@@ -24,7 +24,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
+	"pgregory.net/rapid"
 )
 
 func TestICloudPartitionOrigins(t *testing.T) {
@@ -58,20 +58,20 @@ func TestICloudRecognizersRejectLargeHost(t *testing.T) {
 }
 
 func TestICloudPartitionCanonicalizationIsIdempotentProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		raw := hegel.Draw(ht, hegel.Text())
+	rapid.Check(t, func(rt *rapid.T) {
+		raw := rapid.String().Draw(rt, "raw")
 		origin, ok := ICloudPartitionOrigin(raw)
 		if !ok {
-			assert.Empty(ht, origin)
+			assert.Empty(rt, origin)
 			return
 		}
 		parsed, err := url.Parse(raw)
-		require.NoError(ht, err)
-		assert.Equal(ht, "https://"+strings.ToLower(parsed.Hostname()), origin)
+		require.NoError(rt, err)
+		assert.Equal(rt, "https://"+strings.ToLower(parsed.Hostname()), origin)
 		canonical, accepted := ICloudPartitionOrigin(origin)
-		require.True(ht, accepted)
-		assert.Equal(ht, origin, canonical)
-	}, hegel.WithDatabase(""))
+		require.True(rt, accepted)
+		assert.Equal(rt, origin, canonical)
+	})
 }
 
 func TestICloudConflictingHomesNeverReceiveCredentials(t *testing.T) {
@@ -118,32 +118,32 @@ func TestICloudBootstrapSharesByteBudgetAcrossOriginsProperty(t *testing.T) {
 	for _, limit := range []int64{needed - 1, needed, needed + 1} {
 		check(t, limit)
 	}
-	hegel.Test(t, func(ht *hegel.T) {
-		limit := hegel.Draw(ht, hegel.Integers(int64(1), int64(math.MaxInt64)))
-		check(ht, limit)
-	}, hegel.WithTestCases(32), hegel.WithDatabase(""))
+	rapid.Check(t, func(rt *rapid.T) {
+		limit := rapid.Int64Range(1, math.MaxInt64).Draw(rt, "limit")
+		check(rt, limit)
+	})
 }
 
 func TestICloudPartitionOriginNormalizationProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		n := hegel.Draw(ht, hegel.Integers(uint64(0), uint64(math.MaxUint64)))
+	rapid.Check(t, func(rt *rapid.T) {
+		n := rapid.Uint64().Draw(rt, "n")
 		host := fmt.Sprintf("p%02d-contacts.icloud.com", n)
 		authority := host
-		if hegel.Draw(ht, hegel.Booleans()) {
+		if rapid.Bool().Draw(rt, "uppercase") {
 			authority = strings.ToUpper(authority) + ":443"
 		}
 		origin, ok := ICloudPartitionOrigin("https://" + authority + "/synthetic/home/")
-		require.True(ht, ok)
-		assert.Equal(ht, "https://"+host, origin)
-	}, hegel.WithDatabase(""))
+		require.True(rt, ok)
+		assert.Equal(rt, "https://"+host, origin)
+	})
 }
 
 func TestICloudRejectsArbitraryForeignAuthorityProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		host := hegel.Draw(ht, hegel.Text())
+	rapid.Check(t, func(rt *rapid.T) {
+		host := rapid.String().Draw(rt, "host")
 		_, ok := ICloudPartitionOrigin("https://" + url.PathEscape(host) + ".example.net/home/")
-		assert.False(ht, ok)
-	}, hegel.WithDatabase(""))
+		assert.False(rt, ok)
+	})
 }
 
 func TestICloudPartitionDNSLabelBoundary(t *testing.T) {
@@ -156,11 +156,11 @@ func TestICloudPartitionDNSLabelBoundary(t *testing.T) {
 }
 
 func TestDiscoveryDiagnosticDiscardsArbitraryPrivateComponentsProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		private := hegel.Draw(ht, hegel.Text())
+	rapid.Check(t, func(rt *rapid.T) {
+		private := rapid.String().Draw(rt, "private")
 		target := &url.URL{Scheme: "https", Host: "other.example:443", Path: "/" + private, RawQuery: private, Fragment: private, User: url.UserPassword(private, private)}
-		assert.Equal(ht, "Blocked server address: https://other.example:443", discoveryOriginError(target).Error())
-	}, hegel.WithDatabase(""))
+		assert.Equal(rt, "Blocked server address: https://other.example:443", discoveryOriginError(target).Error())
+	})
 }
 
 func TestICloudDiscoveryURLIsExactBootstrap(t *testing.T) {

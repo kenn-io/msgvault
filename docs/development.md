@@ -195,23 +195,26 @@ for repository testing rules.
 ### Property tests (rapid)
 
 Use properties for contracts over synthetic inputs, such as parsers and rollups.
-Write them with [rapid](https://pkg.go.dev/pgregory.net/rapid): exercise
-production entry points and use testify directly with `*rapid.T`. Run the
-focused properties with:
+Write them with [rapid](https://pkg.go.dev/pgregory.net/rapid), the only
+property library in the repository: exercise production entry points and use
+testify directly with `*rapid.T`.
 
-```bash
-go test -tags "fts5 sqlite_vec" -count=1 -run '^TestProperty(AnnualTemperatureRollups|MessageIDContract)$' ./internal/identityindex ./internal/imap
-```
+`*rapid.T` is not a `*testing.T`. Fixture helpers that need `TempDir` or
+`Cleanup` take the enclosing test's `t`, so their cleanup runs when the whole
+test ends. Helpers that only assert and read a context can accept a small
+interface that both types satisfy.
 
-Each run uses a fresh random seed and 100 cases per property; add
+Each run uses a fresh random seed and 100 cases per property. rapid has no
+per-test case count, so keep each case cheap enough to run 100 times. Add
 `-rapid.checks=N` for a larger budget. When a property fails, rapid shrinks the
 input, prints the seed, and writes a fail file under the package's
 `testdata/rapid/` directory (ignored by Git). To replay it, rerun the same test
 with the printed `-rapid.failfile=...` or `-rapid.seed=...` flag. Turn useful
 shrunk inputs into ordinary regression cases.
 
-A weekly or manually dispatched property-discovery workflow runs 10,000 cases
-per property and keeps the seed, commit, test log, and fail files for 14 days
+A weekly or manually dispatched property-discovery workflow runs
+`TestPropertyAnnualTemperatureRollups` and `TestPropertyMessageIDContract`
+with 10,000 cases each and keeps the seed, commit, test log, and fail files for 14 days
 when it fails.
 
 ### Timing waits
