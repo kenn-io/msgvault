@@ -510,7 +510,7 @@ func TestCardDAVParticipantBindingLifecycleCleanup(t *testing.T) {
 	for _, test := range []struct {
 		action  string
 		tracked bool
-	}{{"delete", false}, {"demote", true}, {"discovery", true}, {"conflict-edit", true}, {"publication-commit", true}} {
+	}{{"delete", false}, {"demote", true}, {"discovery", true}, {"conflict-edit", true}, {"conflict-reset", true}, {"publication-commit", true}} {
 		t.Run(test.action+"/tracked="+strconv.FormatBool(test.tracked), func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
@@ -537,6 +537,24 @@ func TestCardDAVParticipantBindingLifecycleCleanup(t *testing.T) {
 			case "discovery":
 				allowed := true
 				_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{BaseURL: "https://contacts.example/dav", Username: "alice", PrincipalURL: "https://contacts.example/principal/alice/", HomeURL: "https://contacts.example/books/alice/", Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://contacts.example/books/alice/replacement/", DisplayName: "Replacement", CanCreate: &allowed}}})
+			case "conflict-reset":
+				mapping, readErr := st.GetCardDAVResourceContext(t.Context(), book.ID, card.Href)
+				require.NoError(readErr)
+				snapshot, readErr := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
+				require.NoError(readErr)
+				capture := conflictCapture(mapping)
+				capture.LocalHash = snapshot.Fingerprint
+				capture.LocalBody = card.RemoteBody
+				capture.RemoteBody = card.RemoteBody
+				conflict, readErr := st.RecordCardDAVConflictContext(t.Context(), capture)
+				require.NoError(readErr)
+				require.NoError(st.ApproveCardDAVConflictLocalContext(t.Context(), conflictApprovalPlan(t, st, conflict.ID)))
+				conflict, readErr = st.GetCardDAVConflictContext(t.Context(), conflict.ID)
+				require.NoError(readErr)
+				pending, readErr := st.PrepareCardDAVConflictLocalContext(t.Context(), store.CardDAVConflictLocalPlan{ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision, RemoteETag: conflict.RemoteETag, OutgoingSemanticHash: "approved"})
+				require.NoError(readErr)
+				remote := store.CardDAVRemoteResource{Href: pending.Href, RemoteETag: `"different"`, RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:lifecycle-card\r\nFN:Alex Example\r\nEND:VCARD\r\n"), SemanticHash: "different"}
+				err = st.ResetCardDAVConflictLocalIntentContext(t.Context(), *pending, remote, false)
 			case "publication-commit":
 				snapshot, readErr := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
 				require.NoError(readErr)

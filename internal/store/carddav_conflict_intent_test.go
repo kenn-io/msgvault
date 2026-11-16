@@ -85,36 +85,6 @@ func TestConflictOwnedIntentReopenPreservesEvidenceAndIdentity(t *testing.T) {
 	}
 }
 
-func TestResetConflictIntentRemovesUnsupportedAutomaticBinding(t *testing.T) {
-	req := require.New(t)
-	st, account, book := newCardDAVResourceStore(t)
-	participant, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
-	req.NoError(err)
-	card := remoteResource(book.CanonicalURL+"alice.vcf", "alice", "Alice", "alice@example.test", `"one"`)
-	applyParticipantBindingCards(t, st, account, book, card)
-	req.True(bindingOwned(t, st, participant))
-	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, card.Href)
-	req.NoError(err)
-	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), *mapping.PersonID)
-	req.NoError(err)
-	capture := conflictCapture(mapping)
-	capture.LocalHash = snapshot.Fingerprint
-	capture.LocalBody = card.RemoteBody
-	capture.RemoteBody = card.RemoteBody
-	c, err := st.RecordCardDAVConflictContext(t.Context(), capture)
-	req.NoError(err)
-	req.NoError(st.ApproveCardDAVConflictLocalContext(t.Context(), conflictApprovalPlan(t, st, c.ID)))
-	c, err = st.GetCardDAVConflictContext(t.Context(), c.ID)
-	req.NoError(err)
-	pending, err := st.PrepareCardDAVConflictLocalContext(t.Context(), store.CardDAVConflictLocalPlan{ConflictID: c.ID, ExpectedMappingRevision: c.MappingRevision, RemoteETag: c.RemoteETag, OutgoingSemanticHash: "approved"})
-	req.NoError(err)
-	remote := store.CardDAVRemoteResource{Href: pending.Href, RemoteETag: `"different"`, RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:alice\r\nFN:Alice\r\nEND:VCARD\r\n"), SemanticHash: "different"}
-	req.NoError(st.ResetCardDAVConflictLocalIntentContext(t.Context(), *pending, remote, false))
-	person, err := st.PersonForParticipantsContext(t.Context(), []int64{participant})
-	req.NoError(err)
-	assert.Nil(t, person)
-}
-
 func TestConflictOwnedCreateRetryUsesCapturedApprovalScope(t *testing.T) {
 	for _, change := range []string{"none", "inference", "generation", "book", "body"} {
 		t.Run(change, func(t *testing.T) {

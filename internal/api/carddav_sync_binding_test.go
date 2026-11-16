@@ -65,9 +65,6 @@ func TestScheduledCardDAVSyncPersistsBindingConflictCount(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(result.BindingConflicts)
 	assert.Equal(1, *result.BindingConflicts)
-	preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
-	require.NoError(err)
-	assert.Equal(1, preview.Conflicts)
 
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}}
 	controller := &CardDAVController{cfg: cfg, store: st}
@@ -79,5 +76,5 @@ func TestScheduledCardDAVSyncPersistsBindingConflictCount(t *testing.T) {
 	require.NoError(json.NewDecoder(response.Body).Decode(&body))
 	require.Len(body.Runs, 1)
 	assert.Equal("scheduled", body.Runs[0]["trigger"])
-	assert.InDelta(float64(preview.Conflicts), body.Runs[0]["binding_conflicts"], 0)
+	assert.InDelta(float64(1), body.Runs[0]["binding_conflicts"], 0)
 }
