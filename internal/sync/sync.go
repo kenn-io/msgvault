@@ -108,7 +108,7 @@ type Syncer struct {
 
 	// Recovery must refresh existing memberships before advancing its page.
 	requireLabelRefresh bool
-	trashIDs            map[string]struct{}
+	trashIDs            map[string]struct{} // Cached for one ordinary Gmail full sync.
 }
 
 // SuccessfulSyncHook runs after the durable sync run is marked complete.
@@ -1499,7 +1499,7 @@ func (s *Syncer) full(
 	s.logger.Info("syncing account", "email", profile.EmailAddress, "messages", profile.MessagesTotal)
 
 	// Sync labels
-	labelMap, err := s.syncLabelsAndTrash(ctx, source.ID)
+	labelMap, err := s.syncLabels(ctx, source.ID)
 	if err != nil {
 		s.failStoppedSync(state.syncID, err)
 		return nil, fmt.Errorf("sync labels: %w", err)
@@ -1757,22 +1757,18 @@ func (s *Syncer) listCompleteMessageSnapshot(ctx context.Context) (map[string]st
 	}
 }
 
-func (s *Syncer) syncLabelsAndTrash(ctx context.Context, sourceID int64) (map[string]int64, error) {
-	labels, err := s.syncLabels(ctx, sourceID)
-	if err != nil || s.opts.SourceType == sourceTypeIMAP || s.requireLabelRefresh {
-		return labels, err
-	}
+func (s *Syncer) loadTrashIDs(ctx context.Context) error {
 	s.trashIDs = make(map[string]struct{})
 	for token := ""; ; {
 		page, err := s.client.ListMessages(ctx, "in:trash", token)
 		if err != nil {
-			return nil, fmt.Errorf("list Gmail Trash: %w", err)
+			return fmt.Errorf("list Gmail Trash: %w", err)
 		}
 		for _, message := range page.Messages {
 			s.trashIDs[message.ID] = struct{}{}
 		}
 		if page.NextPageToken == "" {
-			return labels, nil
+			return nil
 		}
 		token = page.NextPageToken
 	}
@@ -1786,8 +1782,13 @@ func (s *Syncer) reconcileMarkedGmail(ctx context.Context, sourceID int64, messa
 	if err != nil {
 		return nil, fmt.Errorf("check marked Gmail messages: %w", err)
 	}
-	if s.trashIDs == nil {
+	if s.requireLabelRefresh || len(marked) == 0 {
 		return marked, nil
+	}
+	if s.trashIDs == nil {
+		if err := s.loadTrashIDs(ctx); err != nil {
+			return nil, err
+		}
 	}
 	for id := range marked {
 		message, hasRaw := existing[id]

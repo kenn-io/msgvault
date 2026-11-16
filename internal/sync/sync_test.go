@@ -1927,7 +1927,7 @@ func TestFullSyncPagination(t *testing.T) {
 
 	summary := runFullSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: new(int64(6))})
-	assertListMessagesCalls(t, env, 6)
+	assertListMessagesCalls(t, env, 3)
 }
 
 // Tests for incremental sync
@@ -2646,10 +2646,7 @@ func (a *trashQueryAPI) ListMessages(ctx context.Context, query, pageToken strin
 	if a.trashError != nil {
 		return nil, a.trashError
 	}
-	if pageToken == "" {
-		return &gmail.MessageListResponse{NextPageToken: "next"}, nil
-	}
-	return &gmail.MessageListResponse{Messages: []gmail.MessageID{{ID: "trashed"}}}, nil
+	return a.MockAPI.ListMessages(ctx, query, pageToken)
 }
 
 func TestGmailFullSyncUsesPagedTrashQuery(t *testing.T) {
@@ -2665,6 +2662,7 @@ func TestGmailFullSyncUsesPagedTrashQuery(t *testing.T) {
 		require.NoError(t, env.Store.MarkMessageDeleted(source.ID, id))
 	}
 	env.Mock.Messages["restored"].LabelIDs = []string{"INBOX"}
+	env.Mock.MessagePages = [][]string{{"restored"}, {"trashed"}}
 	api := &trashQueryAPI{labelMetadataSnapshotAPI: &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}}
 	env.Syncer = New(api, env.Store, nil)
 	_, err = env.Syncer.Full(t.Context(), testEmail)
@@ -3353,7 +3351,7 @@ func TestFullSyncResumeWithCursor(t *testing.T) {
 	assert.Equal("page_1", summary.ResumedFromToken, "ResumedFromToken")
 	assertSummary(t, summary, WantSummary{Added: new(int64(4))})
 
-	assertListMessagesCalls(t, env, 3)
+	assertListMessagesCalls(t, env, 1)
 	assertMessageCount(t, env.Store, 4)
 }
 
@@ -3386,7 +3384,7 @@ func TestFullSyncRestartsLegacyUnfilteredCheckpoint(t *testing.T) {
 	summary := runFullSync(t, env)
 	checks.False(summary.WasResumed)
 	checks.Empty(summary.ResumedFromToken)
-	checks.Equal(4, env.Mock.ListMessagesCalls)
+	checks.Equal(2, env.Mock.ListMessagesCalls)
 	assertMessageCount(t, env.Store, 4)
 }
 
@@ -3411,7 +3409,7 @@ func TestFullSyncDoesNotResumeIncrementalCheckpoint(t *testing.T) {
 	summary := runFullSync(t, env)
 	checks.False(summary.WasResumed)
 	checks.Empty(summary.ResumedFromToken)
-	checks.Equal(4, env.Mock.ListMessagesCalls)
+	checks.Equal(2, env.Mock.ListMessagesCalls)
 	assertMessageCount(t, env.Store, 4)
 }
 
