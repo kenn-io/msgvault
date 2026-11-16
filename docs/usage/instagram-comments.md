@@ -93,6 +93,12 @@ account's own comments. The author's `@username` is the subject, so you can
 search for it; Meta returns no author ID for this media, so the author is not
 linked to a person. Media the account owns is skipped here.
 
+Captions and comments by other accounts that @-mention the account are not on
+any edge that sync can read. With [Meta webhooks](meta-webhooks.md), subscribe
+the Instagram object to the `mentions` field and msgvault archives each
+mentioned caption or comment into the same source. A mentioned comment is
+stored as a reply to its media.
+
 An unfinished run resumes from its saved position; a finished run starts again
 from the newest tagged media. The profile's `schedule` also schedules this
 source.
