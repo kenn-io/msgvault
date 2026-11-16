@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"runtime/debug"
 	"slices"
 	"sort"
@@ -385,11 +386,7 @@ func (s *Syncer) incrementalWithRecovery(
 			}
 		}
 		if len(trashRemovalIDs) > 0 {
-			messageIDs := make([]string, 0, len(trashRemovalIDs))
-			for messageID := range trashRemovalIDs {
-				messageIDs = append(messageIDs, messageID)
-			}
-			sort.Strings(messageIDs)
+			messageIDs := slices.Sorted(maps.Keys(trashRemovalIDs))
 			if err := s.reconcileGmailTrashRemovals(ctx, source.ID, messageIDs); err != nil {
 				s.failStoppedSync(syncID, err)
 				return nil, fmt.Errorf("reconcile Gmail Trash removals: %w", err)
