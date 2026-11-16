@@ -6374,3 +6374,65 @@ func TestGmailFullSyncContinuesAfterMarkedLabelError(t *testing.T) {
 		})
 	}
 }
+
+func TestGmailFullLabelFailureKeepsHistoryForIncrementalRetry(t *testing.T) {
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX", "TRASH"})
+	runFullSync(t, env)
+	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+	require.NoError(t, err)
+	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
+	env.Mock.Messages["msg1"].LabelIDs = []string{"INBOX"}
+	env.Mock.AddMessage("msg2", testMIME(), []string{"INBOX"})
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.Profile.HistoryID = 12350
+	api := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true, labelErrors: map[string]error{"msg1": errors.New("temporary label read failure")}}
+	env.Syncer = New(api, env.Store, nil)
+	summary, err := env.Syncer.Full(t.Context(), testEmail)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), summary.Errors)
+	ids, err := env.Store.MessageExistsBatch(source.ID, []string{"msg2"})
+	require.NoError(t, err)
+	assert.Contains(t, ids, "msg2")
+	assertDeletedFromSource(t, env.Store, "msg1", true)
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "12340", source.SyncCursor.String)
+	delete(api.labelErrors, "msg1")
+	env.SetHistory(12350, historyLabelRemoved("msg1", "TRASH"))
+	_, err = env.Syncer.Incremental(t.Context(), source)
+	require.NoError(t, err)
+	assert.Contains(t, env.Mock.HistoryCalls, uint64(12340))
+	assertDeletedFromSource(t, env.Store, "msg1", false)
+}
+
+func TestGmailFullResumeWithLabelFailureKeepsHistory(t *testing.T) {
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.MessagePages = [][]string{{"msg1"}}
+	env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX", "TRASH"})
+	runFullSync(t, env)
+	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+	require.NoError(t, err)
+	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
+	runID, err := env.Store.StartSync(source.ID, "full")
+	require.NoError(t, err)
+	_, err = env.Store.DB().ExecContext(t.Context(), `UPDATE sync_runs SET cursor_after = '12350', request_fingerprint = ? WHERE id = ?`, env.Syncer.fullSyncRequestFingerprint(), runID)
+	require.NoError(t, err)
+	require.NoError(t, env.Store.UpdateSyncCheckpoint(runID, &store.Checkpoint{PageToken: "page_1", MessagesProcessed: 1, ErrorsCount: 1}))
+	require.NoError(t, env.Store.FailSync(runID, "worker stopped"))
+	env.Mock.Profile.HistoryID = 12350
+	env.Mock.AddMessage("msg2", testMIME(), []string{"INBOX"})
+	env.Mock.MessagePages = [][]string{{"msg1"}, {"msg2"}}
+	summary, err := env.Syncer.Full(t.Context(), testEmail)
+	require.NoError(t, err)
+	assert.True(t, summary.WasResumed)
+	current, err := env.Store.GetSourceByID(source.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "12340", current.SyncCursor.String)
+	ids, err := env.Store.MessageExistsBatch(source.ID, []string{"msg2"})
+	require.NoError(t, err)
+	assert.Contains(t, ids, "msg2")
+}

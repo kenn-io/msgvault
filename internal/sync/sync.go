@@ -588,6 +588,7 @@ type batchResult struct {
 	oldestDate       time.Time
 	acknowledged     []string
 	sourceMessageIDs []string
+	markedLabelError bool
 }
 
 type inconclusiveLabelRefresh struct {
@@ -813,6 +814,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					checkpoint.MessagesUpdated += result.updated
 					return nil, fmt.Errorf("fetch labels for %s: %w", sourceMessageID, err)
 				}
+				result.markedLabelError = result.markedLabelError || markedGmail
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", err)
 				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
@@ -834,6 +836,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					checkpoint.MessagesUpdated += result.updated
 					return nil, fmt.Errorf("fetch labels for %s: %w", sourceMessageID, labelResult.Err)
 				}
+				result.markedLabelError = result.markedLabelError || markedGmail
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", labelResult.Err)
 				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, labelResult.Err)
@@ -1550,6 +1553,9 @@ func (s *Syncer) full(
 	}
 	firstPage := true
 	pageToken := state.pageToken
+	// A resumed checkpoint records only the error count, so retain the cursor
+	// when an earlier page may have failed to read a marked message's labels.
+	holdHistory := isUnrestrictedGmailFull && state.wasResumed && state.checkpoint.ErrorsCount > 0
 
 	for !reconcilePresence || state.recoveryPhase == recoveryEnumerate {
 		// List messages
@@ -1590,6 +1596,7 @@ func (s *Syncer) full(
 			return nil, err
 		}
 
+		holdHistory = holdHistory || (isUnrestrictedGmailFull && result.markedLabelError)
 		discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, result.sourceMessageIDs))
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err := fmt.Errorf("sync canceled during identity discovery: %w", ctxErr)
@@ -1689,8 +1696,7 @@ func (s *Syncer) full(
 		s.drainIdentityDiscoveryBacklog(ctx, source.ID)
 	}
 
-	// Ordinary full sync publishes its starting History cursor even with item
-	// errors, preserving a newer cursor from an intervening incremental on resume.
+	// Preserve a newer cursor from an intervening incremental on resume.
 	// Recovery retains H until catch-up succeeds; it cannot publish here.
 	completionHistoryID := handoffHistoryID
 	if state.wasResumed && !reconcilePresence && isUnrestrictedGmailFull {
@@ -1702,6 +1708,14 @@ func (s *Syncer) full(
 		if currentHistoryID, err := strconv.ParseUint(current.SyncCursor.String, 10, 64); err == nil && currentHistoryID > completionHistoryID {
 			completionHistoryID = currentHistoryID
 		}
+	}
+	if holdHistory && !reconcilePresence {
+		current, err := s.store.GetSourceByIDContext(ctx, source.ID)
+		if err != nil {
+			s.failStoppedSync(state.syncID, err)
+			return nil, fmt.Errorf("read saved sync progress: %w", err)
+		}
+		completionHistoryID, _ = strconv.ParseUint(current.SyncCursor.String, 10, 64)
 	}
 	historyIDStr := strconv.FormatUint(completionHistoryID, 10)
 	if state.checkpoint.ErrorsCount > 0 {
@@ -1717,6 +1731,11 @@ func (s *Syncer) full(
 		if err := s.store.PauseSyncWithCheckpoint(context.WithoutCancel(ctx), state.syncID, state.durableCheckpoint()); err != nil {
 			return nil, fmt.Errorf("pause Gmail recovery for catch-up: %w", err)
 		}
+	} else if holdHistory {
+		if err := s.completeSyncWithoutHook(ctx, state.syncID, source.ID, historyIDStr, false); err != nil {
+			return nil, err
+		}
+		s.runSuccessfulSyncHook(ctx, source, true)
 	} else if err := s.completeSyncAndRunHook(ctx, state.syncID, historyIDStr, source, true); err != nil {
 		return nil, err
 	}
