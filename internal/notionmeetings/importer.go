@@ -373,11 +373,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			continue
 		}
 		if strings.TrimSpace(meeting.MeetingNotes.Children.SummaryBlockID) == "" &&
-			(strings.TrimSpace(archived.Evidence.Canonical.Summary) != "" || strings.Contains(archived.Body, "\n\nSummary:\n")) {
+			(strings.TrimSpace(archived.Evidence.Canonical.Summary) != "" || (len(archived.RawTrees["summary"]) > 0 && string(archived.RawTrees["summary"]) != "null") || strings.Contains(archived.Body, "\n\nSummary:\n")) {
 			hydrated.markIncomplete("summary", "summary block omitted")
 		}
 		if strings.TrimSpace(meeting.MeetingNotes.Children.NotesBlockID) == "" &&
-			(strings.TrimSpace(archived.Evidence.Canonical.Notes) != "" || strings.Contains(archived.Body, "\n\nNotes:\n")) {
+			(strings.TrimSpace(archived.Evidence.Canonical.Notes) != "" || (len(archived.RawTrees["notes"]) > 0 && string(archived.RawTrees["notes"]) != "null") || strings.Contains(archived.Body, "\n\nNotes:\n")) {
 			hydrated.markIncomplete("notes", "notes block omitted")
 		}
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""

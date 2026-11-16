@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -1595,4 +1596,87 @@ func TestImporterExpiresMissingSectionRetry(t *testing.T) {
 	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(t, err)
 	assert.Contains(t, body, "Decide the release scope.")
+}
+
+func TestImporterPreservesImageOnlySummaryWhenOmitted(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	image := &Block{Object: "block", ID: "summary-1", Type: "image", Raw: json.RawMessage(`{"object":"block","id":"summary-1","type":"image","has_children":false,"image":{"type":"external","external":{"url":"https://example.com/image.png"}}}`)}
+	source.blocks["summary-1"] = image
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	must.NoError(err)
+	var id int64
+	must.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	before, err := st.GetMessageRaw(id)
+	must.NoError(err)
+	var old map[string]json.RawMessage
+	must.NoError(json.Unmarshal(before, &old))
+	source.query.Results[0].MeetingNotes.Children.SummaryBlockID = ""
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	must.NoError(err)
+	after, err := st.GetMessageRaw(id)
+	must.NoError(err)
+	var updated map[string]json.RawMessage
+	must.NoError(json.Unmarshal(after, &updated))
+	checks.JSONEq(string(old["summary"]), string(updated["summary"]))
+	checks.JSONEq(`["summary"]`, string(updated["incomplete_sections"]))
+	checks.True(second.PartialCoverage)
+	checks.Len(lastNotionState(t, st, first.SourceID).Pending, 1)
+	source.query.Results = nil
+	source.blocks["meeting-1"].Raw = hydrationMeeting().Raw
+	empty := paragraph("summary-1", "", false)
+	source.blocks["summary-1"] = &empty
+	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	must.NoError(err)
+	after, err = st.GetMessageRaw(id)
+	must.NoError(err)
+	must.NoError(json.Unmarshal(after, &updated))
+	checks.NotContains(string(updated["summary"]), `"image"`)
+	checks.Empty(lastNotionState(t, st, first.SourceID).Pending)
+}
+
+func TestImporterPreservesActionsWhenSectionsOmitted(t *testing.T) {
+	for _, section := range []string{"summary", "notes"} {
+		t.Run(section, func(t *testing.T) {
+			checks := assert.New(t)
+			must := require.New(t)
+			st, source, imp := newImporterFixture(t)
+			block := &Block{}
+			must.NoError(json.Unmarshal([]byte(`{"object":"block","id":"`+section+`-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Saved task"}],"checked":false}}`), block))
+			source.blocks[section+"-1"] = block
+			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			must.NoError(err)
+			var id int64
+			must.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+			if section == "summary" {
+				source.query.Results[0].MeetingNotes.Children.SummaryBlockID = ""
+			} else {
+				source.query.Results[0].MeetingNotes.Children.NotesBlockID = ""
+			}
+			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			must.NoError(err)
+			raw, err := st.GetMessageRaw(id)
+			must.NoError(err)
+			content := meetingcontent.Decode(RawFormat, raw, nil)
+			checks.Equal(meetingcontent.CoveragePartial, content.ActionCoverage)
+			must.Len(content.Actions, 1)
+			checks.Equal("Saved task", content.Actions[0].Title)
+			var title string
+			must.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title FROM meeting_action_items WHERE message_id = ?`, id).Scan(&title))
+			checks.Equal("Saved task", title)
+			source.query.Results = nil
+			source.blocks["meeting-1"].Raw = hydrationMeeting().Raw
+			imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			must.NoError(err)
+			checks.Empty(lastNotionState(t, st, first.SourceID).Pending)
+			raw, err = st.GetMessageRaw(id)
+			must.NoError(err)
+			checks.Equal(meetingcontent.CoverageAvailable, meetingcontent.Decode(RawFormat, raw, nil).ActionCoverage)
+			must.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title FROM meeting_action_items WHERE message_id = ?`, id).Scan(&title))
+			checks.Equal("Saved task", title)
+		})
+	}
 }

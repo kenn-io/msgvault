@@ -223,7 +223,7 @@ func (h *Hydrator) retrieveBlock(ctx context.Context, id string) (*Block, error)
 func (h *Hydrator) readTree(ctx context.Context, id string) (blockTree, error) {
 	root, err := h.retrieveBlock(ctx, id)
 	if err != nil {
-		if errors.Is(err, ErrMalformedResponse) && ctx.Err() == nil && !permanentProviderError(err) {
+		if errors.Is(err, ErrMalformedResponse) && ctx.Err() == nil {
 			return blockTree{}, &sectionReadError{reason: "provider", err: err}
 		}
 		return blockTree{}, err
