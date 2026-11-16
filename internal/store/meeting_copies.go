@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-
-	"go.kenn.io/msgvault/internal/calrecur"
 )
 
 // meetingSuccessorSQL follows dedup history and the current visible calendar copy.
@@ -121,8 +119,8 @@ func (s *Store) meetingHasCopies(ctx context.Context) (bool, error) {
 	return found, err
 }
 
-// meetingOccurrenceSeries finds the visible series directly or through copies.
-func (s *Store) meetingOccurrenceSeries(ctx context.Context, id, sourceID int64, providerID string, original calrecur.Identity, budget *int) (int64, error) {
+// meetingSameSourceSeries finds the visible series in the edit's calendar.
+func (s *Store) meetingSameSourceSeries(ctx context.Context, sourceID int64, providerID string, budget *int) (int64, error) {
 	reader := s.meetingSQLReader(ctx)
 	seriesRows, err := queryCalendarEventRowsWithinBudget(ctx, reader, `m.source_id = ? AND e.provider_event_id = ? AND e.kind = 'series'`, []any{sourceID, providerID}, *budget)
 	if err != nil {
@@ -131,28 +129,6 @@ func (s *Store) meetingOccurrenceSeries(ctx context.Context, id, sourceID int64,
 	*budget -= len(seriesRows)
 	if len(seriesRows) > 0 {
 		return seriesRows[0].MessageID, nil
-	}
-	hasCopies, err := s.meetingHasCopies(ctx)
-	if err != nil || !hasCopies {
-		return 0, err
-	}
-	ids, err := s.meetingCopyLookup(ctx, meetingDecisionEndpoint{ID: id, Kind: meetingRefEvent, Key: original.Key()})
-	if err != nil {
-		return 0, err
-	}
-	for batch := range slices.Chunk(ids, 100) {
-		args := make([]any, len(batch))
-		for i, id := range batch {
-			args[i] = id
-		}
-		rows, err := queryCalendarEventRowsWithinBudget(ctx, reader, `e.kind='series' AND e.message_id IN (`+placeholders(len(batch))+`)`, args, *budget)
-		if err != nil {
-			return 0, err
-		}
-		*budget -= len(rows)
-		if len(rows) > 0 {
-			return rows[0].MessageID, nil
-		}
 	}
 	return 0, nil
 }

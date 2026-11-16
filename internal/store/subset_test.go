@@ -5964,6 +5964,9 @@ func TestCopySubsetMeetingDecisionOnEditedCopyInAnotherCalendar(t *testing.T) {
 	r.NoError(err)
 	r.Len(record.Links, 1)
 	r.Equal(survivor, record.Links[0].MessageID)
+	var storedID int64
+	r.NoError(destination.DB().QueryRowContext(t.Context(), `SELECT left_message_id FROM meeting_link_decisions WHERE left_kind='evt'`).Scan(&storedID))
+	r.Equal(survivor, storedID)
 	var count int
 	r.NoError(destination.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE id=?`, series).Scan(&count))
 	r.Zero(count)

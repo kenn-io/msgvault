@@ -163,19 +163,27 @@ func (s *Store) meetingOccurrenceKey(ctx context.Context, endpoint meetingDecisi
 		if endpoint.Key == "" {
 			return endpoint, ErrMeetingOccurrenceRequired
 		}
+		edits, err := s.meetingEventRows(ctx, `m.source_id=? AND e.series_provider_id=? AND e.kind='exception'`, []any{row.SourceID, row.Event.ProviderEventID}, budget)
+		if err != nil {
+			return endpoint, err
+		}
+		for _, edit := range edits {
+			if edit.Event.Original != nil && edit.Event.Original.Key() == endpoint.Key {
+				endpoint.ID = edit.MessageID
+				return endpoint, nil
+			}
+		}
+		edits, err = s.meetingOccurrenceEdits(ctx, endpoint, budget)
+		if err != nil {
+			return endpoint, err
+		}
+		if len(edits) == 1 {
+			endpoint.ID = edits[0].MessageID
+		}
 	case calendarExceptionKind:
 		endpoint.Key = ""
 		if row.Event.Original != nil {
 			endpoint.Key = row.Event.Original.Key()
-		}
-		if row.Event.Original != nil && row.Event.SeriesProviderID != "" {
-			seriesID, err := s.meetingOccurrenceSeries(ctx, id, row.SourceID, row.Event.SeriesProviderID, *row.Event.Original, budget)
-			if err != nil {
-				return endpoint, err
-			}
-			if seriesID != 0 {
-				endpoint.ID = seriesID
-			}
 		}
 	default:
 		key := ""
@@ -188,6 +196,27 @@ func (s *Store) meetingOccurrenceKey(ctx context.Context, endpoint meetingDecisi
 		endpoint.Key = key
 	}
 	return endpoint, nil
+}
+
+func (s *Store) meetingPublicRef(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (string, error) {
+	if endpoint.Kind == meetingRefEvent && endpoint.Key != "" {
+		rows, err := s.meetingEventRows(ctx, `e.message_id=?`, []any{endpoint.ID}, budget)
+		if err != nil {
+			return "", err
+		}
+		if len(rows) > 0 && rows[0].Event.Kind == calendarExceptionKind {
+			series, err := s.meetingSameSourceSeries(ctx, rows[0].SourceID, rows[0].Event.SeriesProviderID, budget)
+			if err != nil {
+				return "", err
+			}
+			if series != 0 {
+				endpoint.ID = series
+			} else {
+				endpoint.Key = ""
+			}
+		}
+	}
+	return endpoint.ref(), nil
 }
 
 func (s *Store) meetingAutomaticRecordForEndpoint(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int, notesOnly bool) (MeetingRecord, error) {
@@ -248,6 +277,14 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		if compareMeetingEndpoints(ca, cb) > 0 {
 			ca, cb = cb, ca
 		}
+		leftRef, err := s.meetingPublicRef(ctx, ca, &budget)
+		if err != nil {
+			return err
+		}
+		rightRef, err := s.meetingPublicRef(ctx, cb, &budget)
+		if err != nil {
+			return err
+		}
 		missing := false
 		for _, endpoint := range []meetingDecisionEndpoint{ca, cb} {
 			if endpoint.Kind != meetingRefEvent {
@@ -307,7 +344,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			if err := s.clearStoredMeetingDecision(ctx, tx, a, b, true, true, decision, cause, &ignored); err != nil {
 				return err
 			}
-			result = MeetingLinkDecisionResult{Left: ca.ref(), Right: cb.ref(), State: "automatic"}
+			result = MeetingLinkDecisionResult{Left: leftRef, Right: rightRef, State: "automatic"}
 			return nil
 		}
 		for _, edge := range equivalent {
@@ -358,7 +395,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 				}
 			}
 		}
-		result = MeetingLinkDecisionResult{Left: ca.ref(), Right: cb.ref(), State: state}
+		result = MeetingLinkDecisionResult{Left: leftRef, Right: rightRef, State: state}
 		return nil
 	})
 	return result, err

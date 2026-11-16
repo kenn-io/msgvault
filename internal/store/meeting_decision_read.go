@@ -296,9 +296,13 @@ func (s *Store) meetingResolveOccurrenceLinks(ctx context.Context, record Meetin
 		if err != nil {
 			return record, err
 		}
-		if ref.Identity == (calrecur.Identity{}) {
+		if ref.Identity == (calrecur.Identity{}) || link.MessageID != ref.MessageID {
 			add(link)
 			continue
+		}
+		member, err := s.meetingOccurrenceKey(ctx, endpointFromRef(ref), budget)
+		if err != nil {
+			return record, err
 		}
 		edits, err := s.meetingOccurrenceEdits(ctx, endpointFromRef(ref), budget)
 		if err != nil {
@@ -306,6 +310,9 @@ func (s *Store) meetingResolveOccurrenceLinks(ctx context.Context, record Meetin
 		}
 		var replacements []MeetingLink
 		for _, edit := range edits {
+			if member.ID != ref.MessageID && edit.MessageID != member.ID {
+				continue
+			}
 			copyRecord, err := s.meetingAutomaticRecord(ctx, MeetingLinkRef{Kind: meetingRefEvent, MessageID: edit.MessageID}, budget, false)
 			if err != nil {
 				return record, err
