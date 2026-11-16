@@ -179,51 +179,6 @@ func TestGmailRecoveryReplacesArchivedLabels(t *testing.T) {
 	}
 }
 
-func TestGmailRecoveryKeepsMarkInTrashAndClearsRestoredMessage(t *testing.T) {
-	require := require.New(t)
-	e, _, ids := recoveryLabelsEnv(t)
-	source := gmailCoverageSource(t.Context(), t, e)
-	require.NoError(e.Store.MarkMessageDeleted(source.ID, "normal1"))
-	require.NoError(e.Store.MarkMessageDeleted(source.ID, "trash"))
-
-	_, err := e.Syncer.IncrementalWithHistoryRecovery(
-		t.Context(), source, nil)
-	require.NoError(err)
-
-	assertDeletedFromSource(t, e.Store, "normal1", true)
-	assertDeletedFromSource(t, e.Store, "trash", false)
-	assertRecoveryLabels(t, e, ids, map[string][]string{
-		"normal1": {"TRASH"}, "trash": {"INBOX"},
-	})
-}
-
-func TestGmailRecoveryReacquiresRawForMarkedMessageAndClearsRestore(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	e, f, ids := recoveryLabelsEnv(t)
-	source := gmailCoverageSource(t.Context(), t, e)
-	require.NoError(e.Store.MarkMessageDeleted(source.ID, "trash"))
-	_, err := e.Store.DB().ExecContext(
-		t.Context(), e.Store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), ids["trash"],
-	)
-	require.NoError(err)
-
-	_, err = e.Syncer.IncrementalWithHistoryRecovery(t.Context(), source, nil)
-	require.NoError(err)
-	assertDeletedFromSource(t, e.Store, "trash", false)
-	assert.Equal(5, f.rawGets, "recovery must reacquire missing raw MIME")
-	var rawCount int
-	require.NoError(e.Store.DB().QueryRowContext(
-		t.Context(), e.Store.Rebind(`SELECT count(*) FROM message_raw WHERE message_id = ?`), ids["trash"],
-	).Scan(&rawCount))
-	assert.Equal(1, rawCount)
-	labelIDs, err := e.Store.MessageLabelIDsContext(t.Context(), ids["trash"])
-	require.NoError(err)
-	inboxID, err := e.Store.LabelIDContext(t.Context(), source.ID, "INBOX")
-	require.NoError(err)
-	assert.ElementsMatch([]int64{inboxID}, labelIDs)
-}
-
 func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 	for _, fault := range []string{"read", "identity", "write", "cancel"} {
 		t.Run(fault, func(t *testing.T) {

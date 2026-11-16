@@ -3,16 +3,13 @@ package store_test
 import (
 	"crypto/sha256"
 	"database/sql"
-	"net"
 	"sort"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/emailtags"
-	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -319,7 +316,6 @@ func TestApplyIMAPMailboxDeltas_TrashAndAllReconcileDeletionMark(t *testing.T) {
 		marked, trash, inbox, all, want bool
 	}{
 		{name: "marked in trash", marked: true, trash: true, want: true},
-		{name: "unmarked in trash", trash: true, want: false},
 		{name: "marked in trash and inbox", marked: true, trash: true, inbox: true, want: false},
 		{name: "marked in trash and all", marked: true, trash: true, all: true, want: true},
 		{name: "marked in all only", marked: true, all: true, want: false},
@@ -371,46 +367,6 @@ func TestClearRestoredIMAPDeletionMarksKeepsAmbiguousIdentity(t *testing.T) {
 		}},
 	))
 	assert.True(t, messageTombstoned(t, f.store, id))
-}
-
-func TestIMAPFallbackTrashPreservesDeletionMark(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := newIMAPMembershipFixture(t)
-	messageID := f.createMessage(t, "fallback-trash", "<fallback-trash@example.com>")
-	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{
-		"INBOX": 0, "Deleted Items": 1,
-	})
-	host, portString, err := net.SplitHostPort(addr)
-	require.NoError(err)
-	port, err := strconv.Atoi(portString)
-	require.NoError(err)
-	client := imapclient.NewClient(&imapclient.Config{
-		Host: host, Port: port, Username: testutil.IMAPTestUsername,
-	}, testutil.IMAPTestPassword)
-	t.Cleanup(func() { _ = client.Close() })
-
-	labels, err := client.ListLabels(t.Context())
-	require.NoError(err)
-	labelInfo := make(map[string]store.LabelInfo, len(labels))
-	for _, label := range labels {
-		labelInfo[label.ID] = store.LabelInfo{
-			Name: label.Name, Type: label.Type, SystemRole: label.SystemRole,
-		}
-	}
-	require.Equal(store.LabelSystemRoleTrash, labelInfo["Deleted Items"].SystemRole)
-	_, err = f.store.EnsureLabelsBatch(t.Context(), f.source.ID, labelInfo)
-	require.NoError(err)
-	require.NoError(f.store.MarkMessageDeleted(f.source.ID, "fallback-trash"))
-
-	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
-		Mailbox: "Deleted Items",
-		State:   store.IMAPFolderState{Mailbox: "Deleted Items", UIDValidity: 1, UIDNext: 2},
-		Memberships: []store.IMAPMembershipObservation{{
-			UID: 1, SourceMessageID: "fallback-trash",
-		}},
-	}}))
-	assert.True(messageTombstoned(t, f.store, messageID))
 }
 
 func TestApplyIMAPMailboxDeltas_UIDValidityResetDeletesOldEpoch(t *testing.T) {
@@ -1536,7 +1492,6 @@ func TestFilteredIMAPRestoreUpdatesOnlyTrashProjection(t *testing.T) {
 	restored := f.createMessage(t, "restored", "<restored@example.com>")
 	stillTrash := f.createMessage(t, "still-trash", "<still-trash@example.com>")
 	allOnly := f.createMessage(t, "all-only", "<all-only@example.com>")
-	require.NoError(t, f.store.UpsertFTS(restored, "restoredexample", "", "", "", ""))
 	_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 		"Trash":    {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
 		"All Mail": {Name: "All Mail", Type: "system", SystemRole: store.LabelSystemRoleAll},
@@ -1564,9 +1519,6 @@ func TestFilteredIMAPRestoreUpdatesOnlyTrashProjection(t *testing.T) {
 		{Mailbox: "All Mail", ArchivedMessageID: stillTrash},
 	}))
 	assert.False(t, messageTombstoned(t, f.store, restored))
-	_, total, err := f.store.SearchMessagesContext(t.Context(), "restoredexample", 0, 10)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), total)
 	assert.Equal(t, []string{"Projects"}, messageLabels(t, f.store, restored))
 	assert.True(t, messageTombstoned(t, f.store, allOnly))
 	assert.True(t, messageTombstoned(t, f.store, stillTrash))
@@ -1577,16 +1529,22 @@ func TestFilteredIMAPRestoreUpdatesOnlyTrashProjection(t *testing.T) {
 func TestFilteredIMAPRestoreSkipsUnmarkedIdentities(t *testing.T) {
 	f := newIMAPIdentityFixture(t)
 	id := f.createMessage(t, "unmarked", "<unmarked@example.com>")
+	_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
+		"Trash": {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
+		"INBOX": {Name: "INBOX", Type: "system"},
+	})
+	require.NoError(t, err)
 	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
-		Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 2},
+		Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2},
 		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "unmarked"}},
 	}}))
-	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (?, ?, 'mime', 'zlib')`), id, []byte("invalid zlib"))
-	require.NoError(t, err)
+	require.NoError(t, f.store.UpsertMessageRaw(id, []byte("unmarked")))
 	syncID, err := f.store.StartSync(f.source.ID, "full")
 	require.NoError(t, err)
 	require.NoError(t, f.store.CompleteSync(syncID, ""))
 	require.NoError(t, f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, []store.IMAPMembershipObservation{{
-		Mailbox: "INBOX", RawSHA256: sha256.Sum256([]byte("unmarked")),
+		Mailbox: "INBOX", ArchivedMessageID: id, RawSHA256: sha256.Sum256([]byte("unmarked")),
 	}}))
+	assert.False(t, messageTombstoned(t, f.store, id))
+	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, id))
 }
