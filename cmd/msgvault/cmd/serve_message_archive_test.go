@@ -314,6 +314,29 @@ func TestArchiveMessageDaemonWriteAndReconcile(t *testing.T) {
 	assertionsForTest.ElementsMatch([]string{"UNREAD", "Keep"}, msg.Labels, "satisfied retry must reconcile stale local membership")
 }
 
+func TestArchiveWholeChatProviderErrors(t *testing.T) {
+	st, _, gmailID, _, _, owner, _ := newArchiveDaemon(t)
+	source, err := st.GetOrCreateSource("imap", "imap@example.test")
+	require.NoError(t, err)
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Archive")
+	require.NoError(t, err)
+	imapID, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "imap-message", MessageType: "email"})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name string
+		id   int64
+		code string
+	}{{"imap", imapID, "archive_unsupported"}, {"gmail", gmailID, "invalid_request"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			archived := true
+			_, err := owner.ArchiveMessage(t.Context(), tc.id, emailtags.ArchiveChange{Archived: &archived, WholeChat: true})
+			var failure *emailtags.MessageTagError
+			require.ErrorAs(t, err, &failure)
+			assert.Equal(t, tc.code, failure.Code)
+		})
+	}
+}
+
 func TestArchiveMessageUnsupportedProviderAndMissingScope(t *testing.T) {
 	for _, provider := range []string{"imap", "gmail"} {
 		t.Run(provider, func(t *testing.T) {
