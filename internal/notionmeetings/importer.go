@@ -195,13 +195,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	scopedStore := imp.store.ScopedToSync(source.ID, syncID)
 	defer func() {
 		if retErr != nil {
-			_ = scopedStore.FailSyncWithCheckpoint(syncID, retErr.Error(), &store.Checkpoint{
-				PageToken:         checkpointPage,
-				MessagesProcessed: sum.MeetingsProcessed,
-				MessagesAdded:     sum.MeetingsAdded,
-				MessagesUpdated:   sum.MeetingsUpdated,
-				ErrorsCount:       sum.Errors,
-			})
+			_ = scopedStore.FailSyncWithCheckpoint(syncID, retErr.Error(), sum.checkpoint(checkpointPage))
 		}
 	}()
 
@@ -362,7 +356,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived evidence: %w", id, recoverErr))
 			continue
 		}
-		if archived.MessageID != 0 && !archived.HasEvidence && (slices.Contains(hydrated.Incomplete, "summary") || slices.Contains(hydrated.Incomplete, "notes")) {
+		if cannotPreserveIncomplete(archived, hydrated) {
 			queueIncomplete()
 			sum.Errors++
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: cannot preserve incomplete sections without archived evidence", id))
@@ -569,7 +563,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if err != nil {
 			return sum, errors.Join(errors.Join(hardErrors...), err)
 		}
-		if err := scopedStore.UpdateSyncCheckpoint(syncID, &store.Checkpoint{PageToken: checkpointPage, MessagesProcessed: sum.MeetingsProcessed, MessagesAdded: sum.MeetingsAdded, MessagesUpdated: sum.MeetingsUpdated, ErrorsCount: sum.Errors}); err != nil {
+		if err := scopedStore.UpdateSyncCheckpoint(syncID, sum.checkpoint(checkpointPage)); err != nil {
 			return sum, errors.Join(errors.Join(hardErrors...), err)
 		}
 		return sum, errors.Join(hardErrors...)
@@ -587,14 +581,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return sum, err
 	}
 	checkpointPage = cursor
-	checkpoint := &store.Checkpoint{
-		PageToken:         cursor,
-		MessagesProcessed: sum.MeetingsProcessed,
-		MessagesAdded:     sum.MeetingsAdded,
-		MessagesUpdated:   sum.MeetingsUpdated,
-		ErrorsCount:       sum.Errors,
-	}
-	if err := scopedStore.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+	if err := scopedStore.UpdateSyncCheckpoint(syncID, sum.checkpoint(cursor)); err != nil {
 		return sum, err
 	}
 	if err := scopedStore.CompleteSync(syncID, cursor); err != nil {
@@ -602,6 +589,23 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	sum.Duration = imp.now().UTC().Sub(started)
 	return sum, nil
+}
+
+func (s *ImportSummary) checkpoint(pageToken string) *store.Checkpoint {
+	return &store.Checkpoint{
+		PageToken:         pageToken,
+		MessagesProcessed: s.MeetingsProcessed,
+		MessagesAdded:     s.MeetingsAdded,
+		MessagesUpdated:   s.MeetingsUpdated,
+		ErrorsCount:       s.Errors,
+	}
+}
+
+// cannotPreserveIncomplete reports whether an incomplete summary or notes
+// section would overwrite an archived meeting that has no evidence to keep.
+func cannotPreserveIncomplete(archived archivedMeetingState, hydrated *HydratedMeeting) bool {
+	return archived.MessageID != 0 && !archived.HasEvidence &&
+		(slices.Contains(hydrated.Incomplete, "summary") || slices.Contains(hydrated.Incomplete, "notes"))
 }
 
 // loadPendingState restores retry state from the latest checkpointed sync and
