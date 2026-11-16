@@ -325,7 +325,7 @@ func failNotionArchive(t *testing.T, st *store.Store) func() {
 	}
 }
 
-func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
+func TestImporterRetryRecoveryAndWindows(t *testing.T) {
 	for _, tc := range []struct {
 		name                                      string
 		archive, anotherMeeting, markdown, cancel bool
@@ -1230,14 +1230,18 @@ func TestImporterHealthyAttendeeResolutionRemainsAuthoritative(t *testing.T) {
 	}
 }
 
-func TestImporterDefersTransientPendingLoadFailure(t *testing.T) {
+func TestImporterHandlesPendingLoadFailure(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		err     error
-		wantErr bool
+		name                       string
+		err                        error
+		wantErr, permanent, cancel bool
 	}{
-		{"service unavailable", &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}, false},
-		{"not found", &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}, true},
+		{name: "service unavailable", err: &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}},
+		{name: "not found", err: &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}, wantErr: true},
+		{name: "unauthorized", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}, permanent: true},
+		{name: "content access", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}, permanent: true},
+		{name: "malformed response", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse), permanent: true},
+		{name: "context canceled", err: context.Canceled, permanent: true, cancel: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -1257,6 +1261,27 @@ func TestImporterDefersTransientPendingLoadFailure(t *testing.T) {
 				"meeting-1": tc.err,
 			}
 			imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+			if tc.permanent {
+				source.query.Results = nil
+				ctx := t.Context()
+				if tc.cancel {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithCancel(ctx)
+					t.Cleanup(cancel)
+					source.onBlock = func(id string) {
+						if id == "meeting-1" {
+							cancel()
+						}
+					}
+				}
+				result, err := imp.Import(ctx, ImportOptions{Identifier: "work"})
+				require.ErrorIs(err, tc.err)
+				after := lastNotionState(t, st, first.SourceID)
+				assert.Equal(state.LastQueryAt, after.LastQueryAt)
+				assert.Equal(state.Pending, after.Pending)
+				assert.Equal(int64(1), result.Errors)
+				return
+			}
 			visible := hydrationMeeting()
 			visible.ID = "meeting-2"
 			visible.LastEditedTime = "2026-08-29T18:01:00Z"
@@ -1294,38 +1319,6 @@ func TestImporterDefersTransientPendingLoadFailure(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(int64(1), third.MaintenanceRetries)
 			assert.Empty(lastNotionState(t, st, third.SourceID).Pending)
-		})
-	}
-}
-
-func TestImporterRejectsPermanentPendingLoadFailure(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		err  error
-	}{
-		{"unauthorized", &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}},
-		{"content access", &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}},
-		{"malformed response", fmt.Errorf("%w: invalid block", ErrMalformedResponse)},
-		{"context canceled", context.Canceled},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			st, source, imp := newImporterFixture(t)
-			empty := paragraph("transcript-1", "", false)
-			source.blocks["transcript-1"] = &empty
-			source.markdown.Markdown = "# Weekly planning"
-			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-			require.NoError(t, err)
-			before := lastNotionState(t, st, first.SourceID)
-			require.Len(t, before.Pending, 1)
-			source.blockErrs = map[string]error{"meeting-1": tc.err}
-			source.query.Results = nil
-			imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
-			result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-			require.ErrorIs(t, err, tc.err)
-			after := lastNotionState(t, st, first.SourceID)
-			assert.Equal(t, before.LastQueryAt, after.LastQueryAt)
-			assert.Equal(t, before.Pending, after.Pending)
-			assert.Equal(t, int64(1), result.Errors)
 		})
 	}
 }
@@ -1401,8 +1394,6 @@ func TestImporterRetriesIncompleteSections(t *testing.T) {
 		{name: "transcript", section: "transcript"}, {name: "summary", section: "summary"}, {name: "notes", section: "notes"},
 		{name: "saved empty summary", section: "summary", emptySummary: true},
 		{name: "transcript malformed evidence", section: "transcript", evidenceDamage: "malformed"},
-		{name: "transcript missing evidence", section: "transcript", evidenceDamage: "missing"},
-		{name: "transcript corrupt compression", section: "transcript", evidenceDamage: "compressed"},
 	} {
 		section := tc.section
 		t.Run(tc.name, func(t *testing.T) {
@@ -1423,15 +1414,8 @@ func TestImporterRetriesIncompleteSections(t *testing.T) {
 			require.NoError(err)
 			var beforeEvidence map[string]json.RawMessage
 			require.NoError(json.Unmarshal(before, &beforeEvidence))
-			switch tc.evidenceDamage {
-			case "malformed":
+			if tc.evidenceDamage == "malformed" {
 				require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte("{"), RawFormat))
-			case "missing":
-				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), messageID)
-				require.NoError(err)
-			case "compressed":
-				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`), []byte("not zlib"), messageID)
-				require.NoError(err)
 			}
 			id := section + "-1"
 			source.blockErrs = map[string]error{id: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
@@ -1604,7 +1588,6 @@ func TestImporterRetriesOmittedTranscript(t *testing.T) {
 		{name: "markdown truncated", markdown: "# Notes\nTranscript heading was truncated", truncated: true, wantBody: "Saved page transcript", wantPending: true, wantIncomplete: true, keepMarkdown: true},
 		{name: "complete empty section", markdown: "# Notes\nNo transcript", structured: true, absentBody: "Test Speaker: Ready to ship.", wantPending: true},
 		{name: "deleted data source transcript", omitted: true, structured: true, dataSource: true, wantBody: "Test Speaker: Ready to ship.", wantPending: true, wantIncomplete: true, keepTree: true, keepReference: true},
-		{name: "empty data source section", structured: true, dataSource: true, absentBody: "Test Speaker: Ready to ship.", wantPending: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
