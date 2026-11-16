@@ -166,7 +166,15 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.3.0**.
+it is separate from the binary release version. The current schema is **5.6.0**.
+
+Schema 5.6.0 adds `POST /api/v1/identity/cache-refresh` to rebuild
+identity-derived datasets without changing links or profiles.
+
+Schema 5.5.0 adds `POST /api/v1/sources/{source_id}/account-attribution/repair`
+to retry account matching for one source.
+
+Schema 5.4.0 allows native tag reads for messages from deleted sources.
 
 Schema 5.3.0 adds `auth_method` to IMAP accounts in `GET /api/v1/cli/accounts`:
 `password` or `xoauth2`, present when the source's settings are readable.
@@ -504,6 +512,15 @@ Unsupported providers or persistent keyword support return
 501. See the generated OpenAPI contract for response schemas.
 
 ### Identity match review and scoring
+
+`POST /api/v1/identity/cache-refresh` rebuilds identity-derived datasets without
+changing links or profiles. It returns `identity_revision` and
+`cache_state: "ready"` on success. It requires API authentication and the
+mutation gate. When a SQLite cache is absent, it returns HTTP 503 with
+`identity_cache_build_required`; run `msgvault build-cache` before retrying.
+PostgreSQL returns HTTP 503 with `identity_cache_unsupported` because it has
+no Parquet cache. Other build failures return HTTP 500; a missing refresh
+capability returns HTTP 503.
 
 Review identity suggestions through `GET /api/v1/identity/match-candidates`
 and `GET /api/v1/identity/match-candidates/{id}`. Responses include the

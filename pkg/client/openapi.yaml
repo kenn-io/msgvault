@@ -16970,7 +16970,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.5.0
+  version: 5.7.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -22824,6 +22824,33 @@ paths:
       security:
         - apiKey: []
       summary: Get authenticated health details
+      tags:
+        - API
+  /api/v1/identity/cache-refresh:
+    post:
+      operationId: refreshIdentityCache
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityLinkResponse"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Refresh identity datasets
       tags:
         - API
   /api/v1/identity/links:
@@ -33895,6 +33922,27 @@ paths:
       security:
         - apiKey: []
       summary: List source sync status
+      tags:
+        - API
+  /api/v1/sources/{source_id}/account-attribution/repair:
+    post:
+      operationId: repairAccountAttribution
+      parameters:
+        - description: Source ID
+          in: path
+          name: source_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "202":
+          description: Accepted
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Retry account matching for one source
       tags:
         - API
   /api/v1/sources/{source_id}/identities:

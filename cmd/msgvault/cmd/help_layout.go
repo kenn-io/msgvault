@@ -28,6 +28,7 @@ const (
 )
 
 var topLevelCommandGroups = map[string]string{
+	"cli":                     helpGroupOperations,
 	"source":                  helpGroupSources,
 	"address":                 helpGroupPeople,
 	"activity":                helpGroupIndex,
@@ -76,6 +77,7 @@ var topLevelCommandGroups = map[string]string{
 	"deduplicate":             helpGroupDelete,
 	"delete-deduped":          helpGroupDelete,
 	"delete-staged":           helpGroupDelete,
+	"diagnose-acquisition":    helpGroupSources,
 	"docbank":                 helpGroupOperations,
 	"draft-compose":           helpGroupWrite,
 	"draft-delete":            helpGroupWrite,

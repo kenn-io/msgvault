@@ -4,8 +4,9 @@ title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
 
-Find a command by task below, or use `msgvault COMMAND --help` for the flags
-in your installed binary. This reference follows current `main`; see
+Find a command with `msgvault cli search "<what you want to do>"`, then use
+`msgvault COMMAND --help` for its flags and examples. This reference follows
+current `main`; see
 [the latest release notes](https://github.com/kenn-io/msgvault/releases/latest) for features and upgrade notes.
 
 `msgvault --help` groups commands by task and lists start-here commands for
@@ -60,6 +61,37 @@ when more history remains. Run it again to continue; JSON sets
 `coverage_incomplete`. With nothing open, it prints `No open loops.` Acting on
 a message that doesn't start an open loop, such as one you already answered,
 fails with `<id> isn't an open loop.`
+
+## cli search
+
+Describe a task to find relevant commands. Quoting the task is optional.
+
+```bash
+msgvault cli search "search extracted document attachments"
+msgvault cli search read a conversation thread --limit 3 --json
+```
+
+Discovery uses the installed command tree locally. It needs no configuration,
+archive, daemon, credentials, or network, including with delegated connection
+flags. It prints command paths and summaries, followed by a help hint. It
+does not run any suggested command.
+
+| Flag | Contract |
+|---|---|
+| `--limit` | Maximum results, default 5; range 1–20 |
+| `--json` | An object with `query` and `results`; each result has `command`, `summary`, and `usage` |
+
+Hidden, deprecated, help-only, interactive setup, and browser/device login
+commands are excluded. Noninteractive children of excluded groups remain
+searchable. Exclusion is based on required interaction, not whether a default
+path can prompt: commands with supported credential files or piped input remain
+searchable. `add-matrix` stays eligible because its login secret can come from
+`--password-file`, `--login-token-file`, or stdin. A recovery secret can come
+from `--recovery-file` or stdin; `--skip-key-backup` skips key backup. A
+recommendation may need a running daemon or configured source.
+No matches succeeds with an empty `results` array in JSON or a root-help hint
+in text. A blank task or invalid limit is a usage error (exit 1).
+`msgvault cli` alone prints group help.
 
 ## meetings
 
@@ -3212,6 +3244,28 @@ msgvault export-token <email> [flags]
 | `--upload-only` | Upload the token without registering an enabled Gmail sync account |
 
 `export-token` reads the configured local token backend, uploads the token to `/api/v1/auth/token/<email>`, and saves it through the daemon's configured token backend. Each end uses credential commands when configured, or `~/.msgvault/tokens/<email>.json` otherwise. By default, it also posts account metadata to `/api/v1/accounts`, enabling a daily Gmail sync. Use `--upload-only` when you only need to store a token, such as for Calendar-only access.
+
+---
+
+## diagnose-acquisition
+
+List Gmail message download, processing, and file-saving failures for a source:
+
+```bash
+msgvault diagnose-acquisition --source-id 1
+msgvault diagnose-acquisition --source-id 1 --all
+```
+
+The command reads the local database without starting the daemon or contacting Gmail. Use `--local` when a remote URL is configured. After a source is merged, use `--all` with the original source ID to inspect its history; unconfirmed work is unknown because sync no longer retries that source. By default it lists failures that sync still retries, based on saved sync records. `--all` adds failures in the other states:
+
+| Text | JSON `state` | Meaning |
+|---|---|---|
+| `still failing` | `active` | Sync retries the failure. |
+| `fixed` | `resolved` | A later sync recorded confirmation that the work succeeded. |
+| `retired` | `historical` | Cleanup retired the failure for a message deleted from Gmail. |
+| `unknown` | `indeterminate` | No retry or confirmation is recorded, sync skipped a later download, or msgvault does not recognize the failure. |
+
+Each row shows the message ID, state, and a description of the failure; JSON also includes the saved phase and error-kind codes. A message can appear once per state, such as an older fixed failure and a newer one still failing. The command does not check saved files, and an empty list does not prove the archive is complete.
 
 ---
 

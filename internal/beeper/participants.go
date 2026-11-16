@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/beeperidentity"
@@ -45,9 +46,12 @@ type participantResolver struct {
 	// accountID is the authoritative Beeper account selected by the import.
 	// Beeper user IDs are only unique inside that account, so every persisted
 	// fallback identifier and every run-local cache key must carry it.
-	accountID string
-	rich      map[string]richEntry // phone/email-based resolutions
-	fallback  map[string]int64     // bare-ID fallbacks; upgraded when metadata appears
+	accountID    string
+	rich         map[string]richEntry // phone/email-based resolutions
+	fallback     map[string]int64     // bare-ID fallbacks; upgraded when metadata appears
+	mergedAway   map[int64]bool       // participants merged away this run; made on first merge
+	messageUsers map[string]User
+	roomOwners   map[string]bool
 }
 
 func newParticipantResolver(s *store.Store, accountIDs ...string) *participantResolver {
@@ -163,6 +167,7 @@ func (r *participantResolver) mergeInto(ctx context.Context, loser, winner int64
 	err := r.store.MergeParticipantsContext(ctx, loser, winner)
 	switch {
 	case err == nil:
+		r.forgetMerged(loser)
 		return winner, nil
 	case errors.Is(err, store.ErrIdentifierAddressConflict):
 		return loser, nil
@@ -178,6 +183,49 @@ func (r *participantResolver) mergeInto(ctx context.Context, loser, winner int64
 // with an optional display name. Cache misses fall through to rung 3 of the
 // ladder since no phone/email is available on bare IDs.
 func (r *participantResolver) resolveID(ctx context.Context, userID, displayName string) (int64, error) {
+	if user, ok := r.messageUsers[userID]; ok {
+		delete(r.messageUsers, userID)
+		r.forgetUser(userID)
+		return r.resolveUser(ctx, &user)
+	}
+	return r.resolveIDFallback(ctx, userID, displayName)
+}
+
+func (r *participantResolver) forgetUser(userID string) {
+	key := r.identifierForUser(userID)
+	delete(r.rich, key)
+	delete(r.fallback, key)
+}
+
+// rememberRosterOwner skips owners merged away during this run.
+func (r *participantResolver) rememberRosterOwner(userID string, owner int64) {
+	r.forgetUser(userID)
+	if !r.mergedAway[owner] {
+		r.fallback[r.identifierForUser(userID)] = owner
+	}
+}
+
+// forgetMerged drops cached entries for a deleted participant, so the next
+// lookup reads the identifier's current owner. The loser is never cached again
+// this run.
+func (r *participantResolver) forgetMerged(loser int64) {
+	if r.mergedAway == nil {
+		r.mergedAway = make(map[int64]bool)
+	}
+	r.mergedAway[loser] = true
+	for key, e := range r.rich {
+		if e.pid == loser {
+			delete(r.rich, key)
+		}
+	}
+	for key, pid := range r.fallback {
+		if pid == loser {
+			delete(r.fallback, key)
+		}
+	}
+}
+
+func (r *participantResolver) resolveIDFallback(ctx context.Context, userID, displayName string) (int64, error) {
 	if userID == "" {
 		return 0, nil
 	}
@@ -200,6 +248,50 @@ func (r *participantResolver) resolveID(ctx context.Context, userID, displayName
 	}
 	r.fallback[identifier] = pid
 	return pid, nil
+}
+
+func (r *participantResolver) useMessageRoster(ctx context.Context, sourceID int64, ch *Chat, enabled bool) error {
+	r.messageUsers = nil
+	for key := range r.roomOwners {
+		delete(r.fallback, key)
+	}
+	r.roomOwners = nil
+	if !enabled {
+		return nil
+	}
+	receipts, err := r.store.BeeperRosterReceiptsContext(ctx, sourceID, rosterProvider(ch.ID))
+	if err != nil {
+		return err
+	}
+	r.roomOwners = make(map[string]bool, len(receipts))
+	for key, receipt := range receipts {
+		delete(r.rich, key)
+		delete(r.fallback, key)
+		if !strings.HasPrefix(receipt.Checksum, store.BeeperRosterRichPrefix) {
+			continue
+		}
+		owner, err := strconv.ParseInt(receipt.Name, 10, 64)
+		if err == nil && owner > 0 && !r.mergedAway[owner] {
+			r.fallback[key] = owner
+			r.roomOwners[key] = true
+		}
+	}
+	bridgePrefix := participantBridgePrefix(ch.Participants.Items)
+	for _, item := range ch.Participants.Items {
+		if strings.HasPrefix(item.PhoneNumber, "+") || strings.Contains(item.Email, "@") {
+			key := r.identifierForUser(item.ID)
+			receipt := receipts[key]
+			owner := r.fallback[key]
+			if owner != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(rosterMemberInputs(&item, ch, r.accountID, bridgePrefix), owner) {
+				continue
+			}
+		}
+		if r.messageUsers == nil {
+			r.messageUsers = make(map[string]User)
+		}
+		r.messageUsers[item.ID] = item.User
+	}
+	return nil
 }
 
 // adoptLegacyIdentifier upgrades an existing unscoped Beeper identifier in

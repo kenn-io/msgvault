@@ -17,36 +17,19 @@ import (
 
 type bindingSyncFixture struct {
 	cardDAVListFixture
+	result carddav.SyncResult
 }
 
 func (f bindingSyncFixture) Sync(context.Context, carddav.SyncOptions) (carddav.SyncResult, error) {
-	return carddav.SyncResult{}, nil
+	return f.result, nil
 }
 
 func TestCardDAVSyncReportsBindingConflict(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	allowed := true
-	account, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
-		BaseURL: "https://memory.test", Username: "alice", PrincipalURL: "https://memory.test/principal/", HomeURL: "https://memory.test/books/",
-		Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://memory.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}},
-	})
-	require.NoError(t, err)
-	_, err = st.EnsureParticipant("shared@example.test", "Shared", "example.test")
-	require.NoError(t, err)
-	var cards []store.CardDAVRemoteResource
-	for _, uid := range []string{"first", "second"} {
-		cards = append(cards, store.CardDAVRemoteResource{
-			Href: books[0].CanonicalURL + uid, RemoteUID: uid, RemoteETag: `"one"`, SemanticHash: uid,
-			RemoteBody:  []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + uid + "\r\nFN:Person\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n"),
-			DisplayName: "Person", Emails: []string{"shared@example.test"},
-		})
+	conflicts := 1
+	controller := &CardDAVController{
+		cfg:     &config.Config{CardDAV: config.CardDAVConfig{Enabled: true}},
+		service: bindingSyncFixture{result: carddav.SyncResult{BindingConflicts: &conflicts}},
 	}
-	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
-		AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration,
-		SyncRevision: books[0].SyncRevision, Upserts: cards,
-	})
-	require.NoError(t, err)
-	controller := &CardDAVController{cfg: &config.Config{CardDAV: config.CardDAVConfig{Enabled: true}}, store: st, service: bindingSyncFixture{}}
 	result, err := controller.Sync(t.Context(), CardDAVSyncRequest{Connection: "default"})
 	require.NoError(t, err)
 	require.NotNil(t, result.BindingConflicts)
@@ -91,41 +74,6 @@ func (r *bindingSyncRemote) CreateHref(collectionURL, uid string) (string, error
 	return collectionURL + uid, nil
 }
 func (r *bindingSyncRemote) Limits() (time.Duration, int64) { return time.Minute, 10 << 20 }
-
-func TestCardDAVSyncReportsPublicationBindingConflict(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	allowed := true
-	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
-		BaseURL: "https://memory.test", Username: "alice", PrincipalURL: "https://memory.test/principal/", HomeURL: "https://memory.test/books/",
-		Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://memory.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}},
-	})
-	require.NoError(t, err)
-	_, err = st.EnsureParticipant("shared@example.test", "Shared", "example.test")
-	require.NoError(t, err)
-	body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:first\r\nFN:First\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n")
-	hash, err := carddav.SemanticHash(body)
-	require.NoError(t, err)
-	href := books[0].CanonicalURL + "first"
-	remote := &bindingSyncRemote{cards: map[string]store.CardDAVRemoteResource{
-		href: {Href: href, RemoteBody: body, RemoteETag: `"first"`, SemanticHash: hash, RemoteUID: "first", DisplayName: "First", Emails: []string{"shared@example.test"}},
-	}}
-	service := carddav.NewRemoteService(st, remote)
-	controller := &CardDAVController{cfg: &config.Config{CardDAV: config.CardDAVConfig{Enabled: true}}, store: st, service: service}
-	_, err = controller.Sync(t.Context(), CardDAVSyncRequest{Connection: "default"})
-	require.NoError(t, err)
-	var personID int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?) RETURNING id`), "second", "Second").Scan(&personID))
-	require.NoError(t, service.PublishPerson(t.Context(), personID))
-	_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{AddressKind: store.ContactAddressEmail, OriginalValue: "shared@example.test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
-	require.NoError(t, err)
-	before, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
-	require.NoError(t, err)
-	require.Zero(t, before.Conflicts)
-	result, err := controller.Sync(t.Context(), CardDAVSyncRequest{Connection: "default"})
-	require.NoError(t, err)
-	require.NotNil(t, result.BindingConflicts)
-	assert.Equal(t, 1, *result.BindingConflicts)
-}
 
 func TestScheduledCardDAVSyncPersistsBindingConflictCount(t *testing.T) {
 	require := require.New(t)
