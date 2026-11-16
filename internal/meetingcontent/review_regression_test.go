@@ -265,7 +265,7 @@ func TestNotionTreeTraversalSkipsNestedMeetingType(t *testing.T) {
 }
 
 func TestNotionIncompleteSectionKeepsSavedActions(t *testing.T) {
-	raw := []byte(`{"schema_version":1,"discovery":{"meeting_notes":{"children":{"notes_block_id":"new-notes"}}},"canonical":{},"incomplete_sections":["notes"],"notes":{"root":{"id":"old-notes","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Saved task"}],"checked":false}}}}`)
+	raw := []byte(`{"schema_version":2,"discovery":{"meeting_notes":{"children":{"notes_block_id":"new-notes"}}},"canonical":{},"incomplete_sections":["notes"],"notes":{"root":{"id":"old-notes","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Saved task"}],"checked":false}}}}`)
 	content := Decode("notion_meeting_json", raw, nil)
 	assert.Equal(t, CoveragePartial, content.ActionCoverage)
 	require.Len(t, content.Actions, 1)

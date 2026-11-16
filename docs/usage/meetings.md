@@ -882,21 +882,18 @@ block-count, and nesting limits can leave sections incomplete. msgvault keeps
 their archived text and evidence and retries section blocks every six hours,
 even after a meeting leaves the query window. The first retry window ends seven
 days after the meeting ended, or 48 hours after the first retry if the end time
-is unknown. Incomplete section blocks start another 48-hour window at expiry.
+is unknown. Retries stop at that deadline.
 
 If page Markdown is incomplete, msgvault keeps the saved transcript and retries.
 When a transcript is missing without an incomplete section, background retries
 stop at the deadline. The sync summary reports partial coverage when a section
 is incomplete or the Notion query reports more meetings.
 
-When a transcript read is incomplete, sync retains saved transcript text and
-retries the section.
 An omitted transcript block keeps saved transcript text and stays eligible for
 retry when page Markdown supplies no replacement. A complete empty transcript
 clears saved text when page Markdown supplies none. Omitted summary and notes
-blocks clear their sections. A
-meeting whose saved evidence has a newer version keeps that evidence, and the sync
-reports an error for it.
+blocks also retain saved text and are retried. A meeting whose saved evidence
+has a newer version keeps that evidence, and the sync reports an error for it.
 Existing `[[notion_meetings]]` settings need no changes. Other hard
 per-meeting failures retain the previous successful state; meetings written
 earlier in that failed run remain safe and idempotent.

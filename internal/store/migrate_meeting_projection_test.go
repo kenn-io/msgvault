@@ -84,7 +84,7 @@ func TestMeetingProjectionUpgradeAllFormatsTwice(t *testing.T) {
 		requirements.NoError(st.db.QueryRow(`SELECT raw_data FROM message_raw WHERE message_id = ?`, ids[i]).Scan(&rawAfter))
 		assertions.Equal(rawBefore[i], rawAfter)
 	}
-	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 1)
+	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, meetingProjectionVersion)
 	requirements.NoError(err)
 	assertions.True(applied)
 	rejectMeetingProjectionWrites(t, st)
@@ -117,7 +117,7 @@ func TestMeetingProjectionCopySubsetRebuildsFromLegacyEvidence(t *testing.T) {
 			content, _ := readProjection(t, copied, id)
 			requirements.Len(content.Actions, 1)
 			assertions.Equal("Send brief", content.Actions[0].Title)
-			applied, err := copied.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 1)
+			applied, err := copied.IsMigrationAppliedContext(t.Context(), projectionMigrationName, meetingProjectionVersion)
 			requirements.NoError(err)
 			assertions.True(applied)
 		})
@@ -164,27 +164,30 @@ func TestMeetingProjectionUpgradeIncludesNonpositiveIDs(t *testing.T) {
 			assertions.Equal("Send brief", title)
 		})
 	}
-	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 1)
+	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, meetingProjectionVersion)
 	requirements.NoError(err)
 	assertions.True(applied)
 	rejectMeetingProjectionWrites(t, st)
 	requirements.NoError(st.InitSchemaContext(t.Context()), "completed signed-ID upgrade must not rewrite projections")
 }
 
-func TestMeetingProjectionUpgradeRemovesNestedMeetingActions(t *testing.T) {
+func TestMeetingProjectionUpgradeRefreshesStaleProjection(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
-	raw := `{"schema_version":1,"discovery":{"meeting_notes":{"children":{"notes_block_id":"notes"}}},"canonical":{},"notes":{"root":{"object":"block","id":"notes","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}},"pages":[{"results":[{"object":"block","id":"nested","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[]}}],"has_more":false},{"results":[{"object":"block","id":"nested-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Other meeting action"}],"checked":false}}],"has_more":false}]}}`
-	_, id := projectionFixture(t, st, "nested", "notion_meeting_json", raw)
+	_, id := projectionFixture(t, st, "stale", "meeting_json", meetingProjectionRaw)
 	_, err := st.db.Exec(`UPDATE applied_migrations SET version = 1 WHERE name = ?`, projectionMigrationName)
 	require.NoError(t, err)
-	_, err = st.db.Exec(`UPDATE meeting_details SET projection_version = 1, content_json = ? WHERE message_id = ?`, `{"actions":[{"title":"Other meeting action"}]}`, id)
+	_, err = st.db.Exec(`UPDATE meeting_details SET projection_version = 1, content_json = ? WHERE message_id = ?`, `{"actions":[]}`, id)
 	require.NoError(t, err)
-	_, err = st.db.Exec(`INSERT INTO meeting_action_items (message_id, ordinal, title, status, origin, locator) VALUES (?, 0, 'Other meeting action', 'pending', 'notion', 'nested')`, id)
+	_, err = st.db.Exec(`DELETE FROM meeting_action_items WHERE message_id = ?`, id)
 	require.NoError(t, err)
 	require.NoError(t, st.InitSchemaContext(t.Context()))
 	content, _ := readProjection(t, st, id)
-	assert.Empty(t, content.Actions)
-	var count int
-	require.NoError(t, st.db.QueryRow(`SELECT COUNT(*) FROM meeting_action_items WHERE message_id = ?`, id).Scan(&count))
-	assert.Zero(t, count)
+	require.Len(t, content.Actions, 1)
+	assert.Equal(t, "Send brief", content.Actions[0].Title)
+	var title string
+	require.NoError(t, st.db.QueryRow(`SELECT title FROM meeting_action_items WHERE message_id = ?`, id).Scan(&title))
+	assert.Equal(t, "Send brief", title)
+	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, meetingProjectionVersion)
+	require.NoError(t, err)
+	assert.True(t, applied)
 }

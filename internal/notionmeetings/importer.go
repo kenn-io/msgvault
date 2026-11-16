@@ -297,7 +297,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				hardErrors = append(hardErrors, fmt.Errorf("load pending Notion meeting %s: %w", id, loadErr))
 			}
 			if pendingExpired(pending, now) {
-				pending.RetryUntil = now.Add(unknownTranscriptRetrySpan).Format(time.RFC3339)
+				delete(pendingByID, id)
+				continue
 			}
 			pending.NextAttemptAt = now.Add(transcriptRetryCadence).Format(time.RFC3339)
 			pendingByID[id] = pending
@@ -371,6 +372,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived evidence: %w", id, recoverErr))
 			continue
 		}
+		if strings.TrimSpace(meeting.MeetingNotes.Children.SummaryBlockID) == "" &&
+			(strings.TrimSpace(archived.Evidence.Canonical.Summary) != "" || strings.Contains(archived.Body, "\n\nSummary:\n")) {
+			hydrated.markIncomplete("summary", "summary block omitted")
+		}
+		if strings.TrimSpace(meeting.MeetingNotes.Children.NotesBlockID) == "" &&
+			(strings.TrimSpace(archived.Evidence.Canonical.Notes) != "" || strings.Contains(archived.Body, "\n\nNotes:\n")) {
+			hydrated.markIncomplete("notes", "notes block omitted")
+		}
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
 		if providerTranscriptMissing && strings.TrimSpace(meeting.MeetingNotes.Children.TranscriptBlockID) == "" &&
 			(strings.TrimSpace(archived.Evidence.Canonical.Transcript) != "" || transcriptFromArchivedBody(archived.Body) != "") {
@@ -402,7 +411,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				return
 			}
 			delete(pendingByID, id)
-			if !providerTranscriptMissing || terminal {
+			if len(hydrated.Incomplete) == 0 && (!providerTranscriptMissing || terminal) {
 				delete(next.TranscriptRetryUntil, id)
 			}
 		}
@@ -952,7 +961,7 @@ func schedulePending(meeting *HydratedMeeting, now time.Time, previous pendingTr
 	if deadline := endedAt.Add(transcriptRetryWindow); !endedAt.IsZero() && deadline.After(retryUntil) {
 		retryUntil = deadline
 	}
-	if (retryUntil.IsZero() && endedAt.IsZero()) || (incomplete && !retryUntil.After(now)) {
+	if retryUntil.IsZero() && endedAt.IsZero() && !hasPrevious {
 		retryUntil = now.Add(unknownTranscriptRetrySpan)
 	}
 	if !retryUntil.After(now) {

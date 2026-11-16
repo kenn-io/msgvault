@@ -181,6 +181,9 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	assert.Contains(snapshot.Body, "Notes:\nOwner will prepare the rollout.\nNested action item.")
 	assert.Contains(snapshot.Body, "Transcript:\nTest Speaker: Ready to ship.")
 	assert.Equal(RawFormat, snapshot.RawFormat)
+	var evidence map[string]json.RawMessage
+	require.NoError(json.Unmarshal(snapshot.Raw, &evidence))
+	assert.JSONEq(`2`, string(evidence["schema_version"]))
 	assert.Contains(string(snapshot.Raw), `"discovery"`)
 	assert.Contains(string(snapshot.Raw), `"page_markdown":null`)
 	assert.Contains(string(snapshot.Raw), `"attendee_labels":["Test Attendee","Unresolved Attendee"]`)
@@ -192,48 +195,39 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 
 func TestHydratorResolvesParentForMarkdown(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		parent   Parent
-		wantPage bool
+		name       string
+		parent     Parent
+		dataSource bool
 	}{
-		{name: "parent from block", wantPage: true},
-		{name: "data source parent", parent: Parent{Type: "data_source_id"}},
+		{name: "meeting parent", parent: Parent{Type: "page_id", PageID: "page-1"}},
+		{name: "parent from block"},
+		{name: "data source parent", parent: Parent{Type: "data_source_id"}, dataSource: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := completeHydrationSource()
 			meeting := hydrationMeeting()
 			meeting.Parent = tc.parent
-			if !tc.wantPage {
+			if tc.dataSource {
 				source.blocks["meeting-1"].Parent = tc.parent
 			}
 			empty := paragraph("transcript-1", "", false)
 			source.blocks["transcript-1"] = &empty
+			source.markdown.Markdown = "# Transcript\nTest Speaker: Late transcript."
 			hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
 			require.NoError(t, err)
-			if tc.wantPage {
+			if !tc.dataSource {
 				assert.Equal(t, []string{"page-1"}, source.markdownIDs)
 				require.NotNil(t, hydrated.PageMarkdown)
 				assert.Equal(t, "page-1", hydrated.PageMarkdown.ID)
+				assert.Equal(t, "Test Speaker: Late transcript.", hydrated.Transcript)
+				assert.True(t, hydrated.MarkdownTranscriptFallback)
+				assert.Contains(t, hydrated.Warnings, "used page Markdown transcript")
 			} else {
 				assert.Zero(t, source.markdownCalls)
 				assert.Empty(t, hydrated.Transcript)
 			}
 		})
 	}
-}
-
-func TestHydratorUsesMarkdownTranscriptFallback(t *testing.T) {
-	checks := assert.New(t)
-	source := completeHydrationSource()
-	empty := paragraph("transcript-1", "", false)
-	source.blocks["transcript-1"] = &empty
-	source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Late transcript."
-
-	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
-	checks.Equal("Test Speaker: Late transcript.", hydrated.Transcript)
-	checks.True(hydrated.MarkdownTranscriptFallback)
-	checks.Contains(hydrated.Warnings, "used page Markdown transcript")
 }
 
 func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
