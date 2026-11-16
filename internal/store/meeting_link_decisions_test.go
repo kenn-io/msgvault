@@ -2628,3 +2628,42 @@ func TestMeetingDecisionUndatedEditGainsTime(t *testing.T) {
 	r.NoError(err)
 	r.NotContains(record.MessageIDs, note)
 }
+
+func TestMeetingDecisionRemoveSourceKeepsEditedOccurrenceKey(t *testing.T) {
+	for _, tc := range []struct{ name, initial, updated, wantKey string }{
+		{"new original time", `{"id":"edit","recurringEventId":"series","status":"cancelled"}`, `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`, "20270314T100000Z"},
+		{"inactive saved time", `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`, `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"start":{"dateTime":"2027-03-22T10:00:00Z"},"end":{"dateTime":"2027-03-22T11:00:00Z"}}`, "20270314T100000Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			seriesRaw := `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
+			source, oldSeries := calendarFixture(t, st, "remove-undated-series", seriesRaw, "old@example.com")
+			edit, editID := calendarFixture(t, st, "remove-undated-edit", tc.initial, "old@example.com")
+			_, newSeries := calendarFixture(t, st, "keep-dated-series", seriesRaw, "new@example.com")
+			_, note := projectionFixture(t, st, "remove-undated-note", "meeting_json", `{}`)
+			n := MeetingLinkRef{Kind: "msg", MessageID: note}
+			_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: editID}, n, "link")
+			r.NoError(err)
+			edit.RawMIME = []byte(tc.updated)
+			_, err = st.PersistMessage(edit)
+			r.NoError(err)
+			_, err = st.MergeDuplicates(t.Context(), newSeries, []int64{oldSeries}, "remove-undated-series")
+			r.NoError(err)
+			r.NoError(st.RemoveSource(source.Message.SourceID))
+			var id int64
+			var key string
+			r.NoError(st.db.QueryRowContext(t.Context(), `SELECT left_message_id,left_key FROM meeting_link_decisions WHERE left_kind='evt'`).Scan(&id, &key))
+			r.Equal(newSeries, id)
+			r.Equal(tc.wantKey, key)
+			event := MeetingLinkRef{Kind: "evt", MessageID: newSeries, Identity: occurrenceIdentity(t, tc.wantKey)}
+			record, err := st.MeetingRecordContext(t.Context(), event)
+			r.NoError(err)
+			r.Contains(record.MessageIDs, note)
+			record, err = st.MeetingRecordContext(t.Context(), n)
+			r.NoError(err)
+			r.Len(record.Links, 1)
+			r.Equal(fmt.Sprintf("evt:%d@%s", newSeries, tc.wantKey), record.Links[0].Ref)
+		})
+	}
+}

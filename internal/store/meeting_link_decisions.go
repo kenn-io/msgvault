@@ -592,6 +592,8 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 		key string
 	}
 	occurrences := map[int64][]occurrenceCopy{}
+	editSeries := map[int64]int64{}
+	originalKeys := map[int64]string{}
 	var ids []int64
 	var visibleAfter []int64
 	for rows.Next() {
@@ -615,6 +617,8 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 		}
 		if series.Valid && (original.Valid || date.String != "") {
 			key := (calrecur.Identity{Instant: original.Time, Date: date.String, AllDay: date.String != ""}).Key()
+			editSeries[id] = series.Int64
+			originalKeys[id] = key
 			occurrences[id] = append(occurrences[id], occurrenceCopy{series.Int64, key})
 			occurrences[series.Int64] = append(occurrences[series.Int64], occurrenceCopy{id, key})
 		}
@@ -692,7 +696,8 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 					queue = append(queue, parent)
 				}
 				for _, occurrence := range occurrences[current] {
-					if occurrence.key == key {
+					// An edit may have moved to another original time since the choice.
+					if occurrence.key == key || current == id && occurrence.id == editSeries[id] {
 						queue = append(queue, occurrence.id)
 					}
 				}
@@ -764,12 +769,18 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 		a, b, ok := edge.a, edge.b, true
 		if purged[edge.a.ID] {
 			var found bool
-			a.ID, found = replacement(edge.a.ID, edge.a.Key)
+			if a.Kind == meetingRefEvent && a.Key == "" {
+				a.Key = originalKeys[a.ID]
+			}
+			a.ID, found = replacement(edge.a.ID, a.Key)
 			ok = ok && found
 		}
 		if purged[edge.b.ID] {
 			var found bool
-			b.ID, found = replacement(edge.b.ID, edge.b.Key)
+			if b.Kind == meetingRefEvent && b.Key == "" {
+				b.Key = originalKeys[b.ID]
+			}
+			b.ID, found = replacement(edge.b.ID, b.Key)
 			ok = ok && found
 		}
 		if compareMeetingEndpoints(a, b) > 0 {
