@@ -157,7 +157,7 @@
     {#if controller.syncError}<p class="notice notice--error" role="alert">{controller.syncError}</p>{/if}
     {#if controller.syncStatus}<p class="notice notice--success" role="status">{controller.syncStatus}</p>{/if}
     {#if controller.syncBindingConflictsUnavailable}
-      <p class="notice notice--warning" role="alert">CardDAV binding conflict count unavailable. Run <code>msgvault carddav bind-participants --dry-run</code> for details.</p>
+      <p class="notice notice--warning" role="alert"><span>CardDAV binding conflict count unavailable. Run <code>msgvault carddav bind-participants --dry-run</code> for details.</span></p>
     {:else if controller.syncBindingConflicts > 0}
       <p class="notice notice--warning" role="alert">
         <span>{controller.syncBindingConflicts} CardDAV binding conflicts. Run <code>msgvault carddav bind-participants --dry-run</code> for details.</span>
