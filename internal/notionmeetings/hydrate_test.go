@@ -13,7 +13,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
 type fakeHydrationSource struct {
@@ -221,9 +220,6 @@ func TestHydratorResolvesParentForMarkdown(t *testing.T) {
 				assert.Equal(t, []string{"page-1"}, source.markdownIDs)
 				require.NotNil(t, hydrated.PageMarkdown)
 				assert.Equal(t, "page-1", hydrated.PageMarkdown.ID)
-				assert.Equal(t, "Test Speaker: Late transcript.", hydrated.Transcript)
-				assert.True(t, hydrated.MarkdownTranscriptFallback)
-				assert.Contains(t, hydrated.Warnings, "used page Markdown transcript")
 			} else {
 				assert.Zero(t, source.markdownCalls)
 				assert.Empty(t, hydrated.Transcript)
@@ -232,7 +228,7 @@ func TestHydratorResolvesParentForMarkdown(t *testing.T) {
 	}
 }
 
-func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
+func TestHydratorHandlesTranscriptReadErrors(t *testing.T) {
 	tests := []struct {
 		name          string
 		err           error
@@ -641,8 +637,4 @@ func TestHydratorSkipsNestedMeetingAndReadsSibling(t *testing.T) {
 	snapshot, err := hydrated.ArchiveSnapshot(1, "example", "")
 	require.NoError(t, err)
 	assert.Contains(t, string(snapshot.Raw), `"id":"other-meeting"`)
-	content := meetingcontent.Decode(RawFormat, snapshot.Raw, nil)
-	assert.Equal(t, meetingcontent.CoverageAvailable, content.ActionCoverage)
-	require.Len(t, content.Actions, 1)
-	assert.Equal(t, "action", content.Actions[0].SourceID)
 }

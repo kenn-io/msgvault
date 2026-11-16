@@ -242,8 +242,12 @@ func TestReviewRound1NotionCheckedMustBeBoolean(t *testing.T) {
 	}
 }
 
-func TestNotionNestedMeetingDoesNotConsumeSiblingPages(t *testing.T) {
-	content := Decode("notion_meeting_json", []byte(`{
+func TestNotionNestedMeetingPages(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		want      []string
+	}{
+		{name: "TestNotionNestedMeetingDoesNotConsumeSiblingPages", raw: `{
 		"schema_version":1,
 		"discovery":{"meeting_notes":{"children":{"summary_block_id":"root"}}},
 		"canonical":{"summary":"Summary"},
@@ -254,14 +258,8 @@ func TestNotionNestedMeetingDoesNotConsumeSiblingPages(t *testing.T) {
 			],"has_more":false},
 			{"results":[{"id":"action","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"branch"},"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}
 		]}
-	}`), nil)
-	assert.Equal(t, CoverageAvailable, content.ActionCoverage)
-	require.Len(t, content.Actions, 1)
-	assert.Equal(t, "action", content.Actions[0].SourceID)
-}
-
-func TestNotionOlderNestedMeetingPagesDoNotLeakActions(t *testing.T) {
-	content := Decode("notion_meeting_json", []byte(`{
+	}`, want: []string{"action"}},
+		{name: "TestNotionOlderNestedMeetingPagesDoNotLeakActions", raw: `{
 		"schema_version":1,
 		"discovery":{"meeting_notes":{"children":{"summary_block_id":"root"}}},
 		"canonical":{"summary":"Summary"},
@@ -274,15 +272,8 @@ func TestNotionOlderNestedMeetingPagesDoNotLeakActions(t *testing.T) {
 			{"results":[{"id":"sibling","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"branch"},"to_do":{"rich_text":[{"plain_text":"Sibling"}],"checked":false}}],"has_more":false},
 			{"results":[{"id":"last","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"root"},"to_do":{"rich_text":[{"plain_text":"Last"}],"checked":false}}],"has_more":false}
 		]}
-	}`), nil)
-	assert.Equal(t, CoverageAvailable, content.ActionCoverage)
-	require.Len(t, content.Actions, 2)
-	assert.Equal(t, "sibling", content.Actions[0].SourceID)
-	assert.Equal(t, "last", content.Actions[1].SourceID)
-}
-
-func TestNotionNestedMeetingWithEmptyLastPage(t *testing.T) {
-	content := Decode("notion_meeting_json", []byte(`{
+	}`, want: []string{"sibling", "last"}},
+		{name: "TestNotionNestedMeetingWithEmptyLastPage", raw: `{
 		"schema_version":1,
 		"discovery":{"meeting_notes":{"children":{"summary_block_id":"root"}}},
 		"canonical":{"summary":"Summary"},
@@ -293,8 +284,15 @@ func TestNotionNestedMeetingWithEmptyLastPage(t *testing.T) {
 			],"has_more":true,"next_cursor":"next"},
 			{"results":[],"has_more":false}
 		]}
-	}`), nil)
-	assert.Equal(t, CoverageAvailable, content.ActionCoverage)
-	require.Len(t, content.Actions, 1)
-	assert.Equal(t, "action", content.Actions[0].SourceID)
+	}`, want: []string{"action"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content := Decode("notion_meeting_json", []byte(tc.raw), nil)
+			assert.Equal(t, CoverageAvailable, content.ActionCoverage)
+			require.Len(t, content.Actions, len(tc.want))
+			for i, id := range tc.want {
+				assert.Equal(t, id, content.Actions[i].SourceID)
+			}
+		})
+	}
 }

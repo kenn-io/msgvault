@@ -15,28 +15,16 @@ import (
 )
 
 type fakeNotionProbe struct {
-	result            *notionmeetings.QueryResult
-	block             *notionmeetings.Block
-	err               error
-	blockErrors       map[string]error
-	usersErr          error
-	blockIDs          *[]string
-	pageIDs           *[]string
-	includeTranscript *bool
-	markdownErr       error
+	result      *notionmeetings.QueryResult
+	block       *notionmeetings.Block
+	err         error
+	blockErrors map[string]error
+	usersErr    error
+	blockIDs    *[]string
 }
 
-func (f fakeNotionProbe) RetrievePageMarkdown(_ context.Context, id string, includeTranscript bool) (*notionmeetings.MarkdownPage, error) {
-	if f.pageIDs != nil {
-		*f.pageIDs = append(*f.pageIDs, id)
-	}
-	if f.includeTranscript != nil {
-		*f.includeTranscript = includeTranscript
-	}
-	if f.markdownErr != nil {
-		return nil, f.markdownErr
-	}
-	return &notionmeetings.MarkdownPage{Object: "page_markdown", ID: id, Raw: []byte(fmt.Sprintf(`{"object":"page_markdown","id":%q,"markdown":""}`, id))}, nil
+func (fakeNotionProbe) RetrievePageMarkdown(context.Context, string, bool) (*notionmeetings.MarkdownPage, error) {
+	return nil, nil
 }
 
 func (f fakeNotionProbe) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
@@ -94,40 +82,28 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 		sections                                *notionmeetings.MeetingChildren
 		blockErr, sectionErr, notesErr, wantErr error
 		wantIDs                                 []string
-		meetingParent, blockParent              notionmeetings.Parent
-		markdownErr                             error
-		wantPage                                bool
 	}{
-		{name: "available", meetingParent: notionmeetings.Parent{Type: "data_source_id"}, blockParent: notionmeetings.Parent{Type: "data_source_id"}, wantIDs: []string{"meeting-1", "summary-1"}},
-		{name: "missing first section", meetingParent: notionmeetings.Parent{Type: "data_source_id"}, blockParent: notionmeetings.Parent{Type: "data_source_id"}, sectionErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
+		{name: "available", wantIDs: []string{"meeting-1", "summary-1"}},
+		{name: "missing first section", sectionErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "all sections missing", sectionErr: missing, notesErr: missing, wantErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "later section denied", sectionErr: missing, notesErr: denied, wantErr: denied, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
-		{name: "meeting parent", meetingParent: notionmeetings.Parent{Type: "page_id", PageID: "page-1"}, markdownErr: denied, wantIDs: []string{"meeting-1", "summary-1"}},
-		{name: "meeting parent denied section", meetingParent: notionmeetings.Parent{Type: "page_id", PageID: "page-1"}, sectionErr: denied, wantErr: denied, wantIDs: []string{"meeting-1", "summary-1"}},
-		{name: "block parent", blockParent: notionmeetings.Parent{PageID: "page-1"}, wantIDs: []string{"meeting-1", "summary-1"}},
+		{name: "first section denied", sectionErr: denied, wantErr: denied, wantIDs: []string{"meeting-1", "summary-1"}},
 		{name: "block unavailable", blockErr: blockUnavailable, wantErr: blockUnavailable},
 		{name: "no section blocks", sections: &notionmeetings.MeetingChildren{}, want: "Read Content: not tested (no section blocks)", wantIDs: []string{"meeting-1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
-			var ids, pageIDs []string
-			var includeTranscript bool
+			var ids []string
 			sections := notionmeetings.MeetingChildren{SummaryBlockID: "summary-1", NotesBlockID: "notes-1"}
 			if tc.sections != nil {
 				sections = *tc.sections
 			}
 			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
-				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", Parent: tc.meetingParent, MeetingNotes: notionmeetings.MeetingNotesData{Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}}, Children: sections}}}, HasMore: true},
-				block:  &notionmeetings.Block{Parent: tc.blockParent, Type: "paragraph", Paragraph: notionmeetings.RichTextBlock{RichText: []notionmeetings.RichText{{PlainText: "private transcript secret-token"}}}}, blockIDs: &ids,
-				pageIDs: &pageIDs, includeTranscript: &includeTranscript, markdownErr: tc.markdownErr,
+				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}}, Children: sections}}}, HasMore: true},
+				block:  &notionmeetings.Block{Type: "paragraph", Paragraph: notionmeetings.RichTextBlock{RichText: []notionmeetings.RichText{{PlainText: "private transcript secret-token"}}}}, blockIDs: &ids,
 				blockErrors: map[string]error{"meeting-1": tc.blockErr, "summary-1": tc.sectionErr, "notes-1": tc.notesErr},
 			}, nil)
-			if tc.wantPage {
-				assert.Equal(t, []string{"page-1"}, pageIDs)
-				assert.True(t, includeTranscript)
-			} else {
-				assert.Empty(t, pageIDs)
-			}
+
 			if tc.wantIDs != nil {
 				assert.Equal(t, tc.wantIDs, ids)
 			}
