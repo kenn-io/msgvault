@@ -1096,6 +1096,24 @@ func (s *Store) ListUnresolvedSyncItemErrors(ctx context.Context, sourceID int64
 	return scanSyncRunItems(rows)
 }
 
+// ListAcquisitionOutcomesContext returns every retained fetch or ingest
+// outcome for a source, newest first.
+func (s *Store) ListAcquisitionOutcomesContext(ctx context.Context, sourceID int64) ([]SyncRunItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT i.id, i.sync_run_id, i.source_message_id, i.phase, i.status,
+		       i.error_kind, i.error_message, i.created_at
+		FROM sync_run_items i
+		JOIN sync_runs r ON r.id = i.sync_run_id
+		WHERE r.source_id = ? AND i.phase IN ('fetch', 'ingest')
+		ORDER BY i.id DESC
+	`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("list acquisition outcomes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanSyncRunItems(rows)
+}
+
 func scanSyncRunItems(rows *loggedRows) ([]SyncRunItem, error) {
 	items := make([]SyncRunItem, 0)
 	for rows.Next() {
