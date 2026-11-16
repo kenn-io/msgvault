@@ -210,6 +210,12 @@ func TestHydratorResolvesParentForMarkdown(t *testing.T) {
 			meeting.Parent = tc.parent
 			if tc.parent.Type != "" {
 				source.blocks["meeting-1"].Parent = tc.parent
+				var raw map[string]any
+				var err error
+				require.NoError(t, json.Unmarshal(source.blocks["meeting-1"].Raw, &raw))
+				raw["parent"] = map[string]string{"type": "data_source_id", "data_source_id": "source-1"}
+				source.blocks["meeting-1"].Raw, err = json.Marshal(raw)
+				require.NoError(t, err)
 			}
 			empty := paragraph("transcript-1", "", false)
 			source.blocks["transcript-1"] = &empty
@@ -233,8 +239,9 @@ func TestHydratorResolvesParentForMarkdown(t *testing.T) {
 
 func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
+		name                      string
+		err                       error
+		fatal, cancel, secondPage bool
 	}{
 		{
 			name: "provider reports transcript block not found",
@@ -244,40 +251,10 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 		{name: "reset", err: syscall.ECONNRESET},
 		{name: "truncated", err: io.ErrUnexpectedEOF},
 		{name: "malformed section root", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse)},
+		{name: "unauthorized", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}, fatal: true},
+		{name: "forbidden second page", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "forbidden"}, secondPage: true, fatal: true},
+		{name: "transient error after cancel", err: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}, cancel: true, fatal: true},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			source := completeHydrationSource()
-			source.blockErrs = map[string]error{"transcript-1": tt.err}
-			source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Published in Markdown.\n\n## Action items\nFollow up."
-
-			hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-			require.NoError(t, err)
-			assert.Equal("Decide the release scope.", hydrated.Summary)
-			assert.Contains(hydrated.Notes, "Nested action item.")
-			assert.Equal("Test Speaker: Published in Markdown.", hydrated.Transcript)
-			assert.Equal(1, source.markdownCalls)
-			assert.True(hydrated.MarkdownTranscriptFallback)
-			assert.Contains(hydrated.Incomplete, "transcript")
-			assert.Len(hydrated.AttendeeLabels, 2)
-		})
-	}
-}
-
-func TestHydratorKeepsSystemicSectionErrorsFatal(t *testing.T) {
-	tests := []struct {
-		name       string
-		err        error
-		cancel     bool
-		secondPage bool
-	}{
-		{name: "unauthorized", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}},
-		{name: "forbidden second page", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "forbidden"}, secondPage: true},
-		{name: "transient error after cancel", err: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}, cancel: true},
-	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			source := completeHydrationSource()
@@ -302,10 +279,22 @@ func TestHydratorKeepsSystemicSectionErrorsFatal(t *testing.T) {
 					}
 				}
 			}
+			source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Published in Markdown.\n\n## Action items\nFollow up."
 			hydrated, err := NewHydrator(source).Hydrate(ctx, hydrationMeeting())
-			require.Error(t, err)
-			assert.Nil(t, hydrated)
-			assert.ErrorIs(t, err, tt.err)
+			if tt.fatal {
+				require.Error(t, err)
+				assert.Nil(t, hydrated)
+				assert.ErrorIs(t, err, tt.err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "Decide the release scope.", hydrated.Summary)
+			assert.Contains(t, hydrated.Notes, "Nested action item.")
+			assert.Equal(t, "Test Speaker: Published in Markdown.", hydrated.Transcript)
+			assert.Equal(t, 1, source.markdownCalls)
+			assert.True(t, hydrated.MarkdownTranscriptFallback)
+			assert.Contains(t, hydrated.Incomplete, "transcript")
+			assert.Len(t, hydrated.AttendeeLabels, 2)
 		})
 	}
 }
