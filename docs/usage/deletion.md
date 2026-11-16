@@ -167,13 +167,6 @@ A filtered IMAP sync can clear the mark when it matches the message in a
 specific mailbox outside Trash and All Mail. It keeps the saved mailbox labels,
 including Trash, until a complete sync reconciles them.
 
-If a Gmail message restored before this change is still marked as deleted, run
-an unfiltered full sync to check its current labels:
-
-```bash
-msgvault sync-full you@example.com
-```
-
 `--permanent` requests irreversible deletion: Gmail uses its batch API; IMAP
 uses `UID STORE \Deleted` followed by `UID EXPUNGE` for each message. Permanent
 IMAP deletion requires UIDPLUS and is refused when the server lacks it.

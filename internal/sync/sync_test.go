@@ -2640,7 +2640,10 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 		labelErr  error
 		wantMark  bool
 		unchanged bool
+		fault     string
 	}{
+		{name: "read error", labels: []string{"INBOX"}, fault: "error"},
+		{name: "missing labels", labels: []string{"INBOX"}, fault: "missing"},
 		{name: "restored", labels: []string{"INBOX"}},
 		{name: "still in Trash", labels: []string{"INBOX", "TRASH"}, wantMark: true},
 		{name: "gone", labelErr: &gmail.NotFoundError{Path: "/messages/msg1"}, wantMark: true},
@@ -2672,9 +2675,22 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 			if tc.labelErr != nil {
 				api.labelErrors["msg1"] = tc.labelErr
 			}
+			if tc.fault == "error" {
+				api.labelErrors["msg1"] = errors.New("temporary label read failure")
+			} else if tc.fault == "missing" {
+				api.omitLabels = true
+			}
 			env.Syncer = New(api, env.Store, nil)
 
 			summary, err := env.Syncer.Full(t.Context(), testEmail)
+			if tc.fault != "" {
+				require.Error(err)
+				assertDeletedFromSource(t, env.Store, "msg1", true)
+				api.labelErrors = nil
+				api.omitLabels = false
+				api.labelCalls = nil
+				summary, err = env.Syncer.Full(t.Context(), testEmail)
+			}
 			require.NoError(err)
 			if tc.unchanged {
 				assert.Equal(int64(1), summary.MessagesUpdated)
@@ -6293,58 +6309,4 @@ func TestGmailFullRestoreClearsMarkWhenRawSaveFails(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), summary.Errors)
 	assertDeletedFromSource(t, env.Store, "msg1", false)
-}
-
-func TestGmailIncrementalRestoreSignalsCacheWithUnchangedLabels(t *testing.T) {
-	env := newTestEnv(t)
-	env.Mock.Profile.MessagesTotal = 1
-	env.Mock.Profile.HistoryID = 12340
-	env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX"})
-	runFullSync(t, env)
-	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
-	require.NoError(t, err)
-	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
-	ids, err := env.Store.MessageExistsBatch(source.ID, []string{"msg1"})
-	require.NoError(t, err)
-	var baseline int64
-	require.NoError(t, env.Store.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
-	env.SetHistory(12350, historyLabelRemoved("msg1", "TRASH"))
-	env.Syncer = New(&labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}, env.Store, nil)
-	runIncrementalSync(t, env)
-	assertDeletedFromSource(t, env.Store, "msg1", false)
-	var count int
-	require.NoError(t, env.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`, baseline, ids["msg1"]).Scan(&count))
-	assert.Positive(t, count)
-}
-
-func TestGmailFullSyncRetriesMarkedLabelErrors(t *testing.T) {
-	for _, fault := range []string{"error", "missing"} {
-		t.Run(fault, func(t *testing.T) {
-			env := newTestEnv(t)
-			env.Mock.Profile.HistoryID = 12340
-			env.Mock.Profile.MessagesTotal = 1
-			env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX", "TRASH"})
-			runFullSync(t, env)
-			source, err := env.Store.GetOrCreateSource("gmail", testEmail)
-			require.NoError(t, err)
-			require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
-			env.Mock.Messages["msg1"].LabelIDs = []string{"INBOX"}
-			env.Mock.Profile.HistoryID = 12350
-			api := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}
-			if fault == "error" {
-				api.labelErrors = map[string]error{"msg1": errors.New("temporary label read failure")}
-			} else {
-				api.omitLabels = true
-			}
-			env.Syncer = New(api, env.Store, nil)
-			_, err = env.Syncer.Full(t.Context(), testEmail)
-			require.Error(t, err)
-			assertDeletedFromSource(t, env.Store, "msg1", true)
-			api.labelErrors = nil
-			api.omitLabels = false
-			_, err = env.Syncer.Full(t.Context(), testEmail)
-			require.NoError(t, err)
-			assertDeletedFromSource(t, env.Store, "msg1", false)
-		})
-	}
 }

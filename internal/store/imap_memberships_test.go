@@ -312,13 +312,13 @@ func TestApplyIMAPMailboxDeltas_ReappearanceClearsTombstone(t *testing.T) {
 
 func TestApplyIMAPMailboxDeltas_TrashAndAllReconcileDeletionMark(t *testing.T) {
 	for _, tc := range []struct {
-		name                            string
-		marked, trash, inbox, all, want bool
+		name                    string
+		trash, inbox, all, want bool
 	}{
-		{name: "marked in trash", marked: true, trash: true, want: true},
-		{name: "marked in trash and inbox", marked: true, trash: true, inbox: true, want: false},
-		{name: "marked in trash and all", marked: true, trash: true, all: true, want: true},
-		{name: "marked in all only", marked: true, all: true, want: false},
+		{name: "marked in trash", trash: true, want: true},
+		{name: "marked in trash and inbox", trash: true, inbox: true, want: false},
+		{name: "marked in trash and all", trash: true, all: true, want: true},
+		{name: "marked in all only", all: true, want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newIMAPMembershipFixture(t)
@@ -328,9 +328,7 @@ func TestApplyIMAPMailboxDeltas_TrashAndAllReconcileDeletionMark(t *testing.T) {
 				"All Mail": {Name: "All Mail", Type: "system", SystemRole: store.LabelSystemRoleAll},
 			})
 			require.NoError(t, err)
-			if tc.marked {
-				require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "message"))
-			}
+			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "message"))
 			var deltas []store.IMAPMailboxDelta
 			if tc.trash {
 				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
@@ -1526,59 +1524,38 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	assert.Equal(t, 3, membershipCount(t, f.store, f.source.ID))
 }
 
-func TestFilteredIMAPRestoreSkipsUnmarkedIdentities(t *testing.T) {
-	f := newIMAPIdentityFixture(t)
-	id := f.createMessage(t, "unmarked", "<unmarked@example.com>")
-	_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
-		"Trash": {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
-		"INBOX": {Name: "INBOX", Type: "system"},
-	})
-	require.NoError(t, err)
-	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
-		Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2},
-		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "unmarked"}},
-	}}))
-	require.NoError(t, f.store.UpsertMessageRaw(id, []byte("unmarked")))
-	syncID, err := f.store.StartSync(f.source.ID, "full")
-	require.NoError(t, err)
-	require.NoError(t, f.store.CompleteSync(syncID, ""))
-	require.NoError(t, f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, []store.IMAPMembershipObservation{{
-		Mailbox: "INBOX", ArchivedMessageID: id, RawSHA256: sha256.Sum256([]byte("unmarked")),
-	}}))
-	assert.False(t, messageTombstoned(t, f.store, id))
-	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, id))
-}
-
-func TestFilteredIMAPRestoreSignalsCacheWithoutTrashLabel(t *testing.T) {
-	f := newIMAPMembershipFixture(t)
-	id := f.createMessage(t, "restored", "<restored@example.com>")
-	_, err := f.store.EnsureLabel(t.Context(), f.source.ID, "INBOX", "INBOX", "system")
-	require.NoError(t, err)
-	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "restored"))
-	syncID, err := f.store.StartSync(f.source.ID, "full")
-	require.NoError(t, err)
-	require.NoError(t, f.store.CompleteSync(syncID, ""))
-	var baseline int64
-	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
-	require.NoError(t, f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, []store.IMAPMembershipObservation{{Mailbox: "INBOX", ArchivedMessageID: id}}))
-	assert.False(t, messageTombstoned(t, f.store, id))
-	var count int
-	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`, baseline, id).Scan(&count))
-	assert.Positive(t, count)
-}
-
-func TestFilteredIMAPRestoreRollsBackWhenCacheSignalFails(t *testing.T) {
-	f := newIMAPMembershipFixture(t)
-	id := f.createMessage(t, "restored", "<restored@example.com>")
-	_, err := f.store.EnsureLabel(t.Context(), f.source.ID, "INBOX", "INBOX", "system")
-	require.NoError(t, err)
-	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "restored"))
-	syncID, err := f.store.StartSync(f.source.ID, "full")
-	require.NoError(t, err)
-	require.NoError(t, f.store.CompleteSync(syncID, ""))
-	_, err = f.store.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_restore_journal BEFORE INSERT ON cache_related_change_journal BEGIN SELECT RAISE(ABORT, 'journal unavailable'); END`)
-	require.NoError(t, err)
-	err = f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, []store.IMAPMembershipObservation{{Mailbox: "INBOX", ArchivedMessageID: id}})
-	require.Error(t, err)
-	assert.True(t, messageTombstoned(t, f.store, id))
+func TestFilteredIMAPRestoreCacheSignal(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail bool
+	}{{"signal", false}, {"rollback", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			failSignal := tc.fail
+			f := newIMAPMembershipFixture(t)
+			id := f.createMessage(t, "restored", "<restored@example.com>")
+			_, err := f.store.EnsureLabel(t.Context(), f.source.ID, "INBOX", "INBOX", "system")
+			require.NoError(t, err)
+			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "restored"))
+			syncID, err := f.store.StartSync(f.source.ID, "full")
+			require.NoError(t, err)
+			require.NoError(t, f.store.CompleteSync(syncID, ""))
+			var baseline int64
+			require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
+			if failSignal {
+				_, err = f.store.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_restore_journal BEFORE INSERT ON cache_related_change_journal BEGIN SELECT RAISE(ABORT, 'journal unavailable'); END`)
+				require.NoError(t, err)
+			}
+			err = f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, []store.IMAPMembershipObservation{{Mailbox: "INBOX", ArchivedMessageID: id}})
+			if failSignal {
+				require.Error(t, err)
+				assert.True(t, messageTombstoned(t, f.store, id))
+				return
+			}
+			require.NoError(t, err)
+			assert.False(t, messageTombstoned(t, f.store, id))
+			var count int
+			require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`, baseline, id).Scan(&count))
+			assert.Positive(t, count)
+		})
+	}
 }

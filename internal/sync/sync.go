@@ -781,9 +781,6 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			labelRefreshIDs = append(labelRefreshIDs, id)
 			continue
 		}
-		if markedGmail {
-			return nil, errors.New("label reader unavailable for marked Gmail message")
-		}
 		if snapshotComplete {
 			result.acknowledged = append(result.acknowledged, id)
 			continue
