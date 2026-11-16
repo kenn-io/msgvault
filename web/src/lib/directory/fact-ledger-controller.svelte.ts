@@ -79,6 +79,9 @@ export interface FactClaimRow {
 }
 export interface FactDecisionRow {
   rowToken: string;
+  displayValue: string;
+  parsedValue?: unknown;
+  targetKind: string;
   action: string;
   reason: string;
   outcome: string | null;
@@ -269,10 +272,10 @@ export class FactLedgerController {
   revealEvidence(rowToken: string): void {
     if (this.evidence.rows.some((row) => row.rowToken === rowToken)) this.revealedEvidence.add(rowToken);
   }
-  revealClaim(rowToken: string): void {
-    if (this.claims.rows.some((row) => row.rowToken === rowToken)) this.revealedClaims.add(rowToken);
+  revealClaim(claimKey: string): void {
+    if ([...this.claims.rows, ...this.decisions.rows].some((row) => row.claimKey === claimKey)) this.revealedClaims.add(claimKey);
   }
-  claimSensitivity(row: FactClaimRow): FactClaimSensitivity {
+  claimSensitivity(row: Pick<FactClaimRow, 'targetCanonical'>): FactClaimSensitivity {
     if (!row.targetCanonical) return 'unknown';
     const target = this.targets.find((candidate) => candidate.canonical === row.targetCanonical);
     if (!target) return 'unknown';
@@ -628,12 +631,11 @@ function projectEvidence(row: RawEvidence, index: number): FactEvidenceRow {
   };
 }
 function projectClaim(row: RawClaim, index: number): FactClaimRow {
-  let parsedValue: unknown;
-  try { parsedValue = JSON.parse(row.submitted_value); } catch { parsedValue = row.submitted_value; }
+  const { parsedValue, displayValue } = claimValue(row.submitted_value, row.target.kind);
   return {
     rowToken: `claim-${index}`,
     submittedValue: row.submitted_value,
-    displayValue: /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(row.submitted_value.trim()) ? row.submitted_value.trim() : readableValue(parsedValue, row.target.kind),
+    displayValue,
     parsedValue,
     targetKey: row.target.key,
     targetKind: row.target.kind,
@@ -652,6 +654,7 @@ function projectClaim(row: RawClaim, index: number): FactClaimRow {
 function projectDecision(row: RawDecision, index: number): FactDecisionRow {
   return {
     rowToken: `decision-${index}`,
+    ...claimValue(row.claim_value, row.target.kind), targetKind: row.target.kind,
     action: row.action,
     reason: row.reason,
     outcome: row.outcome,
@@ -671,6 +674,12 @@ function projectDecision(row: RawDecision, index: number): FactDecisionRow {
     createdAt: row.created_at,
     claimKey: row.claim_key,
   };
+}
+
+function claimValue(submitted: string, kind: string): { parsedValue: unknown; displayValue: string } {
+  let parsedValue: unknown;
+  try { parsedValue = JSON.parse(submitted); } catch { parsedValue = submitted; }
+  return { parsedValue, displayValue: /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(submitted.trim()) ? submitted.trim() : readableValue(parsedValue, kind) };
 }
 
 function readableValue(value: unknown, kind: string): string {

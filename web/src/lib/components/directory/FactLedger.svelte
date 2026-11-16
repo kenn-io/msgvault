@@ -37,20 +37,18 @@
     const names = new Set(loadedClaims.filter(claim => claim.evidenceIDs.includes(row.evidenceID)).map(claim => controller.fieldName(claim, definitions)));
     return [...names].join(', ');
   }
-  function decisionClaim(row: FactDecisionRow): FactClaimRow | undefined { return loadedClaims.find(claim => claim.claimKey === row.claimKey); }
   function decisionLabel(row: FactDecisionRow): string { return controller.fieldName(row, definitions); }
   function decisionText(row: FactDecisionRow): string {
-    const claim = decisionClaim(row);
-    const sensitivity = claim && controller.claimSensitivity(claim);
-    const value = claim && (sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(claim.rowToken)))
-      ? [claimText(claim, definitions.find(field => field.universal_id === claim.targetKey)), claim.targetKind === 'employment' ? employmentClaimDetailItems(claim.parsedValue).join(' · ') : ''].filter(Boolean).join(' · ') : undefined;
+    const sensitivity = controller.claimSensitivity(row);
+    const value = sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(row.claimKey))
+      ? [claimText(row, definitions.find(field => field.universal_id === row.targetKey)), row.targetKind === 'employment' ? employmentClaimDetailItems(row.parsedValue).join(' · ') : ''].filter(Boolean).join(' · ') : 'Hidden';
     return decisionSentence(row.outcome, row.reason, value);
   }
   function relatedSource(id: number, index: number): string {
     const evidence = controller.evidence.rows.find(evidence => evidence.evidenceID === id);
     return evidence ? evidenceSourceWords(evidence.sourceClass, evidence.directness) : `Source ${index + 1}`;
   }
-  function claimText(row: FactClaimRow, definition: import('../../api/generated/models').AttributeDefinition | undefined): string {
+  function claimText(row: Pick<FactClaimRow, 'displayValue' | 'parsedValue'>, definition: import('../../api/generated/models').AttributeDefinition | undefined): string {
     if (!definition) return row.displayValue;
     const parsed = row.parsedValue;
     return displayAttributeValue(definition, typeof parsed === 'boolean' ? { type: 'boolean', boolean: parsed } : { type: 'text', text: row.displayValue });
@@ -142,7 +140,7 @@
           {#each controller.claims.rows as row (row.rowToken)}
             {@const definition = definitions.find(field => field.universal_id === row.targetKey)}
             {@const sensitivity = controller.claimSensitivity(row)}
-            {@const shown = sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(row.rowToken))}
+            {@const shown = sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(row.claimKey))}
             <div aria-label="Fact claim"><DetailRow exception={relationWords(row.relation) ?? undefined}>
               <div class="value">
                 <strong class="field-label">{controller.fieldName(row, definitions)}</strong>
@@ -152,7 +150,7 @@
                 {:else}<span>{claimText(row, definition)}</span>{#if row.targetKind === 'employment'}{@const items = employmentClaimDetailItems(row.parsedValue)}{#if items.length}<span class="job-details">{#each items as item, i}<span class="job-item">{item}{#if i < items.length - 1}{' ·'}{/if}</span>{#if i < items.length - 1}{' '}{/if}{/each}</span>{/if}{/if}{/if}
               </div>
               {#snippet actions()}
-                {#if sensitivity === 'sensitive'}{#if shown}<Button label="Hide" ariaLabel="Hide sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealedClaims.delete(row.rowToken)} />{:else}<Button label="Reveal" ariaLabel="Reveal sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealClaim(row.rowToken)} />{/if}{/if}
+                {#if sensitivity === 'sensitive'}{#if shown}<Button label="Hide" ariaLabel="Hide sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealedClaims.delete(row.claimKey)} />{:else}<Button label="Reveal" ariaLabel="Reveal sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealClaim(row.claimKey)} />{/if}{/if}
               {/snippet}
               {#snippet details()}
                 <dl>
@@ -183,14 +181,15 @@
         {#if controller.decisions.loading}<p class="loading" role="status"><Spinner size={12} label="Loading requested decisions page" /> Loading decisions page…</p>{/if}
         <div class="rows" aria-busy={controller.decisions.loading}>
           {#each controller.decisions.rows as row (row.rowToken)}
+            {@const sensitivity = controller.claimSensitivity(row)}
+            {@const shown = sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(row.claimKey))}
             <div aria-label="Historical fact decision" data-fact-focus={`decision:${row.claimKey}`}><DetailRow description={projectionWords(row.projectionKind) !== decisionLabel(row) ? projectionWords(row.projectionKind) ?? undefined : undefined}>
               <div class="value"><strong class="field-label">{decisionLabel(row)}</strong><span>{decisionText(row)}</span></div>
+              {#snippet actions()}{#if sensitivity === 'sensitive'}{#if shown}<Button label="Hide" ariaLabel="Hide sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealedClaims.delete(row.claimKey)} />{:else}<Button label="Reveal" ariaLabel="Reveal sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealClaim(row.claimKey)} />{/if}{/if}{/snippet}
               {#snippet details()}
-                {#if row.scoreMaxima && row.score.total > 0}<ul class="score-parts">{#each SCORE_PARTS as [key, label] (key)}<li>{label}: {row.score[key]} of {row.scoreMaxima[key]}</li>{/each}</ul>{/if}
-                <Disclosure variant="plain" title="Raw values"><dl><div><dt>Action</dt><dd><code>{row.action}</code></dd></div><div><dt>Reason</dt><dd><code>{row.reason}</code></dd></div>{#if row.projectionKind}<div><dt>Projection</dt><dd><code>{row.projectionKind}</code></dd></div>{/if}
-                  {#each SCORE_PARTS as [key, label] (key)}<div><dt>{label}</dt><dd><code>{row.score[key]}</code></dd></div>{/each}<div><dt>Score</dt><dd><code>{row.score.total}</code></dd></div></dl></Disclosure>
+                {#if row.scoreMaxima}<ul class="score-parts">{#each SCORE_PARTS as [key, label] (key)}<li>{label}: {row.score[key]} of {row.scoreMaxima[key]}</li>{/each}</ul>{/if}
               {/snippet}
-              {#snippet meta()}<span class="meta">{#if row.scoreMaxima && row.score.total > 0}{`Scored ${row.score.total} · `}{/if}<time datetime={row.createdAt} title={formatDateTime(row.createdAt)}>{formatShortDate(row.createdAt)}</time></span>{/snippet}
+              {#snippet meta()}<span class="meta"><time datetime={row.createdAt} title={formatDateTime(row.createdAt)}>{formatShortDate(row.createdAt)}</time></span>{/snippet}
             </DetailRow></div>
           {:else}{#if !controller.decisions.error}<EmptyLine message={emptyTitle('decisions')} />{/if}{/each}
         </div>

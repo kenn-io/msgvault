@@ -16,6 +16,26 @@ async function openFacts(page: Page) {
   return openPersonFacts(page);
 }
 
+test('a decision reveals its own claim outside the claims page', async ({ page }) => {
+  await installDirectoryReviewArchive(page);
+  const target = { kind: 'attribute', key: 'forbidden-target-key', revision: `sha256:${'d'.repeat(64)}` };
+  await page.route(/\/api\/v1\/people\/42\/fact-claims(?:\?.*)?$/, route => route.fulfill({ json: { claims: [] } }));
+  await page.route(/\/api\/v1\/people\/42\/fact-decisions(?:\?.*)?$/, route => route.fulfill({ json: { decisions: [{
+    id: 1, decision_key: 'decision', claim_key: 'claim', claim_value: '"New York"', resolution_id: 1, target,
+    outcome: 'saved', resolver_version: 'v1', action: 'applied', reason: 'applied-projection',
+    score: { authority: 0, confidence: 0, corroboration: 0, directness: 0, freshness: 0, source_class: 0, total: 0 },
+    created_at: '2026-01-03T12:00:00Z'
+  }] } }));
+  const facts = await openPersonFacts(page);
+  await facts.getByRole('radio', { name: 'Decisions' }).click();
+  const row = facts.getByLabel('Historical fact decision');
+  await expect(row).toContainText('Saved: Hidden');
+  await row.getByRole('button', { name: 'Reveal sensitive fact value' }).click();
+  await expect(row).toContainText('Saved: New York');
+  await row.getByRole('button', { name: 'Hide sensitive fact value' }).click();
+  await expect(row).toContainText('Saved: Hidden');
+});
+
 for (const width of [1280, 390]) test(`Work details wrap between items at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 });
   await installDirectoryReviewArchive(page);

@@ -58,11 +58,11 @@ const NOT_USED_REASONS: Record<string, string> = {
   'organization-ambiguous': 'the organization is unclear', 'applied-projection': 'another claim was saved',
   'evidence-unsupported': 'its source was removed', 'outside-validity': 'outside its valid dates',
 };
-export function decisionSentence(outcome: string | null, reason: string, value?: string): string {
+export function decisionSentence(outcome: string | null, reason: string, value: string): string {
   switch (outcome) {
-    case 'saved': return value ? `Saved: ${value}` : 'Saved';
+    case 'saved': return `Saved: ${value}`;
     case 'value-retired': return 'This value is no longer saved';
-    case 'current-value-kept': return reason === 'insufficient-margin' ? `Kept the current value; ${value ?? 'the claim'} wasn't far enough ahead` : 'Kept the current value';
+    case 'current-value-kept': return reason === 'insufficient-margin' ? `Kept the current value; ${value} wasn't far enough ahead` : 'Kept the current value';
     case 'pinned-value-kept': return 'Kept your pinned value';
     case 'too-close-to-choose': return 'The evidence was too close to choose';
     case 'not-used': return NOT_USED_REASONS[reason] ? `Not used: ${NOT_USED_REASONS[reason]}` : 'Not used';

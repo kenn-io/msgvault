@@ -791,6 +791,7 @@ export async function installDirectoryReviewArchive(page: Page) {
               {
                 id: 81,
                 decision_key: 'forbidden-decision-key',
+                claim_value: '"Allowed synthetic sensitive value."',
                 claim_key: 'forbidden-claim-key',
                 competing_claim_key: 'forbidden-competing-claim-key',
                 resolution_id: 82,

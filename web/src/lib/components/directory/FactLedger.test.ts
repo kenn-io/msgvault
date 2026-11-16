@@ -48,13 +48,37 @@ function controller(): FactLedgerController {
     excerpt: 'allowed evidence excerpt', evidenceKey: 'forbidden-evidence-key' }];
   value.claims.rows = [{ rowToken: 'claim-0', targetKind: 'attribute', targetKey: 'note', displayValue: 'allowed sensitive value', claimKey: 'claim', evidenceIDs: [], submittedValue: 'allowed sensitive value', normalizedValue: 'allowed normalized value', relation: 'support', origin: 'extraction',
     validFrom: '2026-01-01', validUntil: null, reportedScore: 88, createdAt: '2026-08-03', targetCanonical: value.targets[0]!.canonical }];
-  value.decisions.rows = [{ rowToken: 'decision-0', claimKey: 'claim', outcome: 'saved', targetKey: 'note', targetCanonical: value.targets[0]!.canonical, scoreMaxima: { authority: 300, confidence: 100, corroboration: 150, directness: 400, freshness: 100, sourceClass: 500, total: 1550 }, action: 'applied', reason: 'applied-projection', score: { authority: 100, confidence: 8, corroboration: 0,
+  value.decisions.rows = [{ rowToken: 'decision-0', claimKey: 'claim', displayValue: 'allowed sensitive value', parsedValue: 'allowed sensitive value', targetKind: 'attribute', outcome: 'saved', targetKey: 'note', targetCanonical: value.targets[0]!.canonical, scoreMaxima: { authority: 300, confidence: 100, corroboration: 150, directness: 400, freshness: 100, sourceClass: 500, total: 1550 }, action: 'applied', reason: 'applied-projection', score: { authority: 100, confidence: 8, corroboration: 0,
     directness: 400, freshness: 100, sourceClass: 300, total: 908 }, projectionKind: 'person_attribute', createdAt: '2026-08-03' }];
   value.pins.rows = [{ kind: 'attribute', targetKey: 'note', pinned: true, targetCanonical: value.targets[0]!.canonical }];
   return value;
 }
 
 describe('FactLedger', () => {
+  it('names a decision from its own claim when the claims page has another claim', () => {
+    const value = controller();
+    value.selectedSection = 'decisions';
+    value.targets[0]!.sensitive = false;
+    value.claims.rows[0] = { ...value.claims.rows[0]!, claimKey: 'other' };
+    Object.assign(value.decisions.rows[0]!, { displayValue: 'New York', parsedValue: 'New York', targetKind: 'attribute' });
+    render(FactLedger, { controller: value });
+    expect(screen.getByLabelText('Historical fact decision').textContent).toContain('Saved: New York');
+  });
+  it('reveals only the selected decision claim', async () => {
+    const value = controller();
+    value.selectedSection = 'decisions';
+    value.claims.rows = [];
+    value.decisions.rows.push({ ...value.decisions.rows[0]!, rowToken: 'decision-1', claimKey: 'another', displayValue: 'another private value' });
+    render(FactLedger, { controller: value });
+    const rows = screen.getAllByLabelText('Historical fact decision');
+    expect(rows[0]!.textContent).toContain('Saved: Hidden');
+    expect(rows[1]!.textContent).not.toContain('another private value');
+    await fireEvent.click(within(rows[0]!).getByRole('button', { name: 'Reveal sensitive fact value' }));
+    expect(rows[0]!.textContent).toContain('allowed sensitive value');
+    expect(rows[1]!.textContent).not.toContain('another private value');
+    await fireEvent.click(within(rows[0]!).getByRole('button', { name: 'Hide sensitive fact value' }));
+    expect(rows[0]!.textContent).not.toContain('allowed sensitive value');
+  });
   it.each([
     { recorded: '2026-08-01T12:00:59Z', distinct: true },
     { recorded: '2026-08-01T08:00:01-04:00', distinct: false },
@@ -86,6 +110,7 @@ describe('FactLedger', () => {
     value.targets[0] = { ...value.targets[0]!, kind: 'employment', targetKey: 'system:employment', canonical: `employment:system:employment:${revision}`, sensitive: false };
     value.selectedSection = 'decisions';
     value.claims.rows[0] = { ...value.claims.rows[0]!, targetKind: 'employment', targetKey: 'system:employment', targetCanonical: `employment:system:employment:${revision}`, displayValue: 'Engineer at Acme', parsedValue: { title: 'Engineer', organization: { name: 'Acme' }, location: 'Boston' } };
+    Object.assign(value.decisions.rows[0]!, { targetKind: 'employment', targetKey: 'system:employment', targetCanonical: value.targets[0]!.canonical, displayValue: 'Engineer at Acme', parsedValue: value.claims.rows[0]!.parsedValue });
     render(FactLedger, { controller: value });
     expect(screen.getByLabelText('Historical fact decision').textContent).toContain('Saved: Engineer at Acme · Boston');
   });
@@ -324,17 +349,16 @@ describe('FactLedger', () => {
     entity.destroy();
   });
 
-  it.each([true, false])('shows score parts only for scored decisions: %s', async scored => {
+  it.each([true, false])('shows score parts when maxima are present: %s', async scored => {
     const value = controller();
     value.selectedSection = 'decisions';
     value.decisions.rows[0]!.scoreMaxima!.authority = 250;
-    if (!scored) value.decisions.rows[0] = { ...value.decisions.rows[0]!, outcome: 'not-used', action: 'policy-rejected', reason: 'sensitive-policy', projectionKind: null, score: { authority: 0, confidence: 0, corroboration: 0, directness: 0, freshness: 0, sourceClass: 0, total: 0 } };
+    if (!scored) value.decisions.rows[0]!.scoreMaxima = null;
     render(FactLedger, { controller: value });
     const row = screen.getByLabelText('Historical fact decision');
     await fireEvent.click(within(row).getByRole('button', { name: 'Details' }));
     expect(within(row).queryAllByRole('listitem')).toHaveLength(scored ? 6 : 0);
     expect(row.textContent?.includes('Authority: 100 of 250')).toBe(scored);
-    expect(row.textContent?.includes('Scored')).toBe(scored);
   });
 
   it('names All fields evidence and decisions', async () => {
@@ -361,13 +385,13 @@ describe('FactLedger', () => {
 
   it.each([
     { sensitivity: 'visible', sensitive: false, revisionMatches: true, loaded: true, expected: 'Saved: allowed sensitive value' },
-    { sensitivity: 'unknown', sensitive: false, revisionMatches: false, loaded: true, expected: 'Saved' },
-    { sensitivity: 'unloaded', sensitive: false, revisionMatches: true, loaded: false, expected: 'Saved' },
+    { sensitivity: 'unknown', sensitive: false, revisionMatches: false, loaded: true, expected: 'Saved: Hidden' },
+    { sensitivity: 'unloaded', sensitive: false, revisionMatches: true, loaded: false, expected: 'Saved: allowed sensitive value' },
   ])('shows a $sensitivity saved decision value safely', ({ sensitive, revisionMatches, loaded, expected }) => {
     const value = controller();
     value.selectedSection = 'decisions';
     value.targets[0]!.sensitive = sensitive;
-    if (!revisionMatches) value.claims.rows[0] = { ...value.claims.rows[0]!, targetCanonical: `attribute:note:sha256:${'b'.repeat(64)}` };
+    if (!revisionMatches) value.decisions.rows[0] = { ...value.decisions.rows[0]!, targetCanonical: `attribute:note:sha256:${'b'.repeat(64)}` };
     if (!loaded) value.claims.rows = [];
     render(FactLedger, { controller: value });
     const decision = screen.getByLabelText('Historical fact decision');
@@ -388,7 +412,7 @@ describe('FactLedger', () => {
         relation: 'support', origin: 'extraction', confidence: { reported_score: 88 }, created_at: '2026-08-03T00:00:00Z'
       }] });
       if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [{
-        id: 1, decision_key: 'decision', claim_key: 'claim', resolution_id: 1, target: { kind: 'attribute', key: 'note', revision },
+        id: 1, decision_key: 'decision', claim_key: 'claim', claim_value: JSON.stringify('allowed sensitive value'), resolution_id: 1, target: { kind: 'attribute', key: 'note', revision },
         outcome: 'saved', resolver_version: 'v1', action: 'applied', reason: 'applied-projection',
         projection: { kind: 'person_attribute', row_id: 1 },
         score: { authority: 100, confidence: 8, corroboration: 0, directness: 400, freshness: 100, source_class: 300, total: 908 },
@@ -407,7 +431,7 @@ describe('FactLedger', () => {
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Reveal sensitive fact value' })).toBeDefined());
     await fireEvent.click(screen.getByRole('radio', { name: 'Decisions' }));
-    await vi.waitFor(() => expect(sentence()).toBe('Saved'));
+    await vi.waitFor(() => expect(sentence()).toBe('Saved: Hidden'));
     value.destroy();
   });
 

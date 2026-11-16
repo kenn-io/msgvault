@@ -27,18 +27,16 @@ describe('fact words', () => {
 
   it('words recorded outcomes and reasons', () => {
     expect(decisionSentence('saved', '', 'New York')).toBe('Saved: New York');
-    expect(decisionSentence('saved', '')).toBe('Saved');
-    expect(decisionSentence('value-retired', '')).toBe('This value is no longer saved');
+    expect(decisionSentence('value-retired', '', 'New York')).toBe('This value is no longer saved');
     expect(decisionSentence('current-value-kept', 'insufficient-margin', 'New York')).toBe("Kept the current value; New York wasn't far enough ahead");
-    expect(decisionSentence('current-value-kept', 'insufficient-margin')).toBe("Kept the current value; the claim wasn't far enough ahead");
     expect(decisionSentence('current-value-kept', 'explicit-contradiction', 'New York')).toBe('Kept the current value');
-    expect(decisionSentence('pinned-value-kept', '')).toBe('Kept your pinned value');
-    expect(decisionSentence('too-close-to-choose', '')).toBe('The evidence was too close to choose');
-    expect(decisionSentence('not-used', 'sensitive-policy')).toBe('Not used: this field is sensitive');
-    expect(decisionSentence('not-used', 'applied-projection')).toBe('Not used: another claim was saved');
-    expect(decisionSentence('not-used', 'insufficient-margin')).toBe('Not used');
-    expect(decisionSentence('not-used', 'identity-mismatch')).toBe('Not used: may be about someone else');
-    expect(decisionSentence(null, '')).toBe('Result unavailable');
+    expect(decisionSentence('pinned-value-kept', '', 'New York')).toBe('Kept your pinned value');
+    expect(decisionSentence('too-close-to-choose', '', 'New York')).toBe('The evidence was too close to choose');
+    expect(decisionSentence('not-used', 'sensitive-policy', 'New York')).toBe('Not used: this field is sensitive');
+    expect(decisionSentence('not-used', 'applied-projection', 'New York')).toBe('Not used: another claim was saved');
+    expect(decisionSentence('not-used', 'insufficient-margin', 'New York')).toBe('Not used');
+    expect(decisionSentence('not-used', 'identity-mismatch', 'New York')).toBe('Not used: may be about someone else');
+    expect(decisionSentence(null, '', 'New York')).toBe('Result unavailable');
   });
 
   it('words source status changes', () => {
