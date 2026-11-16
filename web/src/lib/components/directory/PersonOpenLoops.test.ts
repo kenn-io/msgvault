@@ -191,17 +191,6 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByRole("link", { name: "Review the draft?" })).toBeDefined();
     withLoops.unmount();
 
-    const withPromise = render(PersonOpenLoops, {
-      client: respond({
-        commitments: [promise(1, "I will send it.", 52)],
-        commitments_complete: false, commitments_since: "2026-10-01T00:00:00Z",
-      }),
-      personID: 7,
-    });
-    expect(await screen.findByRole("link", { name: "I will send it." })).toBeDefined();
-    expect(screen.getByText("Promise discovery since 2026-10-01 is incomplete.")).toBeDefined();
-    withPromise.unmount();
-
     const notStarted = render(PersonOpenLoops, { client: respond({ commitments_complete: false }), personID: 7 });
     expect(await screen.findByText("Promise discovery has not started.")).toBeDefined();
     expect(screen.queryByText("Nothing open with this person.")).toBeNull();

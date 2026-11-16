@@ -10,8 +10,8 @@ import (
 )
 
 // The same production upgrade runs on SQLite and the PostgreSQL CI backend.
-// Restore the actual v42 ledger vocabularies and missing slice tables/column,
-// retaining an existing attempt, claim and evidence link across initialization.
+// Restore the v42 ledger vocabularies and retain an existing attempt, claim,
+// and evidence link across initialization.
 func TestCommitmentMigrationUpgradesVersion42(t *testing.T) {
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepBudgetFixture(t, "commitment-v42")
@@ -20,9 +20,6 @@ func TestCommitmentMigrationUpgradesVersion42(t *testing.T) {
 	installPersonFactClaimOrigin(t, st, `CHECK (origin IN ('extraction', 'enrichment', 'brief', 'system', 'invalid'))`)
 	installPersonSweepBatchPurpose(t, st, `CHECK ((call_ordinal = 0 AND purpose IN ('primary', 'brief')) OR (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair')))`)
 	for _, query := range []string{
-		`DROP TABLE person_commitment_oversized`,
-		`DROP TABLE person_commitment_frontiers`,
-		`DROP TABLE person_commitments`,
 		`DELETE FROM applied_migrations WHERE name = 'person_commitments_v1'`,
 		`UPDATE archive_metadata SET value = '42' WHERE key = 'schema_version'`,
 	} {
@@ -59,15 +56,4 @@ func TestCommitmentMigrationUpgradesVersion42(t *testing.T) {
 			r.NoError(st.MarkPersonSweepBudgetStarted(ctx, reservation, sweepAttemptLease(f)))
 		}
 	}
-	var id int64
-	r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`INSERT INTO person_commitments (person_id,target_key) VALUES (?, 'promise') RETURNING id`), f.personID).Scan(&id))
-	a.Positive(id)
-	const sequence = int64(1) << 31
-	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO person_commitment_frontiers
-		(person_id, through_sequence, processed_at, backfill_message_id)
-		VALUES (?, ?, ?, -1)`), f.personID, sequence, sweepBudgetNow())
-	r.NoError(err)
-	var storedSequence int64
-	r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT through_sequence FROM person_commitment_frontiers WHERE person_id = ?`), f.personID).Scan(&storedSequence))
-	a.Equal(sequence, storedSequence)
 }

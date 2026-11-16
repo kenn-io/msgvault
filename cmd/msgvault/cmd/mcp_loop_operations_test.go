@@ -24,7 +24,6 @@ import (
 	"go.kenn.io/msgvault/internal/loops"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -373,26 +372,32 @@ func TestMCPLoopListExposesIncompleteCoverage(t *testing.T) {
 	requirements.True(list.CoverageIncomplete)
 }
 
-type pagedMCPLoopStore struct {
-	*storeAPIAdapter
-
-	offset int
-}
-
-func (s *pagedMCPLoopStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, _, offset int, _ bool) ([]store.PersonCommitment, error) {
-	s.offset = offset
-	return nil, nil
-}
-
 func TestMCPLoopListPassesCommitmentOffset(t *testing.T) {
 	f := storetest.New(t)
-	st := &pagedMCPLoopStore{storeAPIAdapter: &storeAPIAdapter{store: f.Store}}
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: st, Logger: slog.New(slog.DiscardHandler)}))
+	fixture := api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)})
+	offset := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/loops" {
+			offset <- r.URL.Query().Get("commitment_offset")
+		}
+		fixture.Router().ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	capabilities, err := client.MCPCapabilities(t.Context())
+	require.NoError(t, err)
+	backend := newDaemonMCPOperations(client, capabilities)
 	session := loopOperationMCPSession(t, backend, nil, &sdkmcp.ClientOptions{})
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{"limit": 1, "commitment_offset": 5}})
 	require.NoError(t, err)
 	loopToolOutput[generated.LoopListResponse](t, result)
-	assert.Equal(t, 5, st.offset)
+	select {
+	case got := <-offset:
+		assert.Equal(t, "5", got)
+	default:
+		assert.Fail(t, "daemon did not receive a loops request")
+	}
 }
 
 func TestMCPLoopListWithParentDaemonCapabilities(t *testing.T) {

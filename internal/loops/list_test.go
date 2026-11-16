@@ -827,6 +827,10 @@ func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, 
 }
 
 func TestListPagesCommitments(t *testing.T) {
+	for _, id := range []string{"12", "c012"} {
+		_, err := loops.ParseCommitmentID(id)
+		assert.ErrorIs(t, err, loops.ErrInvalidCommitmentID)
+	}
 	f := storetest.New(t)
 	st := &pagingCommitmentStore{Store: f.Store}
 	result, err := loops.List(t.Context(), st, loops.Options{Limit: 1, CommitmentOffset: 200}, now)

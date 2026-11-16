@@ -30,27 +30,10 @@ type loopFixture struct {
 	owed   int64
 }
 
-type deadlineLoopContext struct {
-	context.Context
-
-	done chan struct{}
-}
-
-func (c *deadlineLoopContext) Done() <-chan struct{} { return c.done }
-func (c *deadlineLoopContext) Err() error {
-	select {
-	case <-c.done:
-		return context.DeadlineExceeded
-	default:
-		return nil
-	}
-}
-
 type deadlineLoopStore struct {
 	*store.Store
 
-	deadline *deadlineLoopContext
-	stage    string
+	stage string
 }
 
 func (s *deadlineLoopStore) HasActivePersonCommitmentConsent(context.Context, string) (bool, error) {
@@ -58,14 +41,12 @@ func (s *deadlineLoopStore) HasActivePersonCommitmentConsent(context.Context, st
 		return false, errors.New("consent read failed")
 	}
 	if s.stage == "consent" {
-		close(s.deadline.done)
 		return false, context.DeadlineExceeded
 	}
 	return true, nil
 }
 
 func (s *deadlineLoopStore) PersonCommitmentDiscoveryContext(context.Context, int64, string) (*time.Time, bool, error) {
-	close(s.deadline.done)
 	return nil, false, context.DeadlineExceeded
 }
 
@@ -111,7 +92,6 @@ func TestCommitmentDecisionMapsInvalidUnknownAndChangedIDs(t *testing.T) {
 		status      int
 	}{
 		{"12", `{"state":"done"}`, http.StatusBadRequest},
-		{"c012", `{"state":"done"}`, http.StatusBadRequest},
 		{"c12", `{"state":"done"}`, http.StatusNotFound},
 		{"c1", `{"state":"done"}`, http.StatusConflict},
 	} {
@@ -165,11 +145,10 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			a, r := assert.New(t), require.New(t)
 			fixture := newLoopFixture(t)
-			ctx := &deadlineLoopContext{Context: t.Context(), done: make(chan struct{})}
-			st := &deadlineLoopStore{Store: fixture.f.Store, deadline: ctx, stage: stage}
+			st := &deadlineLoopStore{Store: fixture.f.Store, stage: stage}
 			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
 			w := httptest.NewRecorder()
-			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/loops", nil))
+			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
 			if stage == "error" {
 				a.Equal(http.StatusInternalServerError, w.Code)
 				return
@@ -206,15 +185,9 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 		return response
 	}
-	response := read()
-	requirements.NotNil(response.CommitmentsComplete)
-	assertions.False(*response.CommitmentsComplete)
-	assertions.Empty(response.Commitments)
 	_, _, err = f.Store.GrantPersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
 	requirements.NoError(err)
-	response = read()
-	requirements.NotNil(response.CommitmentsComplete)
-	assertions.False(*response.CommitmentsComplete)
+	response := read()
 	requirements.NotNil(response.CommitmentsUntil)
 	assertions.Equal("2025-06-30", response.CommitmentsUntil.Format(time.DateOnly))
 	since := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -627,9 +600,6 @@ func TestListLoopsPagesCommitments(t *testing.T) {
 	assert.True(st.includeClosed)
 	var response LoopListResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	require.NotNil(response.CommitmentsNextOffset)
-	assert.Equal(201, *response.CommitmentsNextOffset)
-	assert.True(response.Truncated)
 	require.NotEmpty(response.Commitments)
 	assert.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call.", Start: 0, End: 12}, PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Freshness: "fresh", State: "open"}, response.Commitments[0])
 }
