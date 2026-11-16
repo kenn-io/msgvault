@@ -252,10 +252,31 @@ func TestNotionNestedMeetingDoesNotConsumeSiblingPages(t *testing.T) {
 				{"id":"nested-meeting","type":"meeting_notes","has_children":true},
 				{"id":"branch","type":"paragraph","has_children":true}
 			],"has_more":false},
-			{"results":[{"id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}
+			{"results":[{"id":"action","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"branch"},"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}
 		]}
 	}`), nil)
 	assert.Equal(t, CoverageAvailable, content.ActionCoverage)
 	require.Len(t, content.Actions, 1)
 	assert.Equal(t, "action", content.Actions[0].SourceID)
+}
+
+func TestNotionOlderNestedMeetingPagesDoNotLeakActions(t *testing.T) {
+	content := Decode("notion_meeting_json", []byte(`{
+		"schema_version":1,
+		"discovery":{"meeting_notes":{"children":{"summary_block_id":"root"}}},
+		"canonical":{"summary":"Summary"},
+		"summary":{"root":{"id":"root","type":"paragraph","has_children":true},"pages":[
+			{"results":[
+				{"id":"nested","type":"meeting_notes","has_children":true,"parent":{"type":"block_id","block_id":"root"}},
+				{"id":"branch","type":"paragraph","has_children":true,"parent":{"type":"block_id","block_id":"root"}}
+			],"has_more":true,"next_cursor":"next"},
+			{"results":[{"id":"hidden","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"nested"},"to_do":{"rich_text":[{"plain_text":"Hidden"}],"checked":false}}],"has_more":false},
+			{"results":[{"id":"sibling","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"branch"},"to_do":{"rich_text":[{"plain_text":"Sibling"}],"checked":false}}],"has_more":false},
+			{"results":[{"id":"last","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"root"},"to_do":{"rich_text":[{"plain_text":"Last"}],"checked":false}}],"has_more":false}
+		]}
+	}`), nil)
+	assert.Equal(t, CoverageAvailable, content.ActionCoverage)
+	require.Len(t, content.Actions, 2)
+	assert.Equal(t, "sibling", content.Actions[0].SourceID)
+	assert.Equal(t, "last", content.Actions[1].SourceID)
 }

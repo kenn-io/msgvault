@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
 type fakeHydrationSource struct {
@@ -626,7 +627,8 @@ func TestHydratorSkipsNestedMeetingAndReadsSibling(t *testing.T) {
 	var nested Block
 	require.NoError(t, json.Unmarshal([]byte(`{"object":"block","id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}}`), &nested))
 	sibling := paragraph("sibling", "Sibling notes", true)
-	action := paragraph("action", "Sibling action", false)
+	var action Block
+	require.NoError(t, json.Unmarshal([]byte(`{"object":"block","id":"action","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"sibling"},"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}`), &action))
 	source.childErrs = map[string]map[string]error{"other-meeting": {"": errors.New("unreadable nested meeting")}}
 	source.children["notes-1"][""] = &BlockPage{Results: []Block{nested, sibling}}
 	source.children["sibling"] = map[string]*BlockPage{"": {Results: []Block{action}}}
@@ -636,4 +638,11 @@ func TestHydratorSkipsNestedMeetingAndReadsSibling(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, hydrated.Notes, "Another meeting")
 	assert.Contains(t, hydrated.Notes, "Sibling action")
+	snapshot, err := hydrated.ArchiveSnapshot(1, "example", "")
+	require.NoError(t, err)
+	assert.Contains(t, string(snapshot.Raw), `"id":"other-meeting"`)
+	content := meetingcontent.Decode(RawFormat, snapshot.Raw, nil)
+	assert.Equal(t, meetingcontent.CoverageAvailable, content.ActionCoverage)
+	require.Len(t, content.Actions, 1)
+	assert.Equal(t, "action", content.Actions[0].SourceID)
 }

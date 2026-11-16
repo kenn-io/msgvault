@@ -366,6 +366,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			hasPrevious = true
 		}
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
+		if previous, exists := pendingByID[id]; exists && !providerTranscriptMissing {
+			pending, _ := schedulePending(hydrated, now, previous, true, true)
+			pendingByID[id] = pending
+			next.TranscriptRetryUntil[id] = pending.RetryUntil
+		}
 		terminal := terminalStatus(meeting.MeetingNotes.Status)
 		if len(hydrated.Incomplete) > 0 {
 			sum.PartialCoverage = true
@@ -407,9 +412,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		for _, section := range sections {
 			if !slices.Contains(hydrated.Incomplete, section.name) {
-				continue
-			}
-			if section.name == sectionTranscript && strings.TrimSpace(meeting.MeetingNotes.Children.TranscriptBlockID) == "" {
 				continue
 			}
 			oldText := section.oldText

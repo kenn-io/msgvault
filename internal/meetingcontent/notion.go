@@ -194,19 +194,42 @@ func notionTreeBlocks(raw jsontext.Value, expectedRootID string) ([]jsontext.Val
 	if !rootHasChildren {
 		return traversal.blocks, len(tree.Pages) == 0
 	}
-	complete := traversal.readChildren(1) && traversal.nextPage == len(traversal.pages)
-	return traversal.blocks, complete
+	legacy := traversal
+	legacy.blocks = append([]jsontext.Value(nil), traversal.blocks...)
+	legacy.includeNested = true
+	legacyComplete := legacy.readChildren(1, rootID) && legacy.nextPage == len(legacy.pages)
+	complete := traversal.readChildren(1, rootID) && traversal.nextPage == len(traversal.pages)
+	if !traversal.sawNested {
+		return traversal.blocks, complete
+	}
+	if legacyComplete && !complete {
+		return legacy.blocks, true
+	}
+	if complete && !legacyComplete && (!legacy.consumedNested || legacy.parentMismatch) {
+		return traversal.blocks, true
+	}
+	// Both interpretations may assign a page to different blocks. Keep only
+	// the common prefix, whose actions belong to the meeting in either case.
+	n := 0
+	for n < len(traversal.blocks) && n < len(legacy.blocks) && bytes.Equal(traversal.blocks[n], legacy.blocks[n]) {
+		n++
+	}
+	return traversal.blocks[:n], false
 }
 
 type notionTreeTraversal struct {
-	pages       []jsontext.Value
-	nextPage    int
-	pageVisits  int
-	blockVisits int
-	blocks      []jsontext.Value
+	pages          []jsontext.Value
+	nextPage       int
+	pageVisits     int
+	blockVisits    int
+	blocks         []jsontext.Value
+	includeNested  bool
+	sawNested      bool
+	consumedNested bool
+	parentMismatch bool
 }
 
-func (t *notionTreeTraversal) readChildren(depth int) bool {
+func (t *notionTreeTraversal) readChildren(depth int, parentID string) bool {
 	if depth > maxNotionTraversalDepth {
 		return false
 	}
@@ -222,20 +245,56 @@ func (t *notionTreeTraversal) readChildren(depth int) bool {
 		if results == nil {
 			return false
 		}
-		childrenComplete := true
+		pageParent := ""
+		parentKnown := len(results) > 0
 		for _, child := range results {
-			var header struct {
-				Type string `json:"type"`
+			var block struct {
+				Parent struct {
+					Type    string `json:"type"`
+					BlockID string `json:"block_id"`
+				} `json:"parent"`
 			}
-			if json.Unmarshal(child, &header) == nil && header.Type == "meeting_notes" {
+			if json.Unmarshal(child, &block) != nil || block.Parent.Type != "block_id" || block.Parent.BlockID == "" {
+				parentKnown = false
 				continue
 			}
+			if pageParent != "" && pageParent != block.Parent.BlockID {
+				return false
+			}
+			pageParent = block.Parent.BlockID
+		}
+		if parentKnown && pageParent != parentID {
+			t.parentMismatch = true
+			return false
+		}
+
+		childrenComplete := true
+		for _, child := range results {
 			if t.blockVisits >= maxNotionTraversalBlocks {
 				return false
 			}
 			t.blockVisits++
 			t.blocks = append(t.blocks, child)
+			var header struct {
+				Type        string `json:"type"`
+				HasChildren bool   `json:"has_children"`
+			}
+			_ = json.Unmarshal(child, &header)
 			childID, hasChildren, childValid := notionBlockTraversalHeader(child)
+			if header.Type == "meeting_notes" && header.HasChildren {
+				t.sawNested = true
+				if t.includeNested {
+					if t.nextPage < len(t.pages) {
+						t.consumedNested = true
+					}
+					start := len(t.blocks)
+					if !t.readChildren(depth+1, childID) {
+						childrenComplete = false
+					}
+					t.blocks = t.blocks[:start]
+				}
+				continue
+			}
 			if !childValid {
 				childrenComplete = false
 				continue
@@ -243,7 +302,7 @@ func (t *notionTreeTraversal) readChildren(depth int) bool {
 			if !hasChildren {
 				continue
 			}
-			if childID == "" || !childrenComplete || !t.readChildren(depth+1) {
+			if childID == "" || !childrenComplete || !t.readChildren(depth+1, childID) {
 				childrenComplete = false
 			}
 		}

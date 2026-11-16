@@ -1399,7 +1399,7 @@ func TestImporterRetriesOmittedTranscript(t *testing.T) {
 		{"page has transcript", "# Transcript\nNew page transcript", "New page transcript", false, false, true},
 		{"page has none", "# Notes\nNo transcript", "Summary:", true, false, true},
 		{"markdown truncated", "# Notes\nTranscript heading was truncated", "Saved page transcript", true, true, false},
-		{"omitted and markdown truncated", "# Notes\nTranscript heading was truncated", "Summary:", true, true, true},
+		{"omitted and markdown truncated", "# Notes\nTranscript heading was truncated", "Saved page transcript", true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
@@ -1436,10 +1436,10 @@ func TestImporterRetriesOmittedTranscript(t *testing.T) {
 			require.Len(t, pending, 1)
 			assert.Equal(t, tc.truncated, pending[0].Incomplete)
 			assert.Equal(t, tc.truncated, second.PartialCoverage)
-			if tc.omitted {
+			if tc.omitted && !tc.truncated {
 				assert.NotContains(t, body, "Saved page transcript")
 			}
-			if tc.truncated && !tc.omitted {
+			if tc.truncated {
 				after, err := st.GetMessageRaw(id)
 				require.NoError(t, err)
 				var oldFields, newFields map[string]json.RawMessage
@@ -1592,4 +1592,70 @@ func TestImporterRetainsActionsWhenReplacementSectionFails(t *testing.T) {
 			assert.Equal(t, "Saved action", content.Actions[0].Title)
 		})
 	}
+}
+
+func TestImporterRetriesRecoveredTranscriptAfterArchiveFailure(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	empty := paragraph("transcript-1", "", false)
+	source.blocks["transcript-1"] = &empty
+	source.markdown.Markdown = "# Notes\nNo transcript"
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	require.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
+
+	source.query.Results = nil
+	recovered := paragraph("transcript-1", "Recovered transcript", false)
+	source.blocks["transcript-1"] = &recovered
+	imp.now = func() time.Time { return time.Date(2026, 9, 5, 10, 29, 0, 0, time.UTC) }
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_notion_recovered() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced archive failure'; END; $$ LANGUAGE plpgsql; CREATE TRIGGER fail_notion_recovered BEFORE UPDATE ON messages FOR EACH ROW EXECUTE FUNCTION fail_notion_recovered()`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_notion_recovered BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'forced archive failure'); END`)
+	}
+	require.NoError(t, err)
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.ErrorContains(t, err, "forced archive failure")
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_recovered ON messages`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_recovered`)
+	}
+	require.NoError(t, err)
+
+	imp.now = func() time.Time { return time.Date(2026, 9, 5, 10, 31, 0, 0, time.UTC) }
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), result.MaintenanceRetries)
+	assert.Empty(t, lastNotionState(t, st, first.SourceID).Pending)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Recovered transcript")
+}
+
+func TestImporterClearsDeletedDataSourceTranscript(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	meeting := hydrationMeeting()
+	meeting.Parent = Parent{Type: "data_source_id"}
+	source.blocks["meeting-1"].Parent = meeting.Parent
+	source.query.Results = []MeetingNote{meeting}
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	before, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, before, "Test Speaker: Ready to ship.")
+
+	source.query.Results[0].MeetingNotes.Children.TranscriptBlockID = ""
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	after, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.NotContains(t, after, "Test Speaker: Ready to ship.")
+	assert.False(t, second.PartialCoverage)
+	pending := lastNotionState(t, st, first.SourceID).Pending
+	require.Len(t, pending, 1)
+	assert.False(t, pending[0].Incomplete)
 }
