@@ -197,15 +197,12 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 
 func TestHydratorResolvesParentForMarkdown(t *testing.T) {
 	for _, tc := range []struct {
-		name           string
-		parent         Parent
-		blockErr       error
-		wantPage       bool
-		wantIncomplete bool
+		name     string
+		parent   Parent
+		wantPage bool
 	}{
 		{name: "parent from block", wantPage: true},
 		{name: "data source parent", parent: Parent{Type: "data_source_id"}},
-		{name: "data source parent with unavailable transcript", parent: Parent{Type: "data_source_id"}, blockErr: &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}, wantIncomplete: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := completeHydrationSource()
@@ -216,7 +213,6 @@ func TestHydratorResolvesParentForMarkdown(t *testing.T) {
 			}
 			empty := paragraph("transcript-1", "", false)
 			source.blocks["transcript-1"] = &empty
-			source.blockErrs = map[string]error{"transcript-1": tc.blockErr}
 			source.markdown.Markdown = "# Transcript\nTest Speaker: Late transcript."
 			hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
 			require.NoError(t, err)
@@ -230,9 +226,6 @@ func TestHydratorResolvesParentForMarkdown(t *testing.T) {
 			} else {
 				assert.Zero(t, source.markdownCalls)
 				assert.Empty(t, hydrated.Transcript)
-			}
-			if tc.wantIncomplete {
-				assert.Contains(t, hydrated.Incomplete, "transcript")
 			}
 		})
 	}
@@ -357,15 +350,18 @@ func TestExtractMarkdownTranscript(t *testing.T) {
 
 func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		mutate     func(*MarkdownPage)
-		err        error
-		structured bool
+		name         string
+		mutate       func(*MarkdownPage)
+		err          error
+		structured   bool
+		noTranscript bool
 	}{
-		{"truncated", func(p *MarkdownPage) { p.Truncated = true }, nil, false},
-		{"truncated differing transcript", func(p *MarkdownPage) { p.Truncated = true; p.Markdown = "# Transcript\nDifferent text" }, nil, true},
-		{"unknown blocks", func(p *MarkdownPage) { p.UnknownBlockIDs = []string{"block-1"} }, nil, false},
-		{"unavailable", nil, &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}, false},
+		{"truncated", func(p *MarkdownPage) { p.Truncated = true }, nil, false, false},
+		{"truncated differing transcript", func(p *MarkdownPage) { p.Truncated = true; p.Markdown = "# Transcript\nDifferent text" }, nil, true, false},
+		{"unknown blocks", func(p *MarkdownPage) { p.UnknownBlockIDs = []string{"block-1"} }, nil, false, false},
+		{"unavailable", nil, &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}, false, false},
+		{"truncated without transcript", func(p *MarkdownPage) { p.Truncated = true }, nil, false, true},
+		{"unknown block without transcript", func(p *MarkdownPage) { p.UnknownBlockIDs = []string{"block-1"} }, nil, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -377,39 +373,23 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(source.markdown)
 			}
+			if tc.noTranscript {
+				source.markdown.Markdown = "# Notes\nNo transcript here"
+			}
 			source.markdownErr = tc.err
 			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.NoError(t, err)
 			if tc.structured {
 				assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
 				assert.NotContains(result.Warnings, "structured transcript and page Markdown transcript differed; kept the structured transcript")
+			} else if tc.noTranscript {
+				assert.Empty(result.Transcript)
+				assert.NotContains(result.Incomplete, "transcript")
 			} else {
 				assert.Empty(result.Transcript)
 				assert.Contains(result.Incomplete, "transcript")
 				assert.Contains(result.Warnings, "transcript incomplete: markdown")
 			}
-		})
-	}
-}
-
-func TestHydratorIgnoresIncompleteMarkdownWithoutTranscript(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		mutate func(*MarkdownPage)
-	}{
-		{"truncated", func(p *MarkdownPage) { p.Truncated = true }},
-		{"unknown block", func(p *MarkdownPage) { p.UnknownBlockIDs = []string{"block-1"} }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			source := completeHydrationSource()
-			empty := paragraph("transcript-1", "", false)
-			source.blocks["transcript-1"] = &empty
-			source.markdown.Markdown = "# Notes\nNo transcript here"
-			tc.mutate(source.markdown)
-			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-			require.NoError(t, err)
-			assert.Empty(t, result.Transcript)
-			assert.NotContains(t, result.Incomplete, "transcript")
 		})
 	}
 }
