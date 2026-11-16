@@ -49,7 +49,6 @@ type HydratedMeeting struct {
 	NotesTree                  blockTree
 	TranscriptTree             blockTree
 	PageMarkdown               *MarkdownPage
-	PageMarkdownUnavailable    bool
 	Summary                    string
 	Notes                      string
 	Transcript                 string
@@ -59,7 +58,6 @@ type HydratedMeeting struct {
 	AttendeeResolutionDegraded bool
 	Warnings                   []string
 	Incomplete                 []string
-	LimitErr                   error
 	MarkdownTranscriptFallback bool
 	ResolvedUsers              []resolvedUser
 }
@@ -173,7 +171,7 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 //nolint:nilerr // budget exhaustion marks the transcript incomplete for retry
 func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeeting) error {
 	pageID := strings.TrimSpace(result.Discovery.Parent.PageID)
-	if pageID == "" {
+	if pageID == "" || strings.TrimSpace(result.Transcript) != "" {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -186,11 +184,7 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	page, err := h.source.RetrievePageMarkdown(ctx, pageID, true)
 	if err != nil {
 		if ctx.Err() == nil && (transcriptTemporarilyUnavailable(err) || errors.Is(err, ErrMalformedResponse)) {
-			if strings.TrimSpace(result.Transcript) == "" {
-				result.markIncomplete(sectionTranscript, "markdown")
-			} else {
-				result.PageMarkdownUnavailable = true
-			}
+			result.markIncomplete(sectionTranscript, "markdown")
 			return nil
 		}
 		return fmt.Errorf("retrieve Notion page Markdown: %w", err)
@@ -475,17 +469,12 @@ func hydrationLimit(kind string) error {
 	return &sectionReadError{reason: "limit", err: fmt.Errorf("notion meeting hydration exceeded %s limit", kind)}
 }
 
-// reconcileMarkdown keeps the structured transcript canonical and uses page
-// Markdown only as retained evidence, or as the fallback when it is empty.
+// reconcileMarkdown uses complete page Markdown as a transcript fallback.
 func (m *HydratedMeeting) reconcileMarkdown(page *MarkdownPage) {
 	markdown := extractMarkdownTranscript(page.Markdown)
 	complete := !page.Truncated && len(page.UnknownBlockIDs) == 0
 	switch {
-	case strings.TrimSpace(m.Transcript) != "":
-		if complete && markdown != "" && !slices.Equal(strings.Fields(markdown), strings.Fields(m.Transcript)) {
-			m.Warnings = append(m.Warnings, "structured transcript and page Markdown transcript differed; kept the structured transcript")
-		}
-	case !complete && markdown != "":
+	case !complete:
 		m.markIncomplete(sectionTranscript, "markdown")
 	case markdown != "":
 		m.Transcript = markdown
@@ -495,9 +484,6 @@ func (m *HydratedMeeting) reconcileMarkdown(page *MarkdownPage) {
 }
 
 func (m *HydratedMeeting) markIncomplete(section, reason string) {
-	if m.LimitErr == nil && strings.HasPrefix(reason, "limit") {
-		m.LimitErr = fmt.Errorf("%s hydration stopped at the %s", section, reason)
-	}
 	if !slices.Contains(m.Incomplete, section) {
 		m.Incomplete = append(m.Incomplete, section)
 	}

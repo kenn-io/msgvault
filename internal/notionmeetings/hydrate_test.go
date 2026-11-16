@@ -164,11 +164,11 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	source.markdown.Markdown = "# Transcript\nDifferent page transcript"
 	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(err)
+	assert.Zero(source.markdownCalls)
 	assert.False(hydrated.AttendeeResolutionDegraded)
 	assert.Equal("Decide the release scope.", hydrated.Summary)
 	assert.Contains(hydrated.Notes, "Nested action item.")
 	assert.Equal("Test Speaker: Ready to ship.", hydrated.Transcript)
-	assert.Contains(hydrated.Warnings, "structured transcript and page Markdown transcript differed; kept the structured transcript")
 
 	snapshot, err := hydrated.ArchiveSnapshot(17, "work", "user@example.com")
 	require.NoError(err)
@@ -185,9 +185,9 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	assert.Equal(RawFormat, snapshot.RawFormat)
 	var evidence map[string]json.RawMessage
 	require.NoError(json.Unmarshal(snapshot.Raw, &evidence))
-	assert.JSONEq(`2`, string(evidence["schema_version"]))
+	assert.JSONEq(`1`, string(evidence["schema_version"]))
 	assert.Contains(string(snapshot.Raw), `"discovery"`)
-	assert.JSONEq(string(source.markdown.Raw), string(evidence["page_markdown"]))
+	assert.JSONEq(`null`, string(evidence["page_markdown"]))
 	assert.Contains(string(snapshot.Raw), `"attendee_labels":["Test Attendee","Unresolved Attendee"]`)
 	assert.NotContains(string(snapshot.Raw), "unverified@example.com")
 	assert.NotContains(string(snapshot.Raw), "user@example.com", "configured identity must not enter provider evidence")
@@ -384,7 +384,7 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 				assert.NotContains(result.Warnings, "structured transcript and page Markdown transcript differed; kept the structured transcript")
 			} else if tc.noTranscript {
 				assert.Empty(result.Transcript)
-				assert.NotContains(result.Incomplete, "transcript")
+				assert.Contains(result.Incomplete, "transcript")
 			} else {
 				assert.Empty(result.Transcript)
 				assert.Contains(result.Incomplete, "transcript")
@@ -516,7 +516,7 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 		{"requests", 0, []string{"summary", "notes", "transcript"}, []string{"notes-1", "transcript-1"}, true, false},
 		{"bytes", 1, []string{"transcript"}, nil, false, false},
 		{"blocks", 1, []string{"summary", "notes", "transcript"}, []string{"notes-1", "transcript-1"}, true, false},
-		{"depth", 1, []string{"summary"}, nil, true, true},
+		{"depth", 0, []string{"summary"}, nil, true, true},
 	} {
 		t.Run(tc.limit, func(t *testing.T) {
 			assert := assert.New(t)

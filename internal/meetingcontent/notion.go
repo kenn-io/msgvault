@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"slices"
 	"strings"
 )
 
 func decodeNotion(fields map[string]jsontext.Value) Content {
 	version, ok := rawInteger(fields["schema_version"])
-	if !ok || version < 1 || version > 2 {
+	if !ok || version != 1 {
 		return unavailableContent("unsupported_schema")
 	}
 	content := baseRecognizedContent()
@@ -29,20 +28,8 @@ func decodeNotion(fields map[string]jsontext.Value) Content {
 		section := decodeStringField(canonical, "transcript")
 		content.Transcript = Transcript{State: section.State, Reason: section.Reason, Text: section.Text}
 	}
-	var incompleteSections []string
-	if json.Unmarshal(fields["incomplete_sections"], &incompleteSections) == nil {
-		if slices.Contains(incompleteSections, "summary") {
-			content.Summary.State, content.Summary.Reason = StateTruncated, ""
-		}
-		if slices.Contains(incompleteSections, "notes") {
-			content.Notes.State, content.Notes.Reason = StateTruncated, ""
-		}
-		if slices.Contains(incompleteSections, "transcript") {
-			content.Transcript.State, content.Transcript.Reason = StateTruncated, ""
-		}
-	}
 	discovery, discoveryOK := notionDiscovery(fields["discovery"])
-	content.Actions, content.ActionCoverage, content.ActionReason = decodeNotionActions(fields, discovery, discoveryOK, incompleteSections)
+	content.Actions, content.ActionCoverage, content.ActionReason = decodeNotionActions(fields, discovery, discoveryOK)
 	content.SourceParticipants = notionParticipants(fields, discovery)
 	if discoveryOK {
 		if start, startOK := parseTimeString(discovery.Recording.Start); startOK {
@@ -101,7 +88,7 @@ func notionDiscovery(raw jsontext.Value) (notionDiscoveryWire, bool) {
 	return out, true
 }
 
-func decodeNotionActions(fields map[string]jsontext.Value, discovery notionDiscoveryWire, discoveryOK bool, incompleteSections []string) ([]Action, Coverage, string) {
+func decodeNotionActions(fields map[string]jsontext.Value, discovery notionDiscoveryWire, discoveryOK bool) ([]Action, Coverage, string) {
 	if !discoveryOK {
 		return []Action{}, CoverageUnavailable, "incomplete_tree"
 	}
@@ -117,17 +104,12 @@ func decodeNotionActions(fields map[string]jsontext.Value, discovery notionDisco
 	seen := map[string]struct{}{}
 	ordinal := 0
 	for _, tree := range trees {
-		sectionIncomplete := slices.Contains(incompleteSections, tree.key)
-		if tree.id == "" && !sectionIncomplete {
+		if tree.id == "" {
 			continue
 		}
 		referenced = true
-		expectedID := tree.id
-		if sectionIncomplete {
-			expectedID = ""
-		}
-		blocks, complete := notionTreeBlocks(fields[tree.key], expectedID)
-		if !complete || sectionIncomplete {
+		blocks, complete := notionTreeBlocks(fields[tree.key], tree.id)
+		if !complete {
 			incomplete = true
 		} else {
 			completeTrees++
@@ -191,7 +173,7 @@ func notionTreeBlocks(raw jsontext.Value, expectedRootID string) ([]jsontext.Val
 		return nil, false
 	}
 	rootID, rootHasChildren, rootValid := notionBlockTraversalHeader(tree.Root)
-	if expectedRootID != "" && rootID != expectedRootID {
+	if rootID != expectedRootID {
 		return nil, false
 	}
 	traversal := notionTreeTraversal{
@@ -199,17 +181,14 @@ func notionTreeBlocks(raw jsontext.Value, expectedRootID string) ([]jsontext.Val
 		blocks:      []jsontext.Value{tree.Root},
 		blockVisits: 1,
 	}
-	if !rootValid || !rootHasChildren {
-		if len(tree.Pages) != 0 {
-			return nil, false
-		}
-		return traversal.blocks, rootValid
+	if !rootValid {
+		return traversal.blocks, false
+	}
+	if !rootHasChildren {
+		return traversal.blocks, len(tree.Pages) == 0
 	}
 	complete := traversal.readChildren(1)
-	if traversal.nextPage != len(traversal.pages) {
-		return nil, false
-	}
-	return traversal.blocks, complete
+	return traversal.blocks, complete && traversal.nextPage == len(traversal.pages)
 }
 
 type notionTreeTraversal struct {

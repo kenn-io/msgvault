@@ -211,7 +211,7 @@ func admitSections(packet Packet, originals map[int64]Entry, options PacketOptio
 		case "notes":
 			source = original.Content.Notes
 		}
-		if (source.State != StateAvailable && source.State != StateTruncated) || source.Text == "" {
+		if source.State != StateAvailable || source.Text == "" {
 			continue
 		}
 
@@ -266,7 +266,7 @@ func admitActions(packet Packet, originals map[int64]Entry, options PacketOption
 func admitTranscripts(packet Packet, originals map[int64]Entry, options PacketOptions) (Packet, error) {
 	for index := range packet.Meetings {
 		original := originals[packet.Meetings[index].Meeting.MessageID]
-		if original.Content.Transcript.State != StateAvailable && original.Content.Transcript.State != StateTruncated {
+		if original.Content.Transcript.State != StateAvailable {
 			continue
 		}
 		full := clonePacket(packet)
@@ -394,7 +394,7 @@ func preparePacket(packet Packet, originals map[int64]Entry, options PacketOptio
 }
 
 func recomputeSection(entry *Entry, original Section, included *Section, name string, packet *Packet) {
-	if original.State != StateAvailable && original.State != StateTruncated {
+	if original.State != StateAvailable {
 		*included = original
 		return
 	}
@@ -406,7 +406,7 @@ func recomputeSection(entry *Entry, original Section, included *Section, name st
 		return
 	}
 	included.State = StateTruncated
-	included.Reason = original.Reason
+	included.Reason = ""
 	packet.Truncated = true
 	packet.Truncations = append(packet.Truncations, Truncation{
 		MessageID: entry.Meeting.MessageID, Section: name,
@@ -415,7 +415,7 @@ func recomputeSection(entry *Entry, original Section, included *Section, name st
 }
 
 func recomputeTranscript(entry *Entry, original Transcript, packet *Packet) {
-	if original.State != StateAvailable && original.State != StateTruncated {
+	if original.State != StateAvailable {
 		entry.Content.Transcript = cloneTranscript(original)
 		return
 	}
@@ -427,7 +427,7 @@ func recomputeTranscript(entry *Entry, original Transcript, packet *Packet) {
 		return
 	}
 	entry.Content.Transcript.State = StateTruncated
-	entry.Content.Transcript.Reason = original.Reason
+	entry.Content.Transcript.Reason = ""
 	packet.Truncated = true
 	packet.Truncations = append(packet.Truncations, Truncation{
 		MessageID: entry.Meeting.MessageID, Section: "transcript",

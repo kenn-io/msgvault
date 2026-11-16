@@ -248,7 +248,6 @@ func TestNotionTreeTraversalSkipsNestedMeetingType(t *testing.T) {
 		complete          bool
 	}{
 		{"sibling page", `{"object":"block","id":"notes","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}`, `[{"results":[{"object":"block","id":"nested","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[]}},{"object":"block","id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}],"has_more":false},{"results":[{"object":"block","id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}],"has_more":false}]`, true},
-		{"legacy nested page left unread", `{"object":"block","id":"notes","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}`, `[{"results":[{"object":"block","id":"nested","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[]}},{"object":"block","id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}],"has_more":false},{"results":[{"object":"block","id":"other-action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}],"has_more":false},{"results":[{"object":"block","id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}],"has_more":false}]`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tree := []byte(`{"root":` + tc.root + `,"pages":` + tc.pages + `}`)
@@ -260,28 +259,6 @@ func TestNotionTreeTraversalSkipsNestedMeetingType(t *testing.T) {
 			}
 			require.Len(t, blocks, 4)
 			assert.JSONEq(t, `{"object":"block","id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}`, string(blocks[3]))
-		})
-	}
-}
-
-func TestNotionIncompleteSectionKeepsSavedActions(t *testing.T) {
-	raw := []byte(`{"schema_version":2,"discovery":{"meeting_notes":{"children":{"notes_block_id":"new-notes"}}},"canonical":{},"incomplete_sections":["notes"],"notes":{"root":{"id":"old-notes","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Saved task"}],"checked":false}}}}`)
-	content := Decode("notion_meeting_json", raw, nil)
-	assert.Equal(t, CoveragePartial, content.ActionCoverage)
-	require.Len(t, content.Actions, 1)
-	assert.Equal(t, "Saved task", content.Actions[0].Title)
-}
-
-func TestNotionIncompleteSectionsRetainTextAndReportTruncation(t *testing.T) {
-	for _, name := range []string{"summary", "notes", "transcript"} {
-		t.Run(name, func(t *testing.T) {
-			raw := []byte(`{"schema_version":2,"canonical":{"summary":"Saved summary","notes":"Saved notes","transcript":"Saved transcript"},"incomplete_sections":["` + name + `"]}`)
-			content := Decode("notion_meeting_json", raw, nil)
-			want := map[string]State{"summary": StateAvailable, "notes": StateAvailable, "transcript": StateAvailable}
-			want[name] = StateTruncated
-			assert.Equal(t, Section{State: want["summary"], Text: "Saved summary"}, content.Summary)
-			assert.Equal(t, Section{State: want["notes"], Text: "Saved notes"}, content.Notes)
-			assert.Equal(t, Transcript{State: want["transcript"], Text: "Saved transcript"}, content.Transcript)
 		})
 	}
 }

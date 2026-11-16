@@ -84,7 +84,7 @@ func TestMeetingProjectionUpgradeAllFormatsTwice(t *testing.T) {
 		requirements.NoError(st.db.QueryRow(`SELECT raw_data FROM message_raw WHERE message_id = ?`, ids[i]).Scan(&rawAfter))
 		assertions.Equal(rawBefore[i], rawAfter)
 	}
-	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, meetingProjectionVersion)
+	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 1)
 	requirements.NoError(err)
 	assertions.True(applied)
 	rejectMeetingProjectionWrites(t, st)
@@ -117,7 +117,7 @@ func TestMeetingProjectionCopySubsetRebuildsFromLegacyEvidence(t *testing.T) {
 			content, _ := readProjection(t, copied, id)
 			requirements.Len(content.Actions, 1)
 			assertions.Equal("Send brief", content.Actions[0].Title)
-			applied, err := copied.IsMigrationAppliedContext(t.Context(), projectionMigrationName, meetingProjectionVersion)
+			applied, err := copied.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 1)
 			requirements.NoError(err)
 			assertions.True(applied)
 		})
@@ -164,32 +164,9 @@ func TestMeetingProjectionUpgradeIncludesNonpositiveIDs(t *testing.T) {
 			assertions.Equal("Send brief", title)
 		})
 	}
-	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, meetingProjectionVersion)
+	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 1)
 	requirements.NoError(err)
 	assertions.True(applied)
 	rejectMeetingProjectionWrites(t, st)
 	requirements.NoError(st.InitSchemaContext(t.Context()), "completed signed-ID upgrade must not rewrite projections")
-}
-
-func TestMeetingProjectionUpgradeRefreshesStaleProjection(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, id := projectionFixture(t, st, "stale", "meeting_json", meetingProjectionRaw)
-	_, err := st.db.Exec(`UPDATE applied_migrations SET version = 1 WHERE name = ?`, projectionMigrationName)
-	requirements.NoError(err)
-	_, err = st.db.Exec(`UPDATE meeting_details SET projection_version = 1, content_json = ? WHERE message_id = ?`, `{"actions":[]}`, id)
-	requirements.NoError(err)
-	_, err = st.db.Exec(`DELETE FROM meeting_action_items WHERE message_id = ?`, id)
-	requirements.NoError(err)
-	requirements.NoError(st.InitSchemaContext(t.Context()))
-	content, _ := readProjection(t, st, id)
-	requirements.Len(content.Actions, 1)
-	assertions.Equal("Send brief", content.Actions[0].Title)
-	var title string
-	requirements.NoError(st.db.QueryRow(`SELECT title FROM meeting_action_items WHERE message_id = ?`, id).Scan(&title))
-	assertions.Equal("Send brief", title)
-	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, meetingProjectionVersion)
-	requirements.NoError(err)
-	assertions.True(applied)
 }

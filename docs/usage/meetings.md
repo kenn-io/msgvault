@@ -880,20 +880,16 @@ the parent page's Markdown. An incomplete section keeps saved text for retry.
 Provider or network errors, incomplete pagination, and request, response-size,
 block-count, and nesting limits can leave sections incomplete. msgvault keeps
 their archived text and evidence and retries section blocks every six hours,
-even after a meeting leaves the query window. Retries stop when the window
-ends, and archived content stays in place. The window ends seven days after the
-meeting ended. It lasts 48 hours from when the retry is first scheduled if the
-end time is unknown or that window has already passed when an incomplete section is found.
+even after a meeting leaves the query window. Incomplete sections stay queued
+until a complete read is saved.
 
-If incomplete page Markdown contains transcript text, msgvault keeps the saved
-transcript and retries.
+If page Markdown is incomplete, msgvault keeps the saved transcript and retries.
 When a transcript is missing without an incomplete section, background retries
 stop at the deadline. The sync summary reports partial coverage when a section
 is incomplete or the Notion query reports more meetings.
 
-An omitted or empty transcript clears saved text when page Markdown supplies no
-replacement. Omitted summary and notes blocks retain saved text during the
-retry window; afterward, they clear if the blocks have not returned. A meeting
+An omitted or empty section clears saved text when no fallback supplies a
+replacement. A meeting
 whose saved evidence has a newer version keeps that evidence, and the sync
 reports an error for it.
 Existing `[[notion_meetings]]` settings need no changes. Other hard

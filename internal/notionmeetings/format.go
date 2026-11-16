@@ -37,7 +37,7 @@ type rawBlockTree struct {
 	Pages []jsontext.Value `json:"pages,omitempty"`
 }
 
-const notionSnapshotVersion = 2
+const notionSnapshotVersion = 1
 
 type rawEvidence struct {
 	SchemaVersion  int               `json:"schema_version"`
@@ -51,7 +51,6 @@ type rawEvidence struct {
 	AttendeeLabels []string          `json:"attendee_labels,omitempty"`
 	ResolvedUsers  []resolvedUser    `json:"resolved_users,omitempty"`
 	Warnings       []string          `json:"warnings,omitempty"`
-	Incomplete     []string          `json:"incomplete_sections,omitempty"`
 }
 
 type canonicalEvidence struct {
@@ -132,7 +131,7 @@ func (h *HydratedMeeting) archiveEvidence() ([]byte, error) {
 		SchemaVersion: notionSnapshotVersion, Discovery: h.Discovery.Raw, MeetingBlock: rawForBlock(h.MeetingBlock),
 		Summary: summary, Notes: notes, Transcript: transcript, PageMarkdown: markdown,
 		Canonical:      canonicalEvidence{Summary: h.Summary, Notes: h.Notes, Transcript: h.Transcript},
-		AttendeeLabels: h.AttendeeLabels, ResolvedUsers: h.ResolvedUsers, Warnings: h.Warnings, Incomplete: h.Incomplete,
+		AttendeeLabels: h.AttendeeLabels, ResolvedUsers: h.ResolvedUsers, Warnings: h.Warnings,
 	}, json.Deterministic(true))
 }
 
