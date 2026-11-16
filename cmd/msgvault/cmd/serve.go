@@ -1315,6 +1315,10 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 		Name: jobName, Schedule: cardDAVConfig.Schedule,
 		Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 			_, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
+			// Completed books remain committed after cancellation.
+			if refreshErr := rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), jobName); refreshErr != nil {
+				logger.Error("identity cache refresh failed", "error", refreshErr)
+			}
 			return recordSyncAttempt(ctx, "carddav", name, err)
 		}),
 	}); err != nil {
@@ -3933,8 +3937,15 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 // RefreshIdentityDatasets rebuilds identity-derived Parquet in a short-lived,
 // resource-bounded child. The child owns the cache lock and its DuckDB
 // allocator exits with the process; the long-lived daemon does neither.
-func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
+func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (_ int64, resultErr error) {
 	ctx = a.invocationContext(ctx)
+	defer func() {
+		if resultErr != nil {
+			if err := rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "identity"); err != nil {
+				loggerFromContext(ctx).Warn("request identity cache recovery", "error", err)
+			}
+		}
+	}()
 	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
 		return 0, err
 	}

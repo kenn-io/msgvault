@@ -1319,6 +1319,7 @@ func (s *Server) handleCardDAVAccountSave(w http.ResponseWriter, r *http.Request
 	if !decodeCardDAV(w, r, &req) {
 		return
 	}
+	defer s.refreshCardDAVIdentityChanges(r.Context())()
 	result, err := s.cardDAV.Save(r.Context(), req)
 	if err != nil {
 		s.writeCardDAVAccountError(w, err, "CardDAV discovery or save failed")
@@ -1517,6 +1518,7 @@ func (s *Server) handleCardDAVBookRoles(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bad_request", "write_target, subscribed, and lookup_source are required")
 		return
 	}
+	defer s.refreshCardDAVIdentityChanges(r.Context())()
 	if err = svc.SetBookRoles(r.Context(), id, carddav.BookRoles{WriteTarget: *req.WriteTarget, Subscribed: *req.Subscribed, LookupSource: *req.LookupSource}); err != nil {
 		s.writeCardDAVOperationError(w, err, "CardDAV role update failed")
 		return
@@ -1576,6 +1578,7 @@ func (s *Server) mutatePublication(w http.ResponseWriter, r *http.Request, mutat
 		writeError(w, 400, "bad_request", err.Error())
 		return
 	}
+	defer s.refreshCardDAVIdentityChanges(r.Context())()
 	if err = mutate(svc, id); err != nil {
 		s.writeCardDAVOperationError(w, err, "CardDAV publication failed")
 		return
@@ -1696,6 +1699,7 @@ func (s *Server) handleCardDAVResolve(w http.ResponseWriter, r *http.Request) {
 	if !decodeCardDAV(w, r, &req) {
 		return
 	}
+	defer s.refreshCardDAVIdentityChanges(r.Context())()
 	if err = svc.ResolveConflict(r.Context(), id, req.Choice); err != nil {
 		s.writeCardDAVOperationError(w, err, "CardDAV conflict resolution failed")
 		return
@@ -1711,6 +1715,7 @@ func (s *Server) handleCardDAVSync(w http.ResponseWriter, r *http.Request) {
 	if !decodeCardDAV(w, r, &req) {
 		return
 	}
+	defer s.refreshCardDAVIdentityChanges(r.Context())()
 	var result carddav.SyncResult
 	var err error
 	if s.cardDAV.cfg == nil {
@@ -1732,4 +1737,20 @@ func (s *Server) handleCardDAVSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, result)
+}
+
+func (s *Server) refreshCardDAVIdentityChanges(ctx context.Context) func() {
+	revisions, ok := s.store.(interface{ IdentityRevision() (int64, error) })
+	if !ok {
+		return func() {}
+	}
+	before, beforeErr := revisions.IdentityRevision()
+	return func() {
+		after, afterErr := revisions.IdentityRevision()
+		if beforeErr != nil || afterErr != nil || before != after {
+			refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+			defer cancel()
+			s.refreshIdentityCacheState(refreshCtx)
+		}
+	}
 }
