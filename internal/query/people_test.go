@@ -378,6 +378,33 @@ func TestPeopleMeetingSourceUsesFilteredDateWindow(t *testing.T) {
 	}
 }
 
+func TestPeopleMeetingFullTextSourceOwnership(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	firstSource := b.AddSourceWithType("first@example.test", "granola")
+	secondSource := b.AddSourceWithType("second@example.test", "zoom")
+	alice := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	first := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript"})
+	second := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript"})
+	b.AddTo(first, alice, "Alice")
+	b.AddTo(second, alice, "Alice")
+	b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
+	engine := b.BuildEngine()
+	for _, tc := range []struct{ source, want int64 }{{firstSource, 1}, {secondSource, 0}} {
+		request := PersonSearchRequest{Query: "Alice", Explore: ExploreRequest{
+			Context: Context{SourceIDs: []int64{tc.source}},
+			Search:  SearchSpec{Mode: SearchFullText, Query: "alpha", CandidateMessageIDs: []int64{first, second}, LexicalIndexRevision: "fts5:test"},
+		}}
+		indexed, err := engine.SearchPeople(t.Context(), request)
+		require.NoError(t, err)
+		require.Len(t, indexed.Rows, 1)
+		assert.Equal(t, tc.want, indexed.Rows[0].MeetingCount)
+		legacy, err := engine.searchPeopleLegacy(t.Context(), request, nil, nil, false)
+		require.NoError(t, err)
+		require.Len(t, legacy.Rows, 1)
+		assert.Equal(t, tc.want, legacy.Rows[0].MeetingCount)
+	}
+}
+
 func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

@@ -71,6 +71,72 @@ func TestPeopleHTTPCountsMeetingGroups(t *testing.T) {
 	assertions.Equal(int64(1), body.Rows[0].MeetingCount)
 }
 
+func TestPeopleFullTextMeetingSourceAttribution(t *testing.T) {
+	archive := testutil.NewTestStore(t)
+	var ids []int64
+	for i, account := range []string{"first@example.test", "second@example.test"} {
+		source, err := archive.GetOrCreateSource("meeting_import", account)
+		require.NoError(t, err)
+		key := fmt.Sprintf("meeting-%d", i)
+		subject := "alpha"
+		if i == 1 {
+			subject = "alpha beta"
+		}
+		id, err := archive.PersistMessage(&store.MessagePersistData{
+			Message:      &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: "meeting_transcript", Subject: sql.NullString{String: subject, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 7, 18, 10+i, 0, 0, 0, time.UTC), Valid: true}},
+			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"},
+			RawMIME:      []byte(`{}`), RawFormat: "meeting_json",
+		})
+		require.NoError(t, err)
+		ids = append(ids, id)
+	}
+	_, err := archive.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "msg", MessageID: ids[0]}, store.MeetingLinkRef{Kind: "msg", MessageID: ids[1]}, "link")
+	require.NoError(t, err)
+	_, err = archive.BackfillFTS(nil)
+	require.NoError(t, err)
+	messages := strings.ReplaceAll(exploreFixtureDefaultMessages, "'email', NULL::VARCHAR", "'meeting_transcript', NULL::VARCHAR")
+	messages = strings.Replace(messages, "(2::BIGINT, 1::BIGINT, 'm2'", "(2::BIGINT, 2::BIGINT, 'm2'", 1)
+	engine, _ := newExploreDuckDBFixtureWithClusters(t, messages, exploreFixtureDefaultRecipients, "", 3, identityCacheFixtureOptions{
+		meetingGroups: "(SELECT 1::BIGINT AS message_id, 1::BIGINT AS group_id UNION ALL SELECT 2, 1)",
+	})
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}}, Store: archive, Engine: engine, Logger: testLogger()})
+	for _, tc := range []struct {
+		name, term, filters string
+		want                int64
+	}{
+		{"both sources", "alpha", `[{"dimension":"source","values":["1","2"]}]`, 1},
+		{"earlier source", "alpha", `[{"dimension":"source","values":["1"]}]`, 1},
+		{"later source", "alpha", `[{"dimension":"source","values":["2"]}]`, 0},
+		{"later source after cutoff", "alpha", `[{"dimension":"source","values":["2"]},{"dimension":"after","values":["2026-07-18T10:30:00Z"]}]`, 1},
+		{"only later copy matches", "beta", `[{"dimension":"source","values":["2"]}]`, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			predicate := fmt.Sprintf(`{"query":%q,"search_mode":"full_text","filters":%s}`, tc.term, tc.filters)
+			response := postExploreJSON(t, srv, "/api/v1/participants/search", fmt.Sprintf(`{"identity_query":"Alice","predicate":%s}`, predicate))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var search ParticipantSearchHTTPResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &search))
+			require.Len(t, search.Rows, 1)
+			assert.Equal(t, tc.want, search.Rows[0].MeetingCount)
+			response = postExploreJSON(t, srv, "/api/v1/participants/1/summary", predicate)
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var summary ParticipantContextSummaryHTTPResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &summary))
+			assert.Equal(t, tc.want, summary.Summary.MeetingCount)
+		})
+	}
+	srv.lexicalCandidateCap = 1
+	for _, path := range []string{"/api/v1/participants/search", "/api/v1/participants/1/summary"} {
+		predicate := `{"query":"alpha","search_mode":"full_text","filters":[{"dimension":"source","values":["2"]}]}`
+		if strings.HasSuffix(path, "/search") {
+			predicate = fmt.Sprintf(`{"predicate":%s}`, predicate)
+		}
+		response := postExploreJSON(t, srv, path, predicate)
+		assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+		assert.Contains(t, response.Body.String(), "candidate_pool_saturated")
+	}
+}
+
 func TestExploreHTTPUsesCommittedDuckDBReadModel(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
