@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/clisearch"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -105,6 +106,7 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 	search.Flags().StringSliceVar(&directions, "direction", nil, "Person relation: from_person, to_person, or group")
 	search.Flags().IntVarP(&request.Limit, "limit", "n", 20, "Maximum occurrences per list, 1 to 100")
 	search.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
+	clisearch.SetKeywords(search, "extracted document attachments")
 	parent.AddCommand(search)
 	return parent
 }
