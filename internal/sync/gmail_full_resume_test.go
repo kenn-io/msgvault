@@ -187,6 +187,7 @@ func TestGmailFullResumeHistoryExpiration(t *testing.T) {
 
 type backfillHistoryTransport struct {
 	gmailCoverageTransport
+
 	historyStarts []uint64
 }
 
@@ -203,7 +204,7 @@ func (f *backfillHistoryTransport) RoundTrip(r *http.Request) (*http.Response, e
 	case strings.HasSuffix(r.URL.Path, "/history"):
 		start, err := strconv.ParseUint(r.URL.Query().Get("startHistoryId"), 10, 64)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("parse Gmail backfill history start: %w", err)
 		}
 		f.historyStarts = append(f.historyStarts, start)
 		events := []any{}
@@ -230,7 +231,7 @@ func (f *backfillHistoryTransport) RoundTrip(r *http.Request) (*http.Response, e
 func TestGmailFullBackfillPreservesPendingHistory(t *testing.T) {
 	// Serial: gmailTransportClient replaces http.DefaultClient.
 	e := acquisitionDurabilityEnv(t)
-	f := &backfillHistoryTransport{gmailCoverageTransport: gmailCoverageTransport{history: 1000}}
+	f := &backfillHistoryTransport{gmailCoverageTransport: {history: 1000}}
 	api := gmailTransportClient(t, f)
 	e.Syncer = New(api, e.Store, nil)
 	first, err := e.Syncer.Full(t.Context(), testEmail)
