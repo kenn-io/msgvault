@@ -47,6 +47,9 @@ All notable changes to msgvault, grouped by release.
 - [Hide, unhide, or delete](usage/facebook-comments.md#hide-or-delete-comments)
   an archived Facebook Page or Instagram comment with `msgvault comment moderate`.
   Each profile opts in with `actions`, and delete needs `--yes`.
+- Instagram comment sync can also archive comments on the account's ads that
+  its media list leaves out. Set `ad_account_id` and `ad_token_env` on the
+  profile; see [Include ad media](usage/instagram-comments.md#include-ad-media).
 
 - An interrupted `sync-full` prints a command to run again with the same account, filters, configuration, and logging flags. It exits with status 130; on Windows, run the command in PowerShell 7.3 or later.
 

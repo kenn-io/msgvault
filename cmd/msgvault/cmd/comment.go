@@ -198,7 +198,13 @@ func commentProfileFor(cfg *config.Config, target meta.CommentTarget, action met
 	case meta.InstagramSourceType:
 		for _, p := range cfg.InstagramComments {
 			if meta.InstagramSourceIdentifier(p.AppID, p.PageID, p.InstagramAccountID) == target.SourceIdentifier {
-				found = &commentProfile{command: "instagram-comments", actions: p.Actions, client: func() (*meta.Client, error) { return configuredInstagramCommentsClient(p) }}
+				found = &commentProfile{command: "instagram-comments", actions: p.Actions, client: func() (*meta.Client, error) {
+					client, err := configuredInstagramCommentsClient(p)
+					if err != nil {
+						return nil, fmt.Errorf("instagram profile %s: %w", p.Identifier, err)
+					}
+					return client, nil
+				}}
 			}
 		}
 	}

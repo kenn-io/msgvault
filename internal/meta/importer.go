@@ -30,6 +30,7 @@ type ImportSummary struct {
 	// because they are not one-to-one chats with the inbox owner.
 	ConversationsSkipped int
 	Partial              bool
+	AdMediaSkipped       int
 }
 
 type Importer struct {
@@ -37,6 +38,8 @@ type Importer struct {
 	api       API
 	instagram string
 	igAPI     instagramAPI
+	adAccount string
+	ads       *Client
 }
 
 func NewImporter(st *store.Store, api API) *Importer { return &Importer{store: st, api: api} }
@@ -206,7 +209,7 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 		return nil, err
 	}
 	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
-	state, err := loadState(ctx, imp.store, source, opts.Full)
+	state, err := loadState(ctx, imp.store, source, opts.Full, imp.adAccount)
 	if err != nil {
 		return nil, err
 	}
@@ -383,12 +386,20 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 				return err
 			}
 		} else if len(p.Posts) > 0 {
-			post := p.Posts[0]
-			if err := r.persist(ctx, post, post.ID, "", edge); err != nil {
-				return fmt.Errorf("%s post %q: %w", r.providerName(), post.ID, err)
+			post, owned := p.Posts[0], true
+			if edge == adCreativesEdge {
+				var err error
+				if post, owned, err = r.adMedia(ctx, post.ID); err != nil {
+					return fmt.Errorf("%s ad media %q: %w", r.providerName(), p.Posts[0].ID, err)
+				}
+			}
+			if owned {
+				if err := r.persist(ctx, post, post.ID, "", edge); err != nil {
+					return fmt.Errorf("%s post %q: %w", r.providerName(), post.ID, err)
+				}
+				p.Stack = append(p.Stack, commentFrame{Root: post.ID, Parent: post.ID})
 			}
 			p.Posts = p.Posts[1:]
-			p.Stack = append(p.Stack, commentFrame{Root: post.ID, Parent: post.ID})
 		} else if p.Exhausted {
 			p.Done = true
 		} else {

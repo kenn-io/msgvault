@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"testing/synctest"
 
@@ -33,7 +34,11 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 	t.Setenv(profile.TokenEnv, "synthetic-page-token")
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("Bearer synthetic-page-token", r.Header.Get("Authorization"))
+		token := "synthetic-page-token"
+		if r.URL.Path == "/v26.0/act_700/adcreatives" {
+			token = "synthetic-ad-token"
+		}
+		assert.Equal("Bearer "+token, r.Header.Get("Authorization"), r.URL.Path)
 		switch r.URL.Path {
 		case "/v26.0/me":
 			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
@@ -43,7 +48,15 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"data":[{"id":"300","caption":"Example media","owner":{"id":"200"}}]}`)
 		case "/v26.0/300/comments":
 			_, _ = fmt.Fprint(w, `{"data":[{"id":"400","text":"Example comment","parent_id":"300"}]}`)
-		case "/v26.0/400/replies":
+		case "/v26.0/act_700/adcreatives":
+			_, _ = fmt.Fprint(w, `{"data":[{"id":"601","effective_instagram_media_id":"901"},{"id":"600","effective_instagram_media_id":"900"}]}`)
+		case "/v26.0/900":
+			_, _ = fmt.Fprint(w, `{"id":"900","caption":"Ad-only media","owner":{"id":"200"}}`)
+		case "/v26.0/901":
+			_, _ = fmt.Fprint(w, `{"id":"901","caption":"Another account's media","owner":{"id":"201"}}`)
+		case "/v26.0/900/comments":
+			_, _ = fmt.Fprint(w, `{"data":[{"id":"1000","text":"Ad comment"}]}`)
+		case "/v26.0/400/replies", "/v26.0/1000/replies":
 			http.Error(w, "synthetic denial", http.StatusForbidden)
 		default:
 			assert.Fail("unexpected fixture request", r.URL.Path)
@@ -69,7 +82,9 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 	cfg.Data.DataDir = t.TempDir()
 	second := profile
 	second.Identifier, second.AppID = "second", "99"
-	cfg.InstagramComments = []config.InstagramCommentsSource{profile, second}
+	ads := profile
+	ads.Identifier, ads.AppID, ads.AdAccountID, ads.AdTokenEnv = "ads", "999", "700", "EXAMPLE_META_AD_TOKEN"
+	cfg.InstagramComments = []config.InstagramCommentsSource{profile, second, ads}
 	_, err = resolveInstagramCommentsProfiles([]string{"missing"}, cfg)
 	require.Error(err)
 	st, err := store.Open(cfg.DatabaseDSN())
@@ -80,6 +95,12 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 		_, err := registerInstagramCommentsProfile(t.Context(), st, source)
 		require.NoError(err)
 	}
+	t.Setenv(ads.AdTokenEnv, "")
+	require.EqualError(runConfiguredInstagramCommentsSync(t.Context(), st, ads), "instagram profile ads: needs EXAMPLE_META_AD_TOKEN in the daemon environment")
+	t.Setenv(ads.AdTokenEnv, "synthetic-broken\nad-token")
+	_, err = importInstagramCommentsProfile(t.Context(), st, ads, meta.ImportOptions{})
+	require.EqualError(err, "has an invalid token in EXAMPLE_META_AD_TOKEN")
+	t.Setenv(ads.AdTokenEnv, "synthetic-ad-token")
 	cmd := newSyncInstagramCommentsCmd()
 	var output bytes.Buffer
 	cmd.SetOut(&output)
@@ -88,7 +109,9 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 	require.Error(err)
 	assert.Contains(err.Error(), "instagram profile example-account")
 	assert.Contains(err.Error(), "instagram profile second")
+	assert.Contains(err.Error(), "instagram profile ads")
 	assert.Contains(output.String(), "Some comments weren't synced")
+	assert.Equal(1, strings.Count(output.String(), ", 1 ad media skipped"), "only the ads profile skips another account's media")
 	for _, source := range cfg.InstagramComments {
 		row, err := st.GetSourceByTypeAndIdentifier(t.Context(), meta.InstagramSourceType, meta.InstagramSourceIdentifier(source.AppID, source.PageID, source.InstagramAccountID))
 		require.NoError(err)
