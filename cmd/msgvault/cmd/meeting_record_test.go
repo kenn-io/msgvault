@@ -55,7 +55,7 @@ func TestMeetingLinksCLIPartialRecord(t *testing.T) {
 			if tc.noNotes {
 				input.MessageIDs = []int64{}
 			}
-			client := &meetingRecordClient{version: "5.8.0", record: &input}
+			client := &meetingRecordClient{version: "5.9.0", record: &input}
 			command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 			var out, stderr bytes.Buffer
 			command.SetOut(&out)
@@ -89,7 +89,7 @@ func TestMeetingLinksCLIReferenceNormalizationAndSchemaGate(t *testing.T) {
 		t.Run(tc.input, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			client := &meetingRecordClient{version: "5.8.0"}
+			client := &meetingRecordClient{version: "5.9.0"}
 			command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 			var out bytes.Buffer
 			command.SetOut(&out)
@@ -100,10 +100,10 @@ func TestMeetingLinksCLIReferenceNormalizationAndSchemaGate(t *testing.T) {
 	}
 	t.Run("previous schema", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
-		client := &meetingRecordClient{version: "5.7.0"}
+		client := &meetingRecordClient{version: "5.8.0"}
 		command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 		command.SetArgs([]string{"evt:23", "--json"})
-		require.ErrorContains(command.Execute(), "daemon API schema 5.8.0 or newer")
+		require.ErrorContains(command.Execute(), "daemon API schema 5.9.0 or newer")
 		assert.Empty(client.refs)
 	})
 }
