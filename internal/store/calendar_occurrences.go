@@ -67,6 +67,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 	}
 	exceptions := map[seriesKey][]CalendarEventRow{}
 	masters := map[seriesKey]bool{}
+	rangeSeries := map[seriesKey]bool{}
 	byID := make(map[int64]CalendarEventRow, len(rows))
 	for _, row := range rows {
 		byID[row.MessageID] = row
@@ -76,6 +77,9 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		if row.Event.Kind == calendarExceptionKind {
 			key := seriesKey{row.SourceID, row.Event.SeriesProviderID}
 			exceptions[key] = append(exceptions[key], row)
+			if calendarRangeException(row.Event) {
+				rangeSeries[key] = true
+			}
 		}
 	}
 	remaining := *budget
@@ -157,15 +161,16 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			}
 			continue
 		}
-		if (e.Kind == "single" || e.Kind == calendarSeriesKind) && slices.ContainsFunc(exceptions[seriesKey{row.SourceID, e.ProviderEventID}], func(row CalendarEventRow) bool {
-			return calendarRangeException(row.Event)
-		}) {
+		if (e.Kind == "single" || e.Kind == calendarSeriesKind) && rangeSeries[seriesKey{row.SourceID, e.ProviderEventID}] {
 			report(row.MessageID, "unsupported recurrence: RANGE=THISANDFUTURE")
 			continue
 		}
 		switch e.Kind {
 		case calendarExceptionKind, "single":
 			if e.Kind == calendarExceptionKind && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
+				if !filterOverlap && e.Start != nil && e.End != nil && rangeSeries[seriesKey{row.SourceID, e.SeriesProviderID}] {
+					add(row, 0, calendarEventOccurrence(e, row.MessageID), time.Time{})
+				}
 				continue
 			}
 			if e.Start == nil || e.End == nil {

@@ -1,7 +1,7 @@
 package store
 
 import (
-	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -40,7 +40,7 @@ func TestMeetingRecordICSNotes(t *testing.T) {
 
 func TestMeetingRecordICSRangeEdit(t *testing.T) {
 	for _, withMaster := range []bool{false, true} {
-		t.Run(fmt.Sprint(withMaster), func(t *testing.T) {
+		t.Run(strconv.FormatBool(withMaster), func(t *testing.T) {
 			st := newRFC822IDBackfillBackendStore(t)
 			source := icsSource(t, st)
 			if withMaster {
@@ -67,6 +67,38 @@ func TestMeetingRecordICSRangeEdit(t *testing.T) {
 			assert.NotEmpty(t, page.Unexpandable)
 		})
 	}
+}
+
+func TestMeetingRecordICSSeparateEditWithRange(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	for _, properties := range []string{
+		"DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=20",
+		"RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H",
+		"RECURRENCE-ID:20270304T120000Z\r\nDTSTART:20270304T150000Z\r\nDURATION:PT1H",
+	} {
+		_, err := importICalendarForTest(t, st, source, calendarDocument("REQUEST", properties))
+		require.NoError(t, err)
+	}
+	ids := emailEvents(t, st, source)
+	require.Len(t, ids, 3)
+	edit := ids[2]
+	_, note := projectionFixture(t, st, "separate-edit", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"family@example.com","startsAt":"2027-03-04T12:00:00Z"}}`)
+	for _, ref := range []MeetingLinkRef{{Kind: "evt", MessageID: edit}, {Kind: "msg", MessageID: note}} {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		require.NoError(t, err)
+		require.Len(t, record.Links, 1)
+		assert.Equal(t, edit, record.Links[0].MessageID)
+		assert.Equal(t, []int64{note}, record.MessageIDs)
+		require.NotNil(t, record.Links[0].Start)
+		assert.Equal(t, time.Date(2027, 3, 4, 15, 0, 0, 0, time.UTC), *record.Links[0].Start)
+		assert.Contains(t, record.Unexpandable, CalendarUnexpandable{MessageID: ids[1], Reason: "unsupported recurrence: RANGE=THISANDFUTURE"})
+	}
+	from := time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	require.NoError(t, err)
+	assert.Empty(t, page.Occurrences)
+	assert.NotEmpty(t, page.Unexpandable)
 }
 
 func TestMeetingRecordICSProjectionUpgrade(t *testing.T) {
