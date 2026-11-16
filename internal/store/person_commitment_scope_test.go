@@ -208,6 +208,7 @@ func TestCommitmentDiscoveryRestartsWhenOwnershipChangesDuringScan(t *testing.T)
 		run  func(*testing.T)
 	}{
 		{"identity returns after apply", func(t *testing.T) {
+			t.Helper()
 			r, ctx := require.New(t), t.Context()
 			f := newPersonSweepApplyFixture(t, "restart-identity", false)
 			source, persist := newCommitmentTestConversation(t, f)
@@ -249,6 +250,7 @@ func TestCommitmentDiscoveryRestartsWhenOwnershipChangesDuringScan(t *testing.T)
 			r.True(due)
 		}},
 		{"identity returns during scan", func(t *testing.T) {
+			t.Helper()
 			r, ctx := require.New(t), t.Context()
 			f := newPersonSweepApplyFixture(t, "identity-during-discovery", false)
 			source, persist := newCommitmentTestConversation(t, f)
