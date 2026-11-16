@@ -178,6 +178,7 @@ func TestSnapshotDuplicateRemoteUIDClaimsPreviousHrefOnlyOnce(t *testing.T) {
 	require.Len(resources, 2)
 	require.NotNil(resources[0].PersonID)
 	require.NotNil(resources[1].PersonID)
+	assert.Equal(*resources[0].PersonID, *resources[1].PersonID)
 	assert.Contains([]int64{*resources[0].PersonID, *resources[1].PersonID}, personID)
 }
 

@@ -786,7 +786,25 @@ func TestMergeParticipantsAllowsSharedEmail(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, third, owner)
 		var primary string
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT email_address FROM participants WHERE id = ?`, survivor).Scan(&primary))
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), survivor).Scan(&primary))
 		assert.Equal(t, "ABSORBED@example.test", primary)
 	})
+}
+
+func TestMergeParticipantsRejectsLostEmail(t *testing.T) {
+	st := storetest.New(t).Store
+	absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
+	require.NoError(t, err)
+	survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
+	require.NoError(t, err)
+	third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
+	require.NoError(t, err)
+	require.NoError(t, st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
+	require.Error(t, st.MergeParticipants(absorbed, survivor))
+	owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
+	require.NoError(t, err)
+	assert.Equal(t, third, owner)
+	var count int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participants WHERE id IN (?, ?)`), absorbed, survivor).Scan(&count))
+	assert.Equal(t, 2, count)
 }

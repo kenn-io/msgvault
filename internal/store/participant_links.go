@@ -419,6 +419,29 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		}
 		for _, e := range edges {
 			if e.a == lo && e.b == hi {
+				membershipChanged := false
+				if confirmMembership && personID != 0 {
+					withoutEdge := slices.DeleteFunc(slices.Clone(edges), func(edge linkEdge) bool { return edge == e })
+					if err := extendActivePersonMergeLineageTx(ctx, tx, personID, lo, hi, withoutEdge, false); err != nil {
+						return err
+					}
+					changed, err := s.bindPersonParticipantsOwnedTx(ctx, tx, personID, unionMembers, false)
+					if err != nil {
+						return err
+					}
+					if changed {
+						membershipChanged = true
+						if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
+							return err
+						}
+						if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID); err != nil {
+							return err
+						}
+						if err := s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}, peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+							return err
+						}
+					}
+				}
 				if ownerCandidateID == 0 {
 					result, updateErr := tx.ExecContext(ctx, `UPDATE participant_links
 						SET identity_match_candidate_id = NULL
@@ -442,7 +465,11 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 						return nil
 					}
 				}
-				revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
+				if membershipChanged {
+					revision, err = s.bumpIdentityRevisionContext(ctx, tx)
+				} else {
+					revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
+				}
 				if err != nil {
 					return err
 				}

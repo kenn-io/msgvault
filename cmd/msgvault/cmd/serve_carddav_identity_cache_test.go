@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"testing"
 	"time"
@@ -42,7 +41,7 @@ func TestCardDAVSchedulerRequestsIdentityRefresh(t *testing.T) {
 	sched := scheduler.New(nil)
 	t.Cleanup(func() { sched.Stop() })
 	service := &failingCardDAVService{}
-	req.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 */6 * * *"}, service, slog.New(slog.NewTextHandler(io.Discard, nil)), config.DefaultCardDAVConnection, testInvocationWithConfig(cfg)))
+	req.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 */6 * * *"}, service, slog.New(slog.DiscardHandler), config.DefaultCardDAVConnection, testInvocationWithConfig(cfg)))
 	req.ErrorContains(sched.TriggerJob(api.CardDAVJobName), "later book failed")
 	select {
 	case id := <-requests:

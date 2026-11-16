@@ -175,7 +175,7 @@ func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims, conf
  UNION ALL SELECT id, 'phone', phone_number FROM participants WHERE phone_number IS NOT NULL
  UNION ALL SELECT participant_id, identifier_type, identifier_value FROM participant_identifiers
  WHERE scope_kind IS NULL AND scope_value IS NULL
- AND identifier_type IN ('email','phone','apple_id','whatsapp','imessage','synctech_sms','google_voice','imazing_csv','beeper')`)
+ AND identifier_type IN ('email','phone','apple_id','whatsapp','imessage','synctech_sms','google_voice','imazing_csv','beeper','chatwoot')`)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("read participant addresses for CardDAV binding: %w", err)
 	}

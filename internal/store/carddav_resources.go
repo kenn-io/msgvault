@@ -1172,8 +1172,9 @@ func (s *Store) resolveCardDAVPersonTx(
 				WHERE address_kind = ? AND service_id IS NULL
 				  AND normalized_value = ? AND active_until IS NULL AND superseded_at IS NULL
 				  AND NOT EXISTS (SELECT 1 FROM carddav_resources existing
-				    WHERE existing.person_id = person_contact_points.person_id AND existing.id <> ?)
-				ORDER BY person_id`, candidate.kind, normalized, resourceID)
+				    WHERE existing.person_id = person_contact_points.person_id AND existing.id <> ?
+				    AND (existing.remote_uid IS NULL OR existing.remote_uid <> ? OR ? = ''))
+				ORDER BY person_id`, candidate.kind, normalized, resourceID, input.RemoteUID, input.RemoteUID)
 			if err != nil {
 				return nil, nil, fmt.Errorf("match CardDAV contact point: %w", err)
 			}

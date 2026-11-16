@@ -5022,10 +5022,17 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 				INSERT INTO participant_identifiers (
 					participant_id, identifier_type, identifier_value, is_primary
 				) SELECT ?, 'email', ?, FALSE
-				WHERE NOT EXISTS (SELECT 1 FROM participants WHERE id = ? AND email_address = ?)
+				WHERE NOT EXISTS (SELECT 1 FROM participants WHERE id = ? AND LOWER(email_address) = LOWER(?))
 				ON CONFLICT (identifier_type, identifier_value) DO NOTHING
 			`, newID, oldEmail.String, newID, oldEmail.String); err != nil {
 				return fmt.Errorf("preserve absorbed participant email: %w", err)
+			}
+			var retained bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM participants WHERE id = ? AND LOWER(email_address) = LOWER(?)) OR EXISTS (SELECT 1 FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND identifier_value = ?)`, newID, oldEmail.String, newID, oldEmail.String).Scan(&retained); err != nil {
+				return err
+			}
+			if !retained {
+				return errors.New("absorbed participant email belongs to another identity")
 			}
 		}
 		if err := s.rewriteObservationsForMergeTx(
