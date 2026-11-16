@@ -12,6 +12,8 @@ All notable changes to msgvault, grouped by release.
 
 - Account matching recovers after identity changes. Explore refreshes pending counts and lets you retry matching for each source.
 
+- An interrupted `sync-full` prints a command to run again with the same account, filters, configuration, and logging flags. It exits with status 130; on Windows, run the command in PowerShell 7.3 or later.
+
 ## 0.25.0
 <small>2026-11-14</small>
 
