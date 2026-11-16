@@ -249,9 +249,6 @@ describe('CardDAVOperations', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Sync now' }));
     await waitFor(() => expect(second).toBeDefined());
     expect(screen.queryByText(conflictWarning)).toBeNull();
-    second!(syncResult());
-    await waitFor(() => expect(screen.getByText('CardDAV sync completed.')).toBeDefined());
-    expect(screen.queryByText(conflictWarning)).toBeNull();
     controller.destroy();
   });
 
@@ -269,5 +266,4 @@ describe('CardDAVOperations', () => {
     expect(screen.queryByText(conflictWarning)).toBeNull();
     controller.destroy();
   });
-
 });

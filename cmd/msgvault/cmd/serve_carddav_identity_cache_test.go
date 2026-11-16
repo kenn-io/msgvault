@@ -22,7 +22,7 @@ func (f *failingCardDAVService) Sync(context.Context, carddav.SyncOptions) (card
 	return carddav.SyncResult{}, errors.New("later book failed")
 }
 
-func TestCardDAVSchedulerRequestsIdentityRefresh(t *testing.T) {
+func TestCardDAVSchedulerRequestsCacheRebuildAfterFailedSync(t *testing.T) {
 	req := require.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
