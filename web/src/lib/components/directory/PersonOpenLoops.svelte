@@ -82,7 +82,8 @@
     const until = data.commitments_until?.slice(0, 10);
     if (!since) return data.commitments_complete ? '' : 'Promise discovery has not started.';
     if (until && until < since) return 'No messages were eligible for promise discovery in the current window.';
-    return `Promise discovery ${until ? `from ${since} through ${until}` : `since ${since}`} is ${data.commitments_complete ? 'complete' : 'incomplete'}.`;
+    const day = (date: string) => formatShortDate(`${date}T00:00:00`);
+    return `Promise discovery ${until ? `from ${day(since)} through ${day(until)}` : `since ${day(since)}`} is ${data.commitments_complete ? 'complete' : 'incomplete'}.`;
   }
 
   const groups = $derived([
@@ -104,11 +105,10 @@
     return `${Math.floor(seconds / 60)}m`;
   }
 
-  function dueLabel(day: string): string {
-    const due = new Date(`${day}T00:00:00`);
+  function isOverdue(day: string): boolean {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    return `${due < today ? 'overdue' : 'due'} ${formatShortDate(`${day}T00:00:00`)}`;
+    return new Date(`${day}T00:00:00`) < today;
   }
 </script>
 
@@ -143,7 +143,9 @@
             {#each group.items as promise (promise.id)}
               <li class="promise">
                 <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>“{promise.promise.text}”</a>
-                <span class="muted">{promise.due_on ? `${dueLabel(promise.due_on)} · ` : ''}made {ageLabel(promise.promised_at)} ago</span>
+                <span class="muted">
+                  {#if promise.due_on}{#if isOverdue(promise.due_on)}<span class="overdue">overdue {formatShortDate(`${promise.due_on}T00:00:00`)}</span>{:else}due {formatShortDate(`${promise.due_on}T00:00:00`)}{/if}{' · '}{/if}made {ageLabel(promise.promised_at)} ago
+                </span>
               </li>
             {/each}
           </ul>
@@ -174,9 +176,12 @@
   li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); min-width: 0; }
   a { min-width: 0; overflow: hidden; color: var(--link-ink); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
   a:hover { text-decoration: underline; }
-  .stale a { color: var(--text-muted); }
+  .stale { padding-left: var(--space-3); border-left: var(--border-width) solid var(--border-default); }
+  .stale h4 { font-style: italic; }
+  .stale a { text-decoration: underline; }
+  .overdue { padding: 0 var(--chip-pad-x); border-radius: var(--radius-md); background: var(--status-warning-bg); color: var(--status-warning-ink); }
   li > span { flex: none; }
   .muted { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
-  .discovery-status { margin-top: var(--space-4); }
+  .discovery-status { padding-top: var(--space-2); border-top: var(--border-width) solid var(--border-muted); font-size: var(--font-size-xs); line-height: 1.5; }
   [role="alert"] { color: var(--text-danger); }
 </style>

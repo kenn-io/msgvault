@@ -182,18 +182,18 @@ describe("PersonOpenLoops", () => {
     const respond = (body: object) => createAPIClient(vi.fn<typeof fetch>(async () =>
       Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, ...body })));
     const view = render(PersonOpenLoops, {
-      client: respond({ commitments_complete: false, commitments_since: "2026-10-01T00:00:00Z" }),
+      client: respond({ commitments_complete: false, commitments_since: "2000-10-01T00:00:00Z" }),
       personID: 7,
     });
-    expect(await screen.findByText("Promise discovery since 2026-10-01 is incomplete.")).toBeDefined();
+    expect(await screen.findByText("Promise discovery since Oct 1, 2000 is incomplete.")).toBeDefined();
     expect(screen.queryByText("Nothing open with this person.")).toBeNull();
     view.unmount();
 
     const withLoops = render(PersonOpenLoops, {
-      client: respond({ items: [loop()], commitments_complete: false, commitments_since: "2026-10-01T00:00:00Z", commitments_until: "2026-10-31T00:00:00Z" }),
+      client: respond({ items: [loop()], commitments_complete: false, commitments_since: "2000-10-01T00:00:00Z", commitments_until: "2000-10-31T00:00:00Z" }),
       personID: 7,
     });
-    expect(await screen.findByText("Promise discovery from 2026-10-01 through 2026-10-31 is incomplete.")).toBeDefined();
+    expect(await screen.findByText("Promise discovery from Oct 1, 2000 through Oct 31, 2000 is incomplete.")).toBeDefined();
     expect(screen.getByRole("link", { name: "Review the draft?" })).toBeDefined();
     withLoops.unmount();
 
@@ -203,9 +203,9 @@ describe("PersonOpenLoops", () => {
     notStarted.unmount();
     render(PersonOpenLoops, { client: respond({
       commitments_complete: true,
-      commitments_since: "2026-10-01T00:00:00Z", commitments_until: "2026-10-31T00:00:00Z",
+      commitments_since: "2000-10-01T00:00:00Z", commitments_until: "2000-10-31T00:00:00Z",
     }), personID: 7 });
-    expect(await screen.findByText("Promise discovery from 2026-10-01 through 2026-10-31 is complete.")).toBeDefined();
+    expect(await screen.findByText("Promise discovery from Oct 1, 2000 through Oct 31, 2000 is complete.")).toBeDefined();
   });
 
   it("shows an error", async () => {
