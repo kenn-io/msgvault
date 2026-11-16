@@ -77,20 +77,21 @@ describe("PersonOpenLoops", () => {
       items: [loop(42), loop(43), loop(44), loop(45), loop(46)],
       truncated: true,
       commitments: [
-        { id: "c12", person_id: 7, summary: "Send the draft", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 22, text: "I will send the draft." }, promised_at: "2026-10-12T12:00:00Z", due_on: "2026-11-20" },
-        { id: "c13", person_id: 7, summary: "Check the venue", state: "open", direction: "owed_to", freshness: "stale", promise: { message_id: 53, start: 0, end: 23, text: "I will check the venue." }, promised_at: "2026-10-12T12:00:00Z" },
+        { id: "c12", person_id: 7, summary: "Send the draft", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 22, text: "I will send the draft." }, promised_at: "2026-10-12T12:00:00Z", due_on: "2099-11-20" },
+        { id: "c13", person_id: 7, summary: "Check the venue", state: "open", direction: "owed_to", freshness: "stale", promise: { message_id: 53, start: 0, end: 23, text: "I will check the venue." }, promised_at: "2026-10-12T12:00:00Z", due_on: "2000-11-15" },
       ],
     }));
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
-    const cite = await screen.findByRole("link", { name: "I will send the draft." });
+    const cite = await screen.findByRole("link", { name: "“I will send the draft.”" });
     expect(cite.getAttribute("href")).toBe("/messages/52");
     expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
     expect(screen.getByRole("heading", { name: "Stale promises to you" })).toBeDefined();
-    const undated = screen.getByRole("link", { name: "I will check the venue." });
-    expect(undated.getAttribute("href")).toBe("/messages/53");
+    const stale = screen.getByRole("link", { name: "“I will check the venue.”" });
+    expect(stale.getAttribute("href")).toBe("/messages/53");
     expect(await screen.findByText("7+ open")).toBeDefined();
-    expect(cite.closest("li")?.textContent).toContain("due 2026-11-20");
-    expect(undated.closest("li")?.textContent).not.toContain("due");
+    expect(cite.closest("li")?.textContent).toContain("due Nov 20, 2099");
+    expect(cite.closest("li")?.textContent).toMatch(/made \d+[dhm] ago/);
+    expect(stale.closest("li")?.textContent).toContain("overdue Nov 15, 2000");
   });
 
   it("shows a plus when more loops are open than the card lists", async () => {
@@ -162,7 +163,7 @@ describe("PersonOpenLoops", () => {
 
     const button = await screen.findByRole("button", { name: "Check more" });
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(await screen.findByRole("link", { name: "Promise 1" })).toBeDefined();
+    expect(await screen.findByRole("link", { name: "“Promise 1”" })).toBeDefined();
     button.click();
 
     expect((await screen.findByRole("alert")).textContent).toContain(
@@ -174,8 +175,8 @@ describe("PersonOpenLoops", () => {
 
     expect(await screen.findByRole("link", { name: "Can you review this?" }))
       .toBeDefined();
-    expect(await screen.findByRole("link", { name: "Promise 2" })).toBeDefined();
-    expect(screen.queryByRole("link", { name: "Promise 1" })).toBeNull();
+    expect(await screen.findByRole("link", { name: "“Promise 2”" })).toBeDefined();
+    expect(screen.queryByRole("link", { name: "“Promise 1”" })).toBeNull();
     expect(screen.getByText("Promise discovery since 2026-10-01 is complete.")).toBeDefined();
     expect(fetcher).toHaveBeenCalledTimes(3);
     expect(screen.queryByRole("button", { name: "Check more" })).toBeNull();

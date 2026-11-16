@@ -4,6 +4,7 @@
   import { Button } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import { formatContactDate } from '../../directory/labels';
+  import { formatShortDate } from '../../util/format';
   import { listLoops } from '../../api/generated/api/api';
   import type { LoopCommitment, LoopItem, LoopListResponse } from '../../api/generated/models';
 
@@ -102,6 +103,13 @@
     if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h`;
     return `${Math.floor(seconds / 60)}m`;
   }
+
+  function dueLabel(day: string): string {
+    const due = new Date(`${day}T00:00:00`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return `${due < today ? 'overdue' : 'due'} ${formatShortDate(`${day}T00:00:00`)}`;
+  }
 </script>
 
 <DetailSection title="Open loops">
@@ -129,13 +137,13 @@
     {/each}
     {#each promiseGroups as group (group.key)}
       {#if group.items.length > 0}
-        <div class="group">
+        <div class="group" class:stale={group.key.startsWith('stale-')}>
           <h4>{group.label}</h4>
           <ul>
             {#each group.items as promise (promise.id)}
               <li class="promise">
-                <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>{promise.promise.text}</a>
-                <span class="muted">{promise.due_on ? `due ${promise.due_on} · ` : ''}{ageLabel(promise.promised_at)}</span>
+                <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>“{promise.promise.text}”</a>
+                <span class="muted">{promise.due_on ? `${dueLabel(promise.due_on)} · ` : ''}made {ageLabel(promise.promised_at)} ago</span>
               </li>
             {/each}
           </ul>
@@ -143,7 +151,7 @@
       {/if}
     {/each}
   {/if}
-  {#if !loading && !failed && promiseStatus}<p class="muted">{promiseStatus}</p>{/if}
+  {#if !loading && !failed && promiseStatus}<p class="muted discovery-status">{promiseStatus}</p>{/if}
   {#if !loading && !failed && unreadable > 0}
     <p class="muted">
       {unreadable === 1 ? '1 message' : `${unreadable} messages`} could not be read, so a reply in {unreadable === 1 ? 'it' : 'one'} may have settled a loop.
@@ -161,11 +169,14 @@
   h4, p, ul { margin: 0; }
   h4 { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; }
   .group { display: grid; gap: var(--space-1); }
+  .group + .group { margin-top: var(--space-4); }
   ul { display: grid; gap: var(--space-1); padding: 0; list-style: none; }
   li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); min-width: 0; }
   a { min-width: 0; overflow: hidden; color: var(--link-ink); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
   a:hover { text-decoration: underline; }
+  .stale a { color: var(--text-muted); }
   li > span { flex: none; }
   .muted { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  .discovery-status { margin-top: var(--space-4); }
   [role="alert"] { color: var(--text-danger); }
 </style>
