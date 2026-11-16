@@ -58,7 +58,7 @@ func TestMCPCapabilitiesRequiresOwner(t *testing.T) {
 	assertions.NotContains(delegated.Body.String(), agentTokenTestAPIKey)
 }
 
-func TestMCPCapabilitiesDescribeRealLoopAndDeletionRoutes(t *testing.T) {
+func TestMCPCapabilitiesDescribeRealOperationRoutes(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Logger: testLogger()})
@@ -72,6 +72,7 @@ func TestMCPCapabilitiesDescribeRealLoopAndDeletionRoutes(t *testing.T) {
 		routes[route.OperationID] = route
 	}
 	for _, tc := range []struct{ id, method, path string }{
+		{"runCLI", http.MethodPost, "/api/v1/cli/run"},
 		{"listLoops", http.MethodGet, "/api/v1/loops"},
 		{"listDeletions", http.MethodGet, "/api/v1/deletions"},
 		{"getDeletion", http.MethodGet, "/api/v1/deletions/{id}"},
@@ -84,6 +85,7 @@ func TestMCPCapabilitiesDescribeRealLoopAndDeletionRoutes(t *testing.T) {
 		assertions.Equal(tc.path, routes[tc.id].Path)
 	}
 	assertions.Contains(routes["listDeletions"].QueryParameters, "status")
+	assertions.Contains(routes["runCLI"].RequestProperties, "args")
 	assertions.ElementsMatch([]string{"limit", "person_id"}, routes["listLoops"].QueryParameters)
 	assertions.Contains(routes["snoozeLoop"].RequestProperties, "until")
 	assertions.Contains(routes["markLoopDone"].QueryParameters, "question_message_ids")

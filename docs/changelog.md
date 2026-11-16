@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-13"
+last_edited: "2026-11-14"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -9,7 +9,93 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
-- Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
+
+## 0.25.0
+<small>2026-11-14</small>
+
+Connect Claude Code and Codex to your archive with one command, sync Microsoft
+365 mailboxes from several organizations, and let assistants find the right
+tool for a task, export one person's messages, and review staged deletions.
+This release also replaces 0.24.0, which was withdrawn because its Linux
+binaries did not start on most distributions.
+
+[GitHub release](https://github.com/kenn-io/msgvault/releases/tag/v0.25.0) ·
+[All changes since 0.24.0](https://github.com/kenn-io/msgvault/compare/v0.24.0...v0.25.0)
+
+### Upgrade notes
+
+- **0.25.0 includes everything in 0.24.0.** If you are upgrading from 0.23.0,
+  follow the [0.24.0 upgrade notes](#0240) first. They cover document search
+  moving to Docbank and upgrading clients together with the daemon.
+- **On Linux, reinstall if 0.24.0 left msgvault unable to start.** The 0.24.0
+  Linux binaries required glibc 2.43, so they failed with
+  ``version `GLIBC_2.43' not found`` on Ubuntu 24.04, Debian 12, and other
+  releases older than Ubuntu 26.04. `msgvault update` from 0.23.0 installed
+  them anyway, which left a binary that could not run or update itself.
+  Reinstall with `curl -fsSL https://msgvault.io/install.sh | bash`. The
+  archive was not changed, because 0.24.0 exited before it opened anything.
+
+### New features
+
+- Connect Claude Code and Codex to your archive with
+  [`msgvault agent setup`](cli-reference.md#agent-setup). The command installs
+  skills and configures MCP access, the connection assistants use to work with
+  msgvault. [`msgvault setup status`](cli-reference.md#setup-status) reports
+  each installed agent's connection status and any repair command.
+- Sync Microsoft 365 mailboxes from
+  [multiple organizations](guides/oauth-setup.md#mailboxes-in-multiple-organizations)
+  without switching configuration between runs. Define named apps under
+  `[microsoft.apps.NAME]` and select one with
+  `msgvault add-o365 ADDRESS --oauth-app NAME`. Teams, contacts, and the web
+  add-source form continue to use `[microsoft]`.
+- Find MCP tools by describing a task with
+  [`search_tools`](usage/chat.md#find-tools-for-a-task). Search runs locally
+  and returns relevant tools with their descriptions and inputs, limited to
+  those available to the connection.
+- Export one person's messages as JSONL through an MCP-connected assistant
+  with [`export_person_messages`](usage/chat.md#available-tools). Archive
+  owners receive the export, manifest, and completion receipt without running
+  `msgvault export-messages` separately. Exports must fit within the 512 KiB
+  response limit.
+- [Review staged deletions through MCP](usage/chat.md#staged-deletion-via-mcp)
+  without enabling writes. Archive owners can list deletion batches with
+  `list_deletions` and read a batch's receipt with `get_deletion`. These tools
+  are unavailable to delegated sessions.
+
+### Improvements
+
+- Remove leftover Microsoft tokens when removing a Graph mail or IMAP source.
+  msgvault attempts cleanup across the default and named apps, keeps tokens
+  another active source still uses, and warns when unreadable IMAP settings
+  prevent cleanup.
+- Identify an IMAP account's authentication method through the optional
+  `auth_method` field on `GET /api/v1/cli/accounts`, when its settings are
+  readable. See [API compatibility](api-server.md#api-compatibility).
+
+### Bug fixes
+
+- Run the Linux release binaries on distributions back to Ubuntu 22.04 again.
+- Keep your working installation when an update cannot run.
+  [`msgvault update`](cli-reference.md#update) checks that the new binary
+  starts before replacing the installed one. A failed, timed-out, or canceled
+  check leaves the existing binary in place and reports why.
+- Restore provider credentials, CardDAV logins, and the server API key on
+  Windows with the required access permissions. Restore preserves files
+  omitted from the backup and reports permission conflicts. To repair a
+  conflict, move the conflicting file aside, stop the daemon, and rerun
+  [`msgvault backup restore`](cli-reference.md#backup-restore)
+  `SNAPSHOT --repo REPO --target DIR --permissions-only`.
+
+### Acknowledgements
+
+Thanks to everyone who contributed to this release:
+
+- [@AndrewWiggins](https://github.com/AndrewWiggins) for documenting how full-text indexing works and simplifying how sync records partial imports.
+- [@rodboev](https://github.com/rodboev) for `msgvault agent setup`, Microsoft 365 mailboxes in multiple organizations, Microsoft token cleanup when removing a source, and the IMAP authentication method in the accounts API.
+- [@salmonumbrella](https://github.com/salmonumbrella) for task-based tool search, JSONL export of one person's messages, staged deletion review through MCP, and Windows credential restores.
+- [@wesm](https://github.com/wesm) for keeping the installed binary when an update cannot run.
+
+---
 
 ## 0.24.0
 <small>2026-11-13</small>
@@ -21,7 +107,9 @@ for sensitive content and unfamiliar recipients, and sign-in codes withheld
 from delegated reads. Turn on search by meaning from Settings, search attached
 documents through Docbank, and use the Web UI comfortably on a phone.
 
-[GitHub release](https://github.com/kenn-io/msgvault/releases/tag/v0.24.0) ·
+Withdrawn: its Linux binaries did not start on most distributions. Install
+[0.25.0](#0250), which includes these changes.
+
 [All changes since 0.23.0](https://github.com/kenn-io/msgvault/compare/v0.23.0...v0.24.0)
 
 ### Upgrade notes

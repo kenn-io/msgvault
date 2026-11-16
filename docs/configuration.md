@@ -676,11 +676,13 @@ sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
 
 | Key | Default | Description |
 |---|---|---|
-| `client_id` | — | Azure AD Application (client) ID (required) |
+| `client_id` | — | Default Azure AD Application (client) ID |
 | `redirect_uri` | `http://localhost:8089/callback/microsoft` | OAuth redirect URI registered in the Azure AD app |
 | `tenant_id` | `common` | Azure AD tenant ID; `common` allows both personal and org accounts |
 
-See [OAuth Setup: Microsoft 365](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the same `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth uses `tokens/microsoft_<email>.json`.
+For a mailbox in another organization, configure a separate app under `[microsoft.apps.<name>]` with its own `client_id`, `tenant_id`, and `redirect_uri`. Omitted tenant and redirect values use the defaults in the table, independently of `[microsoft]`. Restart the daemon after changing Microsoft app settings so scheduled syncs use the updated configuration. Bind a mail source with `msgvault add-o365 user@org-b.example --oauth-app orgb`. Teams, contacts, and the Web add-source template use `[microsoft]`.
+
+See [OAuth Setup: Microsoft 365](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the default `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth with the default app uses `tokens/microsoft_<email>.json`.
 
 ### `[[fastmail]]`
 

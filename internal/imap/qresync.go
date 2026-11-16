@@ -75,7 +75,7 @@ func (c *Client) qresyncEligible(prior, current FolderState) bool {
 }
 
 func (c *Client) enableQresync(ctx context.Context) bool {
-	caps := c.conn.Caps()
+	caps := c.connCaps()
 	if !caps.Has(imap.CapEnable) || !caps.Has(imap.CapQResync) {
 		return false
 	}

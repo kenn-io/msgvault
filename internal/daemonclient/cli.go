@@ -288,6 +288,7 @@ type CLIAccount struct {
 	Type               string     `json:"type"`
 	DisplayName        string     `json:"display_name"`
 	OAuthApp           string     `json:"oauth_app,omitempty"`
+	AuthMethod         string     `json:"auth_method,omitempty"`
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
 	Stale              bool       `json:"stale,omitempty"`

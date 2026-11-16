@@ -37,14 +37,14 @@ Start here:
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
+  msgvault export-messages --help
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
 
 Output:
-  --json writes JSON to stdout (JSONL for export-messages).
-  Logs and progress go to stderr. Exit: 0 OK, 1 error, 130 interrupted.
+  --json: stdout (JSONL for export-messages).
+  Logs, progress: stderr. Exit: 0 OK, 1 error, 130 interrupted.
   See msgvault quickstart.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			inv := prepareInvocation(cmd)
@@ -305,7 +305,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 		return true
 	}
 	for c := cmd; c != nil; c = c.Parent() {
-		if c == skillsCmd {
+		if c == skillsCmd || c == agentCmd {
 			return true
 		}
 	}

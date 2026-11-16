@@ -18,9 +18,9 @@ func TestPersonGetContactState(t *testing.T) {
 		name, version                    string
 		probeFails, stateFails, hasState bool
 	}{
-		{"optional subresource unavailable", "5.3.0", false, true, false},
+		{"optional subresource unavailable", "5.5.0", false, true, false},
 		{"version probe fails", "", true, false, false},
-		{"current daemon", "5.3.0", false, false, true},
+		{"current daemon", "5.5.0", false, false, true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			check := assert.New(t)

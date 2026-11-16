@@ -18,6 +18,8 @@ their intent or authorization is unclear.
 
 ## Connect and discover
 
+For Claude Code and Codex, run `msgvault agent setup` to install skills and connect the MCP server.
+
 Choose the connection the owner has authorized:
 
 - **Local stdio:** configure the MCP client to run `msgvault mcp`. It starts or
@@ -248,6 +250,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `draft_send_as` | read | — | backend-dependent |
 | `explain_person_tier` | read | — | owner-only |
 | `export_eml` | read | — | owner-only |
+| `export_person_messages` | read | — | owner-only |
 | `find_chat` | read | — | owner-only |
 | `find_contact_candidates` | read | — | owner-only |
 | `find_kata_issues` | read | — | owner-only |
@@ -301,6 +304,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `search_metadata` | read | — | search.read |
 | `search_people` | read | — | owner-only |
 | `search_person_files` | read | — | owner-only |
+| `search_tools` | read | — | metadata-only |
 | `search_visual_attachments` | read | — | owner-only |
 | `semantic_search_messages` | read | — | owner-only |
 | `sync_source` | source_write | `--allow-source-writes` | owner-only |

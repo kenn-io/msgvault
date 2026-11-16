@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-14"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -166,9 +166,12 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.3.0**.
+it is separate from the binary release version. The current schema is **5.5.0**.
 
-Schema 5.3.0 adds first-appearance evidence to person contact state.
+Schema 5.5.0 adds first-appearance evidence to person contact state.
+
+Schema 5.3.0 adds `auth_method` to IMAP accounts in `GET /api/v1/cli/accounts`:
+`password` or `xoauth2`, present when the source's settings are readable.
 
 Schema 5.2.0 adds open Kata issue search and optional task search queries.
 
@@ -443,6 +446,12 @@ syncs. If the sync ends while the write waits, the write can proceed.
 |---|---|
 | `GET /api/v1/messages/{id}/tags` | Read current native tags; optional `mailbox` query selects an exact recorded IMAP copy |
 | `POST /api/v1/messages/{id}/tags` | Apply `add` and `remove` arrays, optional `mailbox`, and optional `dry_run` |
+
+With API schema 5.4.0 or newer, GET can read tags for a message marked deleted
+from its source, such as a message still in Trash. The provider must still
+resolve the stored identity. The read returns the provider's observation and
+leaves the archive unchanged. POST, including `dry_run`, still rejects
+source-deleted messages. Both methods reject locally hidden messages.
 
 `id` is the positive archived message ID. Without `mailbox`, IMAP selects the
 current original copy, then the sole current membership. Multiple surviving
