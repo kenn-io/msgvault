@@ -1,0 +1,23 @@
+Follow feeds and archive their items. Each URL is fetched first: a URL that
+is not a reachable RSS 2.0, Atom or JSON feed is reported and not followed.
+The items it lists now are archived right away; later items arrive with
+msgvault source feeds sync or the [feeds] schedule.
+
+--opml follows every feed in an OPML file, the subscription export of most
+feed readers, without fetching them; the next sync fetches them. Following a
+removed feed again resumes it.
+
+Usage:
+  msgvault source feeds add <url>... | add --opml <file> [flags]
+
+Examples:
+  msgvault source feeds add https://example.com/releases.atom
+  msgvault source feeds add --opml ~/Downloads/subscriptions.opml
+
+Flags:
+      --build-cache      refresh analytics cache after this sync
+  -h, --help             help for add
+      --no-build-cache   skip analytics cache refresh after this sync
+      --opml string      OPML subscription file
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')

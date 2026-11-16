@@ -283,7 +283,7 @@ it.each([{ state: 'ready', shown: true }, { state: 'disabled', shown: false }])(
   readiness.dispose();
 });
 
-it('refreshes links after a Kata comment fails after saving evidence', async () => {
+it('refreshes links on close after a Kata comment fails after saving evidence', async () => {
   let saved = false;
   const issue = { uid: 'issue-uid', ref: 'abcd', qualified_ref: 'example#abcd', project: 'example', title: 'Follow up', status: 'open', revision: '1' };
   const reference = { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, source_type: 'email', source_identifier: 'archive@example.com', source_message_id: 'message-example', message: { body_sha256: 'a'.repeat(64), start_rune: 0, end_rune: 15 } };
@@ -292,6 +292,7 @@ it('refreshes links after a Kata comment fails after saving evidence', async () 
     const path = new URL(request.url).pathname;
     if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
     if (path.endsWith('/messages/42/tasks')) return Response.json({ state: 'ready', complete: true, tasks: saved ? [{ id: 'task-1', title: 'Linked task' }] : [], outbound_metadata: taskOutboundMetadata });
+    if (path.endsWith('/kata/open-issues')) return Response.json({ issues: [issue], truncated: false });
     if (path.endsWith('/kata/issues')) return Response.json({ issues: saved ? [issue] : [], truncated: false });
     if (path.endsWith('/evidence/prepare')) return Response.json({ evidence: [{ id: 'evidence-1', passage: 'passage-1', reference, excerpt: 'Opening passage', display: { containing_title: 'Synthetic message' }, content_trust: 'untrusted' }] });
     if (path.endsWith('/issues/example%23abcd/evidence') && request.method === 'POST') {
@@ -308,14 +309,13 @@ it('refreshes links after a Kata comment fails after saving evidence', async () 
     await screen.findByText('No linked Kata issues.');
     await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
-    await chooseSelectOption(await screen.findByRole('combobox', { name: /^Provider:/ }), 'Kata');
-    await fireEvent.click(screen.getByRole('button', { name: 'Add quote to Kata…' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
     await screen.findByText('Opening passage');
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Action:/ }), 'Add to existing issue');
-    await fireEvent.input(screen.getByLabelText('Kata issue ref'), { target: { value: 'example#abcd' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add evidence' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Follow up · example#abcd' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('Comment failed');
-    await fireEvent.click(screen.getByText('Close').closest('button')!);
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(await screen.findByText('example#abcd: Follow up · open')).toBeDefined();
     expect(await screen.findByText('Linked task')).toBeDefined();
   } finally { view.unmount(); readiness.dispose(); }

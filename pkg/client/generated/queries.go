@@ -546,13 +546,14 @@ type GetKataIssueContextQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
-type SearchIntegrationTasksQuery struct {
-	// Q Task title search within the configured project
-	Q string `json:"q" validate:"required"`
+type ListOpenKataIssuesQuery struct {
+	// Q Search open issue text by whole word or enter an exact qualified ref, including closed issues, up to 256 bytes
+	Q *string `json:"q,omitempty"`
 }
 
-func (s SearchIntegrationTasksQuery) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+type SearchIntegrationTasksQuery struct {
+	// Q Task title search within the configured project; omit to list tasks
+	Q *string `json:"q,omitempty"`
 }
 
 type ListLoopsQuery struct {

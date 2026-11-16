@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
+
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/transform"
 )
 
 var requiredHeaders = []string{"chat session", "message date", "service", "type"}
@@ -101,7 +103,7 @@ func parseFile(ctx context.Context, path string, loc *time.Location) ([]Row, err
 	}
 	defer func() { _ = file.Close() }()
 
-	reader := csv.NewReader(withoutBOM(newValidUTF8Reader(file)))
+	reader := csv.NewReader(withoutBOM(transform.NewReader(file, encoding.UTF8Validator)))
 	reader.Comma = delimiter
 	reader.FieldsPerRecord = -1
 	header, err := reader.Read()
@@ -141,13 +143,13 @@ func detectDelimiter(path string) (rune, error) {
 		if err != nil {
 			return 0, fmt.Errorf("open %s: %w", filepath.Base(path), err)
 		}
-		reader := csv.NewReader(withoutBOM(newValidUTF8Reader(file)))
+		reader := csv.NewReader(withoutBOM(transform.NewReader(file, encoding.UTF8Validator)))
 		reader.Comma = delimiter
 		reader.FieldsPerRecord = -1
 		header, readErr := reader.Read()
 		_ = file.Close()
 		if readErr != nil {
-			if errors.Is(readErr, errInvalidUTF8) {
+			if errors.Is(readErr, encoding.ErrInvalidUTF8) {
 				return 0, fmt.Errorf("parse %s record 1: %w", filepath.Base(path), readErr)
 			}
 			continue
@@ -381,52 +383,6 @@ func ParseWallTime(value string, loc *time.Location) (time.Time, error) {
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Before(candidates[j]) })
 	return candidates[0], nil
-}
-
-var errInvalidUTF8 = errors.New("invalid UTF-8")
-
-type validUTF8Reader struct {
-	reader  *bufio.Reader
-	pending []byte
-	err     error
-}
-
-func newValidUTF8Reader(reader io.Reader) io.Reader {
-	return &validUTF8Reader{reader: bufio.NewReader(reader)}
-}
-
-func (r *validUTF8Reader) Read(buffer []byte) (int, error) {
-	if len(buffer) == 0 {
-		return 0, nil
-	}
-	written := 0
-	for written < len(buffer) {
-		if len(r.pending) > 0 {
-			copied := copy(buffer[written:], r.pending)
-			r.pending = r.pending[copied:]
-			written += copied
-			continue
-		}
-		if r.err != nil {
-			if written > 0 {
-				return written, nil
-			}
-			return 0, r.err
-		}
-		runeValue, size, err := r.reader.ReadRune()
-		if err != nil {
-			r.err = err
-			continue
-		}
-		if runeValue == utf8.RuneError && size == 1 {
-			r.err = errInvalidUTF8
-			continue
-		}
-		var encoded [utf8.UTFMax]byte
-		encodedSize := utf8.EncodeRune(encoded[:], runeValue)
-		r.pending = append(r.pending, encoded[:encodedSize]...)
-	}
-	return written, nil
 }
 
 func withoutBOM(reader io.Reader) io.Reader {

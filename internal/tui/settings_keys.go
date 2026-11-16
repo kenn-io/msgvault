@@ -15,6 +15,17 @@ func (m Model) settingsIsNarrow() bool {
 }
 
 func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == keyNamePageUp || msg.String() == keyNamePageDown {
+		title, body, actions, _ := m.settingsScreen()
+		v, _ := m.settingsViewport(title, body, actions)
+		if msg.String() == keyNamePageUp {
+			v.PageUp()
+		} else {
+			v.PageDown()
+		}
+		m.settings.scrollOffset = v.YOffset()
+		return m, nil
+	}
 	if m.settings.peopleControls.active {
 		return m.handlePeopleInferenceControlKey(msg)
 	}
@@ -28,7 +39,7 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	if m.settings.saving {
 		if msg.String() == keyNameEsc {
 			m.settings.confirmDiscard = false
-			m.settings.status = "Save in progress; wait for it to finish."
+			m.settings.status, m.settings.scrollOffset = "Save in progress; wait for it to finish.", 0
 			m.settings.statusIsError = false
 		}
 		return m, nil
@@ -39,6 +50,7 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			m.settings = newSettingsState()
 		case "n", "N", keyNameEsc:
 			m.settings.confirmDiscard = false
+			m.revealSettingsFocus()
 		}
 		return m, nil
 	}
@@ -58,6 +70,7 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		if m.settings.dirty() {
 			m.settings.confirmDiscard = true
 			m.settings.status = ""
+			m.settings.scrollOffset = 0
 			return m, nil
 		}
 		m.settings = newSettingsState()
@@ -75,20 +88,31 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	case "up", "k", keyNameCtrlP:
 		if m.settings.rowCursor > 0 {
 			m.settings.rowCursor--
+			m.revealSettingsFocus()
 		}
 	case keyNameDown, "j", keyNameCtrlN:
 		if m.settings.rowCursor+1 < len(m.settings.currentFields()) {
 			m.settings.rowCursor++
+			m.revealSettingsFocus()
 		}
 	case "left", "h":
 		if m.settingsIsNarrow() {
 			m.settings.narrowFields = false
+			m.revealSettingsFocus()
 			return m, nil
 		}
+		changed := m.settings.groupCursor > 0 || m.settings.rowCursor > 0 || m.settings.status != ""
 		m.changeSettingsGroup(-1)
+		if changed {
+			m.revealSettingsFocus()
+		}
 	case keyNameRight, "l":
 		if !m.settingsIsNarrow() {
+			changed := m.settings.groupCursor+1 < len(m.settings.groups) || m.settings.rowCursor > 0 || m.settings.status != ""
 			m.changeSettingsGroup(1)
+			if changed {
+				m.revealSettingsFocus()
+			}
 		}
 	case keyNameEnter:
 		return m.beginSettingsEdit()
@@ -105,15 +129,18 @@ func (m Model) handleNarrowSettingsCategoryKey(msg tea.KeyPressMsg) (tea.Model, 
 	case "up", "k", keyNameCtrlP:
 		if m.settings.groupCursor > 0 {
 			m.settings.groupCursor--
+			m.revealSettingsFocus()
 		}
 	case keyNameDown, "j", keyNameCtrlN:
 		if m.settings.groupCursor+1 < len(m.settings.groups) {
 			m.settings.groupCursor++
+			m.revealSettingsFocus()
 		}
 	case keyNameEnter, keyNameRight, "l":
 		if len(m.settings.groups) > 0 {
 			m.settings.narrowFields = true
 			m.settings.rowCursor = 0
+			m.revealSettingsFocus()
 		}
 	}
 	return m, nil
@@ -134,7 +161,7 @@ func (m Model) beginSettingsEdit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if field.ReadOnly {
-		m.settings.status = "This setting is read-only; edit it on the daemon host."
+		m.settings.status, m.settings.scrollOffset = "This setting is read-only; edit it on the daemon host.", 0
 		m.settings.statusIsError = false
 		return m, nil
 	}
@@ -157,6 +184,7 @@ func (m Model) beginSettingsEdit() (tea.Model, tea.Cmd) {
 				break
 			}
 		}
+		m.revealSettingsFocus()
 		return m, nil
 	}
 
@@ -172,6 +200,7 @@ func (m Model) beginSettingsEdit() (tea.Model, tea.Cmd) {
 		input.SetValue(m.currentSettingText(field))
 	}
 	m.settings.editor = input
+	m.revealSettingsFocus()
 	return m, m.settings.editor.Focus()
 }
 
@@ -243,7 +272,7 @@ func (m *Model) commitSettingsEdit(field SettingField) bool {
 	}
 	value, err := parseSettingInput(field, raw)
 	if err != nil {
-		m.settings.status = "Invalid value: " + err.Error()
+		m.settings.status, m.settings.scrollOffset = "Invalid value: "+err.Error(), 0
 		m.settings.statusIsError = true
 		return false
 	}
@@ -259,6 +288,7 @@ func (m *Model) cancelSettingsEdit() {
 	m.settings.editKey = ""
 	m.settings.editOptions = nil
 	m.settings.editOption = 0
+	m.revealSettingsFocus()
 }
 
 func (m *Model) toggleSelectedBooleanSetting() {

@@ -21,7 +21,7 @@
     switch (coverage.status) {
       case 'disabled': return 'Semantic search is disabled';
       case 'initializing': return 'Semantic index is initializing';
-      case 'stale': return 'Semantic index is stale';
+      case 'stale': return 'Semantic search is unavailable; check the index';
       case 'unavailable': return 'Semantic index is unavailable';
       case 'incomplete':
       case 'ready': return `Semantic index: ${percentage}% of ${count} items`;
@@ -33,7 +33,7 @@
   <span>{summary}.</span>
   {#if coverage.detail}<span>{coverage.detail}</span>{/if}
   {#if requestedMode === 'semantic' && coverage.status === 'incomplete'}
-    <span>Unembedded items cannot appear in Semantic results.</span>
+    <span>Items not yet prepared for semantic search won't appear in results.</span>
   {/if}
   {#if actions.includes('retry')}
     <Button label="Retry" tone="info" surface="outline" onclick={() => onaction?.('retry')} />

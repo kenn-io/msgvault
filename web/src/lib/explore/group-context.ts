@@ -1,3 +1,4 @@
+import { editedBoundary } from './date-bound';
 import { isGroupingDimension } from '../grouping/catalog';
 import type { ExploreFilter, ExploreGroupDimension } from './models';
 
@@ -18,9 +19,9 @@ export function parseGroupSelection(value: string | null | undefined): GroupSele
 export function filtersForGroup(
   filters: readonly ExploreFilter[],
   dimension: ExploreGroupDimension,
-  key: string
+  key: string, utc = false
 ): ExploreFilter[] | undefined {
-  if (dimension === 'source' || dimension === 'message_type' || dimension === 'mailing_list') {
+  if (dimension === 'kind' || dimension === 'source' || dimension === 'message_type' || dimension === 'mailing_list') {
     return [
       ...filters.filter((filter) => filter.dimension !== dimension),
       { dimension, values: [key] }
@@ -31,7 +32,7 @@ export function filtersForGroup(
   }
   if (dimension === 'year' && /^\d{4}$/.test(key)) {
     const year = Number(key);
-    return replaceTimeFilters(filters, `${key}-01-01T00:00:00Z`, `${year + 1}-01-01T00:00:00Z`);
+    return replaceTimeFilters(filters, editedBoundary(`${year}-01-01`, false, !utc), editedBoundary(`${year + 1}-01-01`, false, !utc));
   }
   if (dimension === 'month' && /^\d{4}-(0[1-9]|1[0-2])$/.test(key)) {
     const [year, month] = key.split('-').map(Number) as [number, number];
@@ -39,8 +40,8 @@ export function filtersForGroup(
     const nextMonth = month === 12 ? 1 : month + 1;
     return replaceTimeFilters(
       filters,
-      `${key}-01T00:00:00Z`,
-      `${nextYear}-${String(nextMonth).padStart(2, '0')}-01T00:00:00Z`
+      editedBoundary(`${year}-${month}-01`, false, !utc),
+      editedBoundary(`${nextYear}-${nextMonth}-01`, false, !utc)
     );
   }
   return undefined;

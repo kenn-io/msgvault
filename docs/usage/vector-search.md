@@ -39,7 +39,7 @@ Choose the index for the thing you want to find:
 | Messages, chats, and meeting transcripts | `search --mode vector` or `--mode hybrid` | This page |
 | Curated people | `person search` | [People](/docs/usage/people/#find-a-person-by-what-you-remember) |
 | Image and video content | `multimodal search` | [Visual attachment search](#visual-attachment-search) |
-| Mirrored document text | `media search <query>` | [Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) |
+| Mirrored document text | `media search <query>` | [Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank) |
 
 Message embeddings do not include attachment pixels or extracted document
 text. Visual indexing has its own build and consent; Docbank manages document
@@ -54,6 +54,8 @@ In the Web UI, open Settings, then Overview, and click **Turn on** beside
 builds the message index, and enables semantic search in the running daemon.
 The row shows download and indexing progress. You can close the page while it
 runs and keep using keyword search.
+
+If you turned on built-in search in another app, MsgVault starts indexing a SQLite archive at launch when the shared model files are installed and no provider is configured. It does not download missing files at startup. A configured provider takes precedence. PostgreSQL archives require an explicit setup.
 
 If Ollama already serves `nomic-embed-text`, Turn on uses it. An existing
 Ollama configuration stays on Ollama.
@@ -296,7 +298,7 @@ and a fixed tokenizer, pooling, precision and output recipe. An alias is an
 operator convention; msgvault does not verify the loaded checkpoint through
 HTTP. Give a changed serving recipe a new alias. Changing `model`, `dimension`
 or either prefix separates message generations and requires a full rebuild.
-Docbank owns document processing and embeddings. See [Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased).
+Docbank owns document processing and embeddings. See [Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank).
 
 The [model card](https://ai.google.dev/gemma/docs/embeddinggemma/model_card_2)
 specifies mean pooling including prompts, L2-normalized output, and

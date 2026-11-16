@@ -21,8 +21,9 @@ import (
 const runSavedViewMaxLimit = exploreFilesMaxLimit
 
 type RunSavedViewRequest struct {
-	Limit  int    `json:"limit,omitzero" minimum:"0" maximum:"100"`
-	Cursor string `json:"cursor,omitempty"`
+	Limit    int    `json:"limit,omitzero" minimum:"0" maximum:"100"`
+	Cursor   string `json:"cursor,omitempty"`
+	Timezone string `json:"timezone,omitempty" doc:"IANA timezone for calendar grouping; defaults to UTC"`
 }
 
 // RunSavedViewResponse is one typed page produced by executing a Saved View's
@@ -181,9 +182,13 @@ func (s *Server) runSavedViewGroups(
 	w http.ResponseWriter, r *http.Request, predicate ExploreHTTPRequest, dimension string, request RunSavedViewRequest,
 ) (RunSavedViewResponse, bool) {
 	body := ExploreGroupsHTTPRequest{
-		Filters: predicate.Filters, Query: predicate.Query, SearchMode: predicate.SearchMode,
+		Timezone: request.Timezone,
+		Filters:  predicate.Filters, Query: predicate.Query, SearchMode: predicate.SearchMode,
 		Grouping:     []ExploreGroupDimension{ExploreGroupDimension(dimension)},
 		Presentation: explorecatalog.PresentationTable, Cursor: request.Cursor, Limit: request.Limit,
+	}
+	if dimension == "month" || dimension == "year" {
+		body.Sort = []ExploreGroupSort{{Field: "key", Direction: "desc"}}
 	}
 	var result ExploreGroupsHTTPResponse
 	if !s.dispatchSavedViewExplore(w, r, s.handleExploreGroups, body, &result) {

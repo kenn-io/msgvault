@@ -1,0 +1,13 @@
+Stop fetching feeds. Items already archived stay searchable; add the feed
+again to resume it.
+
+Usage:
+  msgvault source feeds remove <url>... [flags]
+
+Examples:
+  msgvault source feeds remove https://example.com/releases.atom
+
+Flags:
+  -h, --help   help for remove
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')

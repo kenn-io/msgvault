@@ -114,7 +114,7 @@
 {/snippet}
 
 <section class="person-page" class:details-open={details} role="group" aria-label="Person page">
-  {#if staleLink}<div class="summary-error" role="alert">Identity saved; the cache refresh failed.<Button label="Retry" onclick={() => void retryLink()} /></div>{/if}
+  {#if staleLink}<div class="summary-error" role="alert">Identity saved, but related views may be out of date.<Button label="Retry" onclick={() => void retryLink()} /></div>{/if}
   {#if durablePersonID !== null || (detail && !controller.detailMissing)}
     <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true}>
       {#snippet actions()}

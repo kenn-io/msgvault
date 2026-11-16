@@ -1,11 +1,14 @@
 ---
 title: External credential providers
-description: Obtain scoped message MCP access through a trusted local helper.
+description: Obtain scoped message MCP access, or source read credentials, through a trusted local helper.
 ---
 
 Applications can use `go.kenn.io/msgvault/pkg/credentialprovider` to ask a
 trusted local executable for access to a hosted message MCP endpoint. The
 application does not need an archive-owner token or its own login flow.
+The same package also lets msgvault ask a helper for a credential to read a
+mail source through an external endpoint; see
+[Read a source through a helper](#read-a-source-through-a-helper).
 
 This package supplies the exchange and validation contract. It does not add a
 credential issuer to `msgvault serve`, change the standalone CLI's HTTP client,
@@ -146,3 +149,69 @@ one of these status/reason pairs. Clients translate the codes into their own tex
 or credential. A missing or inaccessible approval uses the same
 `approval_required` response. No helper decision grants more access than the
 service's current permission checks allow.
+
+## Read a source through a helper
+
+The inbound profile runs in the other direction. msgvault asks the helper for a
+bearer credential to read one mail account through an external endpoint, such
+as a read-only proxy that holds the provider's tokens. The process contract is
+the same as above: `ExchangeInbound(ctx, argv, request)` runs argv without a
+shell, the helper reads `DecodeInboundRequest` and writes `WriteInboundResponse`,
+and the size limit, time limit, and exit codes do not change.
+
+```json
+{
+  "version": 1,
+  "operation": "authorize",
+  "request_id": "11111111-1111-4111-8111-111111111111",
+  "endpoint": "https://proxy.example.org/gmail/v1",
+  "source_type": "gmail",
+  "account": "alice@example.com"
+}
+```
+
+- `endpoint` is the exact URL that receives the credential. It is HTTPS, or
+  HTTP on a loopback host, with no user information, query, or fragment.
+- `source_type` is the msgvault source type: `gmail` or `msmail`.
+- `account` is the source identifier, treated as an opaque string with no
+  whitespace or control characters.
+
+A first success echoes the envelope and all three scope fields and adds the same
+`status`, `credential_id`, `credential_generation`, `issued_at`, `expires_at`,
+and bearer `credential` fields as the MCP profile. `DecodeInboundResponse`
+applies the same strict checks.
+
+| Operation | Required fields in addition to the scope | Result |
+| --- | --- | --- |
+| `authorize` | New `request_id`; no predecessor fields | `ready` |
+| `renew` | New `request_id`, `previous_request_id`, `credential_id`, `expected_generation` | `ready` with a different credential ID and higher generation |
+
+There is no replay, replace, or release. msgvault keeps inbound credentials only
+in memory and does not journal requests: after a restart or a refusal it sends
+a new `authorize`. A helper must answer each request on its own and must not
+require an exact replay. A credential issued for a response msgvault never
+read goes unused until it expires.
+
+`InboundSource` is the client msgvault uses for one account. It serializes
+exchanges, reuses the held credential until 30 seconds before it expires (or
+half its lifetime, if shorter), and measures elapsed time on both the monotonic
+and wall clocks so a host that slept renews before its next request.
+
+- A credential whose usable lifetime ends during its own exchange is not
+  returned; the call fails with `ErrCredentialExpired` and the next call renews.
+- When the endpoint rejects a credential, `Renew` sends one `renew`. The
+  rejected credential is never returned again, even if that renewal fails or
+  is canceled.
+  Callers holding an already-replaced credential receive its successor without
+  another exchange.
+- A canceled caller stops waiting for another caller's exchange and never
+  receives a credential.
+
+Refusals contain only the envelope and one of these status/reason pairs:
+
+| Status | Reason |
+| --- | --- |
+| `sign_in_required` | `no_current_sign_in` |
+| `approval_required` | `account_approval_required` |
+| `conflict` | `generation_changed` |
+| `unavailable` | `authority_unavailable` |

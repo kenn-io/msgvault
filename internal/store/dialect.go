@@ -9,11 +9,10 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 )
 
-// CurrentFTSIndexingVersion identifies the PostgreSQL search_fts field-weight
-// layout. Version 2 assigns subject=A, sender=B, recipients=C, and body=D so
-// exact body-only queries can restrict tsquery matches to weight D.
+// CurrentFTSIndexingVersion identifies the PostgreSQL search format.
+// Version 3 normalizes punctuation before building the weighted vector.
 const (
-	CurrentFTSIndexingVersion = 2
+	CurrentFTSIndexingVersion = 3
 	postgresDriverName        = "pgx"
 )
 
@@ -37,14 +36,14 @@ type ftsEnvelopeExpressions struct {
 // The enclosing query must alias messages as m.
 func storedFTSEnvelopeSQL(aggregate string) ftsEnvelopeExpressions {
 	recipients := func(kind string) string {
-		address := identityindex.SenderAddressExpr("mr", "p")
+		address := "COALESCE(NULLIF(mr.email_address, ''), " + identityindex.SenderAddressExpr("mr", "p") + ", p.phone_number)"
 		return fmt.Sprintf("COALESCE((SELECT %s(%s, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = '%s'), '')", aggregate, address, kind)
 	}
 	return ftsEnvelopeExpressions{
-		subject: "COALESCE(m.subject, '')",
-		fromAddr: `COALESCE(CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
-			THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id) END, ` + recipients("from") + `)`,
-		toAddrs: recipients("to"),
+		subject: "COALESCE(m.subject, CASE WHEN m.message_type = 'fbmessenger' THEN (SELECT c.title FROM conversations c WHERE c.id = m.conversation_id) END, '')",
+		fromAddr: `COALESCE(CASE WHEN m.message_type IN ('slack', 'teams', 'inline', 'facebook_comments', 'instagram_comments', 'discord') THEN (SELECT TRIM(mr.display_name || ' ' || ` + recipients("from") + `) FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND mr.display_name != '' LIMIT 1) END, CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
+			THEN COALESCE((SELECT NULLIF(mr.email_address, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)) END, ` + recipients("from") + `)`,
+		toAddrs: `CASE WHEN m.message_type = 'discord' THEN COALESCE((SELECT ` + aggregate + `(mr.display_name, ' ') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'mention'), '') ELSE ` + recipients("to") + ` END`,
 		ccAddrs: recipients("cc"),
 	}
 }
@@ -194,6 +193,9 @@ type Dialect interface {
 
 	// FTSMatches reports whether the stored search document for
 	// doc.MessageID is exactly what FTSUpsert would write for doc.
+	// PostgreSQL compares the prepared vector, auxiliary fields and version;
+	// SQLite compares stored FTS5 text. An absent entry returns false, nil.
+	// Building the expected document can fail, including with overflow.
 	FTSMatches(q querier, doc FTSDoc) (bool, error)
 
 	// FTSSearchClause returns SQL fragments for full-text search using ?
@@ -205,7 +207,7 @@ type Dialect interface {
 	// final query before execution.
 	// The order expression sorts ascending and has no direction suffix.
 	// rowIDs uses a self-contained predicate so MATCH can appear inside OR.
-	FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int)
+	FTSSearchClause(rowIDs bool, terms []string) (join, where, orderBy string, orderArgCount int)
 
 	// FTSDeleteSQL returns the SQL to remove FTS entries for messages belonging to
 	// a given source. Takes one parameter: source_id.
@@ -216,8 +218,8 @@ type Dialect interface {
 	// best-effort reindex from leaving an old body searchable as an exact hit.
 	InvalidateFTSForMessage(q querier, messageID int64) error
 
-	// FTSBackfillBatchSQL returns the SQL to populate the search index for a range of message IDs.
-	// Uses two ? placeholders for the ID range: WHERE m.id >= ? AND m.id < ?
+	// FTSBackfillBatchSQL indexes a half-open ID range (two placeholders) on
+	// SQLite and selects that range's IDs for Go-side indexing on PostgreSQL.
 	FTSBackfillBatchSQL() string
 
 	// FTSBackfillMissingBatchSQL populates missing search entries on SQLite.
@@ -440,7 +442,7 @@ type Dialect interface {
 	// arguments and drop terms that contain no usable tokens:
 	//   SQLite:     `"term"*` per term, space-joined (FTS5 reads space as
 	//               implicit AND).
-	//   PostgreSQL: `term:*` per term, joined by " & " (to_tsquery).
+	//   PostgreSQL: unordered candidate tsquery; phrases are checked separately.
 	// Shapes match the query package's equivalent helpers so API search
 	// and engine deep-search return the same hits for the same input.
 	// Returns "" when every term reduces to nothing usable — the caller

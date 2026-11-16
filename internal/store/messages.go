@@ -3971,7 +3971,11 @@ func (s *Store) UpsertFTS(messageID int64, subject, bodyText, fromAddr, toAddrs,
 	return s.UpsertFTSContext(context.Background(), messageID, subject, bodyText, fromAddr, toAddrs, ccAddrs)
 }
 
-// UpsertFTSContext honors cancellation during UpsertFTS.
+// UpsertFTSContext writes caller-supplied search fields, honoring cancellation.
+// It propagates dialect errors, including PostgreSQL overflow, without the
+// terminal policy used by PersistMessageContext. Earlier message commits are
+// outside this write; warning or retry decisions belong to the caller.
+// See docs/architecture/storage.md#full-text-index for the indexing contracts.
 func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, bodyText, fromAddr, toAddrs, ccAddrs string) error {
 	doc := FTSDoc{
 		MessageID: messageID,
@@ -3991,6 +3995,9 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 
 // IndexStoredMessageContext fills or refreshes a message's search entry from stored
 // rows. Unchanged entries are left alone, and unavailable FTS is a no-op.
+// Load, comparison and upsert errors propagate, including PostgreSQL overflow
+// while FTSMatches builds the expected vector. This entry does not use the
+// savepoint/terminal policy of PersistMessageContext; callers own any warning.
 func (s *Store) IndexStoredMessageContext(ctx context.Context, messageID int64) error {
 	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
 		if !s.fts5Available {
@@ -4224,6 +4231,11 @@ func (s *Store) backfillFTSBatchContext(
 	}
 	var affected int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		if s.IsPostgreSQL() {
+			var err error
+			affected, err = s.backfillPostgresFTS(ctx, tx, batchSQL, fromID, toID)
+			return err
+		}
 		result, err := tx.ExecContext(ctx, batchSQL, fromID, toID)
 		if err != nil {
 			return err
@@ -6769,7 +6781,7 @@ func (s *Store) EndWaitingProviderAttachments(ctx context.Context, sourceID int6
 
 // markFTSMessageUnsearchable shares the terminal PostgreSQL overflow policy.
 func markFTSMessageUnsearchable(q querier, messageID int64) error {
-	_, err := q.Exec(`UPDATE messages SET search_fts = ''::tsvector, indexing_version = ? WHERE id = ?`, CurrentFTSIndexingVersion, messageID)
+	_, err := q.Exec(`UPDATE messages SET search_fts = ''::tsvector, search_fts_fields = NULL, indexing_version = ? WHERE id = ?`, CurrentFTSIndexingVersion, messageID)
 	return err
 }
 
@@ -6951,6 +6963,7 @@ func (s *Store) ScanArchivedRawMessagesForConversation(
 // UpdateMessageDerivedText atomically updates the text fields derived from one
 // provider payload. A body, snippet, or FTS failure rolls the whole update
 // back, so callers can safely retry every derived field together.
+// It uses the direct FTS writer: overflow is an error, unlike email repair.
 func (s *Store) UpdateMessageDerivedText(
 	ctx context.Context,
 	messageID int64, bodyText, bodyHTML, snippet sql.NullString, fts FTSDoc,
@@ -6982,6 +6995,98 @@ func (s *Store) writeDerivedEmailTextPendingRevision(ctx context.Context, tx *lo
 		return changed, err
 	}
 	return changed, setArchiveMetadataValueTx(ctx, tx, pendingDerivedEmailRevisionKey, "1")
+}
+
+// backfillPostgresFTS locks and indexes bounded pages inside the batch transaction.
+func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query string, fromID, toID int64) (int64, error) {
+	env := storedFTSEnvelopeSQL("STRING_AGG")
+	lockSQL := `SELECT m.id FROM messages m WHERE m.id IN (` + query + `) ORDER BY m.id LIMIT 64 FOR UPDATE OF m`
+	charCap := strconv.Itoa(maxFTSBodyChars)
+	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), r.raw_data, r.compression
+		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id LEFT JOIN message_raw r ON r.message_id = m.id AND r.raw_format = 'beeper_json' WHERE m.id = ANY(?::bigint[]) AND ` + postgresFTSStalePredicate("m.") + ` ORDER BY m.id`
+	vector := pgFTSVectorFields("u.subject", "u.body", "u.sender", "u.to_addrs", "u.cc_addrs")
+	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, fields)) UPDATE messages m SET search_fts = ` + vector + `, search_fts_fields = CASE WHEN u.fields::jsonb = 'null'::jsonb THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(u.fields::jsonb)) END, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM u WHERE m.id = u.id`
+	var affected int64
+	for fromID < toID {
+		rows, err := tx.QueryContext(ctx, lockSQL, fromID, toID)
+		if err != nil {
+			return 0, err
+		}
+		lockedIDs, err := scanInt64Rows(rows)
+		if closeErr := rows.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return 0, err
+		}
+		if len(lockedIDs) == 0 {
+			break
+		}
+		// Read the envelope after locking, using a fresh READ COMMITTED snapshot.
+		rows, err = tx.QueryContext(ctx, selectSQL, lockedIDs)
+		if err != nil {
+			return 0, err
+		}
+		var ids []int64
+		var subjects, bodies, senders, tos, ccs []string
+		var canonicalFields []string
+		bytes := 0
+		for rows.Next() {
+			var doc FTSDoc
+			var raw []byte
+			var compression sql.NullString
+			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &raw, &compression); err != nil {
+				_ = rows.Close()
+				return 0, err
+			}
+			if len(raw) > 0 {
+				decoded, err := decodeMessageRaw(raw, compression)
+				if err == nil {
+					var message struct {
+						SenderName string `json:"senderName"`
+					}
+					if json.Unmarshal(decoded, &message) == nil {
+						doc.FromAddr = message.SenderName
+					}
+				}
+			}
+			doc, fields := preparePostgresFTSDoc(doc)
+			encoded, err := json.Marshal(fields, json.FormatNilSliceAsNull(true))
+			if err != nil {
+				_ = rows.Close()
+				return 0, err
+			}
+			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs) + len(encoded) + len(raw)
+			if len(ids) > 0 && bytes+size > 4*1024*1024 {
+				break
+			}
+			ids = append(ids, doc.MessageID)
+			subjects = append(subjects, doc.Subject)
+			bodies = append(bodies, doc.Body)
+			senders = append(senders, doc.FromAddr)
+			tos = append(tos, doc.ToAddrs)
+			ccs = append(ccs, doc.CcAddrs)
+			canonicalFields = append(canonicalFields, string(encoded))
+			bytes += size
+		}
+		err = rows.Err()
+		if closeErr := rows.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return 0, err
+		}
+		if len(ids) == 0 {
+			fromID = lockedIDs[len(lockedIDs)-1] + 1
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, updateSQL, ids, subjects, bodies, senders, tos, ccs, canonicalFields); err != nil {
+			return 0, err
+		}
+		affected += int64(len(ids))
+		fromID = ids[len(ids)-1] + 1
+	}
+	return affected, nil
 }
 
 // derivedEmailText is a retained email's stored text and the search document
@@ -7112,9 +7217,11 @@ func (s *Store) updateMessageDerivedText(q querier, messageID int64, bodyText, b
 	return nil
 }
 
-// upsertFTSOrUnsearchable applies the backfill's terminal policy when
-// PostgreSQL rejects the bounded search vector, keeping the caller's other
-// writes. It reports false when the row was already terminal.
+// upsertFTSOrUnsearchable requires an existing transaction and isolates the FTS
+// attempt with derived_fts. Only IsFTSValueTooLargeError permits rolling back
+// that attempt and recording a terminal empty vector; other errors propagate
+// for the caller to roll back. It reports false if overflow finds an already
+// terminal row, but still attempts indexing on every call.
 func (s *Store) upsertFTSOrUnsearchable(q querier, doc FTSDoc) (bool, error) {
 	if _, err := q.Exec("SAVEPOINT derived_fts"); err != nil {
 		return false, err

@@ -633,6 +633,7 @@ type Config struct {
 	Matrix             MatrixConfig              `toml:"matrix"`
 	Slack              SlackConfig               `toml:"slack"`
 	Inline             InlineConfig              `toml:"inline"`
+	Feeds              FeedsConfig               `toml:"feeds"`
 	Omi                []OmiSource               `toml:"omi"`
 	Granola            []GranolaSource           `toml:"granola"`
 	Plaud              []PlaudSource             `toml:"plaud"`
@@ -874,9 +875,29 @@ func (o *OAuthConfig) HasAnyConfig() bool {
 
 // MicrosoftConfig holds Microsoft 365 / Azure AD OAuth configuration.
 type MicrosoftConfig struct {
+	ClientID    string                  `toml:"client_id"`
+	TenantID    string                  `toml:"tenant_id"`
+	RedirectURI string                  `toml:"redirect_uri"`
+	Apps        map[string]MicrosoftApp `toml:"apps"`
+}
+
+// MicrosoftApp holds credentials for one Microsoft app.
+type MicrosoftApp struct {
 	ClientID    string `toml:"client_id"`
 	TenantID    string `toml:"tenant_id"`
 	RedirectURI string `toml:"redirect_uri"`
+}
+
+// App resolves a named app or the default Microsoft configuration.
+func (c *MicrosoftConfig) App(name string) (MicrosoftConfig, error) {
+	if name == "" {
+		return *c, nil
+	}
+	app, ok := c.Apps[name]
+	if !ok || app.ClientID == "" {
+		return MicrosoftConfig{}, fmt.Errorf("[microsoft.apps.%s] must specify client_id", name)
+	}
+	return MicrosoftConfig{ClientID: app.ClientID, TenantID: app.TenantID, RedirectURI: app.RedirectURI}, nil
 }
 
 // EffectiveRedirectURI returns the redirect URI, defaulting to the
@@ -1147,6 +1168,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// the pre-filled section so changing endpoint cannot silently carry the
 	// default Voyage key environment name to another origin.
 	cfg.Vector.Multimodal = vector.MultimodalConfig{}
+	// Embedding transport defaults depend on the decoded endpoint selection.
+	cfg.Vector.Embeddings.BatchSize = 0
+	cfg.Vector.Embeddings.Timeout = 0
 	// People-sweep provider defaults include a generated profile. Decode into
 	// an empty section so ApplyDefaults only fills it when the file defines
 	// no profiles of its own.

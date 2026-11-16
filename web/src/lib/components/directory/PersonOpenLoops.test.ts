@@ -109,7 +109,7 @@ describe("PersonOpenLoops", () => {
 
     const empty = clientFor([], false, 0, true);
     render(PersonOpenLoops, { client: empty.client, personID: 7 });
-    expect(await screen.findByText("No loops found in the messages checked."))
+    expect(await screen.findByText("No open loops found. Some messages haven't been checked yet."))
       .toBeDefined();
   });
 
