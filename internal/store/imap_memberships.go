@@ -498,8 +498,9 @@ func (s *Store) applyIMAPMailboxDeltas(
 	})
 }
 
-// imapRestoringMailboxRole matches a mailbox label l whose membership proves a
-// message left Trash. RFC 6154's \All can include Trash, so it is not proof.
+// imapRestoringMailboxRole identifies a specific mailbox outside Trash and All.
+// Filtered sync needs that observation; a complete snapshot can also confirm
+// a restore when Trash membership is absent.
 const imapRestoringMailboxRole = `COALESCE(l.system_role, '') NOT IN ('trash', 'all')`
 
 // ClearRestoredIMAPDeletionMarksForSyncContext reconciles marked messages seen
