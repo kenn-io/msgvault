@@ -2347,6 +2347,30 @@ func TestMeetingDecisionEditedCopyFollowsMergedSeries(t *testing.T) {
 	r.NotContains(record.MessageIDs, note)
 }
 
+func TestMeetingDecisionScopedReadFollowsEditedCopyToSeries(t *testing.T) {
+	for _, tc := range []struct{ name, series, edit string }{
+		{"timed", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`},
+		{"all-day", `{"id":"series","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, `{"id":"edit","recurringEventId":"series","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-15"},"end":{"date":"2027-03-16"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			series, _ := calendarFixture(t, st, "scoped-series", tc.series, "original@example.com")
+			_, original := calendarFixture(t, st, "scoped-original-edit", tc.edit, "original@example.com")
+			copyData, copyID := calendarFixture(t, st, "scoped-edit-copy", tc.edit, "copy@example.com")
+			noteData, note := projectionFixture(t, st, "scoped-edit-note", "meeting_json", `{}`)
+			_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: original}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+			r.NoError(err)
+			_, err = st.MergeDuplicates(t.Context(), copyID, []int64{original}, "scoped-edit")
+			r.NoError(err)
+			ctx := sourcescope.WithSourceIDs(t.Context(), []int64{series.Message.SourceID, copyData.Message.SourceID, noteData.Message.SourceID})
+			record, err := st.MeetingRecordContext(ctx, MeetingLinkRef{Kind: "evt", MessageID: copyID})
+			r.NoError(err)
+			r.Contains(record.MessageIDs, note)
+		})
+	}
+}
+
 func TestMeetingDecisionPurgeRescheduledCopyKeepsOriginalChoice(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

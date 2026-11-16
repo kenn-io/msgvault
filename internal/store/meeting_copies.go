@@ -42,7 +42,6 @@ func meetingSeriesLinksSQL(condition string) string {
 func (s *Store) meetingCopyLookup(ctx context.Context, endpoint meetingDecisionEndpoint) ([]int64, error) {
 	copyScope, args := sourceScopeClause(ctx, "m.source_id")
 	parentScope, parentArgs := sourceScopeClause(ctx, "parent.source_id")
-	args = append(args, parentArgs...)
 	series := ""
 	if endpoint.Kind == meetingRefEvent && endpoint.Key != "" {
 		ref, err := endpoint.meetingRef()
@@ -63,6 +62,8 @@ func (s *Store) meetingCopyLookup(ctx context.Context, endpoint meetingDecisionE
 		args = append(args, seriesArgs...)
 		series = meetingSeriesLinksSQL(` AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)` + editScope + seriesScope)
 	}
+	// The series CTE precedes relations in meetingCopyGraphSQL.
+	args = append(args, parentArgs...)
 	args = append(args, endpoint.ID)
 	query := `WITH RECURSIVE ` + meetingCopyGraphSQL(`SELECT 0,CAST(? AS BIGINT)`, copyScope, parentScope, series) + ` SELECT id FROM copies ORDER BY id`
 	rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, query, args...)
