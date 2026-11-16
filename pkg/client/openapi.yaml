@@ -3253,13 +3253,22 @@ components:
         first_contact_at:
           format: date-time
           type: string
+        first_contact_kind:
+          type: string
         first_contact_ref:
+          type: string
+        first_seen_at:
+          format: date-time
+          type: string
+        first_seen_ref:
           type: string
         inferred_channel:
           type: string
         interaction_count:
           format: int64
           type: integer
+        introducer:
+          $ref: "#/components/schemas/FirstContactIntroducer"
         last_contact_at:
           format: date-time
           type: string
@@ -6029,6 +6038,20 @@ components:
           items:
             type: string
           type: array
+      type: object
+    FirstContactIntroducer:
+      properties:
+        display_name:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - display_name
       type: object
     FormatCoverage:
       properties:
@@ -16970,7 +16993,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.7.0
+  version: 5.8.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

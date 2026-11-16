@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
+
 - Account matching recovers after identity changes. Explore refreshes pending counts and lets you retry matching for each source.
 
 ## 0.25.0
