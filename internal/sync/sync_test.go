@@ -2588,13 +2588,13 @@ func TestIncrementalSyncWithLabelRemoved(t *testing.T) {
 
 func TestIncrementalSyncRemovedLabelPreservesOrClearsDeletion(t *testing.T) {
 	for _, tc := range []struct {
-		name, label                               string
-		marked, retrash, messageDeleted, wantMark bool
+		name, label                            string
+		marked, retrash, messageGone, wantMark bool
 	}{
 		{name: "trash removed", label: "TRASH", marked: true},
 		{name: "other label removed", label: "STARRED", marked: true, wantMark: true},
 		{name: "restored then trashed", label: "TRASH", marked: true, retrash: true, wantMark: true},
-		{name: "message deleted", label: "TRASH", marked: true, messageDeleted: true, wantMark: true},
+		{name: "message disappears after removal", label: "TRASH", marked: true, messageGone: true, wantMark: true},
 		{name: "unmarked", label: "TRASH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2617,9 +2617,8 @@ func TestIncrementalSyncRemovedLabelPreservesOrClearsDeletion(t *testing.T) {
 			if tc.retrash {
 				history = append(history, historyLabelAdded("msg1", "TRASH"))
 			}
-			if tc.messageDeleted {
+			if tc.messageGone {
 				delete(env.Mock.Messages, "msg1")
-				history = append(history, historyDeleted("msg1"))
 			}
 			env.SetHistory(12350, history...)
 			runIncrementalSync(t, env)
@@ -2627,7 +2626,7 @@ func TestIncrementalSyncRemovedLabelPreservesOrClearsDeletion(t *testing.T) {
 			if !tc.marked {
 				assert.Empty(t, api.labelCalls)
 			}
-			if tc.retrash {
+			if tc.retrash || tc.messageGone {
 				assert.Equal(t, [][]string{{"msg1"}}, api.labelCalls)
 			}
 		})
@@ -6271,6 +6270,29 @@ func TestIncrementalSyncRepeatedLabelAddAfterIngestThenPurge(t *testing.T) {
 	summary = runIncrementalSync(t, env)
 	assert.Zero(summary.MessagesAdded)
 	assert.Empty(env.Mock.GetMessageCalls)
+}
+
+func TestGmailFullRestoreClearsMarkWhenRawSaveFails(t *testing.T) {
+	env := newTestEnv(t)
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX", "TRASH"})
+	runFullSync(t, env)
+	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+	require.NoError(t, err)
+	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
+	ids, err := env.Store.MessageExistsBatch(source.ID, []string{"msg1"})
+	require.NoError(t, err)
+	_, err = env.Store.DB().ExecContext(t.Context(), `DELETE FROM message_raw WHERE message_id = ?`, ids["msg1"])
+	require.NoError(t, err)
+	env.Mock.Messages["msg1"].LabelIDs = []string{"INBOX"}
+	allow := acquisitionWriteFault(t, env, "message_raw", "INSERT", "1 = 1")
+	defer allow()
+
+	summary, err := env.Syncer.Full(t.Context(), testEmail)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), summary.Errors)
+	assertDeletedFromSource(t, env.Store, "msg1", false)
 }
 
 func TestGmailIncrementalRestoreSignalsCacheWithUnchangedLabels(t *testing.T) {
