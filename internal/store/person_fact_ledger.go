@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -685,10 +684,15 @@ func (s *Store) hydratePersonFactEvidenceStatusTx(
 	for index := range evidence {
 		evidence[index].Supported = true
 		row := tx.QueryRowContext(ctx, `
-			SELECT status.id, status.person_id, status.generation_id, status.evidence_id,
-			       status.evidence_key, status.source_version, status.supported,
-			       status.reason, status.created_at
-			`+latestPersonFactEvidenceStatusSQL("?", "?", "?"), evidence[index].PersonID, evidence[index].Key, evidence[index].Input.SourceVersion)
+			SELECT latest.id, latest.person_id, latest.generation_id, latest.evidence_id,
+			       latest.evidence_key, latest.source_version, latest.supported,
+			       latest.reason, latest.created_at
+			FROM person_fact_evidence_status_events latest
+			JOIN person_fact_generations generation ON generation.id = latest.generation_id
+			WHERE latest.person_id = ? AND latest.evidence_key = ? AND latest.source_version = ?
+			ORDER BY generation.resolved_at DESC, latest.id DESC
+			LIMIT 1
+		`, evidence[index].PersonID, evidence[index].Key, evidence[index].Input.SourceVersion)
 		event, err := scanPersonFactStatusEvent(row)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
@@ -1428,12 +1432,15 @@ func hydratePersonFactFreshnessTx(ctx context.Context, tx *loggedTx, claims []pe
 	for i := range claims {
 		args = append(args, claims[i].ID)
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(claims)), ",")
 	rows, err := tx.QueryContext(ctx, `SELECT ce.claim_id, MAX(e.event_time)
  FROM person_fact_claim_evidence ce
  JOIN person_fact_evidence e ON e.id = ce.evidence_id
- WHERE e.event_time <= ? AND ce.claim_id IN (`+placeholders+`) AND COALESCE((
-  SELECT status.supported `+latestPersonFactEvidenceStatusSQL("e.person_id", "e.evidence_key", "e.source_version")+`
+ WHERE e.event_time <= ? AND ce.claim_id IN (`+placeholders(len(claims))+`) AND COALESCE((
+  SELECT status.supported FROM person_fact_evidence_status_events status
+  JOIN person_fact_generations generation ON generation.id = status.generation_id
+  WHERE status.person_id = e.person_id AND status.evidence_key = e.evidence_key
+   AND status.source_version = e.source_version
+  ORDER BY generation.resolved_at DESC, status.id DESC LIMIT 1
  ), TRUE) = TRUE GROUP BY ce.claim_id`, args...)
 	if err != nil {
 		return fmt.Errorf("load claim freshness: %w", err)
@@ -1459,15 +1466,6 @@ func hydratePersonFactFreshnessTx(ctx context.Context, tx *loggedTx, claims []pe
 		claims[i].Freshness = describePersonFactFreshness(claims[i].Target, claims[i].ValidUntil, timestamp, now)
 	}
 	return nil
-}
-
-// latestPersonFactEvidenceStatusSQL is the shared status precedence contract.
-// Expressions are internal SQL identifiers or placeholders, never user input.
-func latestPersonFactEvidenceStatusSQL(person, key, version string) string {
-	return fmt.Sprintf(`FROM person_fact_evidence_status_events status
- JOIN person_fact_generations generation ON generation.id = status.generation_id
- WHERE status.person_id = %s AND status.evidence_key = %s AND status.source_version = %s
- ORDER BY generation.resolved_at DESC, status.id DESC LIMIT 1`, person, key, version)
 }
 
 // describePersonFactFreshness uses the newest currently supported evidence, not the date
