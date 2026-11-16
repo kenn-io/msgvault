@@ -727,8 +727,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 
 	// Existing exact IDs only need current label metadata. Clients with a
 	// lightweight metadata path use it for both complete snapshots (replace
-	// labels) and incomplete snapshots (merge labels). Keep the old fallback
-	// for clients that cannot fetch labels separately.
+	// labels) and incomplete snapshots (merge labels).
 	snapshotComplete := s.labelsSnapshotComplete()
 	labelReader, hasLabelReader := s.client.(messageLabelBatchReader)
 	refreshAllExistingLabels := hasLabelReader
@@ -782,10 +781,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			continue
 		}
 		if markedGmail {
-			// Clients without the lightweight metadata endpoint use the raw
-			// message response as their current label snapshot.
-			fetchIDs = append(fetchIDs, id)
-			continue
+			return nil, errors.New("label reader unavailable for marked Gmail message")
 		}
 		if snapshotComplete {
 			result.acknowledged = append(result.acknowledged, id)
