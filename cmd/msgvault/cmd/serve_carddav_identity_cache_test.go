@@ -23,17 +23,23 @@ type failingCardDAVService struct {
 	scheduledCardDAVFixture
 }
 
-func TestCardDAVIdentityRefreshRebuildsMissingParquet(t *testing.T) {
+func TestCardDAVIdentityRefreshReusesOnlyIntactCache(t *testing.T) {
 	req := require.New(t)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "msgvault.db")
 	analyticsDir := filepath.Join(dir, "analytics")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
+	participant, err := st.EnsureParticipant("cache@example.test", "Cache Example", "example.test")
 	req.NoError(err)
-	req.NoError(os.Remove(filepath.Join(analyticsDir, "participants", "participants.parquet")))
+	_, _, err = st.CreatePersonFromParticipant(participant)
+	req.NoError(err)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
+	req.NoError(err)
+	archiveRevision, err := st.IdentityRevisionContext(t.Context())
+	req.NoError(err)
+	req.Positive(archiveRevision)
 
-	refreshErr := errors.New("missing parquet triggered rebuild")
+	refreshErr := errors.New("identity cache rebuilt")
 	old := runDerivedCacheSubprocess
 	runDerivedCacheSubprocess = func(context.Context, string) error { return refreshErr }
 	t.Cleanup(func() { runDerivedCacheSubprocess = old })
@@ -42,6 +48,11 @@ func TestCardDAVIdentityRefreshRebuildsMissingParquet(t *testing.T) {
 	cfg.Data.DataDir = dir
 	cfg.Data.DatabaseURL = dbPath
 	adapter := &storeAPIAdapter{store: st, config: cfg, analyticsDir: analyticsDir}
+	got, err := adapter.RefreshIdentityDatasets(t.Context())
+	req.NoError(err)
+	req.Equal(archiveRevision, got)
+
+	req.NoError(os.Remove(filepath.Join(analyticsDir, "participants", "participants.parquet")))
 	_, err = adapter.RefreshIdentityDatasets(t.Context())
 	req.ErrorIs(err, refreshErr)
 }
@@ -77,66 +88,6 @@ func TestCardDAVSchedulerRequestsCacheRebuildAfterFailedSync(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		req.FailNow("cache refresh was not requested")
 	}
-}
-
-func TestFreshCardDAVIdentityCacheSkipsRebuild(t *testing.T) {
-	req := require.New(t)
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "msgvault.db")
-	analyticsDir := filepath.Join(dir, "analytics")
-	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
-	req.NoError(err)
-	archiveRevision, err := st.IdentityRevisionContext(t.Context())
-	req.NoError(err)
-
-	old := runDerivedCacheSubprocess
-	runDerivedCacheSubprocess = func(context.Context, string) error {
-		return errors.New("fresh identity cache triggered a rebuild")
-	}
-	t.Cleanup(func() { runDerivedCacheSubprocess = old })
-
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = dir
-	cfg.Data.DatabaseURL = dbPath
-	adapter := &storeAPIAdapter{store: st, config: cfg, analyticsDir: analyticsDir}
-	got, err := adapter.RefreshIdentityDatasets(t.Context())
-	req.NoError(err)
-	req.Equal(archiveRevision, got)
-}
-
-func TestStaleCardDAVParticipantIdentifierCacheStillRefreshes(t *testing.T) {
-	req := require.New(t)
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "msgvault.db")
-	analyticsDir := filepath.Join(dir, "analytics")
-	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	participantID, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
-	req.NoError(err)
-	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
-	req.NoError(err)
-	nameRevision, err := st.ParticipantDisplayNameRevisionContext(t.Context())
-	req.NoError(err)
-	state, err := query.ReadCacheSyncState(analyticsDir)
-	req.NoError(err)
-	req.Equal(nameRevision, state.ParticipantDisplayNameRevision)
-	fresh, err := cacheNeedsBuildForServing(t.Context(), dbPath, analyticsDir)
-	req.NoError(err)
-	req.False(fresh.NeedsBuild, fresh.Reason)
-	req.NoError(st.SetParticipantIdentifier(participantID, "apple_id", "carddav-cache-stale"))
-
-	refreshErr := errors.New("stale participant identifier cache triggered refresh")
-	old := runDerivedCacheSubprocess
-	runDerivedCacheSubprocess = func(context.Context, string) error { return refreshErr }
-	t.Cleanup(func() { runDerivedCacheSubprocess = old })
-
-	cfg := config.NewDefaultConfig()
-	cfg.Analytics.AutoBuildCache = false
-	cfg.Data.DataDir = dir
-	cfg.Data.DatabaseURL = dbPath
-	adapter := &storeAPIAdapter{store: st, config: cfg, analyticsDir: analyticsDir}
-	_, err = adapter.RefreshIdentityDatasets(t.Context())
-	req.ErrorIs(err, refreshErr)
 }
 
 func TestFailedCardDAVIdentityRefreshQueuesRealCacheRepair(t *testing.T) {

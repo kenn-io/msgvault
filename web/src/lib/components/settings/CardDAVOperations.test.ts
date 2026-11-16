@@ -262,38 +262,30 @@ describe('CardDAVOperations', () => {
     controller.destroy();
   });
 
-  it('warns about binding conflicts after a sync and clears the warning when the next sync starts', async () => {
-    let second: ((response: Response) => void) | undefined;
-    let syncs = 0;
+  it.each([
+    { name: 'one', extra: { binding_conflicts: 1 }, warning: 'Run msgvault carddav bind-participants --dry-run to review 1 CardDAV binding conflict.' },
+    { name: 'zero', extra: { binding_conflicts: 0 }, warning: undefined },
+    { name: 'absent', extra: {}, warning: undefined },
+  ])('shows the binding conflict warning after a sync only for a positive count: $name', async ({ extra, warning }) => {
+    let finishSecondSync: (response: Response) => void = () => {};
+    let calls = 0;
     const controller = new CardDAVController(createAPIClient(syncFetch(() => {
-      if (syncs++ === 0) return syncResult({ binding_conflicts: 1 });
-      return new Promise<Response>((resolve) => { second = resolve; });
+      if (++calls === 1) return syncResult(extra);
+      return new Promise<Response>(resolve => { finishSecondSync = resolve; });
     })));
     await controller.load();
     render(CardDAVOperations, { controller });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
-    await waitFor(() => expect(screen.getByText('CardDAV sync completed.')).toBeDefined());
-    expect(warningText()).toBe('Run msgvault carddav bind-participants --dry-run to review 1 CardDAV binding conflict.');
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now' }));
-    await waitFor(() => expect(second).toBeDefined());
-    expect(screen.queryByText(conflictWarning)).toBeNull();
-    controller.destroy();
-  });
-
-  it.each([
-    { name: 'zero', extra: { binding_conflicts: 0 } },
-    { name: 'absent', extra: {} },
-  ])('shows no binding conflict warning when the count is $name', async ({ extra }) => {
-    const controller = new CardDAVController(createAPIClient(syncFetch(() => syncResult(extra))));
-    await controller.load();
-    render(CardDAVOperations, { controller });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
 
     await waitFor(() => expect(screen.getByText('CardDAV sync completed.')).toBeDefined());
-    expect(screen.queryByText(conflictWarning)).toBeNull();
+    expect(warningText()).toBe(warning);
+    if (warning) {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Sync now' }));
+      await waitFor(() => expect(warningText()).toBeUndefined());
+      finishSecondSync(syncResult());
+      await waitFor(() => expect(screen.getByText('CardDAV sync completed.')).toBeDefined());
+    }
     controller.destroy();
   });
 });

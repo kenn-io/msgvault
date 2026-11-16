@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -242,6 +243,7 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 	assertions := assert.New(t)
 
 	var full bool
+	conflicts := 2
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertions.Equal(http.MethodPost, r.Method)
 		assertions.Equal("/api/v1/carddav/sync", r.URL.Path)
@@ -251,7 +253,7 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 		assertions.NoError(json.NewDecoder(r.Body).Decode(&body))
 		full = body.Full
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"books":1,"created":2,"updated":3,"removed":4}`))
+		_, _ = fmt.Fprintf(w, `{"books":1,"created":2,"updated":3,"removed":4,"binding_conflicts":%d}`, conflicts)
 	}))
 	t.Cleanup(server.Close)
 
@@ -268,31 +270,14 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 	cmd.SetArgs([]string{"--full"})
 	require.NoError(t, cmd.Execute())
 	assertions.True(full)
+	assertions.Equal("CardDAV sync: 1 books, 2 created, 3 updated, 4 removed\n2 CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.\n", stdout.String())
+	conflicts = 0
+	stdout.Reset()
+	cmd = newSyncCardDAVCmd()
+	cmd.SetContext(testCtx)
+	cmd.SetOut(&stdout)
+	require.NoError(t, cmd.Execute())
 	assertions.Equal("CardDAV sync: 1 books, 2 created, 3 updated, 4 removed\n", stdout.String())
-}
-
-func TestSyncCardDAVReportsBindingConflicts(t *testing.T) {
-	for _, count := range []string{"0", "2"} {
-		t.Run(count, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"books":1,"created":0,"updated":0,"removed":0,"binding_conflicts":` + count + `}`))
-			}))
-			t.Cleanup(server.Close)
-			home := t.TempDir()
-			ctx := withStoreResolverConfig(t, &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-			var output bytes.Buffer
-			cmd := newSyncCardDAVCmd()
-			cmd.SetContext(ctx)
-			cmd.SetOut(&output)
-			require.NoError(t, cmd.Execute())
-			if count == "2" {
-				assert.Contains(t, output.String(), "2 CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.")
-			} else {
-				assert.NotContains(t, output.String(), "binding conflicts")
-			}
-		})
-	}
 }
 
 func TestCardDAVCLISelectsConnectionsAndReportsAggregateFailures(t *testing.T) {

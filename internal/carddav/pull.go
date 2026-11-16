@@ -118,22 +118,12 @@ func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncRes
 		options.OnRunStarted(run.ID)
 	}
 	result, err = s.sync(ctx, options)
-	if bindingConflicts, previewErr := s.cardDAVBindingConflictCount(ctx); previewErr == nil {
-		result.BindingConflicts = bindingConflicts
-	}
-	return result, err
-}
-
-func (s *Service) cardDAVBindingConflictCount(ctx context.Context) (*int, error) {
 	previewCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	preview, err := s.store.ReconcileCardDAVParticipantBindingsContext(
-		previewCtx, store.CardDAVParticipantBindingOptions{DryRun: true},
-	)
-	if err != nil {
-		return nil, err
+	if preview, previewErr := s.store.ReconcileCardDAVParticipantBindingsContext(previewCtx, store.CardDAVParticipantBindingOptions{DryRun: true}); previewErr == nil {
+		result.BindingConflicts = &preview.Conflicts
 	}
-	return &preview.Conflicts, nil
+	return result, err
 }
 
 func (s *Service) sync(ctx context.Context, options SyncOptions) (SyncResult, error) {

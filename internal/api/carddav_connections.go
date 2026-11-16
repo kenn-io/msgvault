@@ -296,8 +296,7 @@ func (c *CardDAVController) Sync(ctx context.Context, req CardDAVSyncRequest) (c
 		if service == nil {
 			return carddav.SyncResult{}, carddav.ErrConnectionUnavailable
 		}
-		result, err := service.Sync(ctx, carddav.SyncOptions{Full: req.Full, Trigger: store.CardDAVSyncTriggerManual})
-		return result, err
+		return service.Sync(ctx, carddav.SyncOptions{Full: req.Full, Trigger: store.CardDAVSyncTriggerManual})
 	}
 	var total carddav.SyncResult
 	total.Status = "succeeded"
@@ -331,6 +330,10 @@ func (c *CardDAVController) Sync(ctx context.Context, req CardDAVSyncRequest) (c
 		total.Created += result.Created
 		total.Updated += result.Updated
 		total.Removed += result.Removed
+		if outcome.RunID != nil {
+			// Each run previews every subscribed book, so the last one is final.
+			total.BindingConflicts = result.BindingConflicts
+		}
 		if err == nil {
 			outcome.Status = "succeeded"
 			succeeded = true
@@ -359,22 +362,7 @@ func (c *CardDAVController) Sync(ctx context.Context, req CardDAVSyncRequest) (c
 			total.Status = "partial"
 		}
 	}
-	if slices.ContainsFunc(total.Connections, func(outcome carddav.ConnectionSyncOutcome) bool {
-		return outcome.RunID != nil
-	}) {
-		c.setBindingConflicts(ctx, &total)
-	}
 	return total, nil
-}
-
-func (c *CardDAVController) setBindingConflicts(ctx context.Context, result *carddav.SyncResult) {
-	if c.store == nil {
-		return
-	}
-	preview, err := c.store.ReconcileCardDAVParticipantBindingsContext(ctx, store.CardDAVParticipantBindingOptions{DryRun: true})
-	if err == nil {
-		result.BindingConflicts = &preview.Conflicts
-	}
 }
 
 func (c *CardDAVController) accountNames(ctx context.Context) (map[int64]string, error) {

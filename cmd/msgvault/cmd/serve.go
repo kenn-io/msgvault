@@ -3986,12 +3986,12 @@ func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, e
 		return 0, api.ErrIdentityCacheUnsupported
 	}
 	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
-		a.requestIdentityCacheRecovery(ctx)
+		a.QueueCardDAVIdentityCacheRefresh(ctx)
 		return 0, err
 	}
 	state, err := query.ReadCacheSyncState(a.analyticsDir)
 	if err != nil {
-		a.requestIdentityCacheRecovery(ctx)
+		a.QueueCardDAVIdentityCacheRefresh(ctx)
 		return 0, fmt.Errorf("read refreshed cache revision: %w", err)
 	}
 	if a.activateAnalyticsCache != nil {
@@ -4003,15 +4003,11 @@ func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, e
 }
 
 func (a *storeAPIAdapter) QueueCardDAVIdentityCacheRefresh(ctx context.Context) {
-	a.requestIdentityCacheRecovery(a.invocationContext(ctx))
-}
-
-func (a *storeAPIAdapter) requestIdentityCacheRecovery(ctx context.Context) {
 	if daemonCacheRefresher == nil {
 		return
 	}
 	// The identity write is durable even when the request or sync context ends.
-	if err := rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "carddav"); err != nil {
+	if err := rebuildCacheAfterScheduledSync(context.WithoutCancel(a.invocationContext(ctx)), "carddav"); err != nil {
 		repairLogger(a.logger).Warn("failed to queue CardDAV identity cache recovery", "error", err)
 	}
 }
