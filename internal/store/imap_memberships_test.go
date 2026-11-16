@@ -737,10 +737,8 @@ func TestApplyIMAPMailboxDeltas_RawDigestResolvesDurableCanonicalMessage(t *test
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
 	canonicalID := f.createMessage(t, "[Gmail]/All Mail|1", "")
-	secondaryID := f.createMessage(t, "INBOX|1", "")
 	raw := []byte("From: sender@example.test\r\nSubject: no identity\r\n\r\nbody\r\n")
 	require.NoError(f.store.UpsertMessageRaw(canonicalID, raw))
-	require.NoError(f.store.UpsertMessageRaw(secondaryID, raw))
 	allMailState := store.IMAPFolderState{
 		Mailbox: "[Gmail]/All Mail", UIDValidity: 16, UIDNext: 2, HighestModSeq: 90,
 	}
@@ -750,6 +748,8 @@ func TestApplyIMAPMailboxDeltas_RawDigestResolvesDurableCanonicalMessage(t *test
 			UID: 1, SourceMessageID: "[Gmail]/All Mail|1",
 		}},
 	}}))
+	secondaryID := f.createMessage(t, "INBOX|1", "")
+	require.NoError(f.store.UpsertMessageRaw(secondaryID, raw))
 
 	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
 		{Mailbox: "[Gmail]/All Mail", State: allMailState}, {
@@ -813,10 +813,8 @@ func TestApplyIMAPMailboxDeltas_RawResolutionUsesPreMutationMembershipSnapshot(t
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
 	canonicalID := f.createMessage(t, "Old|1", "")
-	secondaryID := f.createMessage(t, "INBOX|1", "")
 	raw := []byte("From: sender@example.test\r\nSubject: moved identity\r\n\r\nbody\r\n")
 	require.NoError(f.store.UpsertMessageRaw(canonicalID, raw))
-	require.NoError(f.store.UpsertMessageRaw(secondaryID, raw))
 	oldState := store.IMAPFolderState{
 		Mailbox: "Old", UIDValidity: 16, UIDNext: 2, HighestModSeq: 90,
 	}
@@ -826,6 +824,8 @@ func TestApplyIMAPMailboxDeltas_RawResolutionUsesPreMutationMembershipSnapshot(t
 			UID: 1, SourceMessageID: "Old|1",
 		}},
 	}}))
+	secondaryID := f.createMessage(t, "INBOX|1", "")
+	require.NoError(f.store.UpsertMessageRaw(secondaryID, raw))
 
 	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
 		{Mailbox: "Old", State: oldState, Reset: true},
