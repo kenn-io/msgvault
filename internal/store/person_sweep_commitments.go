@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -149,21 +150,35 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			}
 		}
 	}
-	for _, source := range request.Commitment.Window.Sources {
+	sources := request.Commitment.Window.Sources
+	if len(sources) > 0 {
+		byRef := make(map[string]peoplesweep.CommitmentSource, len(sources))
+		args := []any{request.Lease.PersonID}
+		for _, source := range sources {
+			byRef[source.SourceRef] = source
+			args = append(args, source.SourceRef)
+		}
 		// A formerly unique citation cannot retain its decision after it repeats.
-		rows, err := tx.QueryContext(ctx, `SELECT excerpt FROM person_fact_evidence WHERE person_id = ? AND source_ref = ?`, request.Lease.PersonID, source.SourceRef)
+		rows, err := tx.QueryContext(ctx, `SELECT d.id, d.target_key, e.source_ref, e.excerpt
+			FROM person_commitments d
+			JOIN person_fact_claims c ON c.person_id = d.person_id AND c.target_kind = 'commitment' AND c.target_key = d.target_key AND c.origin = 'commitment'
+			JOIN person_fact_claim_evidence ce ON ce.claim_id = c.id
+			JOIN person_fact_evidence e ON e.id = ce.evidence_id
+			WHERE d.person_id = ? AND d.owner_state <> 'open' AND e.source_ref IN (`+strings.Repeat("?,", len(sources)-1)+`?)`, args...)
 		if err != nil {
 			return err
 		}
-		var keys []string
+		ids := make(map[int64]bool)
 		for rows.Next() {
-			var quote string
-			if err := rows.Scan(&quote); err != nil {
+			var id int64
+			var key, ref, quote string
+			if err := rows.Scan(&id, &key, &ref, &quote); err != nil {
 				_ = rows.Close()
 				return err
 			}
-			if peoplesweep.CommitmentQuoteRepeated(source.Text, quote) {
-				keys = append(keys, peoplesweep.UniqueCommitmentTargetKey(request.Lease.PersonID, source, quote))
+			source := byRef[ref]
+			if peoplesweep.CommitmentQuoteRepeated(source.Text, quote) && key == peoplesweep.UniqueCommitmentTargetKey(request.Lease.PersonID, source, quote) {
+				ids[id] = true
 			}
 		}
 		err = rows.Err()
@@ -171,11 +186,13 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 		if err != nil {
 			return err
 		}
-		for _, key := range keys {
-			if _, err := tx.ExecContext(ctx, `UPDATE person_commitments SET owner_state = 'open', snoozed_until = NULL WHERE person_id = ? AND target_key = ?`, request.Lease.PersonID, key); err != nil {
+		for id := range ids {
+			if _, err := tx.ExecContext(ctx, `UPDATE person_commitments SET owner_state = 'open', snoozed_until = NULL WHERE id = ?`, id); err != nil {
 				return fmt.Errorf("clear ambiguous commitment decision: %w", err)
 			}
 		}
+	}
+	for _, source := range sources {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`, request.Lease.PersonID, source.MessageID); err != nil {
 			return err
 		}
