@@ -162,6 +162,9 @@ func Build(
 	if err := b.copyDataset(ctx, DatasetMeetingGroups, "SELECT message_id::BIGINT AS message_id, group_id::BIGINT AS group_id FROM "+groups); err != nil {
 		return BuildResult{}, err
 	}
+	if err := b.copyDataset(ctx, DatasetMeetingOwners, buildMeetingOwnersSQL(groups)); err != nil {
+		return BuildResult{}, err
+	}
 	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt, groups)); err != nil {
 		return BuildResult{}, err
 	}

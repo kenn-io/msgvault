@@ -12,17 +12,29 @@ const (
 	directoryBuildRelation = "relationship_build_directory"
 )
 
-func buildRelationshipPeopleSQL(effectiveAt time.Time, groups string) string {
+func buildMeetingPeopleCTE(groups string) string {
 	return `
 WITH logical_people AS (
 	SELECT l.entry_key, l.source_id, l.source_type, l.occurred_at, l.message_type, l.attachment_count,
-	       l.canonical_id, coalesce(g.group_id, l.anchor_message_id) AS meeting_group,
+	       l.canonical_id, l.anchor_message_id, coalesce(g.group_id, l.anchor_message_id) AS meeting_group,
 	       row_number() OVER (PARTITION BY l.canonical_id, coalesce(g.group_id, l.anchor_message_id)
-	                          ORDER BY l.occurred_at, l.anchor_message_id) AS meeting_order
+	                          ORDER BY l.deleted_from_source, l.occurred_at, l.anchor_message_id) AS meeting_order
 	FROM ` + logicalBuildRelation + ` l
 	LEFT JOIN ` + groups + ` g ON g.message_id = l.anchor_message_id
 	WHERE l.relation_kind = 1
-), people_totals AS (
+)`
+}
+
+// A meeting is counted at its owning transcript; filtered views count it only when that transcript matches the filter.
+// Live copies come first, then the earliest time and lowest message ID.
+func buildMeetingOwnersSQL(groups string) string {
+	return buildMeetingPeopleCTE(groups) + `
+SELECT canonical_id::BIGINT AS canonical_id, anchor_message_id::BIGINT AS message_id
+FROM logical_people WHERE message_type = 'meeting_transcript' AND meeting_order = 1`
+}
+
+func buildRelationshipPeopleSQL(effectiveAt time.Time, groups string) string {
+	return buildMeetingPeopleCTE(groups) + `, people_totals AS (
 	SELECT canonical_id,
 	       count(*)::BIGINT AS activity_count,
 	       count(DISTINCT meeting_group) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,

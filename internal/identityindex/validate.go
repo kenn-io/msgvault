@@ -51,6 +51,7 @@ func Validate(
 			filepath.Join(opts.OutputRoot, DatasetTemperatureContributions, "*.parquet"), false,
 		),
 		DatasetMeetingGroups: activityRelation(filepath.Join(opts.OutputRoot, DatasetMeetingGroups, "*.parquet"), false),
+		DatasetMeetingOwners: activityRelation(filepath.Join(opts.OutputRoot, DatasetMeetingOwners, "*.parquet"), false),
 	}
 	if opts.ActivityRelation != "" {
 		relations[DatasetActivity] = opts.ActivityRelation
@@ -258,6 +259,7 @@ const duckDBTypeVarchar = "VARCHAR"
 
 var datasetSchemas = map[string][]schemaColumn{
 	DatasetMeetingGroups: {{"message_id", duckDBTypeBigInt}, {"group_id", duckDBTypeBigInt}},
+	DatasetMeetingOwners: {{"canonical_id", duckDBTypeBigInt}, {"message_id", duckDBTypeBigInt}},
 	DatasetActivity: {
 		{"message_id", duckDBTypeBigInt},
 		{"conversation_id", duckDBTypeBigInt},
@@ -357,6 +359,7 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"is_owner", duckDBTypeBoolean},
 		{"with_owner", duckDBTypeBoolean},
 		{"domain", duckDBTypeVarchar},
+		{"deleted_from_source", duckDBTypeBoolean},
 	},
 	DatasetTemperatureContributions: {
 		{"canonical_id", duckDBTypeBigInt},

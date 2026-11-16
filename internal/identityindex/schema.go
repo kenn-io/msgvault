@@ -16,6 +16,7 @@ const (
 	DatasetLogicalContributions     = "relationship_logical_contributions"
 	DatasetTemperatureContributions = "relationship_temperature_contributions"
 	DatasetMeetingGroups            = "meeting_groups"
+	DatasetMeetingOwners            = "meeting_owners"
 
 	ModalityEmail   uint8 = 1
 	ModalityChat    uint8 = 2
@@ -41,6 +42,7 @@ var (
 		DatasetLogicalContributions,
 		DatasetTemperatureContributions,
 		DatasetMeetingGroups,
+		DatasetMeetingOwners,
 	}
 )
 

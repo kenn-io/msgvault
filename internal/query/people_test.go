@@ -356,9 +356,9 @@ func TestPeopleMeetingSourceUsesFilteredDateWindow(t *testing.T) {
 		{"both sources after cutoff", Context{SourceIDs: []int64{firstSource, secondSource}, After: &cutoff}, 1},
 		{"later source after cutoff", Context{SourceIDs: []int64{secondSource}, After: &cutoff}, 1},
 		{"bounded window", Context{SourceIDs: []int64{firstSource, secondSource}, After: &cutoff, Before: &end}, 1},
-		{"first source before cutoff", Context{SourceIDs: []int64{firstSource}, Before: &cutoff}, 1},
+		{"first source before cutoff", Context{SourceIDs: []int64{firstSource}, Before: &cutoff}, 0},
 		{"active later source", Context{SourceIDs: []int64{secondSource}, Deletion: DeletionActive}, 1},
-		{"later source before cutoff", Context{SourceIDs: []int64{secondSource}}, 0},
+		{"later source without date", Context{SourceIDs: []int64{secondSource}}, 1},
 		{"both sources before cutoff", Context{SourceIDs: []int64{firstSource, secondSource}}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -403,6 +403,143 @@ func TestPeopleMeetingFullTextSourceOwnership(t *testing.T) {
 		require.NoError(err)
 		require.Len(legacy.Rows, 1)
 		assert.Equal(tc.want, legacy.Rows[0].MeetingCount)
+	}
+}
+
+func TestPeopleMeetingCountsAddAcrossSources(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	firstSource := b.AddSourceWithType("first@example.test", "granola")
+	secondSource := b.AddSourceWithType("second@example.test", "zoom")
+	alice := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	start := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	deleted := start.Add(time.Hour)
+	first := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: start, DeletedFromSourceAt: &deleted})
+	second := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: start.Add(2 * time.Hour)})
+	b.AddTo(first, alice, "Alice")
+	b.AddTo(second, alice, "Alice")
+	b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
+	engine := b.BuildEngine()
+	cutoff := start.Add(time.Hour)
+	generation := int64(1)
+	for _, disabled := range []bool{false, true} {
+		engine.sourceRollupFastPathDisabled = disabled
+		for _, tc := range []struct {
+			name   string
+			filter Context
+			mode   SearchMode
+			want   int64
+		}{
+			{"none", Context{}, SearchNone, 1},
+			{"after", Context{After: &cutoff}, SearchNone, 1},
+			{"before", Context{Before: &cutoff}, SearchNone, 0},
+			{"active", Context{Deletion: DeletionActive}, SearchNone, 1},
+			{"deleted", Context{Deletion: DeletionDeleted}, SearchNone, 0},
+			{"full text", Context{}, SearchFullText, 1},
+			{"semantic", Context{}, SearchSemantic, 1},
+			{"hybrid", Context{}, SearchHybrid, 1},
+		} {
+			t.Run(fmt.Sprintf("%s/slow=%v", tc.name, disabled), func(t *testing.T) {
+				assertions, requirements := assert.New(t), require.New(t)
+				sources := [][]int64{{firstSource}, {secondSource}, {firstSource, secondSource}}
+				counts := [4][3]int64{}
+				for i, sourceIDs := range sources {
+					filter := tc.filter
+					filter.SourceIDs = sourceIDs
+					search := SearchSpec{Mode: tc.mode}
+					if tc.mode != SearchNone {
+						search.Query = "match"
+						search.CandidateMessageIDs = []int64{first, second}
+						if tc.mode != SearchFullText && i < 2 {
+							search.CandidateMessageIDs = []int64{[]int64{first, second}[i]}
+						}
+						if tc.mode != SearchSemantic {
+							search.LexicalIndexRevision = "fts5:test"
+						}
+						if tc.mode != SearchFullText {
+							search.VectorGeneration = &generation
+						}
+					}
+					explore := ExploreRequest{Context: filter, Search: search}
+					request := PersonSearchRequest{Query: "Alice", Explore: explore}
+					indexed, err := engine.SearchPeople(t.Context(), request)
+					requirements.NoError(err)
+					if len(indexed.Rows) > 0 {
+						counts[0][i] = indexed.Rows[0].MeetingCount
+					}
+					legacy, err := engine.searchPeopleLegacy(t.Context(), request, nil, nil, false)
+					requirements.NoError(err)
+					if len(legacy.Rows) > 0 {
+						counts[1][i] = legacy.Rows[0].MeetingCount
+					}
+					summary, err := engine.GetPersonSummary(t.Context(), alice, explore, nil)
+					requirements.NoError(err)
+					if len(summary.Rows) > 0 {
+						counts[2][i] = summary.Rows[0].MeetingCount
+					}
+					detail, err := engine.GetPerson(t.Context(), alice, filter, nil)
+					requirements.NoError(err)
+					if detail != nil {
+						counts[3][i] = detail.MeetingCount
+					}
+				}
+				for method, count := range counts {
+					assertions.Equal(tc.want, count[2], "%s method %d total", tc.name, method)
+					assertions.Equal(count[2], count[0]+count[1], "%s method %d", tc.name, method)
+				}
+			})
+		}
+	}
+}
+
+func TestPersonMeetingOwnerUsesCanonicalClusterID(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("first@example.test", "granola")
+	canonical := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	alias := b.AddParticipant("alias@example.test", "example.test", "Alias")
+	b.LinkCluster(canonical, alias)
+	message := b.AddMessage(MessageOpt{SourceID: source, MessageType: "meeting_transcript"})
+	b.AddTo(message, alias, "Alias")
+	engine := b.BuildEngine()
+	filter := Context{SourceIDs: []int64{source}}
+	detail, err := engine.GetPerson(t.Context(), alias, filter, []int64{canonical, alias})
+	requirements.NoError(err)
+	requirements.NotNil(detail)
+	assertions.Equal(int64(1), detail.MeetingCount)
+	summary, err := engine.GetPersonSummary(t.Context(), alias, ExploreRequest{Context: filter}, []int64{canonical, alias})
+	requirements.NoError(err)
+	requirements.Len(summary.Rows, 1)
+	assertions.Equal(int64(1), summary.Rows[0].MeetingCount)
+}
+
+func TestPeopleSemanticMeetingOwnershipWithLiveCopies(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	b := NewTestDataBuilder(t)
+	firstSource := b.AddSourceWithType("first@example.test", "granola")
+	secondSource := b.AddSourceWithType("second@example.test", "zoom")
+	alice := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	first := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript"})
+	second := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript"})
+	b.AddTo(first, alice, "Alice")
+	b.AddTo(second, alice, "Alice")
+	b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
+	engine := b.BuildEngine()
+	generation := int64(1)
+	for _, mode := range []SearchMode{SearchSemantic, SearchHybrid} {
+		for i, sources := range [][]int64{{firstSource}, {secondSource}, {firstSource, secondSource}} {
+			ids := []int64{first, second}
+			if i < 2 {
+				ids = []int64{ids[i]}
+			}
+			search := SearchSpec{Mode: mode, Query: "meeting", CandidateMessageIDs: ids, VectorGeneration: &generation}
+			if mode == SearchHybrid {
+				search.LexicalIndexRevision = "fts5:test"
+			}
+			result, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "Alice", Explore: ExploreRequest{Context: Context{SourceIDs: sources, Deletion: DeletionActive}, Search: search}})
+			requirements.NoError(err)
+			requirements.Len(result.Rows, 1)
+			assertions.Equal([]int64{1, 0, 1}[i], result.Rows[0].MeetingCount, "%s", mode)
+		}
 	}
 }
 

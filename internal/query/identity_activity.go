@@ -133,7 +133,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	SELECT le.anchor_message_id AS entry_num, mp.canonical_id,
 	       mp.is_author, mp.is_owner,
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
-	       le.attachment_count, le.source_type, le.source_id
+	       le.attachment_count, le.source_type
 	FROM logical_entries le
 	JOIN message_person mp ON mp.message_id = le.anchor_message_id
 	WHERE le.entry_kind <> 'conversation'
@@ -141,7 +141,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	SELECT -le.conversation_id AS entry_num, cp.canonical_id,
 	       cp.is_author, cp.is_owner,
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
-	       le.attachment_count, le.source_type, le.source_id
+	       le.attachment_count, le.source_type
 	FROM logical_entries le
 	JOIN chat_person cp ON cp.conversation_id = le.conversation_id
 	WHERE le.entry_kind = 'conversation'
@@ -474,20 +474,9 @@ func (e *DuckDBEngine) searchPeople(
 		if logicalErr != nil {
 			return nil, logicalErr
 		}
-		ownerSQL := ""
-		var ownerArgs []any
-		if len(request.Explore.Context.SourceIDs) > 0 {
-			ownerRequest := request.Explore
-			ownerRequest.Context.SourceIDs = nil
-			ownerSQL, ownerArgs, logicalErr = e.buildIdentityLogicalSQL(ctx, ownerRequest, "")
-			if logicalErr != nil {
-				return nil, logicalErr
-			}
-		}
-		queryText = e.filteredPeopleSQL(logicalSQL, order, ownerSQL)
+		queryText = e.filteredPeopleSQL(logicalSQL, order)
 		args = append(args, logicalArgs...)
 		args = append(args, candidateArgs...)
-		args = append(args, ownerArgs...)
 	}
 	limit := request.Page.Limit
 	if limit == 0 {
@@ -587,23 +576,7 @@ func (e *DuckDBEngine) unfilteredPeopleSQL(
 ` + e.peoplePageSelectSQL()
 }
 
-func (e *DuckDBEngine) filteredPeopleSQL(
-	logicalSQL, order, ownerSQL string,
-) string {
-	meetingOwner := ""
-	ownerCondition := ""
-	if ownerSQL != "" {
-		meetingOwner = `, meeting_owners AS (` + ownerSQL + `
-	SELECT p.canonical_id, coalesce(g.group_id, p.entry_num) AS group_id,
-	       arg_min(p.source_id, struct_pack(at := p.occurred_at, id := p.entry_num)) AS source_id
-	FROM person_flags p
-	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = p.entry_num
-	WHERE p.message_type = 'meeting_transcript'
-	GROUP BY p.canonical_id, coalesce(g.group_id, p.entry_num)
-)`
-		ownerCondition = ` AND EXISTS (SELECT 1 FROM meeting_owners o
-	        WHERE o.canonical_id = p.canonical_id AND o.group_id = coalesce(g.group_id, p.entry_num) AND o.source_id = p.source_id)`
-	}
+func (e *DuckDBEngine) filteredPeopleSQL(logicalSQL, order string) string {
 	// person_stats is the ONLY reference to the per-(entry, person) rows,
 	// and it reads person_flags rather than logical_people: a second
 	// reference would make DuckDB materialize the full row set — hundreds
@@ -614,10 +587,11 @@ func (e *DuckDBEngine) filteredPeopleSQL(
 	// the compact (person, source_type) stats, and the candidate
 	// restriction happens in the population join below rather than inside
 	// the aggregate.
-	return logicalSQL + meetingOwner + `,
+	return logicalSQL + `,
 person_stats AS (
 	SELECT p.canonical_id, p.source_type,
 	       count(*)::BIGINT AS source_count,
+	       count(*) FILTER (WHERE p.message_type = 'meeting_transcript' AND (p.canonical_id, p.entry_num) IN (SELECT canonical_id, message_id FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingOwners)) + `')))::BIGINT AS meeting_count,
 	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
 	       min(p.occurred_at)::TIMESTAMP AS first_at,
 	       max(p.occurred_at)::TIMESTAMP AS last_at
@@ -626,9 +600,7 @@ person_stats AS (
 ), person_totals AS (
 	SELECT canonical_id,
 	       sum(source_count)::BIGINT AS activity_count,
-	       (SELECT count(DISTINCT coalesce(g.group_id, p.entry_num))::BIGINT
-	        FROM person_flags p LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = p.entry_num
-	        WHERE p.canonical_id = person_stats.canonical_id AND p.message_type = 'meeting_transcript'` + ownerCondition + `) AS meeting_count,
+	       sum(meeting_count)::BIGINT AS meeting_count,
 	       sum(file_count)::BIGINT AS file_count,
 	       min(first_at)::TIMESTAMP AS first_at,
 	       max(last_at)::TIMESTAMP AS last_at

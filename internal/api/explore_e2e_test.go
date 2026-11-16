@@ -68,7 +68,7 @@ func TestPeopleHTTPCountsMeetingGroups(t *testing.T) {
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 	requirements.Len(body.Rows, 1)
-	assertions.Equal(int64(1), body.Rows[0].MeetingCount)
+	assertions.Equal(int64(0), body.Rows[0].MeetingCount)
 }
 
 func TestPeopleFullTextMeetingSourceAttribution(t *testing.T) {
@@ -108,8 +108,8 @@ func TestPeopleFullTextMeetingSourceAttribution(t *testing.T) {
 		{"both sources", "alpha", `[{"dimension":"source","values":["1","2"]}]`, 1},
 		{"earlier source", "alpha", `[{"dimension":"source","values":["1"]}]`, 1},
 		{"later source", "alpha", `[{"dimension":"source","values":["2"]}]`, 0},
-		{"later source after cutoff", "alpha", `[{"dimension":"source","values":["2"]},{"dimension":"after","values":["2026-07-18T10:30:00Z"]}]`, 1},
-		{"only later copy matches", "beta", `[{"dimension":"source","values":["2"]}]`, 1},
+		{"later source after cutoff", "alpha", `[{"dimension":"source","values":["2"]},{"dimension":"after","values":["2026-07-18T10:30:00Z"]}]`, 0},
+		{"only later copy matches", "beta", `[{"dimension":"source","values":["2"]}]`, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -129,13 +129,28 @@ func TestPeopleFullTextMeetingSourceAttribution(t *testing.T) {
 	}
 	srv.lexicalCandidateCap = 1
 	for _, path := range []string{"/api/v1/participants/search", "/api/v1/participants/1/summary"} {
-		predicate := `{"query":"alpha","search_mode":"full_text","filters":[{"dimension":"source","values":["2"]}]}`
+		predicate := `{"query":"alpha","search_mode":"full_text","filters":[{"dimension":"source","values":["1","2"]}]}`
 		if strings.HasSuffix(path, "/search") {
 			predicate = fmt.Sprintf(`{"predicate":%s}`, predicate)
 		}
 		response := postExploreJSON(t, srv, path, predicate)
 		assertions.Equal(http.StatusConflict, response.Code, response.Body.String())
 		assertions.Contains(response.Body.String(), "candidate_pool_saturated")
+	}
+}
+
+func TestPeopleFullTextWithSourceAndAccountIdentity(t *testing.T) {
+	fixture := newExploreIdentityAPIFixtureWithStore(t, testutil.NewTestStore(t))
+	for _, tc := range []struct{ direction, participant string }{{"sender", "2"}, {"recipient", "1"}} {
+		predicate := fmt.Sprintf(`{"query":"alpha","search_mode":"full_text","filters":[{"dimension":"source","values":["1"]},{"dimension":"identity","values":["1","bob@members.example",%q]}]}`, tc.direction)
+		for _, path := range []string{"/api/v1/participants/search", "/api/v1/participants/" + tc.participant + "/summary"} {
+			body := predicate
+			if strings.HasSuffix(path, "/search") {
+				body = fmt.Sprintf(`{"predicate":%s}`, predicate)
+			}
+			response := postExploreJSON(t, fixture.server, path, body)
+			assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		}
 	}
 }
 
@@ -955,8 +970,12 @@ type exploreIdentityAPIFixture struct {
 
 func newExploreIdentityAPIFixture(t *testing.T) exploreIdentityAPIFixture {
 	t.Helper()
+	return newExploreIdentityAPIFixtureWithStore(t, testutil.NewSQLiteTestStore(t))
+}
+
+func newExploreIdentityAPIFixtureWithStore(t *testing.T, st *store.Store) exploreIdentityAPIFixture {
+	t.Helper()
 	requirements := require.New(t)
-	st := testutil.NewSQLiteTestStore(t)
 	sourceA, err := st.GetOrCreateSource("gmail", "archive-a@example.com")
 	requirements.NoError(err)
 	sourceB, err := st.GetOrCreateSource("imap", "archive-b@example.com")

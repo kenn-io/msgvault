@@ -32,7 +32,8 @@ WITH filtered_facts AS (
 	       f.message_type::VARCHAR AS message_type,
 	       f.entry_kind::VARCHAR AS entry_kind,
 	       f.is_from_me::BOOLEAN AS is_from_me,
-	       f.attachment_count::BIGINT AS attachment_count
+	       f.attachment_count::BIGINT AS attachment_count,
+	       f.deleted_from_source::BOOLEAN AS deleted_from_source
 	FROM filtered_facts f
 	WHERE NOT f.is_chat
 ), chat_units AS (
@@ -53,7 +54,8 @@ WITH filtered_facts AS (
 	       arg_max(f.is_from_me,
 	           struct_pack(occurred_at := f.occurred_at, message_id := f.message_id))::BOOLEAN
 	           AS is_from_me,
-	       coalesce(sum(f.attachment_count), 0)::BIGINT AS attachment_count
+	       coalesce(sum(f.attachment_count), 0)::BIGINT AS attachment_count,
+	       arg_max(f.deleted_from_source, struct_pack(occurred_at := f.occurred_at, message_id := f.message_id))::BOOLEAN AS deleted_from_source
 	FROM filtered_facts f
 	WHERE f.is_chat
 	GROUP BY f.source_id, f.conversation_id
@@ -182,7 +184,7 @@ SELECT 1::UTINYINT AS relation_kind,
        p.entry_key, p.anchor_message_id, p.conversation_id, p.source_id,
        p.source_type, p.occurred_at, p.message_type, p.entry_kind, p.is_from_me,
        p.attachment_count, p.canonical_id, p.is_author, p.is_owner,
-       p.with_owner, NULL::VARCHAR AS domain
+       p.with_owner, NULL::VARCHAR AS domain, p.deleted_from_source
 FROM logical_people p
 
 UNION ALL
@@ -192,7 +194,7 @@ SELECT 2::UTINYINT AS relation_kind,
        u.source_type, u.occurred_at, u.message_type, u.entry_kind, u.is_from_me,
        u.attachment_count, NULL::BIGINT AS canonical_id,
        NULL::BOOLEAN AS is_author, NULL::BOOLEAN AS is_owner,
-       NULL::BOOLEAN AS with_owner, k.domain
+       NULL::BOOLEAN AS with_owner, k.domain, u.deleted_from_source
 FROM logical_domain_keys k
 JOIN logical_units u USING (entry_key)
 WHERE k.domain <> ''
@@ -207,7 +209,7 @@ SELECT 3::UTINYINT AS relation_kind,
        NULL::BOOLEAN AS is_from_me,
        NULL::BIGINT AS attachment_count, p.canonical_id,
        NULL::BOOLEAN AS is_author, NULL::BOOLEAN AS is_owner,
-       NULL::BOOLEAN AS with_owner, p.domain
+       NULL::BOOLEAN AS with_owner, p.domain, NULL::BOOLEAN AS deleted_from_source
 FROM logical_person_domains p
 WHERE p.domain <> ''
 
@@ -220,7 +222,7 @@ SELECT 4::UTINYINT AS relation_kind,
        u.source_type, u.occurred_at, u.message_type, u.entry_kind, u.is_from_me,
        u.attachment_count, NULL::BIGINT AS canonical_id,
        NULL::BOOLEAN AS is_author, NULL::BOOLEAN AS is_owner,
-       NULL::BOOLEAN AS with_owner, NULL::VARCHAR AS domain
+       NULL::BOOLEAN AS with_owner, NULL::VARCHAR AS domain, u.deleted_from_source
 FROM logical_units u
 WHERE u.entry_kind = 'conversation'`
 }

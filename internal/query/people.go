@@ -394,28 +394,6 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		}
 	}
 	overrideExpr := sqlPersonNameOverrideExpr(e.parquetPath(datasetPersonDisplayNames), overrideFilter)
-	meetingSourceCondition := ""
-	if len(request.Explore.Context.SourceIDs) > 0 {
-		ownerRequest := request.Explore
-		ownerRequest.Context.SourceIDs = nil
-		ownerConditions, ownerArgs := buildExploreConditions(ownerRequest)
-		ownerConditions, err = e.sentIdentityConditions(ownerConditions)
-		if err != nil {
-			return nil, err
-		}
-		args = append(args, ownerArgs...)
-		memberCondition := `EXISTS (SELECT 1 FROM relationship_activity_expanded a
-			WHERE a.message_id = le.anchor_message_id AND a.canonical_id = pe.person_id AND a.is_direct)`
-		if exactID != nil {
-			memberCondition = `le.anchor_message_id IN (SELECT message_id FROM person_message_ids)`
-		}
-		meetingSourceCondition = ` AND pe.source_id = (` + buildExploreLogicalSQLNoLists(ownerConditions) + `)
-			SELECT le.source_id FROM logical_entries le
-			LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = le.anchor_message_id
-			WHERE le.entry_kind <> 'conversation' AND le.message_type = 'meeting_transcript' AND ` + memberCondition + `
-			  AND coalesce(g.group_id, le.anchor_message_id) = coalesce(mg.group_id, pe.anchor_message_id)
-			ORDER BY le.occurred_at, le.anchor_message_id LIMIT 1)`
-	}
 	personWhere := []string{"true"}
 	populationFrom := "FROM person_entries pe JOIN participants p ON p.id = pe.person_id"
 	if keepInactive {
@@ -498,11 +476,10 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		` + overrideExpr + ` AS person_display_name,
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
 		COUNT(pe.person_id)::BIGINT AS activity_count,
-		COUNT(DISTINCT coalesce(mg.group_id, pe.anchor_message_id)) FILTER (WHERE pe.message_type = 'meeting_transcript'` + meetingSourceCondition + `)::BIGINT AS meeting_count,
+		COUNT(*) FILTER (WHERE pe.message_type = 'meeting_transcript' AND (coalesce((SELECT c.canonical_id FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetParticipantClusters)) + `') c WHERE c.participant_id = pe.person_id), pe.person_id), pe.anchor_message_id) IN (SELECT canonical_id, message_id FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingOwners)) + `')))::BIGINT AS meeting_count,
 		COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
 	` + populationFrom + `
-	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') mg ON mg.message_id = pe.anchor_message_id
 	GROUP BY p.id, p.display_name, p.email_address, p.phone_number
 ), filtered_people AS (
 	SELECT *, COALESCE(person_display_name, best_display_name, fallback_label) AS display_label,
@@ -589,7 +566,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
 ), person_entries AS (`, quoteIdentitySQLPath(clustersGlob)) +
 			sqlActivityEntryEdges(
-				"a.canonical_id AS person_id, le.anchor_message_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type, le.source_id",
+				"a.canonical_id AS person_id, le.anchor_message_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
 				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
 	}
 	memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
@@ -611,7 +588,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 	SELECT f.conversation_id FROM classified f
 	WHERE f.is_chat AND f.message_id IN (SELECT message_id FROM person_message_ids)
 ), person_entries AS (
-	SELECT ?::BIGINT AS person_id, anchor_message_id, occurred_at, message_type, attachment_count, source_type, source_id
+	SELECT ?::BIGINT AS person_id, anchor_message_id, occurred_at, message_type, attachment_count, source_type
 	FROM logical_entries le
 	WHERE (le.entry_kind <> 'conversation'
 	       AND le.anchor_message_id IN (SELECT message_id FROM person_message_ids))

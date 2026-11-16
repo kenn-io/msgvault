@@ -114,7 +114,7 @@ func registerAnalyticalDetailRoute[Resp any](
 
 func (s *Server) handleSearchParticipants(w http.ResponseWriter, r *http.Request) {
 	var request IdentitySearchHTTPRequest
-	prepared, ok := s.prepareIdentitySearch(w, r, &request, true)
+	prepared, ok := s.prepareIdentitySearch(w, r, &request)
 	if !ok {
 		return
 	}
@@ -147,7 +147,7 @@ func (s *Server) handleSearchParticipants(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleSearchDomains(w http.ResponseWriter, r *http.Request) {
 	var request IdentitySearchHTTPRequest
-	prepared, ok := s.prepareIdentitySearch(w, r, &request, false)
+	prepared, ok := s.prepareIdentitySearch(w, r, &request)
 	if !ok {
 		return
 	}
@@ -178,7 +178,7 @@ func (s *Server) handleSearchDomains(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) prepareIdentitySearch(w http.ResponseWriter, r *http.Request, request *IdentitySearchHTTPRequest, people bool) (identitySearchPrepared, bool) {
+func (s *Server) prepareIdentitySearch(w http.ResponseWriter, r *http.Request, request *IdentitySearchHTTPRequest) (identitySearchPrepared, bool) {
 	if !decodeExploreJSON(w, r, request) {
 		return identitySearchPrepared{}, false
 	}
@@ -218,11 +218,7 @@ func (s *Server) prepareIdentitySearch(w http.ResponseWriter, r *http.Request, r
 	if !ok {
 		return identitySearchPrepared{}, false
 	}
-	searchRequest := prepared.request
-	if people {
-		searchRequest = peopleMeetingSearchRequest(searchRequest)
-	}
-	cursor, searchSpec, snapshotID, ok := s.resolvePagedExploreSearch(r.Context(), w, request.Cursor, searchRequest)
+	cursor, searchSpec, snapshotID, ok := s.resolvePagedExploreSearch(r.Context(), w, request.Cursor, prepared.request)
 	if !ok {
 		return identitySearchPrepared{}, false
 	}
@@ -344,7 +340,7 @@ func (s *Server) handleParticipantContextSummary(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	explore, snapshotID, ok := s.prepareIdentitySummary(w, r, true)
+	explore, snapshotID, ok := s.prepareIdentitySummary(w, r)
 	if !ok {
 		return
 	}
@@ -396,7 +392,7 @@ func (s *Server) handleDomainContextSummary(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	explore, snapshotID, ok := s.prepareIdentitySummary(w, r, false)
+	explore, snapshotID, ok := s.prepareIdentitySummary(w, r)
 	if !ok {
 		return
 	}
@@ -418,7 +414,7 @@ func (s *Server) handleDomainContextSummary(w http.ResponseWriter, r *http.Reque
 		SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID})
 }
 
-func (s *Server) prepareIdentitySummary(w http.ResponseWriter, r *http.Request, people bool) (query.ExploreRequest, string, bool) {
+func (s *Server) prepareIdentitySummary(w http.ResponseWriter, r *http.Request) (query.ExploreRequest, string, bool) {
 	var request ExploreHTTPRequest
 	if !decodeExploreJSON(w, r, &request) {
 		return query.ExploreRequest{}, "", false
@@ -432,26 +428,11 @@ func (s *Server) prepareIdentitySummary(w http.ResponseWriter, r *http.Request, 
 		s.writeExploreFilterError(w, err, "invalid_identity_predicate")
 		return query.ExploreRequest{}, "", false
 	}
-	searchRequest := prepared.request
-	if people {
-		searchRequest = peopleMeetingSearchRequest(searchRequest)
-	}
-	searchSpec, snapshotID, ok := s.resolveExploreSearch(r.Context(), w, searchRequest)
+	searchSpec, snapshotID, ok := s.resolveExploreSearch(r.Context(), w, prepared.request)
 	if !ok || !requireCompleteCandidatePool(w, searchSpec) {
 		return query.ExploreRequest{}, "", false
 	}
 	return query.ExploreRequest{Context: prepared.query.Context, Search: searchSpec}, snapshotID, true
-}
-
-// Meeting ownership needs matches from every source; the analytical query
-// still applies the original source filter to the returned activity.
-func peopleMeetingSearchRequest(request ExploreHTTPRequest) ExploreHTTPRequest {
-	if request.SearchMode == exploreSearchModeFullText {
-		request.Filters = slices.DeleteFunc(slices.Clone(request.Filters), func(filter ExploreFilter) bool {
-			return filter.Dimension == exploreFilterSource
-		})
-	}
-	return request
 }
 
 func (s *Server) handleParticipantTimeline(w http.ResponseWriter, r *http.Request) {

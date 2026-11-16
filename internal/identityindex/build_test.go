@@ -66,7 +66,7 @@ func TestBuildCountsMeetingGroupsAcrossSources(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE meeting_sources AS SELECT * FROM read_parquet(?) UNION ALL SELECT * REPLACE (2::BIGINT AS id) FROM read_parquet(?)`, parquetDatasetGlob(root, "sources"), parquetDatasetGlob(root, "sources"))
 	requirements.NoError(err)
 	replaceRelationshipParquet(t, db, root, "sources", "SELECT * FROM meeting_sources")
-	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE meeting_recipients AS SELECT * FROM read_parquet(?) UNION ALL SELECT * REPLACE (101::BIGINT AS message_id) FROM read_parquet(?)`, parquetDatasetGlob(root, "message_recipients"), parquetDatasetGlob(root, "message_recipients"))
+	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE meeting_recipients AS SELECT * FROM read_parquet(?) UNION ALL SELECT * REPLACE (101::BIGINT AS message_id) FROM read_parquet(?) UNION ALL SELECT * REPLACE (101::BIGINT AS message_id, 4::BIGINT AS participant_id) FROM read_parquet(?) WHERE participant_id = 1`, parquetDatasetGlob(root, "message_recipients"), parquetDatasetGlob(root, "message_recipients"), parquetDatasetGlob(root, "message_recipients"))
 	requirements.NoError(err)
 	replaceRelationshipParquet(t, db, root, "message_recipients", "SELECT * FROM meeting_recipients")
 	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root, MeetingGroups: "(SELECT 100::BIGINT AS message_id, 100::BIGINT AS group_id UNION ALL SELECT 101, 100)"})
@@ -78,6 +78,14 @@ func TestBuildCountsMeetingGroupsAcrossSources(t *testing.T) {
 	assertions.Equal(int64(1), meetings)
 	assertions.Equal(int64(1), firstSource)
 	assertions.Zero(secondSource)
+	var owner int64
+	err = db.QueryRowContext(t.Context(), `SELECT message_id FROM read_parquet(?) WHERE canonical_id = 4`, relationshipParquetGlob(root, DatasetMeetingOwners)).Scan(&owner)
+	requirements.NoError(err)
+	assertions.Equal(int64(101), owner)
+	err = db.QueryRowContext(t.Context(), `SELECT meeting_count, source_rollups[1].meeting_count FROM read_parquet(?) WHERE canonical_id = 4`, relationshipParquetGlob(root, DatasetPeople)).Scan(&meetings, &secondSource)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), meetings)
+	assertions.Equal(int64(1), secondSource)
 }
 
 func TestBuildPublishesFourRelationshipDatasets(t *testing.T) {
