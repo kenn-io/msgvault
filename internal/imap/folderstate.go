@@ -12,7 +12,9 @@ import (
 // MembershipObservation records one fetched mailbox UID and its provider
 // identity without coupling the IMAP protocol package to the durable store.
 type MembershipObservation struct {
-	Mailbox                  string
+	Mailbox string
+	// AllMail records LIST-advertised \All independently of Sent/Drafts roles.
+	AllMail                  bool
 	UIDValidity              uint32
 	UID                      uint32
 	SourceMessageID          string
@@ -38,6 +40,7 @@ func (c *Client) ObservedMemberships() []MembershipObservation {
 	}
 	observations := make([]MembershipObservation, len(c.observedMemberships))
 	for i, observation := range c.observedMemberships {
+		observation.AllMail = c.allMailMailboxes[observation.Mailbox]
 		if observation.Flags != nil {
 			observation.Flags = append([]string{}, observation.Flags...)
 		}

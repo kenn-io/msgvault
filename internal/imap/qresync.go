@@ -13,7 +13,9 @@ import (
 
 // MailboxDelta describes the membership changes observed for one mailbox.
 type MailboxDelta struct {
-	Mailbox      string
+	Mailbox string
+	// AllMail records LIST-advertised \All independently of Sent/Drafts roles.
+	AllMail      bool
 	State        FolderState
 	ChangedUIDs  []imap.UID
 	VanishedUIDs []imap.UID
@@ -35,6 +37,7 @@ func (c *Client) ObservedMailboxDeltas() []MailboxDelta {
 	}
 	deltas := make([]MailboxDelta, len(c.observedMailboxDeltas))
 	for i, delta := range c.observedMailboxDeltas {
+		delta.AllMail = c.allMailMailboxes[delta.Mailbox]
 		delta.State.KnownUIDs = cloneKnownUIDs(delta.State.KnownUIDs)
 		delta.ChangedUIDs = append([]imap.UID(nil), delta.ChangedUIDs...)
 		delta.VanishedUIDs = append([]imap.UID(nil), delta.VanishedUIDs...)

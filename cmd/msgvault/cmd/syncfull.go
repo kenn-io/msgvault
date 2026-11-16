@@ -535,6 +535,7 @@ func applyIMAPMailboxDeltas(
 		}
 		storeDeltas = append(storeDeltas, store.IMAPMailboxDelta{
 			Mailbox: delta.Mailbox,
+			AllMail: delta.AllMail,
 			State: store.IMAPFolderState{
 				Mailbox:       delta.Mailbox,
 				UIDValidity:   delta.State.UIDValidity,
@@ -570,6 +571,7 @@ func clearRestoredIMAPDeletionMarks(
 func imapStoreObservation(observation imaplib.MembershipObservation) store.IMAPMembershipObservation {
 	return store.IMAPMembershipObservation{
 		Mailbox:                  observation.Mailbox,
+		AllMail:                  observation.AllMail,
 		UIDValidity:              observation.UIDValidity,
 		UID:                      observation.UID,
 		SourceMessageID:          observation.SourceMessageID,

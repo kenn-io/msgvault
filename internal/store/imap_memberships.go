@@ -18,7 +18,9 @@ import (
 
 // IMAPMembershipObservation records one observed mailbox UID and its message identity.
 type IMAPMembershipObservation struct {
-	Mailbox                  string
+	Mailbox string
+	// AllMail records LIST-advertised \All independently of the saved label role.
+	AllMail                  bool
 	UIDValidity              uint32
 	UID                      uint32
 	SourceMessageID          string
@@ -36,7 +38,9 @@ type IMAPMembershipObservation struct {
 
 // IMAPMailboxDelta is the durable state change collected for one mailbox.
 type IMAPMailboxDelta struct {
-	Mailbox      string
+	Mailbox string
+	// AllMail records LIST-advertised \All independently of the saved label role.
+	AllMail      bool
 	State        IMAPFolderState
 	Memberships  []IMAPMembershipObservation
 	VanishedUIDs []uint32
@@ -313,8 +317,18 @@ func (s *Store) applyIMAPMailboxDeltas(
 			return err
 		}
 		currentMailboxes := make(map[string]struct{}, len(normalizedDeltas))
+		restoringMailboxRole := imapRestoringMailboxRole
+		var allMailArgs []any
 		for _, normalized := range normalizedDeltas {
 			currentMailboxes[normalized.mailbox] = struct{}{}
+			if normalized.delta.AllMail {
+				allMailArgs = append(allMailArgs, normalized.mailbox)
+			}
+		}
+		if len(allMailArgs) > 0 {
+			// A combined Sent/Drafts role must not turn an All Mail
+			// membership into evidence that a message left Trash.
+			restoringMailboxRole += ` AND l.source_label_id NOT IN (?` + strings.Repeat(",?", len(allMailArgs)-1) + `)`
 		}
 		if err := retireAbsentIMAPMailboxes(
 			ctx, tx, sourceID, currentMailboxes, generations, affected,
@@ -469,9 +483,9 @@ func (s *Store) applyIMAPMailboxDeltas(
 					NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
 						WHERE ml.message_id = messages.id AND l.system_role = 'trash')
 					OR EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
-						WHERE ml.message_id = messages.id AND `+imapRestoringMailboxRole+`)
+						WHERE ml.message_id = messages.id AND `+restoringMailboxRole+`)
 				)
-			`, messageID, sourceID); err != nil {
+			`, append([]any{messageID, sourceID}, allMailArgs...)...); err != nil {
 				return fmt.Errorf("clear IMAP tombstone for message %d: %w", messageID, err)
 			}
 		}
@@ -576,7 +590,7 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 		var candidates []IMAPMembershipObservation
 		for _, observation := range observations {
 			role, known := roles[observation.Mailbox]
-			if !known || role == "trash" || role == "all" {
+			if !known || role == "trash" || role == "all" || observation.AllMail {
 				continue
 			}
 			if markedIDs[observation.ArchivedMessageID] || markedKeys[observation.CanonicalSourceMessageID] ||

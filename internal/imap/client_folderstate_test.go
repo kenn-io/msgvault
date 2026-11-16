@@ -1327,8 +1327,10 @@ func TestConfiguredSentPlacementSurvivesDiscoveryReset(t *testing.T) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	require.True(t, client.isSentPlacementMailboxLocked("Gesendete Elemente"))
+	client.allMailMailboxes = map[string]bool{"All Mail": true}
 
 	client.clearMailboxDiscoveryLocked()
+	assert.Empty(t, client.allMailMailboxes, "rediscovery must discard the prior All Mail roles")
 	assert.True(t, client.isSentPlacementMailboxLocked("Gesendete Elemente"),
 		"rediscovery must not discard the per-source Sent configuration")
 	assert.False(t, client.isSentPlacementMailboxLocked("INBOX"))
