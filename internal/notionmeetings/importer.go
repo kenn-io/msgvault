@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
-	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -422,18 +421,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if section.name == sectionTranscript && strings.TrimSpace(oldText) == "" {
 				oldText = transcriptFromArchivedBody(archived.Body)
 			}
-			if section.name != sectionTranscript && archived.MessageID != 0 && oldText == "" && (!archived.HasEvidence || !archived.EmptySections[section.name]) {
+			if section.name != sectionTranscript && archived.MessageID != 0 && !archived.HasEvidence {
 				// The saved section can't be recovered, so rewriting would erase it.
 				leaveUnchanged = true
 			}
 			if oldText == "" && len(archived.RawTrees[section.name]) == 0 {
 				continue
 			}
-			keepCurrentTranscript := section.name == sectionTranscript && hydrated.MarkdownTranscriptFallback && strings.TrimSpace(oldText) == ""
-			if !keepCurrentTranscript {
-				*section.text = oldText
-			}
-			if section.name == sectionTranscript && !keepCurrentTranscript {
+			*section.text = oldText
+			if section.name == sectionTranscript {
 				providerTranscriptMissing = true
 				hydrated.PageMarkdown = nil
 				hydrated.MarkdownTranscriptFallback = false
@@ -443,16 +439,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 					hydrated.keptRawTrees[section.name] = append(jsontext.Value(nil), rawTree...)
 				}
 				markdownPresent := len(archived.Evidence.PageMarkdown) > 0 && string(archived.Evidence.PageMarkdown) != "null"
-				if section.name == sectionTranscript && markdownPresent && !keepCurrentTranscript {
+				if section.name == sectionTranscript && markdownPresent {
 					hydrated.keptMarkdown = append(jsontext.Value(nil), archived.Evidence.PageMarkdown...)
 				}
-				if section.name == sectionTranscript && archived.MarkdownFallback && !keepCurrentTranscript {
+				if section.name == sectionTranscript && archived.MarkdownFallback {
 					hydrated.MarkdownTranscriptFallback = true
 				}
 			}
-			if !keepCurrentTranscript {
-				hydrated.Warnings = append(hydrated.Warnings, "provider temporarily omitted the "+section.name+"; preserved the archived "+section.name)
-			}
+			hydrated.Warnings = append(hydrated.Warnings, "provider temporarily omitted the "+section.name+"; preserved the archived "+section.name)
 		}
 		if hydrated.AttendeeResolutionDegraded {
 			preserveArchivedAttendees(hydrated, archived.ResolvedUsers)
@@ -480,7 +474,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		checksum := checksumBytes(snapshot.Raw)
 		known, exists := state.Known[id]
-		if archived.HasEvidence && exists && !opts.Full && known.SnapshotVersion == meetingcontent.NotionEvidenceVersion &&
+		if archived.HasEvidence && exists && !opts.Full && known.SnapshotVersion == notionSnapshotVersion &&
 			known.SnapshotSHA256 == checksum {
 			// The archived meeting is current, but attendee linking may not
 			// have finished before an earlier run stopped.
@@ -492,7 +486,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			next.Known[id] = knownMeeting{
 				LastEditedTime:  meeting.LastEditedTime,
 				SnapshotSHA256:  checksum,
-				SnapshotVersion: meetingcontent.NotionEvidenceVersion,
+				SnapshotVersion: notionSnapshotVersion,
 			}
 			finishPending()
 			progress("verified Notion meeting " + id)
@@ -514,7 +508,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		next.Known[id] = knownMeeting{
 			LastEditedTime:  meeting.LastEditedTime,
 			SnapshotSHA256:  checksum,
-			SnapshotVersion: meetingcontent.NotionEvidenceVersion,
+			SnapshotVersion: notionSnapshotVersion,
 		}
 		finishPending()
 		progress("imported Notion meeting " + id)
@@ -588,7 +582,6 @@ func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNot
 type archivedMeetingState struct {
 	Evidence         rawEvidence
 	HasEvidence      bool
-	EmptySections    map[string]bool
 	Body             string
 	MessageID        int64
 	ResolvedUsers    []resolvedUser
@@ -619,13 +612,6 @@ func (imp *Importer) archivedState(ctx context.Context, sourceID int64, id strin
 		if json.Unmarshal([]byte(metadata.String), &decoded) == nil {
 			archived.ResolvedUsers = decoded.ResolvedUsers
 			archived.MarkdownFallback = decoded.MarkdownTranscriptFallback
-		}
-		var fields map[string]jsontext.Value
-		if json.Unmarshal([]byte(metadata.String), &fields) == nil {
-			archived.EmptySections = map[string]bool{}
-			for _, name := range []string{"summary", "notes"} {
-				archived.EmptySections[name] = string(fields["has_"+name]) == "false"
-			}
 		}
 	}
 	raw, err := imp.store.GetMessageRawContext(ctx, messageID)
@@ -668,8 +654,8 @@ func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, map[str
 	if err != nil {
 		return rawEvidence{}, nil, false, nil
 	}
-	if version > meetingcontent.NotionEvidenceVersion {
-		return rawEvidence{}, nil, false, &NewerEvidenceError{MeetingID: expectedID, Found: version, Supported: meetingcontent.NotionEvidenceVersion}
+	if version > notionSnapshotVersion {
+		return rawEvidence{}, nil, false, &NewerEvidenceError{MeetingID: expectedID, Found: version, Supported: notionSnapshotVersion}
 	}
 	var evidence rawEvidence
 	if json.Unmarshal(raw, &evidence) != nil {
@@ -681,7 +667,7 @@ func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, map[str
 			return rawEvidence{}, nil, false, nil
 		}
 	}
-	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > meetingcontent.NotionEvidenceVersion {
+	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > notionSnapshotVersion {
 		return rawEvidence{}, nil, false, nil
 	}
 	var discovery MeetingNote

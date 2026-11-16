@@ -262,9 +262,9 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal("Decide the release scope.", hydrated.Summary)
 			assert.Contains(hydrated.Notes, "Nested action item.")
-			assert.Equal("Test Speaker: Published in Markdown.", hydrated.Transcript)
-			assert.Equal(1, source.markdownCalls)
-			assert.True(hydrated.MarkdownTranscriptFallback)
+			assert.Empty(hydrated.Transcript)
+			assert.Zero(source.markdownCalls)
+			assert.False(hydrated.MarkdownTranscriptFallback)
 			assert.Contains(hydrated.Incomplete, "transcript")
 			assert.Len(hydrated.AttendeeLabels, 2)
 		})
@@ -502,7 +502,7 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 	}{
 		{"requests", 0, []string{"summary", "notes", "transcript"}, []string{"notes-1", "transcript-1"}, true, false},
 		{"bytes", 1, []string{"transcript"}, nil, false, false},
-		{"blocks", 1, []string{"summary", "notes", "transcript"}, []string{"notes-1", "transcript-1"}, true, false},
+		{"blocks", 0, []string{"summary", "notes", "transcript"}, []string{"notes-1", "transcript-1"}, true, false},
 		{"depth", 0, []string{"summary"}, nil, true, true},
 	} {
 		t.Run(tc.limit, func(t *testing.T) {
@@ -660,4 +660,15 @@ func TestHydratorSkipsNestedMeetingAndReadsSibling(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, hydrated.Notes, "Another meeting")
 	assert.Contains(t, hydrated.Notes, "Sibling action")
+}
+
+func TestHydratorDoesNotUsePageTranscriptWhenStructuredReadFails(t *testing.T) {
+	source := completeHydrationSource()
+	source.blockErrs = map[string]error{"transcript-1": syscall.ECONNRESET}
+	source.markdown.Markdown = "# Transcript\nSibling meeting transcript"
+	result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+	require.NoError(t, err)
+	assert.Empty(t, result.Transcript)
+	assert.Contains(t, result.Incomplete, "transcript")
+	assert.Zero(t, source.markdownCalls)
 }

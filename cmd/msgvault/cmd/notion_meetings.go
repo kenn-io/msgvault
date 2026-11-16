@@ -71,51 +71,6 @@ type notionMeetingsQuerySource interface {
 	ListUsers(ctx context.Context, cursor string) (*notionmeetings.UserPage, error)
 }
 
-func probeNotionReadContent(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, meetings []notionmeetings.MeetingNote) error {
-	if len(meetings) == 0 {
-		_, _ = fmt.Fprintln(out, "  Read Content: not tested (no visible meeting)")
-		return nil
-	}
-	meeting := meetings[0]
-	block, err := client.RetrieveBlock(ctx, meeting.ID)
-	if err != nil {
-		return fmt.Errorf("probe Notion meeting block access: %w", err)
-	}
-	if block == nil {
-		return errors.New("probe Notion meeting block access returned no response")
-	}
-	if pageID := notionProbePageID(meeting, block); pageID != "" {
-		if _, err := client.RetrievePageMarkdown(ctx, pageID, true); err != nil {
-			return fmt.Errorf("probe Notion Read Content access: %w", err)
-		}
-		_, _ = fmt.Fprintln(out, "  Read Content: available")
-		return nil
-	}
-	return probeNotionSectionContent(ctx, out, client, meeting.MeetingNotes.Children)
-}
-
-func notionProbePageID(meeting notionmeetings.MeetingNote, block *notionmeetings.Block) string {
-	if pageID := strings.TrimSpace(meeting.Parent.PageID); pageID != "" {
-		return pageID
-	}
-	return strings.TrimSpace(block.Parent.PageID)
-}
-
-func probeNotionSectionContent(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, children notionmeetings.MeetingChildren) error {
-	for _, id := range []string{children.SummaryBlockID, children.NotesBlockID, children.TranscriptBlockID} {
-		if strings.TrimSpace(id) == "" {
-			continue
-		}
-		if _, err := client.RetrieveBlock(ctx, id); err != nil {
-			return fmt.Errorf("probe Notion Read Content access: %w", err)
-		}
-		_, _ = fmt.Fprintln(out, "  Read Content: available")
-		return nil
-	}
-	_, _ = fmt.Fprintln(out, "  Read Content: not tested (no section blocks)")
-	return nil
-}
-
 func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, users notionmeetings.UserSource) error {
 	result, err := client.QueryMeetingNotes(ctx, 1)
 	if err != nil {
@@ -127,8 +82,44 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	_, _ = fmt.Fprintln(out, "Notion AI Meeting Notes probe succeeded.")
 	_, _ = fmt.Fprintf(out, "  Returned meetings: %d\n", len(result.Results))
 	_, _ = fmt.Fprintf(out, "  Partial coverage: %t\n", result.HasMore)
-	if err := probeNotionReadContent(ctx, out, client, result.Results); err != nil {
-		return err
+	if len(result.Results) == 0 {
+		_, _ = fmt.Fprintln(out, "  Read Content: not tested (no visible meeting)")
+	} else {
+		meeting := result.Results[0]
+		block, err := client.RetrieveBlock(ctx, meeting.ID)
+		if err != nil {
+			return fmt.Errorf("probe Notion meeting block access: %w", err)
+		}
+		if block == nil {
+			return errors.New("probe Notion meeting block access returned no response")
+		}
+		pageID := strings.TrimSpace(meeting.Parent.PageID)
+		if pageID == "" {
+			pageID = strings.TrimSpace(block.Parent.PageID)
+		}
+		if pageID != "" {
+			if _, err := client.RetrievePageMarkdown(ctx, pageID, true); err != nil {
+				return fmt.Errorf("probe Notion Read Content access: %w", err)
+			}
+			_, _ = fmt.Fprintln(out, "  Read Content: available")
+		} else {
+			tested := false
+			for _, id := range []string{meeting.MeetingNotes.Children.SummaryBlockID, meeting.MeetingNotes.Children.NotesBlockID, meeting.MeetingNotes.Children.TranscriptBlockID} {
+				if strings.TrimSpace(id) == "" {
+					continue
+				}
+				if _, err := client.RetrieveBlock(ctx, id); err != nil {
+					return fmt.Errorf("probe Notion Read Content access: %w", err)
+				}
+				tested = true
+				break
+			}
+			if tested {
+				_, _ = fmt.Fprintln(out, "  Read Content: available")
+			} else {
+				_, _ = fmt.Fprintln(out, "  Read Content: not tested (no section blocks)")
+			}
+		}
 	}
 	if users == nil {
 		if _, err := client.ListUsers(ctx, ""); errors.Is(err, notionmeetings.ErrUserInformation) {

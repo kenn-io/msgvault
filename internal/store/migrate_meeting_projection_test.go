@@ -170,3 +170,21 @@ func TestMeetingProjectionUpgradeIncludesNonpositiveIDs(t *testing.T) {
 	rejectMeetingProjectionWrites(t, st)
 	requirements.NoError(st.InitSchemaContext(t.Context()), "completed signed-ID upgrade must not rewrite projections")
 }
+
+func TestMeetingProjectionUpgradeRemovesNestedMeetingActions(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"schema_version":1,"discovery":{"meeting_notes":{"children":{"notes_block_id":"notes"}}},"canonical":{},"notes":{"root":{"object":"block","id":"notes","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}},"pages":[{"results":[{"object":"block","id":"nested","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[]}}],"has_more":false},{"results":[{"object":"block","id":"nested-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Other meeting action"}],"checked":false}}],"has_more":false}]}}`
+	_, id := projectionFixture(t, st, "nested", "notion_meeting_json", raw)
+	_, err := st.db.Exec(`UPDATE applied_migrations SET version = 1 WHERE name = ?`, projectionMigrationName)
+	require.NoError(t, err)
+	_, err = st.db.Exec(`UPDATE meeting_details SET projection_version = 1, content_json = ? WHERE message_id = ?`, `{"actions":[{"title":"Other meeting action"}]}`, id)
+	require.NoError(t, err)
+	_, err = st.db.Exec(`INSERT INTO meeting_action_items (message_id, ordinal, title, status, origin, locator) VALUES (?, 0, 'Other meeting action', 'pending', 'notion', 'nested')`, id)
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchemaContext(t.Context()))
+	content, _ := readProjection(t, st, id)
+	assert.Empty(t, content.Actions)
+	var count int
+	require.NoError(t, st.db.QueryRow(`SELECT COUNT(*) FROM meeting_action_items WHERE message_id = ?`, id).Scan(&count))
+	assert.Zero(t, count)
+}

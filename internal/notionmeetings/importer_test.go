@@ -1276,46 +1276,6 @@ func TestImporterPreservesTranscriptWithMissingOrCorruptEvidence(t *testing.T) {
 	}
 }
 
-func TestImporterKeepsNewMarkdownTranscriptWhileBlocksAreIncomplete(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, source, imp := newImporterFixture(t)
-	empty := paragraph("transcript-1", "", false)
-	source.blocks["transcript-1"] = &empty
-	source.markdown.Markdown = "# Weekly planning"
-	var err error
-	source.markdown.Raw, err = json.Marshal(source.markdown)
-	require.NoError(err)
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(err)
-	var messageID int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
-	before, err := st.GetMessageRaw(messageID)
-	require.NoError(err)
-	var beforeEvidence map[string]json.RawMessage
-	require.NoError(json.Unmarshal(before, &beforeEvidence))
-
-	source.blockErrs = map[string]error{"transcript-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
-	source.markdown.Markdown = "# Transcript\nNew page transcript"
-	source.markdown.Raw, err = json.Marshal(source.markdown)
-	require.NoError(err)
-	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
-	source.query.Results = nil
-	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(err)
-	assert.True(second.PartialCoverage)
-	assert.Len(lastNotionState(t, st, first.SourceID).Pending, 1)
-	body, err := st.GetMessageBodyText(t.Context(), messageID)
-	require.NoError(err)
-	assert.Contains(body, "New page transcript")
-	raw, err := st.GetMessageRaw(messageID)
-	require.NoError(err)
-	var evidence map[string]json.RawMessage
-	require.NoError(json.Unmarshal(raw, &evidence))
-	assert.JSONEq(string(beforeEvidence["transcript"]), string(evidence["transcript"]))
-	assert.JSONEq(string(source.markdown.Raw), string(evidence["page_markdown"]))
-}
-
 func TestImporterRequiresRegisteredSource(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source := &fakeImportSource{fakeHydrationSource: completeHydrationSource(), query: &QueryResult{}}
@@ -1396,7 +1356,6 @@ func TestImporterRetriesIncompleteSections(t *testing.T) {
 			require.NoError(err)
 			original := map[string]string{"summary": "Decide the release scope.", "notes": "Owner will prepare the rollout.", "transcript": "Test Speaker: Ready to ship."}
 			if section == "transcript" {
-				assert.Positive(source.markdownCalls)
 				assert.Contains(body, original[section])
 				assert.NotContains(body, "Replacement page transcript")
 				metadata, err := st.GetMessageMetadata(messageID)
