@@ -239,7 +239,8 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 	return &mcpserver.OperationResult{Output: output, ETag: response.Header.Get("ETag")}, nil
 }
 
-func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, limit int64, classify func(string) bool, success ...int) ([]byte, http.Header, *mcpserver.OperationResult, error) {
+func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) ([]byte, http.Header, *mcpserver.OperationResult, error) {
+	const limit = mcpserver.MaxDownloadBytes
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
