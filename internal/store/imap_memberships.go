@@ -328,13 +328,15 @@ func (s *Store) applyIMAPMailboxDeltas(
 		if fullTopology {
 			// A previous scoped sync may have kept labels without memberships.
 			// A full scan can resolve those labels even when memberships are unchanged.
+			// Labels without provider IDs include archived labels, not live mailboxes.
 			if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
 				SELECT m.message_id FROM imap_message_memberships m
 				WHERE m.source_id = ? AND (
 					EXISTS (
 						SELECT 1 FROM message_labels ml
 						JOIN labels l ON l.id = ml.label_id
-						WHERE ml.message_id = m.message_id AND NOT EXISTS (
+						WHERE ml.message_id = m.message_id AND l.source_id = m.source_id
+						AND l.source_label_id IS NOT NULL AND NOT EXISTS (
 							SELECT 1 FROM imap_message_memberships present
 							WHERE present.source_id = m.source_id AND present.message_id = m.message_id
 							AND l.source_id = present.source_id AND l.source_label_id = present.mailbox
@@ -353,7 +355,8 @@ func (s *Store) applyIMAPMailboxDeltas(
 				SELECT messages.id FROM labels l
 				JOIN message_labels ml ON ml.label_id = l.id
 				JOIN messages ON messages.id = ml.message_id
-				WHERE l.source_id = ? AND (messages.source_id <> l.source_id OR messages.deleted_from_source_at IS NULL)
+				WHERE l.source_id = ? AND l.source_label_id IS NOT NULL
+				AND (messages.source_id <> l.source_id OR messages.deleted_from_source_at IS NULL)
 				AND NOT EXISTS (
 					SELECT 1 FROM source_merge_archive_only_messages marker
 					WHERE marker.message_id = messages.id
@@ -535,38 +538,36 @@ func (s *Store) applyIMAPMailboxDeltas(
 			}
 			labelIDs := make([]int64, 0, len(mailboxes))
 			hasFolder := len(mailboxes) > 0
-			if !fullTopology {
-				rows, err := tx.QueryContext(ctx, `
-					SELECT l.id, l.source_id, l.source_label_id
-					FROM message_labels ml JOIN labels l ON l.id = ml.label_id
-					WHERE ml.message_id = ?
-				`, messageID)
-				if err != nil {
-					return fmt.Errorf("query labels for IMAP message %d: %w", messageID, err)
-				}
-				for rows.Next() {
-					var id int64
-					var labelSource sql.NullInt64
-					var mailbox sql.NullString
-					if err := rows.Scan(&id, &labelSource, &mailbox); err != nil {
-						_ = rows.Close()
-						return fmt.Errorf("scan labels for IMAP message %d: %w", messageID, err)
-					}
-					if labelSource.Valid && labelSource.Int64 == sourceID && mailbox.Valid {
-						if _, ok := scanned[mailbox.String]; ok {
-							continue
-						}
-						hasFolder = true
-					}
-					labelIDs = append(labelIDs, id)
-				}
-				if err := rows.Err(); err != nil {
+			rows, err := tx.QueryContext(ctx, `
+				SELECT l.id, l.source_id, l.source_label_id
+				FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+				WHERE ml.message_id = ?
+			`, messageID)
+			if err != nil {
+				return fmt.Errorf("query labels for IMAP message %d: %w", messageID, err)
+			}
+			for rows.Next() {
+				var id int64
+				var labelSource sql.NullInt64
+				var mailbox sql.NullString
+				if err := rows.Scan(&id, &labelSource, &mailbox); err != nil {
 					_ = rows.Close()
-					return fmt.Errorf("iterate labels for IMAP message %d: %w", messageID, err)
+					return fmt.Errorf("scan labels for IMAP message %d: %w", messageID, err)
 				}
-				if err := rows.Close(); err != nil {
-					return fmt.Errorf("close labels for IMAP message %d: %w", messageID, err)
+				if labelSource.Valid && labelSource.Int64 == sourceID && mailbox.Valid {
+					if _, ok := scanned[mailbox.String]; fullTopology || ok {
+						continue
+					}
+					hasFolder = true
 				}
+				labelIDs = append(labelIDs, id)
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("iterate labels for IMAP message %d: %w", messageID, err)
+			}
+			if err := rows.Close(); err != nil {
+				return fmt.Errorf("close labels for IMAP message %d: %w", messageID, err)
 			}
 			for _, mailbox := range mailboxes {
 				if _, ok := scanned[mailbox]; !fullTopology && !ok {
