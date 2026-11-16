@@ -171,21 +171,17 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 	})
 	for _, test := range []struct {
 		command string
-		header  string
+		pattern string
 		path    string
 	}{
-		{command: "evidence", header: "EVIDENCE KEY", path: "/api/v1/people/7/fact-evidence"},
-		{command: "claims", header: "CLAIM KEY", path: "/api/v1/people/7/fact-claims"},
-		{command: "decisions", header: "ACTION", path: "/api/v1/people/7/fact-decisions"},
+		{command: "evidence", pattern: "EVIDENCE KEY", path: "/api/v1/people/7/fact-evidence"},
+		{command: "claims", pattern: `(?s)KIND\s+STATUS.*CLAIM KEY.*fact\s+fresh`, path: "/api/v1/people/7/fact-claims"},
+		{command: "decisions", pattern: "ACTION", path: "/api/v1/people/7/fact-decisions"},
 	} {
 		output, err := runPersonFactsCommand(testCtx, t, test.command, "7",
 			"--target", personFactEmploymentTarget, "--limit", "4", "--offset", "2")
 		requirements.NoError(err)
-		assertions.Contains(output, test.header)
-		if test.command == "claims" {
-			assertions.Regexp(`KIND\s+STATUS`, output)
-			assertions.Regexp(`fact\s+fresh`, output)
-		}
+		assertions.Regexp(test.pattern, output)
 		query := requests[test.path]
 		assertions.Equal(personFactEmploymentTarget, query.Get("target"))
 		assertions.Equal("4", query.Get("limit"))

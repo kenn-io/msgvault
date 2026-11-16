@@ -23,7 +23,7 @@ function ledgerResponse(path: string): Response {
     id: 1, claim_key: 'private-claim-key', generation_id: 2, evidence_ids: [],
     target: { kind: 'attribute', key: 'private-note', revision },
     submitted_value: 'private-sensitive-value', normalized_value: 'private-normalized-value',
-    relation: 'equals', origin: 'observed', kind: 'preference', status: 'stale', confidence: { reported_score: 80 },
+    relation: 'equals', origin: 'observed', kind: 'fact', status: 'stale', confidence: { reported_score: 80 },
     created_at: '2026-08-03T00:00:00Z', program_fingerprint: 'private', program_id: 'private',
     program_version: 'private', value_fingerprint: 'private'
   }] });
