@@ -18,7 +18,7 @@ export * from "./address";
 export * from "./addResult";
 export * from "./addResultCacheState";
 export * from "./agentTokenIssueRequest";
-export * from "./agentTokenIssueRequestArchiveSenders";
+export * from "./agentTokenIssueRequestIncomingSenders";
 export * from "./agentTokenIssueRequestSenderSelections";
 export * from "./agentTokenIssueResponse";
 export * from "./agentTokenListResponse";

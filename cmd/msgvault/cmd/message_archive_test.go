@@ -24,8 +24,8 @@ func TestArchiveCommandRefusesOldDaemon(t *testing.T) {
 		version   string
 		supported bool
 	}{
-		{"5.3.0", false},
-		{"5.4.0", true},
+		{"5.6.0", false},
+		{"5.7.0", true},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			posts := 0

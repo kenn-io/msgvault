@@ -888,6 +888,7 @@ func (e *SQLiteEngine) buildAggregateStatsSearchParts(
 
 // executeAggregate is the shared implementation for Aggregate and SubAggregate.
 func (e *SQLiteEngine) executeAggregate(ctx context.Context, groupBy ViewType, opts AggregateOptions, filterJoins string, filterConditions []string, args []any) ([]AggregateRow, error) {
+	filterConditions, args = e.appendIncomingScope(ctx, filterConditions, args)
 	dim, err := aggDimensionForView(e.dialect, groupBy, opts.TimeGranularity)
 	if err != nil {
 		return nil, err
@@ -992,6 +993,14 @@ func senderCandidateSQL(direct, from string, directArgs, fromArgs []any, limit i
 		slices.Concat(directArgs, []any{limit, limit, limit}, fromArgs, []any{limit})
 }
 
+func (e *SQLiteEngine) appendIncomingScope(ctx context.Context, conditions []string, args []any) ([]string, []any) {
+	if !sourcescope.IncomingRestricted(ctx) {
+		return conditions, args
+	}
+	predicate, values := sourcescope.IncomingPredicate(ctx, "m.id", "m.source_id", e.dialect.UnicodeLowerExpression)
+	return append(slices.Clone(conditions), predicate), append(slices.Clone(args), values...)
+}
+
 // ListMessages retrieves messages matching the filter.
 func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) ([]MessageSummary, error) {
 	senderPredicate, senderArgs := senderMatchSQL(filter, 0)
@@ -1015,6 +1024,7 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 	}
 	filterJoins, conditions, args := e.buildFilterWithSender(filter, sourceColumn, senderPredicate, senderArgs)
 	conditions, args = appendIDFilter(conditions, args, sourceColumn, nil, sourcescope.IDs(ctx))
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 
 	// IN and EXISTS predicates keep each matching message to one row, so
 	// SELECT DISTINCT is unnecessary (and avoided per the SQL guideline:
@@ -1305,6 +1315,7 @@ func (e *SQLiteEngine) getMessageByQuery(ctx context.Context, whereClause string
 // GetAttachment retrieves attachment metadata by ID.
 func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*AttachmentInfo, error) {
 	conditions, args := appendSourceFilter([]string{"a.id = ?"}, []any{id}, "m.", nil, sourcescope.IDs(ctx))
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	var att AttachmentInfo
 	var sourceAttachmentID string
 	err := e.queryRowContext(ctx, `
@@ -1335,12 +1346,14 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 // GetAttachmentsByHash retrieves all attachment metadata matching a content
 // hash in stable ID order.
 func (e *SQLiteEngine) GetAttachmentsByHash(ctx context.Context, contentHash string) ([]AttachmentInfo, error) {
+	predicate, scopeArgs := sourcescope.IncomingPredicate(ctx, "m.id", "m.source_id", e.dialect.UnicodeLowerExpression)
+	args := append([]any{contentHash, attachmentCASPath(contentHash)}, scopeArgs...)
 	rows, err := e.queryContext(ctx, `
 		SELECT a.id, a.message_id, COALESCE(m.source_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, '')
 		FROM attachments a LEFT JOIN messages m ON m.id = a.message_id
-		WHERE a.content_hash = ? OR (COALESCE(a.content_hash, '') = '' AND a.storage_path = ?)
+		WHERE (a.content_hash = ? OR (COALESCE(a.content_hash, '') = '' AND a.storage_path = ?)) AND `+predicate+`
 		ORDER BY a.id
-	`, contentHash, attachmentCASPath(contentHash))
+	`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get attachments by hash: %w", err)
 	}
@@ -1368,7 +1381,7 @@ func (e *SQLiteEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, err
 
 // ListVirtualAccounts reads the virtual account catalog from the archive.
 func (e *SQLiteEngine) ListVirtualAccounts(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
-	return store.ReadVirtualAccountsContext(ctx, e.db, e.dialect.Rebind)
+	return store.ReadVirtualAccountsContext(ctx, e.db, e.dialect.Rebind, e.dialect.UnicodeLowerExpression)
 }
 
 // ListAccounts returns all source accounts.
@@ -1457,6 +1470,7 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		}
 	}
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	// Merge search conditions
 	conditions = append(conditions, searchConditions...)
 	args = append(args, searchArgs...)
@@ -2286,6 +2300,7 @@ func (e *SQLiteEngine) SearchMessageBodies(ctx context.Context, q *search.Query,
 	structured.TextTerms = nil
 	conditions, args, ftsJoin := e.buildSearchQueryParts(ctx, &structured)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	expr, arg := e.dialect.BuildFTSBodyTerm(q.TextTerms)
 	conditions = append(conditions, expr)
 	if arg != "" {
@@ -2470,6 +2485,7 @@ func (e *SQLiteEngine) SearchDeepWithStats(
 func (e *SQLiteEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
@@ -2752,6 +2768,7 @@ func ParseTimePeriodBounds(period string) (after, before time.Time, ok bool) {
 func (e *SQLiteEngine) SearchFastCount(ctx context.Context, q *search.Query, filter MessageFilter) (int64, error) {
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	return e.executeSearchCount(ctx, conditions, args, ftsJoin)
 }
 
@@ -2863,6 +2880,7 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 	}
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	var (
 		results  []MessageSummary
 		count    int64

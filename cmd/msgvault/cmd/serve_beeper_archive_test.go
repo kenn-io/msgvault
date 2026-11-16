@@ -23,11 +23,12 @@ func TestBeeperArchive(t *testing.T) {
 	for _, tc := range []struct {
 		name                                                                                           string
 		before, desired, dry, whole, restricted, wrongSource, wrongAccount, missingState, failReadback bool
-		merged, ignoreWrite                                                                            bool
+		merged, mergedSource, syncActive, ignoreWrite                                                  bool
 		wantCode                                                                                       string
 		writes                                                                                         int
 	}{
 		{name: "archive", desired: true, whole: true, writes: 1},
+		{name: "archive during sync", desired: true, whole: true, syncActive: true, writes: 1},
 		{name: "unarchive", before: true, whole: true, writes: 1},
 		{name: "already archived", before: true, desired: true, whole: true},
 		{name: "already archived during sync", before: true, desired: true, whole: true, syncActive: true},
@@ -38,6 +39,7 @@ func TestBeeperArchive(t *testing.T) {
 		{name: "wrong source", desired: true, whole: true, wrongSource: true, wantCode: "message_not_found"},
 		{name: "account mismatch", desired: true, whole: true, wrongAccount: true, wantCode: "stale_identity"},
 		{name: "merged chat", desired: true, whole: true, merged: true, wantCode: "stale_identity"},
+		{name: "merged source", desired: true, whole: true, mergedSource: true, wantCode: "stale_identity"},
 		{name: "readback mismatch", desired: true, whole: true, ignoreWrite: true, writes: 1, wantCode: "remote_unknown"},
 		{name: "unsupported state", desired: true, whole: true, missingState: true, wantCode: "archive_unsupported"},
 		{name: "readback failure", desired: true, whole: true, failReadback: true, writes: 1, wantCode: "remote_unknown"},
@@ -48,7 +50,15 @@ func TestBeeperArchive(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			source, err := st.GetOrCreateSource("beeper", "fixture-account")
 			requirements.NoError(err)
+			if tc.syncActive {
+				execution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
+				requirements.NoError(err)
+				t.Cleanup(func() { assert.NoError(t, execution.Release()) })
+			}
 			chatID := "!fixture:beeper.test"
+			if tc.mergedSource {
+				chatID = "msgvault-archive:42:conversation:7"
+			}
 			conv, err := st.EnsureConversation(t.Context(), source.ID, chatID, "Fixture")
 			requirements.NoError(err)
 			id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "message", MessageType: "chat"})
@@ -127,7 +137,7 @@ func TestBeeperArchive(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			assertions.Equal(tc.writes, writes)
-			if tc.restricted || tc.wrongSource || !tc.whole {
+			if tc.restricted || tc.wrongSource || tc.mergedSource || !tc.whole {
 				assertions.Zero(reads)
 			}
 			if tc.dry {

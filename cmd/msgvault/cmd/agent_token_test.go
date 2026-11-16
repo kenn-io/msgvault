@@ -733,37 +733,39 @@ func TestOpenAgentDelegatedStoreRejectsEmptyTokenFile(t *testing.T) {
 	})
 }
 
-func TestAgentTokenArchiveSenderFlagAndViews(t *testing.T) {
+func TestAgentTokenIncomingSenderFlagAndViews(t *testing.T) {
+	assertionsForTest := assert.New(t)
+	requirementsForTest := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/v1/health" {
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "4.1.0"}))
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "5.5.0"}))
 			return
 		}
-		source := map[string]any{"id": 1, "type": "gmail", "identifier": "owner@example.test", "sender_keys": []string{"owner@example.test"}, "archive_senders": []string{"codes@example.test", "alerts@example.test"}}
+		source := map[string]any{"id": 1, "type": "gmail", "identifier": "owner@example.test", "sender_keys": []string{"owner@example.test"}, "incoming_senders": []string{"codes@example.test", "alerts@example.test"}}
 		view := map[string]any{"id": "archive-fixture", "label": "archive", "permissions": []string{"message.archive"}, "sources": []any{source}, "created_at": time.Now().UTC()}
 		if r.Method == http.MethodPost {
 			var body struct {
-				ArchiveSenders map[string][]string `json:"archive_senders"`
+				IncomingSenders map[string][]string `json:"incoming_senders"`
 			}
 			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&body)) {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			assert.Equal(t, map[string][]string{"1": {"codes@example.test", "alerts@example.test"}}, body.ArchiveSenders)
+			assert.Equal(t, map[string][]string{"1": {"codes@example.test", "alerts@example.test"}}, body.IncomingSenders)
 			view["secret"] = "synthetic-token"
 			w.WriteHeader(http.StatusCreated)
-			require.NoError(t, json.NewEncoder(w).Encode(view))
+			assert.NoError(t, json.NewEncoder(w).Encode(view))
 		} else {
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"tokens": []any{view}}))
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"tokens": []any{view}}))
 		}
 	}))
 	t.Cleanup(server.Close)
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output, err := runAgentTokenCommand(ctx, t, agentTokenIssueCmd, "--label", "archive", "--permissions", "message.archive", "--source-ids", "1", "--archive-sender", "1=codes@example.test", "--archive-sender", "1=alerts@example.test")
-	require.NoError(t, err)
-	assert.Contains(t, output, "archive senders: codes@example.test,alerts@example.test")
+	output, err := runAgentTokenCommand(ctx, t, agentTokenIssueCmd, "--label", "archive", "--permissions", "message.archive", "--source-ids", "1", "--incoming-sender", "1=codes@example.test", "--incoming-sender", "1=alerts@example.test")
+	requirementsForTest.NoError(err)
+	assertionsForTest.Contains(output, "incoming senders: codes@example.test,alerts@example.test")
 	output, err = runAgentTokenCommand(ctx, t, agentTokenListCmd)
-	require.NoError(t, err)
-	assert.Contains(t, output, "archive senders: codes@example.test,alerts@example.test")
+	requirementsForTest.NoError(err)
+	assertionsForTest.Contains(output, "incoming senders: codes@example.test,alerts@example.test")
 }

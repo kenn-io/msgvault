@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/emailtags"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -53,6 +54,9 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 		return nil
 	}
 	result, err := a.messageTags(ctx, id, nil, "", acquireWrite, &change, authorize)
+	if failure, ok := errors.AsType[*emailtags.MessageTagError](err); grant != nil && ok && failure.Code == "message_not_found" {
+		return nil, emailtags.Failure("message_not_found", "Message not found", nil, nil)
+	}
 	if result == nil {
 		return nil, err
 	}

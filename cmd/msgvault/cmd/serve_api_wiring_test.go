@@ -413,7 +413,7 @@ func TestStoreAPIAdapterForwardsVerificationBodyLoader(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: "owner", AllowInsecure: true, HTTPClient: daemon.Client()})
 	requirements.NoError(err)
 	t.Cleanup(func() { assertions.NoError(owner.Close()) })
-	issued, err := owner.IssueAgentToken(t.Context(), "masked", []string{"search.read"}, []int64{source.ID}, nil, time.Time{})
+	issued, err := owner.IssueAgentToken(t.Context(), "masked", []string{"search.read"}, []int64{source.ID}, nil, nil, time.Time{})
 	requirements.NoError(err)
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages", nil)
 	request.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)

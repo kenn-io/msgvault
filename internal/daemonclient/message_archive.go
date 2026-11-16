@@ -10,7 +10,7 @@ import (
 )
 
 // MessageArchiveMinAPISchemaVersion adds archive actions and incoming sender restrictions.
-const MessageArchiveMinAPISchemaVersion = "4.1.0"
+const MessageArchiveMinAPISchemaVersion = "5.7.0"
 
 // ArchiveMessage sets the desired state without retrying an uncertain write.
 func (c *Client) ArchiveMessage(ctx context.Context, id int64, change emailtags.ArchiveChange) (*emailtags.ArchiveResult, error) {
@@ -18,12 +18,12 @@ func (c *Client) ArchiveMessage(ctx context.Context, id int64, change emailtags.
 		return nil, emailtags.Failure("invalid_request", "archived must be true or false", nil, nil)
 	}
 	if change.WholeChat {
-		supported, err := c.SupportsAPISchemaVersion(ctx, "5.3.0")
+		supported, err := c.SupportsAPISchemaVersion(ctx, MessageArchiveMinAPISchemaVersion)
 		if err != nil {
 			return nil, err
 		}
 		if !supported {
-			return nil, emailtags.Failure("archive_unsupported", "Upgrade the daemon to API schema 5.3.0 for Beeper archiving", nil, nil)
+			return nil, emailtags.Failure("archive_unsupported", "Upgrade the daemon to API schema 5.7.0 for Beeper archiving", nil, nil)
 		}
 	}
 	options := &generated.ArchiveMessageRequestOptions{Body: &generated.ArchiveMessageBody{Archived: *change.Archived, DryRun: &change.DryRun, WholeChat: &change.WholeChat}}
@@ -31,6 +31,7 @@ func (c *Client) ArchiveMessage(ctx context.Context, id int64, change emailtags.
 	if err != nil {
 		return nil, archiveResponseError(change, err)
 	}
+	defer func() { _ = resp.Body.Close() }()
 	return decodeMessageTagResponse[emailtags.ArchiveResult](resp, "archive", func(err error) error { return archiveResponseError(change, err) })
 }
 

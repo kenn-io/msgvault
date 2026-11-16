@@ -774,6 +774,7 @@ func TestAgentTokenIncomingSendersIndependentOfDraftIdentities(t *testing.T) {
 		{"canonical incoming", `{"1":["Code Sender <CODES@example.test>"]}`, []string{"message.read", "message.archive", "draft.create"}, http.StatusCreated},
 		{"omitted", "", []string{"message.archive"}, http.StatusCreated},
 		{"empty", `{"1":[]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"top-level null", `null`, []string{"message.archive"}, http.StatusBadRequest},
 		{"unknown field", `{"1":["codes@example.test"]}`, []string{"message.read"}, http.StatusBadRequest},
 		{"duplicate", `{"1":["codes@example.test","CODES@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
 		{"invalid mailbox", `{"1":["invalid"]}`, []string{"message.archive"}, http.StatusBadRequest},

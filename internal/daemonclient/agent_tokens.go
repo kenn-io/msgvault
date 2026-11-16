@@ -18,31 +18,19 @@ const agentTokenSenderMinAPISchemaVersion = "2.32.0"
 const AgentReadMinAPISchemaVersion = "3.9.0"
 
 // IssueAgentToken creates a restricted agent grant and returns its one-time secret.
-func (c *Client) IssueAgentToken(
-	ctx context.Context,
-	label string,
-	permissions []string,
-	sourceIDs []int64,
-	senderSelections map[int64][]string,
-	expires time.Time,
-) (*generated.AgentTokenIssueResponse, error) {
-	return c.IssueAgentTokenWithArchiveSenders(ctx, label, permissions, sourceIDs, senderSelections, nil, expires)
-}
-
-// IssueAgentTokenWithArchiveSenders independently restricts incoming archive senders.
-func (c *Client) IssueAgentTokenWithArchiveSenders(ctx context.Context, label string, permissions []string, sourceIDs []int64, senderSelections, archiveSenders map[int64][]string, expires time.Time) (*generated.AgentTokenIssueResponse, error) {
-	if len(archiveSenders) > 0 {
+func (c *Client) IssueAgentToken(ctx context.Context, label string, permissions []string, sourceIDs []int64, senderSelections, incomingSenders map[int64][]string, expires time.Time) (*generated.AgentTokenIssueResponse, error) {
+	if len(incomingSenders) > 0 {
 		compatible, err := c.SupportsAPISchemaVersion(ctx, MessageArchiveMinAPISchemaVersion)
 		if err != nil {
-			return nil, fmt.Errorf("check archive sender capability: %w", err)
+			return nil, fmt.Errorf("check incoming sender capability: %w", err)
 		}
 		if !compatible {
-			return nil, fmt.Errorf("archive sender restrictions require daemon API schema %s or newer", MessageArchiveMinAPISchemaVersion)
+			return nil, fmt.Errorf("incoming sender restrictions require daemon API schema %s or newer", MessageArchiveMinAPISchemaVersion)
 		}
 	}
-	encodedArchiveSenders := make(map[string][]string, len(archiveSenders))
-	for sourceID, values := range archiveSenders {
-		encodedArchiveSenders[strconv.FormatInt(sourceID, 10)] = append([]string(nil), values...)
+	encodedIncomingSenders := make(map[string][]string, len(incomingSenders))
+	for sourceID, values := range incomingSenders {
+		encodedIncomingSenders[strconv.FormatInt(sourceID, 10)] = append([]string(nil), values...)
 	}
 	if senderSelections != nil {
 		compatible, err := c.SupportsAPISchemaVersion(ctx, agentTokenSenderMinAPISchemaVersion)
@@ -75,7 +63,7 @@ func (c *Client) IssueAgentTokenWithArchiveSenders(ctx context.Context, label st
 				Label: label, Permissions: permissions, SourceIds: sourceIDs,
 				ExpiresAt:        expiresAt,
 				SenderSelections: encodedSelections,
-				ArchiveSenders:   encodedArchiveSenders,
+				IncomingSenders:  encodedIncomingSenders,
 			},
 		})
 	})

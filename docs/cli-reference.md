@@ -6016,7 +6016,7 @@ A grant is valid until it is revoked, reaches its optional expiry, or the daemon
 restarts. Revocation blocks subsequent authentication; requests already
 authenticated may complete.
 
-### Restrict incoming archive senders
+### Restrict incoming senders
 
 Grant archive access to selected incoming From addresses independently of
 outgoing draft identities:
@@ -6028,7 +6028,7 @@ msgvault agent-token issue --label code-reader \
 ```
 
 Repeat `--incoming-sender SOURCE_ID=ADDRESS` for additional allowed addresses.
-Requires daemon API schema 5.1.0. The bundled client rejects issuance with restrictions against older daemons; older daemons ignore the field in raw API requests.
+Requires daemon API schema 5.7.0. The bundled client rejects issuance with restrictions against older daemons; older daemons ignore the field in raw API requests.
 Omitting the flag allows reads and archiving from any sender on the selected sources.
 The restriction matches recorded From addresses and does not authenticate the sender. It applies to reads, reply parents, and archive writes. The separate `--sender` flag still selects
 confirmed outgoing draft identities. See the [archive API](api-server.md#message-archiving)
@@ -6106,7 +6106,7 @@ msgvault agent-token issue --label <name> \
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h`; the CLI clock converts a duration to absolute expiry |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
-| `--archive-sender <source-id>=<address>` | Limit incoming archive senders; see [archive sender restrictions](#restrict-incoming-archive-senders) |
+| `--incoming-sender <source-id>=<address>` | Limit incoming senders; see [incoming sender restrictions](#restrict-incoming-senders) |
 
 The grant is valid until it is revoked, reaches its optional expiry, or the daemon
 restarts.

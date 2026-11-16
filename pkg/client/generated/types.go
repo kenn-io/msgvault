@@ -251,8 +251,8 @@ func (a Address) Validate() error {
 }
 
 type AgentTokenIssueRequest struct {
-	ArchiveSenders   map[string][]string `json:"archive_senders,omitempty"`
 	ExpiresAt        *time.Time          `json:"expires_at,omitempty"`
+	IncomingSenders  map[string][]string `json:"incoming_senders,omitempty"`
 	Label            string              `json:"label" validate:"required"`
 	Permissions      []string            `json:"permissions" validate:"required"`
 	SenderSelections map[string][]string `json:"sender_selections,omitempty"`
@@ -333,11 +333,11 @@ func (a AgentTokenListResponse) Validate() error {
 }
 
 type AgentTokenSourceView struct {
-	ArchiveSenders []string `json:"archive_senders" validate:"required"`
-	ID             int64    `json:"id"`
-	Identifier     string   `json:"identifier" validate:"required"`
-	SenderKeys     []string `json:"sender_keys" validate:"required"`
-	Type           string   `json:"type" validate:"required"`
+	ID              int64    `json:"id"`
+	Identifier      string   `json:"identifier" validate:"required"`
+	IncomingSenders []string `json:"incoming_senders" validate:"required"`
+	SenderKeys      []string `json:"sender_keys" validate:"required"`
+	Type            string   `json:"type" validate:"required"`
 }
 
 func (a AgentTokenSourceView) Validate() error {
