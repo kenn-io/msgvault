@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -702,6 +703,85 @@ func TestImporterUsesPageTranscriptWhenBlockUnavailable(t *testing.T) {
 	var evidence map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(raw, &evidence))
 	assert.JSONEq(t, `["transcript"]`, string(evidence["incomplete_sections"]))
+}
+
+func TestImporterKeepsReadableSnapshotWhenMergedEvidenceExceedsLimit(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	summary := paragraph("summary-1", strings.Repeat("s", 17<<20), false)
+	source.blocks["summary-1"] = &summary
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	before, err := st.GetMessageRaw(id)
+	require.NoError(t, err)
+	assert.Equal(t, meetingcontent.StateAvailable, meetingcontent.Decode(RawFormat, before, nil).Summary.State)
+	checksum := checksumBytes(before)
+	before = nil
+	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}}
+	notes := paragraph("notes-1", strings.Repeat("n", 17<<20), false)
+	source.blocks["notes-1"] = &notes
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.True(t, second.PartialCoverage)
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(t, err)
+	assert.Equal(t, checksum, checksumBytes(raw))
+	assert.Equal(t, meetingcontent.StateAvailable, meetingcontent.Decode(RawFormat, raw, nil).Summary.State)
+	assert.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
+}
+
+func TestImporterReportsHydrationBudgetAndKeepsPartialContent(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	updated := paragraph("summary-1", "Updated summary", false)
+	source.blocks["summary-1"] = &updated
+	pages := map[string]*BlockPage{}
+	for i := range maxHydrationRequests {
+		cursor := ""
+		if i > 0 {
+			cursor = fmt.Sprint(i)
+		}
+		pages[cursor] = &BlockPage{HasMore: true, NextCursor: fmt.Sprint(i + 1)}
+	}
+	source.children["notes-1"] = pages
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.ErrorContains(t, err, "limit")
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Updated summary")
+	assert.Contains(t, body, "Owner will prepare the rollout.")
+	checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
+	require.NoError(t, err)
+	var state syncState
+	require.NoError(t, json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+	require.Len(t, state.Pending, 1)
+	assert.True(t, state.Pending[0].Incomplete)
+}
+
+func TestImporterRetainsPageMarkdownWithStructuredTranscript(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	source.markdown.Markdown = "# Transcript\nDifferent page transcript"
+	var err error
+	source.markdown.Raw, err = json.Marshal(source.markdown)
+	require.NoError(t, err)
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Test Speaker: Ready to ship.")
+	assert.NotContains(t, body, "Different page transcript")
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(t, err)
+	var evidence map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &evidence))
+	assert.JSONEq(t, string(source.markdown.Raw), string(evidence["page_markdown"]))
+	assert.Contains(t, string(evidence["warnings"]), "structured transcript and page Markdown transcript differed")
 }
 
 func TestImporterRetriesPendingTranscriptOutsideVisibleLimit(t *testing.T) {

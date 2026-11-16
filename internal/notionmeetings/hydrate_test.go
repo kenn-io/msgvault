@@ -185,7 +185,7 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	require.NoError(json.Unmarshal(snapshot.Raw, &evidence))
 	assert.JSONEq(`2`, string(evidence["schema_version"]))
 	assert.Contains(string(snapshot.Raw), `"discovery"`)
-	assert.Contains(string(snapshot.Raw), `"page_markdown":null`)
+	assert.JSONEq(string(source.markdown.Raw), string(evidence["page_markdown"]))
 	assert.Contains(string(snapshot.Raw), `"attendee_labels":["Test Attendee","Unresolved Attendee"]`)
 	assert.NotContains(string(snapshot.Raw), "unverified@example.com")
 	assert.NotContains(string(snapshot.Raw), "user@example.com", "configured identity must not enter provider evidence")
@@ -509,7 +509,7 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 		{"requests", 0, []string{"summary", "notes", "transcript"}, []string{"notes-1", "transcript-1"}, true, false},
 		{"bytes", 1, []string{"transcript"}, nil, false, false},
 		{"blocks", 1, []string{"summary", "notes", "transcript"}, []string{"notes-1", "transcript-1"}, true, false},
-		{"depth", 0, []string{"summary"}, nil, true, true},
+		{"depth", 1, []string{"summary"}, nil, true, true},
 	} {
 		t.Run(tc.limit, func(t *testing.T) {
 			assert := assert.New(t)

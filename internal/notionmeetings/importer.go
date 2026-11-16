@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
+	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -180,21 +181,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if state.TranscriptRetryUntil == nil {
 		state.TranscriptRetryUntil = map[string]string{}
 	}
-	checkpointPage := ""
-	previousCheckpoint, checkpointErr := imp.store.GetLatestCheckpointedSyncByType(ctx, source.ID, SourceType)
-	if checkpointErr == nil {
-		checkpointPage = previousCheckpoint.CursorBefore.String
-		var pendingState syncState
-		if err := json.Unmarshal([]byte(checkpointPage), &pendingState); err != nil {
-			return sum, fmt.Errorf("decode pending Notion sync state: %w", err)
-		}
-		if err := pendingState.validate(); err != nil {
-			return sum, fmt.Errorf("validate pending Notion sync state: %w", err)
-		}
-		state.Pending = pendingState.Pending
-		state.TranscriptRetryUntil = pendingState.TranscriptRetryUntil
-	} else if !errors.Is(checkpointErr, store.ErrSyncRunNotFound) {
-		return sum, checkpointErr
+	checkpointPage, err := imp.loadPendingState(ctx, source.ID, &state)
+	if err != nil {
+		return sum, err
 	}
 
 	syncID, err := imp.store.StartSync(source.ID, SourceType)
@@ -355,6 +344,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			progress(fmt.Sprintf("meeting %s: hydration failed", id))
 			continue
 		}
+		if hydrated.LimitErr != nil {
+			sum.Errors++
+			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: %w", id, hydrated.LimitErr))
+		}
 
 		archived, recoverErr := imp.archivedState(ctx, source.ID, id)
 		if recoverErr != nil {
@@ -485,6 +478,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: build archive snapshot: %w", id, snapshotErr))
 			continue
 		}
+		if len(snapshot.Raw) > meetingcontent.MaxRawBytes {
+			sum.PartialCoverage = true
+			progress("meeting " + id + ": evidence exceeds reader limit; skipped")
+			continue
+		}
 		checksum := checksumBytes(snapshot.Raw)
 		known, exists := state.Known[id]
 		if archived.HasEvidence && exists && !opts.Full && known.SnapshotVersion == notionSnapshotVersion &&
@@ -575,6 +573,29 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	sum.Duration = imp.now().UTC().Sub(started)
 	return sum, nil
+}
+
+// loadPendingState restores retry state from the latest checkpointed sync and
+// returns that checkpoint's cursor so a failed run can carry it forward.
+func (imp *Importer) loadPendingState(ctx context.Context, sourceID int64, state *syncState) (string, error) {
+	previous, err := imp.store.GetLatestCheckpointedSyncByType(ctx, sourceID, SourceType)
+	if errors.Is(err, store.ErrSyncRunNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	page := previous.CursorBefore.String
+	var pending syncState
+	if err := json.Unmarshal([]byte(page), &pending); err != nil {
+		return "", fmt.Errorf("decode pending Notion sync state: %w", err)
+	}
+	if err := pending.validate(); err != nil {
+		return "", fmt.Errorf("validate pending Notion sync state: %w", err)
+	}
+	state.Pending = pending.Pending
+	state.TranscriptRetryUntil = pending.TranscriptRetryUntil
+	return page, nil
 }
 
 func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNote, error) {
