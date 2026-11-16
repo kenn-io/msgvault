@@ -78,12 +78,21 @@ func TestFamilyShowListsCopiesAndReplies(t *testing.T) {
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET email_linkage_outcome = 'complete' WHERE id = ?`), otherID)
 	require.NoError(err)
 
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET email_linkage_outcome = 'size_limit' WHERE id = ?`), replyID)
+	// An oversized copy keeps no header links, as derivation stores none
+	// for it, but its stored Message-ID still matches the opened email.
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM email_link_keys WHERE message_id = ?`), copyID)
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET email_linkage_outcome = 'size_limit' WHERE id = ?`), copyID)
 	require.NoError(err)
 	text, stderr = run(strconv.FormatInt(id, 10))
+	assert.Contains(text, strconv.FormatInt(copyID, 10)+"\thome@example.test\t")
 	assert.Contains(text, "(headers not fully read)")
 	assert.Contains(stderr, "1 copies have incomplete header links")
 	assert.NotContains(stderr, "repair-derived")
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET email_linkage_outcome = NULL WHERE id = ?`), copyID)
+	require.NoError(err)
+	_, err = st.RepairEmailLinkageContext(t.Context(), home.ID, nil)
+	require.NoError(err)
 
 	// A reply indexed from complete headers but without its own stored
 	// Message-ID is reported as such, not as unreadable headers.
