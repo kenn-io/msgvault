@@ -69,7 +69,7 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | `size_estimate` | INTEGER | Approximate size in bytes |
 | `has_attachments` | BOOLEAN | Attachment flag |
 | `deleted_at` | DATETIME | Soft-delete timestamp |
-| `deleted_from_source_at` | DATETIME | Source deletion timestamp |
+| `deleted_from_source_at` | DATETIME | Records removal from the source; content may remain archived |
 
 Msgvault sets `deleted_from_source_at` when it deletes or trashes a message,
 or sync finds the message missing from its source. For Gmail, IMAP, and Graph,
@@ -700,11 +700,6 @@ Gmail History also reports label changes and deletions for messages already in
 the archive. Those have no retry row to fall back on. If msgvault cannot save
 one, the run keeps its place in History so the next run reads the same changes
 again. See [`incremental.go`](https://github.com/kenn-io/msgvault/blob/main/internal/sync/incremental.go).
-
-When an ordinary Gmail full sync finds a marked message, it lists Trash once
-across all pages. For marked messages in the main listing but outside Trash,
-sync clears the deletion mark and stored Trash label. A failed Trash listing
-stops the run so it can retry.
 
 History recovery runs after Gmail expires the History cursor. It still
 refreshes a message's labels when that message's file work fails. It also

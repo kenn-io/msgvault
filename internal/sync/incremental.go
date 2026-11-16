@@ -198,7 +198,6 @@ func (s *Syncer) incrementalWithRecovery(
 
 	if startHistoryID < profile.HistoryID {
 		trashRemovalIDs := make(map[string]struct{})
-		historyDeletedIDs := make(map[string]struct{})
 		// Process history
 		pageToken := ""
 
@@ -255,7 +254,6 @@ func (s *Syncer) incrementalWithRecovery(
 				}
 				for _, msg := range record.MessagesDeleted {
 					deletedSet[msg.Message.ID] = true
-					historyDeletedIDs[msg.Message.ID] = struct{}{}
 				}
 				for _, item := range record.LabelsRemoved {
 					if slices.Contains(item.LabelIDs, "TRASH") {
@@ -389,9 +387,7 @@ func (s *Syncer) incrementalWithRecovery(
 		if len(trashRemovalIDs) > 0 {
 			messageIDs := make([]string, 0, len(trashRemovalIDs))
 			for messageID := range trashRemovalIDs {
-				if _, deleted := historyDeletedIDs[messageID]; !deleted {
-					messageIDs = append(messageIDs, messageID)
-				}
+				messageIDs = append(messageIDs, messageID)
 			}
 			sort.Strings(messageIDs)
 			if err := s.reconcileGmailTrashRemovals(ctx, source.ID, messageIDs); err != nil {
@@ -695,30 +691,26 @@ func (s *Syncer) reconcileGmailTrashRemovals(
 	if !ok {
 		return errors.New("label reader unavailable after Trash removal")
 	}
-	batchSize := s.opts.BatchSize
-	if batchSize <= 0 {
-		batchSize = 10
+	results, err := reader.GetMessageLabelsBatch(ctx, messageIDs)
+	if err != nil {
+		return fmt.Errorf("fetch final Gmail labels: %w", err)
 	}
-	for start := 0; start < len(messageIDs); start += batchSize {
-		batch := messageIDs[start:min(start+batchSize, len(messageIDs))]
-		results, err := reader.GetMessageLabelsBatch(ctx, batch)
-		if err != nil {
-			return fmt.Errorf("fetch final Gmail labels: %w", err)
+	for i, messageID := range messageIDs {
+		if i >= len(results) {
+			return fmt.Errorf("fetch final Gmail labels for %s: missing batch result", messageID)
 		}
-		for i, result := range results {
-			messageID := batch[i]
-			if result.Err != nil {
-				if _, gone := messageGoneKind(result.Err); gone {
-					continue
-				}
-				return fmt.Errorf("fetch final Gmail labels for %s: %w", messageID, result.Err)
-			}
-			if slices.Contains(result.LabelIDs, "TRASH") {
+		result := results[i]
+		if result.Err != nil {
+			if _, gone := messageGoneKind(result.Err); gone {
 				continue
 			}
-			if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, messageID); err != nil {
-				return fmt.Errorf("clear deletion mark for restored message %s: %w", messageID, err)
-			}
+			return fmt.Errorf("fetch final Gmail labels for %s: %w", messageID, result.Err)
+		}
+		if slices.Contains(result.LabelIDs, "TRASH") {
+			continue
+		}
+		if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, messageID); err != nil {
+			return fmt.Errorf("clear deletion mark for restored message %s: %w", messageID, err)
 		}
 	}
 	return nil

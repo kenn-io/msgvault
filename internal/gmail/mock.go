@@ -3,7 +3,6 @@ package gmail
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sync"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -119,19 +118,7 @@ func (m *MockAPI) ListMessages(ctx context.Context, query string, pageToken stri
 	defer m.mu.Unlock()
 	m.ListMessagesCalls++
 	m.LastQuery = query
-	return m.listMessagesForQuery(query, pageToken)
-}
-
-func (m *MockAPI) listMessagesForQuery(query, pageToken string) (*MessageListResponse, error) {
-	page, err := m.listMessages(pageToken)
-	if err != nil || query != "in:trash" {
-		return page, err
-	}
-	page.Messages = slices.DeleteFunc(page.Messages, func(id MessageID) bool {
-		msg, ok := m.Messages[id.ID]
-		return !ok || !slices.Contains(msg.LabelIDs, "TRASH")
-	})
-	return page, nil
+	return m.listMessages(pageToken)
 }
 
 // ListCompleteMessageSnapshot returns all mock message IDs as one complete

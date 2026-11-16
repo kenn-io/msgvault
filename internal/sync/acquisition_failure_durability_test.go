@@ -102,9 +102,7 @@ func (a *acquisitionDurabilityAPI) GetProfile(ctx context.Context) (*gmail.Profi
 }
 
 func (a *acquisitionDurabilityAPI) ListMessages(ctx context.Context, query, token string) (*gmail.MessageListResponse, error) {
-	if query != "in:trash" {
-		a.listTokens = append(a.listTokens, token)
-	}
+	a.listTokens = append(a.listTokens, token)
 	return a.MockAPI.ListMessages(ctx, query, token)
 }
 

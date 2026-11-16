@@ -811,9 +811,6 @@ type cancelOnSecondListAPI struct {
 }
 
 func (c *cancelOnSecondListAPI) ListMessages(ctx context.Context, query, pageToken string) (*gmail.MessageListResponse, error) {
-	if query == "in:trash" {
-		return c.MockAPI.ListMessages(ctx, query, pageToken)
-	}
 	c.calls++
 	if c.calls == 2 {
 		return nil, fmt.Errorf("list messages: %w", context.Canceled)
@@ -2636,67 +2633,53 @@ func TestIncrementalSyncRemovedLabelPreservesOrClearsDeletion(t *testing.T) {
 	}
 }
 
-type trashQueryAPI struct {
-	*labelMetadataSnapshotAPI
+type retrashDuringFullAPI struct{ *labelMetadataSnapshotAPI }
 
-	trashPages int
-	trashError error
+func (a *retrashDuringFullAPI) GetMessageLabelsBatch(ctx context.Context, ids []string) ([]gmail.MessageLabelsBatchResult, error) {
+	a.Messages["msg1"].LabelIDs = []string{"TRASH"}
+	return a.labelMetadataSnapshotAPI.GetMessageLabelsBatch(ctx, ids)
 }
 
-func (a *trashQueryAPI) ListMessages(ctx context.Context, query, pageToken string) (*gmail.MessageListResponse, error) {
-	if query != "in:trash" {
-		return a.MockAPI.ListMessages(ctx, query, pageToken)
-	}
-	a.trashPages++
-	if a.trashError != nil {
-		return nil, a.trashError
-	}
-	return a.MockAPI.ListMessages(ctx, query, pageToken)
-}
-
-func TestGmailFullSyncUsesPagedTrashQuery(t *testing.T) {
+func TestGmailFullSyncUsesCurrentLabelsAfterRetrash(t *testing.T) {
 	env := newTestEnv(t)
 	env.Mock.Profile.HistoryID = 12340
-	for _, id := range []string{"restored", "trashed"} {
-		env.Mock.AddMessage(id, testMIME(), []string{"INBOX", "TRASH"})
-	}
-	runFullSync(t, env)
-	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
-	require.NoError(t, err)
-	for _, id := range []string{"restored", "trashed"} {
-		require.NoError(t, env.Store.MarkMessageDeleted(source.ID, id))
-	}
-	env.Mock.Messages["restored"].LabelIDs = []string{"INBOX"}
-	env.Mock.MessagePages = [][]string{{"restored"}, {"trashed"}}
-	api := &trashQueryAPI{labelMetadataSnapshotAPI: &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}}
-	env.Syncer = New(api, env.Store, nil)
-	_, err = env.Syncer.Full(t.Context(), testEmail)
-	require.NoError(t, err)
-	assert.Equal(t, 2, api.trashPages)
-	assert.Empty(t, api.labelCalls)
-	assertDeletedFromSource(t, env.Store, "restored", false)
-	assertDeletedFromSource(t, env.Store, "trashed", true)
-	assertMessageNotHasLabel(t, env.Store, "restored", "TRASH")
-}
-
-func TestGmailFullSyncRetriesTrashQueryFailure(t *testing.T) {
-	env := newTestEnv(t)
-	env.Mock.Profile.HistoryID = 12340
-	env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX", "TRASH"})
+	env.Mock.AddMessage("msg1", testMIME(), []string{"TRASH"})
 	runFullSync(t, env)
 	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
 	require.NoError(t, err)
 	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
 	env.Mock.Messages["msg1"].LabelIDs = []string{"INBOX"}
-	api := &trashQueryAPI{labelMetadataSnapshotAPI: &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}, trashError: errors.New("query failed")}
+	env.Syncer = New(&retrashDuringFullAPI{&labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}}, env.Store, nil)
+	_, err = env.Syncer.Full(t.Context(), testEmail)
+	require.NoError(t, err)
+	env.SetHistory(12350, historyLabelAdded("msg1", "TRASH"))
+	runIncrementalSync(t, env)
+	assertDeletedFromSource(t, env.Store, "msg1", true)
+}
+
+func TestGmailFullSyncRefreshesRestoredLabelsAndRetries(t *testing.T) {
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.AddMessage("msg1", testMIME(), []string{"TRASH"})
+	runFullSync(t, env)
+	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+	require.NoError(t, err)
+	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
+	env.Mock.Messages["msg1"].LabelIDs = []string{"INBOX", "STARRED"}
+	api := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true, labelErrors: map[string]error{"msg1": errors.New("label read failed")}}
 	env.Syncer = New(api, env.Store, nil)
 	_, err = env.Syncer.Full(t.Context(), testEmail)
 	require.Error(t, err)
 	assertDeletedFromSource(t, env.Store, "msg1", true)
-	api.trashError = nil
+	delete(api.labelErrors, "msg1")
 	_, err = env.Syncer.Full(t.Context(), testEmail)
 	require.NoError(t, err)
+	env.SetHistory(12350)
+	runIncrementalSync(t, env)
 	assertDeletedFromSource(t, env.Store, "msg1", false)
+	assertMessageHasLabel(t, env.Store, "msg1", "INBOX")
+	assertMessageHasLabel(t, env.Store, "msg1", "STARRED")
+	assertMessageNotHasLabel(t, env.Store, "msg1", "TRASH")
 }
 
 func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
@@ -2745,7 +2728,6 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 			if tc.unchanged {
 				assert.Equal(int64(1), summary.MessagesUpdated)
 			}
-			assert.Empty(api.labelCalls)
 			assertDeletedFromSource(t, env.Store, "msg1", tc.wantMark)
 			if !tc.wantMark {
 				assertMessageHasLabel(t, env.Store, "msg1", "INBOX")
