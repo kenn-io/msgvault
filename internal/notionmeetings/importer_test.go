@@ -1649,6 +1649,30 @@ func TestImporterDoesNotRetryIncompletePageWithoutTranscript(t *testing.T) {
 	assert.Empty(t, lastNotionState(t, st, result.SourceID).Pending)
 }
 
+func TestImporterRetriesFirstIncompleteSectionOfOldMeeting(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	imp.now = func() time.Time { return time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC) }
+	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429}}
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	pending := lastNotionState(t, st, first.SourceID).Pending
+	require.Len(t, pending, 1)
+	assert.True(t, pending[0].Incomplete)
+	assert.Equal(t, "2026-09-08T12:00:00Z", pending[0].RetryUntil)
+	source.query.Results = nil
+	delete(source.blockErrs, "summary-1")
+	imp.now = func() time.Time { return time.Date(2026, 9, 6, 18, 0, 0, 0, time.UTC) }
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), second.MaintenanceRetries)
+	assert.Empty(t, lastNotionState(t, st, first.SourceID).Pending)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Decide the release scope.")
+}
+
 func TestImporterStopsIncompleteRetriesAtDeadline(t *testing.T) {
 	for _, visible := range []bool{false, true} {
 		t.Run(fmt.Sprintf("visible=%t", visible), func(t *testing.T) {

@@ -882,7 +882,8 @@ block-count, and nesting limits can leave sections incomplete. msgvault keeps
 their archived text and evidence and retries section blocks every six hours,
 even after a meeting leaves the query window. Retries stop when the window
 ends, and archived content stays in place. The window ends seven days after the
-meeting ended, or 48 hours after the first retry if the end time is unknown.
+meeting ended. It lasts 48 hours from when the retry is first scheduled if the
+end time is unknown or that window has already passed when an incomplete section is found.
 
 If incomplete page Markdown contains transcript text, msgvault keeps the saved
 transcript and retries.

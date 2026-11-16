@@ -976,7 +976,10 @@ func schedulePending(meeting *HydratedMeeting, now time.Time, previous pendingTr
 		retryUntil = now.Add(unknownTranscriptRetrySpan)
 	}
 	if !retryUntil.After(now) {
-		return pendingTranscript{}, false
+		if hasPrevious || !incomplete {
+			return pendingTranscript{}, false
+		}
+		retryUntil = now.Add(unknownTranscriptRetrySpan)
 	}
 	next := now.Add(transcriptRetryCadence)
 	if next.After(retryUntil) {
