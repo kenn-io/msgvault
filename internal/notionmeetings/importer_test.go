@@ -1497,13 +1497,14 @@ func TestImporterKeepsSavedPageTranscriptWhenMarkdownIncomplete(t *testing.T) {
 
 func TestImporterHandlesOmittedSections(t *testing.T) {
 	for _, tc := range []struct {
-		name                    string
-		omitSections, emptyPage bool
-		want, absent            string
-		pending                 int
+		name               string
+		omitSections       bool
+		page, want, absent string
+		pending            int
 	}{
-		{"omitted transcript with empty page", false, true, "Decide the release scope.", "Test Speaker: Ready to ship.", 1},
-		{"omitted summary and notes", true, false, "Test Speaker: Ready to ship.", "Decide the release scope", 0},
+		{"omitted transcript with empty page", false, "# Notes\nNo transcript available", "Test Speaker: Ready to ship.", "No transcript available", 1},
+		{"omitted transcript with page text", false, "# Transcript\nNew page transcript", "New page transcript", "Test Speaker: Ready to ship.", 0},
+		{"omitted summary and notes", true, "", "Test Speaker: Ready to ship.", "Decide the release scope", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
@@ -1519,8 +1520,8 @@ func TestImporterHandlesOmittedSections(t *testing.T) {
 			} else {
 				source.query.Results[0].MeetingNotes.Children.TranscriptBlockID = ""
 			}
-			if tc.emptyPage {
-				source.markdown.Markdown = "# Notes\nNo transcript available"
+			if tc.page != "" {
+				source.markdown.Markdown = tc.page
 			}
 			source.markdown.Raw, err = json.Marshal(source.markdown)
 			require.NoError(t, err)
@@ -1599,4 +1600,40 @@ func TestImporterNewerEvidencePreservesRetryState(t *testing.T) {
 			assert.Equal(before.TranscriptRetryUntil, after.TranscriptRetryUntil)
 		})
 	}
+}
+
+func TestImporterRetriesOmittedTranscriptWithSavedText(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	meeting := hydrationMeeting()
+	meeting.MeetingNotes.Children.TranscriptBlockID = ""
+	source.query.Results = []MeetingNote{meeting}
+	source.markdown.Markdown = "# Notes\nNo transcript"
+	source.markdown.Raw, err = json.Marshal(source.markdown)
+	require.NoError(t, err)
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Test Speaker: Ready to ship.")
+	pending := lastNotionState(t, st, first.SourceID).Pending
+	require.Len(t, pending, 1)
+	assert.True(t, pending[0].Incomplete)
+	assert.True(t, second.PartialCoverage)
+
+	source.query.Results = nil
+	source.blocks["meeting-1"].Raw = hydrationMeeting().Raw
+	recovered := paragraph("transcript-1", "Recovered transcript", false)
+	source.blocks["transcript-1"] = &recovered
+	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+	third, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	body, err = st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Recovered transcript")
+	assert.Equal(t, int64(1), third.MaintenanceRetries)
+	assert.Empty(t, lastNotionState(t, st, first.SourceID).Pending)
 }

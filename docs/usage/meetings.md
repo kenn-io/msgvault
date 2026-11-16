@@ -891,8 +891,10 @@ is incomplete or the Notion query reports more meetings.
 
 When a transcript read is incomplete, sync retains saved transcript text and
 retries the section.
-A complete empty or omitted transcript clears saved text when no page Markdown
-supplies it. Omitted summary and notes blocks clear their sections. A
+An omitted transcript block keeps saved transcript text and stays eligible for
+retry when page Markdown supplies no replacement. A complete empty transcript
+clears saved text when page Markdown supplies none. Omitted summary and notes
+blocks clear their sections. A
 meeting whose saved evidence has a newer version keeps that evidence, and the sync
 reports an error for it.
 Existing `[[notion_meetings]]` settings need no changes. Other hard

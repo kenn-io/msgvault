@@ -372,6 +372,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			continue
 		}
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
+		if providerTranscriptMissing && strings.TrimSpace(meeting.MeetingNotes.Children.TranscriptBlockID) == "" &&
+			(strings.TrimSpace(archived.Evidence.Canonical.Transcript) != "" || transcriptFromArchivedBody(archived.Body) != "") {
+			hydrated.markIncomplete(sectionTranscript, "transcript block omitted")
+		}
 		terminal := terminalStatus(meeting.MeetingNotes.Status)
 		if len(hydrated.Incomplete) > 0 {
 			sum.PartialCoverage = true
@@ -667,7 +671,7 @@ func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, map[str
 			return rawEvidence{}, nil, false, nil
 		}
 	}
-	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > notionSnapshotVersion {
+	if evidence.SchemaVersion < 1 {
 		return rawEvidence{}, nil, false, nil
 	}
 	var discovery MeetingNote
