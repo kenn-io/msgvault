@@ -7,6 +7,21 @@ import {
 } from './e2e/fixtures/carddav';
 import { installMixedArchive } from './e2e/fixtures/mixed-archive';
 
+test('sync history guidance stays secondary to the history table', async ({ page }) => {
+  await installCardDAV(page, { configured: true });
+  await page.route('**/api/v1/carddav/runs?*', (route) => route.fulfill({ json: {
+    runs: [{ id: 91, connection: 'default', state: 'succeeded', trigger: 'manual', started_at: '2026-08-27T12:00:00Z', books: 2, created: 0, updated: 1, removed: 0, binding_conflicts: 1 }]
+  } }));
+  await openCardDAVSettings(page);
+
+  const guidance = page.getByText('Review binding conflicts with');
+  const table = page.getByRole('table', { name: 'CardDAV sync history' });
+  await expect(guidance).toBeVisible();
+  const size = (element: Element) => parseFloat(getComputedStyle(element).fontSize);
+  expect(await guidance.evaluate(size)).toBeLessThanOrEqual(await table.locator('td').first().evaluate(size));
+  expect(await guidance.locator('code').evaluate(size)).toBeLessThan(await guidance.evaluate(size));
+});
+
 // Browser boundary: Playwright proves the built Svelte application's request
 // construction, state transitions, keyboard/focus behavior, responsive UI,
 // and accessibility through intercepted HTTP transport. It is not live

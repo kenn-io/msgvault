@@ -272,7 +272,7 @@
     {#if !controller.runsLoading && controller.runs.length === 0}<p>No CardDAV sync history yet.</p>{/if}
     {#if controller.runs.length > 0}
       {#if controller.runs.some((run) => (run.binding_conflicts ?? 0) > 0)}
-        <p>Review binding conflicts with <code>msgvault carddav bind-participants --dry-run</code>.</p>
+        <p class="helper">Review binding conflicts with <code>msgvault carddav bind-participants --dry-run</code>.</p>
       {/if}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex (the overflow region must accept keyboard focus) -->
       <div class="history-scroll" role="region" aria-label="Scrollable CardDAV sync history" tabindex="0">
@@ -361,6 +361,11 @@
     margin: 0;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+  }
+  .helper code {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
   }
   .notice {
     display: flex;
