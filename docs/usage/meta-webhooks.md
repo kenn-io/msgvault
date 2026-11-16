@@ -1,14 +1,16 @@
 ---
 last_edited: "2026-11-13"
 title: Meta Webhooks
-description: Archive Facebook Page comment changes as Meta reports them, between polling syncs.
+description: Archive Facebook Page and Instagram comment changes as Meta reports them, between polling syncs.
 ---
 
 Polling sync finds new comments only when it runs. With webhooks, Meta sends
 each Page comment change to the msgvault daemon as it happens: new and edited
 comments are archived, hidden comments are marked hidden, and removed comments
-and posts are marked deleted. Keep [Facebook Page comment sync](facebook-comments.md)
-for backfill; webhooks only report changes after you subscribe.
+and posts are marked deleted. New Instagram comments and live comments are
+archived the same way. Keep [Facebook Page comment sync](facebook-comments.md)
+and [Instagram comment sync](instagram-comments.md) for backfill; webhooks only
+report changes after you subscribe.
 
 ## Set up the receiver
 
@@ -51,6 +53,12 @@ for backfill; webhooks only report changes after you subscribe.
 Each Page must have an enabled [`[[facebook_comments]]` profile](../configuration.md#facebook-comments)
 for the same app and Page, registered with `msgvault source facebook-comments add`.
 
+For Instagram, subscribe the app's Instagram object to the `comments` and
+`live_comments` fields with the same callback URL. Each account must have an
+enabled [`[[instagram_comments]]` profile](../configuration.md#instagram-comments)
+for the same app and account, registered with
+`msgvault source instagram-comments add`.
+
 ## How deliveries are applied
 
 The daemon checks each delivery's `X-Hub-Signature-256` signature with the app
@@ -66,7 +74,8 @@ New and edited comments, and the hidden state of a comment, are read from Meta
 rather than taken from the delivery, so a late or repeated delivery cannot
 bring back an older state. A removed comment is marked deleted together with
 its archived replies. A removed post is marked deleted; its comments stay
-archived.
+archived. An Instagram comment is read from Meta too, and media that is not
+archived yet must be owned by the configured account.
 
 ### When a change fails
 
@@ -75,8 +84,8 @@ archived.
   is harmless. Later deliveries wait behind it.
 - Each delivery has one hour. After that, the daemon drops the delivery,
   including the changes after the failing one.
-- A change msgvault cannot decode, and a change for a Page with no enabled
-  profile, are skipped at once.
+- A change msgvault cannot decode, and a change for a Page or Instagram
+  account with no enabled profile, are skipped at once.
 - Every other failure is retried. This includes a comment or post that is
   already gone on Meta and a token that may not read it.
 
@@ -85,10 +94,12 @@ archives a skipped new or edited comment when it reads that comment.
 
 ## Limits
 
-- From the Page `feed` field, msgvault applies comment changes and post
-  removals. A change for a field msgvault does not handle is logged and
-  dropped. Other changes inside the `feed` field, such as reactions, are
+- msgvault applies comment changes and post removals from the Page `feed`
+  field, and new comments from the Instagram `comments` and `live_comments`
+  fields. A change for a field msgvault does not handle is logged and
+  dropped. Other changes inside a handled field, such as reactions, are
   dropped without a log line.
+- Instagram does not send edits, hides or removals of comments.
 - A hide or unhide for a comment that is not archived yet is ignored. Polling
   sync does not read hidden state, so that comment is not marked hidden.
 - Deliveries larger than 8 MiB are refused.
