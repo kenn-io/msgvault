@@ -140,7 +140,6 @@
     {#if current.conflict}<p class="error" role="alert">{current.conflict}</p>{#if current.restartRequired}<Button size="sm" label="Restart" onclick={() => void controller.restart()} />{/if}{/if}
     {#if current.actionConflict}<p class="error" role="alert">{current.actionConflict}</p>{/if}
     {#if current.actionError}<p class="error" role="alert">{current.actionError}</p>{/if}
-    {#if current.actionStatus}<p role="status">{current.actionStatus}</p>{/if}
   </div>
 </Dialog>
 

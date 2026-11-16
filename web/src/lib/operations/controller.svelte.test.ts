@@ -380,8 +380,7 @@ describe('OperationsController', () => {
       detailLoading: false,
       actionPending: null,
       actionConflict: null,
-      actionError: null,
-      actionStatus: null
+      actionError: null
     });
     controller.destroy();
   });
@@ -688,21 +687,6 @@ it.each(['failed', 'partial'] as const)('reports an aggregate CardDAV %s respons
   expect(reads).toBe(4);
   expect(controller.snapshot.actionError).toContain('work');
   expect(controller.snapshot.actionError).not.toContain('private arbitrary');
-  controller.destroy();
-});
-
-it('keeps binding conflicts visible after a successful sync action', async () => {
-  const client = createAPIClient(async input => {
-    const request = requestOf(input);
-    if (request.method === 'POST') return Response.json({ ...syncResult(), binding_conflicts: 2 });
-    return Response.json(new URL(request.url).pathname.endsWith('/status')
-      ? statusResponse({ carddav_sync: { supported_actions: ['carddav_sync'] } }) : runsResponse([]));
-  });
-  const controller = new OperationsController(client);
-  await controller.applyURLState(operationState());
-  expect(await controller.runAction('carddav_sync')).toBe('succeeded');
-  expect(controller.snapshot.actionStatus).toContain('2 CardDAV binding conflicts.');
-  expect(controller.snapshot.actionError).toBeNull();
   controller.destroy();
 });
 

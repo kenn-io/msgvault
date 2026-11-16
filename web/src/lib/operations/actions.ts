@@ -1,4 +1,3 @@
-import { cardDAVBindingConflictMessage, readCardDAVBindingConflicts } from '../carddav/sync-message';
 import {
   resumeVisualAttachmentBuild,
   startVisualAttachmentBuild,
@@ -18,24 +17,16 @@ export async function runOperationAction(action: OperationAction, client: Genera
     : action === 'visual_build'
       ? await startVisualAttachmentBuild({ consent: true }, client)
       : await resumeVisualAttachmentBuild(client);
-  if (result.response.status === 409) {
-    const conflicts = action === 'carddav_sync' ? cardDAVBindingConflictMessage(await readCardDAVBindingConflicts(client)) : '';
-    return { outcome: 'conflict', message: ['The operation could not start because current server state changed.', conflicts].filter(Boolean).join(' ') };
-  }
   if (!result.response.ok) {
-    const conflicts = action === 'carddav_sync' ? cardDAVBindingConflictMessage(await readCardDAVBindingConflicts(client)) : '';
-    return { outcome: 'failed', message: ['Unable to start the operation.', conflicts].filter(Boolean).join(' ') };
+    const conflict = result.response.status === 409;
+    return { outcome: conflict ? 'conflict' : 'failed', message: conflict ? 'The operation could not start because current server state changed.' : 'Unable to start the operation.' };
   }
-  const conflicts = action === 'carddav_sync' && result.data && 'binding_conflicts' in result.data
-    ? ((result.data as SyncResult).binding_conflicts_unavailable
-      ? 'CardDAV binding conflict count unavailable. Check CardDAV settings for the review command.'
-      : cardDAVBindingConflictMessage((result.data as SyncResult).binding_conflicts)) : '';
   if (action === 'carddav_sync' && result.data && 'status' in result.data &&
     (result.data.status === 'partial' || result.data.status === 'failed')) {
     const names = ((result.data as SyncResult).connections ?? [])
       .filter(connection => connection.status !== 'succeeded')
       .map(connection => connection.connection);
-    return { outcome: 'failed', message: [`CardDAV sync ${result.data.status}. Connections needing attention: ${names.join(', ')}.`, conflicts].filter(Boolean).join(' ') };
+    return { outcome: 'failed', message: `CardDAV sync ${result.data.status}. Connections needing attention: ${names.join(', ')}.` };
   }
-  return conflicts ? { outcome: 'succeeded', message: conflicts } : { outcome: 'succeeded' };
+  return { outcome: 'succeeded' };
 }
