@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Card } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, Card } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { MeetingRef } from '../../api/generated/models';
@@ -10,13 +10,14 @@
   import MeetingActionFilters from './MeetingActionFilters.svelte';
   import MeetingMetrics from './MeetingMetrics.svelte';
 
-  let { client, scope, refreshKey = '', showHeading = true, compact = false, controller: suppliedController, onReloadScope = undefined, onOpenMeeting = undefined }: {
+  let { client, scope, refreshKey = '', showHeading = true, compact = false, hideWhenEmpty = false, controller: suppliedController, onReloadScope = undefined, onOpenMeeting = undefined }: {
     client: APIClient;
     scope: MeetingPanelScope;
     /** UI invalidation only; the server still resolves the durable identity. */
     refreshKey?: string;
     showHeading?: boolean;
     compact?: boolean;
+    hideWhenEmpty?: boolean;
     controller?: MeetingsController;
     /** Explore owners must reload the corresponding result before publishing new authority. */
     onReloadScope?: () => void;
@@ -44,11 +45,12 @@
 
 </script>
 
+{#if !hideWhenEmpty || errors.length > 0 || (!controller.metricsLoading && (controller.metrics?.totals.meeting_count ?? 0) > 0)}
 {#if compact}
   <div class="meeting-dialog">
     <MeetingActionFilters compact {controller} />
     {#if controller.metrics}
-      <details><summary>Meeting metrics</summary><MeetingMetrics metrics={controller.metrics} /></details>
+      <Disclosure variant="plain">{#snippet summary()}Meeting metrics{/snippet}<MeetingMetrics metrics={controller.metrics} /></Disclosure>
     {/if}
     {#if controller.actionsError}
       <p role="alert">{controller.actionsError.message}</p>
@@ -90,9 +92,11 @@
         {/if}
       </header>
 
-      <Card level="inset" padding="sm">
-        <MeetingActionFilters {controller} />
-      </Card>
+      {#if !hideWhenEmpty || controller.actions?.total_count !== 0 || controller.filters.status || controller.filters.assigneeEmail}
+        <Card level="inset" padding="sm">
+          <MeetingActionFilters {controller} />
+        </Card>
+      {/if}
 
       {#if controller.actions}
         <MeetingActions {client} evidence={controller.actions} {onOpenMeeting} />
@@ -106,10 +110,12 @@
 </Card>
 {/if}
 
+{/if}
+
 <style>
   .meeting-dialog { display: grid; gap: var(--space-4); }
-  .meeting-dialog details, .meeting-dialog p { font-size: var(--font-size-sm); }
-  .meeting-dialog summary { cursor: pointer; margin-bottom: var(--space-3); }
+  .meeting-dialog :global(.kit-disclosure), .meeting-dialog p { font-size: var(--font-size-sm); }
+  .meeting-dialog :global(.kit-disclosure__summary) { cursor: pointer; margin-bottom: var(--space-3); }
   :global(.meeting-panel-card) { width: 100%; max-width: 100%; min-width: 0; overflow: hidden; }
   .meeting-panel, .overview-section, .actions-section { min-width: 0; }
   .meeting-panel { display: grid; }

@@ -1,25 +1,40 @@
 <script lang="ts">
-  import { formatDateTime as historyTime } from '../../util/format';
-  import { Button, Spinner, Table } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { formatDateTime, formatShortDate } from '../../util/format';
+  import { Button, Disclosure, Spinner } from '@kenn-io/kit-ui';
+  import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
 
+  import { addressText, absorbedCardTitle, mergeAddresses, mergeSentence, type AddressIdentity, type MergedInAddress } from '../../directory/merge-labels';
   import type { APIClient } from '../../api/client';
   import {
     PersonMergeHistoryController,
     type PersonSplitCommittedContext
   } from '../../directory/person-merge-history-controller.svelte';
-  import PersonSplitModal from './PersonSplitModal.svelte';
+  import HistorySection from './HistorySection.svelte';
+  import { actorName, provenance } from './history-format';
+  import MergeProfileCards from './MergeProfileCards.svelte';
+  import { reviewStateChip } from '../../directory/labels';
+  import PersonSplitSteps from './PersonSplitSteps.svelte';
+  import Dialog from '../common/Dialog.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
+  import EmptyLine from '../common/EmptyLine.svelte';
+  import Pager from '../common/Pager.svelte';
+  import DetailRow from '../people/DetailRow.svelte';
 
   interface Props {
     client: APIClient;
     personID: number;
+    scopeSources?: Omit<AddressIdentity, 'identity_key'>[];
+    /** Field history, under the merges, with what this page's merges brought in. */
+    fields?: Snippet<[(mergeID: number) => void, MergedInAddress[], Map<string, string>]>;
+    onClose?: () => void;
+    definitions?: { id: number; label: string; is_sensitive?: boolean }[];
     onOpenPerson?: (personID: number) => void;
     onSplitCommitted?: (context: PersonSplitCommittedContext) => void | Promise<void>;
   }
 
   let {
-    client,
-    personID,
+    client, personID, fields, scopeSources = [], onClose = () => undefined,
+    definitions = [],
     onOpenPerson = () => undefined,
     onSplitCommitted = () => undefined
   }: Props = $props();
@@ -29,7 +44,7 @@
     (context) => onSplitCommitted(context)
   );
   let activePersonID = untrack(() => personID);
-  let splitTrigger = $state<HTMLButtonElement>();
+  let snapshotOpen = $state(false);
 
   $effect(() => {
     if (personID !== activePersonID) {
@@ -41,141 +56,192 @@
   onMount(() => void controller.loadHistory());
   onDestroy(() => controller.destroy());
 
-  async function openSplit(event: MouseEvent): Promise<void> {
-    splitTrigger = event.currentTarget as HTMLButtonElement;
-    await controller.openSplit();
+  function openMerge(mergeID: number): void {
+    snapshotOpen = false;
+    void controller.selectMerge(mergeID);
+  }
+  function back(): void {
+    if (controller.splitOpen) controller.closeSplit();
+    else {
+      controller.selectedMergeID = null;
+      controller.detail = null;
+      snapshotOpen = false;
+    }
   }
 
-  async function closeSplit(): Promise<void> {
-    controller.closeSplit();
-    await tick();
-    if (splitTrigger?.isConnected) splitTrigger.focus();
+  const labels = $derived(controller.labels?.for === controller.detail ? controller.labels : null);
+  $effect(() => controller.addScopes(scopeSources));
+  const absorbedAddresses = $derived(controller.detail ? mergeAddresses(controller.detail, 'absorbed', controller.scopes) : []);
+  const absorbedAddress = $derived(addressText(absorbedAddresses[0]));
+  function mergeTitle(merge: { id: number; absorbed_person_id: number; survivor_person_id: number }): string {
+    if (!controller.historyRows.has(merge.id)) return 'Loading merge…';
+    const address = controller.detail?.merge.id === merge.id && labels ? absorbedAddress : controller.historyRows.get(merge.id)?.absorbedAddress;
+    const names = controller.historyRows.get(merge.id)?.names;
+    return mergeSentence(names?.get(merge.absorbed_person_id), names?.get(merge.survivor_person_id), address);
+  }
+  /** "Nov 6 · 1 address moved in · split back once": what the merge brought, not both sides' total. */
+  function mergeMeta(item: { merge: { id: number; created_at: string }; split_count: number; pending_candidate_count: number }) {
+    const row = controller.historyRows.get(item.merge.id);
+    const count = row?.incomplete ? undefined : row?.count;
+    return {
+      text: [formatShortDate(item.merge.created_at), count !== undefined ? `${count} ${count === 1 ? 'address' : 'addresses'} moved in` : '',
+        item.split_count ? `split back ${item.split_count === 1 ? 'once' : `${item.split_count} times`}` : '',
+        item.pending_candidate_count ? `${item.pending_candidate_count} waiting for review` : ''].filter(Boolean).join(' · '),
+      title: `Merged ${formatDateTime(item.merge.created_at)}`
+    };
   }
 
-  function rowActionCounts(counts: Record<string, number>): string {
-    const entries = Object.entries(counts).sort(([left], [right]) => left.localeCompare(right));
-    return entries.length ? entries.map(([action, count]) => `${action}: ${count}`).join(', ') : 'None';
+  // The merge step: the absorbed card is named as the title names it, and a card headed by its address doesn't list it again.
+  const absorbedNames = $derived(controller.detail ? [labels?.names.get(controller.detail.merge.absorbed_person_id), labels?.names.get(controller.detail.merge.survivor_person_id)] as const : [undefined, undefined] as const);
+  const absorbedTitle = $derived(controller.detail ? absorbedCardTitle(absorbedNames[0], absorbedNames[1], absorbedAddress) : '');
+  const survivorAddresses = $derived(controller.detail ? mergeAddresses(controller.detail, 'survivor', controller.scopes) : []);
+  const onCards = (split: { id: number }) => [...absorbedAddresses, ...survivorAddresses].some(address => address.splitID === split.id);
+  const tookAll = (split: { id: number }) => controller.absorbedParticipants.every(participant => participant.split_id === split.id);
+  /** Splits the cards can't show: one that took no address listed on a card. */
+  const otherSplits = $derived((controller.detail?.splits ?? []).filter(split => !onCards(split)));
+  /**
+   * Each split of the cards' addresses, after the merge line: "split back to Neri Bloom", "on Nov 7" only on another day.
+   * Unless a lone split took exactly the merged-in addresses, it names the ones it took, as "split back to Neri Bloom (neri@example.org)".
+   */
+  const cardSplits = $derived.by(() => {
+    const detail = controller.detail;
+    if (!detail) return [];
+    const splits = (detail.splits ?? []).filter(onCards);
+    const moved = (split: { id: number }) => [...absorbedAddresses, ...survivorAddresses].filter(address => address.splitID === split.id);
+    return splits.map(split => ({
+      id: split.id, personID: split.new_person_id, name: labels?.names.get(split.new_person_id),
+      addresses: splits.length > 1 || !tookAll(split) ? moved(split).map(addressText).join(', ') : '',
+      by: split.actor === detail.merge.actor ? '' : ` by ${actorName(split.actor)}`,
+      rest: `${formatShortDate(split.created_at) === formatShortDate(detail.merge.created_at) ? '' : ` on ${formatShortDate(split.created_at)}`}${!split.exact_reversal && tookAll(split) ? ' · partly restored' : ''}`,
+      title: `Split ${formatDateTime(split.created_at)}`,
+    }));
+  });
+  /** Why Split… is absent, as the merge line's last segment. */
+  const splitUnavailable = $derived.by(() => {
+    const detail = controller.detail;
+    if (!detail || controller.canOfferSplit) return '';
+    return detail.merge.current_person_id || (detail.splits?.length && controller.absorbedParticipants.every(participant => participant.split_id !== undefined))
+      ? 'nothing left to split' : 'the profile it merged into is gone';
+  });
+  function splitLine(split: { id: number; exact_reversal: boolean; actor: string; created_at: string }) {
+    const line = provenance(split.actor, split.created_at);
+    return { text: !split.exact_reversal && tookAll(split) ? `${line.text} · partly restored` : line.text, title: line.title };
   }
-
-  function disposition(splitID: number | undefined): string {
-    return splitID === undefined ? 'Not split' : `Split ${splitID}`;
+  function reviewRows(pending: boolean) {
+    return (controller.detail?.review_candidates ?? []).filter(candidate => (candidate.state === 'pending') === pending).map(candidate => ({
+      id: candidate.id, value: definitions.find(definition => definition.id === candidate.definition_id)?.label ?? 'Field',
+      provenance: !pending && candidate.reviewed_by && candidate.reviewed_at ? provenance(candidate.reviewed_by, candidate.reviewed_at, undefined, { action: reviewStateChip(candidate.state).label }) : undefined,
+    }));
   }
+  const title = $derived(controller.committedResult ? 'Split complete'
+    : controller.splitOpen ? `Split ${controller.sourcePerson?.display_name?.trim() || 'profile'}`
+    : controller.selectedMergeID !== null ? (controller.detail ? mergeTitle(controller.detail.merge) : 'Merge')
+    : 'History');
+  const splitDisabled = $derived(controller.splitNeedsFreshState || !controller.sourcePerson ||
+    (!controller.isZeroParticipantLineage && controller.selectedParticipantIDs.length === 0));
 
+  /** When the merge recorded the profiles: "Nov 6, 9:37 AM", with the year only when it isn't this year. */
+  function capturedAt(at: string): string {
+    const date = new Date(at);
+    if (Number.isNaN(date.valueOf())) return at;
+    return `${formatShortDate(at)}, ${new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date)}`;
+  }
   function snapshotText(value: unknown): string {
     const encoded = JSON.stringify(value, null, 2);
     return encoded === undefined ? String(value) : encoded;
   }
 </script>
 
-<section class="merge-history" aria-labelledby={`person-${personID}-merge-history-heading`}>
-  <div class="section-heading">
-    <h3 id={`person-${personID}-merge-history-heading`}>Merges</h3>
-  </div>
-
-  {#if controller.historyLoading && controller.history.length === 0}
-    <p role="status"><Spinner size={12} label="Loading merge history" /> Loading merge history…</p>
-  {:else if controller.historyError && controller.history.length === 0}
-    <div class="message" role="alert"><p>{controller.historyError}</p><Button label="Retry merge history" size="sm" onclick={() => void controller.retryHistory()} /></div>
-  {:else}
-    {#if controller.historyError}
-      <div class="message" role="alert"><p>{controller.historyError}</p><Button label="Retry merge history" size="sm" onclick={() => void controller.retryHistory()} /></div>
-    {/if}
-    {#if controller.history.length === 0}
-      <p class="muted">No merges</p>
-    {:else}
-      <ul class="merges" aria-label="Person merge history">
+<Dialog {title} width={controller.splitOpen || controller.committedResult ? 'medium' : 'large'} onclose={onClose}
+  onback={controller.selectedMergeID !== null && !controller.committedResult ? back : undefined}
+  backLabel={controller.splitOpen ? `Back to ${controller.detail ? mergeTitle(controller.detail.merge) : 'Merge'}` : 'Back to History'}
+  busy={controller.splitPending}
+  primaryLabel={controller.committedResult ? 'Done' : controller.splitOpen ? 'Split into new person' : undefined}
+  primaryTone={controller.committedResult ? 'info' : 'danger'} cancellable={false}
+  primaryDisabled={!controller.committedResult && splitDisabled}
+  onprimary={() => { if (controller.committedResult) onClose(); else if (controller.confirmSplit()) void controller.submitSplit(); }}>
+  {#if controller.splitOpen}
+    <PersonSplitSteps {controller} {onOpenPerson} />
+  {:else if controller.selectedMergeID === null}
+    <div class="history-step">
+      <!-- Merges lead: they change who a profile is, so they sit above field history. -->
+      <section class="merges" aria-labelledby="merges-heading">
+        <h3 id="merges-heading">Merges</h3>
+        {#if controller.historyError}<InlineNotice message="Couldn't load merge history." actionLabel="Retry" onaction={() => void controller.retryHistory()} details={controller.historyError} />{/if}
+        {#if controller.historyLoading && !controller.history.length}<p role="status">Loading merges…</p>{/if}
         {#each controller.history as item (item.merge.id)}
-          <li>
-            <span>Person {item.merge.absorbed_person_id} merged into person {item.merge.survivor_person_id}
-              <small>{historyTime(item.merge.created_at)} · {item.participant_count} {item.participant_count === 1 ? 'address' : 'addresses'}{item.split_count ? ` · split ${item.split_count}×` : ''}{item.pending_candidate_count ? ` · ${item.pending_candidate_count} to review` : ''}</small>
-            </span>
-            <Button label="Inspect" ariaLabel={`Inspect merge ${item.merge.id}`} size="sm" onclick={() => void controller.selectMerge(item.merge.id)} />
-          </li>
+          <DetailRow actionLabel={`Open ${mergeTitle(item.merge)} · ${formatShortDate(item.merge.created_at)}`} onclick={() => openMerge(item.merge.id)} description={mergeMeta(item)}>
+            {mergeTitle(item.merge)}
+          </DetailRow>
         {/each}
-      </ul>
-    {/if}
-    {#if controller.hasPreviousHistoryPage || controller.hasNextHistoryPage}<div class="pagination" aria-label="Merge history pagination">
-      <Button label="Previous merge history page" size="sm" disabled={!controller.hasPreviousHistoryPage || controller.historyLoading} onclick={() => void controller.previousHistoryPage()} />
-      <span>Offset {controller.historyOffset}</span>
-      <Button label="Next merge history page" size="sm" disabled={!controller.hasNextHistoryPage || controller.historyLoading} onclick={() => void controller.nextHistoryPage()} />
-    </div>{/if}
-  {/if}
-
-  {#if controller.detailLoading}
-    <p role="status"><Spinner size={12} label="Loading merge detail" /> Loading merge detail…</p>
-  {:else if controller.detailError && !controller.detail}
-    <div class="message" role="alert"><p>{controller.detailError}</p><Button label="Retry merge detail" size="sm" onclick={() => void controller.retryDetail()} /></div>
-  {:else if controller.detail}
-    <section class="merge-detail" aria-labelledby={`merge-${controller.detail.merge.id}-detail-heading`}>
-      <div class="section-heading">
-        <div><h4 id={`merge-${controller.detail.merge.id}-detail-heading`}>Merge {controller.detail.merge.id} detail</h4><p>Recorded by {controller.detail.merge.actor} at {controller.detail.merge.created_at}.</p></div>
-        {#if controller.canOfferSplit}<Button label="Split merged profile" tone="info" onclick={openSplit} />
-        {:else if !controller.detail.merge.current_person_id}<p>No current source profile is recorded, so this merge cannot be split.</p>{/if}
+        {#if !controller.historyLoading && !controller.historyError && !controller.history.length}<EmptyLine message="No merges yet" />{/if}
+        <Pager offset={controller.historyOffset} count={controller.history.length} hasNext={controller.hasNextHistoryPage}
+          disabled={controller.historyLoading} onprevious={() => void controller.previousHistoryPage()} onnext={() => void controller.nextHistoryPage()} label="Merge history pages" />
+      </section>
+      {@render fields?.(openMerge, controller.mergedIn, controller.scopes)}
+    </div>
+  {:else if controller.detailLoading}
+    <p role="status"><Spinner size={12} label="Loading merge" /> Loading merge…</p>
+  {:else if !controller.detail}
+    <InlineNotice message="Couldn't load this merge." actionLabel="Retry" onaction={() => void controller.retryDetail()} details={controller.detailError ?? undefined} />
+  {:else}
+    {@const detail = controller.detail}
+    {@const merged = provenance(detail.merge.actor, detail.merge.created_at, undefined, { action: 'Merged' })}
+    <section class="merge-step" aria-label="Merge detail">
+      {#if controller.detailError}<InlineNotice message="Couldn't load this merge." actionLabel="Retry" onaction={() => void controller.retryDetail()} details={controller.detailError} />{/if}
+      {#if labels?.incomplete}<InlineNotice tone="warning" message="Some names and addresses couldn't be loaded." actionLabel="Retry" onaction={() => void controller.retryDetail()} />{/if}
+      <!-- Who was merged into whom, with what each brought, then when. -->
+      <div class="merge-summary">
+        {#if !labels}<p role="status"><Spinner size={12} label="Loading merge" /> Loading merge…</p>
+        {:else}
+        <MergeProfileCards label="Merged profiles"
+          from={{ title: absorbedTitle, addresses: mergeAddresses(detail, 'absorbed', controller.scopes, absorbedTitle) }}
+          to={{ title: labels?.names.get(detail.merge.survivor_person_id) ?? 'This profile', addresses: mergeAddresses(detail, 'survivor', controller.scopes, labels?.names.get(detail.merge.survivor_person_id) ?? 'This profile') }} />
+        {/if}
+        <div class="merge-line">
+          <p><span title={merged.title}>{merged.text}</span>{#if labels}{#each cardSplits as split (split.id)}{' · '}<span title={split.title}>split back{split.by} to {#if split.name !== undefined}<button class="link" type="button" onclick={() => onOpenPerson(split.personID)}>{split.name || 'another profile'}</button>{:else}another profile{/if}{#if split.addresses}{` (${split.addresses})`}{/if}{split.rest}</span>{/each}{/if}{#if splitUnavailable}{` · ${splitUnavailable}`}{/if}</p>
+          {#if controller.canOfferSplit}<Button label="Split…" tone="info" onclick={() => void controller.openSplit()} />{/if}
+        </div>
       </div>
-      {#if controller.detailError}<p class="error" role="alert">{controller.detailError}</p>{/if}
-
-      <!-- Keyboard focus lets a user scroll a table wider than its pane without a pointer. -->
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="table-scroll" role="region" aria-label="Merge participants table" tabindex="0">
-        <Table unsorted bare ariaLabel="Merge participants"><thead><tr><th scope="col">Participant</th><th scope="col">Origin</th><th scope="col">Disposition</th></tr></thead>
-          <tbody>{#each controller.detail.participants ?? [] as participant}<tr><th scope="row">{participant.participant_id}</th><td>{participant.origin_side}</td><td>{disposition(participant.split_id)}</td></tr>{/each}</tbody>
-        </Table>
-      </div>
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="table-scroll" role="region" aria-label="Merge row dispositions table" tabindex="0">
-        <Table unsorted bare ariaLabel="Merge row dispositions"><thead><tr><th scope="col">Table</th><th scope="col">Action</th><th scope="col">Origin</th><th scope="col">Provenance</th><th scope="col">Participant</th><th scope="col">Disposition</th></tr></thead>
-          <tbody>{#each controller.detail.rows ?? [] as row}<tr><th scope="row">{row.table_name}</th><td>{row.action}</td><td>{row.origin_side}</td><td>{row.provenance_kind}</td><td>{row.participant_id ?? 'None'}</td><td>{disposition(row.split_id)}</td></tr>{/each}</tbody>
-        </Table>
-      </div>
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="table-scroll" role="region" aria-label="Prior splits table" tabindex="0">
-        <Table unsorted bare ariaLabel="Prior splits"><thead><tr><th scope="col">Split</th><th scope="col">Source</th><th scope="col">Created person</th><th scope="col">Revision change</th><th scope="col">Restoration</th><th scope="col">Actor</th><th scope="col">Created</th></tr></thead>
-          <tbody>{#each controller.detail.splits ?? [] as split}<tr><th scope="row">{split.id}</th><td>Person {split.source_person_id}</td><td>Person {split.new_person_id}</td><td>{split.source_revision_before} → {split.source_revision_after}</td><td>{split.exact_reversal ? 'Exact' : 'Partial'}</td><td>{split.actor}</td><td>{split.created_at}</td></tr>{/each}</tbody>
-        </Table>
-      </div>
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="table-scroll" role="region" aria-label="Merge review candidates table" tabindex="0">
-        <Table unsorted bare ariaLabel="Merge review candidates"><thead><tr><th scope="col">Candidate</th><th scope="col">Person</th><th scope="col">Definition</th><th scope="col">Survivor value</th><th scope="col">Absorbed value</th><th scope="col">Resolution</th><th scope="col">State</th><th scope="col">Reviewed</th><th scope="col">Reviewer</th><th scope="col">Created</th></tr></thead>
-          <tbody>{#each controller.detail.review_candidates ?? [] as candidate}<tr><th scope="row">{candidate.id}</th><td>{candidate.person_id}</td><td>{candidate.definition_id}</td><td>{candidate.survivor_value_id}</td><td>{candidate.absorbed_value_id}</td><td>{candidate.resolution_value_id ?? 'None'}</td><td>{candidate.state}</td><td>{candidate.reviewed_at ?? 'Not reviewed'}</td><td>{candidate.reviewed_by ?? 'None'}</td><td>{candidate.created_at}</td></tr>{/each}</tbody>
-        </Table>
-      </div>
-
-      {#if controller.snapshot}
-        <p>Verified snapshot version {controller.snapshot.version}. SHA-256 {controller.snapshot.sha256}.</p>
-        <!-- Keyboard focus lets a user scroll explicitly revealed content without a pointer. -->
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <div class="snapshot" role="region" aria-label="Verified merge snapshot content" tabindex="0"><pre>{snapshotText(controller.snapshot.snapshot)}</pre></div>
-      {:else if controller.snapshotLoading}<p role="status">Loading verified snapshot…</p>
-      {:else}
-        {#if controller.snapshotError}<p class="error" role="alert">{controller.snapshotError}</p>{/if}
-        <Button label="View verified snapshot" size="sm" onclick={() => void controller.revealSnapshot()} />
+      {#if labels && otherSplits.length}
+        <section aria-labelledby="splits-heading">
+          <h3 id="splits-heading">Splits</h3>
+          {#each otherSplits as split (split.id)}{@const name = labels.names.get(split.new_person_id)}<DetailRow actionLabel={`Open ${name || 'restored profile'}`} onclick={name === undefined ? undefined : () => onOpenPerson(split.new_person_id)} description={splitLine(split)}>{name || 'A profile'}</DetailRow>{/each}
+        </section>
       {/if}
+      {#if detail.review_candidates?.length}<HistorySection title={detail.review_candidates.some(candidate => candidate.state === 'pending') ? 'Needs review' : 'Review decisions'} rows={reviewRows(true)} earlier={reviewRows(false)} earlierNoun="decision" />{/if}
+      <!-- The merge as stored, last: when, its digest, and the record itself. -->
+      <Disclosure variant="plain" class="fold" title="Profile at merge time" bind:open={snapshotOpen} ontoggle={(open) => { if (open) void controller.revealSnapshot(); }}>
+        {#if controller.snapshot}
+          <div class="snapshot-meta">
+            <p title={`Captured ${formatDateTime(detail.merge.created_at, 'long')}`}>Captured {capturedAt(detail.merge.created_at)}</p>
+            <p title={`SHA-256 ${controller.snapshot.sha256}`}>SHA-256 {controller.snapshot.sha256.slice(0, 8)}…</p>
+          </div>
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+          <div class="snapshot" role="region" aria-label="Raw values at merge time" tabindex="0"><pre>{snapshotText(controller.snapshot.snapshot)}</pre></div>
+        {:else if controller.snapshotLoading}<p role="status">Loading…</p>{/if}
+        {#if controller.snapshotError}<InlineNotice message="Couldn't load the profile at merge time." actionLabel="Retry" onaction={() => void controller.revealSnapshot()} details={controller.snapshotError} />{/if}
+      </Disclosure>
     </section>
   {/if}
-</section>
-
-{#if controller.splitOpen}
-  <PersonSplitModal {controller} {onOpenPerson} onClose={() => void closeSplit()} />
-{/if}
+</Dialog>
 
 <style>
-  .merge-history, .merge-detail { display: grid; gap: var(--space-3); }
-  .merge-history { gap: var(--space-2); }
-  .merges { display: grid; padding: 0; list-style: none; }
-  .merges li { display: flex; align-items: center; justify-content: space-between; gap: var(--field-gap); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-muted); }
-  .merges span { display: grid; gap: var(--space-1); }
-  .merges small, .muted { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .section-heading, .pagination { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
-  h3, h4, p, pre { margin: 0; }
-  .section-heading p, .pagination { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .table-scroll, .snapshot { max-width: 100%; overflow: auto; }
-  .table-scroll :global(table) { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
-  .table-scroll :global(th),
-  .table-scroll :global(td) { padding: var(--space-2); border-bottom: var(--border-width) solid var(--border-default); text-align: left; vertical-align: top; }
-  .table-scroll :global(thead th) { color: var(--text-muted); white-space: nowrap; }
-  .snapshot { max-height: 22rem; padding: var(--space-3); border: var(--border-width) solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
-  .table-scroll:focus-visible, .snapshot:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
-  .snapshot pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .message { display: flex; gap: var(--space-2); align-items: center; }
-  .error { color: var(--text-danger); }
+  /* History's step and the merge step: groups 24 apart, each heading 8 above its rows. The merge's line sits 12 under its cards, as the cards sit 12 apart. */
+  .history-step, .merge-step { display: grid; gap: var(--space-section); min-width: 0; }
+  .merges, section { display: grid; min-width: 0; }
+  .merge-summary { display: grid; gap: var(--space-box); min-width: 0; }
+  .merge-line { display: flex; justify-content: space-between; align-items: center; gap: var(--space-box); flex-wrap: wrap; }
+  h3, p, pre { margin: 0; }
+  h3 { margin-bottom: var(--space-group); font-size: var(--type-heading-size); line-height: var(--type-heading-line); }
+  p, .snapshot-meta { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  .merges > :global(.inline-notice) { margin-bottom: var(--space-group); }
+  .snapshot-meta { display: grid; margin-bottom: var(--space-group); }
+  .link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
+  .link:hover { text-decoration: underline; }
+  .link:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
+  /* The raw record scrolls in its own 22rem pane: 12 inside, its right side 8 less to keep the bar's gutter. */
+  .snapshot { max-width: 100%; max-height: 22rem; overflow: auto; scrollbar-gutter: stable; padding: var(--space-box) calc(var(--space-box) - var(--scrollbar-gutter-size)) var(--space-box) var(--space-box); border: var(--border-width) solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
+  .snapshot:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
+  .snapshot pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--type-small-size); line-height: var(--type-small-line); }
 </style>

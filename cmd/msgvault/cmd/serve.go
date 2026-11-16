@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
@@ -37,6 +38,7 @@ import (
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -578,11 +580,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := registerSQLiteMaintenanceJob(sched, s); err != nil {
 		return fmt.Errorf("schedule SQLite maintenance: %w", err)
 	}
-	if err := configureDocumentReconcileJob(
-		ctx, sched, s, cfg.Attachments.Documents.Enabled,
-	); err != nil {
-		return fmt.Errorf("configure document reconciliation: %w", err)
-	}
 	if err := registerFilenameDiscoveryJob(sched, s); err != nil {
 		return fmt.Errorf("schedule filename discovery: %w", err)
 	}
@@ -637,9 +634,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if err := sched.AddJob(scheduler.Job{
 			Name: api.MatrixJobName, Schedule: cfg.Matrix.Schedule, Preemptible: true,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
-				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
-					return runConfiguredMatrixSync(ctx, s)
-				})
+				return runConfiguredMatrixSync(ctx, s, matrixMediaMutation(attachmentMaint))
 			}),
 		}); err != nil {
 			logger.Error("failed to schedule matrix sync", "error", err)
@@ -682,6 +677,48 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}),
 		}); err != nil {
 			logger.Error("failed to schedule inline sync", "error", err)
+		}
+	}
+
+	for _, source := range cfg.FacebookComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Facebook comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledFacebookCommentsSources() {
+		if err := registerScheduledFacebookCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredFacebookCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Facebook comments", "profile", source.Identifier, "error", err)
+		}
+	}
+
+	for _, source := range cfg.InstagramComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Instagram comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledInstagramCommentsSources() {
+		if err := registerScheduledInstagramCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredInstagramCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Instagram comments", "profile", source.Identifier, "error", err)
+		}
+	}
+
+	if cfg.Feeds.Enabled && cfg.Feeds.Schedule == "" {
+		logger.Warn("feeds are enabled but have no schedule; set [feeds].schedule to fetch them automatically")
+	}
+	if cfg.Feeds.Enabled && cfg.Feeds.Schedule != "" {
+		if err := sched.AddJob(scheduler.Job{
+			Name: api.FeedsJobName, Schedule: cfg.Feeds.Schedule, Preemptible: true,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredFeedSync(ctx, s)
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule feed sync", "error", err)
+		} else {
+			logger.Info("scheduled feed sync", "schedule", cfg.Feeds.Schedule)
 		}
 	}
 
@@ -948,11 +985,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 		},
 		RefreshCache: refreshCacheAfterWrite,
 	}).WithLogger(logger)
+	messageImporter := messageimport.NewImporter(s, messageimport.Hooks{
+		AfterSourceSetup: func() error {
+			return runPostSourceCreateMigrationsForInvocation(ctx, s, state)
+		},
+		RefreshCache: refreshCacheAfterWrite,
+	}).WithLogger(logger)
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
 		operationGate:          operationGate,
+		embeddingsScheduler:    sched,
 		config:                 cfg,
 		options:                state.options,
 		logger:                 logger,
@@ -962,6 +1006,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		draftCacheRefresh:      refreshCacheAfterWrite,
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
+		messageImporter:        messageImporter,
 		analyticsDir:           cfg.AnalyticsDir(),
 		cacheJobs:              cacheJobs,
 		personEnrichmentConfig: cfg.People.Enrichment,
@@ -1094,11 +1139,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 			apiServer, sched, blobStore,
 		)
 		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
-		apiServer.SetLocalEmbeddings(&localEmbeddingsController{
+		localController := &localEmbeddingsController{
 			state: state, store: s, dbPath: dbPath, handle: vectorInit, server: apiServer, scheduler: sched,
 			gate: operationGate, runner: storeAdapter, openers: []visual.StreamOpener{blobStore},
-			inspect: embedlocal.Inspect, install: embedlocal.Install,
-		})
+			inspect: embedlocal.Inspect, install: embedlocal.Install, choice: embedlocal.ChoiceRecorded,
+		}
+		apiServer.SetLocalEmbeddings(localController)
+		apiServer.StartLocalEmbeddings(localController.Start)
 		telemetryHeartbeatDone := make(chan struct{})
 		go func() {
 			defer close(telemetryHeartbeatDone)
@@ -1588,6 +1635,16 @@ func openDaemonAnalyticsEngine(
 	s *store.Store,
 	intent startupCacheBuildIntent,
 ) (query.Engine, string, startupCacheBuildOutcome, error) {
+	return openDaemonAnalyticsEngineWithRebuild(ctx, c, s, intent, nil)
+}
+
+func openDaemonAnalyticsEngineWithRebuild(
+	ctx context.Context,
+	c *config.Config,
+	s *store.Store,
+	intent startupCacheBuildIntent,
+	onFullRebuild func(),
+) (query.Engine, string, startupCacheBuildOutcome, error) {
 	if c == nil || s == nil {
 		return nil, "", startupCacheBuildOutcomeNone,
 			errors.New("daemon analytics engine unavailable")
@@ -1644,11 +1701,8 @@ func openDaemonAnalyticsEngine(
 	shouldBuild := intent != startupCacheBuildIntentNone || automaticBuild
 	var automaticBuildErr error
 	if shouldBuild {
-		// Build the cache before serving rather than starting on live-SQL
-		// fallback: incremental rebuilds take seconds, and startup progress
-		// already streams to the CLI that auto-started the daemon. A failed
-		// build is fatal for engine="duckdb" (documented to never fall back)
-		// and falls back to live SQL for engine="auto".
+		// Incremental builds keep the brief cache wait. Full builds let auto
+		// mode serve live entries until the replacement cache opens.
 		fullBuild := staleness.FullRebuild
 		reason := staleness.Reason
 		if intent == startupCacheBuildIntentFull {
@@ -1659,6 +1713,10 @@ func openDaemonAnalyticsEngine(
 			"step", "build_analytics_cache",
 			"reason", reason,
 			"full_rebuild", fullBuild)
+
+		if fullBuild && engineMode == config.AnalyticsEngineAuto && onFullRebuild != nil {
+			onFullRebuild()
+		}
 
 		var buildErr error
 		if intent != startupCacheBuildIntentNone {
@@ -1821,12 +1879,24 @@ func hasServeOAuthConfig(c *config.Config) bool {
 	if c == nil {
 		return false
 	}
-	return c.OAuth.HasAnyConfig() || c.Microsoft.ClientID != ""
+	return c.OAuth.HasAnyConfig() || hasMicrosoftServeConfig(c.Microsoft)
 }
 
-func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
-	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" {
-		return nil
+func hasMicrosoftServeConfig(c config.MicrosoftConfig) bool {
+	if c.ClientID != "" {
+		return true
+	}
+	for _, app := range c.Apps {
+		if app.ClientID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func effectiveDaemonIdleTimeout(c *config.Config, logger *slog.Logger) time.Duration {
+	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" || os.Getenv(servePersistentChildEnv) == runtimeBackgroundValue {
+		return 0
 	}
 	logger = repairLogger(logger)
 	timeout := c.Server.DaemonIdleTimeout
@@ -1841,11 +1911,16 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 			timeout = parsed
 		}
 	}
+	return max(timeout, 0)
+}
+
+func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
+	timeout := effectiveDaemonIdleTimeout(c, logger)
 	if timeout <= 0 {
 		return nil
 	}
 	return api.NewIdleTracker(timeout, func() {
-		logger.Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
+		repairLogger(logger).Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
 		stop()
 	})
 }
@@ -1856,6 +1931,8 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 type storeAPIAdapter struct {
 	operationGate             api.OperationGate
 	embeddingsOptimizeMu      stdsync.Mutex
+	embeddingsBuildMu         stdsync.Mutex
+	embeddingsScheduler       *scheduler.Scheduler
 	store                     *store.Store
 	config                    *config.Config
 	options                   invocationOptions
@@ -1873,6 +1950,7 @@ type storeAPIAdapter struct {
 	draftCacheRefresh     func(context.Context, string) error
 	attachmentMaintenance *attachmentMaintenance
 	meetingImporter       *meetingimport.Importer
+	messageImporter       *messageimport.Importer
 	// analyticsDir is the daemon's Parquet analytics cache directory, used
 	// to read the revision committed by the derived-refresh child.
 	analyticsDir           string
@@ -1946,6 +2024,7 @@ var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
 var _ api.PersonFactStore = (*storeAPIAdapter)(nil)
 var _ api.PersonBriefStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
+var _ api.MessageImporter = (*storeAPIAdapter)(nil)
 var _ api.MuesliImporter = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStore = (*storeAPIAdapter)(nil)
@@ -1985,9 +2064,6 @@ var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
 var _ api.ChangedMessageLister = (*storeAPIAdapter)(nil)
 var _ api.ArchiveIdentifier = (*storeAPIAdapter)(nil)
 var _ operations.HistoryReader = (*storeAPIAdapter)(nil)
-var _ api.DocumentSearchStore = (*storeAPIAdapter)(nil)
-var _ api.DocumentStatusStore = (*storeAPIAdapter)(nil)
-var _ api.DocumentVectorStatusStore = (*storeAPIAdapter)(nil)
 var _ api.ActivityStore = (*storeAPIAdapter)(nil)
 var _ api.ParticipantIdentityContextStore = (*storeAPIAdapter)(nil)
 
@@ -2138,77 +2214,6 @@ func (a *storeAPIAdapter) LaneStatus(
 	return a.store.LaneStatus(ctx, kind)
 }
 
-func (a *storeAPIAdapter) SearchDocuments(
-	ctx context.Context,
-	request store.DocumentSearchRequest,
-) (store.DocumentSearchResponse, error) {
-	ctx = a.invocationContext(ctx)
-	if err := reconcileDocumentOccurrencesForSearch(ctx, a.store); err != nil {
-		return store.DocumentSearchResponse{}, err
-	}
-	return a.store.SearchDocuments(ctx, request)
-}
-
-func (a *storeAPIAdapter) ReconcileDocumentOccurrences(ctx context.Context) error {
-	ctx = a.invocationContext(ctx)
-	return reconcileDocumentOccurrencesForSearch(ctx, a.store)
-}
-
-func (a *storeAPIAdapter) GetDocumentIndexStatusForScope(
-	ctx context.Context,
-	profileID string,
-	extractionInputKey string,
-	allowedMediaTypes []string,
-	allowedMessageTypes []string,
-) (store.DocumentIndexStatus, error) {
-	return a.store.GetDocumentIndexStatusForScope(
-		ctx, profileID, extractionInputKey, allowedMediaTypes, allowedMessageTypes,
-	)
-}
-
-func (a *storeAPIAdapter) GetCurrentDocumentIndexStatusScope(
-	ctx context.Context,
-) (string, []string, error) {
-	return a.store.GetCurrentDocumentIndexStatusScope(ctx)
-}
-
-func (a *storeAPIAdapter) GetActiveDocumentExtractionRebuild(
-	ctx context.Context,
-	profileID string,
-	extractionInputKey string,
-) (store.DocumentExtractionRebuild, error) {
-	return a.store.GetActiveDocumentExtractionRebuild(ctx, profileID, extractionInputKey)
-}
-
-func (a *storeAPIAdapter) CountIncompleteDocumentExtractionRebuild(
-	ctx context.Context,
-	rebuild store.DocumentExtractionRebuild,
-	allowedMediaTypes []string,
-	allowedMessageTypes []string,
-) (int64, error) {
-	return a.store.CountIncompleteDocumentExtractionRebuild(
-		ctx, rebuild, allowedMediaTypes, allowedMessageTypes,
-	)
-}
-
-func (a *storeAPIAdapter) GetDocumentVectorTargetProfileID(ctx context.Context) (string, error) {
-	return a.store.GetDocumentVectorTargetProfileID(ctx)
-}
-
-func (a *storeAPIAdapter) GetDocumentVectorOperationsStatus(
-	ctx context.Context,
-	configured store.DocumentVectorGenerationSpec,
-	documentEgressFingerprint, queryEgressFingerprint string,
-	generationID int64,
-	afterToken string,
-	limit int,
-) (store.DocumentVectorOperationsStatus, error) {
-	return a.store.GetDocumentVectorOperationsStatus(
-		ctx, configured, documentEgressFingerprint, queryEgressFingerprint,
-		generationID, afterToken, limit,
-	)
-}
-
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {
 	return a.store.GetStats()
 }
@@ -2221,6 +2226,16 @@ func (a *storeAPIAdapter) ImportMeeting(
 		return meetingimport.Result{}, meetingimport.ErrUnavailable
 	}
 	return a.meetingImporter.Import(ctx, req)
+}
+
+func (a *storeAPIAdapter) ImportMessage(
+	ctx context.Context,
+	req messageimport.Request,
+) (messageimport.Result, error) {
+	if a == nil || a.messageImporter == nil {
+		return messageimport.Result{}, messageimport.ErrUnavailable
+	}
+	return a.messageImporter.Import(ctx, req)
 }
 
 // ImportMuesliRecording uses the shared attachment writer; Docbank discovers it
@@ -2271,6 +2286,12 @@ func (a *storeAPIAdapter) ListMessagesContext(
 	ctx context.Context, offset, limit int, sourceIDs []int64,
 ) ([]api.APIMessage, int64, error) {
 	return a.store.ListMessagesContext(ctx, offset, limit, sourceIDs)
+}
+
+var _ api.MessageBodyLoader = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
+	return a.store.PopulateMessageBodiesContext(ctx, messages)
 }
 
 func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api.APIMessage, error) {
@@ -2370,6 +2391,10 @@ func (a *storeAPIAdapter) BackfillFTS(progress func(done, total int64)) (int64, 
 	return a.store.BackfillFTS(progress)
 }
 
+func (a *storeAPIAdapter) BackfillFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error) {
+	return a.store.BackfillFTSContext(ctx, progress)
+}
+
 func (a *storeAPIAdapter) RebuildFTS(progress func(done, total int64)) (int64, error) {
 	return a.store.RebuildFTS(progress)
 }
@@ -2452,15 +2477,9 @@ func (a *storeAPIAdapter) runCLISyncWithRunner(
 		}
 		return emit(api.CLISyncEvent{Type: stream, Data: data})
 	}
-	emitWarning := func(message string) error {
-		if emit == nil {
-			return nil
-		}
-		return emit(api.CLISyncEvent{Type: "stderr", Data: message})
-	}
-	return runAfterSuccessfulAttachmentIngest(ctx, a.attachmentMaintenance, func(ctx context.Context) error {
+	return runAttachmentIngest(ctx, a.attachmentMaintenance, func(ctx context.Context) error {
 		return run(ctx, cliSyncSubprocessArgs(req), emitSubprocess)
-	}, emitWarning)
+	})
 }
 
 // emitFolderArgs appends a --folder/--skip-folder flag for each
@@ -2506,7 +2525,7 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 		args = emitFolderArgs(args, "--folder", req.Folders)
 		args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 		if req.Email != "" {
-			args = append(args, req.Email)
+			args = append(args, "--", req.Email)
 		}
 		return args
 	}
@@ -2523,7 +2542,7 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 	args = emitFolderArgs(args, "--folder", req.Folders)
 	args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 	if req.Email != "" {
-		args = append(args, req.Email)
+		args = append(args, "--", req.Email)
 	}
 	return args
 }
@@ -2599,13 +2618,7 @@ func (a *storeAPIAdapter) runCLIRepairMessageWithRunner(
 	if req.Audit {
 		return runRepair(ctx)
 	}
-	emitWarning := func(message string) error {
-		if emit == nil {
-			return nil
-		}
-		return emit(api.CLIRepairMessageEvent{Type: "stderr", Data: message})
-	}
-	return runAfterSuccessfulAttachmentIngest(ctx, a.attachmentMaintenance, runRepair, emitWarning)
+	return runAttachmentIngest(ctx, a.attachmentMaintenance, runRepair)
 }
 
 func cliRepairMessageSubprocessArgs(req api.CLIRepairMessageRequest) []string {
@@ -2655,6 +2668,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if api.IsCLIRunEmbeddingsBuild(req.Args) {
+		return a.runCLIEmbeddingsBuild(ctx, req, emit)
+	}
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}
@@ -2688,7 +2704,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	runSubprocess := func(ctx context.Context) error {
 		args := req.Args
 		if req.GrantDecided {
-			args = append(append([]string(nil), args...), "--"+addAccountGrantDecidedFlag+"=true")
+			args = append([]string{args[0], "--" + addAccountGrantDecidedFlag + "=true"}, args[1:]...)
 		}
 		return run(ctx, args, req.Env, req.Cwd, emitSubprocess)
 	}
@@ -2726,18 +2742,17 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 			ctx, a.attachmentMaintenance, runSubprocess, emitWarning,
 		)
 	}
-	emitWarning := func(message string) error {
-		if emit == nil {
-			return nil
-		}
-		return emit(api.CLIRunEvent{Type: "stderr", Data: message})
+	return runAttachmentIngest(ctx, a.attachmentMaintenance, runSubprocess)
+}
+
+// Lease each media write so downloads can proceed while packing runs.
+func matrixMediaMutation(maintenance *attachmentMaintenance) func(context.Context, func() error) error {
+	if maintenance == nil {
+		return nil
 	}
-	return runAfterSuccessfulAttachmentIngest(
-		ctx,
-		a.attachmentMaintenance,
-		runSubprocess,
-		emitWarning,
-	)
+	return func(ctx context.Context, write func() error) error {
+		return runScheduledSource(ctx, maintenance, true, func(context.Context) error { return write() })
+	}
 }
 
 func attachmentRemovalCommand(args []string) bool {
@@ -2772,19 +2787,8 @@ func attachmentRemovalCommand(args []string) bool {
 // need no further interpretation here, but they must not be mistaken for
 // command-specific arguments.
 func repackAttachmentsParentArgsAllowed(args []string) bool {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "--") {
-			return false
-		}
-		name := strings.TrimPrefix(arg, "--")
-		if before, _, ok := strings.Cut(name, "="); ok {
-			name = before
-		}
-		if !loggingPassthroughFlags[name] {
-			return false
-		}
-	}
-	return true
+	flags := clirun.NewFlagSet()
+	return clirun.Parse(flags, args) == nil && flags.NArg() == 0
 }
 
 func (a *storeAPIAdapter) PlanCLIAddCalendar(

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Card, EmptyState, SegmentedControl, SelectDropdown, Spinner } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, Card, EmptyState, SegmentedControl, SelectDropdown, Spinner } from '@kenn-io/kit-ui';
   import { onDestroy, tick } from 'svelte';
 
   import type { FactLedgerController, FactLedgerSection } from '../../directory/fact-ledger-controller.svelte';
@@ -123,7 +123,7 @@
           {#each controller.decisions.rows as row (row.rowToken)}
             <Card level="default" padding="sm" ariaLabel="Historical fact decision">
               <dl><div><dt>Action</dt><dd>{row.action}</dd></div><div><dt>Reason</dt><dd>{row.reason}</dd></div>{#if row.projectionKind}<div><dt>Projection</dt><dd>Projection {row.projectionKind}</dd></div>{/if}<div><dt>Created</dt><dd>{row.createdAt}</dd></div></dl>
-              <details><summary>Score details — Total {row.score.total}</summary><dl><div><dt>Authority</dt><dd>{row.score.authority}</dd></div><div><dt>Confidence</dt><dd>{row.score.confidence}</dd></div><div><dt>Corroboration</dt><dd>{row.score.corroboration}</dd></div><div><dt>Directness</dt><dd>{row.score.directness}</dd></div><div><dt>Freshness</dt><dd>{row.score.freshness}</dd></div><div><dt>Source class</dt><dd>{row.score.sourceClass}</dd></div></dl></details>
+              <Disclosure variant="plain">{#snippet summary()}Score details — Total {row.score.total}{/snippet}<dl><div><dt>Authority</dt><dd>{row.score.authority}</dd></div><div><dt>Confidence</dt><dd>{row.score.confidence}</dd></div><div><dt>Corroboration</dt><dd>{row.score.corroboration}</dd></div><div><dt>Directness</dt><dd>{row.score.directness}</dd></div><div><dt>Freshness</dt><dd>{row.score.freshness}</dd></div><div><dt>Source class</dt><dd>{row.score.sourceClass}</dd></div></dl></Disclosure>
             </Card>
           {:else}<EmptyState title="No fact decisions on this page." description="Choose another target or page." />{/each}
         </div>

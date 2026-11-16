@@ -1,6 +1,7 @@
-import { stubOperationStatus } from './kit-ui';
+import { setKitTheme, stubOperationStatus } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
 import { exploreHistoryState } from './explore-state';
+import { shortPagesPDF } from './pdf-fixture';
 
 function exploreURLState() {
   return {
@@ -43,8 +44,8 @@ function file(filename: string, mimeType: string, mimeFamily: string) {
     size_bytes: 1024,
     participant_labels: ['Example Person'],
     participant_domains: ['example.com'],
-    content_state: 'local_content',
-    content_available: true
+    content_state: 'unverified',
+    content_available: null
   };
 }
 
@@ -79,6 +80,34 @@ async function prepare(page: Page, baseURL: string | undefined, row: ReturnType<
   const state = exploreURLState();
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
   return () => contentCookie;
+}
+
+for (const dismissal of ['close button', 'Back']) {
+  test(`closing after stepping restores the shown row via ${dismissal}`, async ({ page, baseURL }) => {
+    const first = file('01-guide.pdf', 'application/pdf', 'pdf');
+    const second = { ...file('06-budget.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'document'), id: 8, key: 'file:8' };
+    await prepare(page, baseURL, first, shortPagesPDF(1));
+    await page.route('**/api/v1/files/search', (route) => route.fulfill({ json: {
+      files: [first, second], total_count: 2, cache_revision: 'cache-files', search_provenance: {}
+    } }));
+    await page.route('**/api/v1/files/8', (route) => route.fulfill({ json: {
+      ...second, content_state: 'local_content', content_available: true
+    } }));
+    await page.reload();
+    const grid = page.getByRole('grid', { name: 'Files results' });
+    const listURL = page.url();
+    await page.getByRole('gridcell', { name: first.filename, exact: true }).click();
+    await page.getByRole('button', { name: 'Next file', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: `View ${second.filename}` })).toBeVisible();
+    if (dismissal === 'Back') { await page.goBack(); await expect(page).toHaveURL(listURL); }
+    else await page.getByRole('button', { name: 'Close file viewer', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(grid).toHaveAttribute('aria-busy', 'false');
+    await expect(grid).toBeFocused();
+    await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-8');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog', { name: `View ${second.filename}` })).toBeVisible();
+  });
 }
 
 test('Escape closes an authenticated image once, suspends background shortcuts, and restores exact keyboard focus', async ({ page, baseURL }) => {
@@ -195,13 +224,14 @@ async function stubContainingConversation(page: Page) {
 
 test('opening a containing conversation and one Back restores the exact Files URL and active row', async ({ page, baseURL }) => {
   await stubContainingConversation(page);
-  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), tinyPDF('Back fixture'));
+  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), shortPagesPDF(1, { height: 792, text: 'Back fixture' }));
   const grid = page.getByRole('grid', { name: 'Files results' });
   await grid.focus();
   await page.keyboard.press('Enter');
   const filesURL = page.url();
 
-  await page.getByRole('button', { name: 'Open conversation' }).click();
+  await page.getByRole('button', { name: 'More file actions' }).click();
+  await page.getByRole('menuitem', { name: 'Open conversation' }).click();
   const reading = page.getByRole('complementary', { name: 'Reading pane: Containing item' });
   await expect(reading).toBeVisible();
   await expect(reading.getByRole('region', { name: 'Conversation thread' })).toBeVisible();
@@ -215,7 +245,7 @@ test('opening a containing conversation and one Back restores the exact Files UR
 test('a phone opens a message from Files and returns to results', async ({ page, baseURL }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await stubContainingConversation(page);
-  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), tinyPDF('Phone fixture'));
+  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), shortPagesPDF(1, { height: 792, text: 'Phone fixture' }));
   const files = page.getByRole('grid', { name: 'Files results' });
   await files.getByText('fixture.pdf').click();
   const viewer = page.getByRole('dialog', { name: 'View fixture.pdf' });
@@ -233,37 +263,24 @@ test('a phone opens a message from Files and returns to results', async ({ page,
   await expect(messages.getByText('Containing item', { exact: true })).toBeVisible();
 });
 
-test('Back from an open file viewer closes it and restores the Files list URL', async ({ page, baseURL }) => {
-  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), tinyPDF('Back close fixture'));
+test('PDF reading preserves selection, page tracking, shortcuts, and focus', async ({ page, baseURL }) => {
+  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), shortPagesPDF(3, { height: 792, text: 'Fixture preview text' }));
   const grid = page.getByRole('grid', { name: 'Files results' });
   await grid.focus();
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-7');
   await expect.poll(async () => (await exploreHistoryState(page)).activeRow).toBe('file:7');
-  const listURL = page.url();
 
   await page.keyboard.press('Enter');
   await expect(page.getByRole('dialog', { name: 'View fixture.pdf' })).toBeVisible();
-  await expect.poll(() => {
-    const encoded = new URL(page.url()).searchParams.get('explore');
-    return encoded ? (JSON.parse(encoded) as { selectedRow?: string | null }).selectedRow : undefined;
-  }).toBe('file:7');
-
-  await page.goBack();
-
-  await expect(page).toHaveURL(listURL);
-  await expect(page.getByRole('dialog', { name: 'View fixture.pdf' })).toHaveCount(0);
-});
-
-test('real PDF renders in-app and Escape closes with shortcut isolation and exact focus restoration', async ({ page, baseURL }) => {
-  const pdf = tinyPDF('Fixture preview text');
-  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), pdf);
-
-  const grid = page.getByRole('grid', { name: 'Files results' });
-  await grid.focus();
-  await page.keyboard.press('Enter');
   const preview = page.getByRole('region', { name: 'PDF preview fixture.pdf' });
-  await expect(preview.getByLabel('PDF page 1', { exact: true })).toBeVisible();
-  await expect(preview.locator('.pdf-text')).toContainText('Fixture preview text');
+  await expect(preview.locator('.textLayer')).toHaveCount(3);
+  await preview.locator('.textLayer').first().evaluate((layer) => {
+    const range = document.createRange(); range.selectNodeContents(layer); const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+  });
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toContain('Fixture preview text');
+  await expect(page.getByText('Page 1 of 3', { exact: true })).toBeVisible();
+  await page.locator('.file-viewer .preview').evaluate((element) => { element.scrollTop = (element.querySelectorAll<HTMLElement>('.pdf-page')[1]!).offsetTop - (element as HTMLElement).offsetTop; });
+  await expect(page.getByText('Page 2 of 3', { exact: true })).toBeVisible();
   await expect(page.locator('iframe, embed, object')).toHaveCount(0);
   await page.keyboard.press('f');
   await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'false');
@@ -283,29 +300,69 @@ test('real PDF renders in-app and Escape closes with shortcut isolation and exac
   await expect.poll(() => page.evaluate(() =>
     (window as unknown as { pdfEscapePrevented?: boolean }).pdfEscapePrevented
   )).toBe(true);
+
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'View fixture.pdf' })).toBeVisible();
+  await expect.poll(() => {
+    const encoded = new URL(page.url()).searchParams.get('explore');
+    return encoded ? (JSON.parse(encoded) as { selectedRow?: string | null }).selectedRow : undefined;
+  }).toBe('file:7');
 });
 
-function tinyPDF(text: string): Buffer {
-  const escaped = text.replace(/[()\\]/g, (character) => `\\${character}`);
-  const stream = `BT /F1 18 Tf 36 100 Td (${escaped}) Tj ET`;
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
-    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
-  ];
-  let source = '%PDF-1.4\n';
-  const offsets = [0];
-  for (let index = 0; index < objects.length; index += 1) {
-    offsets.push(Buffer.byteLength(source));
-    source += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`;
+for (const deviceScaleFactor of [1, 2]) {
+  test.describe(`PDF reading at device scale ${deviceScaleFactor}`, () => {
+    test.use({ deviceScaleFactor });
+    test('Letter PDF canvas and zoom retain enough resolution', async ({ page, baseURL }) => {
+      const pdf = shortPagesPDF(3, { height: 792, text: 'Fixture preview text' });
+      await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), pdf);
+
+      const grid = page.getByRole('grid', { name: 'Files results' });
+      await grid.focus();
+      await page.keyboard.press('Enter');
+      const preview = page.getByRole('region', { name: 'PDF preview fixture.pdf' });
+      await expect(preview.getByLabel('PDF page 1', { exact: true })).toBeVisible();
+      await expect(preview.locator('.textLayer').first()).toContainText('Fixture preview text');
+      const canvas = preview.locator('canvas').first();
+      const fitWidth = (await canvas.boundingBox())!.width;
+      await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+      await expect.poll(async () => (await canvas.boundingBox())!.width).toBeGreaterThan(fitWidth);
+      await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+      expect(await canvas.evaluate((element) => (element as HTMLCanvasElement).width)).toBeGreaterThanOrEqual((await canvas.boundingBox())!.width);
+      await page.getByRole('button', { name: 'Fit width', exact: true }).click();
+      await expect.poll(async () => (await canvas.boundingBox())!.width).toBe(fitWidth);
+    });
+  });
+}
+
+test('PDF text overlay honors page user units at fit, zoom, and resize', async ({ page, baseURL }) => {
+  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), shortPagesPDF(1, { height: 792, userUnit: 2 }));
+  await page.getByRole('gridcell', { name: 'fixture.pdf', exact: true }).click();
+  const layer = page.locator('.textLayer');
+  await expect(layer).toContainText('Fixture page');
+  for (const state of ['fit', 'zoom', 'resize']) {
+    if (state === 'zoom') await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+    if (state === 'resize') await page.setViewportSize({ width: 800, height: 700 });
+    await expect.poll(() => layer.evaluate(element => {
+      const canvas = element.closest('.pdf-page')!.querySelector('canvas')!;
+      const span = element.querySelector('span')!;
+      // The fixture uses 18-point text on a 612-point-wide page.
+      return Math.abs(parseFloat(getComputedStyle(span).fontSize) - canvas.getBoundingClientRect().width * 18 / 612);
+    })).toBeLessThan(0.1);
   }
-  const xref = Buffer.byteLength(source);
-  source += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  source += offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('');
-  source += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(source, 'ascii');
+});
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`PDF import preserves the chosen ${theme} color scheme against the OS preference`, async ({ page, baseURL }) => {
+    await page.emulateMedia({ colorScheme: theme === 'light' ? 'dark' : 'light' });
+    await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), shortPagesPDF(1));
+    await setKitTheme(page, theme);
+    await expect(page.locator('html')).toHaveCSS('color-scheme', theme);
+    await page.getByRole('gridcell', { name: 'fixture.pdf', exact: true }).click();
+    await expect(page.locator('.textLayer')).toContainText('Fixture page');
+    await expect(page.locator('html')).toHaveCSS('color-scheme', theme);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('html')).toHaveCSS('color-scheme', theme);
+  });
 }
 
 test('Files exposes visual search after setup supplies a consented active generation', async ({ page, baseURL }) => {

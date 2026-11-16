@@ -68,9 +68,13 @@ WITH message_facts AS (
 	SELECT m.message_id, m.sender_id, true,
 	       coalesce(m.sender_id = m.owner_participant_id, false), true
 	FROM message_facts m WHERE m.sender_id IS NOT NULL
+), relay_domains AS (
+	SELECT message_id, %s AS relay_domain FROM %s mr
+	WHERE mr.recipient_type = 'from' AND mr.is_relayed
 ), direct_canon AS (
-	SELECT e.*, c.canonical_id, c.participant_domain
+	SELECT e.*, c.canonical_id, CASE WHEN e.is_author THEN coalesce(r.relay_domain, c.participant_domain) ELSE c.participant_domain END AS participant_domain
 	FROM direct_edges e LEFT JOIN canon c USING (participant_id)
+	LEFT JOIN relay_domains r USING (message_id)
 ), direct_agg AS (
 	SELECT message_id, canonical_id, participant_domain,
 	       bool_or(is_sender) AS is_sender,
@@ -104,7 +108,8 @@ FROM message_facts m`, EntryKindSQL("m.message_type"),
 		messages, quoteSQLString(path("sources")),
 		quoteSQLString(path("conversations")), unsentMessages, occurredYear,
 		CanonicalParticipantsSQL(fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("participants"))), fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("participant_clusters")))),
-		OwnerCanonicalsSQL(fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("owner_participants"))), "canon"), recipients)
+		OwnerCanonicalsSQL(fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("owner_participants"))), "canon"), recipients,
+		SenderEnvelopeDomainExpr("mr.email_address"), recipients)
 }
 
 // ExpandedActivityRelation restores the logical edge relation on demand from
@@ -213,4 +218,29 @@ WHERE f.is_direct
 	                       WHERE cm.conversation_id = f.conversation_id%[6]s
 	                         AND cm.canonical_id IS NOT NULL))
 )`, sparse, roster, CanonicalParticipantsSQL(participants, clusters), OwnerCanonicalsSQL(owners, "canon"), memberCTEs, factMemberKey, directMemberKey)
+}
+
+// SenderAddressExpr selects the relay address for relayed From rows.
+func SenderAddressExpr(recipient, participant string) string {
+	return "COALESCE(CASE WHEN " + recipient + ".is_relayed THEN " + recipient + ".email_address END, " + participant + ".email_address)"
+}
+
+// SenderAddressMatchExpr keeps relay and participant address lookups separate.
+func SenderAddressMatchExpr(recipient, participant string) string {
+	return "((" + recipient + ".is_relayed AND LOWER(" + recipient + ".email_address) = ?) OR (NOT " + recipient + ".is_relayed AND (" + participant + ".email_address = ? OR " + participant + ".phone_number = ?)))"
+}
+
+// SenderDomainExpr selects the relay domain for relayed From rows.
+func SenderDomainExpr(recipient, participant string) string {
+	return "COALESCE(" + SenderEnvelopeDomainExpr("CASE WHEN "+recipient+".is_relayed THEN "+recipient+".email_address END") + ", " + participant + ".domain)"
+}
+
+// RelayAddressSubquery selects a message's relayed From address.
+func RelayAddressSubquery(messageID, recipients string) string {
+	return "(SELECT mr_relay.email_address FROM " + recipients + " mr_relay WHERE mr_relay.message_id = " + messageID + " AND mr_relay.recipient_type = 'from' AND mr_relay.is_relayed LIMIT 1)"
+}
+
+// RelayAbsentExpr prevents a linked author from replacing the relay sender.
+func RelayAbsentExpr(messageID, recipients string) string {
+	return "NOT EXISTS (SELECT 1 FROM " + recipients + " mr_guard WHERE mr_guard.message_id = " + messageID + " AND mr_guard.recipient_type = 'from' AND mr_guard.is_relayed)"
 }

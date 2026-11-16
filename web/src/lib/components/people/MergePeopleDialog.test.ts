@@ -50,7 +50,7 @@ it.each([
       return;
     }
     if (outcome === 'retry and merge' || outcome === 'read failure') {
-      await screen.findByText('Could not read both people. Retry the merge.');
+      await screen.findByText("Couldn't load both people.");
       expect(onReconcile).toHaveBeenCalledWith(expect.anything(), false);
       if (outcome === 'read failure') return;
       await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
@@ -68,7 +68,7 @@ it.each([
     if (outcome === 'stale merge') {
       await modal.onSuccess({ result: mergeResult(profile(7), 'stale'), survivor: profile(7), responseETag: '"person-7-r5"' });
       await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-      expect(await screen.findByText('People merged. Identity cache refresh failed.')).toBeDefined();
+      expect(await screen.findByText("People merged. Couldn't refresh the people list.")).toBeDefined();
       expect(onOpenPerson).toHaveBeenCalledWith(7);
       expect(onReconcile).toHaveBeenLastCalledWith(context, false, expect.objectContaining({ survivor: expect.objectContaining({ id: 7 }) }));
       expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST')).toHaveLength(0);

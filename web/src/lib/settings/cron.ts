@@ -7,6 +7,8 @@
  * adds no rules of its own: cron-corpus.json pins the two parsers together.
  */
 
+import { joinWords } from '../util/words';
+
 export type CronFieldName = 'minute' | 'hour' | 'day' | 'month' | 'weekday';
 
 export interface CronFieldSpec {
@@ -462,12 +464,6 @@ function ordinal(value: number): string {
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');
-}
-
-function joinWords(items: string[]): string {
-  if (items.length <= 1) return items.join('');
-  if (items.length === 2) return `${items[0]} and ${items[1]}`;
-  return `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`;
 }
 
 function capitalize(text: string): string {

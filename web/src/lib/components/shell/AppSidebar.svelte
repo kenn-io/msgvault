@@ -240,7 +240,7 @@
   .sidebar__item {
     display: flex;
     width: 100%;
-    min-height: var(--control-h-lg);
+    min-height: var(--nav-item-h);
     align-items: center;
     gap: var(--control-gap);
     padding: 0 var(--pane-pad-x);
@@ -254,13 +254,12 @@
   }
 
   .sidebar__item--footer {
-    min-height: var(--control-h);
     font-size: var(--font-size-sm);
   }
 
   .sidebar--rail .sidebar__item {
-    width: var(--control-h-lg);
-    min-height: var(--control-h-lg);
+    width: var(--nav-item-h);
+    min-height: var(--nav-item-h);
     justify-content: center;
     padding: 0;
   }

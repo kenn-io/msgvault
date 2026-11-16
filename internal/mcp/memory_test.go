@@ -79,7 +79,6 @@ func daemonProxyMemoryOptions() ServeOptions {
 		ManifestSaver:        struct{ DeletionManifestSaver }{},
 		HybridSearcher:       struct{ HybridSearcher }{},
 		SimilarSearcher:      struct{ SimilarSearcher }{},
-		DocumentSearcher:     struct{ DocumentSearcher }{},
 		MediaSearcher:        struct{ MediaSearcher }{},
 		PersonFileSearcher:   struct{ PersonFileSearcher }{},
 		PeopleBackend:        struct{ peoplebrowser.Backend }{},

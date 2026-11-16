@@ -166,6 +166,7 @@ func TestBeeperDraftWritesCheckTheComposerFirst(t *testing.T) {
 	created, err := f.create(t, nil, "hello")
 	require.NoError(err)
 	assert.Equal("created", created.Status)
+	assert.Equal("not_applicable", created.RecipientProvenanceStatus)
 	assert.Equal(int64(1), created.Revision)
 	require.NotNil(created.Content)
 	assert.Equal("<p>hello</p>", *created.Content)

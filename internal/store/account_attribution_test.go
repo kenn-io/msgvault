@@ -64,6 +64,7 @@ type attrMail struct {
 	noEnvelope   bool
 	sourceMsgKey string
 	rawFormat    string
+	rfc822       string // messages.rfc822_message_id, as a sync stores it
 }
 
 func (f *attrFixture) participant(address string) int64 {
@@ -101,6 +102,9 @@ func (f *attrFixture) persist(m attrMail) int64 {
 	}
 	if m.senderID != 0 {
 		msg.SenderID = sql.NullInt64{Int64: m.senderID, Valid: true}
+	}
+	if m.rfc822 != "" {
+		msg.RFC822MessageID = sql.NullString{String: m.rfc822, Valid: true}
 	}
 	data := &store.MessagePersistData{Message: msg, LabelIDs: m.labels}
 	if m.raw != "" {

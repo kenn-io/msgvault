@@ -109,8 +109,8 @@ func (a Assembler) Discover(ctx context.Context, request AssemblyRequest) (Assem
 		backstop, loadErr := a.loadWindow(ctx, WindowRequest{
 			PersonID: request.PersonID, Lane: cursor.Key.SourceLane,
 			Mode: GenerationCursorBackstop, ReconcileAfter: cursor.BackstopAfterKey,
-			BackstopUpper: cursor.BackstopUpperKey, DocumentAfter: cursor.BackstopDocumentKey,
-			Limit: windowLimit,
+			BackstopUpper: cursor.BackstopUpperKey,
+			Limit:         windowLimit,
 		})
 		if loadErr != nil {
 			return loadErr
@@ -118,11 +118,9 @@ func (a Assembler) Discover(ctx context.Context, request AssemblyRequest) (Assem
 		capturedUpper := backstop.CapturedUpperKey
 		if capturedUpper == "" ||
 			(cursor.BackstopUpperKey != "" && capturedUpper != cursor.BackstopUpperKey) ||
-			!sweepCursorCoordinateAdvanced(cursor.BackstopAfterKey, cursor.BackstopDocumentKey,
-				backstop.NextReconcileKey, backstop.NextDocumentKey) ||
+			backstop.NextReconcileKey <= cursor.BackstopAfterKey ||
 			backstop.NextReconcileKey > capturedUpper ||
-			backstop.ReconciliationDone != (backstop.NextReconcileKey == capturedUpper &&
-				backstop.NextDocumentKey == "") {
+			backstop.ReconciliationDone != (backstop.NextReconcileKey == capturedUpper) {
 			return errors.New("person sweep backstop returned invalid bounded progress")
 		}
 		result.Windows = append(result.Windows, backstop)
@@ -142,7 +140,6 @@ func (a Assembler) Discover(ctx context.Context, request AssemblyRequest) (Assem
 			}
 		}
 		if !reconciliationAlreadyCovered && !cursor.ReconciliationComplete &&
-			cursor.ReconcileDocumentKey == "" && backstop.NextDocumentKey == "" &&
 			cursor.ReconcileAfterKey < cursor.ReconcileUpperKey &&
 			cursor.BackstopAfterKey <= cursor.ReconcileAfterKey &&
 			backstop.NextReconcileKey >= cursor.ReconcileUpperKey {
@@ -156,8 +153,6 @@ func (a Assembler) Discover(ctx context.Context, request AssemblyRequest) (Assem
 			Key: cursor.Key, Mode: GenerationCursorBackstop,
 			ReconcileFromKey: cursor.BackstopAfterKey,
 			ReconcileToKey:   backstop.NextReconcileKey,
-			DocumentFromKey:  cursor.BackstopDocumentKey,
-			DocumentToKey:    backstop.NextDocumentKey,
 			BackstopUpperKey: capturedUpper,
 		})
 		return nil
@@ -180,7 +175,7 @@ cursorLoop:
 		optimistic, err := a.loadWindow(ctx, WindowRequest{
 			PersonID: request.PersonID, Lane: cursor.Key.SourceLane,
 			Mode: GenerationCursorOptimistic, AfterSequence: cursor.OptimisticSequence,
-			DocumentAfter: cursor.OptimisticDocumentKey, Limit: windowLimit,
+			Limit: windowLimit,
 		})
 		if err != nil {
 			return AssemblyProgress{}, err
@@ -190,13 +185,10 @@ cursorLoop:
 		if err := appendAssemblySeeds(seedByID, optimistic.Seeds, request.Profile, after, before); err != nil {
 			return AssemblyProgress{}, err
 		}
-		if sweepSequenceCoordinateAdvanced(cursor.OptimisticSequence, cursor.OptimisticDocumentKey,
-			optimistic.NextSequence, optimistic.NextDocumentKey) {
+		if optimistic.NextSequence > cursor.OptimisticSequence {
 			result.CursorEnvelope = append(result.CursorEnvelope, GenerationCursor{
 				Key: cursor.Key, Mode: GenerationCursorOptimistic,
 				CursorFrom: cursor.OptimisticSequence, CursorThrough: optimistic.NextSequence,
-				DocumentFromKey: cursor.OptimisticDocumentKey,
-				DocumentToKey:   optimistic.NextDocumentKey,
 			})
 			progressWindows++
 			if a.MaxProgressWindows > 0 && progressWindows >= a.MaxProgressWindows {
@@ -209,7 +201,7 @@ cursorLoop:
 				PersonID: request.PersonID, Lane: cursor.Key.SourceLane,
 				Mode:           GenerationCursorReconciliation,
 				ReconcileAfter: cursor.ReconcileAfterKey, ReconcileUpper: cursor.ReconcileUpperKey,
-				DocumentAfter: cursor.ReconcileDocumentKey, Limit: windowLimit,
+				Limit: windowLimit,
 			})
 			if loadErr != nil {
 				return AssemblyProgress{}, loadErr
@@ -219,15 +211,11 @@ cursorLoop:
 			if err := appendAssemblySeeds(seedByID, reconciliation.Seeds, request.Profile, after, before); err != nil {
 				return AssemblyProgress{}, err
 			}
-			if sweepCursorCoordinateAdvanced(
-				cursor.ReconcileAfterKey, cursor.ReconcileDocumentKey,
-				reconciliation.NextReconcileKey, reconciliation.NextDocumentKey) {
+			if reconciliation.NextReconcileKey > cursor.ReconcileAfterKey {
 				result.CursorEnvelope = append(result.CursorEnvelope, GenerationCursor{
 					Key: cursor.Key, Mode: GenerationCursorReconciliation,
 					ReconcileFromKey: cursor.ReconcileAfterKey,
 					ReconcileToKey:   reconciliation.NextReconcileKey,
-					DocumentFromKey:  cursor.ReconcileDocumentKey,
-					DocumentToKey:    reconciliation.NextDocumentKey,
 				})
 				progressWindows++
 				if a.MaxProgressWindows > 0 && progressWindows >= a.MaxProgressWindows {
@@ -516,17 +504,9 @@ func canonicalGenerationCursors(cursors []GenerationCursor) []GenerationCursor {
 		if left.ReconcileFromKey != right.ReconcileFromKey {
 			return left.ReconcileFromKey < right.ReconcileFromKey
 		}
-		return left.DocumentFromKey < right.DocumentFromKey
+		return false
 	})
 	return canonical
-}
-
-func sweepSequenceCoordinateAdvanced(from int64, fromDocument string, to int64, toDocument string) bool {
-	return to > from || (to == from && toDocument > fromDocument)
-}
-
-func sweepCursorCoordinateAdvanced(from, fromDocument, to, toDocument string) bool {
-	return to > from || (to == from && toDocument > fromDocument)
 }
 
 func cursorModeOrder(mode GenerationCursorMode) int {

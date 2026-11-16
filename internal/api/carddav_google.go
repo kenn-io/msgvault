@@ -47,6 +47,11 @@ func (c *CardDAVController) credentialForRequest(ctx context.Context, req CardDA
 	}
 	password, err := c.passwordForRequest(ctx, req)
 	credential.Password = password
+	if err == nil && req.Provider == "" {
+		if previous, reuseErr := c.reusableCredential(ctx, req.BaseURL, req.Username); reuseErr == nil {
+			credential.ICloud = previous.ICloud
+		}
+	}
 	return credential, err
 }
 

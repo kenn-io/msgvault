@@ -33,7 +33,6 @@ import (
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
@@ -350,10 +349,6 @@ func TestSearchMetadata(t *testing.T) {
 	})
 }
 
-type recordingDocumentSearcher struct {
-	request store.DocumentSearchRequest
-}
-
 type recordingVisualSearcher struct{ request VisualSearchRequest }
 
 func (s *recordingVisualSearcher) SearchVisualAttachments(
@@ -440,80 +435,6 @@ func TestSearchPersonFilesPreservesOmittedDirectionDefault(t *testing.T) {
 
 	assert.Nil(t, searcher.request.Directions,
 		"an omitted direction must let the metadata route include unclassified roster rows")
-}
-
-func (s *recordingDocumentSearcher) SearchDocuments(
-	_ context.Context,
-	request store.DocumentSearchRequest,
-) (store.DocumentSearchResponse, error) {
-	s.request = request
-	return store.DocumentSearchResponse{
-		Revision: 4,
-		Results: []store.DocumentSearchResult{{
-			AttachmentID: 17, MessageID: 18, Filename: "inspection.xlsx",
-			OccurrenceKey: "occurrence", CanonicalBlobHash: "hash", ChunkKey: "chunk",
-			Excerpt: "carton damage", ProfileID: "profile", ExtractionID: "extraction",
-			Provider: "mistral", Model: "ocr", MatchedSignals: []string{"content"}, Rank: 1,
-			PersonProvenance: &personscope.Provenance{
-				ParticipantIDs: []int64{4}, Roles: []personscope.Role{personscope.RoleFrom},
-				Directions: []personscope.Direction{personscope.FromPerson},
-			},
-		}},
-	}, nil
-}
-
-func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
-	response := runTool[store.DocumentSearchResponse](t, ToolSearchDocuments, h.searchDocuments, map[string]any{
-		"query": "carton damage", "source_ids": []any{float64(3), float64(7)},
-		"message_types": []any{"email", "mms"}, "attachment_id": float64(17),
-		"message_id": float64(18), "person_id": float64(40),
-		"directions": []any{"from_person", "group"},
-		"after":      "2026-08-01", "before": "2026-08-20",
-		"limit": float64(5), "cursor": "opaque",
-		"mode": "lexical", "candidate_limit": float64(1001),
-	})
-	assert.Equal("carton damage", searcher.request.Query)
-	assert.Equal([]int64{3, 7}, searcher.request.SourceIDs)
-	assert.Equal([]string{"email", "mms"}, searcher.request.MessageTypes)
-	assert.Equal(int64(17), searcher.request.AttachmentID)
-	assert.Equal(int64(18), searcher.request.MessageID)
-	assert.Equal(int64(40), searcher.request.PersonID)
-	assert.Equal([]personscope.Direction{personscope.FromPerson, personscope.Group}, searcher.request.Directions)
-	require.NotNil(searcher.request.After)
-	require.NotNil(searcher.request.Before)
-	assert.Equal(5, searcher.request.PageSize)
-	assert.Equal("opaque", searcher.request.Cursor)
-	assert.Equal("lexical", searcher.request.SearchMode)
-	assert.Equal(1001, searcher.request.CandidateLimit)
-	require.Len(response.Results, 1)
-	assert.Equal("inspection.xlsx", response.Results[0].Filename)
-	assert.Equal("mistral", response.Results[0].Provider)
-	require.NotNil(response.Results[0].PersonProvenance)
-	assert.Equal([]int64{4}, response.Results[0].PersonProvenance.ParticipantIDs)
-}
-
-func TestSearchDocumentAttachmentsRejectsOutOfRangeExactID(t *testing.T) {
-	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
-	result := runToolExpectError(t, ToolSearchDocuments, h.searchDocuments, map[string]any{
-		"query": "carton damage", "attachment_id": math.Exp2(63),
-	})
-	assert.Contains(t, resultText(t, result), "attachment_id must be a positive integer")
-	assert.Empty(t, searcher.request.Query, "an invalid exact filter must never be silently dropped")
-}
-
-func TestSearchDocumentAttachmentsRejectsSemanticCandidateLimitAboveBound(t *testing.T) {
-	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
-	result := runToolExpectError(t, ToolSearchDocuments, h.searchDocuments, map[string]any{
-		"query": "carton damage", "mode": "semantic", "candidate_limit": float64(1001),
-	})
-	assert.Contains(t, resultText(t, result), "candidate_limit must be an integer between 1 and 1000")
-	assert.Empty(t, searcher.request.Query)
 }
 
 func TestSearchRejectsInvalidQueryBeforeDispatch(t *testing.T) {
@@ -981,103 +902,6 @@ func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 				assert.NotContains(resp.Data[0].Matches[0].Snippet, tc.reject,
 					"context must start from an FTS token-prefix match")
 			}
-		})
-	}
-}
-
-func TestSearchMessageBodies_PostgreSQLContextIgnoresAccentLookalikes(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	if !f.Store.IsPostgreSQL() {
-		t.Skip("PostgreSQL simple-dictionary context semantics")
-	}
-
-	accentLookalike := "résumé " + strings.Repeat("padding ", 60)
-	body := strings.Repeat(accentLookalike, query.MessageBodyContextMaxSnippets) + "resume marker"
-	messageID := f.NewMessage().
-		WithSourceMessageID("mcp-postgres-accent-context").
-		WithSubject("ordinary subject").
-		WithSnippet("ordinary preview").
-		Create(t, f.Store)
-	require.NoError(f.Store.UpsertMessageBody(messageID,
-		sql.NullString{String: body, Valid: true}, sql.NullString{}), "UpsertMessageBody")
-	_, err := f.Store.BackfillFTS(nil)
-	require.NoError(err, "BackfillFTS")
-
-	engine := query.NewEngine(f.Store.DB(), true)
-	resp := runTool[paginatedSearchMessages](t, "search_message_bodies",
-		newTestHandlers(engine).searchMessageBodies, map[string]any{"query": "resume"})
-	require.Len(resp.Data, 1, "body hit")
-	assert.Equal(messageID, resp.Data[0].ID, "body hit ID")
-	require.NotEmpty(resp.Data[0].Matches, "FTS hit context windows")
-	assert.Condition(func() bool {
-		for _, m := range resp.Data[0].Matches {
-			if strings.Contains(m.Snippet, "resume marker") {
-				return true
-			}
-		}
-		return false
-	}, "context snippets must include the true PostgreSQL simple-dictionary hit")
-}
-
-func TestSearchMessageBodies_PostgreSQLContextUsesParserTokens(t *testing.T) {
-	f := storetest.New(t)
-	if !f.Store.IsPostgreSQL() {
-		t.Skip("PostgreSQL parser-specific body context semantics")
-	}
-
-	tests := []struct {
-		name      string
-		lookalike string
-		query     string
-		marker    string
-	}{
-		{
-			name:      "decomposed combining mark stays inside a word",
-			lookalike: "cafe\u0301teria",
-			query:     "cafe\u0301teria",
-			marker:    "cafe teria marker",
-		},
-		{
-			name:      "host stays one token",
-			lookalike: "foo.bar",
-			query:     `"foo bar"`,
-			marker:    "foo bar marker",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			lookalike := tc.lookalike + " " + strings.Repeat("padding ", 60)
-			body := strings.Repeat(lookalike, query.MessageBodyContextMaxSnippets) + tc.marker
-			messageID := f.NewMessage().
-				WithSourceMessageID("mcp-postgres-parser-"+tc.name).
-				WithSubject("ordinary subject").
-				WithSnippet("ordinary preview").
-				Create(t, f.Store)
-			require.NoError(f.Store.UpsertMessageBody(messageID,
-				sql.NullString{String: body, Valid: true}, sql.NullString{}), "UpsertMessageBody")
-			_, err := f.Store.BackfillFTS(nil)
-			require.NoError(err, "BackfillFTS")
-
-			engine := query.NewEngine(f.Store.DB(), true)
-			resp := runTool[paginatedSearchMessages](t, "search_message_bodies",
-				newTestHandlers(engine).searchMessageBodies,
-				map[string]any{"query": tc.query})
-			require.Len(resp.Data, 1, "body hit")
-			assert.Equal(messageID, resp.Data[0].ID, "body hit ID")
-			require.NotEmpty(resp.Data[0].Matches, "FTS hit context windows")
-			assert.Condition(func() bool {
-				for _, m := range resp.Data[0].Matches {
-					if strings.Contains(m.Snippet, tc.marker) {
-						return true
-					}
-				}
-				return false
-			}, "context snippets must ignore PostgreSQL parser lookalikes")
 		})
 	}
 }

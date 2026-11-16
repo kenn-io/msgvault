@@ -67,7 +67,7 @@ SQLITE_SHARDED_TEST_PKGS := $(sort $(SHARDED_TEST_PKGS) ./internal/query)
 SQLITE_SHARD_TARGETS := $(addprefix test-sqlite-shard/,$(SQLITE_SHARDED_TEST_PKGS))
 GOLANGCI_LINT_VERSION ?= v2.14.0
 GOVULNCHECK_VERSION ?= v1.7.0
-HUMA_CHECK_VERSION := 3e1f59e9011e878ec595aa04aebc8a77c5292c4d
+HUMA_CHECK_VERSION := v0.48.4
 GO_INSTALL_BIN := $(shell go env GOBIN)
 ifeq ($(strip $(GO_INSTALL_BIN)),)
 GO_INSTALL_BIN := $(shell go env GOPATH)/bin
@@ -110,7 +110,7 @@ PG_TEST_TAGS := fts5 sqlite_vec pgvector
 # configuration. Verified by `make pg-shipped-only-check`, which re-derives the
 # closure from `go list`.
 NOCGO_LINT_PKGS := ./pkg/archive/... ./pkg/mcp/... ./internal/postgresprofile/... ./internal/sqliteutil/... ./internal/duckdbutil/... ./internal/muesli/...
-PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/agentguide/gen ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/tui ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./pkg/mcp ./scripts/contextual-retrieval-eval
+PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/agentguide/gen ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/tui ./internal/vector/chunkmatch ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./pkg/mcp ./scripts/contextual-retrieval-eval
 
 OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
 WEB_INSTALL_STAMP := web/node_modules/.msgvault-install-stamp
@@ -127,7 +127,7 @@ export GOLANGCI_LINT_CACHE
 # serialize one another while duplicate runners in one worktree can wait.
 GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 
-.PHONY: build build-release homebrew install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-browser-install web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release homebrew install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-packages test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci lint-ci-golangci vuln-tools vulncheck tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-browser-install web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 .PHONY: agent-guide agent-guide-check
 
@@ -224,6 +224,10 @@ test:
 		$(MAKE) test-standard; \
 	fi
 
+.PHONY: test-install
+test-install:
+	$(call gotestsum,install,./scripts,-timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" -run '^TestInstallPath$$' -count=1)
+
 # Use an existing built binary when supplied, otherwise build the worktree CLI.
 .PHONY: test-cli-e2e
 test-cli-e2e:
@@ -286,11 +290,13 @@ test-pg-shipped: require-test-db
 	$(MAKE) test-pg-shipped-unsharded
 	$(MAKE) test-shards
 
-# test-pg-shipped minus SHARDED_TEST_PKGS, for CI's test-postgres lane; the
-# test-postgres-sharded jobs cover the rest against their own servers.
+# test-pg-shipped minus SHARDED_TEST_PKGS and any additional CI exclusions.
 test-pg-shipped-unsharded: require-test-db
-	@excluded=$$(go list $(SHARDED_TEST_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
+	@excluded=$$(go list $(SHARDED_TEST_PKGS) $(EXCLUDE_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
 	$(call gotestsum,pg-shipped-unsharded,$$(go list ./... | grep -vxF $$excluded),-timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)")
+
+test-pg-packages: require-test-db
+	$(call gotestsum,pg-packages,$(PKGS),-timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)")
 
 # Both PostgreSQL lanes' coverage in one pass.
 #
@@ -446,6 +452,12 @@ smoke-web-release:
 	node --test scripts/smoke-web-release.test.mjs
 	bash scripts/smoke-web-release.sh
 
+# Run against an already built or extracted executable; never install/rebuild it.
+BINARY ?= ./msgvault
+.PHONY: smoke-standalone
+smoke-standalone:
+	sh scripts/smoke-standalone.sh "$(BINARY)"
+
 # Format code
 fmt:
 	go fmt ./...
@@ -473,26 +485,18 @@ lint: custom-gcl
 	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run --fix ./...
 
 # Check the shared Huma API contract.
-# The dedicated adapter targets a foreign host even when its route matches this API.
 huma-check:
 	@go run go.kenn.io/kit/cmd/huma-check@$(HUMA_CHECK_VERSION) -h >/dev/null 2>&1 || :; \
-	status=0; out=$$(go run go.kenn.io/kit/cmd/huma-check@$(HUMA_CHECK_VERSION) ./... 2>&1) || status=$$?; \
-	if [ $$status -eq 1 ] && printf '%s\n' "$$out" | awk ' \
-		/^internal[\\\/]docbankmedia[\\\/][^\\\/]+\.go:[1-9][0-9]*:[1-9][0-9]*: hand-rolled HTTP request to this module\047s own Huma route \/[^ ;]*; call it through the generated API client \(client\)$$/ { foreign++; next } \
-		$$0 == "exit status 1" && !wrapper { wrapper = 1; next } \
-		{ bad = 1 } \
-		END { exit !(foreign && wrapper && !bad) }'; then \
-		echo "huma-check: accepted foreign-service client diagnostics in internal/docbankmedia"; \
-	else \
-		[ -z "$$out" ] || printf '%s\n' "$$out"; exit $$status; \
-	fi
+	go run go.kenn.io/kit/cmd/huma-check@$(HUMA_CHECK_VERSION) ./...
 
 .PHONY: huma-check
 
 # Run linter (CI, no auto-fix). The second pass lints the files that only the
 # PostgreSQL-only CGO_ENABLED=0 build compiles. It covers the packages whose
 # tests also build without CGO; the others' tests need the SQLite driver.
-lint-ci: custom-gcl testify-helper-check lint-workflow-retries
+lint-ci: lint-ci-golangci
+
+lint-ci-golangci: custom-gcl lint-workflow-retries
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
 	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run ./...
 	CGO_ENABLED=0 TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run $(NOCGO_LINT_PKGS)
@@ -509,10 +513,6 @@ vuln-tools:
 
 vulncheck: vuln-tools
 	"$(GOVULNCHECK_BIN)" -tags "$(BUILD_TAGS)" ./...
-
-# Enforce testify helper usage in assertion-heavy tests
-testify-helper-check:
-	go run ./cmd/testify-helper-check -tags="$(BUILD_TAGS)" ./...
 
 # Install pre-commit and pre-push hooks via prek
 install-hooks:
@@ -576,9 +576,15 @@ docs-fixture-smoke:
 docs-web-screenshots:
 	bash docs/screenshots/generate-web-fixture-screenshots.sh
 
-# Regenerate docs screenshots
+# Regenerate docs screenshots. With DOCS_SCREENSHOTS_OUTPUT set, build the
+# complete docs-generated-assets tree into $(DOCS_SCREENSHOTS_OUTPUT)/assets
+# using only Docker on the host.
 docs-screenshots:
+ifdef DOCS_SCREENSHOTS_OUTPUT
+	bash docs/screenshots/build-generated-assets.sh "$(DOCS_SCREENSHOTS_OUTPUT)"
+else
 	bash docs/screenshots/generate-all.sh
+endif
 
 # Publish curated static docs assets to local asset branch
 docs-assets-branch:
@@ -623,11 +629,11 @@ help:
 	@echo "  test-cli-e2e    - Build and test the CLI on a synthetic archive"
 	@echo "  test-shards    - Run SHARDED_TEST_PKGS as TEST_SHARDS concurrent processes each"
 	@echo "  test-unsharded - Run every package except SHARDED_TEST_PKGS (CI's test lane)"
+	@echo "  test-pg-packages - Run PostgreSQL tests for PKGS"
 	@echo "  fmt            - Format code"
 	@echo "  lint           - Run linter (auto-fix)"
-	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
+	@echo "  lint-ci        - Run linter (CI, no auto-fix)"
 	@echo "  vulncheck      - Run the pinned Go vulnerability scanner"
-	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
 	@echo "  tidy           - Tidy go.mod"
 	@echo "  vcard-registry-check - Network-check IANA registry drift (manual; not CI)"
 	@echo "  vcard-registry-update - Update the vendored IANA vCard registry"
@@ -643,6 +649,7 @@ help:
 	@echo "  web-embed      - Build, stage, and validate browser assets for Go embedding"
 	@echo "  web-assets-check - Validate the release asset graph and run the validator's tests"
 	@echo "  smoke-web-release - Build and exercise an isolated release-style daemon"
+	@echo "  smoke-standalone - Check a built/downloaded executable (BINARY=./msgvault)"
 	@echo "  install-hooks  - Install pre-commit and pre-push hooks via prek"
 	@echo "  clean          - Remove build artifacts"
 	@echo ""

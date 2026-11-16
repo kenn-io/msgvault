@@ -7,7 +7,7 @@ import (
 )
 
 // DefaultChatMaxBytes is the per-attachment size cap chat providers (Beeper,
-// Slack, Teams) apply when max_media_mb is unset. It is sized for the media
+// Slack, Teams, Matrix) apply when max_media_mb is unset. It is sized for the media
 // worth keeping from direct chats and small groups: long voice notes, screen
 // recordings, and phone video routinely clear 100 MiB, and the participant
 // cap already keeps large-room volume out. Discord keeps its own lower cap.

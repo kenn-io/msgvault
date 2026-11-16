@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-14"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -45,6 +45,13 @@ Daemon API schema 3.1.0 adds `calendar_create`, `calendar_update`,
 tools appear only with `--allow-calendar-writes`; HTTP also requires
 `--http-allow-writes` and protocol `2026-07-28` or newer.
 
+All seven calendar tools advertise `openWorldHint=true` because availability
+and mutations contact Google Calendar. Updating, deleting, moving, or responding
+to an existing event advertises `destructiveHint=true`; creating an event and
+reading availability advertise `false`. Hints describe possible effects, so a
+dry run keeps the tool's mutation hints. Calendar consent and per-call approval
+still apply.
+
 For a non-dry-run mutation, the MCP server first asks the daemon to build and
 authorize a plan. It then presents that plan through client elicitation and
 requires explicit approval before writing. The server rechecks the plan before
@@ -82,7 +89,7 @@ non-dry-run plan through client elicitation.
 
 These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Msgvault never sends.
 
-`draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
+`draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. By default, clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
 
 | Tool | Command | Parameters |
 |---|---|---|
@@ -97,7 +104,9 @@ These tools run the matching CLI commands through your selected daemon. They req
 
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
-On unreleased `main`, successful draft creation and edit receipts include `sensitive_content` when the submitted subject or body contains a likely `payment_card`, `iban`, `us_ssn`, `api_key`, or `password`. Each entry has a `kind` and an optional `hint` showing the last four characters of a card or IBAN, or the first four characters of a prefixed key. Review these values before sending. The draft is still written unchanged.
+Successful draft creation and edit receipts include `sensitive_content` when the submitted subject or body contains a likely `payment_card`, `iban`, `us_ssn`, `api_key`, or `password`. Each entry has a `kind` and an optional `hint` showing the last four characters of a card or IBAN, or the first four characters of a prefixed key. The `quoted: true` label identifies sensitive content in parts of the body that msgvault recognizes as quoted history. The quote rules cover `>` lines and their reply attribution, keeping an unmarked answer below the block authored. A reply attribution without a `>` block, a dashed forwarded or original-message separator, or an Outlook `From:`/`Sent:` header marks history through the end of the body. The label neither proves authorship nor changes confirmation, and the approval prompt repeats it. Review these values before sending. The draft is still written unchanged.
+
+`msgvault mcp --confirm-sensitive-drafts` requires client approval before creating or editing a draft with detected sensitive content. For native daemon endpoints, use `msgvault serve --mcp-allow-writes --mcp-confirm-sensitive-drafts`. This option is off by default. Clients without elicitation support, and HTTP clients using a protocol older than `2026-07-28`, cannot write flagged drafts when it is enabled. The option grants no tools; standalone HTTP writes still require `--http-allow-writes`.
 
 Cards need 13 to 19 digits that pass the checksum, with a first digit of 2 to 6 or 8. IBANs need a registered country length and a valid checksum. Unlabelled keys are recognized only for common provider prefixes. A labelled value needs at least eight characters with a letter and a digit or one of `!@#$%^&*+/=~`; a quoted multi-word passphrase also counts under a password label. Labels and values must be on the same line, separated by `:` or `=`; `Bearer` values also count. An absent finding does not mean the content is safe. Stored drafts, server-appended history, and attachments are outside this scan.
 
@@ -117,6 +126,47 @@ For a delegated Claude Desktop session, use these arguments with the daemon URL 
 ```
 
 For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Delegated MCP serves over stdio; `--http` returns a usage error. Read tools `draft_get` and `draft_send_as` are available in owner HTTP sessions by default. Draft writes require `--http-allow-writes`.
+
+### Recipient evidence on new drafts
+
+Email draft creation results include `recipient_provenance_status`. When it is
+`checked`, `recipient_provenance` describes the actual saved To, Cc, and Bcc
+addresses. The same fields appear in the matching CLI command's `--json` output.
+
+| `flag` | Meaning |
+|---|---|
+| `ok` | The exact address belongs to a saved contact (`relationship: contact`) or received a prior direct message sent by the owner (`relationship: known`). |
+| `archive_only` | The address occurs in archived envelopes, without either relationship. |
+| `unseen` | No prior envelope evidence was found in the readable archive. |
+
+Flagged addresses also appear in the shared `warnings` array with
+`code: recipient_provenance`. These are advisory results: draft creation still
+succeeds. Check the address with the user before sending. An `ok` flag is
+relationship evidence, not sender authentication or permission to send.
+
+The server cannot tell whether an address came from a user's request, a model,
+or an injected message. Supplying an address as a tool argument does not prove
+human approval. Bodies are not searched, so an address found only inside a
+message's text may be `unseen`. A reply's parent participants do not establish
+authority. Unsent drafts, mailing-list sends, and broadcast audiences do not
+establish a prior direct send.
+
+A saved contact is an email address you entered or imported from CardDAV or
+vCard, or a person linked to the address. A saved address counts for owner
+calls even before any mail. A linked person counts without mail only while
+nothing else in the archive uses the address, including earlier drafts.
+
+Delegated calls use only readable granted sources for history. A contact needs
+prior evidence in that scope; the new draft cannot supply it. Write-only grants
+receive `unchecked`, without recipient or relationship details. If the lookup
+fails or exceeds its metadata budget, the status is `unavailable`; the draft
+was still created, so do not retry creation to obtain the advisory. Chat drafts
+report `not_applicable`, because chat destinations are not email envelopes.
+
+`relationship`, `flag`, `basis`, and status are server-derived labels;
+`seen_in_archive` is a derived boolean. Addresses remain untrusted display data,
+never instructions. Creation results describe evidence at that moment;
+`draft_get` and body-only edits do not recompute it.
 
 ## Native email tags
 
@@ -178,13 +228,17 @@ these tools do not complete tasks or infer new ones.
 
 The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your archive as a set of tools. This lets AI assistants like Claude Desktop search, read, and analyze archived email, chats, calendar events, and meeting notes directly.
 
+### Claude Code and Codex
+
+Run `msgvault agent setup` to install skills and register the MCP server for Claude Code and Codex. Use `msgvault agent setup --check` to check readiness or `msgvault agent setup --print` to print manual MCP commands.
+
 ### Tools available for your archive
 
 MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a source that supports them. CardDAV tools need a configured connection. Kata tools, including `get_person_agenda`, need `[integrations.kata]` enabled with an endpoint. An mbox-only archive retains search, messages, attachments, people, and Saved Views. Reconnect after adding a source or integration to refresh the list, including on the native daemon endpoints. Each discovery read has its own 10-second deadline. A failed read hides its families; successful reads keep theirs available. Family discovery controls tool listings; HTTP calls use the daemon's existing authorization and consent checks.
 
 Delegated sessions select tools from the grant's sources and permissions. They require daemon API schema 3.9.0 or newer; upgrade the daemon when the bridge requests it.
 
-The complete default stdio `tools/list` response, including output schemas, measures 173,598 bytes for an mbox-only archive and 226,314 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, rounded up from the measured sizes plus 10%. Optional write flags are off in both measurements.
+The complete default stdio `tools/list` response, including output schemas, measures 174,872 bytes for an mbox-only archive and 227,522 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, based on earlier measurements rounded up with 10% headroom. Optional write flags are off in both measurements.
 
 ### Claude Desktop Configuration
 
@@ -379,12 +433,37 @@ conventions.
 
 For an agent-oriented workflow, see the [agent quickstart](../guides/agent-quickstart.md).
 
+## Find tools for a task
+
+Call `search_tools` with a task description when you need to choose an MCP
+tool. For example, `{"query":"read one message","limit":3}` finds tools for
+reading a message and summarizes their real input names, types, and required
+fields. Use `tools/list` for the complete schemas before calling a result.
+Discovery searches tool metadata locally. It does not search messages, execute
+the matched tools, or call an embedding service.
+
+`query` must contain non-whitespace text and be at most 512 UTF-8 bytes.
+`limit` is an integer from 1 to 20, defaulting to 5. Results follow a stable
+relevance order with tool-name tie breaking. No match returns `results: []`.
+`truncated: true` means the result limit may have omitted matches. Each result
+includes the full description and all top-level inputs, sorted by name, with
+`types`, required status, and full descriptions. Use `tools/list` for nested
+constraints and alternatives.
+
+Discovery uses this server's capability, write, transport, delegated-grant,
+and archive-family filters. It is available even without archive read grants,
+but only describes the tools the session can list. Stdio keeps the catalog it
+advertised when the connection started. HTTP refreshes archive families on each
+request. Results grant no additional access or permission to act. Older servers
+may omit `search_tools`; use `tools/list` directly in that case.
+
 ## Available Tools
 
 The MCP server exposes the following tools to connected AI clients:
 
 | Tool | Description | Parameters |
 |---|---|---|
+| `search_tools` | Find available tools for a task; see [task discovery](#find-tools-for-a-task). | `query` (string, required), `limit` (int, 1–20, default 5) |
 | `search_messages` | Deprecated compatibility wrapper. Omitted mode dispatches to `search_metadata`; `vector`/`hybrid` dispatch to `semantic_search_messages`. | `query` (string, required), `mode` (string: `vector`/`hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
 | `search_metadata` | Search message metadata with a subset of Gmail query syntax (not full Gmail compatibility). Matches subject, snippet, and sender/recipient metadata, not message bodies. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
 | `search_message_bodies` | Keyword full-text search inside message bodies. Returns `matches` excerpts (up to 5 per message), ordered newest-first. Backend excerpts may omit `char_offset` and `line`; use `search_in_message` when exact locations are needed. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
@@ -396,6 +475,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `conversation_id` (int), `limit` (int), `offset` (int), `account` (string) |
 | `list_thread` | List visible archived messages in one conversation, oldest first, with `has_raw` marking messages whose original `.eml` is stored. See [Export original emails](#export-original-emails). | exactly one of `id` (int), `source_message_id` (string), or `thread_id` (string); `account` (string), `limit` (1–500, default 100), `offset` (int) |
 | `export_eml` | Export one email's original `.eml` bytes in verified chunks. See [Export original emails](#export-original-emails). | exactly one of `id` (int) or `source_message_id` (string); `account` (string), `offset` (int), `length` (1–4194304, default 1048576), `sha256` (string, required after offset 0) |
+| `export_person_messages` | Export one person's messages as native JSONL. Encoded MCP response limited to 512 KiB. | `person_id` (int), `start` (RFC3339), `end` (RFC3339); optional `sources` (string array), `message_types` (string array) |
 | `get_attachment` | Get attachment content by ID. Pass `offset` or `length` to receive verified chunks instead of one embedded blob. | `attachment_id` (int), `offset` (int), `length` (int), `sha256` (string, required after offset 0) |
 | `export_attachment` | Save attachment to filesystem | `attachment_id` (int), `destination` (string) |
 | `get_stats` | Archive overview statistics, plus each account's `LastSyncAt` and its `virtual_accounts`, whose keys the `account` argument takes. Includes vector index state when configured. | — |
@@ -406,10 +486,12 @@ The MCP server exposes the following tools to connected AI clients:
 | `update_message_tags` | Add or remove native email tags through the daemon. Write-class. | `message_id` (int, required), `add` / `remove` (string arrays), `mailbox` (string, IMAP only), `dry_run` (bool) |
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
 | `get_saved_view` | Get one Saved View and its canonical definition and revision. Read-only. | `id` (int, required) |
-| `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string) |
-| `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; use `2` for new definitions; schema `1` retains literal-pipe meaning), `description` (string) |
+| `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string), `timezone` (IANA time zone) |
+| `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; use `3` for local date bounds with numeric offsets, or `2` for UTC; schema `1` retains literal-pipe meaning), `description` (string) |
 | `update_saved_view` | Patch supplied Saved View fields using optimistic revision checking. Write-class. | `id` (int, required), `revision` (int, required), at least one of `name`, `description`, `canonical_state`, `schema_version` |
 | `delete_saved_view` | Delete a Saved View definition, not archive messages. Write-class and destructive. | `id` (int, required), `revision` (int, required) |
+| `list_deletions` | List staged deletion batches, optionally by status. | Optional `status`: `pending`, `in_progress`, `completed`, `failed`, or `cancelled` |
+| `get_deletion` | Read a staged batch lifecycle receipt. | Required `batch_id` |
 | `stage_deletion` | Stage every match its source can delete (creates manifest only); refuses above 100000 Gmail, Microsoft Graph, or IMAP matches | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
 | `find_contact_candidates` | Find durable people by saved or observed names; returns stable UIDs and explicit ambiguity. Available with daemon API schema 3.20.0 or newer. | `query` (required), `limit` (1–100, default 20), `after_id` |
 | `get_person_messaging_routes` | Resolve a selected UID to curated points, bound observations, unreviewed suggestions and exact archived routes, with status and evidence. | `person_uid` (required), `network`, `source_id`, `limit` (1–100 per section, default 20), `after_conversation_id`, `after_contact_point_id`, `after_observation_id`, `after_suggestion_id` |
@@ -480,7 +562,7 @@ place. `last_talked` includes the last contact time and channel; its `brief` is
 }
 ```
 
-On SQLite, an empty first page for an incomplete `from:` name or address can include `hints`, for example `{"code":"sender_name_requires_address","message":"…","retry_with":{"query":"from:alex@example.com"}}`. Retry with that query and keep the other tool arguments, including `account`, `limit`, and `offset`. The legacy `search_messages` metadata mode returns the same hints.
+`from:` accepts a sender name, address, or domain. See [sender matching](https://msgvault.io/docs/usage/searching/#domain-search) for the matching rules.
 
 Use `offset` and `limit` to request subsequent pages. `search_metadata`,
 `search_message_bodies`, `semantic_search_messages`, and `list_messages` default to `limit = 20` and
@@ -499,7 +581,7 @@ slice of the body plus `body_length`, `body_returned`, `offset`, and
 `has_more`, so unusually large messages are paged across calls instead of
 being returned in a single response.
 
-On newer `main` builds, `get_message` with `include_segments: true` returns
+`get_message` with `include_segments: true` returns
 `segments_version: "seg-v1"` and `segments` with `kind`, `start`, and `end`.
 For plain-text email, kinds are `authored`, `quoted`, `forwarded`, and
 `signature`. Quoted ranges carry `depth`, the count of leading `>` markers,
@@ -534,7 +616,7 @@ assistant can tell a cancelled or moved event from a confirmed one. A field
 is `null` when the stored event does not carry it; calendar sync does not
 store a `sequence` of 0, so a `null` sequence usually means 0.
 
-On newer `main` builds, `get_message` and `search_in_message` include
+`get_message` and `search_in_message` include
 the best-effort flag `hidden_text_present`. True means the stored HTML likely hides
 readable text. False does not guarantee that text is visible. Many newsletters
 hide a preview line, called a preheader, and those set the flag too. The flag
@@ -714,10 +796,8 @@ array. Request the next page by passing the opaque `next_cursor` as `cursor`;
 
 The daemon executes the view. `run_saved_view` calls
 `POST /api/v1/saved-views/{id}/run`, which hands the stored definition to the
-same Explore endpoint the Web UI uses, so the query, search mode, filters,
-grouping, presentation, and sort run exactly as saved. A grouped view runs at
-the first level of its grouping chain, the level the Web UI shows when it
-opens that view, and a timeline view returns the same entry rows as a table.
+same Explore endpoint the Web UI uses. A grouped view runs at the first level
+of its grouping chain. Calendar groups use the requested time zone, or UTC by default; Month and Year groups appear newest first, while other groups sort by descending count. Use the same time zone for every page. A timeline view returns the same entry rows as a table.
 The tools are offered only when the daemon serves that endpoint (API schema
 2.21.0 or later); an older daemon omits them from the tool list.
 
@@ -830,6 +910,56 @@ Omitted fields are preserved; `false` and empty arrays are explicit changes.
 A stale ETag returns `settings_conflict`. Selection changes retain archived data
 and may require a daemon restart; inspect `pending_restart` in the response.
 
+## Open loops
+
+An assistant connected as the owner can see who is
+waiting on a reply and record decisions. See [Open loops](open-loops.md) for
+what counts as a loop. Delegated sessions get none of these tools. A tool
+appears only when the daemon offers its route.
+
+| Tool | Effect | Parameters |
+|---|---|---|
+| `list_open_loops` | List loops waiting on the owner (`reply_owed`) and on the other person (`awaiting_reply`). | Optional `person_id`; `limit` from 1 to 200, default 50 |
+| `close_open_loop` | Mark the listed questions done. | `message_id` and `question_message_ids` |
+| `snooze_open_loop` | Hide the listed questions until a deadline. | `message_id`, `question_message_ids`, and `until` |
+| `reopen_open_loop` | Clear the decision on one question. | `message_id` |
+
+To act on a loop:
+
+1. Call `list_open_loops`. Each item has `anchor_message_id`, the message that
+   started the wait, and `question_message_ids`, every question in the loop.
+2. Pass the item's `anchor_message_id` as `message_id`, and its
+   `question_message_ids`, to `close_open_loop` or `snooze_open_loop`. Only
+   those questions are marked. A question that arrived after the list stays
+   open.
+3. For `snooze_open_loop`, give `until` as an RFC3339 time or a `YYYY-MM-DD`
+   date, which means midnight in the MCP server's time zone. Durations such as
+   `24h` are rejected, so the deadline can't move between approval and saving.
+4. To undo a decision, call `reopen_open_loop` with the question's
+   `message_id` from an earlier list or receipt.
+
+Every decision needs `--allow-loop-writes` and approval for that one call. The
+approval shows the action, the message ID, the question IDs, and for snooze
+the exact deadline. For the daemon's built-in endpoint, use
+`msgvault serve --mcp-allow-writes --mcp-allow-loop-writes`; decisions then
+appear on `/mcp/writes`. Over HTTP, decisions also need
+`--http-allow-writes` and protocol `2026-07-28` or newer. Older HTTP clients
+get the list only.
+
+Read the list's warnings before acting:
+
+- `coverage_incomplete`: the daemon stopped before checking all history. Call
+  again to continue.
+- `truncated`: more loops are open than `limit`. Narrow with `person_id`;
+  there is no cursor.
+- `skipped_unparseable`: stored emails the daemon couldn't read. A reply in one
+  of them may have answered a listed loop.
+
+A decision refused with `loop_scan_incomplete` saved nothing. Wait at least
+one second, then make a new call, which needs approval again. MCP never
+retries a write by itself. If a write reports
+`operation_may_have_completed: true`, list the loops again before retrying.
+
 ## Write controls
 
 Enable only the writes intended for the assistant's session:
@@ -838,10 +968,11 @@ Enable only the writes intended for the assistant's session:
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
+| Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
 
-`draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available.
+`draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available. `--confirm-sensitive-drafts` also requires confirmation for flagged draft creation and edits; it grants no write access.
 
 Profile tools use the following arguments. Reads need no write opt-in; writes
 require `--allow-profile-writes` and the HTTP opt-in when applicable.
@@ -878,6 +1009,8 @@ provenance are user-authored; MCP writes use `enrichment` provenance.
 
 ## Staged Deletion via MCP
 
+Owner sessions can use `list_deletions` and `get_deletion` without enabling writes when the selected daemon advertises their routes. Delegated sessions cannot use these reads. Pass `batch_id` from `stage_deletion` or `id` from `list_deletions` to `get_deletion`. The lifecycle receipt can include failed and checkpoint IDs; it is not a selection preview. Lists or receipts over 1 MiB return `operation_response_limit_exceeded`; use the CLI or HTTP API to read them.
+
 When enabled for the transport, `stage_deletion` lets an AI assistant help you
 plan archive cleanup. It accepts either a Gmail-style query string or structured filters (sender, domain, label, date range), but not both at once. Query staging includes Gmail, Microsoft Graph, and IMAP mail. It stages every match its source can delete, or refuses without saving a batch. Chats and mail from other sources are left out of the search. Matches no longer in the archive or that cannot be deleted from their source, including archive-only mail and meetings, are skipped and counted in `skipped_count`. A query with matches but none deletable refuses without saving a batch. The 100,000 limit counts Gmail, Microsoft Graph, and IMAP matches, including skipped ones. Structured filters stage eligible Gmail and Microsoft Graph mail and do not report `skipped_count`. Narrow a larger selection with `before:`, `after:`, or `account` and stage each part.
 
@@ -896,9 +1029,9 @@ The tool returns the batch ID, message count, and next steps:
 }
 ```
 
-## Server identity (unreleased)
+## Server identity
 
-On `main`, the MCP server declares msgvault's website and icon. The icon is
+The MCP server declares msgvault's website and icon. The icon is
 included as a PNG data URI, so stdio and HTTP clients can load it without an
 external request. Whether it appears depends on the client.
 
@@ -925,6 +1058,7 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | Name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |

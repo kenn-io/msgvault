@@ -2,34 +2,40 @@ package visual
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestAssembleDocumentOrdersBoundedContextThenMedia(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	media := &MediaInput{Kind: MediaKindImage, MIMEType: "image/png", BlobHash: testHash, Bytes: []byte("png"), Width: 2, Height: 2}
-	doc, truncated, err := AssembleDocument(AssembleRequest{
-		Owner: Owner{MessageID: 9, BlobHash: testHash, MediaInputKey: OriginalMediaInputKey},
-		Media: media,
-		Context: MessageContext{
-			Subject: "Launch", Body: "<p>photo caption</p>\n\n> quoted history\n-- \nsignature",
-			MessageType: "slack", Filename: "secret-name.png", ThreadHistory: "other message",
-		},
-		Role: store.AttachmentRoleStandalone, SourceSequence: 44,
-		Policy: ContextPolicy{MaxChars: 60, InputVersion: "visual-input-v1", EligibilityVersion: "visual-eligibility-v1"},
-	})
-	require.NoError(err)
-	assert.False(truncated)
-	require.Len(doc.Parts, 2)
-	assert.Equal("Subject: Launch\n\nphoto caption\n\nMessage type: chat message", doc.Parts[0].Text)
-	assert.Same(media, doc.Parts[1].Media)
-	assert.NotContains(doc.Parts[0].Text, "secret-name")
-	assert.NotContains(doc.Parts[0].Text, "other message")
-	assert.Equal(int64(44), doc.SourceSequence)
+	for _, messageType := range []string{"slack", "matrix"} {
+		t.Run(messageType, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			media := &MediaInput{Kind: MediaKindImage, MIMEType: "image/png", BlobHash: testHash, Bytes: []byte("png"), Width: 2, Height: 2}
+			doc, truncated, err := AssembleDocument(AssembleRequest{
+				Owner: Owner{MessageID: 9, BlobHash: testHash, MediaInputKey: OriginalMediaInputKey},
+				Media: media,
+				Context: MessageContext{
+					Subject: "Launch", Body: "<p>photo caption</p>\n\n> quoted history\n-- \nsignature",
+					MessageType: messageType, Filename: "secret-name.png", ThreadHistory: "other message",
+				},
+				Role: store.AttachmentRoleStandalone, SourceSequence: 44,
+				Policy: ContextPolicy{MaxChars: 60, InputVersion: "visual-input-v1", EligibilityVersion: "visual-eligibility-v1"},
+			})
+			require.NoError(err)
+			assert.False(truncated)
+			require.Len(doc.Parts, 2)
+			assert.Equal("Subject: Launch\n\nphoto caption\n\nMessage type: chat message", doc.Parts[0].Text)
+			assert.Same(media, doc.Parts[1].Media)
+			assert.NotContains(doc.Parts[0].Text, "secret-name")
+			assert.NotContains(doc.Parts[0].Text, "other message")
+			assert.Equal(int64(44), doc.SourceSequence)
+		})
+	}
 }
 
 func TestAssembleDocumentRevisionIgnoresFenceAndOperationalMetadata(t *testing.T) {
@@ -92,6 +98,16 @@ func TestAssembleDocumentTruncatesContextOnRuneBoundary(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, truncated)
 	assert.Equal(t, "αβγ", doc.Parts[0].Text)
+}
+
+func TestAssembleDocumentReportsTruncationOfInvalidUTF8Context(t *testing.T) {
+	request := revisionRequest()
+	request.Context = MessageContext{Body: "\xffxy"}
+	request.Policy.MaxChars = 2
+	doc, truncated, err := AssembleDocument(request)
+	require.NoError(t, err)
+	assert.True(t, truncated)
+	assert.Equal(t, 2, utf8.RuneCountInString(doc.Parts[0].Text))
 }
 
 func revisionRequest() AssembleRequest {

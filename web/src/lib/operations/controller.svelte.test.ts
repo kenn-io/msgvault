@@ -117,8 +117,8 @@ describe('OperationsController', () => {
     });
     const controller = new OperationsController(createAPIClient(fetchFn));
     const state = operationState({
-      operationLane: 'documents',
-      operationKind: 'document_extraction',
+      operationLane: 'visual_attachments',
+      operationKind: 'visual_embedding',
       operationState: 'partial',
       operationStartedFrom: '2026-08-01T00:00:00Z',
       operationStartedBefore: '2026-09-01T00:00:00Z'
@@ -130,13 +130,13 @@ describe('OperationsController', () => {
     expect((controller.snapshot as { historyReadable?: boolean }).historyReadable).toBe(false);
     expect(controller.snapshot.rows).toEqual([]);
     status.resolve(Response.json(statusResponse()));
-    history.resolve(Response.json(runsResponse([run(RUN_ONE, 'document_extraction', 'documents', 'partial')])));
+    history.resolve(Response.json(runsResponse([run(RUN_ONE, 'visual_embedding', 'visual_attachments', 'partial')])));
     await loading;
 
     const historyRequest = requests.find((request) => new URL(request.url).pathname.endsWith('/runs'))!;
     expect(Object.fromEntries(new URL(historyRequest.url).searchParams)).toEqual({
-      lane: 'documents',
-      kind: 'document_extraction',
+      lane: 'visual_attachments',
+      kind: 'visual_embedding',
       state: 'partial',
       started_from: '2026-08-01T00:00:00Z',
       started_before: '2026-09-01T00:00:00Z',
@@ -146,7 +146,7 @@ describe('OperationsController', () => {
     expect((controller.snapshot as { statusReadable?: boolean }).statusReadable).toBe(true);
     expect((controller.snapshot as { historyReadable?: boolean }).historyReadable).toBe(true);
     expect(controller.snapshot.statusLanes.map((item) => item.lane)).toEqual([
-      'messages', 'person_facts', 'contacts', 'documents', 'visual_attachments'
+      'messages', 'person_facts', 'contacts', 'visual_attachments'
     ]);
     expect(controller.snapshot.rows.map((item) => item.id)).toEqual([RUN_ONE]);
     expect(Object.isFrozen(controller.snapshot)).toBe(true);
@@ -179,7 +179,7 @@ describe('OperationsController', () => {
     await vi.waitFor(() => expect(refreshStatus && refreshRuns).toBeTruthy());
     expect(controller.snapshot.backgroundLoading).toBe(true);
     expect(controller.snapshot.rows.map((item) => item.id)).toEqual([RUN_ONE]);
-    expect(controller.snapshot.statusLanes).toHaveLength(5);
+    expect(controller.snapshot.statusLanes).toHaveLength(4);
     refreshStatus!.resolve(Response.json(statusResponse()));
     refreshRuns!.resolve(Response.json(runsResponse([run(RUN_TWO)])));
     await refreshing;
@@ -373,7 +373,7 @@ describe('OperationsController', () => {
     expect(controller.snapshot.actionConflict).not.toBeNull();
     expect(controller.snapshot.actionError).not.toBeNull();
 
-    await controller.applyURLState(operationState({ operationLane: 'documents' }));
+    await controller.applyURLState(operationState({ operationLane: 'visual_attachments' }));
 
     expect(controller.snapshot).toMatchObject({
       detailError: null,
@@ -389,11 +389,11 @@ describe('OperationsController', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(requestOf(input).url).pathname;
       return Response.json(path.endsWith('/status')
-        ? statusResponse({ document_embedding: { history_availability: 'unavailable' } })
+        ? statusResponse({ person_embedding: { history_availability: 'unavailable' } })
         : runsResponse([run(RUN_ONE)], {
           unavailable_kinds: [{
-            kind: 'document_embedding',
-            lane: 'documents',
+            kind: 'person_embedding',
+            lane: 'person_facts',
             unavailable_code: 'synthetic_schema_unavailable'
           }]
         }));
@@ -402,11 +402,11 @@ describe('OperationsController', () => {
 
     await controller.applyURLState(operationState());
 
-    expect(controller.snapshot.statusLanes.find((item) => item.lane === 'documents')?.kinds).toHaveLength(2);
+    expect(controller.snapshot.statusLanes.find((item) => item.lane === 'person_facts')?.kinds).toHaveLength(3);
     expect(controller.snapshot.rows).toHaveLength(1);
     expect(controller.snapshot.unavailableKinds).toEqual([{
-      kind: 'document_embedding',
-      lane: 'documents',
+      kind: 'person_embedding',
+      lane: 'person_facts',
       unavailable_code: 'synthetic_schema_unavailable'
     }]);
     controller.destroy();

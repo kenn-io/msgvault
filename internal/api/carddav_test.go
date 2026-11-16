@@ -272,7 +272,7 @@ func TestCardDAVTrustedPolicyChangeDuringDiscoveryConflicts(t *testing.T) {
 		BaseURL: "https://new.example/dav", Username: "new-user", Password: "new-password", Enabled: new(false),
 	})
 	require.ErrorIs(err, config.ErrConfigConflict)
-	assert.NotSame(candidate, controller.Current())
+	assert.NotSame(candidate, cardDAVRuntimeDelegate(controller.Current()))
 	persisted, loadErr := config.Load(cfg.ConfigFilePath(), "")
 	require.NoError(loadErr)
 	assert.Equal("https://old.example", persisted.CardDAV.TrustedOrigin)
@@ -349,7 +349,7 @@ func TestCardDAVAccountSaveRollsBackPublishedFilesWhenDiscoveryStoreFails(t *tes
 	require.NoError(booksErr)
 	require.Len(books, 1)
 	assert.Equal("Old", books[0].DisplayName)
-	assert.NotSame(newService, controller.Current())
+	assert.NotSame(newService, cardDAVRuntimeDelegate(controller.Current()))
 }
 
 func TestCardDAVAccountSavePreservesOldStateWhenConfigPublicationFails(t *testing.T) {
@@ -421,7 +421,7 @@ func TestCardDAVAccountSaveRepublishesPreviousConfigAfterPublishThenError(t *tes
 	credential, loadErr := carddav.LoadCredential(cfg.TokensDir())
 	require.NoError(loadErr)
 	assert.Equal("old-password", credential.Password)
-	assert.NotSame(candidate, controller.Current())
+	assert.NotSame(candidate, cardDAVRuntimeDelegate(controller.Current()))
 }
 
 func TestCardDAVAccountSavePreservesConcurrentNonCardDAVConfigEdits(t *testing.T) {
@@ -579,7 +579,7 @@ func TestCardDAVAccountSaveRepairsUnboundLegacyCredentialWithExplicitPassword(t 
 	require.NoError(loadErr)
 	assert.Equal("replacement-password", credential.Password)
 	assert.Equal("replacement-user", credential.Username)
-	assert.Same(candidate, controller.Current())
+	assert.Same(candidate, cardDAVRuntimeDelegate(controller.Current()))
 }
 
 func TestCardDAVAccountSaveRestoresUnboundLegacyCredentialOnRollback(t *testing.T) {
@@ -656,8 +656,8 @@ func TestCardDAVAccountSaveUpdatesSchedulingWithoutDiscovery(t *testing.T) {
 	assert.Equal(int32(0), candidate.discoverCalls.Load())
 	assert.Equal(1, response.Books)
 	assert.Equal(config.CardDAVConfig{BaseURL: cfg.CardDAV.BaseURL, Username: cfg.CardDAV.Username, Enabled: false, Schedule: "0 3 * * *"}, scheduledConfig)
-	assert.Same(candidate, scheduledService)
-	assert.Same(candidate, controller.Current())
+	assert.Same(candidate, cardDAVRuntimeDelegate(scheduledService))
+	assert.Same(candidate, cardDAVRuntimeDelegate(controller.Current()))
 	credential, loadErr := carddav.LoadCredential(cfg.TokensDir())
 	require.NoError(loadErr)
 	assert.Equal("old-password", credential.Password)
@@ -721,7 +721,7 @@ func TestCardDAVAccountSaveExplicitPasswordRefreshesDiscovery(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int32(1), candidate.discoverCalls.Load())
 	assert.Equal(len(candidate.discovery.Books), response.Books)
-	assert.Same(candidate, controller.Current())
+	assert.Same(candidate, cardDAVRuntimeDelegate(controller.Current()))
 }
 
 func TestCardDAVAccountSaveRepairsMissingCredentialAfterStartup(t *testing.T) {
@@ -757,7 +757,7 @@ func TestCardDAVAccountSaveRepairsMissingCredentialAfterStartup(t *testing.T) {
 		Password: "replacement-password", Enabled: new(true), Schedule: cfg.CardDAV.Schedule,
 	})
 	require.NoError(err)
-	assert.Same(candidate, controller.Current())
+	assert.Same(candidate, cardDAVRuntimeDelegate(controller.Current()))
 	credential, err := carddav.LoadCredential(cfg.TokensDir())
 	require.NoError(err)
 	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)

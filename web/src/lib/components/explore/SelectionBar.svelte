@@ -125,7 +125,7 @@
   >{visible ? summary.announced : ''}</span
 >
 {#if visible}
-  <div class="selection-bar">
+  <div class="selection-bar" data-toolbar>
     <div class="selection-summary">
       <span class="selection-count">{summary.label}{#if preflight}<span class="selection-size">{' · '}{formatBytes(preflight.estimated_bytes)}</span>{/if}</span>
       {#if allMatching && selection.mode === 'explicit' && selection.count > 0}

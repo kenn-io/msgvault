@@ -151,24 +151,40 @@ export async function readBoundedStream(
           // The stable size error is authoritative even when transport cleanup fails.
         }
       }
-      throw new Error('File exceeds the preview byte limit.');
+      throw new Error('This file is too large to preview.');
     }
   }
-  if (!stream) return new Uint8Array();
+  return (await readStream(stream, signal, maxBytes, false)).bytes;
+}
+
+export async function readStreamPrefix(stream: ReadableStream<Uint8Array>, signal: AbortSignal, maxBytes: number): Promise<{ bytes: Uint8Array; truncated: boolean }> {
+  return readStream(stream, signal, maxBytes, true);
+}
+
+async function readStream(stream: ReadableStream<Uint8Array> | null, signal: AbortSignal, maxBytes: number, allowPrefix: boolean): Promise<{ bytes: Uint8Array; truncated: boolean }> {
+  if (!stream) return { bytes: new Uint8Array(), truncated: false };
   const reader = stream.getReader();
   const cancel = (): void => { void reader.cancel(); };
   signal.addEventListener('abort', cancel, { once: true });
   const chunks: Uint8Array[] = [];
   let length = 0;
+  let truncated = false;
   try {
     while (true) {
       if (signal.aborted) throw new DOMException('Preview cancelled', 'AbortError');
       const { done, value } = await reader.read();
       if (done) break;
+      if (allowPrefix && length + value.byteLength > maxBytes) {
+        chunks.push(value.subarray(0, maxBytes - length));
+        length = maxBytes;
+        truncated = true;
+        await reader.cancel();
+        break;
+      }
       length += value.byteLength;
       if (length > maxBytes) {
         await reader.cancel();
-        throw new Error('File exceeds the preview byte limit.');
+        throw new Error('This file is too large to preview.');
       }
       chunks.push(value);
     }
@@ -182,5 +198,5 @@ export async function readBoundedStream(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return bytes;
+  return { bytes, truncated };
 }

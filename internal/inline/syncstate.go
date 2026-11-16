@@ -22,11 +22,14 @@ type ChatState struct {
 	RepairHead    int64 `json:"repair_head,omitempty"`
 }
 
+// SyncState holds every chat's cursors. PassDone lists chats the current pass
+// has already visited, so a pass interrupted on every run still completes.
 type SyncState struct {
 	Account       string                `json:"account"`
 	NextChatID    int64                 `json:"next_chat_id,omitempty"`
 	RepairPending bool                  `json:"repair_pending,omitempty"`
 	RepairScope   []int64               `json:"repair_scope,omitempty"`
+	PassDone      []int64               `json:"pass_done,omitempty"`
 	Chats         map[string]*ChatState `json:"chats"`
 }
 
@@ -48,6 +51,13 @@ func LoadSyncState(blob, account string) (*SyncState, error) {
 	for _, id := range state.RepairScope {
 		if !validID(id) || seen[id] {
 			return nil, errors.New("invalid Inline repair scope")
+		}
+		seen[id] = true
+	}
+	clear(seen)
+	for _, id := range state.PassDone {
+		if !validID(id) || seen[id] {
+			return nil, errors.New("invalid Inline pass progress")
 		}
 		seen[id] = true
 	}

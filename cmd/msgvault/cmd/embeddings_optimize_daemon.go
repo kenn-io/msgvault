@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/logging"
 )
 
@@ -19,6 +21,65 @@ func (a *storeAPIAdapter) runCLIEmbeddingsOptimize(ctx context.Context, req api.
 	if len(req.Env) > 0 {
 		return errors.New("embeddings optimize does not accept environment overrides")
 	}
+	return runManagedEmbeddingsCLI(ctx, req, emit, func(root *cobra.Command) {
+		group := &cobra.Command{Use: "embeddings"}
+		command := &cobra.Command{
+			Use: "optimize [generation-id]", Args: cobra.MaximumNArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				closeLogs, err := setupManagedEmbeddingsLogging(cmd)
+				if err != nil {
+					return err
+				}
+				defer closeLogs()
+				// Acquire this before the gate: another optimize must never wait
+				// for the first while holding the lease the first needs to resume.
+				if !a.embeddingsOptimizeMu.TryLock() {
+					return errors.New("embeddings optimize is already running")
+				}
+				defer a.embeddingsOptimizeMu.Unlock()
+				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Waiting for archive operation gate..."); err != nil {
+					return fmt.Errorf("report operation gate wait: %w", err)
+				}
+				lease, err := acquireOptimizeGate(cmd.Context(), a.operationGate)
+				if err != nil {
+					return err
+				}
+				defer lease.close()
+				return runEmbeddingsOptimizeManaged(cmd, args, lease.yield)
+			},
+		}
+		command.Flags().Bool("drop", false, "Remove the accelerator while keeping exact vectors")
+		group.AddCommand(command)
+		root.AddCommand(group)
+	})
+}
+
+func setupManagedEmbeddingsLogging(cmd *cobra.Command) (func(), error) {
+	state := prepareInvocation(cmd)
+	level := state.options.logLevel
+	if level == "" && state.cfg != nil {
+		level = state.cfg.Log.Level
+	}
+	if err := logging.ValidateLevel(level); err != nil {
+		return nil, err
+	}
+	var override *slog.Level
+	if state.options.verbose {
+		debug := slog.LevelDebug
+		override = &debug
+	}
+	logs, err := logging.BuildHandler(logging.Options{
+		FileDisabled: true, LevelString: level, LevelOverride: override,
+		Stderr: cmd.ErrOrStderr(), HumanConsole: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	state.logger = slog.New(logs.Handler)
+	return logs.Close, nil
+}
+
+func runManagedEmbeddingsCLI(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error, configure func(*cobra.Command)) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var outputMu sync.Mutex
@@ -40,59 +101,26 @@ func (a *storeAPIAdapter) runCLIEmbeddingsOptimize(ctx context.Context, req api.
 	// This tree is private to the request: never reuse the global Cobra tree
 	// or its root initialization, which changes process-wide logging state.
 	root := &cobra.Command{Use: "msgvault", SilenceErrors: true, SilenceUsage: true}
-	root.PersistentFlags().BoolP("verbose", "v", false, "Verbose output")
-	root.PersistentFlags().String("log-level", "", "Log level")
-	group := &cobra.Command{Use: "embeddings"}
-	command := &cobra.Command{
-		Use: "optimize [generation-id]", Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			state := prepareInvocation(cmd)
-			level := state.options.logLevel
-			if level == "" && state.cfg != nil {
-				level = state.cfg.Log.Level
-			}
-			if err := logging.ValidateLevel(level); err != nil {
-				return err
-			}
-			var override *slog.Level
-			if state.options.verbose {
-				debug := slog.LevelDebug
-				override = &debug
-			}
-			logs, err := logging.BuildHandler(logging.Options{
-				FileDisabled: true, LevelString: level, LevelOverride: override,
-				Stderr: cmd.ErrOrStderr(), HumanConsole: true,
-			})
-			if err != nil {
-				return err
-			}
-			defer logs.Close()
-			state.logger = slog.New(logs.Handler)
-			// Acquire this before the gate: another optimize must never wait
-			// for the first while holding the lease the first needs to resume.
-			if !a.embeddingsOptimizeMu.TryLock() {
-				return errors.New("embeddings optimize is already running")
-			}
-			defer a.embeddingsOptimizeMu.Unlock()
-			if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Waiting for archive operation gate..."); err != nil {
-				return fmt.Errorf("report operation gate wait: %w", err)
-			}
-			lease, err := acquireOptimizeGate(ctx, a.operationGate)
-			if err != nil {
-				return err
-			}
-			defer lease.close()
-			return runEmbeddingsOptimizeManaged(cmd, args, lease.yield)
-		},
+	clirun.AddLoggingFlags(root.PersistentFlags())
+	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+		trace, err := root.PersistentFlags().GetBool("log-sql")
+		if err != nil {
+			return fmt.Errorf("read --log-sql: %w", err)
+		}
+		slow, err := root.PersistentFlags().GetInt64("log-sql-slow-ms")
+		if err != nil {
+			return fmt.Errorf("read --log-sql-slow-ms: %w", err)
+		}
+		if trace || slow > 0 {
+			return errors.New("configure daemon SQL logging with [log] sql_trace or sql_slow_ms instead of CLI flags")
+		}
+		return nil
 	}
-	command.Flags().Bool("drop", false, "Remove the accelerator while keeping exact vectors")
-	group.AddCommand(command)
-	root.AddCommand(group)
+	configure(root)
+	root.SetIn(strings.NewReader(""))
 	root.SetOut(writer(cliStreamStdout))
 	root.SetErr(writer(cliStreamStderr))
 	root.SetArgs(req.Args)
-	// Cwd is irrelevant here: the only positional input is a generation ID;
-	// all archive paths come from the daemon's resolved configuration.
 	err := root.ExecuteContext(ctx)
 	return errors.Join(err, outputErr, ctx.Err())
 }
@@ -105,10 +133,15 @@ type optimizeGateLease struct {
 	ctx     context.Context
 	gate    api.OperationGate
 	release func()
+	label   string
 }
 
 func acquireOptimizeGate(ctx context.Context, gate api.OperationGate) (*optimizeGateLease, error) {
-	lease := &optimizeGateLease{ctx: ctx, gate: gate}
+	return acquireLabeledEmbeddingsGate(ctx, gate, "msgvault embeddings optimize")
+}
+
+func acquireLabeledEmbeddingsGate(ctx context.Context, gate api.OperationGate, label string) (*optimizeGateLease, error) {
+	lease := &optimizeGateLease{ctx: ctx, gate: gate, label: label}
 	if err := lease.acquireRequest(); err != nil {
 		return nil, err
 	}
@@ -133,9 +166,9 @@ func (l *optimizeGateLease) acquireWork(request bool) error {
 	var ok bool
 	if labeled, labeledOK := l.gate.(api.LabeledOperationGate); labeledOK {
 		if request {
-			l.release, ok = labeled.BeginRequestWorkContext(l.ctx, "msgvault embeddings optimize")
+			l.release, ok = labeled.BeginRequestWorkContext(l.ctx, l.label)
 		} else {
-			l.release, ok = labeled.BeginLabeledWorkContext(l.ctx, "msgvault embeddings optimize")
+			l.release, ok = labeled.BeginLabeledWorkContext(l.ctx, l.label)
 		}
 	} else {
 		l.release, ok = l.gate.BeginWorkContext(l.ctx)

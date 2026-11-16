@@ -206,11 +206,15 @@ type SemanticMessageSearchResult struct {
 	HasMore  bool
 }
 
-// Explorer is intentionally separate from Engine: only the committed
-// DuckDB/Parquet analytical read model implements it. Transactional engines
-// must never become a modality-specific fallback for exploration.
-type Explorer interface {
+// EntryExplorer lists message and conversation rows. Auto mode may serve
+// live SQLite rows during or after a full analytical cache rebuild.
+type EntryExplorer interface {
 	Explore(ctx context.Context, request ExploreRequest) (*ExploreResponse, error)
+}
+
+// Explorer adds operations that require the committed analytical cache.
+type Explorer interface {
+	EntryExplorer
 	ExploreCoverage(ctx context.Context, request ExploreCoverageRequest, visit func(messageIDs []int64) error) (*ExploreCoverageResult, error)
 	ExploreGroups(ctx context.Context, request ExploreGroupRequest) (*ExploreGroupResponse, error)
 	ExploreSelectionStats(ctx context.Context, request ExploreSelectionRequest) (*ExploreSelectionStats, error)

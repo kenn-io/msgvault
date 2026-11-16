@@ -37,12 +37,74 @@ detect_arch() {
 
 # Find install directory
 find_install_dir() {
-    if [ -w "/usr/local/bin" ]; then
+    if [ -n "${MSGVAULT_INSTALL_DIR:-}" ]; then
+        local install_dir="$MSGVAULT_INSTALL_DIR"
+        case "$install_dir" in /*) ;; *) install_dir="$PWD/$install_dir" ;; esac
+        case "$install_dir" in *:*) error "Install directory cannot contain ':': $install_dir" ;; esac
+        mkdir -p "$install_dir" || error "Could not create install directory: $install_dir"
+        printf '%s\n' "$install_dir"
+    elif [ -w "/usr/local/bin" ]; then
         echo "/usr/local/bin"
     else
         mkdir -p "$HOME/.local/bin"
         echo "$HOME/.local/bin"
     fi
+}
+
+# Save PATH for new terminals and show how to update the current shell.
+configure_path() {
+    local install_dir="$1" profile quoted command configured=true
+    local profiles=()
+    case ":$PATH:" in *:"$install_dir":*) return ;; esac
+
+    quoted="'${install_dir//\'/\'\\\'\'}'"
+    command="case \":\$PATH:\" in *:$quoted:*) ;; *) export PATH=\"\$PATH\":$quoted ;; esac"
+    case "${SHELL##*/}" in
+        bash)
+            profiles=("$HOME/.bashrc")
+            for profile in .bash_profile .bash_login .profile; do
+                if [ -f "$HOME/$profile" ] && [ -r "$HOME/$profile" ]; then
+                    break
+                fi
+            done
+            profiles+=("$HOME/$profile")
+            ;;
+        zsh) profiles=("$HOME/.zshenv" "${ZDOTDIR:-$HOME}/.zshenv") ;;
+        fish)
+            quoted="${install_dir//\\/\\\\}"
+            quoted="'${quoted//\'/\\\'}'"
+            command="fish_add_path --append --path $quoted"
+            profiles=("${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish")
+            ;;
+        *)
+            warn "Configure PATH manually for your shell. Installed executable:"
+            printf '  %s/msgvault\n\nFor POSIX shells, run:\n  export PATH="$PATH":%s\n\n' "$quoted" "$quoted"
+            return
+            ;;
+    esac
+    case "${MSGVAULT_NO_MODIFY_PATH:-}" in
+        1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss])
+            profiles=()
+            configured=false
+            ;;
+    esac
+    for profile in "${profiles[@]}"; do
+        if grep -qxF -- "$command" "$profile" 2>/dev/null; then
+            continue
+        fi
+        if mkdir -p "$(dirname "$profile")" && printf '\n%s\n' "$command" >> "$profile"; then
+            info "Added msgvault to PATH in $profile"
+        else
+            warn "Could not update $profile"
+            configured=false
+        fi
+    done
+    if "$configured"; then
+        warn "Open a new terminal, or run:"
+    else
+        warn "Run in your current shell:"
+    fi
+    printf '  %s\n\n' "$command"
 }
 
 # Download with curl or wget
@@ -179,7 +241,8 @@ main() {
 
     local os=$(detect_os)
     local arch=$(detect_arch)
-    local install_dir=$(find_install_dir)
+    local install_dir
+    install_dir=$(find_install_dir) || exit 1
 
     info "Platform: ${os}/${arch}"
     info "Install directory: ${install_dir}"
@@ -195,12 +258,7 @@ main() {
     info "Installation complete!"
     echo
 
-    # Check PATH
-    if ! echo "$PATH" | grep -q "$install_dir"; then
-        warn "Add this to your shell profile:"
-        echo "  export PATH=\"\$PATH:$install_dir\""
-        echo
-    fi
+    configure_path "$install_dir"
 
     echo "Get started:"
     echo "  msgvault init-db"

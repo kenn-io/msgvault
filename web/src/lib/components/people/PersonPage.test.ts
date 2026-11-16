@@ -165,57 +165,31 @@ it('opening Files drops the selected day from the conversation reader', async ()
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('shows Addresses only on the person Details tab', async () => {
-  vi.stubEnv('TZ', 'UTC');
-  const summary = { id: 1, display_label: 'Alice Example', identifiers: [
-    { type: 'email', value: 'alice@example.com', participant_id: 1, is_primary: true, provenance: 'participant_identifiers' },
-    { type: 'email', value: 'alice@example.org', participant_id: 1, is_primary: false, provenance: 'participant_identifiers' },
-  ], activity_count: 9, file_count: 2, first_at: '2026-06-01T12:00:00Z', last_at: when, source_counts: [], cache_revision: 'cache-detail' };
-  const target = 'cluster:1';
+it.each([
+  { name: 'filtered activity failure', missing: false, activity: 9, filtered: true, message: 'Filtered activity is unavailable.', retries: 1, calendar: true },
+  { name: 'draft with no messages', missing: false, activity: 0, filtered: false, message: 'No messages with Synthetic contact yet', retries: 0, calendar: false },
+  { name: 'missing person', missing: true, activity: 0, filtered: false, message: 'Person or domain not found', retries: 0, calendar: false }
+])('shows the observed person notice and calendar state: $name', async ({ missing, activity, filtered, message, retries, calendar }) => {
+  const predicate = filtered ? { filters: [{ dimension: 'source' as const, values: ['2'] }] } : {};
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/participants/1') return Response.json(summary);
-    if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-detail', search_provenance: {} });
-    return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-detail', search_provenance: {} });
-  });
-  const controller = new RelationshipsController(client, () => 'UTC');
-  const directory = new DirectoryController(client);
-  await controller.openTarget(target, {});
-  const view = render(PersonPage, { props: { client, directory, controller, target, filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
-  try {
-    expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    expect(screen.getAllByRole('heading', { name: 'Addresses' })).toHaveLength(1);
-    const addresses = screen.getByRole('region', { name: 'Known addresses' });
-    expect(within(addresses).getByLabelText('Identity alice@example.com')).toBeDefined();
-    expect(within(addresses).getByLabelText('Identity alice@example.org')).toBeDefined();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
-    await view.rerender({ filesOpen: true });
-    expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
-    await view.rerender({ filesOpen: false });
-    expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); }
-});
-
-it('reports a filtered summary failure while retaining the loaded person', async () => {
-  const predicate = { filters: [{ dimension: 'source' as const, values: ['2'] }] };
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 9, file_count: 0, source_counts: [] });
+    if (path === '/api/v1/participants/1' && missing) return Response.json({ error: 'participant_not_found' }, { status: 404 });
+    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Synthetic contact', identifiers: [], ...(activity ? { first_at: when, last_at: when } : {}), activity_count: activity, file_count: 0, source_counts: [] });
     if (path === '/api/v1/participants/1/summary') return Response.json({ error: 'analytical_cache_unavailable', readiness: 'stale', recovery_action: '', message: 'Filtered activity is unavailable.' }, { status: 503 });
+    if (path === '/api/v1/relationships/1/calendar') return Response.json(emptyCalendar((await request.json()).year));
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', predicate);
   const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    await screen.findByRole('heading', { name: 'Alice Example' });
-    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    expect(await screen.findByText('Filtered activity is unavailable.')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined();
+    if (!missing) await screen.findByRole('heading', { name: 'Synthetic contact' });
+    if (!missing && !calendar) await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    expect(await screen.findByText(message)).toBeDefined();
+    expect(Boolean(screen.queryByRole('region', { name: 'Relationship activity calendar' }))).toBe(calendar);
+    if (calendar) await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    expect(screen.queryAllByRole('button', { name: 'Retry' })).toHaveLength(retries);
   } finally { view.unmount(); controller.destroy(); }
 });
 
@@ -299,8 +273,8 @@ it('keeps the current person retry pair when an earlier Retry finishes late', as
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Peer' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer 2/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    await screen.findByText('Identity saved; the cache refresh failed.');
-    await fireEvent.click(within(screen.getByText('Identity saved; the cache refresh failed.')).getByRole('button', { name: 'Retry' }));
+    await screen.findByText('Identity saved, but related views may be out of date.');
+    await fireEvent.click(within(screen.getByText('Identity saved, but related views may be out of date.')).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(writes).toHaveLength(2));
     await controller.openTarget('cluster:3', {});
     await view.rerender({ ...props, target: 'cluster:3' });
@@ -309,10 +283,10 @@ it('keeps the current person retry pair when an earlier Retry finishes late', as
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Peer' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer 4/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    await screen.findByText('Identity saved; the cache refresh failed.');
+    await screen.findByText('Identity saved, but related views may be out of date.');
     await act(async () => { release(Response.json({ identity_revision: 2, cache_state: 'ready' })); await link.mock.results[1]!.value; });
-    expect(screen.queryByText('Identity saved; the cache refresh failed.')).not.toBeNull();
-    await fireEvent.click(within(screen.getByText('Identity saved; the cache refresh failed.')).getByRole('button', { name: 'Retry' }));
+    expect(screen.queryByText('Identity saved, but related views may be out of date.')).not.toBeNull();
+    await fireEvent.click(within(screen.getByText('Identity saved, but related views may be out of date.')).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(writes).toHaveLength(4));
     expect(writes.at(-1)).toEqual({ participant_a: 3, participant_b: 4 });
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }

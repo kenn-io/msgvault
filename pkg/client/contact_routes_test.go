@@ -8,6 +8,17 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+func TestGeneratedParticipantAddressPermitsEmptyMetadata(t *testing.T) {
+	require := require.New(t)
+	identifier := generated.ParticipantAddress{
+		ParticipantID: 7,
+		Type:          "email",
+		Value:         "person@example.org",
+		IdentityKey:   `["email","","","person@example.org"]`,
+	}
+	require.NoError(identifier.Validate())
+}
+
 func TestGeneratedPersonMessagingRoutesAcceptsEmptyCanonicalAliasReason(t *testing.T) {
 	page := generated.PersonMessagingRoutesPage{
 		AliasReason: "",

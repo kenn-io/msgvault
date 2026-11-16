@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test';
-import { documentStatus, RELATED_STATUS } from '../../../src/test/operations';
+import { RELATED_STATUS } from '../../../src/test/operations';
 import { readFileSync } from 'node:fs';
 import type {
   OperationLaneStatus,
@@ -22,24 +22,22 @@ const operationPublicFixture = JSON.parse(readFileSync(
 const checkedPublicFixture = operationPublicFixture as unknown as OperationRunsResponse;
 const sourceRun = fixtureRun('source_sync');
 const cardDAVRun = fixtureRun('carddav_sync');
-const documentRun = fixtureRun('document_extraction');
 const visualRun = fixtureRun('visual_embedding');
 const sweepRun = fixtureRun('person_sweep');
 
-const firstPage = [sourceRun, cardDAVRun, documentRun, visualRun];
+const firstPage = [sourceRun, cardDAVRun, visualRun];
 const secondPage = [sweepRun];
 
 export type InstalledOperations = {
   readonly operationStatusReads: number;
   failNextHistory(): void;
   holdNextOperationStatus(): () => void;
-  setOperationConfigured(kind: 'document_extraction' | 'visual_embedding', configured: boolean): void;
+  setOperationConfigured(kind: 'visual_embedding', configured: boolean): void;
 };
 
 export async function installOperations(page: Page): Promise<InstalledOperations> {
   let operationStatusReads = 0;
   let statusGate: Promise<void> | undefined;
-  let documentConfigured = true;
   let historyFailure = false;
   let visualConfigured = true;
 
@@ -70,14 +68,6 @@ export async function installOperations(page: Page): Promise<InstalledOperations
   await page.route('**/api/v1/carddav/books', (route) => route.fulfill({ json: { books: [] } }));
   await page.route('**/api/v1/carddav/conflicts**', (route) => route.fulfill({ json: { conflicts: [] } }));
   await page.route('**/api/v1/carddav/runs**', (route) => route.fulfill({ json: { runs: [] } }));
-  await page.route('**/api/v1/documents/status/current', (route) => {
-    return route.fulfill({ json: documentStatus });
-  });
-  await page.route('**/api/v1/documents/vectors/status', (route) => {
-    return route.fulfill({ json: {
-      enabled: true, configured: true, status: { coverage: { ready: 7, required: 9 } }
-    } });
-  });
   await page.route('**/api/v1/multimodal/status', (route) => {
     return route.fulfill({ json: {
       current: 8, eligible: 10, retryable: 1, terminal: 0, unavailable: 1,
@@ -90,7 +80,7 @@ export async function installOperations(page: Page): Promise<InstalledOperations
     const gate = statusGate;
     statusGate = undefined;
     await gate;
-    return fulfillOperation(route, statusResponse(documentConfigured, visualConfigured));
+    return fulfillOperation(route, statusResponse(visualConfigured));
   });
   await page.route('**/api/v1/operations/runs**', async (route) => {
     const url = new URL(route.request().url());
@@ -139,9 +129,8 @@ export async function installOperations(page: Page): Promise<InstalledOperations
       statusGate = new Promise<void>((resolve) => { release = resolve; });
       return release;
     },
-    setOperationConfigured(kind, configured): void {
-      if (kind === 'document_extraction') documentConfigured = configured;
-      else visualConfigured = configured;
+    setOperationConfigured(_kind, configured): void {
+      visualConfigured = configured;
     }
   };
 }
@@ -168,10 +157,7 @@ function detailFor(id: string): OperationRunDetail | undefined {
   };
 }
 
-function statusResponse(
-  documentConfigured = true,
-  visualConfigured = true
-): OperationStatusResponse {
+function statusResponse(visualConfigured = true): OperationStatusResponse {
   return {
     lanes: [
       lane('messages', 'source_sync', sourceRun),
@@ -180,8 +166,6 @@ function statusResponse(
       lane('person_facts', 'person_embedding', undefined, [], 'unavailable'),
       lane('person_facts', 'person_enrichment'),
       lane('contacts', 'carddav_sync', cardDAVRun, ['carddav_sync']),
-      lane('documents', 'document_extraction', documentRun, [], 'available', documentConfigured),
-      lane('documents', 'document_embedding', undefined),
       lane('visual_attachments', 'visual_embedding', visualRun, ['visual_resume'], 'available', visualConfigured)
     ]
   };

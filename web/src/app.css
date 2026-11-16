@@ -24,6 +24,13 @@ textarea {
   font: inherit;
 }
 
+/* Typed text takes the field faces (tokens.css), so its letters center in the field. */
+input,
+select,
+textarea {
+  font-family: var(--font-field);
+}
+
 /* Kit has no CSS hook for MEDIA.touch. */
 @media (hover: none), (pointer: coarse) {
   .touch-controls button:not(.kit-popover-card *) {
@@ -42,6 +49,17 @@ h2 {
 h3 {
   font-size: var(--font-size-md);
   font-weight: 600;
+}
+
+/* Related fields use equal columns on desktop and stack on phones. */
+.form-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-pane) var(--space-box);
+}
+
+@media (max-width: 640px) {
+  .form-pair { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* The first block sits 12px plus --page-header-gap below the page title.

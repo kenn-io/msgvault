@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
@@ -146,10 +147,10 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 	switch view {
 	case ViewSenders:
 		return aggDimension{
-			keyExpr: "p.email_address",
+			keyExpr: identityindex.SenderAddressExpr("mr", "p"),
 			joins: `JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 				JOIN participants p ON p.id = mr.participant_id`,
-			whereExpr: "p.email_address IS NOT NULL",
+			whereExpr: identityindex.SenderAddressExpr("mr", "p") + " IS NOT NULL",
 		}, nil
 	case ViewSenderNames:
 		nameExpr := recipientNameExpr("mr", "p")
@@ -176,10 +177,10 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 		}, nil
 	case ViewDomains:
 		return aggDimension{
-			keyExpr: "p.domain",
+			keyExpr: identityindex.SenderDomainExpr("mr", "p"),
 			joins: `JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 				JOIN participants p ON p.id = mr.participant_id`,
-			whereExpr: "p.domain IS NOT NULL AND p.domain != ''",
+			whereExpr: identityindex.SenderDomainExpr("mr", "p") + " != ''",
 		}, nil
 	case ViewLabels:
 		return aggDimension{
@@ -521,7 +522,7 @@ func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, sourceColumn 
 			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
 			WHERE mr_filter_from.message_id = m.id
 			  AND mr_filter_from.recipient_type = 'from'
-			  AND LOWER(p_filter_from.domain) = ?
+			  AND LOWER(`+identityindex.SenderDomainExpr("mr_filter_from", "p_filter_from")+`) = ?
 		)`)
 		args = append(args, strings.ToLower(filter.Domain))
 	} else if filter.MatchesEmpty(ViewDomains) {
@@ -532,8 +533,7 @@ func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, sourceColumn 
 			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
 			WHERE mr_filter_from.message_id = m.id
 			  AND mr_filter_from.recipient_type = 'from'
-			  AND p_filter_from.domain IS NOT NULL
-			  AND p_filter_from.domain != ''
+			  AND `+identityindex.SenderDomainExpr("mr_filter_from", "p_filter_from")+` != ''
 		)`)
 	}
 
@@ -942,10 +942,10 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 	if filter.Sender == "" {
 		return "", nil
 	}
-	address := `(p_filter_from.email_address = ? OR p_filter_from.phone_number = ?)`
-	directAddress := `(p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)`
+	address := identityindex.SenderAddressMatchExpr("mr_filter_from", "p_filter_from")
+	directAddress := `((p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?) AND ` + identityindex.RelayAbsentExpr("m.id", "message_recipients") + `)`
 	fromName, directName := "", ""
-	fromArgs := []any{filter.Sender, filter.Sender}
+	fromArgs := []any{strings.ToLower(filter.Sender), filter.Sender, filter.Sender}
 	directArgs := []any{filter.Sender, filter.Sender}
 	if filter.SenderName != "" {
 		fromName = " AND " + recipientNameExpr("mr_filter_from", "p_filter_from") + " = ?"
@@ -954,25 +954,30 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 		directArgs = append(directArgs, filter.SenderName)
 	}
 	if limit != 0 {
+		direct := `SELECT m_direct.id FROM messages m_direct WHERE m_direct.sender_id IN (
+            SELECT p_direct_sender.id FROM participants p_direct_sender WHERE (p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)` + directName + `)
+            AND ` + identityindex.RelayAbsentExpr("m_direct.id", "message_recipients")
 		from := `SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
-			WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.participant_id IN (
-				SELECT id FROM participants p_filter_from WHERE ` + address + `)`
-		if fromName != "" {
-			from += ` AND EXISTS (SELECT 1 FROM participants p_filter_from WHERE p_filter_from.id = mr_filter_from.participant_id` + fromName + `)`
+            JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
+            WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.is_relayed AND LOWER(mr_filter_from.email_address) = ?` + fromName + `
+            UNION ALL SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
+            JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
+            WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.participant_id IN (SELECT id FROM participants WHERE email_address = ? OR phone_number = ?)
+            AND NOT mr_filter_from.is_relayed` + fromName
+		fromArgs = []any{strings.ToLower(filter.Sender)}
+		if filter.SenderName != "" {
+			fromArgs = append(fromArgs, filter.SenderName)
 		}
-		direct := `SELECT id FROM messages WHERE sender_id IN (
-			SELECT id FROM participants p_direct_sender WHERE ` + directAddress + directName + `)`
+		fromArgs = append(fromArgs, filter.Sender, filter.Sender)
+		if filter.SenderName != "" {
+			fromArgs = append(fromArgs, filter.SenderName)
+		}
 		return senderCandidateSQL(direct, from, directArgs, fromArgs, limit)
 	}
-	return `(EXISTS (
-		SELECT 1 FROM message_recipients mr_filter_from
-		JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
-		WHERE mr_filter_from.message_id = m.id AND mr_filter_from.recipient_type = 'from'
-			AND ` + address + fromName + `
-	) OR EXISTS (
-		SELECT 1 FROM participants p_direct_sender WHERE p_direct_sender.id = m.sender_id
-			AND ` + directAddress + directName + `
-	))`, append(fromArgs, directArgs...)
+	return `(EXISTS (SELECT 1 FROM message_recipients mr_filter_from
+  JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
+  WHERE mr_filter_from.message_id = m.id AND mr_filter_from.recipient_type = 'from' AND ` + address + fromName + `)
+  OR (EXISTS (SELECT 1 FROM participants p_direct_sender WHERE p_direct_sender.id = m.sender_id AND ` + directAddress + directName + `)))`, append(fromArgs, directArgs...)
 }
 
 // senderCandidateSQL lists every sender message ID for a negative limit. A positive limit instead
@@ -1064,7 +1069,7 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
-			COALESCE(p_sender.email_address, ''),
+			COALESCE(`+identityindex.RelayAddressSubquery("m.id", "message_recipients")+`, p_sender.email_address, ''),
 			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
@@ -1213,7 +1218,7 @@ func (e *SQLiteEngine) fetchMessageSummariesByIDsInto(
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
-			COALESCE(p_sender.email_address, ''),
+			COALESCE(`+identityindex.RelayAddressSubquery("m.id", "message_recipients")+`, p_sender.email_address, ''),
 			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
@@ -1301,9 +1306,9 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 	var att AttachmentInfo
 	var sourceAttachmentID string
 	err := e.queryRowContext(ctx, `
-		SELECT a.id, COALESCE(m.source_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, ''), COALESCE(a.source_attachment_id, '')
+		SELECT a.id, COALESCE(a.message_id, 0), COALESCE(m.source_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, ''), COALESCE(a.source_attachment_id, '')
 		FROM attachments a LEFT JOIN messages m ON m.id = a.message_id
-		WHERE `+strings.Join(conditions, " AND "), args...).Scan(&att.ID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath, &sourceAttachmentID)
+		WHERE `+strings.Join(conditions, " AND "), args...).Scan(&att.ID, &att.MessageID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath, &sourceAttachmentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // Engine.GetAttachment uses (nil, nil) for not-found; callers branch on the nil result
 	}
@@ -1329,7 +1334,7 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 // hash in stable ID order.
 func (e *SQLiteEngine) GetAttachmentsByHash(ctx context.Context, contentHash string) ([]AttachmentInfo, error) {
 	rows, err := e.queryContext(ctx, `
-		SELECT a.id, COALESCE(m.source_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, '')
+		SELECT a.id, a.message_id, COALESCE(m.source_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, '')
 		FROM attachments a LEFT JOIN messages m ON m.id = a.message_id
 		WHERE a.content_hash = ? OR (COALESCE(a.content_hash, '') = '' AND a.storage_path = ?)
 		ORDER BY a.id
@@ -1342,7 +1347,7 @@ func (e *SQLiteEngine) GetAttachmentsByHash(ctx context.Context, contentHash str
 	var attachments []AttachmentInfo
 	for rows.Next() {
 		var att AttachmentInfo
-		if err := rows.Scan(&att.ID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath); err != nil {
+		if err := rows.Scan(&att.ID, &att.MessageID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath); err != nil {
 			return nil, fmt.Errorf("scan attachment by hash: %w", err)
 		}
 		att.ContentHash = store.AttachmentContentHash(att.ContentHash, att.StoragePath)
@@ -1617,38 +1622,10 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	// match the SAME from-row (or the SAME direct sender), not two
 	// independent EXISTS that a multi-author message could satisfy via
 	// different rows.
-	if filter.Sender != "" && filter.SenderName != "" {
-		conditions = append(conditions, fmt.Sprintf(`(
-			EXISTS (
-				SELECT 1 FROM message_recipients mr_from
-				JOIN participants p_from ON p_from.id = mr_from.participant_id
-				WHERE mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
-				  AND (p_from.email_address = ? OR p_from.phone_number = ?)
-				  AND %s = ?
-			)
-			OR EXISTS (
-				SELECT 1 FROM participants p_ds
-				WHERE p_ds.id = m.sender_id
-				  AND (p_ds.email_address = ? OR p_ds.phone_number = ?)
-				  AND %s = ?
-			)
-		)`, recipientNameExpr("mr_from", "p_from"), participantNameExpr("p_ds")))
-		args = append(args, filter.Sender, filter.Sender, filter.SenderName, filter.Sender, filter.Sender, filter.SenderName)
-	} else if filter.Sender != "" {
-		conditions = append(conditions, `(
-			EXISTS (
-				SELECT 1 FROM message_recipients mr_from
-				JOIN participants p_from ON p_from.id = mr_from.participant_id
-				WHERE mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
-				  AND (p_from.email_address = ? OR p_from.phone_number = ?)
-			)
-			OR EXISTS (
-				SELECT 1 FROM participants p_ds
-				WHERE p_ds.id = m.sender_id
-				  AND (p_ds.email_address = ? OR p_ds.phone_number = ?)
-			)
-		)`)
-		args = append(args, filter.Sender, filter.Sender, filter.Sender, filter.Sender)
+	if filter.Sender != "" {
+		senderPredicate, senderArgs := senderMatchSQL(filter, 0)
+		conditions = append(conditions, senderPredicate)
+		args = append(args, senderArgs...)
 	} else if filter.SenderName != "" {
 		conditions = append(conditions, fmt.Sprintf(`(
 			EXISTS (
@@ -1703,7 +1680,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 			SELECT 1 FROM message_recipients mr_from
 			JOIN participants p_from ON p_from.id = mr_from.participant_id
 			WHERE mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
-			  AND LOWER(p_from.domain) = ?
+			  AND LOWER(`+identityindex.SenderDomainExpr("mr_from", "p_from")+`) = ?
 		)`)
 		args = append(args, strings.ToLower(filter.Domain))
 	}
@@ -1993,8 +1970,8 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 		SELECT 1 FROM message_recipients mr_dom
 		JOIN participants p_dom ON p_dom.id = mr_dom.participant_id
 		WHERE mr_dom.message_id = m.id
-		  AND LOWER(p_dom.domain) IN (%s)
-	)`, strings.Join(placeholders, ", ")))
+		  AND LOWER(%s) IN (%s)
+	)`, identityindex.SenderDomainExpr("mr_dom", "p_dom"), strings.Join(placeholders, ", ")))
 
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourceIDs)
 	if after != nil {
@@ -2052,10 +2029,10 @@ func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query,
 		return conditions, args, ""
 	}
 
-	conditions, args = appendSQLiteAddressCondition(conditions, args, q.FromAddrs, "from")
-	conditions, args = appendSQLiteAddressCondition(conditions, args, q.ToAddrs, "to")
-	conditions, args = appendSQLiteAddressCondition(conditions, args, q.CcAddrs, "cc")
-	conditions, args = appendSQLiteAddressCondition(conditions, args, q.BccAddrs, "bcc")
+	conditions, args = e.appendSQLiteAddressCondition(conditions, args, q.FromAddrs, "from")
+	conditions, args = e.appendSQLiteAddressCondition(conditions, args, q.ToAddrs, "to")
+	conditions, args = e.appendSQLiteAddressCondition(conditions, args, q.CcAddrs, "cc")
+	conditions, args = e.appendSQLiteAddressCondition(conditions, args, q.BccAddrs, "bcc")
 
 	// Label filter - case-insensitive substring match using EXISTS
 	// so each label term can match a different row in message_labels.
@@ -2176,13 +2153,21 @@ func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query,
 // appendSQLiteAddressCondition resolves matching participants first and looks
 // messages up by rowid. A correlated EXISTS scans every message for a rare
 // address; this semi-join also avoids multiplying result rows.
-func appendSQLiteAddressCondition(
+func (e *SQLiteEngine) appendSQLiteAddressCondition(
 	conditions []string,
 	args []any,
 	addresses []string,
 	recipientType string,
 ) ([]string, []any) {
 	if len(addresses) == 0 {
+		return conditions, args
+	}
+	if recipientType == "from" {
+		for _, address := range addresses {
+			_, matching, senderArgs := search.SenderLookup(address, e.dialect.UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+			conditions = append(conditions, "m.id IN ("+matching+")")
+			args = append(args, senderArgs...)
+		}
 		return conditions, args
 	}
 	parts := make([]string, 0, len(addresses))
@@ -2192,9 +2177,6 @@ func appendSQLiteAddressCondition(
 		case strings.HasPrefix(address, "@"):
 			parts = append(parts, `LOWER(p_addr.email_address) LIKE ? ESCAPE '\'`)
 			matchArgs = append(matchArgs, "%"+escapeSQLiteLike(strings.ToLower(address)))
-		case recipientType == "from":
-			parts = append(parts, "LOWER(p_addr.email_address) = LOWER(?)")
-			matchArgs = append(matchArgs, address)
 		default:
 			lower := strings.ToLower(address)
 			parts = append(parts, "(LOWER(p_addr.email_address) = ? OR p_addr.phone_number = ?)")
@@ -2341,7 +2323,8 @@ func (e *SQLiteEngine) buildMetadataSearchCriteria(ctx context.Context, q *searc
 					%s OR
 					%s OR
 					%s OR
-					%s
+					%s OR
+					(mr_meta.is_relayed AND %s)
 				  )
 			) OR
 			EXISTS (
@@ -2361,11 +2344,12 @@ func (e *SQLiteEngine) buildMetadataSearchCriteria(ctx context.Context, q *searc
 			metadataContainsExpression(e.dialect, "p_meta.display_name"),
 			metadataContainsExpression(e.dialect, "p_meta.phone_number"),
 			metadataContainsExpression(e.dialect, "mr_meta.display_name"),
+			metadataContainsExpression(e.dialect, "mr_meta.email_address"),
 			metadataContainsExpression(e.dialect, "p_direct_meta.email_address"),
 			metadataContainsExpression(e.dialect, "p_direct_meta.display_name"),
 			metadataContainsExpression(e.dialect, "p_direct_meta.phone_number"),
 		))
-		for range 9 {
+		for range 10 {
 			args = append(args, pattern)
 		}
 	}
@@ -2550,7 +2534,7 @@ func searchResultsSQL(pageSource, whereClause string) string {
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
-			COALESCE(p_sender.email_address, ''),
+			COALESCE(`+identityindex.RelayAddressSubquery("m.id", "message_recipients")+`, p_sender.email_address, ''),
 			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
@@ -2579,9 +2563,8 @@ func searchResultsSQL(pageSource, whereClause string) string {
 // Most context filters are appended to existing query filters.
 // For OR queries, drill-down fields land on the parent and AND with each alternative.
 //
-// Note on semantics: Appending to FromAddrs/ToAddrs produces OR semantics
-// within each dimension (IN clause). Labels use per-term EXISTS subqueries
-// with AND semantics (message must have all labels). MessageType and date
+// Recipient addresses use OR within their dimension. Labels and from: values
+// use per-term requirements. MessageType and date
 // filters are scoped intersections so an in-view search cannot widen outside
 // the current drill-down context.
 func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
@@ -2639,11 +2622,6 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 		}
 	}
 
-	// Sender filter - append to existing from: filters
-	if filter.Sender != "" {
-		merged.FromAddrs = append(merged.FromAddrs, filter.Sender)
-	}
-
 	// Recipient filter - append to existing to: filters
 	if filter.Recipient != "" {
 		merged.ToAddrs = append(merged.ToAddrs, filter.Recipient)
@@ -2669,11 +2647,6 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	if filter.WithAttachmentsOnly {
 		hasAttachment := true
 		merged.HasAttachment = &hasAttachment
-	}
-
-	// Domain filter - add as @domain pattern (handled specially in Search)
-	if filter.Domain != "" {
-		merged.FromAddrs = append(merged.FromAddrs, "@"+filter.Domain)
 	}
 
 	// Hide-deleted filter
@@ -2713,7 +2686,7 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 		}
 	}
 
-	// Note: SenderName, RecipientName, ListID, and
+	// Note: Sender, SenderName, Domain, RecipientName, ListID, and
 	// EmptyValueTargets cannot be represented in search.Query.
 	// ListID scopes must use an exact-capable engine path rather than
 	// being translated to the substring list: search operator.
@@ -2902,14 +2875,5 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		log.Printf("warning: search count failed (using -1): %v", countErr)
 		count = -1
 	}
-	result := &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}
-	if limit > 0 && offset == 0 && len(results) == 0 && count <= 0 {
-		result.Hints = e.matchSenderName(ctx, q, func(ctx context.Context, scoped *search.Query) ([]string, []any, string) {
-			return e.buildFilteredMetadataSearchQueryParts(ctx, scoped, filter)
-		})
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-	}
-	return result, nil
+	return &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}, nil
 }

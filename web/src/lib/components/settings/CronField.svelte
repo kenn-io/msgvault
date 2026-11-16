@@ -242,11 +242,12 @@
     --cron-month: color-mix(in srgb, var(--accent-amber) 72%, var(--text-primary));
     --cron-weekday: color-mix(in srgb, var(--accent-purple) 72%, var(--text-primary));
   }
+  /* A 32 field, like the presets and zone pickers beside it. */
   .cron__editor {
     position: relative;
     box-sizing: border-box;
     min-width: 0;
-    height: 28px;
+    height: var(--field-h);
     border: var(--border-width) solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
@@ -260,17 +261,22 @@
   .cron__editor--invalid {
     border-color: var(--accent-red);
   }
+  /* The painted text and the transparent input carrying the caret and
+     selection share every metric, so the two never drift apart. Field text
+     is 16 on a phone (tokens.css), which keeps iOS from zooming on focus;
+     the line fills the field inside its border. */
   .cron__mirror,
   .cron__input {
     box-sizing: border-box;
     width: 100%;
     height: 100%;
     margin: 0;
-    padding: 0 var(--space-3);
+    padding: 0 var(--field-pad-x);
     border: 0;
     font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
-    line-height: 26px;
+    font-size: var(--field-text-size);
+    font-weight: 400;
+    line-height: calc(var(--field-h) - 2 * var(--border-width));
     letter-spacing: 0.02em;
     white-space: pre;
     overflow: hidden;
@@ -329,8 +335,9 @@
     gap: var(--space-2);
     min-width: 0;
   }
+  /* Wide enough for "Every 15 minutes" in the 14px field text. */
   .cron__presets {
-    flex: 0 0 9.5rem;
+    flex: 0 0 10.5rem;
     min-width: 0;
   }
   /* "Custom" is a short word; the slot shrinks so the expression editor

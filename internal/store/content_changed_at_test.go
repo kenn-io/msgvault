@@ -52,7 +52,7 @@ func TestMessagesColumnClassificationIsExhaustive(t *testing.T) {
 		actualSet[col] = true
 	}
 	for col := range classified {
-		if col == "search_fts" && !st.IsPostgreSQL() {
+		if (col == "search_fts" || col == "search_fts_fields") && !st.IsPostgreSQL() {
 			continue // PostgreSQL-only column
 		}
 		assert.True(actualSet[col], "%q is classified but is not a column of messages", col)

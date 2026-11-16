@@ -298,6 +298,8 @@ func readCacheSyncCountersContext(ctx context.Context, db contextSQLRowQuerier) 
 
 // Cancelled attempts can commit messages before yielding. Like failed runs,
 // they may stop before counting every write, so track interruptions as well.
+// Not-started runs wrote nothing, so they do not count. The sync type is
+// inlined because callers may pass a raw PostgreSQL *sql.DB, which rejects '?'.
 func readCacheSyncCountersWithRow(queryRow func(string, ...any) *sql.Row) (cacheSyncCounters, error) {
 	var counters cacheSyncCounters
 	err := queryRow(`
@@ -310,6 +312,7 @@ func readCacheSyncCountersWithRow(queryRow func(string, ...any) *sql.Row) (cache
 		JOIN sources src ON src.id = sr.source_id
 		WHERE sr.status IN ('completed', 'failed', 'cancelled', 'paused')
 		  AND sr.completed_at IS NOT NULL
+		  AND sr.sync_type <> '`+store.SyncTypeNotStarted+`'
 	`).Scan(
 		&counters.additions,
 		&counters.updates,
@@ -2148,8 +2151,8 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 		// CSV view that lacks the column and the export fails on Windows.
 		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
 		{"source_merge_archive_only_messages", "SELECT message_id FROM source_merge_archive_only_messages", "types={'message_id': 'BIGINT'}", nil},
-		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients" + childFilter("message_recipients"),
-			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN'}",
+		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + ", is_relayed FROM message_recipients" + childFilter("message_recipients"),
+			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN', 'is_relayed': 'BOOLEAN'}",
 			identityColumns("recipient_type", "email_address")},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels" + childFilter("message_labels"),
 			"types={'message_id': 'BIGINT', 'label_id': 'BIGINT'}", nil},

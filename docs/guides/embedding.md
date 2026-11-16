@@ -11,8 +11,6 @@ Callers supply database locations, credentials, and importer options explicitly.
 The package does not discover personal configuration or start a daemon. Calls
 accept a context; the caller controls cancellation, scheduling, and shutdown.
 
-This package is newer than the latest release.
-
 For clients of a hosted message MCP endpoint, the
 [external credential provider](credential-providers.md) package validates access
 obtained from a trusted local helper. Hosts still own approval and scoped reads.

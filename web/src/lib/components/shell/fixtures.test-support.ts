@@ -1,4 +1,4 @@
-import { candidate } from '../../directory/entity-fixtures.test-support';
+import { candidate } from '../../directory/entity-data.test-support';
 import type { SavedView } from '../../api/generated/models';
 
 export function view(id: number, name: string, presentation = 'table'): SavedView {

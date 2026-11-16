@@ -123,13 +123,14 @@
   </div>
 {/snippet}
 
-<section class="context-bar" aria-label="Active analytical context">
+<section class="context-bar" aria-label="Active analytical context" data-toolbar>
+  <!-- L7: groups of 28 controls, 8 apart inside a group and 16 between groups; a group wraps whole. -->
   <div class="context-controls">
+    <div class="context-group">
     {#if messages}
       <FilterMenu {client} {filters} {lockedFilter} extraActive={extraInPopover && extraActive} onChange={onFiltersChange} onClear={() => { onClearFilters(); if (extraInPopover) onClearExtra?.(); }} extra={extraInPopover ? popoverExtra : filterExtra} />
     {:else}
     <Button
-      size="sm"
       surface={filtersOpen || filters.length > 0 ? 'soft' : 'outline'}
       label="Filters"
       ariaLabel="Filters"
@@ -137,9 +138,13 @@
       onclick={() => { filtersOpen = !filtersOpen; }}
     />
     {/if}
+    </div>
     {#if compact.current && !lockedFilter}
+    <div class="context-group">
       <ViewMenu {presentation} {presentationOptions} {groupOptions} {sort} {sortOptions} {selectPresentation} {selectGrouping} {selectSort} />
-    {:else}
+    </div>
+    {:else if !lockedFilter || sort}
+    <div class="context-group view-group">
     {#if !lockedFilter}
     <SelectDropdown
       value={presentation}
@@ -164,8 +169,9 @@
         />
       </div>
     {/if}
+    </div>
     {/if}
-    {#if !extraInPopover}{@render extraControls?.()}{/if}
+    {#if extraControls && !extraInPopover}<div class="context-group">{@render extraControls()}</div>{/if}
     <span class="context-count" aria-live="polite" data-mono>{countLabel}</span>
   </div>
 
@@ -223,7 +229,7 @@
           <span>No filters applied.</span>
         {:else}
           <span>{filters.length} active {filters.length === 1 ? 'filter' : 'filters'}</span>
-          <Button size="sm" surface="outline" label="Clear filters" onclick={onClearFilters} />
+          <Button surface="outline" label="Clear filters" onclick={onClearFilters} />
         {/if}
       </div>
       <AccountFilter {client} {filters} onChange={onFiltersChange} />
@@ -233,30 +239,63 @@
 </section>
 
 <style>
+  /* A boxed toolbar: chips 8 under the controls. */
   .context-bar {
     position: relative;
     display: flex;
     min-width: 0;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--space-group);
     padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
-    font-size: var(--font-size-xs);
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
   }
 
-  .context-controls,
+  .context-controls {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-group) var(--space-pane);
+  }
+
+  .context-group {
+    display: flex;
+    min-width: 0;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--space-group);
+  }
+
   .context-chips {
     display: flex;
     min-width: 0;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-group);
   }
 
   .group-picker {
     width: 172px;
+  }
+
+  /* On a phone ViewMenu replaces the view group except in a scoped view, where the sort picker fills the rest of the Filter line. */
+  @media (max-width: 640px) {
+    .view-group {
+      flex: 1 1 auto;
+    }
+
+    .view-group > :global(*) {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+
+    .view-group :global(.kit-select-dropdown) {
+      min-width: 0;
+    }
   }
 
   .popover-extra {
@@ -298,14 +337,14 @@
   .filter-panel {
     position: absolute;
     z-index: var(--z-popover);
-    top: calc(100% + var(--space-2));
+    top: calc(100% + var(--space-tight));
     left: 0;
     display: flex;
     min-width: 320px;
     align-items: stretch;
     flex-direction: column;
-    gap: var(--space-4);
-    padding: var(--space-4);
+    gap: var(--space-group);
+    padding: var(--space-box);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
@@ -317,6 +356,12 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-4);
+    gap: var(--space-group);
+  }
+
+  @media (max-width: 640px) {
+    .context-count {
+      margin-left: 0;
+    }
   }
 </style>

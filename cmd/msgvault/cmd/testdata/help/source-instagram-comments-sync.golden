@@ -1,0 +1,13 @@
+Sync Instagram professional account comments for registered [[instagram_comments]] profiles. Read available media, comments and replies with resumable progress; ordinary media discovery does not promise ad-only coverage. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.
+
+Usage:
+  msgvault source instagram-comments sync [identifier] [flags]
+
+Flags:
+      --build-cache        refresh analytics cache after this sync
+      --full               restart selected source scans with fresh cursors; preserve and update archived rows
+  -h, --help               help for sync
+      --max-requests int   maximum API reads per account, including Page and linkage checks (default 1000)
+      --no-build-cache     skip analytics cache refresh after this sync
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')

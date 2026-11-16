@@ -48,8 +48,8 @@ func TestOperationInvocationConcurrentIdenticalFinishIsIdempotent(t *testing.T) 
 func TestOperationInvocationSchemasRejectErrorsOutsideDurableAllowlist(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	tables := []string{
-		"message_embedding_runs", "person_embedding_runs", "document_extraction_runs",
-		"document_embedding_runs", "visual_embedding_runs",
+		"message_embedding_runs", "person_embedding_runs",
+		"visual_embedding_runs",
 	}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
@@ -77,8 +77,6 @@ func TestOperationInvocationLifecycleForEveryLedger(t *testing.T) {
 	}{
 		{operations.KindMessageEmbedding, "message_embedding_runs"},
 		{operations.KindPersonEmbedding, "person_embedding_runs"},
-		{operations.KindDocumentExtraction, "document_extraction_runs"},
-		{operations.KindDocumentEmbedding, "document_embedding_runs"},
 		{operations.KindVisualEmbedding, "visual_embedding_runs"},
 	}
 
@@ -161,7 +159,7 @@ func TestOperationInvocationRecoveryUsesDurableOutcomes(t *testing.T) {
 	require.NoError(st.CheckpointOperationInvocation(t.Context(), useful.ID,
 		operations.InvocationCounters{Attempted: 1, Succeeded: 1}))
 	empty, err := st.BeginOperationInvocation(t.Context(), operations.InvocationSpec{
-		Kind: operations.KindDocumentExtraction, Key: "scheduler:empty",
+		Kind: operations.KindMessageEmbedding, Key: "scheduler:empty",
 		Trigger: operations.TriggerScheduled, StartedAt: started.Add(time.Second),
 	})
 	require.NoError(err)
@@ -179,7 +177,7 @@ func TestOperationInvocationRecoveryUsesDurableOutcomes(t *testing.T) {
 	assert.Equal(operations.StatePartial, usefulReplay.Terminal.State)
 	assert.Equal(operations.PublicErrorInvocationDaemonRestarted, usefulReplay.Terminal.Error.Code)
 	emptyReplay, err := st.BeginOperationInvocation(t.Context(), operations.InvocationSpec{
-		Kind: operations.KindDocumentExtraction, Key: "scheduler:empty",
+		Kind: operations.KindMessageEmbedding, Key: "scheduler:empty",
 		Trigger: operations.TriggerScheduled, StartedAt: started.Add(time.Second),
 	})
 	require.NoError(err)

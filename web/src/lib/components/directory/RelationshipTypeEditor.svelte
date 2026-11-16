@@ -56,7 +56,7 @@
         return;
       }
       if (result.kind === 'conflict') {
-        conflictCurrent = result.current;
+        conflictCurrent = result.current?.data;
         message = `This relationship type changed elsewhere. ${result.message}`;
       } else if (result.kind === 'unknown' || result.kind === 'blocked') {
         message = `The create outcome is unknown. ${result.message}`;

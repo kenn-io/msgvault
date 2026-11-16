@@ -194,7 +194,7 @@ func (s *Store) PurgeRetiredVisualGeneration(ctx context.Context, generationID i
 	if generationID <= 0 {
 		return errors.New("invalid visual generation purge")
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		var state VisualGenerationState
 		if err := q.QueryRow(`SELECT state FROM visual_generations WHERE id = ?`,

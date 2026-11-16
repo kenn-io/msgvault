@@ -55,6 +55,9 @@ func TestSearchOperatorsLookupPlan(t *testing.T) {
 	t.Cleanup(func() { require.NoError(s.Close()) })
 	for _, op := range []string{"from", "to", "cc", "bcc", "label"} {
 		for _, value := range []string{"rare", "absent"} {
+			if op == "from" {
+				value += "@example.com"
+			}
 			t.Run(op+":"+value, func(t *testing.T) {
 				checks := assert.New(t)
 				plan := s.buildMessageSearchSQL(t.Context(), search.Parse(op+":"+value), true)
@@ -69,7 +72,11 @@ func TestSearchOperatorsLookupPlan(t *testing.T) {
 				}
 			})
 		}
-		plan := s.buildMessageSearchSQL(t.Context(), search.Parse(op+":broad"), true)
+		value := "broad"
+		if op == "from" {
+			value += "@example.com"
+		}
+		plan := s.buildMessageSearchSQL(t.Context(), search.Parse(op+":"+value), true)
 		checks.NotContains(plan.where, "m.id IN (SELECT", op)
 	}
 	for _, input := range []string{"to:fanout", "label:fanout"} {
@@ -78,15 +85,19 @@ func TestSearchOperatorsLookupPlan(t *testing.T) {
 			assert.Contains(t, plan.where, "m.id IN (SELECT")
 		})
 	}
-	for _, input := range []string{"from:rare to:broad", "from:rare to:tenth", "from:tenth to:rare"} {
+	for _, tc := range []struct {
+		input           string
+		lookupCondition int
+	}{
+		{"from:rare@example.com to:broad", 0},
+		{"from:rare@example.com to:tenth", 0},
+		{"from:tenth@example.com to:rare", 1},
+	} {
+		input := tc.input
 		plan := s.buildMessageSearchSQL(t.Context(), search.Parse(input), true)
+		checks.Contains(plan.conditions[1+tc.lookupCondition], "m.id IN (SELECT", input)
 		checks.Equal(1, strings.Count(plan.where, "m.id IN (SELECT"), input)
 		checks.Contains(plan.where, "EXISTS (", input)
-		for i, arg := range plan.args {
-			if arg == "%rare%" {
-				checks.True(strings.HasPrefix(plan.conditions[i+1], "m.id IN ("), input)
-			}
-		}
 		explained := explainPlan(t, s, "SELECT COUNT(*) FROM messages m WHERE "+plan.where, plan.args...)
 		checks.NotRegexp(`SCAN m\b`, explained)
 	}

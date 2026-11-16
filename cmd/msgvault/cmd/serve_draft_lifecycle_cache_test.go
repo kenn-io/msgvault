@@ -27,24 +27,7 @@ func TestDraftReplyOutputFailureRefreshesCache(t *testing.T) {
 	assertions := assert.New(t)
 	fixture := newDraftReplyFixture(t)
 	adapter := fixture.grantedAdapter()
-	cacheRoot := t.TempDir()
-	cacheDB := filepath.Join(cacheRoot, "cache.db")
-	analyticsDir := filepath.Join(cacheRoot, "analytics")
-	checkSourceUnlocked := adapter.draftCacheRefresh
-	adapter.draftCacheRefresh = func(ctx context.Context, label string) error {
-		if err := checkSourceUnlocked(ctx, label); err != nil {
-			return err
-		}
-		if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if err := fixture.store.BackupDatabaseContext(ctx, cacheDB); err != nil {
-			return err
-		}
-		_, err := buildCache(ctx, cacheDB, analyticsDir, true)
-		return err
-	}
-	requirements.NoError(adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
+	analyticsDir := installDraftAnalyticsCacheRefresh(t, fixture, adapter)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var created draftReplyOutput
@@ -74,24 +57,7 @@ func TestDraftEditCancelledAfterPublicationRefreshesCache(t *testing.T) {
 	fixture := newDraftReplyFixture(t)
 	adapter := fixture.grantedAdapter()
 	created := createReviewDraft(t, fixture, adapter, "original body")
-	cacheRoot := t.TempDir()
-	cacheDB := filepath.Join(cacheRoot, "cache.db")
-	analyticsDir := filepath.Join(cacheRoot, "analytics")
-	checkSourceUnlocked := adapter.draftCacheRefresh
-	adapter.draftCacheRefresh = func(ctx context.Context, label string) error {
-		if err := checkSourceUnlocked(ctx, label); err != nil {
-			return err
-		}
-		if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if err := fixture.store.BackupDatabaseContext(ctx, cacheDB); err != nil {
-			return err
-		}
-		_, err := buildCache(ctx, cacheDB, analyticsDir, true)
-		return err
-	}
-	requirements.NoError(adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
+	analyticsDir := installDraftAnalyticsCacheRefresh(t, fixture, adapter)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	previous := slog.Default()
@@ -152,24 +118,7 @@ func TestDraftDeleteOutputFailureRefreshesCache(t *testing.T) {
 				requirements.NoError(err)
 				requirements.NoError(fixture.store.RecordIMAPDraftOutcomeContext(t.Context(), created.DraftID, 1, store.IMAPDraftCodeRemoved, nil))
 			}
-			cacheRoot := t.TempDir()
-			cacheDB := filepath.Join(cacheRoot, "cache.db")
-			analyticsDir := filepath.Join(cacheRoot, "analytics")
-			checkSourceUnlocked := adapter.draftCacheRefresh
-			adapter.draftCacheRefresh = func(ctx context.Context, label string) error {
-				if err := checkSourceUnlocked(ctx, label); err != nil {
-					return err
-				}
-				if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
-					return err
-				}
-				if err := fixture.store.BackupDatabaseContext(ctx, cacheDB); err != nil {
-					return err
-				}
-				_, err := buildCache(ctx, cacheDB, analyticsDir, true)
-				return err
-			}
-			requirements.NoError(adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
+			analyticsDir := installDraftAnalyticsCacheRefresh(t, fixture, adapter)
 			engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 			requirements.NoError(err)
 			results, err := engine.SearchFast(t.Context(), search.Parse("deletedcache"), query.MessageFilter{HideDeletedFromSource: true}, 100, 0)
@@ -216,24 +165,7 @@ func TestDraftRecoverRefreshesCache(t *testing.T) {
 	requirements.True(removed.Complete)
 	requirements.NoError(client.Close())
 
-	cacheRoot := t.TempDir()
-	cacheDB := filepath.Join(cacheRoot, "cache.db")
-	analyticsDir := filepath.Join(cacheRoot, "analytics")
-	checkSourceUnlocked := adapter.draftCacheRefresh
-	adapter.draftCacheRefresh = func(ctx context.Context, label string) error {
-		if err := checkSourceUnlocked(ctx, label); err != nil {
-			return err
-		}
-		if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if err := fixture.store.BackupDatabaseContext(ctx, cacheDB); err != nil {
-			return err
-		}
-		_, err := buildCache(ctx, cacheDB, analyticsDir, true)
-		return err
-	}
-	requirements.NoError(adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
+	analyticsDir := installDraftAnalyticsCacheRefresh(t, fixture, adapter)
 	baselineEngine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	requirements.NoError(err)
 	baselineResults, err := baselineEngine.SearchFast(t.Context(), search.Parse("recovercache"), query.MessageFilter{HideDeletedFromSource: true}, 100, 0)
@@ -312,24 +244,7 @@ func TestDraftRecoverPublishedEditCleanupRefreshesCache(t *testing.T) {
 	requirements.True(removed.Complete)
 	requirements.NoError(client.Close())
 
-	cacheRoot := t.TempDir()
-	cacheDB := filepath.Join(cacheRoot, "cache.db")
-	analyticsDir := filepath.Join(cacheRoot, "analytics")
-	checkSourceUnlocked := adapter.draftCacheRefresh
-	adapter.draftCacheRefresh = func(ctx context.Context, label string) error {
-		if err := checkSourceUnlocked(ctx, label); err != nil {
-			return err
-		}
-		if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if err := fixture.store.BackupDatabaseContext(ctx, cacheDB); err != nil {
-			return err
-		}
-		_, err := buildCache(ctx, cacheDB, analyticsDir, true)
-		return err
-	}
-	requirements.NoError(adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
+	analyticsDir := installDraftAnalyticsCacheRefresh(t, fixture, adapter)
 	baselineEngine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	requirements.NoError(err)
 	baselineResults, err := baselineEngine.SearchFast(t.Context(), search.Parse("recoverpublishedcache"), query.MessageFilter{HideDeletedFromSource: true}, 100, 0)
@@ -367,4 +282,38 @@ func TestDraftRecoverPublishedEditCleanupRefreshesCache(t *testing.T) {
 		}
 	}
 	assertions.Equal(int64(1), draftCount)
+}
+
+// installDraftAnalyticsCacheRefresh wraps the adapter's refresh hook with a
+// real snapshot and analytics rebuild, runs it once for a baseline, and
+// returns the analytics directory. The daemon's hook runs the rebuild under
+// the daemon's lifetime and ignores the caller's context, which carries a
+// short deadline. This hook does the same with the test's context, so a slow
+// rebuild still completes. The caller's context must still be live when the
+// refresh starts, which shows the adapter detached it from client
+// cancellation.
+func installDraftAnalyticsCacheRefresh(t *testing.T, fixture draftReplyFixture, adapter *storeAPIAdapter) string {
+	t.Helper()
+	cacheRoot := t.TempDir()
+	cacheDB := filepath.Join(cacheRoot, "cache.db")
+	analyticsDir := filepath.Join(cacheRoot, "analytics")
+	checkSourceUnlocked := adapter.draftCacheRefresh
+	adapter.draftCacheRefresh = func(ctx context.Context, label string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := checkSourceUnlocked(ctx, label); err != nil {
+			return err
+		}
+		if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := fixture.store.BackupDatabaseContext(t.Context(), cacheDB); err != nil {
+			return err
+		}
+		_, err := buildCache(t.Context(), cacheDB, analyticsDir, true)
+		return err
+	}
+	require.NoError(t, adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
+	return analyticsDir
 }

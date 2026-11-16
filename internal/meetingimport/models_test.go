@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiimport"
 )
 
 func decodedValidRequest(t *testing.T) Request {
@@ -158,6 +159,33 @@ func TestRequestNormalizeValidatesMeetingContent(t *testing.T) {
 			_, err := req.Normalize()
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrValidation)
+		})
+	}
+}
+
+// PostgreSQL text and JSONB refuse NUL, so every stored text field rejects
+// it as a validation error instead of failing the write on every retry.
+func TestRequestNormalizeRejectsNULText(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Request)
+		want   string
+	}{
+		{"summary", func(r *Request) { r.Meeting.SummaryMarkdown = "a\x00b" }, "meeting.summary_markdown must not contain NUL characters"},
+		{"transcript segment text", func(r *Request) { r.Meeting.TranscriptSegments[0].Text = "a\x00b" }, "meeting.transcript_segments[0].text must not contain NUL characters"},
+		{"transcript segment speaker", func(r *Request) { r.Meeting.TranscriptSegments[0].Speaker = "a\x00b" }, "meeting.transcript_segments[0].speaker must not contain NUL characters"},
+		{"attendee name", func(r *Request) { r.Meeting.Attendees[0].Name = "a\x00b" }, "meeting.attendees[0].name must not contain NUL characters"},
+		{"metadata", func(r *Request) { r.Meeting.Metadata = map[string]any{"tags": []any{"a\x00b"}} }, "meeting.metadata must not contain NUL characters"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := decodedValidRequest(t)
+			tt.mutate(&req)
+			_, err := req.Normalize()
+			require.ErrorIs(t, err, ErrValidation)
+			detail, ok := apiimport.ValidationDetail(err)
+			require.True(t, ok)
+			assert.Equal(t, tt.want, detail)
 		})
 	}
 }

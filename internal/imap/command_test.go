@@ -123,3 +123,22 @@ func FuzzCommandRetryDelay(f *testing.F) {
 		assert.GreaterOrEqual(t, delay, time.Duration(0))
 	})
 }
+
+// A failed reconnect leaves c.conn nil. The label map then moved on to the
+// next mailbox and SELECT dereferenced the nil client, which panicked the
+// whole sync (seen with DavMail restarting under a first sync).
+func TestCommandsWithoutConnectionFailAsNetworkErrors(t *testing.T) {
+	client := &Client{logger: slog.Default()}
+	_, err := client.selectCommand(t.Context(), "INBOX", nil)
+	require.ErrorIs(t, err, errNoConnection)
+	assert.True(t, isNetworkError(err), "a missing connection must read as a network error")
+	_, err = client.searchCommand(t.Context(), &imap.SearchCriteria{})
+	require.ErrorIs(t, err, errNoConnection)
+	_, err = client.fetchCommand(t.Context(), imap.UIDSet{}, &imap.FetchOptions{})
+	require.ErrorIs(t, err, errNoConnection)
+	_, err = client.fetchFlagsCommand(t.Context(), imap.UIDSet{})
+	require.ErrorIs(t, err, errNoConnection)
+	_, err = client.listCommand(t.Context(), client.listOptionsLocked())
+	require.ErrorIs(t, err, errNoConnection)
+	assert.False(t, client.enableQresync(t.Context()))
+}

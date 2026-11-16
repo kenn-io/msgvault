@@ -15,6 +15,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/logging"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -29,23 +30,22 @@ func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   daemonService,
 		Short: "Offline email, chat, and meeting archive tool",
-		Long: `Archive email, chats, and meetings offline. Use the daemon
-or config.toml's [remote].url; --local forces local.
+		Long: `Archive email, chats, and meetings offline.
 
 Start here:
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
+  msgvault export-messages --help
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
 
 Output:
-  --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
-  --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
-  More: msgvault quickstart.`,
+  --json: stdout (JSONL for export-messages).
+  Logs, progress: stderr. Exit: 0 OK, 1 error, 130 interrupted.
+  See msgvault quickstart.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			inv := prepareInvocation(cmd)
 			if inv == nil {
@@ -305,7 +305,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 		return true
 	}
 	for c := cmd; c != nil; c = c.Parent() {
-		if c == skillsCmd {
+		if c == skillsCmd || c == agentCmd {
 			return true
 		}
 	}
@@ -872,17 +872,10 @@ func registerRootFlags(root *cobra.Command) {
 	flags := root.PersistentFlags()
 	flags.String("config", "", "config file (default: ~/.msgvault/config.toml)")
 	flags.String("home", "", "home directory (overrides MSGVAULT_HOME)")
-	flags.BoolP("verbose", "v", false, "verbose output (implies --log-level=debug)")
 	flags.Bool(localValue, false, "use local daemon instead of configured remote")
 	flags.String("log-file", "",
 		"override log file path (default: <data dir>/logs/msgvault-YYYY-MM-DD.log)")
-	flags.String("log-level", "",
-		"log level: debug, info, warn, error (default: info)")
 	flags.Bool("no-log-file", false,
 		"disable the log file for this run (stderr output stays on)")
-	flags.Bool("log-sql", false,
-		"log every SQL query at info level (verbose; for debugging)")
-	flags.Int64("log-sql-slow-ms", 0,
-		"threshold in ms above which a SQL query is logged as slow "+
-			"(default 100; 0 uses the default)")
+	clirun.AddLoggingFlags(flags)
 }

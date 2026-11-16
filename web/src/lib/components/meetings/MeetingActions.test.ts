@@ -82,7 +82,7 @@ describe('MeetingActions', () => {
     expect(screen.getByText(/Jamie Example.*jamie@example\.test/)).toBeDefined();
     expect(within(evidence).getByText('Due')).toBeDefined();
     expect(within(evidence).getByText('After the next review')).toBeDefined();
-    expect(screen.getByText('Coverage: 1 available · 0 partial · 0 unsupported · 0 unavailable')).toBeDefined();
+    expect(screen.getByText('Action item records by meeting: 1 complete · 0 partial · 0 not supported · 0 unavailable')).toBeDefined();
     const archiveLink = screen.getByRole('link', {
       name: 'Open archived meeting',
     });

@@ -125,7 +125,7 @@ func gatedMeetingProjectionStore(t *testing.T, base *Store, gate *meetingProject
 	return st
 }
 
-func TestMeetingProjectionUpgradeCancellationResumesCommittedRows(t *testing.T) {
+func TestMeetingProjectionUpgradeCancellationResumesCommittedPages(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	base := newRFC822IDBackfillBackendStore(t)
@@ -139,7 +139,7 @@ func TestMeetingProjectionUpgradeCancellationResumesCommittedRows(t *testing.T) 
 	gate := &meetingProjectionGate{committed: func(projected bool) {
 		if projected {
 			committed++
-			if committed == 3 {
+			if committed == 1 {
 				cancel()
 			}
 		}
@@ -148,7 +148,7 @@ func TestMeetingProjectionUpgradeCancellationResumesCommittedRows(t *testing.T) 
 	requirements.ErrorIs(st.InitSchemaContext(ctx), context.Canceled)
 	var count int
 	requirements.NoError(base.db.QueryRow(`SELECT COUNT(*) FROM meeting_details`).Scan(&count))
-	assertions.Equal(3, count, "commits before cancellation survive")
+	assertions.Equal(100, count, "the committed page survives cancellation")
 	applied, err := base.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 1)
 	requirements.NoError(err)
 	assertions.False(applied)

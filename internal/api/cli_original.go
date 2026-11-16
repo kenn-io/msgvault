@@ -121,6 +121,9 @@ func (s *Server) handleCLIMessageThread(w http.ResponseWriter, r *http.Request) 
 		s.writeOriginalExportError(w, "list thread", err)
 		return
 	}
+	if !s.maskThread(w, r, page.Messages) {
+		return
+	}
 	writeJSON(w, http.StatusOK, page)
 }
 

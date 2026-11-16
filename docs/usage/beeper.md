@@ -91,8 +91,10 @@ but it is fully resumable: interrupt it any time and the next run continues
 from the saved checkpoint. Later runs only fetch chats with new activity.
 
 Recent messages (last 24 hours) are re-checked on every incremental run so
-edits, deletions, and reaction changes are captured; older in-place changes
-are only picked up by `--full` runs.
+edits, deletions, and reaction changes are captured. Only messages that changed
+since they were archived are rewritten, and the summary counts them as
+`updated`; `added` counts only messages archived for the first time. Older
+in-place changes are only picked up by `--full` runs.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -393,6 +395,13 @@ A scheduled run keeps other sources on their cadence:
   completes the run, and the next run continues from the saved cursors.
 - **Account rotation.** After stopping within an account, the next run starts
   with the following account. Each account retains its own progress.
+- **Yielding to waiting work.** When a run stops because other work is
+  waiting, a follow-up runs after that work. It visits only the accounts that
+  have not had a turn yet, including one cut short at a boundary. Once every
+  account has had a turn, the next run waits for the next scheduled time.
+  **Sync now** or a scheduled time that arrives while a follow-up waits starts
+  a new pass over every account instead. The daemon keeps this progress in
+  memory, so a restart starts over.
 - **New messages first.** Chats with only new messages sync before chats
   still backfilling history. Completed chats are skipped until the current
   discovery cycle finishes, so later chats also get a turn.

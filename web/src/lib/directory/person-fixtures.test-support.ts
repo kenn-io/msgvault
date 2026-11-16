@@ -15,7 +15,7 @@ export function merge(survivor: Person): PersonMerge {
     survivor_revision_before: survivor.revision - 1,
     absorbed_revision_before: 2,
     survivor_revision_after: survivor.revision,
-    actor: 'web',
+    actor: 'user',
     snapshot_version: 1,
     snapshot_sha256: 'synthetic-digest',
     created_at: '2026-08-03T00:00:00Z',

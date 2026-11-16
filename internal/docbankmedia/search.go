@@ -84,6 +84,7 @@ type SearchReport struct {
 	Coverage             SearchCoverage         `json:"coverage"`
 	Results              []SearchHit            `json:"results"`
 	Truncated            bool                   `json:"truncated"`
+	Degradations         []string               `json:"degradations"`
 }
 
 func validSearchRequest(request SearchRequest) bool {
@@ -177,7 +178,7 @@ func (c *Client) searchReport(ctx context.Context, request SearchRequest) (Searc
 	if err := c.jsonRequestLimits(ctx, http.MethodPost, "/api/v1/search", request, &report, maxSearchBytes, maxSearchBytes); err != nil {
 		return SearchReport{}, err
 	}
-	if report.ActualMode != "lexical" || report.RequestedMode != "lexical" || report.Results == nil || len(report.Results) > request.Limit ||
+	if (report.ActualMode != request.Mode && (request.Mode != "hybrid" || report.ActualMode != "lexical")) || report.RequestedMode != request.Mode || report.Results == nil || len(report.Results) > request.Limit ||
 		report.Coverage.State == "" || report.Coverage.ScopedDocuments < 0 || report.Coverage.CompleteDocuments < 0 ||
 		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments {
 		return SearchReport{}, ErrInvalidReceipt
@@ -228,7 +229,7 @@ func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (Se
 		content := false
 		for _, evidence := range hit.Evidence {
 			switch evidence.Kind {
-			case "content_blob", "rendition_segment":
+			case "content_blob", "rendition_segment", "embedding":
 				content = true
 			case "node_name":
 			default:

@@ -1,17 +1,24 @@
 <script lang="ts">
   import XIcon from '@lucide/svelte/icons/x';
-  import { Button, IconButton, copyToClipboard } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, IconButton, copyToClipboard } from '@kenn-io/kit-ui';
 
   import type { DomainSummary, PersonSummary } from '../../explore/models';
   import type { LinkOutcome } from '../../relationships/controller.svelte';
   import { identityChipText } from '../../relationships/identity-chip';
   import DetailRow from './DetailRow.svelte';
+  import DetailSection from './DetailSection.svelte';
 
   const STALE_CACHE_MESSAGE =
     'Identity saved; the cache refresh failed — groupings may be stale until a rebuild. Retrying is safe.';
 
-  let { detail, onUnlinkParticipants, onAnnounce }:
-    { detail: PersonSummary | DomainSummary | null; onUnlinkParticipants: (a: number, b: number) => Promise<LinkOutcome>; onAnnounce?: (message: string) => void } = $props();
+  let { detail, onUnlinkParticipants, onAnnounce, listedInDetails = [] }:
+    {
+      detail: PersonSummary | DomainSummary | null;
+      onUnlinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
+      onAnnounce?: (message: string) => void;
+      /** Details already lists this profile's own emails and phones, so they show once, there. */
+      listedInDetails?: Pick<import('../../api/generated/models').PersonContactPoint, 'address_kind' | 'normalized_value'>[];
+    } = $props();
   type LinkMutation = { kind: 'unlink'; a: number; b: number };
 
   let staleBanner = $state<'identity_cache_stale' | null>(null);
@@ -42,9 +49,19 @@
    * loop below never renders anything for it. */
   const unrepresentedMembers = $derived.by((): number[] => {
     if (!detail || !isPersonDetail(detail) || !detail.cluster) return [];
-    const known = new Set((detail.identifiers ?? []).map((identifier) => identifier.participant_id));
+    const known = new Set(identifiers.map((identifier) => identifier.participant_id));
     return (detail.cluster.member_ids ?? []).filter((id) => id !== detail.id && !known.has(id));
   });
+  /** Each address shows once: with a saved profile, this person's own emails and phones are in Details,
+   * and this section keeps only what it alone offers, linked profiles' addresses with Unlink and other identifiers. */
+  const identifiers = $derived.by(() => {
+    if (!detail || !isPersonDetail(detail)) return [];
+    const all = detail.identifiers ?? [];
+    const listed = new Set(listedInDetails.map(point => `${point.address_kind}:${point.normalized_value}`));
+    return all.filter(identifier => identifier.participant_id !== detail.id || !listed.has(`${identifier.type}:${identifier.value}`));
+  });
+  const empty = $derived(identifiers.length === 0 && unrepresentedMembers.length === 0 && staleBanner === null && unlinkError === null);
+
   /** Evidence detail lives in the chip tooltip, in human words — internal
    * provenance identifiers never reach user-visible text. */
   function identifierTooltip(identifier: { type: string; is_primary: boolean; provenance: string }): string {
@@ -67,7 +84,7 @@
 
   async function copyIdentifier(value: string): Promise<void> {
     const copied = await copyToClipboard(value);
-    onAnnounce?.(copied ? 'Identity copied' : 'Could not copy identity');
+    onAnnounce?.(copied ? 'Copied' : "Couldn't copy.");
   }
 
   // Navigating to a different person must not leave behind a stale banner
@@ -171,9 +188,9 @@
   }
 </script>
 
-<section class="addresses" aria-label="Known addresses">
-  {#if detail && isPersonDetail(detail)}
-    <h3>Addresses</h3>
+{#if detail && isPersonDetail(detail) && !empty}
+<DetailSection title="Linked addresses">
+  <div class="addresses" role="group" aria-label="Known addresses">
     {#if staleBanner === 'identity_cache_stale'}
       <section class="named-state" role="alert">
         <span>{STALE_CACHE_MESSAGE}</span>
@@ -183,7 +200,7 @@
       {#key detail.id}
       <div class="identities">
         <div class="identifiers" role="group" aria-label="Linked identities">
-        {#each detail.identifiers ?? [] as identifier (`${identifier.participant_id}:${identifier.type}:${identifier.value}`)}
+        {#each identifiers as identifier (`${identifier.participant_id}:${identifier.type}:${identifier.value}`)}
           {@const isOtherMember = !!detail.cluster && identifier.participant_id !== detail.id}
           {@const opaque = identifier.type !== 'email' && identifier.type !== 'phone'}
           {@const edges = isOtherMember ? edgesFor(identifier.participant_id) : []}
@@ -196,7 +213,7 @@
           {@const relation = isOtherMember ? (edges.some((edge) => edge.link_origin) ? '' : 'linked') : 'this profile'}
           {@const label = identifier.service_label || (identifier.type === 'email' ? 'Email' : identifier.type === 'phone' ? 'Phone' : 'Address')}
           <DetailRow label={label === text.title ? undefined : label}>
-            <details aria-label={`Identity ${chipName}`}><summary>{text.title}</summary><p>{[text.subtitle, relation, text.detail, identifierTooltip(identifier)].filter(Boolean).join(' · ')}</p></details>
+            <div role="group" aria-label={`Identity ${chipName}`}><Disclosure variant="plain">{#snippet summary()}{text.title}{/snippet}<p>{[text.subtitle, relation, text.detail, identifierTooltip(identifier)].filter(Boolean).join(' · ')}</p></Disclosure></div>
             {#snippet actions()}
               <Button label="Copy" ariaLabel={`Copy ${opaque ? chipName : identifier.value}`} size="sm" onclick={() => void copyIdentifier(identifier.value)} />
               {#if isOtherMember && confirmingParticipantID !== identifier.participant_id}<Button label="Unlink" ariaLabel={`Unlink ${chipName}`} size="sm" onclick={() => startUnlink(identifier.participant_id)} />{/if}
@@ -247,15 +264,15 @@
         {/if}
       </div>
       {/key}
-  {/if}
-</section>
+  </div>
+</DetailSection>
+{/if}
 
 <style>
   .addresses { display: grid; gap: var(--field-gap); }
-  h3, p { margin: 0; }
-  h3 { font-size: var(--font-size-md); }
+  p { margin: 0; }
   .identifiers { display: grid; }
   .named-state, .chip-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--control-gap); }
   .unlink-error { color: var(--text-danger); }
-  details p, small { color: var(--text-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+  .addresses :global(.kit-disclosure p), small { color: var(--text-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 </style>

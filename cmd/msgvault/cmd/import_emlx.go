@@ -214,6 +214,7 @@ func importSingleAccount(
 			MaxMessageBytes:    importEmlxMaxMessageBytes,
 			AttachmentsDir:     attachmentsDir,
 			RemoteImages:       configuredRemoteImageFetcher(cfg),
+			RelayedSenders:     cfg.RelayedSenders,
 			Logger:             logger,
 		},
 	)
@@ -361,6 +362,7 @@ func importAutoAccounts(
 				MaxMessageBytes:    importEmlxMaxMessageBytes,
 				AttachmentsDir:     attachmentsDir,
 				RemoteImages:       configuredRemoteImageFetcher(cfg),
+				RelayedSenders:     cfg.RelayedSenders,
 				Logger:             logger,
 			},
 		)
