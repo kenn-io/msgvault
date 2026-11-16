@@ -15726,10 +15726,11 @@ func (s SetOrganizationAttributeBody) Validate() error {
 }
 
 type SetPersonAttributeRequest struct {
-	ActiveFrom  *time.Time `json:"active_from,omitempty"`
-	ActiveUntil *time.Time `json:"active_until,omitempty"`
-	Actor       *string    `json:"actor,omitzero"`
-	Confidence  *float64   `json:"confidence,omitempty"`
+	ActiveFrom    *time.Time `json:"active_from,omitempty"`
+	ActiveUntil   *time.Time `json:"active_until,omitempty"`
+	Actor         *string    `json:"actor,omitzero"`
+	Confidence    *float64   `json:"confidence,omitempty"`
+	ExpectedEmpty *bool      `json:"expected_empty,omitempty"`
 
 	// ExpectedValueID Positive ID compares the current value; zero requires no current value
 	ExpectedValueID *int64                           `json:"expected_value_id,omitempty"`
