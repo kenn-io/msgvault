@@ -603,10 +603,6 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 			restored[messageID] = true
 		}
 		for messageID := range restored {
-			// The filtered scan cannot retire saved memberships; only remove the stale visible Trash label.
-			if _, err := tx.ExecContext(ctx, `DELETE FROM message_labels WHERE message_id = ? AND label_id IN (SELECT id FROM labels WHERE source_id = ? AND system_role = 'trash')`, messageID, sourceID); err != nil {
-				return fmt.Errorf("remove stale IMAP Trash label for message %d: %w", messageID, err)
-			}
 			if err := s.clearMessageDeletedFromSourceTx(ctx, tx, `id = ? AND source_id = ?`, messageID, sourceID); err != nil {
 				return fmt.Errorf("clear restored IMAP deletion mark for message %d: %w", messageID, err)
 			}
