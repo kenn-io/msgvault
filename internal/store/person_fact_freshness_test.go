@@ -104,4 +104,13 @@ func TestClaimFreshnessUsesSupportedEvidence(t *testing.T) {
 	r.Len(page, 1)
 	r.NotNil(page[0].Freshness.LatestSupportedAt)
 	a.WithinDuration(old, *page[0].Freshness.LatestSupportedAt, time.Microsecond)
+	change.Supported = true
+	change.Reason = personfacts.EvidenceStatusSourceReimported
+	persistPersonFactLedgerGeneration(t, st, preparePersonFactLedgerGeneration(t, personID, "reimport-new", nil,
+		[]personfacts.EvidenceStatusChange{change}), nil)
+	page, err = st.ListPersonFactClaimsContext(t.Context(), personID, personfacts.ClaimFilter{Limit: 1})
+	r.NoError(err)
+	r.Len(page, 1)
+	r.NotNil(page[0].Freshness.LatestSupportedAt)
+	a.WithinDuration(recent, *page[0].Freshness.LatestSupportedAt, time.Microsecond)
 }

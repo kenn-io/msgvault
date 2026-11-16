@@ -54,7 +54,7 @@ func TestPersonFactCatalogHTTPDefaultsSensitiveAndSupportsExplicitInclude(t *tes
 	}, "explicit sensitive catalog request includes the marked target")
 }
 
-func TestPersonFactHistoryHTTPIsBoundedNewestFirstNonNullAndNoStore(t *testing.T) {
+func TestPersonFactHistoryHTTPPaginationNoStoreAndClaimMetadata(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
