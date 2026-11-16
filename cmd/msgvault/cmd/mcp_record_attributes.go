@@ -18,6 +18,7 @@ import (
 
 const attributeSourceKey = "source"
 const attributeInvalidArguments = "invalid_arguments"
+const attributeSetOperation = "set_person_attribute"
 
 func recordAttributeMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
@@ -27,7 +28,7 @@ func recordAttributeMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MC
 	}{
 		{"list_person_attributes", "listPersonAttributes", http.MethodGet, "/api/v1/people/{id}/attributes", "", []string{"history", "slug", "universal_id"}, nil},
 		{"list_attribute_definitions", "listAttributeDefinitions", http.MethodGet, "/api/v1/attribute-definitions", "", []string{"object_type", "include_hidden"}, nil},
-		{"set_person_attribute", "setPersonAttribute", http.MethodPut, "/api/v1/people/{id}/attributes/{slug}", "list_person_attributes", []string{"dry_run"}, []string{"value", "ordinal", "expected_value_id", "expected_empty", attributeSourceKey, "source_ref", "confidence", "actor", "active_from", "active_until"}},
+		{attributeSetOperation, "setPersonAttribute", http.MethodPut, "/api/v1/people/{id}/attributes/{slug}", "list_person_attributes", []string{"dry_run"}, []string{"value", "ordinal", "expected_value_id", "expected_empty", attributeSourceKey, "source_ref", "confidence", "actor", "active_from", "active_until"}},
 		{"clear_person_attribute", "clearPersonAttribute", http.MethodDelete, "/api/v1/people/{id}/attributes/{slug}", "list_person_attributes", []string{"ordinal", "expected_value_id", "dry_run"}, nil},
 		{"get_attribute_definition", "getAttributeDefinition", http.MethodGet, "/api/v1/attribute-definitions/{id}", "", nil, nil},
 		{"create_attribute_definition", "createAttributeDefinition", http.MethodPost, "/api/v1/attribute-definitions", "", nil, []string{"object_type", "slug", "label", "description", "value_type", "field_type", "record_target", "cardinality", "display_order", "is_required", "is_searchable", "is_sensitive", "is_audited", "options", "vcard_property"}},
@@ -122,7 +123,7 @@ func attributeRequest(name string, args map[string]any) (string, string, runtime
 			return "", "", nil, false
 		}
 		return http.MethodGet, "/api/v1/people/{id}/attributes", &generated.ListPersonAttributesRequestOptions{PathParams: &generated.ListPersonAttributesPath{ID: in.PersonID}, Query: &generated.ListPersonAttributesQuery{History: in.History, Slug: in.Slug, UniversalID: in.UniversalID}}, true
-	case "set_person_attribute":
+	case attributeSetOperation:
 		in, err := decodeMCPOperationArguments[attributeSetArgs](args)
 		value, _ := args["value"].(map[string]any)
 		if err != nil || in.PersonID <= 0 || store.ValidateAttributeSlug(in.Slug) != nil || unsafeAttributeJSON(value["json"]) {
@@ -172,7 +173,7 @@ func attributeRequest(name string, args map[string]any) (string, string, runtime
 
 func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	switch name {
-	case "list_person_attributes", "set_person_attribute", "clear_person_attribute", "list_attribute_definitions", "get_attribute_definition", "create_attribute_definition", "patch_attribute_definition", "delete_attribute_definition":
+	case "list_person_attributes", attributeSetOperation, "clear_person_attribute", "list_attribute_definitions", "get_attribute_definition", "create_attribute_definition", "patch_attribute_definition", "delete_attribute_definition":
 	default:
 		return nil, false, nil
 	}
@@ -183,7 +184,7 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 	var result *mcpserver.OperationResult
 	var err error
 	classify := func(code string, body []byte) (any, bool) {
-		if code == "attribute_value_conflict" && (name == "set_person_attribute" || name == "clear_person_attribute") {
+		if code == "attribute_value_conflict" && (name == attributeSetOperation || name == "clear_person_attribute") {
 			var conflict generated.PersonAttributeConflictResponse
 			if json.Unmarshal(body, &conflict) == nil {
 				return attributeConflictOutput{code, false, conflict.CurrentValueID, conflict.CurrentValue}, true
@@ -194,7 +195,7 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 	switch name {
 	case "list_person_attributes":
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonAttributesResponse](ctx, b.client, method, path, options, classify, http.StatusOK)
-	case "set_person_attribute", "clear_person_attribute":
+	case attributeSetOperation, "clear_person_attribute":
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonAttributeWrite](ctx, b.client, method, path, options, classify, http.StatusOK)
 	case "list_attribute_definitions":
 		result, err = readMCPOperationJSONWithClassifier[generated.AttributeDefinitionsResponse](ctx, b.client, method, path, options, classify, http.StatusOK)
@@ -239,7 +240,7 @@ func attributeContextRefusal(result *mcpserver.OperationResult) *mcpserver.Opera
 
 func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {
 	switch name {
-	case "set_person_attribute", "clear_person_attribute", "create_attribute_definition", "patch_attribute_definition", "delete_attribute_definition":
+	case attributeSetOperation, "clear_person_attribute", "create_attribute_definition", "patch_attribute_definition", "delete_attribute_definition":
 	default:
 		return "", false, nil
 	}
@@ -248,7 +249,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		return "", true, &mcpserver.OperationRefusalError{Code: attributeInvalidArguments}
 	}
 	var current any
-	if name == "set_person_attribute" || name == "clear_person_attribute" {
+	if name == attributeSetOperation || name == "clear_person_attribute" {
 		slug, _ := args["slug"].(string)
 		listing, _, err := b.executeRecordAttributeOperation(ctx, "list_person_attributes", map[string]any{"person_id": args["person_id"], "slug": strings.TrimSpace(slug)})
 		if err != nil || listing == nil || listing.IsError {
@@ -263,7 +264,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 				return "", true, &mcpserver.OperationRefusalError{Code: "attribute_notes_use_update_person_notes"}
 			}
 		}
-		if name == "set_person_attribute" {
+		if name == attributeSetOperation {
 			request, ok := options.(*generated.SetPersonAttributeRequestOptions)
 			if !ok || request.Body == nil || request.Body.Source == nil || request.Body.Actor == nil {
 				return "", true, &mcpserver.OperationRefusalError{Code: attributeInvalidArguments}
@@ -279,7 +280,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 			return "", true, attributeContextRefusal(result)
 		}
 		preview, ok := result.Output.(generated.PersonAttributeWrite)
-		if !ok || (name == "set_person_attribute" && preview.Value == nil) || (name == "clear_person_attribute" && preview.Superseded == nil) {
+		if !ok || (name == attributeSetOperation && preview.Value == nil) || (name == "clear_person_attribute" && preview.Superseded == nil) {
 			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 		}
 		var ordinal int64
@@ -291,7 +292,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 			if unguarded {
 				args["expected_value_id"] = v.ID
 			}
-		} else if name == "set_person_attribute" && unguarded {
+		} else if name == attributeSetOperation && unguarded {
 			args["expected_empty"] = true
 		}
 		if preview.Value != nil {
