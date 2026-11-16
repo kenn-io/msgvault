@@ -572,7 +572,7 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 		{
 			name:         "config include",
 			cfg:          &Config{Folders: []string{"INBOX"}},
-			opts:         []Option{WithFilteredDeletionReconciliation(true)},
+			opts:         []Option{WithFolderFilter(nil, []string{"Trash"}), WithFilteredDeletionReconciliation(true)},
 			wantFiltered: true,
 		},
 		{

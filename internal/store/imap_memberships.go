@@ -326,6 +326,46 @@ func (s *Store) applyIMAPMailboxDeltas(
 		}
 
 		if fullTopology {
+			// A previous scoped sync may have kept labels without memberships.
+			// A full scan can resolve those labels even when memberships are unchanged.
+			if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
+				SELECT m.message_id FROM imap_message_memberships m
+				WHERE m.source_id = ? AND (
+					EXISTS (
+						SELECT 1 FROM message_labels ml
+						JOIN labels l ON l.id = ml.label_id
+						WHERE ml.message_id = m.message_id AND NOT EXISTS (
+							SELECT 1 FROM imap_message_memberships present
+							WHERE present.source_id = m.source_id AND present.message_id = m.message_id
+							AND l.source_id = present.source_id AND l.source_label_id = present.mailbox
+						)
+					) OR NOT EXISTS (
+						SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+						WHERE ml.message_id = m.message_id AND l.source_id = m.source_id
+						AND l.source_label_id = m.mailbox
+					)
+				)
+				GROUP BY m.message_id
+			`, sourceID); err != nil {
+				return fmt.Errorf("capture IMAP messages for full reconciliation: %w", err)
+			}
+			if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
+				SELECT messages.id FROM labels l
+				JOIN message_labels ml ON ml.label_id = l.id
+				JOIN messages ON messages.id = ml.message_id
+				WHERE l.source_id = ? AND (messages.source_id <> l.source_id OR messages.deleted_from_source_at IS NULL)
+				AND NOT EXISTS (
+					SELECT 1 FROM source_merge_archive_only_messages marker
+					WHERE marker.message_id = messages.id
+				)
+				AND NOT EXISTS (
+					SELECT 1 FROM imap_message_memberships m
+					WHERE m.source_id = l.source_id AND m.message_id = messages.id
+				)
+				GROUP BY messages.id
+			`, sourceID); err != nil {
+				return fmt.Errorf("capture untracked IMAP labels for full reconciliation: %w", err)
+			}
 			if err := s.captureUntrackedIMAPMessageIDs(ctx, tx, sourceID, len(generations) != 0, affected); err != nil {
 				return err
 			}
@@ -408,8 +448,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 					if saved && prior.flagsDecoded &&
 						prior.messageID == messageID &&
 						slices.Equal(slices.Sorted(slices.Values(prior.flags)), slices.Sorted(slices.Values(flags))) {
-						// Identical membership: writing it would only move
-						// updated_at and rebuild labels that cannot have changed.
+						// Identical membership: writing it would only move updated_at.
 						continue
 					}
 				}
@@ -456,25 +495,93 @@ func (s *Store) applyIMAPMailboxDeltas(
 			}
 		}
 
+		if !fullTopology {
+			for _, delta := range normalizedDeltas {
+				if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
+					SELECT ml.message_id FROM message_labels ml
+					JOIN labels l ON l.id = ml.label_id
+					WHERE l.source_id = ? AND l.source_label_id = ?
+					AND NOT EXISTS (
+						SELECT 1 FROM imap_message_memberships m
+						WHERE m.source_id = l.source_id AND m.mailbox = l.source_label_id
+						AND m.message_id = ml.message_id
+					) AND NOT EXISTS (
+						SELECT 1 FROM source_merge_archive_only_messages marker
+						WHERE marker.message_id = ml.message_id
+					)
+				`, sourceID, delta.mailbox); err != nil {
+					return fmt.Errorf("capture untracked labels for IMAP mailbox %q: %w", delta.mailbox, err)
+				}
+				if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
+					SELECT m.message_id FROM imap_message_memberships m
+					WHERE m.source_id = ? AND m.mailbox = ? AND NOT EXISTS (
+						SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+						WHERE ml.message_id = m.message_id AND l.source_id = m.source_id
+						AND l.source_label_id = m.mailbox
+					)
+				`, sourceID, delta.mailbox); err != nil {
+					return fmt.Errorf("capture missing labels for IMAP mailbox %q: %w", delta.mailbox, err)
+				}
+			}
+		}
+		scanned := make(map[string]struct{}, len(normalizedDeltas))
+		for _, delta := range normalizedDeltas {
+			scanned[delta.mailbox] = struct{}{}
+		}
 		for _, messageID := range sortedIMAPMessageIDs(affected) {
 			mailboxes, err := s.imapMembershipMailboxes(ctx, tx, sourceID, messageID)
 			if err != nil {
 				return err
 			}
 			labelIDs := make([]int64, 0, len(mailboxes))
+			hasFolder := len(mailboxes) > 0
+			if !fullTopology {
+				rows, err := tx.QueryContext(ctx, `
+					SELECT l.id, l.source_id, l.source_label_id
+					FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+					WHERE ml.message_id = ?
+				`, messageID)
+				if err != nil {
+					return fmt.Errorf("query labels for IMAP message %d: %w", messageID, err)
+				}
+				for rows.Next() {
+					var id int64
+					var labelSource sql.NullInt64
+					var mailbox sql.NullString
+					if err := rows.Scan(&id, &labelSource, &mailbox); err != nil {
+						_ = rows.Close()
+						return fmt.Errorf("scan labels for IMAP message %d: %w", messageID, err)
+					}
+					if labelSource.Valid && labelSource.Int64 == sourceID && mailbox.Valid {
+						if _, ok := scanned[mailbox.String]; ok {
+							continue
+						}
+						hasFolder = true
+					}
+					labelIDs = append(labelIDs, id)
+				}
+				if err := rows.Err(); err != nil {
+					_ = rows.Close()
+					return fmt.Errorf("iterate labels for IMAP message %d: %w", messageID, err)
+				}
+				if err := rows.Close(); err != nil {
+					return fmt.Errorf("close labels for IMAP message %d: %w", messageID, err)
+				}
+			}
 			for _, mailbox := range mailboxes {
+				if _, ok := scanned[mailbox]; !fullTopology && !ok {
+					continue
+				}
 				labelID, err := ensureIMAPMailboxLabel(ctx, tx, sourceID, mailbox)
 				if err != nil {
 					return err
 				}
 				labelIDs = append(labelIDs, labelID)
 			}
-			if err := s.refreshAccountAttributionIfOutboundChangedTx(ctx, tx, messageID, func() error {
-				return replaceMessageLabelsTx(boundQuerier{ctx: ctx, q: tx}, messageID, labelIDs)
-			}); err != nil {
+			if _, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, labelIDs, true); err != nil {
 				return fmt.Errorf("replace labels for IMAP message %d: %w", messageID, err)
 			}
-			if len(mailboxes) == 0 {
+			if !hasFolder {
 				if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 					UPDATE messages SET deleted_from_source_at = %s
 					WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NULL
