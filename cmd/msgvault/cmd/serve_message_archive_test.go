@@ -130,56 +130,84 @@ func newArchiveDaemon(t *testing.T) (*store.Store, *store.Source, int64, *storeA
 }
 
 func TestArchiveMessageDaemonGrantEnforcement(t *testing.T) {
-	st, source, id, _, serverURL, owner, provider := newArchiveDaemon(t)
-	other, err := st.GetOrCreateSource("gmail", "other@example.test")
+	st, gmailSource, gmailID, _, serverURL, owner, provider := newArchiveDaemon(t)
+	imapSource, err := st.GetOrCreateSource("imap", "imap@example.test")
 	require.NoError(t, err)
+	sender, err := st.EnsureParticipant("codes@example.test", "Code Sender", "example.test")
+	require.NoError(t, err)
+	conv, err := st.EnsureConversation(t.Context(), imapSource.ID, "thread-imap", "Archive")
+	require.NoError(t, err)
+	imapID, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: imapSource.ID, ConversationID: conv, SourceMessageID: "message-imap", MessageType: "email", SenderID: sql.NullInt64{Int64: sender, Valid: true}}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}, EmailAddresses: []string{"codes@example.test"}, DisplayNames: []string{"Code Sender"}}}})
+	require.NoError(t, err)
+	archived := true
+	change := emailtags.ArchiveChange{Archived: &archived, DryRun: true}
+	_, err = owner.ArchiveMessage(t.Context(), imapID, change)
+	var ownerFailure *emailtags.MessageTagError
+	require.ErrorAs(t, err, &ownerFailure)
+	assert.Equal(t, "archive_unsupported", ownerFailure.Code)
+
 	var hidden *emailtags.MessageTagError
-	for _, tc := range []struct {
-		name    string
-		perms   []string
-		source  int64
-		senders []string
-		allowed bool
-		missing bool
+	for _, target := range []struct {
+		name   string
+		source *store.Source
+		id     int64
 	}{
-		{"wrong source", []string{"message.archive"}, other.ID, nil, false, false},
-		{"wrong sender", []string{"message.archive"}, source.ID, []string{"other@example.test"}, false, false},
-		{"missing", []string{"message.archive"}, source.ID, []string{"codes@example.test"}, false, true},
-		{"unrestricted sender", []string{"message.archive"}, source.ID, nil, true, false},
+		{"gmail", gmailSource, gmailID},
+		{"imap", imapSource, imapID},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertionsForTest := assert.New(t)
-			requirementsForTest := require.New(t)
-			var selections map[int64][]string
-			if tc.senders != nil {
-				selections = map[int64][]string{tc.source: tc.senders}
+		t.Run(target.name, func(t *testing.T) {
+			other, err := st.GetOrCreateSource(target.name, "other@example.test")
+			require.NoError(t, err)
+			for _, tc := range []struct {
+				name             string
+				source           int64
+				senders          []string
+				allowed, missing bool
+			}{
+				{"wrong source", other.ID, nil, false, false},
+				{"wrong sender", target.source.ID, []string{"other@example.test"}, false, false},
+				{"missing", target.source.ID, []string{"codes@example.test"}, false, true},
+				{"unrestricted sender", target.source.ID, nil, true, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					var selections map[int64][]string
+					if tc.senders != nil {
+						selections = map[int64][]string{tc.source: tc.senders}
+					}
+					token, err := owner.IssueAgentToken(t.Context(), tc.name, []string{"message.archive"}, []int64{tc.source}, nil, selections, time.Time{})
+					require.NoError(t, err)
+					client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: token.Secret, AllowInsecure: true})
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, client.Close()) })
+					before := provider.connects.Load()
+					id := target.id
+					if tc.missing {
+						id += 1000
+					}
+					result, err := client.ArchiveMessage(t.Context(), id, change)
+					if !tc.allowed {
+						var failure *emailtags.MessageTagError
+						require.ErrorAs(t, err, &failure)
+						assert.Equal(t, "message_not_found", failure.Code)
+						assert.Equal(t, "Message not found", failure.Message)
+						if hidden == nil {
+							hidden = failure
+						} else {
+							assert.Equal(t, hidden, failure)
+						}
+						assert.Equal(t, before, provider.connects.Load())
+						return
+					}
+					if target.name == "imap" {
+						var failure *emailtags.MessageTagError
+						require.ErrorAs(t, err, &failure)
+						assert.Equal(t, "archive_unsupported", failure.Code)
+					} else {
+						require.NoError(t, err)
+						assert.True(t, result.DryRun)
+					}
+				})
 			}
-			token, err := owner.IssueAgentToken(t.Context(), tc.name, tc.perms, []int64{tc.source}, nil, selections, time.Time{})
-			requirementsForTest.NoError(err)
-			client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: token.Secret, AllowInsecure: true})
-			requirementsForTest.NoError(err)
-			t.Cleanup(func() { require.NoError(t, client.Close()) })
-			archived := true
-			before := provider.connects.Load()
-			targetID := id
-			if tc.missing {
-				targetID += 1000
-			}
-			result, err := client.ArchiveMessage(t.Context(), targetID, emailtags.ArchiveChange{Archived: &archived, DryRun: true})
-			if !tc.allowed {
-				var failure *emailtags.MessageTagError
-				requirementsForTest.ErrorAs(err, &failure)
-				assertionsForTest.Equal("message_not_found", failure.Code)
-				if hidden == nil {
-					hidden = failure
-				} else {
-					assertionsForTest.Equal(hidden, failure)
-				}
-				assertionsForTest.Equal(before, provider.connects.Load(), "denials must precede provider access")
-				return
-			}
-			requirementsForTest.NoError(err)
-			assertionsForTest.True(result.DryRun)
 		})
 	}
 }
@@ -522,64 +550,6 @@ func TestArchiveCodeReaderGrant(t *testing.T) {
 			} else {
 				assertionsForTest.NotContains(string(body), "482913")
 				assertionsForTest.Contains(string(body), "[verification content masked]")
-			}
-		})
-	}
-}
-
-func TestArchiveIMAPAuthorizesBeforeMembershipError(t *testing.T) {
-	st, _, _, _, serverURL, owner, _ := newArchiveDaemon(t)
-	source, err := st.GetOrCreateSource("imap", "imap@example.test")
-	require.NoError(t, err)
-	other, err := st.GetOrCreateSource("imap", "other@example.test")
-	require.NoError(t, err)
-	sender, err := st.EnsureParticipant("codes@example.test", "Code Sender", "example.test")
-	require.NoError(t, err)
-	conv, err := st.EnsureConversation(t.Context(), source.ID, "thread-imap", "Archive")
-	require.NoError(t, err)
-	id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "message-imap", MessageType: "email", SenderID: sql.NullInt64{Int64: sender, Valid: true}}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}, EmailAddresses: []string{"codes@example.test"}, DisplayNames: []string{"Code Sender"}}}})
-	require.NoError(t, err)
-	archived := true
-	change := emailtags.ArchiveChange{Archived: &archived, DryRun: true}
-	_, err = owner.ArchiveMessage(t.Context(), id, change)
-	var failure *emailtags.MessageTagError
-	require.ErrorAs(t, err, &failure)
-	assert.Equal(t, "archive_unsupported", failure.Code)
-
-	var hidden *emailtags.MessageTagError
-	for _, tc := range []struct {
-		name     string
-		sourceID int64
-		senders  []string
-		missing  bool
-	}{
-		{name: "denied source", sourceID: other.ID},
-		{name: "denied sender", sourceID: source.ID, senders: []string{"other@example.test"}},
-		{name: "missing message", sourceID: source.ID, missing: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var selections map[int64][]string
-			if tc.senders != nil {
-				selections = map[int64][]string{tc.sourceID: tc.senders}
-			}
-			token, err := owner.IssueAgentToken(t.Context(), tc.name, []string{"message.archive"}, []int64{tc.sourceID}, nil, selections, time.Time{})
-			require.NoError(t, err)
-			client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: token.Secret, AllowInsecure: true})
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, client.Close()) })
-			targetID := id
-			if tc.missing {
-				targetID += 1000
-			}
-			_, err = client.ArchiveMessage(t.Context(), targetID, change)
-			var got *emailtags.MessageTagError
-			require.ErrorAs(t, err, &got)
-			assert.Equal(t, "message_not_found", got.Code)
-			assert.Equal(t, "Message not found", got.Message)
-			if hidden == nil {
-				hidden = got
-			} else {
-				assert.Equal(t, hidden, got)
 			}
 		})
 	}

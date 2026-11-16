@@ -15,17 +15,9 @@ var _ api.MessageArchiveStore = (*storeAPIAdapter)(nil)
 
 // ArchiveMessage reuses tag source ownership, readback, and guarded persistence.
 func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change emailtags.ArchiveChange, grant *agentgrant.Grant, acquireWrite func(context.Context) (func(), error)) (*emailtags.ArchiveResult, error) {
-	if change.Archived == nil {
-		return nil, emailtags.Failure("invalid_request", "archived must be true or false", nil, nil)
-	}
 	target, err := a.store.EmailTagTargetContext(ctx, id, "")
 	if err != nil {
-		failure, ok := errors.AsType[*emailtags.MessageTagError](err)
-		if grant != nil && ok && failure.Code == "message_not_found" {
-			return nil, emailtags.Failure("message_not_found", "Message not found", nil, nil)
-		}
-		// A stale IMAP membership still identifies a source for authorization.
-		if !ok || (failure.Code != "unsupported_provider" && !(failure.Code == "stale_identity" && target.SourceID != 0)) {
+		if _, ok := errors.AsType[*emailtags.MessageTagError](err); !ok {
 			return nil, err
 		}
 	}

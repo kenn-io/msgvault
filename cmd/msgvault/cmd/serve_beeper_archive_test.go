@@ -106,8 +106,12 @@ func TestBeeperArchive(t *testing.T) {
 			}
 			grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageArchive}, Sources: []agentgrant.SourceRef{ref}}
 			gates := 0
-			result, err := adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &tc.desired, DryRun: tc.dry, WholeChat: tc.whole}, grant, func(context.Context) (func(), error) { gates++; return func() { gates-- }, nil })
-			assertions.Zero(gates)
+			result, err := adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &tc.desired, DryRun: tc.dry, WholeChat: tc.whole}, grant, func(context.Context) (func(), error) { gates++; return func() {}, nil })
+			wantGates := 0
+			if !tc.dry && tc.whole && !tc.restricted && !tc.wrongSource && !tc.mergedSource {
+				wantGates = 1
+			}
+			assertions.Equal(wantGates, gates)
 			if tc.wantCode != "" {
 				var failure *emailtags.MessageTagError
 				requirements.ErrorAs(err, &failure)

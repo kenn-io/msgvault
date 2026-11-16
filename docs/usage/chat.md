@@ -174,15 +174,15 @@ Use `archive_message` with `message_id` and `archived: true` to remove a Gmail
 message from its inbox. Set `archived: false` to restore it. Optional `dry_run`
 previews the change. Repeated calls preserve the requested state and leave
 unrelated labels unchanged. For a Beeper message, pass `whole_chat: true` to
-archive or unarchive its entire chat, using API schema 5.3.0 or newer. This needs
+archive or unarchive its entire chat. This needs
 owner access or a source-wide grant without incoming sender restrictions;
 results include `chat_id`. Other providers return `archive_unsupported`.
 
-The tool requires daemon API schema 4.1.0. Delegated sessions list it when the
+The tool requires daemon API schema 5.4.0. Delegated sessions list it when the
 grant includes `message.archive`; the daemon checks the message's source.
-Owners can restrict incoming archive senders with
-[`--archive-sender`](../cli-reference.md#restrict-incoming-archive-senders).
-Read permissions remain account-scoped. HTTP sessions also require
+Owners can restrict incoming senders with
+[`--incoming-sender`](../cli-reference.md#restrict-incoming-senders).
+The restriction also applies to reads and reply parents. HTTP sessions also require
 `--http-allow-writes`. See
 [message archiving](../api-server.md#message-archiving) for provider consent,
 readback, and errors.

@@ -396,7 +396,7 @@ msgvault archive --message 42 --whole-chat
 msgvault unarchive --message 42 --whole-chat
 ```
 
-Requires API schema 5.3.0. The operation affects all messages in that Beeper chat.
+The operation affects all messages in that Beeper chat.
 Use owner access or a source-wide `message.archive` grant without incoming sender
 restrictions. JSON results include `chat_id`; previews never write to Beeper.
 
