@@ -19,12 +19,14 @@ const (
 // FTSDoc is the set of fields the dialect needs to upsert a message into
 // the full-text search index.
 type FTSDoc struct {
-	MessageID int64
-	Subject   string
-	Body      string
-	FromAddr  string
-	ToAddrs   string
-	CcAddrs   string
+	MessageID   int64
+	Subject     string
+	Body        string
+	FromAddr    string
+	ToAddrs     string
+	CcAddrs     string
+	voice       string
+	voiceLoaded bool
 }
 
 type ftsEnvelopeExpressions struct {
@@ -193,6 +195,9 @@ type Dialect interface {
 
 	// FTSMatches reports whether the stored search document for
 	// doc.MessageID is exactly what FTSUpsert would write for doc.
+	// PostgreSQL compares the prepared vector, auxiliary fields and version;
+	// SQLite compares stored FTS5 text. An absent entry returns false, nil.
+	// Building the expected document can fail, including with overflow.
 	FTSMatches(q querier, doc FTSDoc) (bool, error)
 
 	// FTSSearchClause returns SQL fragments for full-text search using ?

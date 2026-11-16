@@ -39,8 +39,6 @@ Temporary connection failures receive bounded retries; a persistent failure
 still ends the run with an error. Rerun the command after correcting the
 connection problem.
 
-Not in the latest release yet: Unicode mailbox negotiation.
-
 Servers advertising both IMAP4rev1 and IMAP4rev2 require explicit negotiation
 before using UTF-8 mailbox names. msgvault enables IMAP4rev2 after login on
 every connection, including reconnects, so folders with non-ASCII names can

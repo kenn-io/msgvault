@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/identityops"
+	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/provideridentity"
@@ -737,22 +738,23 @@ type sourceMessageCounter interface {
 
 // virtualAccountLister reads the virtual account catalog. Its freshness
 // depends on the confirmed identities, so a store that offers the catalog
-// also reports the revision that changes when one is added or removed.
+// also reports the revision that changes when one is added or removed or any
+// transaction rewrites a message's attribution.
 type virtualAccountLister interface {
 	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
-	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
+	AccountCatalogRevisionContext(ctx context.Context) (int64, error)
 }
 
 // virtualAccountCatalogFreshFor is how long a completed catalog read serves
 // as current. Confirming or removing an identity starts a new read at once.
 const virtualAccountCatalogFreshFor = 2 * time.Minute
 
-// virtualAccountCatalogVersion is the identity revision a catalog read
-// depends on, so a read from before an identity change is never fresh.
+// virtualAccountCatalogVersion is the catalog revision a read depends on, so a
+// read from before an identity or attribution change is never fresh.
 func (s *Server) virtualAccountCatalogVersion(ctx context.Context, lister virtualAccountLister) string {
-	revision, err := lister.AccountIdentityRevisionContext(ctx)
+	revision, err := lister.AccountCatalogRevisionContext(ctx)
 	if err != nil {
-		s.logger.Warn("reading account identity revision for the account catalog", "error", err)
+		s.logger.Warn("reading account catalog revision", "error", err)
 		return ""
 	}
 	return strconv.FormatInt(revision, 10)
@@ -877,6 +879,7 @@ type cliAccountResponse struct {
 	Type               string     `json:"type"`
 	DisplayName        string     `json:"display_name"`
 	OAuthApp           string     `json:"oauth_app,omitempty"`
+	AuthMethod         string     `json:"auth_method,omitempty"`
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
 	LastSync           *time.Time `json:"last_sync"`
@@ -1778,6 +1781,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"gc",
 		"import",
 		"import-maildir",
+		"import-ics",
 		"import-eml",
 		"import-emlx",
 		"import-gvoice",
@@ -2837,6 +2841,11 @@ func newCLIAccountResponse(src *store.Source, count, sourceDeleted int64) cliAcc
 		Type:               src.SourceType,
 		MessageCount:       count,
 		SourceDeletedCount: sourceDeleted,
+	}
+	if src.SourceType == "imap" && src.SyncConfig.Valid {
+		if cfg, err := imapclient.ConfigFromJSON(src.SyncConfig.String); err == nil {
+			account.AuthMethod = string(cfg.EffectiveAuthMethod())
+		}
 	}
 	if src.DisplayName.Valid {
 		account.DisplayName = src.DisplayName.String

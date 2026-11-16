@@ -1063,3 +1063,59 @@ func TestAccountAttributionFirstSentFolderReturnsSourceToPending(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]int64{id}, searchIDs(t, f.st, "received:"+attrSink))
 }
+
+func TestUpdateSourceIdentifierAdvancesAccountRevision(t *testing.T) {
+	f := newAttrFixture(t, "mbox", "old@example.net")
+	before, err := f.st.AccountIdentityRevisionContext(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, f.st.UpdateSourceIdentifier(t.Context(), f.source.ID, "new@example.net"))
+	after, err := f.st.AccountIdentityRevisionContext(t.Context())
+	require.NoError(t, err)
+	assert.Greater(t, after, before)
+}
+
+func TestAccountCatalogRevisionAdvancesWhenPersistAddsUnattributedMessage(t *testing.T) {
+	f := newAttrFixture(t, "mbox", "me@example.net")
+	revision := func() int64 {
+		r, err := f.st.AccountCatalogRevisionContext(t.Context())
+		require.NoError(t, err)
+		return r
+	}
+	unattributed := func() int64 {
+		accounts, err := f.st.ListVirtualAccountsContext(t.Context())
+		require.NoError(t, err)
+		var n int64
+		for _, a := range accounts[f.source.ID] {
+			if a.Unattributed {
+				n += a.MessageCount
+			}
+		}
+		return n
+	}
+	f.persist(attrMail{})
+	beforeRevision, beforeCount := revision(), unattributed()
+	f.persist(attrMail{})
+	require.Greater(t, unattributed(), beforeCount, "the catalog counts the new unattributed message")
+	assert.Greater(t, revision(), beforeRevision, "a new unattributed message changes the catalog revision")
+}
+
+func TestAccountCatalogRevisionBumpsOncePerRepairTransaction(t *testing.T) {
+	f := newAttrFixture(t, "mbox", "me@example.net")
+	for range 3 {
+		f.persist(attrMail{})
+	}
+	_, err := f.st.DB().ExecContext(t.Context(), `UPDATE messages SET account_address = NULL, account_path = NULL`)
+	require.NoError(t, err)
+	revision := func() int64 {
+		r, err := f.st.AccountCatalogRevisionContext(t.Context())
+		require.NoError(t, err)
+		return r
+	}
+	before := revision()
+	_, err = f.st.RepairAccountAttributionContext(t.Context(), f.source.ID, nil)
+	require.NoError(t, err)
+	assert.Equal(t, before+1, revision(), "three rows in one page advance the revision once")
+	_, err = f.st.RepairAccountAttributionContext(t.Context(), f.source.ID, nil)
+	require.NoError(t, err)
+	assert.Equal(t, before+1, revision(), "a pass with nothing pending leaves it alone")
+}

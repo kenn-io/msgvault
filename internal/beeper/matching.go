@@ -133,8 +133,26 @@ func (m *identityMatcher) match(
 			return outcome, err
 		}
 	}
-	if err := m.matchServiceScopeUsername(ctx, participantID, observation, &outcome); err != nil {
+	gathered := make(map[int64]struct{})
+	if err := m.matchServiceScopeUsername(ctx, participantID, observation, &outcome, gathered); err != nil {
 		return outcome, err
+	}
+	candidates, err := m.store.ParticipantUsernameSuggestionsContext(ctx, participantID)
+	if err != nil {
+		return outcome, err
+	}
+	for i := range candidates {
+		candidate := &candidates[i]
+		if _, ok := gathered[candidate.ID]; ok {
+			continue
+		}
+		other := candidate.LeftID
+		if other == participantID {
+			other = candidate.RightID
+		}
+		if err := m.gatherEvidence(ctx, candidate, participantID, other, nil); err != nil {
+			return outcome, err
+		}
 	}
 	return outcome, nil
 }
@@ -150,6 +168,7 @@ func (m *identityMatcher) matchServiceScopeUsername(
 	participantID int64,
 	observation *store.ParticipantContactObservation,
 	outcome *matchOutcome,
+	gathered map[int64]struct{},
 ) error {
 	if observation.AddressKind != store.ContactAddressUsername ||
 		observation.ServiceSlug == nil {
@@ -239,6 +258,7 @@ func (m *identityMatcher) matchServiceScopeUsername(
 		); err != nil {
 			return err
 		}
+		gathered[candidate.ID] = struct{}{}
 		if candidate.State == store.IdentityMatchStateCandidate {
 			outcome.Suggested = append(outcome.Suggested, candidate.ID)
 		}

@@ -32,6 +32,62 @@ func tagMembership(t *testing.T, st *store.Store, source, id int64, mailbox stri
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO imap_message_memberships (source_id,mailbox,uidvalidity,uid,message_id,flags) VALUES (?,?,?,?,?,?)`), source, mailbox, epoch, uid, id, `["Old"]`)
 	require.NoError(err)
 }
+
+func TestEmailTagReadTargetSourceDeleted(t *testing.T) {
+	for _, provider := range []string{"gmail", "msmail", "imap"} {
+		t.Run(provider, func(t *testing.T) {
+			st, source, id := tagFixture(t, provider, "INBOX|7")
+			if provider == "imap" {
+				tagMembership(t, st, source.ID, id, "INBOX", 77, 7)
+			}
+			want, err := st.EmailTagTargetContext(t.Context(), id, "")
+			require.NoError(t, err)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), id)
+			require.NoError(t, err)
+			got, err := st.EmailTagReadTargetContext(t.Context(), id, "")
+			require.NoError(t, err)
+			assert.Equal(t, want, got)
+			_, err = st.EmailTagTargetContext(t.Context(), id, "")
+			require.ErrorIs(t, err, store.ErrMessageNotFound)
+			result := &emailtags.MessageTagResult{
+				Provider: provider, Verified: true, Tags: []string{}, Flags: []string{},
+				Mailbox: got.Mailbox, UIDValidity: got.UIDValidity, UID: got.UID,
+			}
+			require.Error(t, st.SaveEmailTagsContext(t.Context(), got, result), "a read target must not bypass the save guard")
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), id)
+			require.NoError(t, err)
+			_, err = st.EmailTagReadTargetContext(t.Context(), id, "")
+			require.ErrorIs(t, err, store.ErrMessageNotFound)
+		})
+	}
+}
+
+func TestEmailTagReadTargetSourceDeletedIMAPIdentity(t *testing.T) {
+	st, source, id := tagFixture(t, "imap", "INBOX|7")
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), id)
+	require.NoError(t, err)
+	_, err = st.EmailTagReadTargetContext(t.Context(), id, "")
+	var failure *emailtags.MessageTagError
+	require.ErrorAs(t, err, &failure)
+	assert.Equal(t, "stale_identity", failure.Code)
+	tagMembership(t, st, source.ID, id, "INBOX", 77, 7)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE imap_folder_state SET uidvalidity=78 WHERE source_id=?`), source.ID)
+	require.NoError(t, err)
+	_, err = st.EmailTagReadTargetContext(t.Context(), id, "INBOX")
+	require.ErrorAs(t, err, &failure)
+	assert.Equal(t, "stale_identity", failure.Code)
+	tagMembership(t, st, source.ID, id, "Archive", 88, 9)
+	tagMembership(t, st, source.ID, id, "Trash", 99, 10)
+	_, err = st.EmailTagReadTargetContext(t.Context(), id, "")
+	require.ErrorAs(t, err, &failure)
+	assert.Equal(t, "stale_identity", failure.Code)
+	target, err := st.EmailTagReadTargetContext(t.Context(), id, "Trash")
+	require.NoError(t, err)
+	assert.Equal(t, "Trash", target.Mailbox)
+	assert.Equal(t, uint32(99), target.UIDValidity)
+	assert.Equal(t, uint32(10), target.UID)
+}
+
 func TestEmailTagsIMAPMembershipIdentityAndSave(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

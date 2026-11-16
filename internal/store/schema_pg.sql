@@ -1565,6 +1565,10 @@ CREATE TABLE IF NOT EXISTS message_raw (
     encryption_version INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS email_calendar_pending (
+    message_id BIGINT PRIMARY KEY REFERENCES message_raw(message_id) ON DELETE CASCADE
+);
+
 -- Explicit MIME identifiers (In-Reply-To, References, attached originals),
 -- indexed across archived email copies. A copy's own Message-ID is
 -- messages.rfc822_message_id. messages.email_linkage_outcome IS NULL marks a
@@ -3756,6 +3760,17 @@ CREATE INDEX IF NOT EXISTS idx_account_identities_address
 
 CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
     ON collection_sources(source_id);
+
+CREATE TABLE IF NOT EXISTS voice_transcripts (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    attachment_id BIGINT NOT NULL,
+    vault_uid TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_version_id TEXT NOT NULL,
+    content_version_id TEXT NOT NULL,
+    transcript_text TEXT NOT NULL,
+    PRIMARY KEY (message_id, attachment_id, vault_uid, source_id, source_version_id, content_version_id)
+);
 
 -- Current normalized source evidence, rebuilt from authoritative meeting raw.
 CREATE TABLE IF NOT EXISTS meeting_details (

@@ -22,10 +22,24 @@ type EmailTagTarget struct {
 
 // EmailTagTargetContext resolves metadata only; it never guesses by Message-ID.
 func (s *Store) EmailTagTargetContext(ctx context.Context, id int64, mailbox string) (EmailTagTarget, error) {
+	return s.emailTagTargetContext(ctx, id, mailbox, false)
+}
+
+// EmailTagReadTargetContext lets a provider read resolve source-deleted messages.
+// A source deletion mark does not prove the message is absent from the provider.
+func (s *Store) EmailTagReadTargetContext(ctx context.Context, id int64, mailbox string) (EmailTagTarget, error) {
+	return s.emailTagTargetContext(ctx, id, mailbox, true)
+}
+
+func (s *Store) emailTagTargetContext(ctx context.Context, id int64, mailbox string, includeSourceDeleted bool) (EmailTagTarget, error) {
 	var target EmailTagTarget
-	err := s.db.QueryRowContext(ctx, `SELECT m.id,m.source_id,m.source_message_id,s.source_type
+	query := `SELECT m.id,m.source_id,m.source_message_id,s.source_type
  FROM messages m JOIN sources s ON s.id=m.source_id
- WHERE m.id=? AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`, id).Scan(&target.ID, &target.SourceID, &target.SourceMessageID, &target.Provider)
+ WHERE m.id=? AND m.deleted_at IS NULL`
+	if !includeSourceDeleted {
+		query += ` AND m.deleted_from_source_at IS NULL`
+	}
+	err := s.db.QueryRowContext(ctx, query, id).Scan(&target.ID, &target.SourceID, &target.SourceMessageID, &target.Provider)
 	if errors.Is(err, sql.ErrNoRows) {
 		return target, emailtags.Failure("message_not_found", "message is not present in the archive source", nil, ErrMessageNotFound)
 	}

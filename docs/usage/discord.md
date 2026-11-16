@@ -14,7 +14,7 @@ membership, or moderates a guild.
 
 ## Import a personal data package
 
-Available on `main` (not yet in a release): import an extracted official
+Import an extracted official
 [Discord data package](https://support.discord.com/hc/en-us/articles/360004957991-Your-Discord-Data-Package):
 
 ```bash

@@ -100,7 +100,7 @@ describe('DirectoryReviewController', () => {
       if (request.method === 'POST') {
         expect(url.pathname).toBe('/api/v1/identity/match-candidates/1/review/reject');
         candidates = candidates.filter(row => row.id !== 1);
-        return Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' });
+        return Response.json({ candidate: candidate(1, 'rejected'), identity_revision: 1, cache_state: 'ready' });
       }
       const offset = Number(url.searchParams.get('offset'));
       offsets.push(offset);
@@ -285,7 +285,7 @@ describe('DirectoryReviewController', () => {
         controller.applyURLState({ identityState: 'candidate' }, true);
         await vi.waitFor(() => expect(controller.rows).toEqual([candidate(99)]));
         decisionResponse.resolve(Response.json({ candidate: candidate(17, 'accepted'), identity_revision: 4, cache_state: 'ready' }));
-        await expect(decision).resolves.toEqual({ ok: true, candidate: candidate(17, 'accepted'), cacheState: 'ready' });
+        await expect(decision).resolves.toEqual({ ok: true, candidate: candidate(17, 'accepted'), cacheState: 'ready', identityRevision: 4 });
         await navigation;
         expect(controller.identityState).toBe('candidate');
         expect(controller.rows).toEqual([candidate(100)]);
@@ -393,7 +393,7 @@ it.each([
     if (request.method === 'POST') {
       writes.push({ path: new URL(request.url).pathname, body: await request.json(), keepalive: request.keepalive });
       decided = true;
-      return Response.json({ candidate: accepted, cache_state: cacheState });
+      return Response.json({ candidate: accepted, cache_state: cacheState, identity_revision: 4 });
     }
     const path = new URL(request.url).pathname;
     if (path.includes('/participants/')) return Response.json({ id: Number(path.split('/').at(-1)), display_label: decided ? 'Updated Example' : 'Original Example', activity_count: decided ? 9 : 3, identifiers: [{ participant_id: Number(path.split('/').at(-1)), type: 'email', is_primary: true, value: decided ? 'updated@example.com' : 'original@example.com' }] });
@@ -411,7 +411,7 @@ it.each([
       expect(controller.isDecisionPending(1)).toBe(true);
       refresh.resolve(page([candidate(2)]));
     }
-    await expect(completion).resolves.toEqual({ ok: true, candidate: accepted, cacheState });
+    await expect(completion).resolves.toEqual({ ok: true, candidate: accepted, cacheState, identityRevision: 4 });
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
     expect(controller.isDecisionPending(1)).toBe(false);
     expect(writes).toEqual([{ path: `/api/v1/identity/match-candidates/1/review/${decision}`, body: { review_token: 'token-1-candidate', notes: 'Different people' }, keepalive: true }]);
@@ -430,7 +430,7 @@ it('returns to the first page when deciding the last later-page row empties that
   let decided = false;
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = requestOf(input);
-    if (request.method === 'POST') { decided = true; return Response.json({ candidate: candidate(11, 'rejected'), cache_state: 'ready' }); }
+    if (request.method === 'POST') { decided = true; return Response.json({ candidate: candidate(11, 'rejected'), identity_revision: 1, cache_state: 'ready' }); }
     const offset = Number(new URL(request.url).searchParams.get('offset'));
     return page(offset ? decided ? [] : [candidate(11)] : Array.from({ length: decided ? 10 : 11 }, (_, i) => candidate(i + 1)), offset);
   }));
@@ -474,7 +474,7 @@ it.each([
     const navigation = direction === 'next' ? controller.loadNextPage() : direction === 'invalidate' ? controller.invalidate(true) : controller.retryPage();
     await vi.waitFor(() => expect(posted).toBe(true));
     if (direction === 'invalidate') expect(order).toEqual(['GET', 'POST']);
-    decision.resolve(failed ? Response.json({ message: 'Decision unavailable' }, { status: 503 }) : Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' }));
+    decision.resolve(failed ? Response.json({ message: 'Decision unavailable' }, { status: 503 }) : Response.json({ candidate: candidate(1, 'rejected'), identity_revision: 1, cache_state: 'ready' }));
     await vi.waitFor(() => expect(controller.pendingDecisions.size).toBe(0));
     if (direction !== 'invalidate') {
       await vi.waitFor(() => expect(destinationRead).toBe(true));

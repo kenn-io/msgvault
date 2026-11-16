@@ -3,14 +3,13 @@ package store_test
 import (
 	"context"
 	"fmt"
-	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"hegel.dev/go/hegel"
+	"pgregory.net/rapid"
 )
 
 func TestSourceRemovalClearsOnlyItsRepairLedger(t *testing.T) {
@@ -97,11 +96,11 @@ func TestSourceRemovalRollsBackRepairCleanup(t *testing.T) {
 }
 
 func TestSourceRemovalRepairLedgerIsolation(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		require := require.New(ht)
-		n := hegel.Draw(ht, hegel.Integers(uint64(0), uint64(math.MaxUint64)))
-		serialized := hegel.Draw(ht, hegel.Booleans())
-		st := testutil.NewTestStore(ht.T)
+	rapid.Check(t, func(rt *rapid.T) {
+		require := require.New(rt)
+		n := rapid.Uint64().Draw(rt, "n")
+		serialized := rapid.Bool().Draw(rt, "serialized")
+		st := testutil.NewTestStore(t)
 		defer func() { require.NoError(st.Close()) }()
 		identifier := fmt.Sprintf("archive_%%%x#@example.net", n)
 		src, err := st.GetOrCreateSource("outlook", identifier)
@@ -117,5 +116,5 @@ func TestSourceRemovalRepairLedgerIsolation(t *testing.T) {
 		applied, err = st.IsMigrationApplied(other)
 		require.NoError(err)
 		require.True(applied, "an overlapping identifier must keep its repair state")
-	}, hegel.WithTestCases(32), hegel.WithDatabase(""))
+	})
 }

@@ -28,6 +28,7 @@ const (
 )
 
 var topLevelCommandGroups = map[string]string{
+	"cli":                     helpGroupOperations,
 	"source":                  helpGroupSources,
 	"address":                 helpGroupPeople,
 	"activity":                helpGroupIndex,
@@ -53,6 +54,7 @@ var topLevelCommandGroups = map[string]string{
 	"add-teams":               helpGroupSources,
 	"add-twenty":              helpGroupSources,
 	"add-twilio":              helpGroupSources,
+	"agent":                   helpGroupOperations,
 	"agent-token":             helpGroupOperations,
 	"archive-remote-images":   helpGroupSources,
 	"attribute-definition":    helpGroupPeople,
@@ -75,6 +77,7 @@ var topLevelCommandGroups = map[string]string{
 	"deduplicate":             helpGroupDelete,
 	"delete-deduped":          helpGroupDelete,
 	"delete-staged":           helpGroupDelete,
+	"diagnose-acquisition":    helpGroupSources,
 	"docbank":                 helpGroupOperations,
 	"draft-compose":           helpGroupWrite,
 	"draft-delete":            helpGroupWrite,
@@ -96,6 +99,7 @@ var topLevelCommandGroups = map[string]string{
 	"find-chat":               helpGroupRead,
 	"gc":                      helpGroupDelete,
 	"identity":                helpGroupPeople,
+	"import-ics":              helpGroupImport,
 	"import-eml":              helpGroupImport,
 	"import-emlx":             helpGroupImport,
 	"import-gvoice":           helpGroupImport,

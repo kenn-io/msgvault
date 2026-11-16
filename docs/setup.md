@@ -457,7 +457,7 @@ See [Recommended Configuration](/docs/usage/recommended-configuration/) for the
 values it writes and the probe steps the hosted lanes still need.
 
 Document text search uses Docbank processing and its consent settings. See
-[Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) for the profile and setup steps.
+[Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank) for the profile and setup steps.
 
 ## Optional: Sync Google Calendar
 
