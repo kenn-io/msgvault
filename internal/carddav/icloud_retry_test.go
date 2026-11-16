@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
+	"pgregory.net/rapid"
 )
 
 func TestICloudRetryAfterStopsEveryDiscoverySubrequest(t *testing.T) {
@@ -42,11 +42,11 @@ func TestICloudRetryAfterStopsEveryDiscoverySubrequest(t *testing.T) {
 }
 
 func TestDiscoveryFallbackNeverDiscardsPositiveRetryAfterProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		status := hegel.Draw(ht, hegel.SampledFrom([]int{http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusGone, http.StatusNotImplemented}))
-		delay := hegel.Draw(ht, hegel.Integers(int64(1), int64(math.MaxInt64)))
-		assert.False(ht, discoveryFallbackAllowed(&StatusError{StatusCode: status, RetryAfter: time.Duration(delay)}))
-	}, hegel.WithDatabase(""))
+	rapid.Check(t, func(rt *rapid.T) {
+		status := rapid.SampledFrom([]int{http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusGone, http.StatusNotImplemented}).Draw(rt, "status")
+		delay := rapid.Int64Range(1, math.MaxInt64).Draw(rt, "delay")
+		assert.False(rt, discoveryFallbackAllowed(&StatusError{StatusCode: status, RetryAfter: time.Duration(delay)}))
+	})
 }
 
 // Minimal regression for the shrunk positive-delay fallback counterexample.
