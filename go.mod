@@ -22,6 +22,7 @@ require (
 	github.com/doordash-oss/oapi-codegen-dd/v3 v3.76.5
 	github.com/duckdb/duckdb-go/v2 v2.20000.0
 	github.com/dustin/go-humanize v1.1.0
+	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-msgauth v0.7.0
@@ -67,9 +68,9 @@ require (
 	golang.org/x/time v0.16.0
 	google.golang.org/api v0.310.0
 	gopkg.in/yaml.v3 v3.0.1
-	hegel.dev/go/hegel v0.9.31
 	howett.net/plist v1.0.1
 	maunium.net/go/mautrix v0.32.0
+	pgregory.net/rapid v1.3.0
 )
 
 require (

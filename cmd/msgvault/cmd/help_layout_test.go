@@ -32,6 +32,13 @@ func helpTestSubprocess(t *testing.T) bool {
 	if *updateGolden {
 		args = append(args, "-update")
 	}
+	// Pass rapid's seed, fail-file, and case-count flags to the child, which
+	// is where rapid.Check runs.
+	flag.Visit(func(f *flag.Flag) {
+		if strings.HasPrefix(f.Name, "rapid.") {
+			args = append(args, "-"+f.Name+"="+f.Value.String())
+		}
+	})
 	command := exec.CommandContext(t.Context(), executable, args...)
 	command.Env = append(os.Environ(), "MSGVAULT_HELP_TEST="+t.Name(), "MSGVAULT_HOME="+t.TempDir())
 	output, err := command.CombinedOutput()

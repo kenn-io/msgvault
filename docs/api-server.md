@@ -166,7 +166,14 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.6.0**.
+it is separate from the binary release version. The current schema is **5.8.0**.
+
+Schema 5.8.0 advertises the existing structured person profile routes to MCP:
+`GET` and `PATCH /api/v1/people/{id}/profile`,
+`GET /api/v1/people/{id}/profile/history`, and
+`GET /api/v1/people/{id}/profile/media/{media_id}/content`.
+
+Schema 5.7.0 adds first-appearance evidence to person contact state.
 
 Schema 5.6.0 adds `POST /api/v1/identity/cache-refresh` to rebuild
 identity-derived datasets without changing links or profiles.

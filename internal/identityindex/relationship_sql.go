@@ -20,7 +20,7 @@ WITH filtered_facts AS (
 	       f.occurred_at, f.message_type, f.conversation_type, f.entry_kind,
 	       f.is_chat, f.is_from_me, f.attachment_count, f.deleted_from_source
 	FROM %[1]s f
-	WHERE (%[2]s) AND NOT f.unsent
+	WHERE (%[2]s) AND NOT f.unsent AND NOT f.email_invite
 	GROUP BY ALL
 ), nonchat_units AS (
 	SELECT ('message:' || f.message_id)::VARCHAR AS entry_key,

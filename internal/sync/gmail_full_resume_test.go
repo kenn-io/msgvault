@@ -231,7 +231,7 @@ func (f *backfillHistoryTransport) RoundTrip(r *http.Request) (*http.Response, e
 func TestGmailFullBackfillPreservesPendingHistory(t *testing.T) {
 	// Serial: gmailTransportClient replaces http.DefaultClient.
 	e := acquisitionDurabilityEnv(t)
-	f := &backfillHistoryTransport{gmailCoverageTransport: {history: 1000}}
+	f := &backfillHistoryTransport{history: 1000}
 	api := gmailTransportClient(t, f)
 	e.Syncer = New(api, e.Store, nil)
 	first, err := e.Syncer.Full(t.Context(), testEmail)
