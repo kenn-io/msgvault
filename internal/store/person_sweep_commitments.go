@@ -89,16 +89,20 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	generation.ProgramID, generation.ProgramVersion = peoplesweep.CommitmentProgramID, peoplesweep.CommitmentProgramVersion
 	generation.ProgramFingerprint = peoplesweep.CommitmentProgramFingerprint()
 	generation.Claims, generation.EvidenceStatusChanges = nil, nil
+	promises, err := s.matchCommitmentCitations(ctx, personID, sources, result.Output.Promises)
+	if err != nil {
+		return nil, err
+	}
 	aligner := make(commitmentEvidenceAligner)
-	evidence := make([]personfacts.EvidenceInput, len(result.Output.Promises))
-	for i, promise := range result.Output.Promises {
+	evidence := make([]personfacts.EvidenceInput, len(promises))
+	for i, promise := range promises {
 		source, ok := sources[promise.SourceID]
 		if !ok {
 			return nil, errCommitmentWindowChanged
 		}
 		evidence[i] = commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
 	}
-	for i, promise := range result.Output.Promises {
+	for i, promise := range promises {
 		descriptor := personfacts.TargetDescriptor{Kind: personfacts.TargetCommitment,
 			Key: promise.TargetKey, Slug: "commitment", ValueType: personfacts.ValueCommitment,
 			Cardinality: personfacts.CardinalitySingle, Sensitive: true, MaxLength: 240}
@@ -135,6 +139,71 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		}
 	}
 	return prepared, nil
+}
+
+func (s *Store) matchCommitmentCitations(ctx context.Context, personID int64, sources map[string]peoplesweep.CommitmentSource, promises []peoplesweep.CommitmentPromise) ([]peoplesweep.CommitmentPromise, error) {
+	if len(promises) == 0 {
+		return promises, nil
+	}
+	args := []any{personID}
+	for _, source := range sources {
+		args = append(args, source.SourceRef)
+	}
+	if len(args) == 1 {
+		return nil, errCommitmentWindowChanged
+	}
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT d.target_key, e.source_ref, e.source_version, e.subject_ref, e.span_start, e.span_end, e.excerpt
+		FROM person_commitments d JOIN person_fact_claims c ON c.person_id = d.person_id AND c.target_kind = 'commitment' AND c.target_key = d.target_key AND c.origin = 'commitment'
+		JOIN person_fact_claim_evidence ce ON ce.claim_id = c.id JOIN person_fact_evidence e ON e.id = ce.evidence_id
+		WHERE d.person_id = ? AND c.relation = 'support' AND c.rejection_action IS NULL AND c.normalized_value_json IS NOT NULL
+		AND e.source_ref IN (`+strings.Repeat("?,", len(args)-2)+`?)`), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	matches := make([]map[string]bool, len(promises))
+	for rows.Next() {
+		var key, ref, version, subject, quote string
+		var start, end sql.NullInt64
+		if err := rows.Scan(&key, &ref, &version, &subject, &start, &end, &quote); err != nil {
+			return nil, err
+		}
+		for i, promise := range promises {
+			source := sources[promise.SourceID]
+			role := "commitment-promise"
+			if source.Direction == peoplesweep.CommitmentOwedBy {
+				role = personfacts.CommitmentOwnerSubjectRef
+			}
+			if source.SourceRef != ref || source.SourceVersion != version || subject != role || !start.Valid || !end.Valid ||
+				promise.Start >= end.Int64 || start.Int64 >= promise.End || peoplesweep.CommitmentQuoteRepeated(source.Text, quote) || peoplesweep.CommitmentQuoteRepeated(source.Text, promise.Quote) {
+				continue
+			}
+			if matches[i] == nil {
+				matches[i] = make(map[string]bool)
+			}
+			matches[i][key] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	uses := make(map[string]int)
+	for _, match := range matches {
+		for key := range match {
+			uses[key]++
+		}
+	}
+	promises = append([]peoplesweep.CommitmentPromise(nil), promises...)
+	for i, match := range matches {
+		if len(match) == 1 {
+			for key := range match {
+				if uses[key] == 1 {
+					promises[i].TargetKey = key
+				}
+			}
+		}
+	}
+	return promises, nil
 }
 
 func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {

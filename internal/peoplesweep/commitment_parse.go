@@ -60,6 +60,7 @@ type CommitmentPromise struct {
 	End       int64   `json:"end"`
 	Summary   string  `json:"summary"`
 	DueOn     *string `json:"due_on"`
+	DuePhrase *string `json:"due_phrase"`
 	TargetKey string  `json:"-"`
 }
 
@@ -104,7 +105,7 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 			if err != nil || due.Format(time.DateOnly) != *promise.DueOn {
 				return invalid()
 			}
-			if !commitmentQuoteHasDate(promise.Quote, due, source.EventTime, location) {
+			if promise.DuePhrase == nil || strings.TrimSpace(*promise.DuePhrase) == "" || !strings.Contains(promise.Quote, *promise.DuePhrase) || !commitmentQuoteHasDate(*promise.DuePhrase, due, source.EventTime, location) {
 				promise.DueOn = nil
 			}
 		}
@@ -150,7 +151,7 @@ var (
 	commitmentYearFollows     = regexp.MustCompile(`^[,\s]*\d{4}\b`)
 	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/(?:\d{4}|\d{2})\b`)
 	commitmentTomorrow        = regexp.MustCompile(`\b(day after )?tomorrow\b`)
-	commitmentRelativeDays    = regexp.MustCompile(`\bin ([a-z0-9]+) days?\b`)
+	commitmentRelativeDays    = regexp.MustCompile(`\bin ([a-z0-9]+) (days?|weeks?)\b`)
 	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:(?:by|on)\s+)?(?:(this|next)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
 	commitmentInTail          = regexp.MustCompile(`^\s+in\b`)
 )
@@ -223,6 +224,12 @@ func quoteHasRelativeDays(quote string, due, day time.Time) bool {
 		days, err := strconv.Atoi(match[1])
 		if err != nil {
 			days = slices.Index([]string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"}, match[1])
+		}
+		if strings.HasPrefix(match[2], "week") {
+			if days > 36600/7 {
+				continue
+			}
+			days *= 7
 		}
 		if days > 0 && days <= 36600 && day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) {
 			return true

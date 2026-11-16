@@ -36,8 +36,8 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	r.Len(window.Sources, 1)
 	start, end := int64(len(first)+1), int64(len(text))
 	parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[
-		{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send the draft","due_on":null},
-		{"source_id":%q,"direction":"owed_to","quote":%q,"start":%d,"end":%d,"summary":"Check the venue","due_on":null}
+		{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send the draft","due_on":null,"due_phrase":null},
+		{"source_id":%q,"direction":"owed_to","quote":%q,"start":%d,"end":%d,"summary":"Check the venue","due_on":null,"due_phrase":null}
 	]}`, window.Sources[0].ID, first, len(first), window.Sources[0].ID, second, start, end)), window)
 	r.NoError(err)
 	request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
@@ -73,7 +73,7 @@ func TestCommitmentWeekdayDueDateSurvivesDecisions(t *testing.T) {
 	r.NoError(err)
 	r.Len(window.Sources, 1)
 	const due = "2026-08-24"
-	parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send it","due_on":%q}]}`, window.Sources[0].ID, quote, len(quote), due)), window)
+	parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send it","due_on":%q,"due_phrase":"I will send it Monday"}]}`, window.Sources[0].ID, quote, len(quote), due)), window)
 	r.NoError(err)
 	request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
 	_, err = f.store.ApplyPersonSweep(ctx, request)
@@ -341,7 +341,7 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 			r.NoError(err)
 			r.Len(window.Sources, 1)
 			a.Equal(small, window.Sources[0].MessageID)
-			parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":0,"end":12,"summary":"Call","due_on":null}]}`, window.Sources[0].ID)), window)
+			parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":0,"end":12,"summary":"Call","due_on":null,"due_phrase":null}]}`, window.Sources[0].ID)), window)
 			r.NoError(err)
 			request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
 			_, err = f.store.ApplyPersonSweep(ctx, request)
@@ -408,7 +408,7 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 			fits, err := peoplesweep.CommitmentInputFits(window)
 			r.NoError(err)
 			a.True(fits)
-			empty, err = peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":92161,"end":92173,"summary":"Call","due_on":null}]}`, largeSource)), window)
+			empty, err = peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":92161,"end":92173,"summary":"Call","due_on":null,"due_phrase":null}]}`, largeSource)), window)
 			r.NoError(err)
 			request = commitmentApplyRequest(t, f, window, cfg.Commitments, empty)
 			request.Generation.ResolvedAt = laterNow
@@ -550,7 +550,7 @@ func TestCommitmentApplyRevokedConsentRetainsPaidAccounting(t *testing.T) {
 	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 	r.NoError(err)
 	r.Len(window.Sources, 1)
-	parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send the draft","due_on":null}]}`, window.Sources[0].ID, quote, len(quote))), window)
+	parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send the draft","due_on":null,"due_phrase":null}]}`, window.Sources[0].ID, quote, len(quote))), window)
 	r.NoError(err)
 	request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
 	revoked, err := f.store.RevokePersonCommitmentConsent(ctx, request.Generation.Policy.ProviderPolicyFingerprint, "test")
@@ -798,6 +798,82 @@ func TestCommitmentDecisionDoesNotReturnAfterAmbiguousEdit(t *testing.T) {
 			r.NoError(err)
 		} else {
 			r.Equal(LoopStateOpen, items[0].State)
+		}
+	}
+}
+
+func TestRediscoveredCommitmentKeepsDecision(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "rediscovered-promise", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	const original = "I will send it."
+	persist("promise", original+" Thanks!", -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	for i, quote := range []string{original, original + " Thanks!"} {
+		if i > 0 {
+			_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitment_frontiers SET scope_fingerprint = '' WHERE person_id = ?`), f.personID)
+			r.NoError(err)
+			f = nextCommitmentTestAttempt(t, f, "-rescan")
+		}
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Len(window.Sources, 1)
+		output := peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, End: int64(len(quote)), Summary: "Send"}}}
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
+		r.NoError(err)
+		items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, true)
+		r.NoError(err)
+		r.Len(items, 1)
+		if i == 0 {
+			_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, personFactLedgerNow)
+			r.NoError(err)
+		} else {
+			r.Equal(LoopStateDone, items[0].State)
+		}
+	}
+}
+
+func TestRediscoveredCommitmentWithAmbiguousOverlapStaysOpen(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "ambiguous-overlap", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	const first, second = "I will send it.", "I will call."
+	persist("promise", first+" "+second, -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	for i := range 2 {
+		if i > 0 {
+			_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitment_frontiers SET scope_fingerprint = '' WHERE person_id = ?`), f.personID)
+			r.NoError(err)
+			f = nextCommitmentTestAttempt(t, f, "-rescan")
+		}
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Len(window.Sources, 1)
+		id := window.Sources[0].ID
+		output := peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{
+			{SourceID: id, Direction: peoplesweep.CommitmentOwedTo, Quote: first, End: int64(len(first)), Summary: "Send"},
+			{SourceID: id, Direction: peoplesweep.CommitmentOwedTo, Quote: second, Start: int64(len(first) + 1), End: int64(len(first) + 1 + len(second)), Summary: "Call"},
+		}}
+		if i > 0 {
+			output.Promises = []peoplesweep.CommitmentPromise{{SourceID: id, Direction: peoplesweep.CommitmentOwedTo, Quote: first + " " + second, End: int64(len(first) + 1 + len(second)), Summary: "Send and call"}}
+		}
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
+		r.NoError(err)
+		items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, false)
+		r.NoError(err)
+		if i == 0 {
+			r.Len(items, 2)
+			_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, personFactLedgerNow)
+			r.NoError(err)
+		} else {
+			var found bool
+			for _, item := range items {
+				if item.Quote == first+" "+second {
+					found = true
+					r.Equal(LoopStateOpen, item.State)
+				}
+			}
+			r.True(found)
 		}
 	}
 }
