@@ -345,9 +345,10 @@ What happens:
   stays `blocked` without further polling. Resolve it in Docbank, then restart
   the msgvault daemon to resume checking its state.
 
-Provider transcripts stay searchable through the normal message text. This
-route does not add search over Docbank's processed output yet. Check progress
-with a query:
+Provider transcripts stay searchable through the normal message text. Set
+`integrations.docbank.voice_transcript_search` to search generated transcripts.
+Restart the daemon after changing this setting. Turning it off removes generated
+transcripts from the search index. Check progress with a query:
 
 ```sql
 SELECT retention_state, error_code, COUNT(*)
@@ -391,8 +392,9 @@ A scheduled run keeps other sources on their cadence:
 
 - **Bounded runs.** One scheduled Beeper job works for at most 3 minutes
   across all accounts. It also stops early when another scheduled source has
-  waited for it for a minute. It stops at a chat or history-page boundary,
-  completes the run, and the next run continues from the saved cursors.
+  waited for it for a minute. It stops between chats, history pages, or member
+  updates. The next run continues message and roster work,
+  including optional contact matching, from saved progress.
 - **Account rotation.** After stopping within an account, the next run starts
   with the following account. Each account retains its own progress.
 - **Yielding to waiting work.** When a run stops because other work is

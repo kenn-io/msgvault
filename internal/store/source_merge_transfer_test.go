@@ -269,6 +269,7 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 	var participant int64
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE email_address = 'owner@example.test'`).Scan(&participant))
 	require.NoError(st.EnsureConversationParticipant(oldChat, participant, "member"))
+	require.NoError(st.SetConversationMemberCount(destChat, 1))
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients(message_id, participant_id, recipient_type, email_address) VALUES (?, ?, 'to', 'owner@example.test')`), duplicate, participant)
 	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO reactions(message_id, participant_id, reaction_type, reaction_value) VALUES (?, ?, 'emoji', 'like')`), duplicate, participant)
@@ -286,6 +287,9 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 	req := store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID, DryRun: true}
 	preview, err := st.MergeSourcesContext(ctx, req)
 	require.NoError(err)
+	unresolved, err := st.ListUnresolvedConversationIDs(ctx, into.ID)
+	require.NoError(err)
+	assert.NotContains(unresolved, "!shared:example.test")
 	assert.Equal(int64(3), preview.MessagesMoved)
 	assert.Equal(int64(1), preview.DuplicatesHidden)
 	assert.Zero(preview.AttachmentsCopied, "an existing legacy attachment hash needs no new copy")
@@ -295,6 +299,9 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 	req.DryRun = false
 	result, err := st.MergeSourcesContext(ctx, req)
 	require.NoError(err)
+	unresolved, err = st.ListUnresolvedConversationIDs(ctx, into.ID)
+	require.NoError(err)
+	assert.Contains(unresolved, "!shared:example.test")
 	preview.DryRun = false
 	assert.Equal(preview, result)
 	for _, id := range []int64{duplicate, unique, repeated} {

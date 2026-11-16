@@ -2,6 +2,7 @@ import {
   getDomain as generatedGetDomain,
   getParticipant as generatedGetParticipant,
   linkIdentityParticipants as generatedLinkIdentityParticipants,
+  refreshIdentityCache as generatedRefreshIdentityCache,
   unlinkIdentityParticipants as generatedUnlinkIdentityParticipants,
 } from '../api/generated/api/api';
 import {
@@ -37,7 +38,7 @@ export type LinkOutcome =
     }
   | {
       ok: false;
-      code: 'already_linked' | 'invalid' | 'error';
+      code: 'already_linked' | 'invalid' | 'error' | 'cache_unsupported' | 'cache_build_required';
       message: string;
     };
 export interface RelationshipsMergeContext {
@@ -136,6 +137,8 @@ export class RelationshipsController {
   lastContactAt = $state('');
   canonicalID = $state<number | null>(null);
   identityRevision = $state<number | null>(null);
+  pendingIdentityCacheRevision = $state<number | null>(null);
+  identityCacheRefreshing = $state(false);
   activityRevision = $state(0);
   relationshipCalendar = $state<RelationshipCalendar | null>(null);
   relationshipCalendarYear = $state(new Date().getUTCFullYear());
@@ -649,6 +652,23 @@ export class RelationshipsController {
       return { ok: false, code: 'error', message: errorMessage(cause, 0) };
     }
   }
+  async refreshIdentityCache(): Promise<LinkOutcome> {
+    this.identityCacheRefreshing = true;
+    try {
+      return await this.applyLinkResponse(await generatedRefreshIdentityCache(this.client), true);
+    } catch (cause: unknown) {
+      return { ok: false, code: 'error', message: errorMessage(cause, 0) };
+    } finally {
+      this.identityCacheRefreshing = false;
+    }
+  }
+  recordIdentityCacheState(revision: number, state: 'ready' | 'stale'): void {
+    if (state === 'stale') {
+      this.pendingIdentityCacheRevision = Math.max(this.pendingIdentityCacheRevision ?? revision, revision);
+    } else {
+      if (this.pendingIdentityCacheRevision !== null && revision >= this.pendingIdentityCacheRevision) this.pendingIdentityCacheRevision = null;
+    }
+  }
   private async applyLinkResponse(response: {
     data?: {
       identity_revision: number;
@@ -656,9 +676,11 @@ export class RelationshipsController {
     };
     error?: unknown;
     response: Response;
-  }): Promise<LinkOutcome> {
+  }, force = false): Promise<LinkOutcome> {
     const { data, error, response: res } = response;
     if (data) {
+      this.recordIdentityCacheState(data.identity_revision, data.cache_state);
+      if (force) this.relationshipCalendarCache.clear();
       // A null identityRevision means no identity revision was loaded, so
       // there is nothing to compare against — treat that as "changed" and
       // refresh anyway rather than silently skipping the reopen. The ranked
@@ -680,7 +702,7 @@ export class RelationshipsController {
     if (res.status === 409 && isErrorCode(error, 'already_linked'))
       return { ok: false, code: 'already_linked', message };
     if (res.status === 400) return { ok: false, code: 'invalid', message };
-    return { ok: false, code: 'error', message };
+    return { ok: false, code: isErrorCode(error, 'identity_cache_unsupported') ? 'cache_unsupported' : isErrorCode(error, 'identity_cache_build_required') ? 'cache_build_required' : 'error', message };
   }
   destroy(): void {
     this.clearCacheBuildRetry();

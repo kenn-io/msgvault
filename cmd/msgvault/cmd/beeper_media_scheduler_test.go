@@ -667,3 +667,16 @@ func TestPrivateNetworkDocbankRuntime(t *testing.T) {
 		<-sched.Stop().Done()
 	}
 }
+
+func TestVoiceTranscriptSearchDisabledWhenDocbankOff(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st, blobs := storedBeeperVoiceNote(t)
+	sched := scheduler.New(nil)
+	defer func() { <-sched.Stop().Done() }()
+	require.NoError(st.SetVoiceTranscriptSearch(t.Context(), true))
+	err := configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), t.TempDir(), config.DocbankIntegrationConfig{VoiceTranscriptSearch: true}, nil)
+	require.NoError(err)
+	var value string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT value FROM archive_metadata WHERE key='voice_transcript_search_enabled'`).Scan(&value))
+	assert.Equal("0", value)
+}

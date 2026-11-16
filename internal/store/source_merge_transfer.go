@@ -29,6 +29,12 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
  ON CONFLICT (conversation_id, participant_id) DO NOTHING`, c.destination, c.id); err != nil {
 				return err
 			}
+			if err := s.setConversationRosterRepairPending(boundQuerier{ctx: ctx, q: tx}, c.destination, true); err != nil {
+				return err
+			}
+			if err := s.invalidateMessagingRouteEvidenceWith(boundQuerier{ctx: ctx, q: tx}, c.destination, ""); err != nil {
+				return err
+			}
 		}
 	}
 	for _, m := range plan.messages {
@@ -175,7 +181,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	// Moved mail uses a new mailbox, and incoming aliases or a Sent folder can
 	// change attribution for existing destination mail too. Mark these rows in
 	// the merge transaction; derive them in pages after it commits.
-	if _, err := tx.ExecContext(ctx, `UPDATE messages SET account_address = NULL, account_path = NULL
+	if _, err := tx.execAttributionContext(ctx, `UPDATE messages SET account_address = NULL, account_path = NULL
  WHERE source_id = ? AND COALESCE(message_type, '') IN ('', 'email', 'calendar_event')`, into); err != nil {
 		return fmt.Errorf("mark merged account attribution pending: %w", err)
 	}
