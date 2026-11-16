@@ -250,7 +250,7 @@ func TestNotionTreeTraversalSkipsNestedMeetingType(t *testing.T) {
 		want             []string
 	}{
 		{"legacy nested page", `{"results":[{"id":"nested-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Nested"}],"checked":false}}],"has_more":false},`, CoverageAvailable, []string{"sibling-action"}},
-		{"legacy without parents", `{"results":[{"id":"nested-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Nested"}],"checked":false}}],"has_more":false},`, CoverageUnavailable, []string{}},
+		{"legacy without parents", `{"results":[{"id":"nested-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Nested"}],"checked":false}}],"has_more":false},`, CoverageAvailable, []string{"sibling-action"}},
 		{"sibling page", ``, CoverageAvailable, []string{"sibling-action"}},
 		{"ambiguous page", ``, CoverageUnavailable, []string{}},
 	} {

@@ -202,7 +202,7 @@ func notionTreeBlocks(raw jsontext.Value, expectedRootID string) ([]jsontext.Val
 	if !traversal.sawNested {
 		return traversal.blocks, complete
 	}
-	if legacyComplete && !complete && !legacy.unknownNestedParent {
+	if legacyComplete && !complete {
 		return legacy.blocks, true
 	}
 	if complete && !legacyComplete && (!legacy.consumedNested || legacy.parentMismatch) {
@@ -218,16 +218,15 @@ func notionTreeBlocks(raw jsontext.Value, expectedRootID string) ([]jsontext.Val
 }
 
 type notionTreeTraversal struct {
-	pages               []jsontext.Value
-	nextPage            int
-	pageVisits          int
-	blockVisits         int
-	blocks              []jsontext.Value
-	includeNested       bool
-	sawNested           bool
-	consumedNested      bool
-	parentMismatch      bool
-	unknownNestedParent bool
+	pages          []jsontext.Value
+	nextPage       int
+	pageVisits     int
+	blockVisits    int
+	blocks         []jsontext.Value
+	includeNested  bool
+	sawNested      bool
+	consumedNested bool
+	parentMismatch bool
 }
 
 func (t *notionTreeTraversal) readChildren(depth int, parentID string) bool {
@@ -263,9 +262,6 @@ func (t *notionTreeTraversal) readChildren(depth int, parentID string) bool {
 				return false
 			}
 			pageParent = block.Parent.BlockID
-		}
-		if depth > 1 && t.sawNested && !parentKnown {
-			t.unknownNestedParent = true
 		}
 		if parentKnown && pageParent != parentID {
 			t.parentMismatch = true

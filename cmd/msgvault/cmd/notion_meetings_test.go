@@ -85,29 +85,6 @@ func TestResolveNotionMeetingsSourcesRequiresProbeIdentifierForMultipleSources(t
 	assert.Equal("work", sources[0].Identifier)
 }
 
-func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
-	assert := assert.New(t)
-	meeting := notionmeetings.MeetingNote{
-		ID: "private-block-id", MeetingNotes: notionmeetings.MeetingNotesData{
-			Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}}, Children: notionmeetings.MeetingChildren{TranscriptBlockID: "transcript-1"},
-		},
-	}
-	var out bytes.Buffer
-	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
-		result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}, HasMore: true},
-		block:  &notionmeetings.Block{Type: "paragraph", Paragraph: notionmeetings.RichTextBlock{RichText: []notionmeetings.RichText{{PlainText: "private transcript secret-token"}}}},
-	}, nil)
-	require.NoError(t, err)
-	assert.Contains(out.String(), "Returned meetings: 1")
-	assert.Contains(out.String(), "Partial coverage: true")
-	assert.NotContains(out.String(), "private-block-id")
-	assert.NotContains(out.String(), "Private meeting title")
-	assert.NotContains(out.String(), "private transcript")
-	assert.NotContains(out.String(), "secret-token")
-	assert.Contains(out.String(), "Read Content: available")
-	assert.Contains(out.String(), "User Information: available")
-}
-
 func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 	blockUnavailable := errors.New("block endpoint unavailable")
 	denied := &notionmeetings.APIError{Kind: notionmeetings.ErrUnauthorized, Status: 401}
@@ -121,8 +98,8 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 		markdownErr                             error
 		wantPage                                bool
 	}{
-		{name: "available", blockParent: notionmeetings.Parent{Type: "data_source_id"}, wantIDs: []string{"meeting-1", "summary-1"}},
-		{name: "missing first section", blockParent: notionmeetings.Parent{Type: "data_source_id"}, sectionErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
+		{name: "available", meetingParent: notionmeetings.Parent{Type: "data_source_id"}, blockParent: notionmeetings.Parent{Type: "data_source_id"}, wantIDs: []string{"meeting-1", "summary-1"}},
+		{name: "missing first section", meetingParent: notionmeetings.Parent{Type: "data_source_id"}, blockParent: notionmeetings.Parent{Type: "data_source_id"}, sectionErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "all sections missing", sectionErr: missing, notesErr: missing, wantErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "later section denied", sectionErr: missing, notesErr: denied, wantErr: denied, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "meeting parent", meetingParent: notionmeetings.Parent{Type: "page_id", PageID: "page-1"}, markdownErr: denied, wantErr: notionmeetings.ErrUnauthorized, wantPage: true},
@@ -139,8 +116,8 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 				sections = *tc.sections
 			}
 			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
-				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", Parent: tc.meetingParent, MeetingNotes: notionmeetings.MeetingNotesData{Children: sections}}}},
-				block:  &notionmeetings.Block{Parent: tc.blockParent}, blockIDs: &ids,
+				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", Parent: tc.meetingParent, MeetingNotes: notionmeetings.MeetingNotesData{Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}}, Children: sections}}}, HasMore: true},
+				block:  &notionmeetings.Block{Parent: tc.blockParent, Type: "paragraph", Paragraph: notionmeetings.RichTextBlock{RichText: []notionmeetings.RichText{{PlainText: "private transcript secret-token"}}}}, blockIDs: &ids,
 				pageIDs: &pageIDs, includeTranscript: &includeTranscript, markdownErr: tc.markdownErr,
 				blockErrors: map[string]error{"meeting-1": tc.blockErr, "summary-1": tc.sectionErr, "notes-1": tc.notesErr},
 			}, nil)
@@ -162,6 +139,13 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 					want = "Read Content: available"
 				}
 				assert.Contains(t, out.String(), want)
+				assert.Contains(t, out.String(), "Returned meetings: 1")
+				assert.Contains(t, out.String(), "Partial coverage: true")
+				assert.Contains(t, out.String(), "User Information: available")
+				assert.NotContains(t, out.String(), "meeting-1")
+				assert.NotContains(t, out.String(), "Private meeting title")
+				assert.NotContains(t, out.String(), "private transcript")
+				assert.NotContains(t, out.String(), "secret-token")
 			}
 		})
 	}

@@ -467,9 +467,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 					}
 					children[name+"_block_id"], _ = json.Marshal(id)
 				}
-				notes["children"], _ = json.Marshal(children)
-				discovery["meeting_notes"], _ = json.Marshal(notes)
-				hydrated.Discovery.Raw, _ = json.Marshal(discovery)
+				notes["children"], _ = json.Marshal(children, json.Deterministic(true))
+				discovery["meeting_notes"], _ = json.Marshal(notes, json.Deterministic(true))
+				hydrated.Discovery.Raw, _ = json.Marshal(discovery, json.Deterministic(true))
 			}
 		}
 		if hydrated.AttendeeResolutionDegraded {
