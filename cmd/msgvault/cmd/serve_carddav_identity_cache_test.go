@@ -55,7 +55,7 @@ func TestCardDAVSchedulerRequestsCacheRebuildAfterFailedSync(t *testing.T) {
 	}
 }
 
-func TestFailedCardDAVIdentityRefreshQueuesRealCacheRepair(t *testing.T) {
+func TestCardDAVIdentityRefreshSkipsCurrentCacheAndQueuesRepairOnFailure(t *testing.T) {
 	req := require.New(t)
 	checks := assert.New(t)
 	dir := t.TempDir()

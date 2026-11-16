@@ -816,7 +816,7 @@ describe('CardDAVController', () => {
   });
 });
 
-it('uses an explicit selected connection for manual sync while keeping books and history global', async () => {
+it('scopes manual sync to the selected connection and resets binding conflicts', async () => {
   const requests: Request[] = [];
   const nextSync = deferredResponse();
   let posts = 0;

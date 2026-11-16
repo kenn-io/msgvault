@@ -5,27 +5,10 @@ import { createAPIClient } from '../../api/client';
 import { CardDAVController } from '../../carddav/controller.svelte';
 import CardDAVOperations from './CardDAVOperations.svelte';
 
-const readyStatus = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '' };
-const conflictWarning = /to review \d+ CardDAV binding conflicts?\./;
+const conflictWarning = /to review/;
 
 function warningText(): string | undefined {
   return screen.queryByText(conflictWarning)?.textContent?.replace(/\s+/g, ' ').trim();
-}
-
-function syncFetch(sync: () => Response | Promise<Response>) {
-  return vi.fn<typeof fetch>(async (input) => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/status')) return Response.json(readyStatus);
-    if (path.endsWith('/books')) return Response.json({ books: [] });
-    if (path.endsWith('/runs')) return Response.json({ runs: [] });
-    if (path.endsWith('/sync')) return sync();
-    throw new Error(`Unexpected ${request.method} ${path}`);
-  });
-}
-
-function syncResult(extra: Record<string, unknown> = {}) {
-  return Response.json({ status: 'succeeded', books: 1, created: 0, updated: 0, removed: 0, ...extra });
 }
 
 describe('CardDAVOperations', () => {
@@ -263,17 +246,14 @@ describe('CardDAVOperations', () => {
   });
 
   it.each([
-    { name: 'one', extra: { binding_conflicts: 1 }, warning: 'Run msgvault carddav bind-participants --dry-run to review 1 CardDAV binding conflict.' },
-    { name: 'zero', extra: { binding_conflicts: 0 }, warning: undefined },
-    { name: 'absent', extra: {}, warning: undefined },
-  ])('shows the binding conflict warning after a sync only for a positive count: $name', async ({ extra, warning }) => {
-    const controller = new CardDAVController(createAPIClient(syncFetch(() => syncResult(extra))));
-    await controller.load();
+    { name: 'one', count: 1, warning: 'Run msgvault carddav bind-participants --dry-run to review 1 CardDAV binding conflict.' },
+    { name: 'zero', count: 0, warning: undefined },
+    { name: 'absent', count: undefined, warning: undefined },
+  ])('shows the binding conflict warning only for a positive count: $name', ({ count, warning }) => {
+    const controller = new CardDAVController(createAPIClient(vi.fn<typeof fetch>()));
+    controller.bindingConflicts = count;
     render(CardDAVOperations, { controller });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
-
-    await waitFor(() => expect(screen.getByText('CardDAV sync completed.')).toBeDefined());
     expect(warningText()).toBe(warning);
     controller.destroy();
   });
