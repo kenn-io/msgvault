@@ -543,7 +543,7 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 				candidates = append(candidates, observation)
 			}
 		}
-		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL()}
+		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL(), includeMarked: true}
 		if err := resolver.primeIdentities(ctx, []normalizedIMAPMailboxDelta{{delta: IMAPMailboxDelta{Memberships: candidates}}}); err != nil {
 			return err
 		}
@@ -945,6 +945,7 @@ type imapMembershipResolver struct {
 	tx                *loggedTx
 	sourceID          int64
 	sqlite            bool
+	includeMarked     bool
 	rawMessages       map[int64]map[[32]byte]int64
 	canonicalMessages map[string]int64
 	archivedMessages  map[int64]bool
@@ -1251,7 +1252,6 @@ func (r *imapMembershipResolver) resolveRawSHA256(
 			FROM messages
 			JOIN message_raw ON message_raw.message_id = messages.id
 			WHERE messages.source_id = ? AND message_raw.raw_format = 'mime'
-			  AND messages.deleted_from_source_at IS NULL
 			  AND EXISTS (
 				SELECT 1 FROM imap_message_memberships membership
 				WHERE membership.source_id = messages.source_id
@@ -1259,6 +1259,9 @@ func (r *imapMembershipResolver) resolveRawSHA256(
 			  )
 		`
 		args := []any{r.sourceID}
+		if !r.includeMarked {
+			query += ` AND messages.deleted_from_source_at IS NULL`
+		}
 		if rawSize > 0 {
 			query += ` AND messages.size_estimate = ?`
 			args = append(args, rawSize)
