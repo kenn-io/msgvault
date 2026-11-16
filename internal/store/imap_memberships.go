@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 // IMAPMembershipObservation records one observed mailbox UID and its message identity.
@@ -501,11 +503,8 @@ func (s *Store) applyIMAPMailboxDeltas(
 // message left Trash. RFC 6154's \All can include Trash, so it is not proof.
 const imapRestoringMailboxRole = `COALESCE(l.system_role, '') NOT IN ('trash', 'all')`
 
-// ClearRestoredIMAPDeletionMarksForSyncContext clears deletion marks that a
-// filtered sync's positive observations prove restored. A filtered sync cannot
-// publish mailbox topology, so this changes only the mark: an observation
-// clears it when it is in a specific mailbox outside Trash and All Mail and
-// resolves uniquely to an archived row. Anything else leaves the mark.
+// ClearRestoredIMAPDeletionMarksForSyncContext reconciles marked messages seen
+// by a filtered sync without changing the saved mailbox memberships.
 func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 	ctx context.Context,
 	sourceID int64,
@@ -519,28 +518,77 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 		return nil
 	}
 	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
-		if err := s.validateCurrentSyncGeneration(
-			ctx, tx, sourceID, syncRunID, SyncStatusCompleted,
-		); err != nil {
+		if err := s.validateCurrentSyncGeneration(ctx, tx, sourceID, syncRunID, SyncStatusCompleted); err != nil {
 			return err
 		}
-		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL()}
-		if err := resolver.primeIdentities(ctx, []normalizedIMAPMailboxDelta{
-			{delta: IMAPMailboxDelta{Memberships: observations}},
-		}); err != nil {
-			return err
+		roles := make(map[string]string)
+		rows, err := tx.QueryContext(ctx, `SELECT source_label_id, COALESCE(system_role, '') FROM labels WHERE source_id = ? AND source_label_id IS NOT NULL`, sourceID)
+		if err != nil {
+			return fmt.Errorf("read IMAP mailbox roles: %w", err)
 		}
-		for _, observation := range observations {
-			var restoring bool
-			if err := tx.QueryRowContext(ctx, `
-				SELECT EXISTS (SELECT 1 FROM labels l
-					WHERE l.source_id = ? AND l.source_label_id = ? AND `+imapRestoringMailboxRole+`)
-			`, sourceID, observation.Mailbox).Scan(&restoring); err != nil {
-				return fmt.Errorf("read IMAP mailbox role for %q: %w", observation.Mailbox, err)
+		for rows.Next() {
+			var mailbox, role string
+			if err := rows.Scan(&mailbox, &role); err != nil {
+				_ = rows.Close()
+				return err
 			}
-			if !restoring {
+			roles[mailbox] = role
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+
+		markedIDs := make(map[int64]bool)
+		markedKeys := make(map[string]bool)
+		markedRFC := make(map[string]bool)
+		rows, err = tx.QueryContext(ctx, `SELECT id, COALESCE(source_message_id, ''), rfc822_message_id FROM messages WHERE source_id = ? AND deleted_from_source_at IS NOT NULL`, sourceID)
+		if err != nil {
+			return fmt.Errorf("read marked IMAP messages: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var key string
+			var rfc sql.NullString
+			if err := rows.Scan(&id, &key, &rfc); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			markedIDs[id] = true
+			if key != "" {
+				markedKeys[key] = true
+			}
+			if rfc.Valid {
+				for _, candidate := range imapRFC822MessageIDCandidates(rfc.String) {
+					markedRFC[candidate] = true
+				}
+				if key := mime.LegacyMessageIDMatchKey(rfc.String); key != "" {
+					markedRFC[key] = true
+				}
+			}
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+		var candidates []IMAPMembershipObservation
+		for _, observation := range observations {
+			if _, known := roles[observation.Mailbox]; !known {
 				continue
 			}
+			if markedIDs[observation.ArchivedMessageID] || markedKeys[observation.CanonicalSourceMessageID] ||
+				(observation.RFC822MessageID != "" && (markedRFC[observation.RFC822MessageID] || markedRFC[mime.LegacyMessageIDMatchKey(observation.RFC822MessageID)])) {
+				candidates = append(candidates, observation)
+			}
+		}
+		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL()}
+		if err := resolver.primeIdentities(ctx, []normalizedIMAPMailboxDelta{{delta: IMAPMailboxDelta{Memberships: candidates}}}); err != nil {
+			return err
+		}
+		restored, inTrash := make(map[int64]bool), make(map[int64]bool)
+		for _, observation := range candidates {
 			messageID, err := resolver.resolveIdentity(ctx, observation, true)
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
@@ -548,10 +596,23 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 			if err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE messages SET deleted_from_source_at = NULL
-				WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NOT NULL
-			`, messageID, sourceID); err != nil {
+			if !markedIDs[messageID] {
+				continue
+			}
+			if roles[observation.Mailbox] == "trash" {
+				inTrash[messageID] = true
+			} else {
+				restored[messageID] = true
+			}
+		}
+		for messageID := range restored {
+			if inTrash[messageID] {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM message_labels WHERE message_id = ? AND label_id IN (SELECT id FROM labels WHERE source_id = ? AND system_role = 'trash')`, messageID, sourceID); err != nil {
+				return fmt.Errorf("remove stale IMAP Trash label for message %d: %w", messageID, err)
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE messages SET deleted_from_source_at = NULL WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NOT NULL`, messageID, sourceID); err != nil {
 				return fmt.Errorf("clear restored IMAP deletion mark for message %d: %w", messageID, err)
 			}
 		}

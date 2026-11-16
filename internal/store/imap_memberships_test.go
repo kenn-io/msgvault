@@ -1530,3 +1530,57 @@ func TestApplyIMAPMailboxDeltas_EmptyBaselineCleansLegacyLabelsOnce(t *testing.T
 	assertions.Equal([]string{"Legacy"}, messageLabels(t, st, messageID), "an established baseline skips legacy tombstones")
 	assertions.True(messageTombstoned(t, st, messageID))
 }
+
+func TestFilteredIMAPRestoreUpdatesOnlyTrashProjection(t *testing.T) {
+	f := newIMAPIdentityFixture(t)
+	restored := f.createMessage(t, "restored", "<restored@example.com>")
+	stillTrash := f.createMessage(t, "still-trash", "<still-trash@example.com>")
+	require.NoError(t, f.store.UpsertFTS(restored, "restoredexample", "", "", "", ""))
+	_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
+		"Trash":    {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
+		"All Mail": {Name: "All Mail", Type: "system", SystemRole: store.LabelSystemRoleAll},
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 3},
+		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "restored"}, {UID: 2, SourceMessageID: "still-trash"}},
+	}, {
+		Mailbox: "Projects", State: store.IMAPFolderState{Mailbox: "Projects", UIDValidity: 1, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "restored"}},
+	}}))
+	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "restored"))
+	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "still-trash"))
+	syncID, err := f.store.StartSync(f.source.ID, "full")
+	require.NoError(t, err)
+	require.NoError(t, f.store.CompleteSync(syncID, ""))
+	require.NoError(t, f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, []store.IMAPMembershipObservation{
+		{Mailbox: "All Mail", SourceMessageID: "All Mail|1", RFC822MessageID: "<restored@example.com>"},
+		{Mailbox: "Trash", ArchivedMessageID: stillTrash},
+		{Mailbox: "All Mail", ArchivedMessageID: stillTrash},
+	}))
+	assert.False(t, messageTombstoned(t, f.store, restored))
+	_, total, err := f.store.SearchMessagesContext(t.Context(), "restoredexample", 0, 10)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	assert.Equal(t, []string{"Projects"}, messageLabels(t, f.store, restored))
+	assert.True(t, messageTombstoned(t, f.store, stillTrash))
+	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, stillTrash))
+	assert.Equal(t, 3, membershipCount(t, f.store, f.source.ID))
+}
+
+func TestFilteredIMAPRestoreSkipsUnmarkedIdentities(t *testing.T) {
+	f := newIMAPIdentityFixture(t)
+	id := f.createMessage(t, "unmarked", "<unmarked@example.com>")
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "unmarked"}},
+	}}))
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (?, ?, 'mime', 'zlib')`), id, []byte("invalid zlib"))
+	require.NoError(t, err)
+	syncID, err := f.store.StartSync(f.source.ID, "full")
+	require.NoError(t, err)
+	require.NoError(t, f.store.CompleteSync(syncID, ""))
+	require.NoError(t, f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, []store.IMAPMembershipObservation{{
+		Mailbox: "INBOX", RawSHA256: sha256.Sum256([]byte("unmarked")),
+	}}))
+}

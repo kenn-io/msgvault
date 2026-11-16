@@ -661,7 +661,7 @@ func discoverTrashMailbox(items []*imap.ListData) string {
 		return true
 	}
 	for _, item := range items {
-		if eligible(item) && hasAttr(item.Attrs, imap.MailboxAttrTrash) {
+		if !hasAttr(item.Attrs, imap.MailboxAttrNoSelect) && hasAttr(item.Attrs, imap.MailboxAttrTrash) {
 			return item.Mailbox
 		}
 	}
