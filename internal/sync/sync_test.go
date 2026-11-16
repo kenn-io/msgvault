@@ -2675,9 +2675,10 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 			if tc.labelErr != nil {
 				api.labelErrors["msg1"] = tc.labelErr
 			}
-			if tc.fault == "error" {
+			switch tc.fault {
+			case "error":
 				api.labelErrors["msg1"] = errors.New("temporary label read failure")
-			} else if tc.fault == "missing" {
+			case "missing":
 				api.omitLabels = true
 			}
 			env.Syncer = New(api, env.Store, nil)
