@@ -114,9 +114,8 @@ func TestRunScheduledIMAPSync_CombinedMailboxRoles(t *testing.T) {
 				mailboxes := map[string]int{"INBOX": 0, "Combined": 0, "Archive": 0}
 				roles := map[string][]imapapi.MailboxAttr{"Combined": {imapapi.MailboxAttrTrash, tc.role}}
 				if tc.allMail {
-					mailboxes["Trash"], mailboxes["All Mail"] = 0, 0
+					mailboxes["Trash"] = 0
 					roles["Trash"] = []imapapi.MailboxAttr{imapapi.MailboxAttrTrash}
-					roles["All Mail"] = []imapapi.MailboxAttr{imapapi.MailboxAttrAll}
 					roles["Combined"] = []imapapi.MailboxAttr{imapapi.MailboxAttrAll, tc.role}
 				}
 				addr, user := testutil.StartIMAPMemServerWithSpecialUse(t, mailboxes, roles)
@@ -124,7 +123,6 @@ func TestRunScheduledIMAPSync_CombinedMailboxRoles(t *testing.T) {
 				testutil.AppendIMAPRawMessage(t, user, "Combined", raw)
 				if tc.allMail {
 					testutil.AppendIMAPRawMessage(t, user, "Trash", raw)
-					testutil.AppendIMAPRawMessage(t, user, "All Mail", raw)
 				}
 				host, portText, err := net.SplitHostPort(addr)
 				require.NoError(t, err)
