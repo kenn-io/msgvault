@@ -41,6 +41,16 @@ func newFusedFixture(t *testing.T) *fusedFixture {
         filename TEXT
     )`)
 	require.NoError(t, err, "create attachments")
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE IF NOT EXISTS voice_transcripts (
+        message_id BIGINT NOT NULL,
+        attachment_id BIGINT NOT NULL,
+        vault_uid TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        source_version_id TEXT NOT NULL,
+        content_version_id TEXT NOT NULL,
+        transcript_text TEXT NOT NULL
+    )`)
+	require.NoError(t, err, "create voice_transcripts")
 	ctx := t.Context()
 	b, err := Open(ctx, Options{DB: db, Dimension: 4})
 	require.NoError(t, err, "Open")

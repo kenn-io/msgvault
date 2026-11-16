@@ -6872,6 +6872,7 @@ func (s *Store) ScanArchivedEmailContext(ctx context.Context, sourceID, afterID,
 		return nil, fmt.Errorf("scan archived email: %w", err)
 	}
 	item.stored.fts.MessageID = item.MessageID
+	item.stored.fts.voiceLoaded = true
 	item.BodyText, item.Snippet = item.stored.body, item.stored.snippet
 	item.decodeArchivedEmail(raw, compression)
 	return item, nil
@@ -7002,10 +7003,10 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	env := storedFTSEnvelopeSQL("STRING_AGG")
 	lockSQL := `SELECT m.id FROM messages m WHERE m.id IN (` + query + `) ORDER BY m.id LIMIT 64 FOR UPDATE OF m`
 	charCap := strconv.Itoa(maxFTSBodyChars)
-	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), r.raw_data, r.compression
+	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), ` + voiceSearchSQL(true, "m.id") + `, r.raw_data, r.compression
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id LEFT JOIN message_raw r ON r.message_id = m.id AND r.raw_format = 'beeper_json' WHERE m.id = ANY(?::bigint[]) AND ` + postgresFTSStalePredicate("m.") + ` ORDER BY m.id`
-	vector := pgFTSVectorFields("u.subject", "u.body", "u.sender", "u.to_addrs", "u.cc_addrs")
-	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, fields)) UPDATE messages m SET search_fts = ` + vector + `, search_fts_fields = CASE WHEN u.fields::jsonb = 'null'::jsonb THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(u.fields::jsonb)) END, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM u WHERE m.id = u.id`
+	vector := pgFTSVectorFields("u.subject", "u.body", "u.sender", "u.to_addrs", "u.cc_addrs", "u.voice")
+	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, voice, fields)) UPDATE messages m SET search_fts = ` + vector + `, search_fts_fields = CASE WHEN u.fields::jsonb = 'null'::jsonb THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(u.fields::jsonb)) END, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM u WHERE m.id = u.id`
 	var affected int64
 	for fromID < toID {
 		rows, err := tx.QueryContext(ctx, lockSQL, fromID, toID)
@@ -7028,35 +7029,25 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 			return 0, err
 		}
 		var ids []int64
-		var subjects, bodies, senders, tos, ccs []string
+		var subjects, bodies, senders, tos, ccs, voices []string
 		var canonicalFields []string
 		bytes := 0
 		for rows.Next() {
 			var doc FTSDoc
 			var raw []byte
 			var compression sql.NullString
-			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &raw, &compression); err != nil {
+			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &doc.voice, &raw, &compression); err != nil {
 				_ = rows.Close()
 				return 0, err
 			}
-			if len(raw) > 0 {
-				decoded, err := decodeMessageRaw(raw, compression)
-				if err == nil {
-					var message struct {
-						SenderName string `json:"senderName"`
-					}
-					if json.Unmarshal(decoded, &message) == nil {
-						doc.FromAddr = message.SenderName
-					}
-				}
-			}
+			doc.FromAddr = beeperFTSSender(raw, compression, doc.FromAddr)
 			doc, fields := preparePostgresFTSDoc(doc)
 			encoded, err := json.Marshal(fields, json.FormatNilSliceAsNull(true))
 			if err != nil {
 				_ = rows.Close()
 				return 0, err
 			}
-			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs) + len(encoded) + len(raw)
+			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs) + len(doc.voice) + len(encoded) + len(raw)
 			if len(ids) > 0 && bytes+size > 4*1024*1024 {
 				break
 			}
@@ -7066,6 +7057,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 			senders = append(senders, doc.FromAddr)
 			tos = append(tos, doc.ToAddrs)
 			ccs = append(ccs, doc.CcAddrs)
+			voices = append(voices, doc.voice)
 			canonicalFields = append(canonicalFields, string(encoded))
 			bytes += size
 		}
@@ -7080,13 +7072,30 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 			fromID = lockedIDs[len(lockedIDs)-1] + 1
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, updateSQL, ids, subjects, bodies, senders, tos, ccs, canonicalFields); err != nil {
+		if _, err := tx.ExecContext(ctx, updateSQL, ids, subjects, bodies, senders, tos, ccs, voices, canonicalFields); err != nil {
 			return 0, err
 		}
 		affected += int64(len(ids))
 		fromID = ids[len(ids)-1] + 1
 	}
 	return affected, nil
+}
+
+func beeperFTSSender(raw []byte, compression sql.NullString, fallback string) string {
+	if len(raw) == 0 {
+		return fallback
+	}
+	decoded, err := decodeMessageRaw(raw, compression)
+	if err != nil {
+		return fallback
+	}
+	var message struct {
+		SenderName string `json:"senderName"`
+	}
+	if json.Unmarshal(decoded, &message) != nil {
+		return fallback
+	}
+	return message.SenderName
 }
 
 // derivedEmailText is a retained email's stored text and the search document
@@ -7109,11 +7118,11 @@ func (s *Store) derivedEmailTextColumns() string {
 	}
 	envelope := storedFTSEnvelopeSQL(aggregate)
 	return `COALESCE(b.body_text, ''), COALESCE(b.body_html, ''), COALESCE(m.snippet, ''), ` +
-		envelope.subject + `, ` + envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs
+		envelope.subject + `, ` + envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs + `, ` + voiceSearchSQL(s.IsPostgreSQL(), "m.id")
 }
 
 func (row *derivedEmailText) scanDest() []any {
-	return []any{&row.body, &row.html, &row.snippet, &row.fts.Subject, &row.fts.FromAddr, &row.fts.ToAddrs, &row.fts.CcAddrs}
+	return []any{&row.body, &row.html, &row.snippet, &row.fts.Subject, &row.fts.FromAddr, &row.fts.ToAddrs, &row.fts.CcAddrs, &row.fts.voice}
 }
 
 func (s *Store) loadDerivedEmailText(q querier, messageID int64) (derivedEmailText, error) {
@@ -7121,6 +7130,7 @@ func (s *Store) loadDerivedEmailText(q querier, messageID int64) (derivedEmailTe
 	err := q.QueryRow(`SELECT `+s.derivedEmailTextColumns()+`
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ?`, messageID).
 		Scan(row.scanDest()...)
+	row.fts.voiceLoaded = err == nil
 	return row, err
 }
 
