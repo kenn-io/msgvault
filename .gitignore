@@ -82,4 +82,4 @@ docs/screenshots/demo-data/
 /contextual-retrieval-eval
 
 # rapid property-test failure files
-testdata/rapid/
+**/testdata/rapid/
