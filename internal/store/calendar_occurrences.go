@@ -148,8 +148,13 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		if e.Kind == calendarExceptionKind && e.Original == nil {
 			report(row.MessageID, "exception has no original start")
 		}
-		if e.Kind == calendarExceptionKind && calendarRangeException(e) && !masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
-			report(row.MessageID, "unsupported recurrence: RANGE=THISANDFUTURE")
+		if e.Kind == calendarExceptionKind && calendarRangeException(e) {
+			if !filterOverlap || !masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
+				report(row.MessageID, "unsupported recurrence: RANGE=THISANDFUTURE")
+			}
+			if !filterOverlap {
+				add(row, 0, calendarEventOccurrence(e, row.MessageID), time.Time{})
+			}
 			continue
 		}
 		if (e.Kind == "single" || e.Kind == calendarSeriesKind) && slices.ContainsFunc(exceptions[seriesKey{row.SourceID, e.ProviderEventID}], func(row CalendarEventRow) bool {

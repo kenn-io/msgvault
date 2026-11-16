@@ -51,7 +51,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		source, tool string
 		noDrafts     bool
 	}{
-		{"mbox", "", false}, {"gcal", "get_meeting_record", false},
+		{"mbox", "get_meeting_record", false}, {"ics", "get_meeting_record", false}, {"gcal", "get_meeting_record", false},
 		{"granola", "get_meeting_context", false}, {"chatwoot", "get_meeting_context", false},
 		{"circleback", "get_meeting_context", false}, {"pocket", "get_meeting_context", false},
 		{"muesli", "get_meeting_context", false}, {"notion_meetings", "get_meeting_context", false},
@@ -103,12 +103,15 @@ func TestMCPArchiveFamilies(t *testing.T) {
 				assert.NotContains(names, "list_meeting_action_items")
 				assert.NotContains(names, "get_meeting_metrics")
 			}
+			if tc.source == "ics" {
+				assert.NotContains(names, "calendar_freebusy")
+			}
 			if tc.source == "mbox" {
 				assert.Contains(names, "get_stats")
 				assert.Contains(names, "list_saved_views")
 				assert.Contains(names, "get_person_merge_context")
 				for _, name := range names {
-					assert.False(strings.HasPrefix(name, "calendar_") || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || strings.Contains(name, "meeting") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
+					assert.False(strings.HasPrefix(name, "calendar_") || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || (strings.Contains(name, "meeting") && name != "get_meeting_record") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
 				}
 			}
 		})
@@ -264,6 +267,21 @@ func TestMCPMeetingRecordDelegated(t *testing.T) {
 			session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, tc.permissions), t)
 			names := mcpDraftToolNames(t, session)
 			assert.Equal(tc.available, slices.Contains(names, "get_meeting_record"))
+		})
+	}
+}
+
+func TestMCPMeetingRecordCalendarSources(t *testing.T) {
+	for _, kind := range []string{"ics", "mbox", "gmail", "imap", "eml", "maildir", "pst"} {
+		t.Run(kind, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource(kind, "owner@example.com")
+			require.NoError(t, err)
+			server := mcpDraftTestDaemon(t, &storeAPIAdapter{store: st}, nil)
+			session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, []string{"message.read"}), t)
+			names := mcpDraftToolNames(t, session)
+			assert.Contains(t, names, "get_meeting_record")
+			assert.NotContains(t, names, "calendar_freebusy")
 		})
 	}
 }
