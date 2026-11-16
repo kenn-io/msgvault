@@ -224,6 +224,12 @@ func (t *notionTreeTraversal) readChildren(depth int) bool {
 		}
 		childrenComplete := true
 		for _, child := range results {
+			var header struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(child, &header) == nil && header.Type == "meeting_notes" {
+				continue
+			}
 			if t.blockVisits >= maxNotionTraversalBlocks {
 				return false
 			}

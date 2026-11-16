@@ -242,6 +242,7 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			err:  &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"},
 		},
 		{name: "server retry exhausted", err: &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}},
+		{name: "provider 501", err: &APIError{Kind: ErrProvider, Status: 501, Code: "not_implemented"}},
 		{name: "reset", err: syscall.ECONNRESET},
 		{name: "truncated", err: io.ErrUnexpectedEOF},
 		{name: "malformed section root", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse)},

@@ -513,7 +513,7 @@ func transcriptTemporarilyUnavailable(err error) bool {
 		return true
 	}
 	if api, ok := errors.AsType[*APIError](err); ok {
-		return api.Status == 404 && api.Code == "object_not_found"
+		return api.Status >= 500 && api.Status < 600 || api.Status == 404 && api.Code == "object_not_found"
 	}
 	var network net.Error
 	return errors.As(err, &network) || errors.Is(err, io.EOF)

@@ -241,3 +241,21 @@ func TestReviewRound1NotionCheckedMustBeBoolean(t *testing.T) {
 		})
 	}
 }
+
+func TestNotionNestedMeetingDoesNotConsumeSiblingPages(t *testing.T) {
+	content := Decode("notion_meeting_json", []byte(`{
+		"schema_version":1,
+		"discovery":{"meeting_notes":{"children":{"summary_block_id":"root"}}},
+		"canonical":{"summary":"Summary"},
+		"summary":{"root":{"id":"root","type":"paragraph","has_children":true},"pages":[
+			{"results":[
+				{"id":"nested-meeting","type":"meeting_notes","has_children":true},
+				{"id":"branch","type":"paragraph","has_children":true}
+			],"has_more":false},
+			{"results":[{"id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}
+		]}
+	}`), nil)
+	assert.Equal(t, CoverageAvailable, content.ActionCoverage)
+	require.Len(t, content.Actions, 1)
+	assert.Equal(t, "action", content.Actions[0].SourceID)
+}

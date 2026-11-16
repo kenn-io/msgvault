@@ -1393,12 +1393,13 @@ func TestImporterNewerEvidencePreservesRetryState(t *testing.T) {
 
 func TestImporterRetriesOmittedTranscript(t *testing.T) {
 	for _, tc := range []struct {
-		name, markdown, wantBody string
-		pending, truncated       bool
+		name, markdown, wantBody    string
+		pending, truncated, omitted bool
 	}{
-		{"page has transcript", "# Transcript\nNew page transcript", "New page transcript", false, false},
-		{"page has none", "# Notes\nNo transcript", "Saved page transcript", true, false},
-		{"markdown truncated", "# Notes\nTranscript heading was truncated", "Saved page transcript", true, true},
+		{"page has transcript", "# Transcript\nNew page transcript", "New page transcript", false, false, true},
+		{"page has none", "# Notes\nNo transcript", "Summary:", true, false, true},
+		{"markdown truncated", "# Notes\nTranscript heading was truncated", "Saved page transcript", true, true, false},
+		{"omitted and markdown truncated", "# Notes\nTranscript heading was truncated", "Summary:", true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
@@ -1414,7 +1415,7 @@ func TestImporterRetriesOmittedTranscript(t *testing.T) {
 			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
 			before, err := st.GetMessageRaw(id)
 			require.NoError(t, err)
-			if !tc.truncated {
+			if tc.omitted {
 				source.query.Results[0].MeetingNotes.Children.TranscriptBlockID = ""
 			}
 			source.markdown.Markdown = tc.markdown
@@ -1433,9 +1434,12 @@ func TestImporterRetriesOmittedTranscript(t *testing.T) {
 				return
 			}
 			require.Len(t, pending, 1)
-			assert.True(t, pending[0].Incomplete)
-			assert.True(t, second.PartialCoverage)
-			if tc.truncated {
+			assert.Equal(t, tc.truncated, pending[0].Incomplete)
+			assert.Equal(t, tc.truncated, second.PartialCoverage)
+			if tc.omitted {
+				assert.NotContains(t, body, "Saved page transcript")
+			}
+			if tc.truncated && !tc.omitted {
 				after, err := st.GetMessageRaw(id)
 				require.NoError(t, err)
 				var oldFields, newFields map[string]json.RawMessage
