@@ -294,7 +294,7 @@ func runVerifyLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	// Count local messages
-	archiveCount, err := s.CountMessagesForSource(source.ID)
+	archiveCount, err := s.CountNativeMessagesForSource(source.ID)
 	if err != nil {
 		return fmt.Errorf("count messages: %w", err)
 	}

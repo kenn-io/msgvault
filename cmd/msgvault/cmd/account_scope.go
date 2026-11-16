@@ -152,7 +152,7 @@ func filterSources(sources []*store.Source, keep func(*store.Source) bool) []*st
 }
 
 func emailAccountSource(src *store.Source) bool {
-	return src != nil && src.SourceType != sourceTypeCalendar
+	return src != nil && src.SourceType != sourceTypeCalendar && src.SourceType != sourceTypeICS
 }
 
 // ResolveCollectionFlag resolves the value of a --collection flag.
