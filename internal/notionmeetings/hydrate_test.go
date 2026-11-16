@@ -392,6 +392,28 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 	}
 }
 
+func TestHydratorIgnoresIncompleteMarkdownWithoutTranscript(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*MarkdownPage)
+	}{
+		{"truncated", func(p *MarkdownPage) { p.Truncated = true }},
+		{"unknown block", func(p *MarkdownPage) { p.UnknownBlockIDs = []string{"block-1"} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := completeHydrationSource()
+			empty := paragraph("transcript-1", "", false)
+			source.blocks["transcript-1"] = &empty
+			source.markdown.Markdown = "# Notes\nNo transcript here"
+			tc.mutate(source.markdown)
+			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+			require.NoError(t, err)
+			assert.Empty(t, result.Transcript)
+			assert.NotContains(t, result.Incomplete, "transcript")
+		})
+	}
+}
+
 func TestHydratorDegradesWhenUserInformationIsUnavailable(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

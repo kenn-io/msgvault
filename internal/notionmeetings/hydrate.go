@@ -485,7 +485,7 @@ func (m *HydratedMeeting) reconcileMarkdown(page *MarkdownPage) {
 		if complete && markdown != "" && !slices.Equal(strings.Fields(markdown), strings.Fields(m.Transcript)) {
 			m.Warnings = append(m.Warnings, "structured transcript and page Markdown transcript differed; kept the structured transcript")
 		}
-	case !complete:
+	case !complete && markdown != "":
 		m.markIncomplete(sectionTranscript, "markdown")
 	case markdown != "":
 		m.Transcript = markdown

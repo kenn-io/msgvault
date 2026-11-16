@@ -263,7 +263,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	now := imp.now().UTC()
 	var hardErrors []error
 	for id, pending := range pendingByID {
-		if pendingExpired(pending, now) && !pending.Incomplete {
+		if pendingExpired(pending, now) {
 			delete(pendingByID, id)
 			continue
 		}
@@ -326,6 +326,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		queueIncomplete := func() {
 			if hydrated != nil && len(hydrated.Incomplete) > 0 {
 				previous, exists := pendingByID[id]
+				if retained := next.TranscriptRetryUntil[id]; retained != "" {
+					previous.RetryUntil = retained
+					exists = true
+				}
 				pending, keep := schedulePending(hydrated, now, previous, exists, true)
 				if keep {
 					pendingByID[id] = pending
@@ -349,7 +353,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if recoverErr != nil {
 			if _, newer := errors.AsType[*NewerEvidenceError](recoverErr); newer {
 				for _, pending := range state.Pending {
-					if pending.BlockID == id {
+					if pending.BlockID == id && !pendingExpired(pending, now) {
 						pendingByID[id] = pending
 						break
 					}
@@ -972,10 +976,7 @@ func schedulePending(meeting *HydratedMeeting, now time.Time, previous pendingTr
 		retryUntil = now.Add(unknownTranscriptRetrySpan)
 	}
 	if !retryUntil.After(now) {
-		if !incomplete {
-			return pendingTranscript{}, false
-		}
-		retryUntil = now.Add(unknownTranscriptRetrySpan)
+		return pendingTranscript{}, false
 	}
 	next := now.Add(transcriptRetryCadence)
 	if next.After(retryUntil) {

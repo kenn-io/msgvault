@@ -880,12 +880,11 @@ the parent page's Markdown. An incomplete section keeps saved text for retry.
 Provider or network errors, incomplete pagination, and request, response-size,
 block-count, and nesting limits can leave sections incomplete. msgvault keeps
 their archived text and evidence and retries section blocks every six hours,
-even after a meeting leaves the query window. If a referenced section remains
-incomplete when its retry window ends, retries continue in a new window. The
-first window ends seven days after the meeting ended, or 48 hours after the
-first retry if the end time is unknown.
+even after a meeting leaves the query window. Retries stop when the window
+ends, and archived content stays in place. The window ends seven days after the
+meeting ended, or 48 hours after the first retry if the end time is unknown.
 
-If the transcript depends on incomplete page Markdown, msgvault keeps the saved
+If incomplete page Markdown contains transcript text, msgvault keeps the saved
 transcript and retries.
 When a transcript is missing without an incomplete section, background retries
 stop at the deadline. The sync summary reports partial coverage when a section
