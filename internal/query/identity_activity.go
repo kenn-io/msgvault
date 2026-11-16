@@ -474,9 +474,20 @@ func (e *DuckDBEngine) searchPeople(
 		if logicalErr != nil {
 			return nil, logicalErr
 		}
-		queryText = e.filteredPeopleSQL(logicalSQL, order, len(request.Explore.Context.SourceIDs) > 0)
+		ownerSQL := ""
+		var ownerArgs []any
+		if len(request.Explore.Context.SourceIDs) > 0 {
+			ownerRequest := request.Explore
+			ownerRequest.Context.SourceIDs = nil
+			ownerSQL, ownerArgs, logicalErr = e.buildIdentityLogicalSQL(ctx, ownerRequest, "")
+			if logicalErr != nil {
+				return nil, logicalErr
+			}
+		}
+		queryText = e.filteredPeopleSQL(logicalSQL, order, ownerSQL)
 		args = append(args, logicalArgs...)
 		args = append(args, candidateArgs...)
+		args = append(args, ownerArgs...)
 	}
 	limit := request.Page.Limit
 	if limit == 0 {
@@ -577,18 +588,18 @@ func (e *DuckDBEngine) unfilteredPeopleSQL(
 }
 
 func (e *DuckDBEngine) filteredPeopleSQL(
-	logicalSQL, order string, filterSource bool,
+	logicalSQL, order, ownerSQL string,
 ) string {
 	meetingOwner := ""
 	ownerCondition := ""
-	if filterSource {
-		meetingOwner = `, meeting_owners AS (
-	SELECT l.canonical_id, coalesce(g.group_id, l.anchor_message_id) AS group_id,
-	       arg_min(l.source_id, struct_pack(at := l.occurred_at, id := l.anchor_message_id)) AS source_id
-	FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetLogicalContributions)) + `') l
-	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = l.anchor_message_id
-	WHERE l.relation_kind = 1 AND l.message_type = 'meeting_transcript'
-	GROUP BY l.canonical_id, coalesce(g.group_id, l.anchor_message_id)
+	if ownerSQL != "" {
+		meetingOwner = `, meeting_owners AS (` + ownerSQL + `
+	SELECT p.canonical_id, coalesce(g.group_id, p.entry_num) AS group_id,
+	       arg_min(p.source_id, struct_pack(at := p.occurred_at, id := p.entry_num)) AS source_id
+	FROM person_flags p
+	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = p.entry_num
+	WHERE p.message_type = 'meeting_transcript'
+	GROUP BY p.canonical_id, coalesce(g.group_id, p.entry_num)
 )`
 		ownerCondition = ` AND EXISTS (SELECT 1 FROM meeting_owners o
 	        WHERE o.canonical_id = p.canonical_id AND o.group_id = coalesce(g.group_id, p.entry_num) AND o.source_id = p.source_id)`

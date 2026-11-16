@@ -333,6 +333,51 @@ func TestPeopleMeetingSourceUsesEarliestTime(t *testing.T) {
 	}
 }
 
+func TestPeopleMeetingSourceUsesFilteredDateWindow(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	firstSource := b.AddSourceWithType("first@example.test", "granola")
+	secondSource := b.AddSourceWithType("second@example.test", "zoom")
+	alice := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	start := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	deleted := start.Add(time.Hour)
+	first := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: start, DeletedFromSourceAt: &deleted})
+	second := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: start.Add(2 * time.Hour)})
+	b.AddTo(first, alice, "Alice")
+	b.AddTo(second, alice, "Alice")
+	b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
+	engine := b.BuildEngine()
+	cutoff := start.Add(time.Hour)
+	end := start.Add(3 * time.Hour)
+	for _, tc := range []struct {
+		name   string
+		filter Context
+		want   int64
+	}{
+		{"both sources after cutoff", Context{SourceIDs: []int64{firstSource, secondSource}, After: &cutoff}, 1},
+		{"later source after cutoff", Context{SourceIDs: []int64{secondSource}, After: &cutoff}, 1},
+		{"bounded window", Context{SourceIDs: []int64{firstSource, secondSource}, After: &cutoff, Before: &end}, 1},
+		{"first source before cutoff", Context{SourceIDs: []int64{firstSource}, Before: &cutoff}, 1},
+		{"active later source", Context{SourceIDs: []int64{secondSource}, Deletion: DeletionActive}, 1},
+		{"later source before cutoff", Context{SourceIDs: []int64{secondSource}}, 0},
+		{"both sources before cutoff", Context{SourceIDs: []int64{firstSource, secondSource}}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			result, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "Alice", Explore: ExploreRequest{Context: tc.filter}})
+			requirements.NoError(err)
+			requirements.Len(result.Rows, 1)
+			assertions.Equal(tc.want, result.Rows[0].MeetingCount)
+			detail, err := engine.GetPerson(t.Context(), alice, tc.filter, nil)
+			requirements.NoError(err)
+			assertions.Equal(tc.want, detail.MeetingCount)
+			summary, err := engine.GetPersonSummary(t.Context(), alice, ExploreRequest{Context: tc.filter}, nil)
+			requirements.NoError(err)
+			requirements.Len(summary.Rows, 1)
+			assertions.Equal(tc.want, summary.Rows[0].MeetingCount)
+		})
+	}
+}
+
 func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

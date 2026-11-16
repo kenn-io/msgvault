@@ -394,6 +394,28 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		}
 	}
 	overrideExpr := sqlPersonNameOverrideExpr(e.parquetPath(datasetPersonDisplayNames), overrideFilter)
+	meetingSourceCondition := ""
+	if len(request.Explore.Context.SourceIDs) > 0 {
+		ownerRequest := request.Explore
+		ownerRequest.Context.SourceIDs = nil
+		ownerConditions, ownerArgs := buildExploreConditions(ownerRequest)
+		ownerConditions, err = e.sentIdentityConditions(ownerConditions)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, ownerArgs...)
+		memberCondition := `EXISTS (SELECT 1 FROM relationship_activity_expanded a
+			WHERE a.message_id = le.anchor_message_id AND a.canonical_id = pe.person_id AND a.is_direct)`
+		if exactID != nil {
+			memberCondition = `le.anchor_message_id IN (SELECT message_id FROM person_message_ids)`
+		}
+		meetingSourceCondition = ` AND pe.source_id = (` + buildExploreLogicalSQLNoLists(ownerConditions) + `)
+			SELECT le.source_id FROM logical_entries le
+			LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = le.anchor_message_id
+			WHERE le.entry_kind <> 'conversation' AND le.message_type = 'meeting_transcript' AND ` + memberCondition + `
+			  AND coalesce(g.group_id, le.anchor_message_id) = coalesce(mg.group_id, pe.anchor_message_id)
+			ORDER BY le.occurred_at, le.anchor_message_id LIMIT 1)`
+	}
 	personWhere := []string{"true"}
 	populationFrom := "FROM person_entries pe JOIN participants p ON p.id = pe.person_id"
 	if keepInactive {
@@ -468,25 +490,6 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	}
 	args = append(args, limit, request.Page.Offset)
 	peopleRollup := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
-	meetingSourceCondition := ""
-	if len(request.Explore.Context.SourceIDs) > 0 {
-		groups := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups))
-		if exactID != nil {
-			meetingSourceCondition = ` AND pe.source_id = (SELECT m.source_id FROM messages m
-				LEFT JOIN read_parquet('` + groups + `') g ON g.message_id = m.id
-				WHERE m.id IN (SELECT message_id FROM person_message_ids) AND m.message_type = 'meeting_transcript'
-				  AND m.sent_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM relationship_unsent_messages u WHERE u.message_id = m.id)
-				  AND coalesce(g.group_id, m.id) = coalesce(mg.group_id, pe.anchor_message_id)
-				ORDER BY m.sent_at, m.id LIMIT 1)`
-		} else {
-			meetingSourceCondition = ` AND pe.source_id = (SELECT l.source_id
-				FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetLogicalContributions)) + `') l
-				LEFT JOIN read_parquet('` + groups + `') g ON g.message_id = l.anchor_message_id
-				WHERE l.relation_kind = 1 AND l.message_type = 'meeting_transcript' AND l.canonical_id = pe.person_id
-				  AND coalesce(g.group_id, l.anchor_message_id) = coalesce(mg.group_id, pe.anchor_message_id)
-				ORDER BY l.occurred_at, l.anchor_message_id LIMIT 1)`
-		}
-	}
 	queryText := buildExploreLogicalSQLNoLists(conditions) + entriesCTE + `
 ), person_population AS (
 	SELECT p.id AS person_id, COALESCE(p.display_name, '') AS display_name,
