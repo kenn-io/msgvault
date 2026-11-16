@@ -40,8 +40,21 @@ func TestClaimFreshness(t *testing.T) {
 			a.Equal(tt.status, metadata.Status)
 		})
 	}
-	boundary := now.Add(-365 * 24 * time.Hour)
-	target := personfacts.TargetRef{Kind: personfacts.TargetEmployment}
-	assert.Equal(t, personfacts.StatusStale, describePersonFactFreshness(target, &until, &boundary, now).Status)
-	assert.Equal(t, personfacts.StatusStale, describePersonFactFreshness(target, &until, nil, now).Status)
+	for _, tt := range []struct {
+		name   string
+		target personfacts.TargetRef
+		until  *time.Time
+		days   int
+	}{
+		{"employment", personfacts.TargetRef{Kind: personfacts.TargetEmployment}, &until, 365},
+		{"event", personfacts.TargetRef{Kind: personfacts.TargetAttribute, Key: "custom-event"}, &until, 7},
+		{"fact", personfacts.TargetRef{Kind: personfacts.TargetAttribute, Key: "custom-favorites-food"}, nil, 365},
+		{"preference", personfacts.TargetRef{Kind: personfacts.TargetAttribute, Key: AttributeUniversalIDContactFrequency}, &until, 90},
+	} {
+		t.Run(tt.name+" boundary", func(t *testing.T) {
+			boundary := now.Add(-time.Duration(tt.days) * 24 * time.Hour)
+			assert.Equal(t, personfacts.StatusStale, describePersonFactFreshness(tt.target, tt.until, &boundary, now).Status)
+		})
+	}
+	assert.Equal(t, personfacts.StatusStale, describePersonFactFreshness(personfacts.TargetRef{Kind: personfacts.TargetEmployment}, &until, nil, now).Status)
 }
