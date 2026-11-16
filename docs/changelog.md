@@ -8,6 +8,10 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.
+  With `--allow-curated-writes` and explicit client confirmation, it can apply
+  atomic profile patches. The client is responsible for obtaining user approval.
+
 - Incomplete open-loop lists continue checking history in the background.
 
 - Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).

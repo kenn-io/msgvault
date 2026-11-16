@@ -72,6 +72,10 @@ func TestMCPCapabilitiesDescribeRealOperationRoutes(t *testing.T) {
 		routes[route.OperationID] = route
 	}
 	for _, tc := range []struct{ id, method, path string }{
+		{"getPersonStructuredProfile", http.MethodGet, "/api/v1/people/{id}/profile"},
+		{"patchPersonStructuredProfile", http.MethodPatch, "/api/v1/people/{id}/profile"},
+		{"getPersonProfileHistory", http.MethodGet, "/api/v1/people/{id}/profile/history"},
+		{"getPersonProfileMediaContent", http.MethodGet, "/api/v1/people/{id}/profile/media/{media_id}/content"},
 		{"runCLI", http.MethodPost, "/api/v1/cli/run"},
 		{"listLoops", http.MethodGet, "/api/v1/loops"},
 		{"listDeletions", http.MethodGet, "/api/v1/deletions"},
@@ -84,6 +88,7 @@ func TestMCPCapabilitiesDescribeRealOperationRoutes(t *testing.T) {
 		assertions.Equal(tc.method, routes[tc.id].Method)
 		assertions.Equal(tc.path, routes[tc.id].Path)
 	}
+	assertions.ElementsMatch([]string{"names", "contact_points", "addresses", "dates", "categories", "media"}, routes["patchPersonStructuredProfile"].RequestProperties)
 	assertions.Contains(routes["listDeletions"].QueryParameters, "status")
 	assertions.Contains(routes["runCLI"].RequestProperties, "args")
 	assertions.ElementsMatch([]string{"limit", "person_id"}, routes["listLoops"].QueryParameters)
