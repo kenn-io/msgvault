@@ -874,6 +874,7 @@ msgvault sync-full [account] [flags]
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--query` | Gmail search query filter |
 | `--noresume` | Ignore checkpoints, start fresh |
+| `--refresh-labels` | Refresh archived labels for one explicitly selected, unrestricted Gmail source |
 | `--folder NAME` | Scan this IMAP folder (repeatable) |
 | `--skip-folder NAME` | Skip this IMAP folder (repeatable) |
 | `--source-id ID` | Sync exactly one source by numeric ID; mutually exclusive with the account argument |
@@ -900,6 +901,42 @@ set. This is especially important with `--query`, `--limit`, or date filters,
 where the listing is intentionally incomplete. Gmail source-deletion
 reconciliation happens only during the complete mailbox recovery described
 under [`sync`](#sync).
+
+### Refresh archived Gmail labels
+
+Use this when historical labels may be stale even though ordinary sync is up
+to date:
+
+```bash
+msgvault sync-full account@example.com --refresh-labels
+msgvault sync-full --source-id 42 --refresh-labels
+```
+
+Select exactly one configured Gmail source. An ambiguous account name requires
+`--source-id`. The option rejects query, date and folder filters, and any
+positive `--limit`. Explicitly supplied empty filters are also rejected.
+
+The scan replaces archived memberships from lightweight provider metadata,
+including an empty label set. Healthy archived originals are kept without
+downloading them again. New messages and missing originals follow ordinary
+full-sync acquisition. The usual post-sync cache refresh publishes label changes;
+`--no-build-cache` still skips that refresh.
+
+The scan preserves the consumed History cursor. It does not consume History or
+infer deletion from absence. Later ordinary sync replays available changes from
+that cursor, including changes made during the scan. Observations are collected
+per message, rather than as one atomic mailbox snapshot.
+
+Metadata errors, a listed archived message disappearing, an unknown catalog
+label, or a failed label/checkpoint save stop the scan and leave it retryable.
+Earlier successful rows may already have changed. Rerun the command to retry
+with a fresh label catalog; `--noresume` starts the refresh from the beginning.
+Acquisition-only checkpoints cannot skip required label observations.
+
+Already-pending History recovery takes precedence and is reported in the sync
+log. It retains its broader recovery phases, including absence reconciliation
+and History catch-up. The label-refresh option requires daemon API schema 5.9.0
+or newer; an older daemon fails explicitly instead of silently skipping refresh.
 
 ### Gmail Spam and Trash coverage
 

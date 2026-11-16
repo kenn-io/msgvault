@@ -565,6 +565,7 @@ func resetSyncFullFlagsForTest(t *testing.T) {
 
 	oldQuery := syncQuery
 	oldNoResume := syncNoResume
+	oldRefreshLabels := syncRefreshLabels
 	oldBefore := syncBefore
 	oldAfter := syncAfter
 	oldLimit := syncLimit
@@ -572,6 +573,7 @@ func resetSyncFullFlagsForTest(t *testing.T) {
 	oldSkipFolders := syncSkipFolders
 	syncQuery = ""
 	syncNoResume = false
+	syncRefreshLabels = false
 	syncBefore = ""
 	syncAfter = ""
 	syncLimit = 0
@@ -580,6 +582,7 @@ func resetSyncFullFlagsForTest(t *testing.T) {
 	t.Cleanup(func() {
 		syncQuery = oldQuery
 		syncNoResume = oldNoResume
+		syncRefreshLabels = oldRefreshLabels
 		syncBefore = oldBefore
 		syncAfter = oldAfter
 		syncLimit = oldLimit

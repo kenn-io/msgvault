@@ -389,6 +389,9 @@ type SyncFullCLIQuery struct {
 	// Noresume Ignore checkpoints and start fresh
 	Noresume *bool `json:"noresume,omitempty"`
 
+	// RefreshLabels Refresh archived labels for one unrestricted Gmail source
+	RefreshLabels *bool `json:"refresh_labels,omitempty"`
+
 	// Folder IMAP folder names to include (repeatable)
 	Folder []string `json:"folder,omitempty"`
 

@@ -43,19 +43,20 @@ type CLIStats struct {
 type CLICacheStats = cacheops.CacheStats
 
 type CLISyncRequest struct {
-	Full         bool
-	BuildCache   bool
-	NoBuildCache bool
-	Email        string
-	SourceID     int64
-	SourceIDSet  bool
-	Query        string
-	NoResume     bool
-	Before       string
-	After        string
-	Limit        int
-	Folders      []string
-	SkipFolders  []string
+	Full          bool
+	BuildCache    bool
+	NoBuildCache  bool
+	Email         string
+	SourceID      int64
+	SourceIDSet   bool
+	Query         string
+	NoResume      bool
+	RefreshLabels bool
+	Before        string
+	After         string
+	Limit         int
+	Folders       []string
+	SkipFolders   []string
 }
 
 type CLIVerifyRequest struct {
@@ -445,6 +446,18 @@ func (c *Client) RunCLISync(
 	req CLISyncRequest,
 	output func(stream, data string) error,
 ) error {
+	if req.RefreshLabels {
+		if !req.Full {
+			return errors.New("label refresh requires a full sync")
+		}
+		version, err := c.APISchemaVersion(ctx)
+		if err != nil {
+			return fmt.Errorf("check daemon label refresh capability: %w", err)
+		}
+		if !apiSchemaVersionAtLeast(version, RefreshLabelsMinAPISchemaVersion) {
+			return fmt.Errorf("label refresh requires daemon API schema %s or newer (daemon reports %q); upgrade the daemon", RefreshLabelsMinAPISchemaVersion, version)
+		}
+	}
 	if req.BuildCache || req.NoBuildCache {
 		version, err := c.APISchemaVersion(ctx)
 		if err != nil {
@@ -467,17 +480,18 @@ func (c *Client) RunCLISync(
 		path = "/api/v1/cli/sync-full"
 		return c.runCLIStream(ctx, path, "sync", &generated.SyncFullCLIRequestOptions{
 			Query: &generated.SyncFullCLIQuery{
-				BuildCache:   optionalBool(req.BuildCache),
-				NoBuildCache: optionalBool(req.NoBuildCache),
-				Email:        optionalString(req.Email),
-				SourceID:     optionalCLIIdentitySourceID(req.SourceID, req.SourceIDSet),
-				Query:        optionalString(req.Query),
-				Noresume:     optionalBool(req.NoResume),
-				Before:       optionalString(req.Before),
-				After:        optionalString(req.After),
-				Limit:        optionalPositiveInt64(req.Limit),
-				Folder:       req.Folders,
-				SkipFolder:   req.SkipFolders,
+				BuildCache:    optionalBool(req.BuildCache),
+				NoBuildCache:  optionalBool(req.NoBuildCache),
+				Email:         optionalString(req.Email),
+				SourceID:      optionalCLIIdentitySourceID(req.SourceID, req.SourceIDSet),
+				Query:         optionalString(req.Query),
+				Noresume:      optionalBool(req.NoResume),
+				RefreshLabels: optionalBool(req.RefreshLabels),
+				Before:        optionalString(req.Before),
+				After:         optionalString(req.After),
+				Limit:         optionalPositiveInt64(req.Limit),
+				Folder:        req.Folders,
+				SkipFolder:    req.SkipFolders,
 			},
 		}, output)
 	}
@@ -492,6 +506,10 @@ func (c *Client) RunCLISync(
 		},
 	}, output)
 }
+
+// RefreshLabelsMinAPISchemaVersion prevents older daemons from silently
+// ignoring the label-refresh option and running acquire-only full sync.
+const RefreshLabelsMinAPISchemaVersion = "5.9.0"
 
 const (
 	sourceIDSyncMinAPISchemaVersion    = "2.4.0"

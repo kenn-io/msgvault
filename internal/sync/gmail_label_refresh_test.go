@@ -1,0 +1,340 @@
+package sync
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/store"
+)
+
+func TestGmailFullLabelRefresh(t *testing.T) {
+	// Serial: the production Gmail client uses the fixture HTTP transport.
+	e, f, ids := recoveryLabelsEnv(t)
+	f.expire = false
+	f.labels["normal1"] = []string{"TRASH", "STARRED"}
+	otherLabels := make(map[int64]int64)
+	for _, sourceType := range []string{"gmail", "imap"} {
+		source, err := e.Store.GetOrCreateSourceContext(t.Context(), sourceType, "other@example.test")
+		require.NoError(t, err)
+		conversation, err := e.Store.EnsureConversationWithTypeContext(t.Context(), source.ID, "thread_normal1", "email_thread", "Synthetic")
+		require.NoError(t, err)
+		id, err := e.Store.UpsertMessageContext(t.Context(), &store.Message{
+			SourceID: source.ID, ConversationID: conversation, SourceMessageID: "normal1", MessageType: "email",
+		})
+		require.NoError(t, err)
+		labels, err := e.Store.EnsureLabelsBatch(t.Context(), source.ID, map[string]store.LabelInfo{"INBOX": {Name: "INBOX", Type: "system"}})
+		require.NoError(t, err)
+		_, err = e.Store.ReconcileMessageLabels(t.Context(), id, []int64{labels["INBOX"]}, true)
+		require.NoError(t, err)
+		otherLabels[id] = labels["INBOX"]
+	}
+	opts := DefaultOptions()
+	opts.RefreshLabels = true
+	e.Syncer = New(e.Syncer.client, e.Store, opts)
+	for attempt := range 2 {
+		before := f.metadataGets
+		f.listTokens = nil
+		summary, err := e.Syncer.Full(t.Context(), testEmail)
+		require.NoError(t, err)
+		assertRecoveryLabels(t, e, ids, f.labels)
+		assert.Equal(t, "1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+		assert.Equal(t, uint64(1000), summary.FinalHistoryID)
+		assert.Empty(t, f.historyStarts, "the sweep does not consume History")
+		assert.Equal(t, []string{"", "p2"}, f.listTokens, "one complete listing, including Spam and Trash")
+		assert.Equal(t, 4, f.metadataGets-before)
+		assert.Equal(t, 4, f.rawGets, "healthy archived RAW is never downloaded again")
+		assert.Zero(t, summary.MessagesAdded)
+		for id, label := range otherLabels {
+			actual, err := e.Store.MessageLabelIDsContext(t.Context(), id)
+			require.NoError(t, err)
+			assert.Equal(t, []int64{label}, actual, "overlapping provider IDs in other sources are unchanged")
+		}
+		if attempt == 0 {
+			assert.Equal(t, int64(4), summary.MessagesUpdated)
+		} else {
+			assert.Zero(t, summary.MessagesUpdated, "a quiescent second sweep changes no memberships")
+		}
+	}
+}
+
+func TestGmailFullLabelRefreshFailuresRetryPage(t *testing.T) {
+	for _, fault := range []string{"read", "identity", "unknown", "gone", "write", "checkpoint", "cancel"} {
+		t.Run(fault, func(t *testing.T) {
+			e, f, ids := recoveryLabelsEnv(t)
+			f.expire = false
+			opts := DefaultOptions()
+			opts.RefreshLabels = true
+			api := e.Syncer.client
+			e.Syncer = New(api, e.Store, opts)
+			removeFault := func() {}
+			ctx := t.Context()
+			switch fault {
+			case "write":
+				removeFault = acquisitionWriteFault(t, e, "message_labels", "DELETE", fmt.Sprintf("OLD.message_id = %d", ids["trash"]))
+			case "checkpoint":
+				removeFault = acquisitionWriteFault(t, e, "sync_runs", "UPDATE", "NEW.cursor_before = 'p2'")
+			default:
+				f.fault = fault
+			}
+			if fault == "cancel" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(t.Context())
+				defer cancel()
+				f.cancel = cancel
+			}
+			_, err := e.Syncer.Full(ctx, testEmail)
+			require.Error(t, err)
+			run, err := e.Store.GetLatestSync(gmailCoverageSource(t.Context(), t, e).ID)
+			require.NoError(t, err)
+			assert.Equal(t, store.SyncStatusFailed, run.Status)
+			assert.Equal(t, "1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+			assertRecoveryLabels(t, e, ids, map[string][]string{"trash": {"TRASH"}})
+			assertDeletedFromSource(t, e.Store, "trash", false)
+			assert.Equal(t, 4, f.rawGets)
+			debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), gmailCoverageSource(t.Context(), t, e).ID)
+			require.NoError(t, err)
+			assert.Empty(t, debt, "a metadata refresh failure is not RAW acquisition debt")
+			if fault == "checkpoint" {
+				assert.Empty(t, run.CursorBefore.String, "a rejected first-page checkpoint cannot publish p2")
+			} else {
+				assert.Equal(t, "p2", run.CursorBefore.String, "the failing metadata page remains retryable")
+			}
+			removeFault()
+			reopenAcquisitionStore(t, e)
+			e.Syncer = New(api, e.Store, opts)
+			switch fault {
+			case "unknown":
+				// A subsequent run observes the newly created label in its
+				// startup catalog. Keep the metadata observation unchanged.
+				f.extraLabels = []string{"Label_unknown"}
+			case "gone":
+				// Fresh enumeration omits the disappeared row. This sweep
+				// has no absence reconciliation and retains its last labels.
+				f.labels["trash"] = []string{"TRASH"}
+				f.fault = ""
+			default:
+				f.fault = ""
+			}
+			_, err = e.Syncer.Full(t.Context(), testEmail)
+			require.NoError(t, err)
+			if fault == "unknown" {
+				f.labels["trash"] = []string{"INBOX", "Label_unknown"}
+			}
+			assertRecoveryLabels(t, e, ids, f.labels)
+			assertDeletedFromSource(t, e.Store, "trash", false)
+			assert.Empty(t, f.historyStarts)
+			assert.Equal(t, "1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+			assert.Equal(t, 4, f.rawGets)
+		})
+	}
+}
+
+func TestGmailFullLabelRefreshLocalReplayCheckpointFailure(t *testing.T) {
+	e, f, _ := recoveryLabelsEnv(t)
+	source := gmailCoverageSource(t.Context(), t, e)
+	previous, err := e.Store.GetLatestSync(source.ID)
+	require.NoError(t, err)
+	require.NoError(t, e.Store.RecordSyncRunItemContext(t.Context(), store.SyncRunItem{
+		SyncRunID: previous.ID, SourceMessageID: "normal1", Phase: syncItemPhaseIngest,
+		Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindAttachmentError, ErrorMessage: "synthetic pending files",
+	}))
+	opts := DefaultOptions()
+	opts.RefreshLabels = true
+	e.Syncer = New(e.Syncer.client, e.Store, opts)
+	f.emptyListing, f.expire = true, false
+	f.listTokens = nil
+	removeFault := acquisitionWriteFault(t, e, "sync_runs", "UPDATE", "NEW.cursor_after = '2000' AND NEW.messages_processed = 0")
+	_, err = e.Syncer.Full(t.Context(), testEmail)
+	require.ErrorContains(t, err, "save local replay checkpoint")
+	assert.Equal(t, "1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+	assert.Empty(t, f.listTokens, "failed required checkpoint stops before an empty enumeration can complete the run")
+	run, err := e.Store.GetLatestSync(source.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.SyncStatusFailed, run.Status)
+	removeFault()
+}
+
+func TestGmailFullLabelRefreshResumeModes(t *testing.T) {
+	for _, scenario := range []struct {
+		name               string
+		first              bool
+		next               bool
+		noResume           bool
+		incrementalBetween bool
+		wantResumed        bool
+	}{
+		{name: "acquisition then refresh", next: true},
+		{name: "refresh then acquisition", first: true},
+		{name: "refresh resumes refresh", first: true, next: true, wantResumed: true},
+		{name: "noresume restarts refresh", first: true, next: true, noResume: true},
+		{name: "incremental between refresh attempts", first: true, next: true, wantResumed: true, incrementalBetween: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			e, f, ids := recoveryLabelsEnv(t)
+			api := e.Syncer.client
+			f.expire, f.stopAtToken = false, "p2"
+			opts := DefaultOptions()
+			opts.RefreshLabels = scenario.first
+			e.Syncer = New(api, e.Store, opts)
+			_, err := e.Syncer.Full(t.Context(), testEmail)
+			require.ErrorContains(t, err, "synthetic interrupted listing")
+			wantCursor := "1000"
+			if scenario.incrementalBetween {
+				f.history = 2200
+				e.Syncer = New(api, e.Store, nil)
+				_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t.Context(), t, e))
+				require.NoError(t, err)
+				wantCursor = "2200"
+			}
+			reopenAcquisitionStore(t, e)
+			opts = DefaultOptions()
+			opts.RefreshLabels, opts.NoResume = scenario.next, scenario.noResume
+			e.Syncer = New(api, e.Store, opts)
+			f.stopAtToken, f.listTokens = "", nil
+			before := f.metadataGets
+			summary, err := e.Syncer.Full(t.Context(), testEmail)
+			require.NoError(t, err)
+			assert.Equal(t, scenario.wantResumed, summary.WasResumed)
+			require.NotEmpty(t, f.listTokens)
+			if scenario.wantResumed {
+				assert.Equal(t, "p2", f.listTokens[0])
+				assert.Equal(t, 2, f.metadataGets-before)
+			} else {
+				assert.Empty(t, f.listTokens[0])
+			}
+			if scenario.next {
+				assertRecoveryLabels(t, e, ids, f.labels)
+			} else {
+				assertRecoveryLabels(t, e, ids, map[string][]string{"trash": {"TRASH"}})
+				assert.Equal(t, before, f.metadataGets, "ordinary acquisition keeps its archived-RAW shortcut")
+			}
+			assert.Equal(t, wantCursor, gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+			assert.Equal(t, 4, f.rawGets)
+		})
+	}
+}
+
+func TestGmailFullLabelRefreshAcquiresNewAndMissingRaw(t *testing.T) {
+	e, f, ids := recoveryLabelsEnv(t)
+	f.expire = false
+	_, err := e.Store.DB().ExecContext(t.Context(), e.Store.Rebind("DELETE FROM message_raw WHERE message_id = ?"), ids["normal2"])
+	require.NoError(t, err)
+	f.extraMessageIDs = []string{"new"}
+	f.labels["new"] = []string{"INBOX"}
+	opts := DefaultOptions()
+	opts.RefreshLabels = true
+	e.Syncer = New(e.Syncer.client, e.Store, opts)
+	_, err = e.Syncer.Full(t.Context(), testEmail)
+	require.NoError(t, err)
+	newIDs, err := e.Store.MessageExistsBatch(gmailCoverageSource(t.Context(), t, e).ID, []string{"new", "normal2"})
+	require.NoError(t, err)
+	require.Len(t, newIDs, 2)
+	assert.Equal(t, ids["normal2"], newIDs["normal2"], "reacquisition keeps the existing archive identity")
+	ids["new"] = newIDs["new"]
+	assertRecoveryLabels(t, e, ids, f.labels)
+	assert.Equal(t, 3, f.metadataGets, "healthy archived messages use metadata")
+	assert.Equal(t, 6, f.rawGets, "only the new and missing-RAW messages download content")
+	assert.Equal(t, "1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+}
+
+func TestGmailFullLabelRefreshResumesPendingRecovery(t *testing.T) {
+	for _, phase := range []string{"enumerate", "catchup"} {
+		for _, noResume := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/noresume=%t", phase, noResume), func(t *testing.T) {
+				e, f, ids := recoveryLabelsEnv(t)
+				f.expire = false
+				api := e.Syncer.client
+				if phase == "enumerate" {
+					f.stopAtToken = "p2"
+				} else {
+					f.stopHistory = true
+				}
+				_, err := e.Syncer.RecoverExpiredHistory(t.Context(), gmailCoverageSource(t.Context(), t, e))
+				require.Error(t, err)
+				reopenAcquisitionStore(t, e)
+				opts := DefaultOptions()
+				opts.RefreshLabels, opts.NoResume = true, noResume
+				e.Syncer = New(api, e.Store, opts)
+				f.stopAtToken, f.stopHistory, f.listTokens, f.historyStarts = "", false, nil, nil
+				f.fault = "unknown" // Preserve the existing recovery catalog policy.
+				_, err = e.Syncer.Full(t.Context(), testEmail)
+				require.NoError(t, err)
+				assertRecoveryLabels(t, e, ids, f.labels)
+				assert.Equal(t, "2001", gmailCoverageSource(t.Context(), t, e).SyncCursor.String, "pending recovery still catches up before publishing")
+				assert.NotEmpty(t, f.historyStarts)
+				if phase == "catchup" && !noResume {
+					assert.Empty(t, f.listTokens, "a pinned catch-up phase does not repeat completed enumeration")
+				}
+				assert.Equal(t, 4, f.rawGets)
+			})
+		}
+	}
+}
+
+type incompleteLabelRefreshAPI struct {
+	gmail.API
+	messageLabelBatchReader
+}
+
+func (incompleteLabelRefreshAPI) LabelsSnapshotComplete() bool { return false }
+
+func TestGmailFullLabelRefreshRequiresCompleteMetadata(t *testing.T) {
+	for _, incomplete := range []bool{false, true} {
+		t.Run(fmt.Sprint(incomplete), func(t *testing.T) {
+			e, f, _ := recoveryLabelsEnv(t)
+			api := e.Syncer.client
+			var wrapped gmail.API = struct{ gmail.API }{api}
+			if incomplete {
+				wrapped = incompleteLabelRefreshAPI{api, api.(messageLabelBatchReader)}
+			}
+			opts := DefaultOptions()
+			opts.RefreshLabels = true
+			e.Syncer = New(wrapped, e.Store, opts)
+			f.listTokens = nil
+			_, err := e.Syncer.Full(t.Context(), testEmail)
+			require.ErrorContains(t, err, "complete Gmail label metadata")
+			assert.Empty(t, f.listTokens)
+			assert.Zero(t, f.metadataGets)
+			assert.Equal(t, 4, f.rawGets)
+		})
+	}
+}
+
+func TestGmailFullLabelRefreshRejectsPartialOrOtherSource(t *testing.T) {
+	for _, scenario := range []string{"query", "limit", "imap", "incremental"} {
+		t.Run(scenario, func(t *testing.T) {
+			e, f, _ := recoveryLabelsEnv(t)
+			opts := DefaultOptions()
+			opts.RefreshLabels = true
+			source := gmailCoverageSource(t.Context(), t, e)
+			switch scenario {
+			case "query":
+				opts.Query = "in:inbox"
+			case "limit":
+				opts.Limit = 1
+			case "imap":
+				source.SourceType = "imap"
+			}
+			e.Syncer = New(e.Syncer.client, e.Store, opts)
+			before, err := e.Store.GetLatestSync(source.ID)
+			require.NoError(t, err)
+			f.listTokens = nil
+			if scenario == "incremental" {
+				_, err = e.Syncer.IncrementalWithHistoryRecovery(t.Context(), source, nil)
+			} else {
+				_, err = e.Syncer.FullWithFinalizer(t.Context(), source, nil)
+			}
+			require.Error(t, err)
+			after, err := e.Store.GetLatestSync(source.ID)
+			require.NoError(t, err)
+			assert.Equal(t, before.ID, after.ID, "invalid options acquire no new sync execution")
+			assert.Empty(t, f.listTokens)
+			assert.Zero(t, f.metadataGets)
+			assert.Equal(t, 4, f.rawGets)
+		})
+	}
+}
