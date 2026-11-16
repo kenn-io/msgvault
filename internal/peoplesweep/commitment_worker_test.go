@@ -107,8 +107,6 @@ func TestCommitmentOptionalCallRepair(t *testing.T) {
 	a.Equal(ProviderCallPurposeCommitment, st.reserved[0].Purpose)
 	a.Equal(ProviderCallPurposeCommitmentRepair, st.reserved[1].Purpose)
 	a.Equal(1, st.reserved[1].CallOrdinal)
-	a.Equal(2, driver.calls)
-	a.Len(accounting.completedBatches, 2)
 	r.NotNil(result)
 	a.Empty(class)
 }

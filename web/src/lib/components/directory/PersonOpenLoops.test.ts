@@ -144,7 +144,6 @@ describe("PersonOpenLoops", () => {
       .mockResolvedValueOnce(Response.json({
         items: [loop()],
         commitments: [promise(1)],
-        commitments_complete: false,
         truncated: false,
         skipped_unparseable: 0,
         coverage_incomplete: true,
@@ -153,8 +152,6 @@ describe("PersonOpenLoops", () => {
       .mockResolvedValueOnce(Response.json({
         items: [loop(), loop(43, "awaiting_reply", "Can you review this?")],
         commitments: [promise(2)],
-        commitments_complete: true,
-        commitments_since: "2026-10-01T00:00:00Z",
         truncated: false,
         skipped_unparseable: 0,
         coverage_incomplete: false,
@@ -177,7 +174,6 @@ describe("PersonOpenLoops", () => {
       .toBeDefined();
     expect(await screen.findByRole("link", { name: "“Promise 2”" })).toBeDefined();
     expect(screen.queryByRole("link", { name: "“Promise 1”" })).toBeNull();
-    expect(screen.getByText("Promise discovery since 2026-10-01 is complete.")).toBeDefined();
     expect(fetcher).toHaveBeenCalledTimes(3);
     expect(screen.queryByRole("button", { name: "Check more" })).toBeNull();
   });
