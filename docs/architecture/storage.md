@@ -69,7 +69,7 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | `size_estimate` | INTEGER | Approximate size in bytes |
 | `has_attachments` | BOOLEAN | Attachment flag |
 | `deleted_at` | DATETIME | Soft-delete timestamp |
-| `deleted_from_source_at` | DATETIME | Set when msgvault deletes or trashes a message, or sync finds it missing from its source; for Gmail and Graph, kept while a msgvault-trashed message stays in Trash and cleared when sync sees it outside Trash; trashing in the provider's app does not set it |
+| `deleted_from_source_at` | DATETIME | Set when msgvault deletes or trashes a message, or sync finds it missing from its source; for Gmail, IMAP, and Graph, kept while a msgvault-trashed message stays in Trash and cleared when sync confirms it outside Trash; trashing in the provider's app does not set it |
 
 The Store derives `account_address` and `account_path` in the same transaction
 as every message write that changes their inputs: raw MIME, recipients, and
