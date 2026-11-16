@@ -129,6 +129,8 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 		{"in three days", "I will call in three days.", "I will call in three days.", "2026-11-13", "", time.Time{}, true},
 		{"in three days wrong date", "I will call in three days.", "I will call in three days.", "2026-11-12", "", time.Time{}, false},
 		{"tomorrow", "I will call tomorrow.", "I will call tomorrow.", "2026-11-11", "", time.Time{}, true},
+		{"today", "I will call today.", "I will call today.", "2026-11-10", "", time.Time{}, true},
+		{"today wrong date", "I will call today.", "I will call today.", "2026-11-11", "", time.Time{}, false},
 		{"day after tomorrow", "I will call the day after tomorrow.", "I will call the day after tomorrow.", "2026-11-12", "", time.Time{}, true},
 		{"day after tomorrow rejects tomorrow", "I will call the day after tomorrow.", "I will call the day after tomorrow.", "2026-11-11", "", time.Time{}, false},
 		{"wrong tomorrow", "I will call tomorrow.", "I will call tomorrow.", "2026-11-12", "", time.Time{}, false},

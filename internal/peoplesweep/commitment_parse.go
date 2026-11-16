@@ -164,7 +164,7 @@ func commitmentQuoteHasDate(quote string, due, event time.Time, location *time.L
 		return false
 	}
 	day := event.In(location)
-	return quoteHasTomorrow(quote, due, day) || quoteHasRelativeDays(quote, due, day) || quoteHasYearlessDate(quote, due, day) || quoteHasByWeekday(quote, due, day)
+	return day.Format(time.DateOnly) == due.Format(time.DateOnly) && quoteHasPhrase(quote, "today", nil) || quoteHasTomorrow(quote, due, day) || quoteHasRelativeDays(quote, due, day) || quoteHasYearlessDate(quote, due, day) || quoteHasByWeekday(quote, due, day)
 }
 
 // quoteHasPhrase finds phrase as a whole token; allow, when set, vets the text after each match.

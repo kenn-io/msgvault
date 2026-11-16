@@ -17,7 +17,7 @@ import (
 
 func loopMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCPCapabilities) []string {
 	var names []string
-	if hasRoute("listLoops", http.MethodGet, "/api/v1/loops", "person_id", "limit", "commitment_offset") {
+	if hasRoute("listLoops", http.MethodGet, "/api/v1/loops", "person_id", "limit") {
 		names = append(names, "list_open_loops")
 	}
 	for _, route := range []struct {
@@ -77,7 +77,7 @@ func (b *daemonMCPOperations) executeLoopOperation(ctx context.Context, name str
 	}
 	if name == "list_open_loops" {
 		input, err := decodeMCPOperationArguments[loopListArguments](args)
-		if err != nil || input.PersonID != nil && !validLoopID(*input.PersonID) || input.Limit != nil && (*input.Limit < 1 || *input.Limit > 200) || input.CommitmentOffset != nil && *input.CommitmentOffset < 0 {
+		if err != nil || input.PersonID != nil && !validLoopID(*input.PersonID) || input.Limit != nil && (*input.Limit < 1 || *input.Limit > 200) || input.CommitmentOffset != nil && (*input.CommitmentOffset < 0 || !b.commitmentOffsetSupport) {
 			return invalid()
 		}
 		if input.Limit == nil {

@@ -395,6 +395,29 @@ func TestMCPLoopListPassesCommitmentOffset(t *testing.T) {
 	assert.Equal(t, 5, st.offset)
 }
 
+func TestMCPLoopListWithParentDaemonCapabilities(t *testing.T) {
+	_, backend, anchor := loopOperationFixture(t)
+	capabilities, err := backend.client.MCPCapabilities(t.Context())
+	require.NoError(t, err)
+	for i := range capabilities.Routes {
+		if capabilities.Routes[i].OperationID == "listLoops" {
+			capabilities.Routes[i].QueryParameters = []string{"person_id", "limit"}
+		}
+	}
+	backend = newDaemonMCPOperations(backend.client, capabilities)
+	session := loopOperationMCPSession(t, backend, nil, &sdkmcp.ClientOptions{})
+	tools, err := session.ListTools(t.Context(), nil)
+	require.NoError(t, err)
+	assert.True(t, slices.ContainsFunc(tools.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "list_open_loops" }))
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{}})
+	require.NoError(t, err)
+	list := loopToolOutput[generated.LoopListResponse](t, result)
+	assert.True(t, slices.ContainsFunc(list.Items, func(item generated.LoopItem) bool { return item.AnchorMessageID == anchor }))
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{"commitment_offset": 1}})
+	require.NoError(t, err)
+	assert.Equal(t, "invalid_arguments", loopToolFailure(t, result)["error"])
+}
+
 func TestMCPLoopListExposesSkippedUnparseable(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
