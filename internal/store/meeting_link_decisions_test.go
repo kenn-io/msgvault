@@ -2055,6 +2055,40 @@ func TestMeetingDecisionPurgeOneCopyThenUndoOther(t *testing.T) {
 	r.Equal([]int64{kept, restored}, record.MessageIDs)
 }
 
+func TestMeetingDecisionPurgeMiddleCopyWithoutRelatedChoices(t *testing.T) {
+	for _, unrelated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unrelated_choice_%t", unrelated), func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, first := projectionFixture(t, st, "redirect-first", "meeting_json", `{}`)
+			_, middle := projectionFixture(t, st, "redirect-middle", "meeting_json", `{}`)
+			_, kept := projectionFixture(t, st, "redirect-kept", "meeting_json", `{}`)
+			_, note := projectionFixture(t, st, "redirect-note", "meeting_json", `{}`)
+			ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+			if unrelated {
+				_, other := projectionFixture(t, st, "redirect-other", "meeting_json", `{}`)
+				_, last := projectionFixture(t, st, "redirect-last", "meeting_json", `{}`)
+				_, err := st.DecideMeetingLinkContext(t.Context(), ref(other), ref(last), "link")
+				r.NoError(err)
+			}
+			_, err := st.MergeDuplicates(t.Context(), middle, []int64{first}, "redirect-first-batch")
+			r.NoError(err)
+			_, err = st.MergeDuplicates(t.Context(), kept, []int64{middle}, "redirect-middle-batch")
+			r.NoError(err)
+			_, err = st.DeleteDedupedBatchContext(t.Context(), "redirect-middle-batch")
+			r.NoError(err)
+			record, err := st.MeetingRecordContext(t.Context(), ref(first))
+			r.NoError(err)
+			r.Equal([]int64{kept}, record.MessageIDs)
+			_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), ref(note), "link")
+			r.NoError(err)
+			record, err = st.MeetingRecordContext(t.Context(), ref(note))
+			r.NoError(err)
+			r.Equal([]int64{kept, note}, record.MessageIDs)
+		})
+	}
+}
+
 func TestMeetingDecisionPurgeUsesNearestSurvivingCopy(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

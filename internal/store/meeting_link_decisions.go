@@ -560,13 +560,6 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }, predicate string, args ...any) error {
 	reader := s.meetingSQLReader(ctx)
-	var hasChoices bool
-	if err := reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meeting_link_decisions)`).Scan(&hasChoices); err != nil {
-		return err
-	}
-	if !hasChoices {
-		return nil
-	}
 	var hasMeetings bool
 	if err := reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages WHERE (`+predicate+`) AND message_type IN ('calendar_event', 'meeting_transcript'))`, args...).Scan(&hasMeetings); err != nil {
 		return err
@@ -740,9 +733,6 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 			return err
 		}
 	}
-	if len(edges) == 0 {
-		return nil
-	}
 	slices.SortFunc(edges, func(a, b meetingDecisionEdge) int { return cmp.Compare(b.id, a.id) })
 	// Keep a choice on a surviving copy when possible. All choices resolving
 	// to the same deleted visible copy use the same replacement for priority.
@@ -843,6 +833,9 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 				return err
 			}
 		}
+	}
+	if len(edges) == 0 {
+		return nil
 	}
 	seen := map[pair]int64{}
 	for _, edge := range edges {
