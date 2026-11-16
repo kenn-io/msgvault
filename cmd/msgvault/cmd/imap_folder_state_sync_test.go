@@ -150,6 +150,11 @@ func TestRunScheduledIMAPSync_CombinedMailboxRoles(t *testing.T) {
 					require.Zero(t, summary.Errors)
 				}
 				syncMailbox()
+				if !tc.allMail {
+					var accountPath string
+					require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT account_path FROM messages WHERE source_id = ? AND source_message_id = 'Combined|1'`), src.ID).Scan(&accountPath))
+					assert.Equal(t, "sent", accountPath)
+				}
 				_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE source_id = ?`), src.ID)
 				require.NoError(t, err)
 				testutil.SetIMAPFlags(t, addr, "Combined", 1, imapapi.FlagSeen)
