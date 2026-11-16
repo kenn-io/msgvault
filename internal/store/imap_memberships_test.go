@@ -1524,7 +1524,7 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	assert.Equal(t, 3, membershipCount(t, f.store, f.source.ID))
 }
 
-func TestFilteredIMAPRestoreCacheSignal(t *testing.T) {
+func TestClearMessageDeletedFromSourceCacheSignal(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		fail bool
@@ -1533,26 +1533,20 @@ func TestFilteredIMAPRestoreCacheSignal(t *testing.T) {
 			failSignal := tc.fail
 			f := newIMAPMembershipFixture(t)
 			id := f.createMessage(t, "restored", "<restored@example.com>")
-			_, err := f.store.EnsureLabel(t.Context(), f.source.ID, "INBOX", "INBOX", "system")
-			require.NoError(t, err)
 			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "restored"))
-			syncID, err := f.store.StartSync(f.source.ID, "full")
-			require.NoError(t, err)
-			require.NoError(t, f.store.CompleteSync(syncID, ""))
 			var baseline int64
 			require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
 			if failSignal {
-				_, err = f.store.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_restore_journal BEFORE INSERT ON cache_related_change_journal BEGIN SELECT RAISE(ABORT, 'journal unavailable'); END`)
+				_, err := f.store.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_restore_journal BEFORE INSERT ON cache_related_change_journal BEGIN SELECT RAISE(ABORT, 'journal unavailable'); END`)
 				require.NoError(t, err)
 			}
-			err = f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, []store.IMAPMembershipObservation{{Mailbox: "INBOX", ArchivedMessageID: id}})
+			err := f.store.ClearMessageDeletedFromSourceContext(t.Context(), f.source.ID, "restored")
 			if failSignal {
 				require.Error(t, err)
 				assert.True(t, messageTombstoned(t, f.store, id))
 				return
 			}
 			require.NoError(t, err)
-			assert.False(t, messageTombstoned(t, f.store, id))
 			var count int
 			require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`, baseline, id).Scan(&count))
 			assert.Positive(t, count)

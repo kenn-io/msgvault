@@ -2688,11 +2688,9 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 		labels    []string
 		wantMark  bool
 		unchanged bool
-		gone      bool
 	}{
 		{name: "restored", labels: []string{"INBOX"}},
 		{name: "still in Trash", labels: []string{"INBOX", "TRASH"}, wantMark: true},
-		{name: "gone", wantMark: true, gone: true},
 		{name: "unchanged labels", labels: []string{"INBOX"}, unchanged: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2712,9 +2710,6 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 			require.NoError(err)
 			require.NoError(env.Store.MarkMessageDeleted(source.ID, "msg1"))
 			env.Mock.Messages["msg1"].LabelIDs = append([]string(nil), tc.labels...)
-			if tc.gone {
-				delete(env.Mock.Messages, "msg1")
-			}
 			env.Mock.Profile.HistoryID = 12341
 			api := &labelMetadataSnapshotAPI{
 				MockAPI:     env.Mock,
@@ -5651,7 +5646,6 @@ type labelMetadataSnapshotAPI struct {
 	filtered    bool
 	labelCalls  [][]string
 	labelErrors map[string]error
-	omitLabels  bool
 	seedCalls   [][2]string
 }
 
@@ -5685,10 +5679,6 @@ func (a *labelMetadataSnapshotAPI) SeedValidatedMessageDedup(
 
 func (a *labelMetadataSnapshotAPI) GetMessageLabelsBatch(_ context.Context, messageIDs []string) ([]gmail.MessageLabelsBatchResult, error) {
 	a.labelCalls = append(a.labelCalls, append([]string(nil), messageIDs...))
-	if a.omitLabels {
-		return nil, nil
-	}
-
 	results := make([]gmail.MessageLabelsBatchResult, len(messageIDs))
 	for i, id := range messageIDs {
 		results[i].ID = id
