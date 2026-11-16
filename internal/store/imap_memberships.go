@@ -588,6 +588,9 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 			}
 		}
 		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL(), includeMarked: true}
+		if err := resolver.recordFilteredTrashObservations(ctx, observations); err != nil {
+			return err
+		}
 		if err := resolver.primeIdentities(ctx, []normalizedIMAPMailboxDelta{{delta: IMAPMailboxDelta{Memberships: candidates}}}); err != nil {
 			return err
 		}
@@ -608,6 +611,46 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 		}
 		return nil
 	})
+}
+
+func (r *imapMembershipResolver) recordFilteredTrashObservations(ctx context.Context, observations []IMAPMembershipObservation) error {
+	type membershipKey struct {
+		mailbox       string
+		validity, uid uint32
+	}
+	observed := make(map[membershipKey]bool)
+	r.trashDigests = make(map[[32]byte]bool)
+	for _, observation := range observations {
+		if !observation.Trash {
+			continue
+		}
+		observed[membershipKey{observation.Mailbox, observation.UIDValidity, observation.UID}] = true
+		if observation.RawSHA256 != ([32]byte{}) {
+			r.trashDigests[observation.RawSHA256] = true
+		}
+	}
+	if len(observed) == 0 {
+		return nil
+	}
+	rows, err := r.tx.QueryContext(ctx, `SELECT m.id, membership.mailbox, membership.uidvalidity, membership.uid
+		FROM imap_message_memberships membership JOIN messages m ON m.id = membership.message_id AND m.source_id = membership.source_id
+		WHERE membership.source_id = ? AND m.deleted_from_source_at IS NOT NULL`, r.sourceID)
+	if err != nil {
+		return fmt.Errorf("read marked Trash memberships: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	r.markedStillInTrash = make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		var key membershipKey
+		if err := rows.Scan(&id, &key.mailbox, &key.validity, &key.uid); err != nil {
+			return err
+		}
+		if observed[key] {
+			r.markedStillInTrash[id] = true
+		}
+	}
+	return rows.Err()
 }
 
 func (s *Store) hideRestoredIMAPCopy(ctx context.Context, tx *loggedTx, resolver *imapMembershipResolver, observation IMAPMembershipObservation, originalID int64) error {

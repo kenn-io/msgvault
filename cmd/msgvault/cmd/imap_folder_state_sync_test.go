@@ -303,61 +303,86 @@ func TestRunScheduledIMAPSync_CompleteRestoreWithoutMessageID(t *testing.T) {
 }
 
 func TestRunScheduledIMAPSync_FilteredRestoreWithoutMessageID(t *testing.T) {
-	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Trash": 0})
-	raw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Restored\r\n\r\nbody\r\n")
-	testutil.AppendIMAPRawMessage(t, user, "Trash", raw)
-	host, portText, err := net.SplitHostPort(addr)
-	require.NoError(t, err)
-	port, err := strconv.Atoi(portText)
-	require.NoError(t, err)
-	imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
-	require.NoError(t, err)
-	configJSON, err := imapCfg.ToJSON()
-	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, configJSON))
-	src, err = st.GetSourceByID(src.ID)
-	require.NoError(t, err)
-	home := t.TempDir()
-	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
-	require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
-	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	invocationFromContext(ctx).logger = testDiscardLogger()
-	summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
-	require.NoError(t, err)
-	require.Zero(t, summary.Errors)
-	var originalID int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), src.ID, "Trash|1").Scan(&originalID))
-	require.NoError(t, st.MarkMessageDeleted(src.ID, "Trash|1"))
-	var journalBaseline int64
-	require.NoError(t, st.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&journalBaseline))
-	testutil.ExpungeIMAPMessage(t, addr, "Trash", imapapi.UID(1))
-	testutil.AppendIMAPRawMessage(t, user, "INBOX", raw)
-	cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
-	summary, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
-	require.NoError(t, err)
-	require.Zero(t, summary.Errors)
-	var marked bool
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), originalID).Scan(&marked))
-	assert.False(t, marked, "the original archived message should lose its deletion mark")
-	var hiddenID int64
-	require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = 'INBOX|1' AND deleted_at IS NOT NULL AND deleted_from_source_at IS NULL`), src.ID).Scan(&hiddenID))
-	var journalCount int
-	require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`), journalBaseline, hiddenID).Scan(&journalCount))
-	assert.Positive(t, journalCount)
-	for i := range 2 {
-		var live int
-		require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND deleted_at IS NULL AND deleted_from_source_at IS NULL`), src.ID).Scan(&live))
-		assert.Equal(t, 1, live)
-		plan, err := st.PlanGCContext(ctx)
-		require.NoError(t, err)
-		assert.NotContains(t, plan.SourceDeletedIDs, originalID)
-		if i == 0 {
+	for _, visibleTrash := range []bool{false, true} {
+		t.Run("trash-visible="+strconv.FormatBool(visibleTrash), func(t *testing.T) {
+			addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Trash": 0, "Archive": 0})
+			raw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Restored\r\n\r\nbody\r\n")
+			testutil.AppendIMAPRawMessage(t, user, "Trash", raw)
+			host, portText, err := net.SplitHostPort(addr)
+			require.NoError(t, err)
+			port, err := strconv.Atoi(portText)
+			require.NoError(t, err)
+			imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
+			st := testutil.NewTestStore(t)
+			src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
+			require.NoError(t, err)
+			configJSON, err := imapCfg.ToJSON()
+			require.NoError(t, err)
+			require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, configJSON))
+			src, err = st.GetSourceByID(src.ID)
+			require.NoError(t, err)
+			home := t.TempDir()
+			cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
+			require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
+			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			invocationFromContext(ctx).logger = testDiscardLogger()
+			summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+			require.NoError(t, err)
+			require.Zero(t, summary.Errors)
+			var originalID int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), src.ID, "Trash|1").Scan(&originalID))
+			require.NoError(t, st.MarkMessageDeleted(src.ID, "Trash|1"))
+			var journalBaseline int64
+			if !st.IsPostgreSQL() {
+				require.NoError(t, st.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&journalBaseline))
+			}
+			if visibleTrash {
+				testutil.SetIMAPFlags(t, addr, "Trash", 1, imapapi.FlagSeen)
+			} else {
+				testutil.ExpungeIMAPMessage(t, addr, "Trash", imapapi.UID(1))
+			}
+			testutil.AppendIMAPRawMessage(t, user, "INBOX", raw)
+			if visibleTrash {
+				cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Archive"}}
+			} else {
+				cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
+			}
 			summary, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
 			require.NoError(t, err)
 			require.Zero(t, summary.Errors)
-		}
+			var marked bool
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), originalID).Scan(&marked))
+			if visibleTrash {
+				assert.True(t, marked)
+				var inboxID int64
+				require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = 'INBOX|1' AND deleted_at IS NULL AND deleted_from_source_at IS NULL`), src.ID).Scan(&inboxID))
+				assert.NotEqual(t, originalID, inboxID)
+				return
+			}
+			assert.False(t, marked, "the original archived message should lose its deletion mark")
+			var hiddenID int64
+			require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = 'INBOX|1' AND deleted_at IS NOT NULL AND deleted_from_source_at IS NULL`), src.ID).Scan(&hiddenID))
+			if !st.IsPostgreSQL() {
+				var journalCount int
+				require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`), journalBaseline, hiddenID).Scan(&journalCount))
+				assert.Positive(t, journalCount)
+			}
+			for i := range 2 {
+				var live int
+				require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND deleted_at IS NULL AND deleted_from_source_at IS NULL`), src.ID).Scan(&live))
+				assert.Equal(t, 1, live)
+				if !st.IsPostgreSQL() {
+					plan, err := st.PlanGCContext(ctx)
+					require.NoError(t, err)
+					assert.NotContains(t, plan.SourceDeletedIDs, originalID)
+				}
+				if i == 0 {
+					summary, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+					require.NoError(t, err)
+					require.Zero(t, summary.Errors)
+				}
+			}
+		})
 	}
 }
 

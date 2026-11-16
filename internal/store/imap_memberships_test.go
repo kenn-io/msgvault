@@ -1474,9 +1474,12 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	uniqueRaw := f.createMessage(t, "Trash|3", "")
 	ambiguousRaw1 := f.createMessage(t, "Trash|4", "")
 	ambiguousRaw2 := f.createMessage(t, "Trash|5", "")
+	visibleRaw := f.createMessage(t, "orphan", "")
 	uniqueData := []byte("From: sender@example.test\r\nSubject: unique\r\n\r\nbody\r\n")
 	ambiguousData := []byte("From: sender@example.test\r\nSubject: identical\r\n\r\nbody\r\n")
+	visibleData := []byte("From: sender@example.test\r\nSubject: visible in trash\r\n\r\nbody\r\n")
 	require.NoError(t, f.store.UpsertMessageRaw(uniqueRaw, uniqueData))
+	require.NoError(t, f.store.UpsertMessageRaw(visibleRaw, visibleData))
 	for _, id := range []int64{ambiguousRaw1, ambiguousRaw2} {
 		require.NoError(t, f.store.UpsertMessageRaw(id, ambiguousData))
 	}
@@ -1500,13 +1503,15 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "still-trash"))
 	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "all-only"))
 	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|1"))
-	for _, id := range []string{"Trash|3", "Trash|4", "Trash|5"} {
+	for _, id := range []string{"Trash|3", "Trash|4", "Trash|5", "orphan"} {
 		require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, id))
 	}
 	ambiguousCopy := f.createMessage(t, "INBOX|4", "")
 	require.NoError(t, f.store.UpsertMessageRaw(ambiguousCopy, ambiguousData))
 	uniqueCopy := f.createMessage(t, "INBOX|3", "")
 	require.NoError(t, f.store.UpsertMessageRaw(uniqueCopy, uniqueData))
+	visibleCopy := f.createMessage(t, "INBOX|9", "")
+	require.NoError(t, f.store.UpsertMessageRaw(visibleCopy, visibleData))
 	syncID, err := f.store.StartSync(f.source.ID, "full")
 	require.NoError(t, err)
 	require.NoError(t, f.store.CompleteSync(syncID, ""))
@@ -1515,6 +1520,8 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 		{Mailbox: "INBOX", UIDValidity: 1, UID: 2, SourceMessageID: "INBOX|2", RFC822MessageID: "<shared@example.com>"},
 		{Mailbox: "INBOX", SourceMessageID: "INBOX|3", RawSHA256: sha256.Sum256(uniqueData)},
 		{Mailbox: "INBOX", SourceMessageID: "INBOX|4", RawSHA256: sha256.Sum256(ambiguousData)},
+		{Mailbox: "INBOX", SourceMessageID: "INBOX|9", RawSHA256: sha256.Sum256(visibleData)},
+		{Mailbox: "Trash", Trash: true, SourceMessageID: "Trash|9", RawSHA256: sha256.Sum256(visibleData)},
 		{Mailbox: "Trash", ArchivedMessageID: restored},
 		{Mailbox: "All Mail", ArchivedMessageID: allOnly},
 		{Mailbox: "Trash", ArchivedMessageID: stillTrash},
@@ -1530,6 +1537,10 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	assert.True(t, uniqueCopyHidden)
 	assert.True(t, messageTombstoned(t, f.store, ambiguousRaw1))
 	assert.True(t, messageTombstoned(t, f.store, ambiguousRaw2))
+	assert.True(t, messageTombstoned(t, f.store, visibleRaw))
+	var visibleCopyLive bool
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT deleted_at IS NULL AND deleted_from_source_at IS NULL FROM messages WHERE id = ?`), visibleCopy).Scan(&visibleCopyLive))
+	assert.True(t, visibleCopyLive)
 	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, ambiguousRaw1))
 	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, ambiguousRaw2))
 	var copyLive bool
