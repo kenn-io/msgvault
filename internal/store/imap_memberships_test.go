@@ -1487,7 +1487,7 @@ func TestApplyIMAPMailboxDeltas_EmptyBaselineCleansLegacyLabelsOnce(t *testing.T
 	assertions.True(messageTombstoned(t, st, messageID))
 }
 
-func TestFilteredIMAPRestoreUpdatesOnlyTrashProjection(t *testing.T) {
+func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	f := newIMAPIdentityFixture(t)
 	restored := f.createMessage(t, "restored", "<restored@example.com>")
 	stillTrash := f.createMessage(t, "still-trash", "<still-trash@example.com>")
@@ -1519,7 +1519,7 @@ func TestFilteredIMAPRestoreUpdatesOnlyTrashProjection(t *testing.T) {
 		{Mailbox: "All Mail", ArchivedMessageID: stillTrash},
 	}))
 	assert.False(t, messageTombstoned(t, f.store, restored))
-	assert.Equal(t, []string{"Projects"}, messageLabels(t, f.store, restored))
+	assert.Equal(t, []string{"Projects", "Trash"}, messageLabels(t, f.store, restored))
 	assert.True(t, messageTombstoned(t, f.store, allOnly))
 	assert.True(t, messageTombstoned(t, f.store, stillTrash))
 	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, stillTrash))
