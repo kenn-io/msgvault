@@ -197,8 +197,8 @@ type SourceStatusStore interface {
 	ListSources(sourceType string) ([]*store.Source, error)
 	ListSourcesContext(ctx context.Context, sourceType string) ([]*store.Source, error)
 	GetActiveSyncReadOnly(ctx context.Context, sourceID int64) (*store.SyncRun, error)
-	GetLatestSyncContext(ctx context.Context, sourceID, excludeID int64) (*store.SyncRun, error)
-	GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error)
+	GetLatestSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*store.SyncRun, error)
+	GetLastSuccessfulSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*store.SyncRun, error)
 	CountSyncRunItemsContext(ctx context.Context, syncRunID int64, status string) (int64, error)
 	ListSyncRunItemsContext(ctx context.Context, syncRunID int64, status string, limit int) ([]store.SyncRunItem, error)
 }

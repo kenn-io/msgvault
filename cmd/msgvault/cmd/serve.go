@@ -1105,6 +1105,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}()
 	var serverStartupErr error
+	var metaWebhooks *metaWebhookRuntime
 	startErr := apiServer.WaitStarted(ctx)
 	if startErr != nil {
 		if ctx.Err() == nil {
@@ -1124,6 +1125,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		listenerReserved = false
 		analyticsServerStarted = true
 		resourceCleanupSafe = false
+		var webhookErr error
+		metaWebhooks, webhookErr = startMetaWebhooks(ctx, cfg, s, idleTracker, combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "a Meta webhook delivery")))
+		if webhookErr != nil {
+			logger.Error("Meta webhook receiver failed to start", "error", webhookErr)
+			serverStartupErr = webhookErr
+			cancel()
+		}
 		if analyticsAsync {
 			analyticsInit = startDaemonAnalyticsInitializer(
 				ctx, cfg, s, startupCacheIntent, apiServer, ownership,
@@ -1192,6 +1200,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("API server error", "error", err)
 			fmt.Printf("\nAPI server error: %v\n", err)
 			serverStartupErr = err
+		case err := <-metaWebhooks.Errors():
+			logger.Error("Meta webhook receiver error", "error", err)
+			serverStartupErr = err
 		case err := <-analyticsInit.Fatal():
 			if ctx.Err() == nil {
 				logger.Error("analytics initialization error", "error", err)
@@ -1220,7 +1231,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			mcpInitErr = errors.New("native MCP initialization did not stop during shutdown")
 		}
 	}
-	shutdownErr := errors.Join(mcpInitErr, shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate))
+	shutdownErr := errors.Join(mcpInitErr, metaWebhooks.Shutdown(shutdownCtx), shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate))
 	if !cacheJobs.waitContext(shutdownCtx) {
 		logger.Warn("analytics cache build did not stop within the shutdown drain timeout")
 		shutdownErr = errors.Join(shutdownErr, errors.New("analytics cache build did not stop during shutdown"))
@@ -3945,8 +3956,8 @@ func (a *storeAPIAdapter) GetActiveSyncReadOnly(ctx context.Context, sourceID in
 	return a.store.GetActiveSyncReadOnly(ctx, sourceID)
 }
 
-func (a *storeAPIAdapter) GetLatestSyncContext(ctx context.Context, sourceID, excludeID int64) (*store.SyncRun, error) {
-	return a.store.GetLatestSyncContext(ctx, sourceID, excludeID)
+func (a *storeAPIAdapter) GetLatestSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*store.SyncRun, error) {
+	return a.store.GetLatestSyncExcludingTypeContext(ctx, sourceID, syncType)
 }
 
 func (a *storeAPIAdapter) GetSyncOperation(operationID string) (*store.SyncOperation, error) {
@@ -3957,8 +3968,8 @@ func (a *storeAPIAdapter) CreateSyncOperation(sourceID int64, operationID string
 	return a.store.CreateSyncOperation(sourceID, operationID)
 }
 
-func (a *storeAPIAdapter) GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error) {
-	return a.store.GetLastSuccessfulSyncContext(ctx, sourceID)
+func (a *storeAPIAdapter) GetLastSuccessfulSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*store.SyncRun, error) {
+	return a.store.GetLastSuccessfulSyncExcludingTypeContext(ctx, sourceID, syncType)
 }
 
 func (a *storeAPIAdapter) CountSyncRunItemsContext(ctx context.Context, syncRunID int64, status string) (int64, error) {

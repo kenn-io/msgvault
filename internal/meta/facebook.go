@@ -55,3 +55,42 @@ func (c *Client) objects(ctx context.Context, path, after string, q url.Values) 
 func (c *Client) safeCursor(cursor string) bool {
 	return len(cursor) <= 4096 && strings.IndexFunc(cursor, func(r rune) bool { return r < 32 || r == 127 }) < 0 && !strings.Contains(cursor, c.token)
 }
+
+// Post reads one Page post with the fields polling reads.
+func (c *Client) Post(ctx context.Context, id string) (Object, error) {
+	return readNode(ctx, c, id, "id,message,created_time,from", func(o Object) string { return o.ID })
+}
+
+// Comment reads one comment and the parent Meta declares for it.
+func (c *Client) Comment(ctx context.Context, id string) (Object, error) {
+	return readNode(ctx, c, id, facebookCommentFields, func(o Object) string { return o.ID })
+}
+
+// readNode reads one Graph node by ID and checks that Meta returned that node.
+func readNode[T any](ctx context.Context, c *Client, id, fields string, nodeID func(T) string) (T, error) {
+	var node T
+	if !safeObjectID(id) {
+		return node, errors.New("invalid Graph object ID")
+	}
+	if err := c.get(ctx, url.PathEscape(id), url.Values{fieldsParam: {fields}}, &node); err != nil {
+		return node, err
+	}
+	if nodeID(node) != id {
+		return node, errors.New("graph object identity mismatch")
+	}
+	return node, nil
+}
+
+// commentVisibility is the part of a comment node that says whether Meta
+// hides it. It is kept apart from Object so the comment JSON that polling and
+// webhooks archive stays the same.
+type commentVisibility struct {
+	ID       string `json:"id"`
+	IsHidden bool   `json:"is_hidden"`
+}
+
+// CommentHidden reads whether Meta currently hides a comment.
+func (c *Client) CommentHidden(ctx context.Context, id string) (bool, error) {
+	node, err := readNode(ctx, c, id, "id,is_hidden", func(v commentVisibility) string { return v.ID })
+	return node.IsHidden, err
+}

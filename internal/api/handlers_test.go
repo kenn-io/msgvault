@@ -42,6 +42,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/meta"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/opserr"
@@ -4053,6 +4054,64 @@ func TestHandleSourceStatusNoSyncRuns(t *testing.T) {
 	assert.Nil(resp.Sources[0].LastSuccessfulSync, "LastSuccessfulSync")
 	assert.False(resp.Sources[0].CanSync)
 	assert.Equal("scheduler_unavailable", resp.Sources[0].SyncUnavailableReason)
+}
+
+// A webhook run records one change between polling syncs, so it must not hide
+// a failing polling sync behind a recent success.
+func TestHandleSourceStatusLeavesOutWebhookRuns(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+	ctx := t.Context()
+	run := func(sourceID int64, syncType string, complete bool) int64 {
+		t.Helper()
+		id, err := st.StartSyncContext(ctx, sourceID, syncType)
+		require.NoError(err)
+		if complete {
+			require.NoError(st.CompleteSyncContext(ctx, id, ""))
+		} else {
+			require.NoError(st.FailSyncContext(ctx, id, "synthetic Graph failure"))
+		}
+		return id
+	}
+
+	succeeded, err := st.GetOrCreateSource(meta.SourceType, "app:1:page:2")
+	require.NoError(err)
+	succeededRun := run(succeeded.ID, "incremental", true)
+	succeededFailedRun := run(succeeded.ID, "incremental", false)
+	run(succeeded.ID, meta.WebhookSyncType, true)
+	run(succeeded.ID, meta.WebhookSyncType, true)
+
+	neverSucceeded, err := st.GetOrCreateSource(meta.SourceType, "app:1:page:3")
+	require.NoError(err)
+	neverSucceededRun := run(neverSucceeded.ID, "full", false)
+	run(neverSucceeded.ID, meta.WebhookSyncType, true)
+
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/sources/status?source_type="+meta.SourceType, nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, "status")
+	var resp SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	byID := map[int64]SourceStatus{}
+	for _, s := range resp.Sources {
+		byID[s.ID] = s
+	}
+	require.Len(byID, 2, "sources")
+
+	got := byID[succeeded.ID]
+	require.NotNil(got.LatestSync, "LatestSync")
+	assert.Equal(succeededFailedRun, got.LatestSync.ID, "LatestSync.ID")
+	assert.Equal(store.SyncStatusFailed, got.LatestSync.Status, "LatestSync.Status")
+	require.NotNil(got.LastSuccessfulSync, "LastSuccessfulSync")
+	assert.Equal(succeededRun, got.LastSuccessfulSync.ID, "LastSuccessfulSync.ID")
+
+	got = byID[neverSucceeded.ID]
+	require.NotNil(got.LatestSync, "LatestSync")
+	assert.Equal(neverSucceededRun, got.LatestSync.ID, "LatestSync.ID")
+	assert.Nil(got.LastSuccessfulSync, "LastSuccessfulSync")
 }
 
 // Sources backed by a scheduler job report its schedule and next run,

@@ -25,8 +25,9 @@ type objectMetadata struct {
 	Organic            bool   `json:"organic,omitempty"`
 	Visitor            bool   `json:"visitor,omitempty"`
 	Ad                 bool   `json:"ad,omitempty"`
-	// Hidden records a hide made through msgvault. Sync keeps it because it
-	// starts from the stored metadata and Graph reads do not return it.
+	// Hidden records a hide made through msgvault, or the state Graph
+	// reported when a webhook named a hide or unhide. Sync keeps it because
+	// it starts from the stored metadata and Graph reads do not return it.
 	Hidden bool `json:"hidden,omitempty"`
 	// Outbound marks a reply msgvault posted. Meta may omit or not identify
 	// its author, so sync keeps this instead.
