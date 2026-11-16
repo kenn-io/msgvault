@@ -1691,7 +1691,8 @@ func (s *Syncer) full(
 		s.drainIdentityDiscoveryBacklog(ctx, source.ID)
 	}
 
-	// Preserve a newer cursor from an intervening incremental on resume.
+	// Ordinary full sync publishes its starting History cursor even with item
+	// errors, preserving a newer cursor from an intervening incremental on resume.
 	// Recovery retains H until catch-up succeeds; it cannot publish here.
 	completionHistoryID := handoffHistoryID
 	if state.wasResumed && !reconcilePresence && isUnrestrictedGmailFull {
