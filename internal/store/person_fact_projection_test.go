@@ -1768,6 +1768,7 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 		seed       string
 		relation   personfacts.ClaimRelation
 		weak       bool
+		retire     bool
 		competitor string
 	}
 	for _, test := range []struct {
@@ -1776,6 +1777,7 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 		want  personfacts.DecisionOutcome
 	}{
 		{"saved", setup{}, personfacts.OutcomeSaved},
+		{"retired", setup{seed: "chat", relation: personfacts.RelationSupersede, retire: true}, personfacts.OutcomeValueRetired},
 		{"current", setup{value: "email", pin: new(false), weak: true}, personfacts.OutcomeCurrentValueKept},
 		{"current removal", setup{value: "chat", pin: new(false), relation: personfacts.RelationContradict, weak: true}, personfacts.OutcomeCurrentValueKept},
 		{"pinned", setup{value: "email"}, personfacts.OutcomePinnedValueKept},
@@ -1798,6 +1800,9 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 			}
 			if test.setup.seed != "" {
 				first := personFactProjectionClaim(personID, target, `"`+test.setup.seed+`"`, test.name+"-seed")
+				if test.setup.retire {
+					first.Confidence.ReportedScore = 0
+				}
 				_, err := st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, test.name+"-seed", []personfacts.ProposedClaim{first}, nil), nil)
 				require.NoError(t, err)
 			}
@@ -1809,11 +1814,17 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 				claim.Evidence[0].Authority = personfacts.AuthorityOrdinary
 				claim.Confidence.ReportedScore = 200
 			}
+			if test.setup.retire {
+				claim.Confidence.ReportedScore = 1000
+			}
 			claims := []personfacts.ProposedClaim{claim}
 			if test.setup.competitor != "" {
 				claims = append(claims, personFactProjectionClaim(personID, target, `"`+test.setup.competitor+`"`, test.name+"-other"))
 			}
 			input := personFactProjectionInput(personID, test.name, claims, nil)
+			if test.setup.retire {
+				input.ResolvedAt = input.ResolvedAt.Add(time.Hour)
+			}
 			prepared, err := personfacts.PreparePersonFactGeneration(t.Context(), input, nil)
 			require.NoError(t, err)
 			var claimKey string
