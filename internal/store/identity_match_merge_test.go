@@ -747,7 +747,7 @@ func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
 		thirdHolder, conflict     bool
 	}{
 		{name: "different survivor email", survivorEmail: "survivor@example.test"},
-		{name: "survivor has primary", survivorEmail: "ABSORBED@example.test", want: "ABSORBED@example.test", thirdHolder: true},
+		{name: "survivor has primary", survivorEmail: "ABSORBED@example.test", want: "ABSORBED@example.test"},
 		{name: "another participant holds identifier", survivorEmail: "survivor@example.test", thirdHolder: true, conflict: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -774,6 +774,9 @@ func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
 				require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), survivor).Scan(&primary))
 				if tc.want != "" {
 					assert.Equal(t, tc.want, primary)
+					var count int
+					require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND LOWER(identifier_value) = LOWER(?)`), survivor, "absorbed@example.test").Scan(&count))
+					assert.Zero(t, count)
 				} else {
 					var count int
 					require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND identifier_value = ?`), survivor, "absorbed@example.test").Scan(&count))
