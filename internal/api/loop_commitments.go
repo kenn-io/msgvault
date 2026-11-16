@@ -58,7 +58,7 @@ func loopCommitments(commitments []store.PersonCommitment) []LoopCommitment {
 
 func (s *Server) registerCommitmentDecision(api huma.API) {
 	op := rawAPIV1Operation("setCommitmentDecision", http.MethodPost, "/loops/commitments/{commitment_id}/decision", "Set an owner decision on a cited promise")
-	op.Errors = []int{400, 401, 403, 404, 409, 413, 415, 500, 503}
+	op.Errors = []int{400, 401, 403, 404, 413, 415, 500, 503}
 	op.Parameters = []*huma.Param{pathStringParam("commitment_id", "The commitment ID, for example c12")}
 	op.RequestBody = jsonRequestBodyFor[CommitmentDecisionRequest](api)
 	op.Responses = jsonResponsesFor[CommitmentDecisionResponse](api)
@@ -84,8 +84,6 @@ func (s *Server) handleCommitmentDecision(w http.ResponseWriter, r *http.Request
 	switch {
 	case errors.Is(err, store.ErrInvalidActivityRequest):
 		writeError(w, http.StatusBadRequest, "invalid_request", "Use open, done, or snoozed with a future until")
-	case errors.Is(err, store.ErrCommitmentChanged):
-		writeError(w, http.StatusConflict, "commitment_changed", "Commitment changed; refresh and retry")
 	case errors.Is(err, sql.ErrNoRows):
 		writeError(w, http.StatusNotFound, "commitment_not_found", "Commitment not found")
 	case err != nil:

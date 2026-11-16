@@ -115,6 +115,37 @@ func TestCommitmentListPages(t *testing.T) {
 		r.Len(items, 2)
 		a.Equal(personfacts.StatusStale, items[1].Freshness)
 	})
+	t.Run("overdue before older undated promises", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "promise-overdue-order", false)
+		_, persist := newCommitmentTestConversation(t, f)
+		for i := range 5 {
+			persist(fmt.Sprintf("undated-%d", i), fmt.Sprintf("I will send report %d.", i), -48*time.Hour+time.Duration(i)*time.Minute)
+		}
+		const quote = "I will call by 2026-08-21."
+		persist("overdue", quote, -24*time.Hour)
+		cfg, profile := commitmentTestConfig()
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Len(window.Sources, 6)
+		output := peoplesweep.ParsedCommitments{}
+		for _, source := range window.Sources {
+			promise := peoplesweep.CommitmentPromise{SourceID: source.ID, Direction: source.Direction, Quote: source.Text, Start: source.Start, End: source.Start + int64(len([]rune(source.Text))), Summary: "Keep the promise"}
+			if source.Text == quote {
+				promise.DueOn = new("2026-08-21")
+				promise.DuePhrase = new("by 2026-08-21")
+			}
+			output.Promises = append(output.Promises, promise)
+		}
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
+		r.NoError(err)
+		items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 5, false)
+		r.NoError(err)
+		r.Len(items, 5)
+		r.Equal(quote, items[0].Quote)
+		r.NotNil(items[0].DueOn)
+		r.Equal("2026-08-21", *items[0].DueOn)
+	})
 	t.Run("submillisecond times", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "promise-page-times", false)
@@ -488,64 +519,6 @@ func TestCommitmentApplyRevokedConsentRetainsPaidAccounting(t *testing.T) {
 	a.Zero(commitments)
 	a.Zero(frontiers)
 	a.Equal(1, requests)
-}
-
-func TestCommitmentDecisionReportsConcurrentChange(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "decision-conflict", false)
-
-	_, persist := newCommitmentTestConversation(t, f)
-	const quote = "I will call."
-	persist("promise", quote, -time.Hour)
-	cfg, profile := commitmentTestConfig()
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	promise := peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Call", End: int64(len(quote))}
-	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{promise}})
-	result, err := f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, true)
-	r.NoError(err)
-	r.Len(items, 1)
-	load := func() commitmentCandidate {
-		var candidate commitmentCandidate
-		r.NoError(f.store.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-			c, err := scanPersonCommitment(tx.QueryRowContext(ctx, `SELECT `+commitmentColumns+` FROM person_commitments WHERE id = ?`, items[0].ID))
-			if err != nil {
-				return err
-			}
-			candidate.commitment = c
-			return f.store.loadCommitmentCandidateEvidenceTx(ctx, tx, &candidate)
-		}))
-		return candidate
-	}
-	candidate := load()
-	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
-	r.NoError(err)
-	_, err = f.store.updatePersonCommitmentDecision(ctx, candidate, LoopStateSnoozed, new(request.CompletedAt.Add(time.Hour)))
-	r.ErrorIs(err, ErrCommitmentChanged)
-	// A changed snooze deadline is also a concurrent change.
-	first := request.CompletedAt.Add(time.Hour)
-	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateSnoozed, &first, request.CompletedAt)
-	r.NoError(err)
-	snoozed := load()
-	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitments SET snoozed_until = ? WHERE id = ?`), f.store.dialect.TimestampParam(first.Add(time.Hour)), items[0].ID)
-	r.NoError(err)
-	_, err = f.store.updatePersonCommitmentDecision(ctx, snoozed, LoopStateSnoozed, new(first.Add(2*time.Hour)))
-	r.ErrorIs(err, ErrCommitmentChanged)
-
-	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateOpen, nil, request.CompletedAt)
-	r.NoError(err)
-	candidate = load()
-
-	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_fact_evidence_status_events
-		(person_id, generation_id, evidence_id, evidence_key, source_version, supported, reason)
-		VALUES (?, ?, ?, ?, ?, FALSE, 'source-edited')`), f.personID, result.Generation.GenerationID,
-		candidate.promise.ID, candidate.promise.Key, candidate.promise.Input.SourceVersion)
-	r.NoError(err)
-	_, err = f.store.updatePersonCommitmentDecision(ctx, candidate, LoopStateSnoozed, new(request.CompletedAt.Add(time.Hour)))
-	r.ErrorIs(err, ErrCommitmentChanged)
 }
 
 func TestCommitmentDiscoveryCoalescesBackfillAndJournal(t *testing.T) {

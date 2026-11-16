@@ -21,9 +21,6 @@ import (
 	"go.kenn.io/msgvault/internal/vector/preprocess"
 )
 
-// ErrCommitmentChanged reports a decision that changed during an update.
-var ErrCommitmentChanged = errors.New("commitment changed; retry")
-
 // PersonCommitment keeps mutable owner decisions separate from immutable facts.
 type PersonCommitment struct {
 	ID              int64                       `json:"id"`
@@ -94,20 +91,10 @@ func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64
 	return result, nil
 }
 
-func (s *Store) loadCommitmentCandidates(ctx context.Context, personID int64, now time.Time, after PersonCommitment, pageSize int, fresh, includeClosed bool) ([]commitmentCandidate, error) {
-	var candidates []commitmentCandidate
-	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		query := `SELECT ` + commitmentColumns + ` FROM person_commitments WHERE 1=1`
-		var args []any
-		if !includeClosed {
-			query += ` AND (owner_state = 'open' OR (owner_state = 'snoozed' AND ` + s.loopTimeKey("snoozed_until") + ` <= ` + s.loopTimeKey("?") + `))`
-			args = append(args, s.dialect.TimestampParam(now))
-		}
-		if personID > 0 {
-			query += ` AND person_id = ?`
-			args = append(args, personID)
-		}
-		promised := `(SELECT e.event_time FROM person_fact_claims c
+// commitmentLatestClaimSQL selects column from the latest supported claim and
+// evidence row of the current commitment.
+func commitmentLatestClaimSQL(column string) string {
+	return `(SELECT ` + column + ` FROM person_fact_claims c
 				JOIN person_fact_generations g ON g.id = c.generation_id
 				JOIN person_fact_claim_evidence ce ON ce.claim_id = c.id
 				JOIN person_fact_evidence e ON e.id = ce.evidence_id
@@ -116,25 +103,52 @@ func (s *Store) loadCommitmentCandidates(ctx context.Context, personID int64, no
 				AND c.relation = 'support' AND c.rejection_action IS NULL AND c.normalized_value_json IS NOT NULL
 				AND COALESCE((SELECT status.supported ` + latestPersonFactEvidenceStatusSQL("e.person_id", "e.evidence_key", "e.source_version") + `), TRUE) = TRUE
 				ORDER BY g.resolved_at DESC, c.id DESC, e.event_time DESC, e.id DESC LIMIT 1)`
-		key := s.loopTimeKey(promised)
-		query += ` AND ` + promised + ` IS NOT NULL`
-		if fresh {
-			query += ` AND ` + key + ` > ` + s.loopTimeKey("?") + ` AND ` + key + ` <= ` + s.loopTimeKey("?")
-		} else {
-			query += ` AND (` + key + ` <= ` + s.loopTimeKey("?") + ` OR ` + key + ` > ` + s.loopTimeKey("?") + `)`
+}
+
+// commitmentCandidateQuery pages one freshness group, overdue promises first,
+// then oldest promised first, keyed by (overdue rank, promised time, id).
+func (s *Store) commitmentCandidateQuery(personID int64, now time.Time, after PersonCommitment, pageSize int, fresh, includeClosed bool) (string, []any) {
+	query := `SELECT ` + commitmentColumns + ` FROM person_commitments WHERE 1=1`
+	var args []any
+	if !includeClosed {
+		query += ` AND (owner_state = 'open' OR (owner_state = 'snoozed' AND ` + s.loopTimeKey("snoozed_until") + ` <= ` + s.loopTimeKey("?") + `))`
+		args = append(args, s.dialect.TimestampParam(now))
+	}
+	if personID > 0 {
+		query += ` AND person_id = ?`
+		args = append(args, personID)
+	}
+	promised := commitmentLatestClaimSQL(`e.event_time`)
+	key := s.loopTimeKey(promised)
+	today := now.Format(time.DateOnly)
+	rank := `(CASE WHEN ` + commitmentLatestClaimSQL(`c.normalized_value_json ->> 'due_on'`) + ` < ? THEN 0 ELSE 1 END)`
+	query += ` AND ` + promised + ` IS NOT NULL`
+	if fresh {
+		query += ` AND ` + key + ` > ` + s.loopTimeKey("?") + ` AND ` + key + ` <= ` + s.loopTimeKey("?")
+	} else {
+		query += ` AND (` + key + ` <= ` + s.loopTimeKey("?") + ` OR ` + key + ` > ` + s.loopTimeKey("?") + `)`
+	}
+	args = append(args, s.dialect.TimestampParam(now.Add(-commitmentFreshnessDays*24*time.Hour)), s.dialect.TimestampParam(now))
+	if after.ID != 0 {
+		query += ` AND (` + rank + `, ` + key + `, id) > (?, ` + s.loopTimeKey("?") + `, ?)`
+		cursor := s.dialect.TimestampParam(after.PromisedAt)
+		if !s.IsPostgreSQL() {
+			cursor = after.PromisedAt.UTC().Format(time.RFC3339Nano)
 		}
-		args = append(args, s.dialect.TimestampParam(now.Add(-commitmentFreshnessDays*24*time.Hour)), s.dialect.TimestampParam(now))
-		if after.ID != 0 {
-			query += ` AND (` + key + `, id) > (` + s.loopTimeKey("?") + `, ?)`
-			cursor := s.dialect.TimestampParam(after.PromisedAt)
-			if !s.IsPostgreSQL() {
-				cursor = after.PromisedAt.UTC().Format(time.RFC3339Nano)
-			}
-			args = append(args, cursor, after.ID)
+		afterRank := 1
+		if after.DueOn != nil && *after.DueOn < today {
+			afterRank = 0
 		}
-		query += ` ORDER BY ` + key + `, id`
-		query += ` LIMIT ?`
-		args = append(args, pageSize)
+		args = append(args, today, afterRank, cursor, after.ID)
+	}
+	query += ` ORDER BY ` + rank + `, ` + key + `, id LIMIT ?`
+	return query, append(args, today, pageSize)
+}
+
+func (s *Store) loadCommitmentCandidates(ctx context.Context, personID int64, now time.Time, after PersonCommitment, pageSize int, fresh, includeClosed bool) ([]commitmentCandidate, error) {
+	var candidates []commitmentCandidate
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		query, args := s.commitmentCandidateQuery(personID, now, after, pageSize, fresh, includeClosed)
 		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
 			return err
@@ -211,7 +225,6 @@ func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commit
 	}
 	source, live, err := s.currentCommitmentSource(ctx, c.PersonID, c.AnchorMessageID)
 	if err != nil || !live || source.Direction != c.Direction || source.SourceVersion != input.SourceVersion ||
-		source.ContentSHA256 != input.ContentSHA256 ||
 		!personFactPortableTime(source.EventTime).Equal(input.EventTime) ||
 		!personFactPortableTime(source.RecordedTime).Equal(input.RecordedTime) ||
 		!source.MatchesQuote(c.Quote, c.Start, c.End) {
@@ -247,7 +260,17 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 	if !visible {
 		return PersonCommitment{}, sql.ErrNoRows
 	}
-	result, err := s.updatePersonCommitmentDecision(ctx, candidate, state, until)
+	var result PersonCommitment
+	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
+			return err
+		}
+		var err error
+		result, err = scanPersonCommitment(tx.QueryRowContext(ctx, `UPDATE person_commitments
+			SET owner_state = ?, snoozed_until = ? WHERE id = ? RETURNING `+commitmentColumns,
+			state, s.commitmentDeadline(until), id))
+		return err
+	})
 	if err == nil {
 		current.State, current.SnoozedUntil = result.State, result.SnoozedUntil
 		result = current
@@ -261,27 +284,6 @@ func (s *Store) commitmentDeadline(until *time.Time) any {
 		return nil
 	}
 	return s.dialect.TimestampParam(*until)
-}
-
-func (s *Store) updatePersonCommitmentDecision(ctx context.Context, candidate commitmentCandidate, state string, until *time.Time) (PersonCommitment, error) {
-	var result PersonCommitment
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
-			return err
-		}
-		previous := candidate.commitment
-		var err error
-		result, err = scanPersonCommitment(tx.QueryRowContext(ctx, `UPDATE person_commitments
-			SET owner_state = ?, snoozed_until = ? WHERE id = ? AND owner_state = ? AND snoozed_until IS NOT DISTINCT FROM ?
-			AND COALESCE((SELECT status.supported `+latestPersonFactEvidenceStatusSQL("?", "?", "?")+`), TRUE) = TRUE
-			RETURNING `+commitmentColumns, state, s.commitmentDeadline(until), previous.ID, previous.State, s.commitmentDeadline(previous.SnoozedUntil),
-			candidate.promise.Input.PersonID, candidate.promise.Key, candidate.promise.Input.SourceVersion))
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrCommitmentChanged
-		}
-		return err
-	})
-	return result, err
 }
 
 // PersonCommitmentDiscoveryContext returns the saved discovery window and progress.

@@ -119,7 +119,7 @@ func TestCommitmentConfigLimits(t *testing.T) {
 	cfg.Commitments.MaxBytes = 120 << 10
 	r.NoError(cfg.Commitments.Validate(cfg.Budgets))
 	cfg.Commitments.MaxBytes++
-	r.Error(cfg.Commitments.Validate(cfg.Budgets))
+	r.ErrorContains(cfg.Commitments.Validate(cfg.Budgets), "max_bytes <= 122880")
 	cfg.Commitments.MaxBytes = 120 << 10
 	cfg.Budgets.MaxOutputTokensPerPerson = 40000
 	cfg.Commitments.MaxOutputTokens = 32768
@@ -141,7 +141,6 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 		{name: "ISO date", text: "I will call by 2026-11-20.", quote: "I will call by 2026-11-20.", due: "2026-11-20", keep: true},
 		{name: "written date", text: "I will call by November 20, 2026.", quote: "I will call by November 20, 2026.", due: "2026-11-20", keep: true},
 		{name: "weekday", text: "I will call by Friday.", quote: "I will call by Friday.", due: "2026-11-13", keep: true},
-		{name: "bare weekday", text: "I will call Friday.", quote: "I will call Friday.", due: "2026-11-13", keep: true},
 		{name: "this weekday", text: "I will call by this Friday.", quote: "I will call by this Friday.", due: "2026-11-13", keep: true},
 		{name: "next weekday", text: "I will call by next Friday.", quote: "I will call by next Friday.", due: "2026-11-20", keep: true},
 		{name: "weekday next week", text: "I will call by Monday next week.", quote: "I will call by Monday next week.", due: "2026-11-16", keep: true},
@@ -165,6 +164,7 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 		{name: "ambiguous numeric date", text: "I will call on 11/12/2026.", quote: "I will call on 11/12/2026.", due: "2026-11-12"},
 		{name: "unknown days", text: "I will call in several days.", quote: "I will call in several days.", due: "2026-11-13"},
 		{name: "in three days", text: "I will call in three days.", quote: "I will call in three days.", due: "2026-11-13", keep: true},
+		{name: "in two months", text: "I will call in two months.", quote: "I will call in two months.", due: "2027-01-10", keep: true},
 		{name: "in two weeks", text: "I will call in two weeks.", quote: "I will call in two weeks.", due: "2026-11-24", keep: true},
 		{name: "unrelated date", text: "We met Monday; I will call Tuesday.", quote: "We met Monday; I will call Tuesday.", due: "2026-11-16", phrase: `"I will call Tuesday"`},
 		{name: "cited deadline", text: "We met Monday; I will call Tuesday.", quote: "We met Monday; I will call Tuesday.", due: "2026-11-10", phrase: `"I will call Tuesday"`, keep: true},

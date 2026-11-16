@@ -153,7 +153,7 @@ var (
 	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/(?:\d{4}|\d{2})\b`)
 	commitmentYearlessNumeric = regexp.MustCompile(`\b\d{1,2}/\d{1,2}\b`)
 	commitmentTomorrow        = regexp.MustCompile(`\b(day after )?tomorrow\b`)
-	commitmentRelativeDays    = regexp.MustCompile(`\bin ([a-z0-9]+) (days?|weeks?)\b`)
+	commitmentRelativeDays    = regexp.MustCompile(`\bin ([a-z0-9]+) (days?|weeks?|months?)\b`)
 	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:(?:by|on)\s+)?(?:(this|next)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
 	commitmentInTail          = regexp.MustCompile(`^\s+in\b`)
 )
@@ -259,21 +259,29 @@ func quoteHasTomorrow(quote string, due, day time.Time) bool {
 
 func quoteHasRelativeDays(quote string, due, day time.Time) bool {
 	for _, match := range commitmentRelativeDays.FindAllStringSubmatch(quote, -1) {
-		days, err := strconv.Atoi(match[1])
+		count, err := strconv.Atoi(match[1])
 		if err != nil {
-			days = slices.Index([]string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"}, match[1])
+			count = slices.Index([]string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"}, match[1])
 		}
-		if strings.HasPrefix(match[2], "week") {
-			if days > 36600/7 {
-				continue
-			}
-			days *= 7
-		}
-		if days > 0 && days <= 36600 && day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) {
+		unit := strings.TrimSuffix(match[2], "s")
+		if count > 0 && count <= commitmentRelativeLimits[unit] && commitmentRelativeDue(day, count, unit).Format(time.DateOnly) == due.Format(time.DateOnly) {
 			return true
 		}
 	}
 	return false
+}
+
+// commitmentRelativeLimits caps each unit at about a century of event days.
+var commitmentRelativeLimits = map[string]int{"day": 36600, "week": 36600 / 7, "month": 1200}
+
+func commitmentRelativeDue(day time.Time, count int, unit string) time.Time {
+	switch unit {
+	case "week":
+		return day.AddDate(0, 0, count*7)
+	case "month":
+		return day.AddDate(0, count, 0)
+	}
+	return day.AddDate(0, 0, count)
 }
 
 // quoteHasYearlessDate accepts a month and day only for its next occurrence

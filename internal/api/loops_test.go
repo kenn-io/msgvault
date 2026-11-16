@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,23 +80,18 @@ func (l *loopFixture) list(t *testing.T, query string) LoopListResponse {
 	return out
 }
 
-func TestCommitmentDecisionMapsInvalidUnknownAndChangedIDs(t *testing.T) {
+func TestCommitmentDecisionMapsInvalidAndUnknownIDs(t *testing.T) {
 	a := assert.New(t)
 	fixture := newLoopFixture(t)
-	fixture.router = NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: &conflictingCommitmentStore{fixture.f.Store}, Scheduler: newMockScheduler(), Logger: testLogger()}).Router()
 	for _, tc := range []struct {
 		id, request string
 		status      int
 	}{
 		{"12", `{"state":"done"}`, http.StatusBadRequest},
 		{"c12", `{"state":"done"}`, http.StatusNotFound},
-		{"c1", `{"state":"done"}`, http.StatusConflict},
 	} {
 		response := fixture.do(t, http.MethodPost, "/api/v1/loops/commitments/"+tc.id+"/decision", tc.request)
 		a.Equal(tc.status, response.Code, response.Body.String())
-		if tc.status == http.StatusConflict {
-			a.Contains(response.Body.String(), "commitment_changed")
-		}
 	}
 }
 
@@ -152,13 +146,17 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 		{name: "active", active: true, status: http.StatusOK, wantSince: true, wantComplete: true, complete: true},
 		{name: "inactive", status: http.StatusOK, wantSince: true, wantComplete: true},
 		{name: "consent deadline", active: true, consentErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true},
-		{name: "discovery deadline", active: true, discoveryErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true, wantSince: true, wantComplete: true},
+		{name: "discovery deadline", active: true, discoveryErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true, wantComplete: true},
 		{name: "consent error", consentErr: errors.New("consent read failed"), status: http.StatusInternalServerError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			fixture := newLoopFixture(t)
 			st := &deadlineLoopStore{Store: fixture.f.Store, active: tc.active, since: &since, complete: true, consentErr: tc.consentErr, discoveryErr: tc.discoveryErr}
+			if tc.discoveryErr != nil {
+				st.since = nil
+				st.complete = false
+			}
 			server := NewServerWithOptions(ServerOptions{Config: commitmentDiscoveryAPIConfig(t), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
 			w := httptest.NewRecorder()
 			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
@@ -546,15 +544,6 @@ func TestLoopBackfillStopsWhenServerShutsDown(t *testing.T) {
 	assert.Equal(first, result.Items[0].AnchorMessageID)
 	assert.Equal(second, result.Items[1].AnchorMessageID)
 	assert.Equal(reads+1, st.reads.Load())
-}
-
-type conflictingCommitmentStore struct{ *store.Store }
-
-func (s *conflictingCommitmentStore) DecidePersonCommitmentContext(_ context.Context, id int64, _ string, _ *time.Time, _ time.Time) (store.PersonCommitment, error) {
-	if id == 1 {
-		return store.PersonCommitment{}, store.ErrCommitmentChanged
-	}
-	return store.PersonCommitment{}, sql.ErrNoRows
 }
 
 type commitmentListStore struct {
