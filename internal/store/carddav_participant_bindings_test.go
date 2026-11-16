@@ -279,19 +279,6 @@ func TestCardDAVParticipantBindingPhoneAdmission(t *testing.T) {
 			}
 		})
 	}
-	t.Run("scoped beeper identifier", func(t *testing.T) {
-		require := Require.New(t)
-		st, account, book := newCardDAVResourceStore(t)
-		_, err := st.EnsureParticipantByIdentifier("beeper", "+12025550101", "Alex Example")
-		require.NoError(err)
-		require.NoError(st.ClassifyParticipantIdentifierServiceContext(t.Context(), "beeper", "+12025550101", nil, new("account"), new("example")))
-		card := remoteResource(book.CanonicalURL+"scoped.vcf", "scoped-card", "Alex Example", "unmatched@example.test", "one")
-		card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:scoped-card\r\nFN:Alex Example\r\nTEL:+12025550101\r\nEND:VCARD\r\n")
-		card.Emails = nil
-		card.Phones = []string{"+12025550101"}
-		applyParticipantBindingCards(t, st, account, book, card)
-		require.Empty(bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-	})
 }
 
 func TestCardDAVParticipantBindingManualPromotionAndLinkConfirmOwnership(t *testing.T) {
@@ -449,6 +436,19 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 }
 
 func TestCardDAVParticipantBindingMergedAliasRemainsClaimed(t *testing.T) {
+	t.Run("scoped beeper identifier", func(t *testing.T) {
+		require := Require.New(t)
+		st, account, book := newCardDAVResourceStore(t)
+		_, err := st.EnsureParticipantByIdentifier("beeper", "+12025550101", "Alex Example")
+		require.NoError(err)
+		require.NoError(st.ClassifyParticipantIdentifierServiceContext(t.Context(), "beeper", "+12025550101", nil, new("account"), new("example")))
+		card := remoteResource(book.CanonicalURL+"scoped.vcf", "scoped-card", "Alex Example", "unmatched@example.test", "one")
+		card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:scoped-card\r\nFN:Alex Example\r\nTEL:+12025550101\r\nEND:VCARD\r\n")
+		card.Emails = nil
+		card.Phones = []string{"+12025550101"}
+		applyParticipantBindingCards(t, st, account, book, card)
+		require.Empty(bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+	})
 	t.Run("email", func(t *testing.T) {
 		assert := Assert.New(t)
 		require := Require.New(t)

@@ -1743,7 +1743,7 @@ func (s *Server) handleCardDAVSync(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) refreshCardDAVIdentityChanges(ctx context.Context) func() {
 	return func() {
-		if refresher, ok := s.store.(interface{ QueueCardDAVIdentityCacheRefresh(ctx context.Context) }); ok {
+		if refresher, ok := s.store.(interface{ QueueCardDAVIdentityCacheRefresh(context.Context) }); ok {
 			refresher.QueueCardDAVIdentityCacheRefresh(context.WithoutCancel(ctx))
 		}
 	}
