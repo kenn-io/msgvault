@@ -9,7 +9,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -1839,7 +1838,9 @@ func samePinnedEmployment(left, right personfacts.NormalizedValue) (bool, error)
 	if err := json.Unmarshal(right.JSON, &b); err != nil {
 		return false, err
 	}
-	return a.Title == b.Title && reflect.DeepEqual(a.StartDate, b.StartDate) && reflect.DeepEqual(a.EndDate, b.EndDate), nil
+	startMatches := (a.StartDate == nil && b.StartDate == nil) || samePersonFactEmploymentDate(storeEmploymentPartialDate(a.StartDate), storeEmploymentPartialDate(b.StartDate))
+	endMatches := (a.EndDate == nil && b.EndDate == nil) || samePersonFactEmploymentDate(storeEmploymentPartialDate(a.EndDate), storeEmploymentPartialDate(b.EndDate))
+	return startMatches && endMatches, nil
 }
 
 func personFactEmploymentStableIdentity(

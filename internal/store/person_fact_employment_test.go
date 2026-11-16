@@ -1605,6 +1605,8 @@ func TestPersonFactEmploymentPinnedOutcomeMatchesIdentity(t *testing.T) {
 		{"different title", `{"organization":{"name":"Example Company"},"title":"Engineer"}`, `{"organization":{"name":"Example Company"},"title":"Manager"}`, personfacts.OutcomeNotUsed},
 		{"separate stints", "", `{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"Engineer","start_date":{"year":2023},"end_date":{"year":2025}}`, personfacts.OutcomeNotUsed},
 		{"manual ended job", "", `{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"Engineer","start_date":{"year":2018},"end_date":{"year":2020}}`, personfacts.OutcomePinnedValueKept},
+		{"title case", "", `{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"engineer","start_date":{"year":2018},"end_date":{"year":2020}}`, personfacts.OutcomePinnedValueKept},
+		{"date precision", "", `{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"Engineer","start_date":{"year":2018,"month":2},"end_date":{"year":2020,"month":3}}`, personfacts.OutcomePinnedValueKept},
 		{"historical", `{"organization":{"name":"Example Company"},"title":"Engineer","end_date":{"year":2020}}`, `{"organization":{"name":"Example Company"},"title":"Engineer","role":"Developer","end_date":{"year":2020}}`, personfacts.OutcomePinnedValueKept},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
