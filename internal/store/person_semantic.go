@@ -13,11 +13,12 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
-	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 
 	"go.kenn.io/msgvault/internal/jsonexact"
+	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/internal/vector"
-	"golang.org/x/text/unicode/norm"
 )
 
 const (
@@ -504,13 +505,5 @@ func normalizePersonSemanticText(value string) string {
 }
 
 func capPersonSemanticUTF8(value string) string {
-	value = strings.ToValidUTF8(value, "\uFFFD")
-	if len(value) <= MaxPersonSemanticDocumentBytes {
-		return value
-	}
-	end := MaxPersonSemanticDocumentBytes
-	for end > 0 && !utf8.ValidString(value[:end]) {
-		end--
-	}
-	return value[:end]
+	return textutil.PrefixBytes(strings.ToValidUTF8(value, "\uFFFD"), MaxPersonSemanticDocumentBytes)
 }

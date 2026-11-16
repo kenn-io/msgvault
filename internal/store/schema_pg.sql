@@ -1376,6 +1376,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
     -- Full-text search column
     search_fts TSVECTOR,
+    search_fts_fields TEXT[],
 
     -- Vector-embedding watermark: the index generation this message's
     -- embeddings were last written for. NULL means "needs embedding"
@@ -3612,7 +3613,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_source_message_id ON messages(source_mes
 -- column, not here: a legacy DB missing search_fts would fail this index
 -- during the schema-file Exec and roll back the whole apply. [cr2-10]
 
--- idx_message_recipients_email_from is built concurrently by Store.
+-- Recipient address indexes are built concurrently by Store.
 CREATE INDEX IF NOT EXISTS idx_message_recipients_message ON message_recipients(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_recipients_participant ON message_recipients(participant_id, recipient_type);
 

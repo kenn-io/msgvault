@@ -4,7 +4,7 @@
 
 export type SearchIntegrationTasksParams = {
   /**
-   * Task title search within the configured project
+   * Task title search within the configured project; omit to list tasks
    */
-  q: string;
+  q?: string;
 };

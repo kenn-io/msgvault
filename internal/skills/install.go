@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -17,9 +18,76 @@ type AgentDir struct {
 }
 
 // knownAgents maps agent names to their config directory under $HOME.
-var knownAgents = []struct{ name, configDir string }{
-	{"claude", ".claude"},
-	{"codex", ".codex"},
+var knownAgents = []struct{ name, configDir, env string }{
+	{"claude", ".claude", "CLAUDE_CONFIG_DIR"},
+	{"codex", ".codex", "CODEX_HOME"},
+}
+
+func agentConfigDir(home, configDir, env string) string {
+	if dir := os.Getenv(env); dir != "" {
+		return dir
+	}
+	return filepath.Join(home, configDir)
+}
+
+// Root returns the skills root for a supported agent.
+func Root(home, agent string) (string, bool) {
+	for _, a := range knownAgents {
+		if a.name == agent {
+			return filepath.Join(agentConfigDir(home, a.configDir, a.env), "skills"), true
+		}
+	}
+	return "", false
+}
+
+// CheckState describes the installed state of a skill.
+type CheckState string
+
+const (
+	CheckCurrent  CheckState = "current"
+	CheckMissing  CheckState = "missing"
+	CheckModified CheckState = "modified"
+	CheckOutdated CheckState = "outdated"
+)
+
+func generated(content []byte) bool { return bytes.Contains(content, []byte(Marker)) }
+
+// CheckResult describes the state of one skill.
+type CheckResult struct {
+	Skill string
+	State CheckState
+}
+
+func checkSkill(path string, sk Skill) (CheckState, error) {
+	content, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return CheckMissing, nil
+	case err != nil:
+		return "", fmt.Errorf("read skill %s: %w", path, err)
+	case !generated(content):
+		return CheckModified, nil
+	case !bytes.Equal(content, []byte(sk.Content)):
+		return CheckOutdated, nil
+	default:
+		return CheckCurrent, nil
+	}
+}
+
+// Check compares installed skills with the rendered files.
+func Check(root string, list []Skill) (CheckResult, error) {
+	result := CheckResult{State: CheckCurrent}
+	rank := map[CheckState]int{CheckCurrent: 0, CheckOutdated: 1, CheckMissing: 2, CheckModified: 3}
+	for _, sk := range list {
+		state, err := checkSkill(filepath.Join(root, sk.Name, skillFileName), sk)
+		if err != nil {
+			return result, err
+		}
+		if rank[state] > rank[result.State] {
+			result = CheckResult{Skill: sk.Name, State: state}
+		}
+	}
+	return result, nil
 }
 
 // DetectAgents returns the skills roots of agents whose config
@@ -46,7 +114,7 @@ func DetectAgents(home string, only []string) ([]AgentDir, error) {
 		if len(filter) > 0 && !filter[a.name] {
 			continue
 		}
-		configDir := filepath.Join(home, a.configDir)
+		configDir := agentConfigDir(home, a.configDir, a.env)
 		info, err := os.Stat(configDir)
 		if err != nil || !info.IsDir() {
 			continue
@@ -87,7 +155,7 @@ func Install(root string, list []Skill, force bool) ([]InstallResult, error) {
 		status := StatusInstalled
 		existing, err := os.ReadFile(path)
 		switch {
-		case err == nil && !force && !strings.Contains(string(existing), Marker):
+		case err == nil && !force && !generated(existing):
 			results = append(results,
 				InstallResult{Skill: sk.Name, Path: path, Status: StatusSkipped})
 			continue
@@ -136,7 +204,7 @@ func Uninstall(root string) ([]string, error) {
 		if err != nil {
 			return removed, fmt.Errorf("read skill %s: %w", path, err)
 		}
-		if !strings.Contains(string(content), Marker) {
+		if !generated(content) {
 			continue
 		}
 		if err := os.Remove(path); err != nil {

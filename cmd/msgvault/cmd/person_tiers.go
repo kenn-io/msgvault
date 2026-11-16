@@ -159,7 +159,7 @@ func runPersonTiers(command *cobra.Command, deps personTiersCommandDeps, args []
 
 func writePersonTiersWarning(w io.Writer, readiness store.PersonTierReadiness) {
 	if !readiness.Ready {
-		_, _ = fmt.Fprintf(w, "Warning: the activity projection is behind or built under other settings (%s); counts may be too low or follow the stored settings until \"msgvault activity build\" catches up.\n",
+		_, _ = fmt.Fprintf(w, "Warning: counts may be low or use older settings (%s). Run \"msgvault activity build\" to refresh them.\n",
 			strings.Join(readiness.Reasons, ", "))
 	}
 }

@@ -116,8 +116,8 @@ and Forward restore them.
 
 One toolbar sits above the results:
 
-- **Filter** holds Kind, Account, Identity, and optional From and To dates. Dates include the selected UTC calendar days. From must be on or before To.
-- **Group by** adds a grouping level. Add more levels to group within groups.
+- **Filter** holds Kind, Account, Identity, and optional From and To dates. A new date range uses UTC. Month and Year drills create dates in your browser's time zone; editing those dates keeps them local. From must be on or before To.
+- **Group by** adds a grouping level, including Entry kind. Month and Year list newest first in your time zone, with bars showing each group's share of all items. Add more levels to group within groups.
 - **Show as** switches between Table, Timeline, and Files.
 - **Sort** shows the fixed newest-first Messages order.
 - The count at the end reports items, or groups when the view is grouped.
@@ -319,8 +319,9 @@ Facts lives in the person's Details. Choose **Show** to inspect evidence, claims
 
 Domains provides the same activity-and-files analysis for an exact domain
 fact. A domain is not treated as an inferred organization identity. Selecting
-a grouped person or domain in Messages opens its inspector in the current
-context, including chronologically ordered related files.
+any group in Messages opens its inspector with its item count, date range,
+activity, and the people who appear with it most. Person and domain inspectors
+also show related files and meeting activity when meetings exist.
 
 ## Saved views
 
@@ -337,8 +338,9 @@ keep the Filename filter, Type filter, or file sort. Open the view from its row 
 
 An incompatible view stays dimmed with its reason in the tooltip. Its menu offers only Delete. Updates and deletion carry the record revision. If another browser changes the view first, msgvault reports a conflict or restores the row after a failed deletion.
 
-The daemon validates new definitions against the schema 2 vocabulary. It reads
-schema 1 views with pipes as literal text. A stored view can be opened here,
+The daemon validates new definitions against the saved view vocabulary. Schema 3
+preserves local date bounds; schema 2 uses UTC dates. Schema 1 views keep pipes
+as literal text. A stored view can be opened here,
 run by an API client through `POST /api/v1/saved-views/{id}/run`, or executed by an AI assistant
 with the [MCP server](/docs/usage/chat/#saved-views)'s `run_saved_view` tool.
 All three read the same records and see the same revisions.
@@ -489,8 +491,9 @@ The bar stays visible on Contacts while ordinary settings have unsaved changes.
 Leaving Settings or reloading the page asks first when the bar or one of those
 forms has unsaved edits. Switching categories keeps the bar's edits but drops
 unsaved edits in those forms.
-After a save that needs a restart, Settings shows “Saved. Restart msgvault to
-apply these changes.”
+After a save that needs a restart, Settings shows `msgvault daemon restart` to
+run on the computer running msgvault. Reuse any custom `--home` and `--config`
+options, or restart the daemon's service.
 
 Saving makes targeted edits to `config.toml` while preserving comments. A stale
 edit is rejected after another browser or a hand edit changes the

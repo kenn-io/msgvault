@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/voyage"
 	"go.kenn.io/docbank/document/voyage/voyagetest"
+	"go.kenn.io/kit/agentsetup"
 	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -602,6 +603,7 @@ func TestSetupReportsCheckStoredPeopleCredential(t *testing.T) {
 			}
 			consent := &setupConsentState{PersonInference: true}
 			deps := defaultSetupStatusDeps()
+			deps.agents = nil
 			deps.config = func() *config.Config { return loaded }
 			readEnvironment := deps.environment
 			deps.environment = func(command *cobra.Command, c *config.Config) setupEnvironment {
@@ -1446,6 +1448,74 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 			detectSetupProviders(t.Context(), fixture.load(t), deps, setupProvidersOptions{})
 			assert.Equal(t, 1, probes)
 			assert.Equal(t, 1, discoveries)
+		})
+	}
+}
+
+func TestSetupStatusAgents(t *testing.T) {
+	for _, name := range []string{"text", "json", "error", "interrupted", "no_agents"} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+			row := agentsetup.Row{Agent: "claude", AgentName: "Claude Code", Piece: "skills", State: agentsetup.StateOK}
+			if name == "text" {
+				row.Status = agentsetup.Status{State: agentsetup.StateMissing, NextStep: "msgvault agent setup"}
+			}
+			var output, errOutput bytes.Buffer
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			command := newSetupStatusCommand(setupStatusDeps{
+				config: func() *config.Config { return fixture.load(t) },
+				environment: func(*cobra.Command, *config.Config) setupEnvironment {
+					return setupEnvironment{lookupEnv: fixture.lookupEnv, fileExists: defaultFileExists}
+				},
+				agents: func(context.Context) (agentsetup.Report, error) {
+					switch name {
+					case "no_agents":
+						return agentsetup.Report{}, nil
+					case "error":
+						return agentsetup.Report{}, errors.New("agent check failed")
+					case "interrupted":
+						cancel()
+						return agentsetup.Report{}, context.Canceled
+					default:
+						return agentsetup.Report{Rows: []agentsetup.Row{row}}, nil
+					}
+				},
+			})
+			command.SilenceUsage = true
+			command.SetOut(&output)
+			command.SetErr(&errOutput)
+			if name == "json" || name == "error" || name == "interrupted" {
+				command.SetArgs([]string{"--json"})
+			} else {
+				command.SetArgs([]string{})
+			}
+			err := command.ExecuteContext(ctx)
+			if name == "interrupted" {
+				require.ErrorIs(t, err, context.Canceled)
+				assert.Empty(t, output.String())
+				return
+			}
+			require.NoError(t, err)
+			switch name {
+			case "text":
+				text := output.String()
+				assert.Contains(t, text, "Claude Code")
+				assert.Contains(t, text, "msgvault agent setup")
+				assert.NotContains(t, text, "afterwards")
+				assert.Less(t, strings.Index(text, "MCP tools live"), strings.Index(text, "Agents:"))
+				assert.Less(t, strings.Index(text, "Agents:"), strings.Index(text, "Config:"))
+			case "json":
+				var report laneReport
+				require.NoError(t, json.Unmarshal(output.Bytes(), &report))
+				assert.Equal(t, []agentsetup.Row{row}, report.Agents)
+			case "error":
+				assert.Contains(t, errOutput.String(), "check agents: agent check failed\n")
+				assert.NotContains(t, output.String(), `"agents"`)
+			case "no_agents":
+				assert.Empty(t, errOutput.String())
+				assert.NotContains(t, output.String(), "Agents:")
+			}
 		})
 	}
 }

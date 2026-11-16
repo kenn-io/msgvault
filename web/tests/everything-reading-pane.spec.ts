@@ -282,7 +282,7 @@ test('a drilled aggregate restores after grouped rows clear and through Back and
   const grouped = page.getByRole('grid', { name: 'Messages grouped by source' });
   await expect(grouped.getByText('Example source group')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Drill into Example source group' }).click();
+  await page.getByRole('button', { name: 'Show items in Example source group' }).click();
   await expect(page.getByRole('complementary', { name: 'Reading pane: Restored source detail' })).toBeVisible();
   await expect(grouped).toHaveCount(0);
 
@@ -549,4 +549,75 @@ test('right preview resizes, restores its width, and falls back below on narrow 
   await expect(grid).toBeFocused();
   await expect.poll(async () => (await primary.boundingBox())!.width)
     .toBeCloseTo((await page.locator('.results-split').boundingBox())!.width, 0);
+});
+
+test('aligns group actions and activity in wide and inspected views', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore/groups', route => {
+    const body = route.request().postDataJSON();
+    const label = body.grouping[0] === 'source' ? 'Example source' : 'Person Example';
+    const overview = { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 1 }, { bucket: '2024-06', count: 2 }], co_participants: [] };
+    return route.fulfill({ json: {
+      rows: [{ key: '7', label, count: 3, estimated_bytes: 512, latest_at: '2024-06-30T12:00:00Z' }],
+      ...(body.group_key ? { overview } : {}),
+      total_count: 1, cache_revision: 'cache-groups', search_provenance: {}
+    } });
+  });
+  await page.route('**/api/v1/explore/files', route => route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'cache-groups', search_provenance: {} } }));
+  await page.route('**/api/v1/meetings/metrics', route => route.fulfill({ json: {
+    schema_version: 1, archive_uid: 'synthetic', scope: { kind: 'explore' },
+    totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: 0 },
+    first_meeting_at: null, last_meeting_at: null, undated_count: 0, duration_by_basis: [], months: []
+  } }));
+  await page.route('**/api/v1/meetings/actions', route => route.fulfill({ json: {
+    schema_version: 1, archive_uid: 'synthetic', scope: { kind: 'explore' }, rows: [], total_count: 0,
+    coverage: { meeting_count: 0, available: 0, partial: 0, unsupported: 0, unavailable: 0 }
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['source'] })))}`);
+  const sources = page.getByRole('grid', { name: 'Messages grouped by source' });
+  const sourceAction = sources.getByRole('row', { name: /Example source/ }).getByRole('button', { name: 'Show items in Example source' });
+  await expect(sourceAction).toBeVisible();
+  const actionHeader = (await sources.getByRole('columnheader', { name: 'Show items' }).boundingBox())!;
+  const actionButton = (await sourceAction.boundingBox())!;
+  expect(Math.abs(actionHeader.x + actionHeader.width / 2 - actionButton.x - actionButton.width / 2)).toBeLessThanOrEqual(1);
+  const sourceGrid = (await sources.boundingBox())!;
+  const sourceCell = (await sourceAction.locator('..').boundingBox())!;
+  expect.soft(sourceGrid.x + sourceGrid.width - sourceCell.x - sourceCell.width, 'wide Source action inset').toBeLessThanOrEqual(2);
+
+  const width = await sources.evaluate(element => element.clientWidth);
+  await page.setViewportSize({ width: page.viewportSize()!.width + 640 - width, height: 900 });
+  await expect.poll(async () => (await sources.boundingBox())!.width).toBeCloseTo(640, 0);
+  const narrowGrid = (await sources.boundingBox())!;
+  const narrowAction = (await sourceAction.boundingBox())!;
+  expect(narrowAction.x + narrowAction.width).toBeLessThanOrEqual(narrowGrid.x + narrowGrid.width);
+  await page.setViewportSize({ width: 1920, height: 900 });
+
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['participant'] })))}`);
+  const people = page.getByRole('grid', { name: 'Messages grouped by participant' });
+  await people.getByText('Person Example', { exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Group overview' })).toBeVisible();
+  const personAction = people.getByRole('row', { name: /Person Example/ }).getByRole('button', { name: 'Show items in Person Example' });
+  const personGrid = (await people.boundingBox())!;
+  const personCell = (await personAction.locator('..').boundingBox())!;
+  expect.soft(personGrid.x + personGrid.width - personCell.x - personCell.width, 'inspected Person action inset').toBeLessThanOrEqual(2);
+  const personSpacing = await people.getByRole('row', { name: /Person Example/ }).evaluate(row => {
+    const count = row.querySelector('.group-count')!;
+    const countRange = document.createRange();
+    countRange.selectNodeContents(count);
+    return countRange.getBoundingClientRect().left - row.getBoundingClientRect().left;
+  });
+  expect.soft(personSpacing, 'inspected Person count stays beside the capped name column').toBeLessThanOrEqual(560);
+  const activity = page.getByRole('img', { name: /Activity by month/ });
+  expect((await activity.boundingBox())!.width).toBeLessThanOrEqual(320);
+  expect((await activity.locator('rect').first().boundingBox())!.width).toBeLessThanOrEqual(8);
+  const personActivityGap = await page.getByRole('img', { name: /Activity by month/ }).evaluate(svg => {
+    const lastBar = svg.querySelector('rect:last-child')!;
+    return svg.getBoundingClientRect().right - lastBar.getBoundingClientRect().right;
+  });
+  expect.soft(personActivityGap, 'last activity bar aligns with its endpoint').toBeLessThanOrEqual(1);
+  await page.getByRole('button', { name: 'Display', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Right', exact: true }).click();
+  await page.keyboard.press('Escape');
+  expect(await people.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
 });

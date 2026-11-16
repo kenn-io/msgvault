@@ -156,6 +156,22 @@ func PrefixRunes(s string, n int) string {
 	return string(runes[:n])
 }
 
+// PrefixBytes returns the longest prefix of s that fits in maxBytes without
+// splitting a UTF-8 sequence, or s when it already fits.
+func PrefixBytes(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	if maxBytes <= 0 {
+		return ""
+	}
+	end := maxBytes
+	for end > 0 && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return s[:end]
+}
+
 // FirstLine returns the first line of a string, capped at 200 runes.
 // Useful for extracting clean error messages from multi-line outputs
 // where the first line itself may be excessively long (e.g. enmime

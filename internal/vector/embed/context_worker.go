@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -1291,7 +1292,7 @@ func truncateDocumentInput(input DocumentInput, budget int) DocumentInput {
 	for i, chunk := range input.Chunks {
 		text := chunk
 		if total > 0 {
-			text = utf8Prefix(chunk, len(chunk)*budget/total)
+			text = textutil.PrefixBytes(chunk, len(chunk)*budget/total)
 		}
 		if text == "" && chunk != "" {
 			_, size := utf8.DecodeRuneInString(chunk)
