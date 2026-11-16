@@ -27,7 +27,7 @@ var cliSearchTasks = []struct {
 	{"read a conversation thread", "msgvault show-thread"},
 	{"export a message as eml", "msgvault export-eml"},
 	{"list archived accounts", "msgvault list-accounts"},
-	{"search extracted document attachments", "msgvault documents search"},
+	{"search extracted document attachments", "msgvault media search"},
 	{"find words in transcripts", "msgvault media search"},
 	{"search attachment pixels with a query image", "msgvault multimodal search"},
 	{"search contacts semantically by free text", "msgvault person search"},

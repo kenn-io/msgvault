@@ -5,7 +5,8 @@ description: Complete command reference for all msgvault commands.
 ---
 
 Find a command with `msgvault cli search "<what you want to do>"`, then use
-`msgvault COMMAND --help` for its flags and examples. This reference follows current `main`; see
+`msgvault COMMAND --help` for its flags and examples. This reference follows
+current `main`; see
 [the latest release notes](https://github.com/kenn-io/msgvault/releases/latest) for features and upgrade notes.
 
 `msgvault --help` groups commands by task and lists start-here commands for
