@@ -40,6 +40,7 @@ type PersonCommitment struct {
 	Freshness       personfacts.FreshnessStatus `json:"freshness"`
 	State           string                      `json:"state"`
 	SnoozedUntil    *time.Time                  `json:"snoozed_until,omitempty"`
+	PagePosition    int                         `json:"-"`
 }
 
 const commitmentColumns = `id, person_id, target_key, owner_state, snoozed_until`
@@ -64,11 +65,12 @@ func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64
 		return nil, ErrInvalidActivityRequest
 	}
 	result := make([]PersonCommitment, 0, limit)
+	position := 0
 	pageSize := min(32, max(8, limit))
 	for _, fresh := range []bool{true, false} {
 		var after PersonCommitment
 		for {
-			candidates, err := s.loadCommitmentCandidates(ctx, personID, now, includeClosed, after, pageSize, fresh)
+			candidates, err := s.loadCommitmentCandidates(ctx, personID, now, after, pageSize, fresh)
 			if err != nil {
 				return nil, err
 			}
@@ -80,10 +82,12 @@ func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64
 				if !visible {
 					continue
 				}
-				if offset > 0 {
-					offset--
+				// Count hidden decisions so closing a promise does not shift later pages.
+				position++
+				if position <= offset || !includeClosed && (c.State == LoopStateDone || c.State == LoopStateSnoozed) {
 					continue
 				}
+				c.PagePosition = position
 				result = append(result, c)
 				if len(result) == limit {
 					return result, nil
@@ -98,16 +102,11 @@ func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64
 	return result, nil
 }
 
-func (s *Store) loadCommitmentCandidates(ctx context.Context, personID int64, now time.Time, includeClosed bool, after PersonCommitment, pageSize int, fresh bool) ([]commitmentCandidate, error) {
+func (s *Store) loadCommitmentCandidates(ctx context.Context, personID int64, now time.Time, after PersonCommitment, pageSize int, fresh bool) ([]commitmentCandidate, error) {
 	var candidates []commitmentCandidate
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		query := `SELECT ` + commitmentColumns + ` FROM person_commitments WHERE 1=1`
 		var args []any
-		if !includeClosed {
-			query += ` AND owner_state <> 'done'`
-			query += ` AND (owner_state <> 'snoozed' OR ` + s.loopTimeKey("snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
-			args = append(args, s.dialect.TimestampParam(now))
-		}
 		if personID > 0 {
 			query += ` AND person_id = ?`
 			args = append(args, personID)

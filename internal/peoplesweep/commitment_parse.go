@@ -135,7 +135,7 @@ var (
 	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/(?:\d{4}|\d{2})\b`)
 	commitmentTomorrow        = regexp.MustCompile(`\b(day after )?tomorrow\b`)
 	commitmentRelativeDays    = regexp.MustCompile(`\bin ([a-z0-9]+) days?\b`)
-	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(?:(this)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
+	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(?:(this|next)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
 	commitmentInTail          = regexp.MustCompile(`^\s+in\b`)
 )
 
@@ -248,8 +248,8 @@ func quoteHasByWeekday(quote string, due, day time.Time) bool {
 		}
 		days := (int(weekday) - int(day.Weekday()) + 7) % 7
 		period := match[3]
-		if match[1] == "this" {
-			period = "this"
+		if match[1] != "" {
+			period = match[1]
 		}
 		switch period {
 		case "this":

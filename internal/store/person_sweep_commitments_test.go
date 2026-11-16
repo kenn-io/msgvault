@@ -104,6 +104,35 @@ func TestCommitmentDecisionSurvivesPrependedText(t *testing.T) {
 }
 
 func TestCommitmentListPages(t *testing.T) {
+	t.Run("decision between pages", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "promise-page-decision", false)
+		_, persist := newCommitmentTestConversation(t, f)
+		for i := range 5 {
+			persist(fmt.Sprintf("promise-%d", i), fmt.Sprintf("I will send report %d.", i), -time.Hour+time.Duration(i)*time.Second)
+		}
+		cfg, _ := commitmentTestConfig()
+		applyCommitmentTestSources(t, f, cfg.Commitments)
+		first, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 2, 0, false)
+		r.NoError(err)
+		r.Len(first, 2)
+		_, err = f.store.DecidePersonCommitmentContext(ctx, first[0].ID, LoopStateDone, nil, personFactLedgerNow)
+		r.NoError(err)
+		second, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 2, first[1].PagePosition, false)
+		r.NoError(err)
+		r.Len(second, 2)
+		r.Equal("I will send report 2.", second[0].Quote)
+		r.Equal("I will send report 3.", second[1].Quote)
+		first, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 2, 0, false)
+		r.NoError(err)
+		r.Len(first, 2)
+		r.Equal(3, first[1].PagePosition)
+		second, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 2, first[1].PagePosition, false)
+		r.NoError(err)
+		r.Len(second, 2)
+		r.Equal("I will send report 3.", second[0].Quote)
+		r.Equal("I will send report 4.", second[1].Quote)
+	})
 	t.Run("fresh before limit", func(t *testing.T) {
 		r, a, ctx := require.New(t), assert.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "promise-order", false)

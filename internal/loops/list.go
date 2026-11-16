@@ -233,7 +233,7 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 		result.CoverageIncomplete = result.CoverageIncomplete || stopped
 		if len(commitments) > opts.Limit {
 			commitments = commitments[:opts.Limit]
-			next := opts.CommitmentOffset + opts.Limit
+			next := commitments[len(commitments)-1].PagePosition
 			result.CommitmentsNextOffset = &next
 			result.Truncated = true
 		}

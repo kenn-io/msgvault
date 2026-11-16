@@ -609,7 +609,7 @@ type pagingCommitmentStore struct {
 
 func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, _, offset int, includeClosed bool) ([]store.PersonCommitment, error) {
 	s.offset, s.includeClosed = offset, includeClosed
-	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Start: 0, End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}, {ID: 202, PersonID: 1, TargetKey: "promise-202", AnchorMessageID: 2, Direction: "owed_to", Quote: "I will write.", Start: 0, End: 13, Summary: "Write", Freshness: "stale", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}}, nil
+	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Start: 0, End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open", PagePosition: 201}, {ID: 202, PersonID: 1, TargetKey: "promise-202", AnchorMessageID: 2, Direction: "owed_to", Quote: "I will write.", Start: 0, End: 13, Summary: "Write", Freshness: "stale", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open", PagePosition: 202}}, nil
 }
 
 func TestListLoopsPagesCommitments(t *testing.T) {
