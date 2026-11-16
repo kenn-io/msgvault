@@ -87,7 +87,7 @@ func TestFamilyShowListsCopiesAndReplies(t *testing.T) {
 	text, stderr = run(strconv.FormatInt(id, 10))
 	assert.Contains(text, strconv.FormatInt(copyID, 10)+"\thome@example.test\t")
 	assert.Contains(text, "(headers not fully read)")
-	assert.Contains(stderr, "1 copies have incomplete header links")
+	assert.Contains(stderr, "1 copies may have related emails this output cannot show")
 	assert.NotContains(stderr, "repair-derived")
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET email_linkage_outcome = NULL WHERE id = ?`), copyID)
 	require.NoError(err)
@@ -101,7 +101,7 @@ func TestFamilyShowListsCopiesAndReplies(t *testing.T) {
 	text, stderr = run(strconv.FormatInt(id, 10))
 	assert.Contains(text, "\treply (no stored Message-ID)\tQuote")
 	assert.NotContains(text, "headers not fully read")
-	assert.Contains(stderr, "1 copies have incomplete header links")
+	assert.Contains(stderr, "1 copies may have related emails this output cannot show")
 
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET email_linkage_outcome = NULL WHERE id = ?`), replyID)
 	require.NoError(err)

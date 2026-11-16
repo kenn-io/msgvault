@@ -149,7 +149,7 @@ func writeRelatedCopies(cmd *cobra.Command, family *store.EmailFamily) error {
 		}
 	}
 	if unreadable > 0 {
-		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%d copies have incomplete header links, so they may have relations this output cannot show\n", unreadable); err != nil {
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%d copies may have related emails this output cannot show\n", unreadable); err != nil {
 			return fmt.Errorf("write related copies: %w", err)
 		}
 	}
