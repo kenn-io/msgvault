@@ -363,7 +363,6 @@
     font-size: var(--font-size-sm);
   }
   .helper code {
-    font-family: var(--font-mono);
     font-size: var(--font-size-xs);
     overflow-wrap: anywhere;
   }
