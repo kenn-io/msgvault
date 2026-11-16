@@ -2638,6 +2638,7 @@ func TestIncrementalSyncRemovedLabelPreservesOrClearsDeletion(t *testing.T) {
 
 type trashQueryAPI struct {
 	*labelMetadataSnapshotAPI
+
 	trashPages int
 	trashError error
 }

@@ -1776,7 +1776,7 @@ func (s *Syncer) loadTrashIDs(ctx context.Context) error {
 
 func (s *Syncer) reconcileMarkedGmail(ctx context.Context, sourceID int64, messageIDs []string, existing map[string]store.MessageWithRawMetadata, labels map[string]int64, result *batchResult) (map[string]struct{}, error) {
 	if s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail {
-		return nil, nil
+		return map[string]struct{}{}, nil
 	}
 	marked, err := s.store.MarkedSourceMessageIDsBatchContext(ctx, sourceID, messageIDs)
 	if err != nil {
