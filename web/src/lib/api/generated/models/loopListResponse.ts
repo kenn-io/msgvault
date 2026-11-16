@@ -7,8 +7,6 @@ import type { LoopItem } from "./loopItem";
 export interface LoopListResponse {
   commitments?: LoopCommitment[];
   commitments_complete?: boolean;
-  /** Offset for the next promise page; keep the same person and include_closed filters */
-  commitments_next_offset?: number;
   commitments_since?: string;
   commitments_until?: string;
   /** True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue */

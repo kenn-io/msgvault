@@ -8,11 +8,6 @@ export type ListLoopsParams = {
    */
   person_id?: number;
   /**
-   * Number of cited promises to skip
-   * @minimum 0
-   */
-  commitment_offset?: number;
-  /**
    * Include done and snoozed commitments
    */
   include_closed?: boolean;
