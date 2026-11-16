@@ -115,10 +115,10 @@ func cloneGrant(g Grant) Grant {
 	}
 	for i, source := range g.Sources {
 		clone.Sources[i] = SourceRef{
-			ID:                source.ID,
-			Type:              source.Type,
-			Identifier:        source.Identifier,
-			SenderKeys:        append([]string(nil), source.SenderKeys...),
+			ID:                 source.ID,
+			Type:               source.Type,
+			Identifier:         source.Identifier,
+			SenderKeys:         append([]string(nil), source.SenderKeys...),
 			IncomingSenderKeys: append([]string(nil), source.IncomingSenderKeys...),
 		}
 	}
