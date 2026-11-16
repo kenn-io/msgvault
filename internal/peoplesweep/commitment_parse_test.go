@@ -147,6 +147,7 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 		{name: "weekday next week", text: "I will call by Monday next week.", quote: "I will call by Monday next week.", due: "2026-11-16", keep: true},
 		{name: "weekday next week wrong date", text: "I will call by Monday next week.", quote: "I will call by Monday next week.", due: "2026-11-23"},
 		{name: "yearless date", text: "I will call on November 20.", quote: "I will call on November 20.", due: "2026-11-20", keep: true},
+		{name: "yearless numeric same year", text: "I will call by 8/24.", quote: "I will call by 8/24.", due: "2026-08-24", event: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC), keep: true},
 		{name: "yearless numeric", text: "I will call by 8/24.", quote: "I will call by 8/24.", due: "2027-08-24", keep: true},
 		{name: "yearless numeric day first", text: "I will call by 24/8.", quote: "I will call by 24/8.", due: "2027-08-24", keep: true},
 		{name: "yearless numeric ambiguous", text: "I will call by 8/12.", quote: "I will call by 8/12.", due: "2027-08-12"},

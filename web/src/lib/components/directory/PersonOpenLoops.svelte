@@ -23,11 +23,6 @@
   let unreadable = $state(0);
   let checkMore = $state<() => void>(() => {});
   let promiseStatus = $state('');
-  let nextOffset = $state<number | undefined>();
-  let loadedPages = 1;
-  let loadingPromises = $state(false);
-  let morePromisesFailed = $state(false);
-  let morePromises = $state<() => void>(() => {});
 
   $effect(() => {
     const selectedID = personID;
@@ -36,9 +31,6 @@
     const controller = new AbortController();
     checkMoreFailed = false;
     checkingMore = false;
-    morePromisesFailed = false;
-    loadingPromises = false;
-    morePromises = () => void loadPromises(selectedID, selectedClient, controller.signal);
     async function load(more = false) {
       if (more) {
         checkingMore = true;
@@ -52,8 +44,6 @@
         unreadable = 0;
         failed = false;
         promiseStatus = '';
-        nextOffset = undefined;
-        loadedPages = 1;
       }
       try {
         const result = await listLoops(
@@ -62,24 +52,8 @@
         );
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Open loops are unavailable.');
-        let refreshed = result.data.commitments ?? [];
-        let offset = result.data.commitments_next_offset;
-        let pages = 1;
-        while (more && pages < loadedPages && offset !== undefined) {
-          const page = await listLoops(
-            { person_id: selectedID, limit, commitment_offset: offset },
-            { ...selectedClient, signal: controller.signal },
-          );
-          if (controller.signal.aborted) return;
-          if (!page.data) throw new Error('Promises are unavailable.');
-          refreshed = mergeCommitments(refreshed, page.data.commitments);
-          offset = page.data.commitments_next_offset;
-          pages++;
-        }
         items = result.data.items ?? [];
-        commitments = refreshed;
-        nextOffset = offset;
-        loadedPages = pages;
+        commitments = result.data.commitments ?? [];
         promiseStatus = discoveryStatus(result.data);
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
@@ -100,13 +74,6 @@
     return () => controller.abort();
   });
 
-  // Refresh loaded promises in place by ID and append the ones not already shown.
-  function mergeCommitments(current: LoopCommitment[], incoming: LoopCommitment[] = []): LoopCommitment[] {
-    const fresh = new Map(incoming.map((item) => [item.id, item]));
-    const known = new Set(current.map((item) => item.id));
-    return [...current.map((item) => fresh.get(item.id) ?? item), ...incoming.filter((item) => !known.has(item.id))];
-  }
-
   // Show the discovery window with the loop results.
   function discoveryStatus(data: LoopListResponse): string {
     if (data.commitments_complete == null) return '';
@@ -115,27 +82,6 @@
     if (!since) return data.commitments_complete ? '' : 'Promise discovery has not started.';
     if (until && until < since) return 'No messages were eligible for promise discovery in the current window.';
     return `Promise discovery ${until ? `from ${since} through ${until}` : `since ${since}`} is ${data.commitments_complete ? 'complete' : 'incomplete'}.`;
-  }
-
-  async function loadPromises(selectedID: number, selectedClient: APIClient, signal: AbortSignal) {
-    loadingPromises = true;
-    morePromisesFailed = false;
-    try {
-      const result = await listLoops(
-        { person_id: selectedID, limit, commitment_offset: nextOffset },
-        { ...selectedClient, signal },
-      );
-      if (signal.aborted) return;
-      if (!result.data) throw new Error('Promises are unavailable.');
-      commitments = mergeCommitments(commitments, result.data.commitments);
-      loadedPages++;
-      truncated = Boolean(result.data.truncated);
-      nextOffset = result.data.commitments_next_offset;
-    } catch {
-      if (!signal.aborted) morePromisesFailed = true;
-    } finally {
-      if (!signal.aborted) loadingPromises = false;
-    }
   }
 
   const groups = $derived([
@@ -198,10 +144,6 @@
     {/each}
   {/if}
   {#if !loading && !failed && promiseStatus}<p class="muted">{promiseStatus}</p>{/if}
-  {#if !loading && !failed && nextOffset !== undefined}
-    {#if morePromisesFailed}<p role="alert">Couldn't load more promises.</p>{/if}
-    <div><Button size="sm" label={loadingPromises ? 'Loading…' : 'More promises'} disabled={loadingPromises || checkingMore} onclick={morePromises} /></div>
-  {/if}
   {#if !loading && !failed && unreadable > 0}
     <p class="muted">
       {unreadable === 1 ? '1 message' : `${unreadable} messages`} could not be read, so a reply in {unreadable === 1 ? 'it' : 'one'} may have settled a loop.
@@ -209,7 +151,7 @@
   {/if}
   {#if !loading && !failed && coverageIncomplete}
     {#if checkMoreFailed}<p role="alert">Couldn't check more archive history.</p>{/if}
-    <div><Button size="sm" label={checkingMore ? 'Checking…' : 'Check more'} disabled={checkingMore || loadingPromises} onclick={checkMore} /></div>
+    <div><Button size="sm" label={checkingMore ? 'Checking…' : 'Check more'} disabled={checkingMore} onclick={checkMore} /></div>
   {/if}
 </div>
 </DetailSection>

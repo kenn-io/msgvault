@@ -7587,10 +7587,6 @@ components:
           type: array
         commitments_complete:
           type: boolean
-        commitments_next_offset:
-          description: Offset for the next promise page; keep the same person and include_closed filters
-          format: int64
-          type: integer
         commitments_since:
           format: date-time
           type: string
@@ -24722,13 +24718,6 @@ paths:
           name: person_id
           schema:
             format: int64
-            type: integer
-        - description: Number of cited promises to skip
-          in: query
-          name: commitment_offset
-          schema:
-            format: int64
-            minimum: 0
             type: integer
         - description: Include done and snoozed commitments
           in: query

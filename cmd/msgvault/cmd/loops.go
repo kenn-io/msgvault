@@ -52,7 +52,6 @@ func newLoopsListCommand() *cobra.Command {
   msgvault loops list --person 42`,
 	}
 	command.Flags().IntVar(&opts.Limit, "limit", loops.DefaultLimit, "Maximum entries per collection (1 through 200)")
-	command.Flags().IntVar(&opts.CommitmentOffset, "commitment-offset", 0, "Skip this many cited promises")
 	command.Flags().BoolVar(&opts.IncludeClosed, "include-closed", false, "Include done and snoozed commitments")
 	command.Flags().Int64Var(&opts.PersonID, "person", 0, "Show loops with this person ID")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
@@ -60,14 +59,11 @@ func newLoopsListCommand() *cobra.Command {
 		if cmd.Flags().Changed("person") && opts.PersonID <= 0 {
 			return usageErr(cmd, errors.New("--person must be a positive person ID"))
 		}
-		if opts.CommitmentOffset < 0 {
-			return usageErr(cmd, errors.New("--commitment-offset must be nonnegative"))
-		}
 		if opts.Limit < 1 || opts.Limit > loops.MaxLimit {
 			return usageErr(cmd, fmt.Errorf("--limit must be from 1 through %d", loops.MaxLimit))
 		}
 		version := loopsMinAPISchemaVersion
-		if opts.IncludeClosed || opts.CommitmentOffset > 0 {
+		if opts.IncludeClosed {
 			version = commitmentMinAPISchemaVersion
 		}
 		return withLoopsClientVersion(cmd, version, func(client *daemonclient.Client, version string) error {
@@ -326,9 +322,6 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 		} else {
 			fmt.Fprintf(&notes, "Showing up to %d reply loops and %d cited promises; more remain.\n", limit, limit)
 		}
-	}
-	if result.CommitmentsNextOffset != nil {
-		fmt.Fprintf(&notes, "More promises: repeat this command with --commitment-offset %d.\n", *result.CommitmentsNextOffset)
 	}
 	writeLoopWarnings(&notes, result.SkippedUnparseable, result.CoverageIncomplete)
 	if notes.Len() > 0 {

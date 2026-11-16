@@ -166,48 +166,6 @@ func TestCommitmentScopeRetrack(t *testing.T) {
 	r.Equal("I will call.", window.Sources[0].Text)
 }
 
-func TestCommitmentScopeIdentity(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "restart-identity", false)
-	source, persist := newCommitmentTestConversation(t, f)
-
-	_, err := f.store.RemoveAccountIdentity(source, "owner@example.test")
-	r.NoError(err)
-	persist("promise", "I will call.", -time.Hour)
-
-	cfg, profile := commitmentTestConfig()
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-	r.NoError(err)
-	r.Empty(window.Sources)
-	request := f.request
-	request.CommitmentOnly = true
-	request.Generation.Policy.AllowSensitive = true
-	request.Budget = personSweepApplyBudget()
-	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
-
-	_, err = f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-
-	old := personFactLedgerNow.Add(-60 * 24 * time.Hour)
-	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitment_frontiers SET processed_at = ?, discovery_since = ? WHERE person_id = ?`), f.store.dialect.TimestampParam(old), f.store.dialect.TimestampParam(old), f.personID)
-	r.NoError(err)
-	err = f.store.AddAccountIdentity(source, "owner@example.test", "manual")
-	r.NoError(err)
-	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	r.Equal("I will call.", window.Sources[0].Text)
-	r.Equal(personFactLedgerNow, window.SelectionAt)
-	since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-	r.NoError(err)
-	r.NotNil(since)
-	r.Equal(personFactLedgerNow.Add(-60*24*time.Hour), *since)
-	r.False(complete)
-	due, err := f.store.PersonCommitmentsDue(ctx, f.personID, personFactLedgerNow.Add(time.Minute), cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint, cfg.Commitments.MaxBytes)
-	r.NoError(err)
-	r.True(due)
-}
-
 func TestCommitmentScopeUntrack(t *testing.T) {
 	r, ctx := require.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "restart-untrack", false)
@@ -239,50 +197,100 @@ func TestCommitmentScopeUntrack(t *testing.T) {
 	r.NotNil(since)
 	r.Equal(*savedSince, *since)
 	r.True(complete)
-	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, false)
 	r.NoError(err)
 	r.Len(items, 1)
 }
 
 func TestCommitmentDiscoveryRestartsWhenOwnershipChangesDuringScan(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "identity-during-discovery", false)
-	source, persist := newCommitmentTestConversation(t, f)
-	_, err := f.store.RemoveAccountIdentity(source, "owner@example.test")
-	r.NoError(err)
-	persist("promise", "I will call.", -time.Hour)
-	persist("second", "I will write.", -time.Minute)
-	cfg, profile := commitmentTestConfig()
-	cfg.Commitments.MaxItems = 1
-	scope := peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments)
-	priorSince := personFactLedgerNow.Add(-60 * 24 * time.Hour)
-	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, -1, ?, ?)`), f.personID, f.store.dialect.TimestampParam(personFactLedgerNow), scope, f.store.dialect.TimestampParam(priorSince))
-	r.NoError(err)
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-	r.NoError(err)
-	r.Empty(window.Sources)
-	r.NoError(f.store.AddAccountIdentity(source, "owner@example.test", "manual"))
-	request := f.request
-	request.CommitmentOnly = true
-	request.Generation.Policy.AllowSensitive = true
-	request.Budget = personSweepApplyBudget()
-	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
-	result, err := f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	r.Equal(peoplesweep.FailureArchiveGap, result.CommitmentFailureClass)
-	r.NoError(f.store.db.QueryRowContext(ctx, f.store.Rebind(`SELECT scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`), f.personID).Scan(&scope))
-	r.Empty(scope)
-	since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-	r.NoError(err)
-	r.NotNil(since)
-	r.Equal(priorSince, *since)
-	r.False(complete)
-	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	r.Equal("I will call.", window.Sources[0].Text)
-	r.Zero(window.BackfillMessageID)
-	r.Equal(personFactLedgerNow, window.SelectionAt)
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"identity returns after apply", func(t *testing.T) {
+			r, ctx := require.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "restart-identity", false)
+			source, persist := newCommitmentTestConversation(t, f)
+
+			_, err := f.store.RemoveAccountIdentity(source, "owner@example.test")
+			r.NoError(err)
+			persist("promise", "I will call.", -time.Hour)
+
+			cfg, profile := commitmentTestConfig()
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+			r.NoError(err)
+			r.Empty(window.Sources)
+			request := f.request
+			request.CommitmentOnly = true
+			request.Generation.Policy.AllowSensitive = true
+			request.Budget = personSweepApplyBudget()
+			request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+
+			_, err = f.store.ApplyPersonSweep(ctx, request)
+			r.NoError(err)
+
+			old := personFactLedgerNow.Add(-60 * 24 * time.Hour)
+			_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitment_frontiers SET processed_at = ?, discovery_since = ? WHERE person_id = ?`), f.store.dialect.TimestampParam(old), f.store.dialect.TimestampParam(old), f.personID)
+			r.NoError(err)
+			err = f.store.AddAccountIdentity(source, "owner@example.test", "manual")
+			r.NoError(err)
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+			r.NoError(err)
+			r.Len(window.Sources, 1)
+			r.Equal("I will call.", window.Sources[0].Text)
+			r.Equal(personFactLedgerNow, window.SelectionAt)
+			since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+			r.NoError(err)
+			r.NotNil(since)
+			r.Equal(personFactLedgerNow.Add(-60*24*time.Hour), *since)
+			r.False(complete)
+			due, err := f.store.PersonCommitmentsDue(ctx, f.personID, personFactLedgerNow.Add(time.Minute), cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint, cfg.Commitments.MaxBytes)
+			r.NoError(err)
+			r.True(due)
+		}},
+		{"identity returns during scan", func(t *testing.T) {
+			r, ctx := require.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "identity-during-discovery", false)
+			source, persist := newCommitmentTestConversation(t, f)
+			_, err := f.store.RemoveAccountIdentity(source, "owner@example.test")
+			r.NoError(err)
+			persist("promise", "I will call.", -time.Hour)
+			persist("second", "I will write.", -time.Minute)
+			cfg, profile := commitmentTestConfig()
+			cfg.Commitments.MaxItems = 1
+			scope := peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments)
+			priorSince := personFactLedgerNow.Add(-60 * 24 * time.Hour)
+			_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, -1, ?, ?)`), f.personID, f.store.dialect.TimestampParam(personFactLedgerNow), scope, f.store.dialect.TimestampParam(priorSince))
+			r.NoError(err)
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+			r.NoError(err)
+			r.Empty(window.Sources)
+			r.NoError(f.store.AddAccountIdentity(source, "owner@example.test", "manual"))
+			request := f.request
+			request.CommitmentOnly = true
+			request.Generation.Policy.AllowSensitive = true
+			request.Budget = personSweepApplyBudget()
+			request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+			result, err := f.store.ApplyPersonSweep(ctx, request)
+			r.NoError(err)
+			r.Equal(peoplesweep.FailureArchiveGap, result.CommitmentFailureClass)
+			r.NoError(f.store.db.QueryRowContext(ctx, f.store.Rebind(`SELECT scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`), f.personID).Scan(&scope))
+			r.Empty(scope)
+			since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+			r.NoError(err)
+			r.NotNil(since)
+			r.Equal(priorSince, *since)
+			r.False(complete)
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+			r.NoError(err)
+			r.Len(window.Sources, 1)
+			r.Equal("I will call.", window.Sources[0].Text)
+			r.Zero(window.BackfillMessageID)
+			r.Equal(personFactLedgerNow, window.SelectionAt)
+		}},
+	} {
+		t.Run(tc.name, tc.run)
+	}
 }
 
 func TestCommitmentOwnershipChangeWaitsForFrontierCommit(t *testing.T) {

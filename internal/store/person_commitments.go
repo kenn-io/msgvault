@@ -40,7 +40,6 @@ type PersonCommitment struct {
 	Freshness       personfacts.FreshnessStatus `json:"freshness"`
 	State           string                      `json:"state"`
 	SnoozedUntil    *time.Time                  `json:"snoozed_until,omitempty"`
-	PagePosition    int                         `json:"-"`
 }
 
 const commitmentColumns = `id, person_id, target_key, owner_state, snoozed_until`
@@ -60,34 +59,27 @@ type commitmentCandidate struct {
 	promise    personfacts.Evidence
 }
 
-func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit, offset int, includeClosed bool) ([]PersonCommitment, error) {
-	if personID < 0 || limit < 1 || limit > 201 || offset < 0 {
+func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]PersonCommitment, error) {
+	if personID < 0 || limit < 1 || limit > 201 {
 		return nil, ErrInvalidActivityRequest
 	}
-	result, lookup := make([]PersonCommitment, 0, limit), commitmentSourceLookup{store: s}
-	position := 0
+	result := make([]PersonCommitment, 0, limit)
 	pageSize := min(32, max(8, limit))
 	for _, fresh := range []bool{true, false} {
 		var after PersonCommitment
 		for {
-			candidates, err := s.loadCommitmentCandidates(ctx, personID, now, after, pageSize, fresh)
+			candidates, err := s.loadCommitmentCandidates(ctx, personID, now, after, pageSize, fresh, includeClosed)
 			if err != nil {
 				return nil, err
 			}
 			for _, candidate := range candidates {
-				c, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now, &lookup)
+				c, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now)
 				if err != nil {
 					return nil, err
 				}
 				if !visible {
 					continue
 				}
-				// Count hidden decisions so closing a promise does not shift later pages.
-				position++
-				if position <= offset || !includeClosed && (c.State == LoopStateDone || c.State == LoopStateSnoozed) {
-					continue
-				}
-				c.PagePosition = position
 				result = append(result, c)
 				if len(result) == limit {
 					return result, nil
@@ -102,11 +94,15 @@ func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64
 	return result, nil
 }
 
-func (s *Store) loadCommitmentCandidates(ctx context.Context, personID int64, now time.Time, after PersonCommitment, pageSize int, fresh bool) ([]commitmentCandidate, error) {
+func (s *Store) loadCommitmentCandidates(ctx context.Context, personID int64, now time.Time, after PersonCommitment, pageSize int, fresh, includeClosed bool) ([]commitmentCandidate, error) {
 	var candidates []commitmentCandidate
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		query := `SELECT ` + commitmentColumns + ` FROM person_commitments WHERE 1=1`
 		var args []any
+		if !includeClosed {
+			query += ` AND (owner_state = 'open' OR (owner_state = 'snoozed' AND ` + s.loopTimeKey("snoozed_until") + ` <= ` + s.loopTimeKey("?") + `))`
+			args = append(args, s.dialect.TimestampParam(now))
+		}
 		if personID > 0 {
 			query += ` AND person_id = ?`
 			args = append(args, personID)
@@ -208,12 +204,12 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 	return nil
 }
 
-func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commitmentCandidate, now time.Time, lookup *commitmentSourceLookup) (PersonCommitment, bool, error) {
+func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commitmentCandidate, now time.Time) (PersonCommitment, bool, error) {
 	c, input := candidate.commitment, candidate.promise.Input
 	if candidate.promise.ID == 0 {
 		return c, false, nil
 	}
-	source, live, err := lookup.load(ctx, c.PersonID, c.AnchorMessageID)
+	source, live, err := s.currentCommitmentSource(ctx, c.PersonID, c.AnchorMessageID)
 	if err != nil || !live || source.Direction != c.Direction || source.SourceVersion != input.SourceVersion ||
 		source.ContentSHA256 != input.ContentSHA256 ||
 		!personFactPortableTime(source.EventTime).Equal(input.EventTime) ||
@@ -244,7 +240,7 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 	if err != nil {
 		return PersonCommitment{}, err
 	}
-	current, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now, &commitmentSourceLookup{store: s})
+	current, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now)
 	if err != nil {
 		return PersonCommitment{}, err
 	}
@@ -335,58 +331,37 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 	return since, complete && since != nil, rows.Err()
 }
 
-type commitmentDueState struct {
-	processed         requiredTimestamp
-	through, backfill int64
-	observed          sql.NullInt64
-	scope             string
-}
-
-func (s *Store) commitmentDueState(ctx context.Context, personID int64) (commitmentDueState, error) {
-	var st commitmentDueState
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT processed_at, through_sequence, observed_sequence, backfill_message_id,
-		scope_fingerprint
-		FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&st.processed, &st.through, &st.observed, &st.backfill, &st.scope)
-	return st, err
-}
-
-// commitmentOversizedRetryDue reports whether a message was skipped under a
-// byte limit below maxBytes in this scope, which the retry path will offer again.
-func (s *Store) commitmentOversizedRetryDue(ctx context.Context, personID int64, scopeFingerprint string, maxBytes int) (bool, error) {
-	var due bool
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_commitment_oversized WHERE person_id = ? AND scope_fingerprint = ? AND max_bytes < ?)`), personID, scopeFingerprint, maxBytes).Scan(&due)
-	return due, err
-}
-
 func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration, scopeFingerprint string, maxBytes int) (bool, error) {
-	st, err := s.commitmentDueState(ctx, personID)
+	var processed requiredTimestamp
+	var through, backfill int64
+	var observed sql.NullInt64
+	var scope string
+	var retry bool
+	// A message skipped under a smaller byte limit in this scope is offered again.
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT f.processed_at, f.through_sequence, f.observed_sequence, f.backfill_message_id, f.scope_fingerprint,
+		EXISTS(SELECT 1 FROM person_commitment_oversized o WHERE o.person_id = f.person_id AND o.scope_fingerprint = ? AND o.max_bytes < ?)
+		FROM person_commitment_frontiers f WHERE f.person_id = ?`), scopeFingerprint, maxBytes, personID).Scan(&processed, &through, &observed, &backfill, &scope, &retry)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	if scopeFingerprint != "" && st.scope != scopeFingerprint {
+	if (scopeFingerprint != "" && scope != scopeFingerprint) || retry || backfill >= 0 {
 		return true, nil
 	}
-	if retry, err := s.commitmentOversizedRetryDue(ctx, personID, scopeFingerprint, maxBytes); retry || err != nil {
-		return retry, err
-	}
-	if st.backfill >= 0 {
-		return true, nil
-	}
-	if st.observed.Valid {
-		if !now.Before(st.processed.Time.Add(window)) {
+	if observed.Valid {
+		if !now.Before(processed.Time.Add(window)) {
 			return true, nil
 		}
-		st.through = max(st.through, st.observed.Int64)
+		through = max(through, observed.Int64)
 	}
-	if now.Before(st.processed.Time.Add(interval)) {
+	if now.Before(processed.Time.Add(interval)) {
 		var pending bool
-		err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_sweep_changes WHERE person_id = ? AND sequence > ? AND `+s.loopTimeKey("recorded_at")+` <= `+s.loopTimeKey("?")+`)`), personID, st.through, s.dialect.TimestampParam(st.processed.Time)).Scan(&pending)
+		err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_sweep_changes WHERE person_id = ? AND sequence > ? AND `+s.loopTimeKey("recorded_at")+` <= `+s.loopTimeKey("?")+`)`), personID, through, s.dialect.TimestampParam(processed.Time)).Scan(&pending)
 		return pending, err
 	}
-	return s.HasPersonSweepChangesAfter(ctx, personID, st.through)
+	return s.HasPersonSweepChangesAfter(ctx, personID, through)
 }
 
 // commitmentMessage admits both sides only when participant identities prove a
@@ -562,10 +537,6 @@ func (s *Store) scanCommitmentChanges(ctx context.Context, personID, previous, t
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	return readCommitmentChanges(rows)
-}
-
-func readCommitmentChanges(rows *loggedRows) ([]peoplesweep.ArchiveChange, error) {
 	var changes []peoplesweep.ArchiveChange
 	for rows.Next() {
 		var change peoplesweep.ArchiveChange
@@ -772,17 +743,6 @@ func commitmentInWindow(source peoplesweep.CommitmentSource, journalRecent bool,
 	return journalRecent || !source.EventTime.Before(cutoff) || !source.RecordedTime.Before(cutoff)
 }
 
-// oversizedRetryEligible reports whether an oversized message is still in the
-// profile and the discovery window, as the journal would admit it.
-func (s *Store) oversizedRetryEligible(ctx context.Context, personID int64, source peoplesweep.CommitmentSource, cutoff time.Time, inProfile func(time.Time) bool) (bool, error) {
-	if !inProfile(source.EventTime) {
-		return false, nil
-	}
-	var recent bool
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_sweep_changes WHERE person_id = ? AND message_id = ? AND source_lane = 'conversation_text' AND `+s.loopTimeKey("recorded_at")+` >= `+s.loopTimeKey("?")+`)`), personID, source.MessageID, s.dialect.TimestampParam(cutoff)).Scan(&recent)
-	return commitmentInWindow(source, recent, cutoff), err
-}
-
 const oversizedRetryPage = 256
 
 func (s *Store) oversizedRetryIDs(ctx context.Context, personID int64, baseScope string, maxBytes int, previous int64) ([]int64, error) {
@@ -792,11 +752,6 @@ func (s *Store) oversizedRetryIDs(ctx context.Context, personID int64, baseScope
 	}
 	defer func() { _ = rows.Close() }()
 	return scanInt64Rows(rows)
-}
-
-func (s *Store) forgetOversizedCommitment(ctx context.Context, personID, messageID int64) error {
-	_, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`), personID, messageID)
-	return err
 }
 
 // retryOversizedCommitments offers the messages skipped under a smaller
@@ -811,13 +766,13 @@ func (s *Store) retryOversizedCommitments(ctx context.Context, window *peopleswe
 	for _, id := range ids {
 		source, ok, err := s.currentCommitmentSource(ctx, personID, id)
 		if ok && err == nil {
-			ok, err = s.oversizedRetryEligible(ctx, personID, source, window.SelectionAt.Add(-cfg.Window), inProfile)
+			ok = inProfile(source.EventTime)
 		}
 		if err != nil {
 			return false, err
 		}
 		if !ok {
-			if err := s.forgetOversizedCommitment(ctx, personID, id); err != nil {
+			if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`), personID, id); err != nil {
 				return false, err
 			}
 			continue

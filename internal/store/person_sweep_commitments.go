@@ -318,26 +318,12 @@ func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, requ
 }
 
 func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID int64) (peoplesweep.CommitmentSource, bool, error) {
-	return (&commitmentSourceLookup{store: s}).load(ctx, personID, messageID)
-}
-
-type commitmentSourceLookup struct {
-	store         *Store
-	owners        *loopOwners
-	conversations map[[2]int64][]LoopConversation
-}
-
-func (l *commitmentSourceLookup) load(ctx context.Context, personID, messageID int64) (peoplesweep.CommitmentSource, bool, error) {
-	s := l.store
-	if l.owners == nil {
-		owners, err := s.loopOwnerIdentities(ctx)
-		if err != nil {
-			return peoplesweep.CommitmentSource{}, false, err
-		}
-		l.owners = &owners
+	owners, err := s.loopOwnerIdentities(ctx)
+	if err != nil {
+		return peoplesweep.CommitmentSource{}, false, err
 	}
 	var conversationID int64
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
+	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
 		FROM messages m JOIN sources src ON src.id = m.source_id
 		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND `+s.loopLiveMessageSQL()), messageID).Scan(&conversationID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -346,29 +332,21 @@ func (l *commitmentSourceLookup) load(ctx context.Context, personID, messageID i
 	if err != nil {
 		return peoplesweep.CommitmentSource{}, false, err
 	}
-	if l.conversations == nil {
-		l.conversations = make(map[[2]int64][]LoopConversation)
+	heads, err := s.loopConversationHeads(ctx, LoopQuery{PersonID: personID, ConversationID: conversationID})
+	if err != nil {
+		return peoplesweep.CommitmentSource{}, false, err
 	}
-	key := [2]int64{personID, conversationID}
-	conversations, ok := l.conversations[key]
-	if !ok {
-		heads, err := s.loopConversationHeads(ctx, LoopQuery{PersonID: personID, ConversationID: conversationID})
-		if err != nil {
-			return peoplesweep.CommitmentSource{}, false, err
-		}
-		conversations, err = s.loopChunk(ctx, heads, *l.owners)
-		if err != nil {
-			return peoplesweep.CommitmentSource{}, false, err
-		}
-		l.conversations[key] = conversations
+	conversations, err := s.loopChunk(ctx, heads, owners)
+	if err != nil {
+		return peoplesweep.CommitmentSource{}, false, err
 	}
 	if len(conversations) > 0 {
-		messages, err := s.loopMessages(ctx, []int64{messageID}, *l.owners)
+		messages, err := s.loopMessages(ctx, []int64{messageID}, owners)
 		if err != nil {
 			return peoplesweep.CommitmentSource{}, false, err
 		}
 		if len(messages) == 1 {
-			return s.commitmentMessage(ctx, personID, conversations[0], messages[0], *l.owners)
+			return s.commitmentMessage(ctx, personID, conversations[0], messages[0], owners)
 		}
 	}
 	return peoplesweep.CommitmentSource{}, false, nil

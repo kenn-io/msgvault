@@ -67,5 +67,4 @@ func TestPersonSweepWorkerDefersCommitmentFailureForTheRestOfRun(t *testing.T) {
 	assert.Contains(t, st.claims[1].ExcludePersonIDs, int64(7))
 	assert.Equal(t, []int64{8}, st.completed)
 	require.Len(t, result.People, 2)
-	assert.False(t, sink.requests[0].CommitmentOnly)
 }

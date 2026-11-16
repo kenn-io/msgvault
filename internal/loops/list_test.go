@@ -181,7 +181,7 @@ func (s *commitmentPhaseEndingStore) LoopConversationsContext(ctx context.Contex
 	}
 }
 
-func (s *commitmentPhaseEndingStore) ListPersonCommitmentsContext(context.Context, int64, time.Time, int, int, bool) ([]store.PersonCommitment, error) {
+func (s *commitmentPhaseEndingStore) ListPersonCommitmentsContext(context.Context, int64, time.Time, int, bool) ([]store.PersonCommitment, error) {
 	s.called = true
 	if s.readerErr != nil {
 		return nil, s.readerErr
@@ -821,21 +821,19 @@ type pagingCommitmentStore struct {
 	limit int
 }
 
-func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit, _ int, _ bool) ([]store.PersonCommitment, error) {
+func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit int, _ bool) ([]store.PersonCommitment, error) {
 	s.limit = limit
-	return []store.PersonCommitment{{ID: 201, PersonID: 1, PromisedAt: now, PagePosition: 201}, {ID: 202, PersonID: 1, PromisedAt: now, PagePosition: 202}}, nil
+	return []store.PersonCommitment{{ID: 201, PersonID: 1, PromisedAt: now}, {ID: 202, PersonID: 1, PromisedAt: now}}, nil
 }
 
 func TestListPagesCommitments(t *testing.T) {
 	f := storetest.New(t)
 	st := &pagingCommitmentStore{Store: f.Store}
-	result, err := loops.List(t.Context(), st, loops.Options{Limit: 1, CommitmentOffset: 200}, now)
+	result, err := loops.List(t.Context(), st, loops.Options{Limit: 1}, now)
 	require.NoError(t, err)
 	assert.Equal(t, 2, st.limit)
 	require.Len(t, result.Commitments, 1)
 	assert.Equal(t, int64(201), result.Commitments[0].ID)
-	require.NotNil(t, result.CommitmentsNextOffset)
-	assert.Equal(t, 201, *result.CommitmentsNextOffset)
 	assert.True(t, result.Truncated)
 }
 

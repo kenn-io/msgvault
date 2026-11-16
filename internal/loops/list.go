@@ -20,8 +20,7 @@ type Options struct {
 	PersonID int64
 	Limit    int
 
-	IncludeClosed    bool
-	CommitmentOffset int
+	IncludeClosed bool
 }
 
 // Result lists reply loops and promises. Truncated is set when either
@@ -30,12 +29,11 @@ type Options struct {
 // CoverageIncomplete is set when List stopped after MaxListEvidenceComputations
 // uncached messages; the loops come from the conversations read in full.
 type Result struct {
-	Loops                 []Loop
-	Commitments           []store.PersonCommitment
-	CommitmentsNextOffset *int
-	Truncated             bool
-	SkippedUnparseable    int
-	CoverageIncomplete    bool
+	Loops              []Loop
+	Commitments        []store.PersonCommitment
+	Truncated          bool
+	SkippedUnparseable int
+	CoverageIncomplete bool
 }
 
 // MaxListEvidenceComputations bounds uncached message classifications per request.
@@ -75,7 +73,7 @@ type Store interface {
 	MarkLoopDoneContext(ctx context.Context, anchorID int64, questions []store.LoopMessage) (store.LoopDecision, error)
 	SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, questions []store.LoopMessage) (store.LoopDecision, error)
 	ClearLoopDecisionContext(ctx context.Context, messageID int64) (bool, error)
-	ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit, offset int, includeClosed bool) ([]store.PersonCommitment, error)
+	ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]store.PersonCommitment, error)
 	DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (store.PersonCommitment, error)
 	HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error)
 	PersonCommitmentDiscoveryContext(ctx context.Context, personID int64, scopeFingerprint string) (*time.Time, bool, error)
@@ -224,7 +222,7 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 		var commitments []store.PersonCommitment
 		err := ctx.Err()
 		if err == nil {
-			commitments, err = st.ListPersonCommitmentsContext(ctx, opts.PersonID, now, min(opts.Limit, MaxLimit)+1, opts.CommitmentOffset, opts.IncludeClosed)
+			commitments, err = st.ListPersonCommitmentsContext(ctx, opts.PersonID, now, min(opts.Limit, MaxLimit)+1, opts.IncludeClosed)
 		}
 		stopped, err := requestStop(ctx, err)
 		if err != nil {
@@ -233,8 +231,6 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 		result.CoverageIncomplete = result.CoverageIncomplete || stopped
 		if len(commitments) > opts.Limit {
 			commitments = commitments[:opts.Limit]
-			next := commitments[len(commitments)-1].PagePosition
-			result.CommitmentsNextOffset = &next
 			result.Truncated = true
 		}
 		result.Commitments = commitments
