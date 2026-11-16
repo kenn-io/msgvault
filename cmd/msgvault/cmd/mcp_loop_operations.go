@@ -157,7 +157,6 @@ func (b *daemonMCPOperations) loopOperationDisclosure(name string, args map[stri
 		if err != nil {
 			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 		}
-		}
 		id, questions, until = input.MessageID, input.QuestionMessageIDs, deadline.Format(time.RFC3339Nano)
 	default:
 		return "", false, nil

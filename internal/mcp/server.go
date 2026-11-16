@@ -332,8 +332,8 @@ func officialToolHandler(
 	}
 }
 
-func exactAttributeToolHandler(definition operationalDefinition, backend OperationBackend, confirmation confirmationConfig) sdkmcp.ToolHandler {
-	handler := officialToolHandler(definition.bind(backend), confirmation)
+func exactAttributeToolHandler(definition operationalDefinition, backend OperationBackend, downloads *downloadCache, confirmation confirmationConfig) sdkmcp.ToolHandler {
+	handler := officialToolHandler(definition.bind(backend, downloads), confirmation)
 	schema, err := definition.definition.inputSchema.Resolve(nil)
 	if err != nil {
 		panic(err)
@@ -531,7 +531,7 @@ func newMCPServerWithPolicy(
 
 	for _, definition := range operations {
 		if definition.family == OperationFamilyAttributes {
-			s.AddTool(definition.definition.tool(), exactAttributeToolHandler(definition, opts.Operations, confirmation))
+			s.AddTool(definition.definition.tool(), exactAttributeToolHandler(definition, opts.Operations, opts.downloads, confirmation))
 		} else {
 			sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations, opts.downloads), confirmation))
 		}
