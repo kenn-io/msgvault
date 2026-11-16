@@ -762,3 +762,42 @@ func TestEditedCommitmentDecision(t *testing.T) {
 		})
 	}
 }
+
+func TestCommitmentDecisionDoesNotReturnAfterAmbiguousEdit(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "ambiguous-edit", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send it."
+	id := persist("promise", quote, -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	for i, text := range []string{quote, quote + " " + quote, quote} {
+		if i > 0 {
+			_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), text, id)
+			r.NoError(err)
+			_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitment_frontiers SET scope_fingerprint = '' WHERE person_id = ?`), f.personID)
+			r.NoError(err)
+			f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-edit-%d", i))
+		}
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Len(window.Sources, 1)
+		output := peoplesweep.ParsedCommitments{}
+		if i != 1 {
+			output.Promises = []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, End: int64(len(quote)), Summary: "Send"}}
+		}
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
+		r.NoError(err)
+		if i == 1 {
+			continue
+		}
+		items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, true)
+		r.NoError(err)
+		r.Len(items, 1)
+		if i == 0 {
+			_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, personFactLedgerNow)
+			r.NoError(err)
+		} else {
+			r.Equal(LoopStateOpen, items[0].State)
+		}
+	}
+}

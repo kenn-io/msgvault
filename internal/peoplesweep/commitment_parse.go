@@ -110,13 +110,10 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 		}
 		// Human-readable wording is deliberately absent from identity.
 		hash, start, end := source.ContentSHA256, promise.Start, promise.End
-		first := strings.Index(source.Text, promise.Quote)
-		if first >= 0 && !strings.Contains(source.Text[first+1:], promise.Quote) {
+		if !CommitmentQuoteRepeated(source.Text, promise.Quote) {
 			hash, start, end = "", 0, 0
 		}
-		identity := fmt.Sprintf("%d/%s/%d/%s/%s/%d/%d/%s", window.PersonID, promise.Direction, source.MessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), hash, start, end, promise.Quote)
-		digest := sha256.Sum256([]byte(identity))
-		promise.TargetKey = "commitment:" + hex.EncodeToString(digest[:])
+		promise.TargetKey = commitmentTargetKey(window.PersonID, source, promise.Quote, hash, start, end)
 		for _, span := range spans[source.MessageID] {
 			if promise.Start < span.end && span.start < promise.End {
 				return invalid()
@@ -125,6 +122,26 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 		spans[source.MessageID] = append(spans[source.MessageID], promiseSpan{promise.Start, promise.End})
 	}
 	return parsed, nil
+}
+
+// CommitmentQuoteRepeated counts overlapping occurrences in eligible text.
+func CommitmentQuoteRepeated(text, quote string) bool {
+	if quote == "" {
+		return false
+	}
+	first := strings.Index(text, quote)
+	return first >= 0 && strings.Contains(text[first+1:], quote)
+}
+
+// UniqueCommitmentTargetKey identifies a quote that occurred once in a source.
+func UniqueCommitmentTargetKey(personID int64, source CommitmentSource, quote string) string {
+	return commitmentTargetKey(personID, source, quote, "", 0, 0)
+}
+
+func commitmentTargetKey(personID int64, source CommitmentSource, quote, hash string, start, end int64) string {
+	identity := fmt.Sprintf("%d/%s/%d/%s/%s/%d/%d/%s", personID, source.Direction, source.MessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), hash, start, end, quote)
+	digest := sha256.Sum256([]byte(identity))
+	return "commitment:" + hex.EncodeToString(digest[:])
 }
 
 var (

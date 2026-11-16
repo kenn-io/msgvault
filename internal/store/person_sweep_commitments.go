@@ -73,20 +73,16 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		return prepared, nil
 	}
 	sources := make(map[string]peoplesweep.CommitmentSource, len(window.Sources))
-	for _, source := range window.Sources {
-		sources[source.ID] = source
-	}
 	personID := request.Lease.PersonID
-	verify := func(sourceID string) (peoplesweep.CommitmentSource, error) {
-		expected := sources[sourceID]
+	for _, expected := range window.Sources {
 		source, ok, err := s.currentCommitmentSource(ctx, personID, expected.MessageID)
 		if err != nil {
-			return peoplesweep.CommitmentSource{}, err
+			return nil, err
 		}
 		if !ok || source != expected {
-			return peoplesweep.CommitmentSource{}, errCommitmentWindowChanged
+			return nil, errCommitmentWindowChanged
 		}
-		return source, nil
+		sources[source.ID] = source
 	}
 	generation := request.Generation
 	generation.ProgramID, generation.ProgramVersion = peoplesweep.CommitmentProgramID, peoplesweep.CommitmentProgramVersion
@@ -95,9 +91,9 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	aligner := make(commitmentEvidenceAligner)
 	evidence := make([]personfacts.EvidenceInput, len(result.Output.Promises))
 	for i, promise := range result.Output.Promises {
-		source, err := verify(promise.SourceID)
-		if err != nil {
-			return nil, err
+		source, ok := sources[promise.SourceID]
+		if !ok {
+			return nil, errCommitmentWindowChanged
 		}
 		evidence[i] = commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
 	}
@@ -153,8 +149,33 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			}
 		}
 	}
-	// Clear the oversized messages this window retried.
 	for _, source := range request.Commitment.Window.Sources {
+		// A formerly unique citation cannot retain its decision after it repeats.
+		rows, err := tx.QueryContext(ctx, `SELECT excerpt FROM person_fact_evidence WHERE person_id = ? AND source_ref = ?`, request.Lease.PersonID, source.SourceRef)
+		if err != nil {
+			return err
+		}
+		var keys []string
+		for rows.Next() {
+			var quote string
+			if err := rows.Scan(&quote); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if peoplesweep.CommitmentQuoteRepeated(source.Text, quote) {
+				keys = append(keys, peoplesweep.UniqueCommitmentTargetKey(request.Lease.PersonID, source, quote))
+			}
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+		for _, key := range keys {
+			if _, err := tx.ExecContext(ctx, `UPDATE person_commitments SET owner_state = 'open', snoozed_until = NULL WHERE person_id = ? AND target_key = ?`, request.Lease.PersonID, key); err != nil {
+				return fmt.Errorf("clear ambiguous commitment decision: %w", err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`, request.Lease.PersonID, source.MessageID); err != nil {
 			return err
 		}
