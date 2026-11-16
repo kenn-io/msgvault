@@ -6,8 +6,8 @@ description: Archive a linked professional Instagram account's media comments an
 
 Search returned Instagram media captions, comments, and replies beside your
 other communications, and link commenters with existing person tools. This
-integration reads comments, and can hide, delete, or publicly reply to
-comments you choose. It does not send messages.
+integration reads comments; it does not send messages. Hiding, deleting, and
+publicly replying to comments you choose are not released yet.
 
 ## Connect a professional account
 
