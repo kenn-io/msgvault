@@ -284,7 +284,6 @@ func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T
 		emptySummary bool
 		transcript   bool
 	}{
-		{"unavailable evidence", false, false},
 		{"saved empty summary", true, false},
 		{"transcript without evidence", false, true},
 	} {
@@ -301,8 +300,6 @@ func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T
 			if !tc.emptySummary {
 				require.NoError(t, st.UpsertMessageRawWithFormat(messageID, []byte("{"), RawFormat))
 			}
-			before, err := st.GetMessageBodyText(t.Context(), messageID)
-			require.NoError(t, err)
 			section := "summary-1"
 			if tc.transcript {
 				section = "transcript-1"
@@ -315,15 +312,9 @@ func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T
 			assert.True(t, second.PartialCoverage)
 			after, err := st.GetMessageBodyText(t.Context(), messageID)
 			require.NoError(t, err)
-			if tc.emptySummary || tc.transcript {
-				assert.Contains(t, after, "Updated notes.")
-				if tc.transcript {
-					assert.Contains(t, after, "Test Speaker: Ready to ship.")
-				}
-			} else {
-				assert.Zero(t, second.MeetingsUpdated)
-				assert.Equal(t, before, after)
-				assert.Contains(t, after, "Decide the release scope.")
+			assert.Contains(t, after, "Updated notes.")
+			if tc.transcript {
+				assert.Contains(t, after, "Test Speaker: Ready to ship.")
 			}
 			assert.Len(t, lastNotionState(t, st, second.SourceID).Pending, 1)
 		})

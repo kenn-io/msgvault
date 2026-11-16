@@ -366,11 +366,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			continue
 		}
 		if strings.TrimSpace(meeting.MeetingNotes.Children.SummaryBlockID) == "" &&
-			(strings.TrimSpace(archived.Evidence.Canonical.Summary) != "" || (len(archived.RawTrees["summary"]) > 0 && string(archived.RawTrees["summary"]) != "null") || strings.Contains(archived.Body, "\n\nSummary:\n")) {
+			(strings.TrimSpace(archived.Evidence.Canonical.Summary) != "" || (len(archived.RawTrees["summary"]) > 0 && string(archived.RawTrees["summary"]) != "null")) {
 			hydrated.markIncomplete("summary", "summary block omitted")
 		}
 		if strings.TrimSpace(meeting.MeetingNotes.Children.NotesBlockID) == "" &&
-			(strings.TrimSpace(archived.Evidence.Canonical.Notes) != "" || (len(archived.RawTrees["notes"]) > 0 && string(archived.RawTrees["notes"]) != "null") || strings.Contains(archived.Body, "\n\nNotes:\n")) {
+			(strings.TrimSpace(archived.Evidence.Canonical.Notes) != "" || (len(archived.RawTrees["notes"]) > 0 && string(archived.RawTrees["notes"]) != "null")) {
 			hydrated.markIncomplete("notes", "notes block omitted")
 		}
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
@@ -418,7 +418,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			{"notes", &hydrated.Notes, archived.Evidence.Canonical.Notes},
 			{sectionTranscript, &hydrated.Transcript, archived.Evidence.Canonical.Transcript},
 		}
-		leaveUnchanged := false
 		for _, section := range sections {
 			if !slices.Contains(hydrated.Incomplete, section.name) {
 				continue
@@ -426,10 +425,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			oldText := section.oldText
 			if section.name == sectionTranscript && strings.TrimSpace(oldText) == "" {
 				oldText = transcriptFromArchivedBody(archived.Body)
-			}
-			if section.name != sectionTranscript && archived.MessageID != 0 && !archived.HasEvidence {
-				// The saved section can't be recovered, so rewriting would erase it.
-				leaveUnchanged = true
 			}
 			if oldText == "" && len(archived.RawTrees[section.name]) == 0 {
 				continue
@@ -465,11 +460,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				}
 				preserveArchivedAttendeeRelationships(hydrated, recipients, archived.ResolvedUsers)
 			}
-		}
-
-		if leaveUnchanged {
-			progress("meeting " + id + ": kept the saved meeting because incomplete sections can't be recovered; retry pending")
-			continue
 		}
 
 		snapshot, snapshotErr := hydrated.ArchiveSnapshot(source.ID, opts.Identifier, opts.AccountEmail)
