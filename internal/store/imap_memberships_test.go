@@ -1464,7 +1464,7 @@ func TestApplyIMAPMailboxDeltas_EmptyBaselineCleansLegacyLabelsOnce(t *testing.T
 }
 
 func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
-	for _, scenario := range []string{"restored", "all only", "shared RFC822", "unique raw", "visible raw", "visible membership"} {
+	for _, scenario := range []string{"restored", "all only", "shared RFC822"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newIMAPIdentityFixture(t)
 			_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
@@ -1474,8 +1474,6 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 			})
 			require.NoError(t, err)
 			id := f.createMessage(t, "Trash|1", "")
-			data := []byte("From: sender@example.test\r\nSubject: restored\r\n\r\nbody\r\n")
-			var copyID int64
 			var observations []store.IMAPMembershipObservation
 			if scenario == "restored" || scenario == "shared RFC822" {
 				_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "<restored@example.test>", id)
@@ -1484,14 +1482,9 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 			if scenario == "shared RFC822" {
 				f.createMessage(t, "Trash|2", "<restored@example.test>")
 			}
-			if scenario == "unique raw" || scenario == "visible raw" || scenario == "visible membership" {
-				require.NoError(t, f.store.UpsertMessageRaw(id, data))
-			}
-			if scenario == "restored" || scenario == "unique raw" || scenario == "visible membership" {
+			if scenario == "restored" {
 				deltas := []store.IMAPMailboxDelta{{Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Trash|1"}}}}
-				if scenario == "restored" {
-					deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "Projects", State: store.IMAPFolderState{Mailbox: "Projects", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Trash|1"}}})
-				}
+				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "Projects", State: store.IMAPFolderState{Mailbox: "Projects", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Trash|1"}}})
 				require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, deltas))
 			}
 			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|1"))
@@ -1500,129 +1493,17 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 				observations = []store.IMAPMembershipObservation{{Mailbox: "INBOX", UIDValidity: 1, UID: 1, SourceMessageID: "INBOX|1", RFC822MessageID: "<restored@example.test>"}}
 			case "all only":
 				observations = []store.IMAPMembershipObservation{{Mailbox: "All Mail", AllMail: true, UIDValidity: 1, UID: 1, ArchivedMessageID: id}}
-			default:
-				copyID = f.createMessage(t, "INBOX|1", "")
-				require.NoError(t, f.store.UpsertMessageRaw(copyID, data))
-				observations = []store.IMAPMembershipObservation{{Mailbox: "INBOX", UIDValidity: 1, UID: 1, SourceMessageID: "INBOX|1", RawSHA256: sha256.Sum256(data)}}
-				if scenario == "visible raw" {
-					observations = append(observations, store.IMAPMembershipObservation{Mailbox: "Trash", Trash: true, UIDValidity: 1, UID: 2, SourceMessageID: "Trash|2", RawSHA256: sha256.Sum256(data)})
-				}
-				if scenario == "visible membership" {
-					observations = append(observations, store.IMAPMembershipObservation{Mailbox: "Trash", Trash: true, UIDValidity: 1, UID: 1, SourceMessageID: "Trash|1"})
-				}
 			}
-			var journalBaseline int64
-			if scenario == "unique raw" && !f.store.IsPostgreSQL() {
-				require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&journalBaseline))
-			}
+
 			syncID, err := f.store.StartSync(f.source.ID, "full")
 			require.NoError(t, err)
 			require.NoError(t, f.store.CompleteSync(syncID, ""))
 			require.NoError(t, f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, observations))
-			wantMarked := scenario != "restored" && scenario != "unique raw"
+			wantMarked := scenario != "restored"
 			assert.Equal(t, wantMarked, messageTombstoned(t, f.store, id))
-			switch scenario {
-			case "restored":
+			if scenario == "restored" {
 				assert.Equal(t, []string{"Projects", "Trash"}, messageLabels(t, f.store, id))
-			case "unique raw", "visible membership":
-				assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, id))
 			}
-			if copyID != 0 {
-				var hidden, marked bool
-				require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL, deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), copyID).Scan(&hidden, &marked))
-				assert.Equal(t, scenario == "unique raw", hidden)
-				assert.False(t, marked)
-			}
-			if scenario == "unique raw" && !f.store.IsPostgreSQL() {
-				var count int
-				require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`), journalBaseline, copyID).Scan(&count))
-				assert.Positive(t, count)
-			}
-		})
-	}
-}
-
-func TestCompleteIMAPRestoreWithAmbiguousRawIdentity(t *testing.T) {
-	f := newIMAPIdentityFixture(t)
-	data := []byte("From: sender@example.test\r\nSubject: identical\r\n\r\nbody\r\n")
-	first := f.createMessage(t, "Trash|1", "")
-	second := f.createMessage(t, "Trash|2", "")
-	for _, id := range []int64{first, second} {
-		require.NoError(t, f.store.UpsertMessageRaw(id, data))
-	}
-	_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
-		"Trash": {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
-		"INBOX": {Name: "INBOX", Type: "system"},
-	})
-	require.NoError(t, err)
-	trash := store.IMAPMailboxDelta{Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 3}, Memberships: []store.IMAPMembershipObservation{
-		{UID: 1, SourceMessageID: "Trash|1"}, {UID: 2, SourceMessageID: "Trash|2"},
-	}}
-	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{trash}))
-	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|1"))
-	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|2"))
-	trash.Memberships = nil
-	trash.VanishedUIDs = []uint32{1, 2}
-	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{trash}))
-	trash.VanishedUIDs = nil
-	copyID := f.createMessage(t, "INBOX|1", "")
-	require.NoError(t, f.store.UpsertMessageRaw(copyID, data))
-	inbox := store.IMAPMailboxDelta{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{
-		{UID: 1, SourceMessageID: "INBOX|1", RawSHA256: sha256.Sum256(data)},
-	}}
-	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{trash, inbox}))
-	assert.True(t, messageTombstoned(t, f.store, first))
-	assert.True(t, messageTombstoned(t, f.store, second))
-	id, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 1, 1)
-	assert.Equal(t, copyID, id)
-	assert.False(t, messageTombstoned(t, f.store, copyID))
-}
-
-func TestCompleteIMAPTrashUIDValidityResetWithIdenticalInbox(t *testing.T) {
-	for _, scenario := range []string{"reset", "reset after absence", "restore after absence", "identical in trash"} {
-		t.Run(scenario, func(t *testing.T) {
-			f := newIMAPIdentityFixture(t)
-			data := []byte("From: sender@example.test\r\nSubject: identical\r\n\r\nbody\r\n")
-			original := f.createMessage(t, "Trash|1", "")
-			require.NoError(t, f.store.UpsertMessageRaw(original, data))
-			_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
-				"Trash": {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
-				"INBOX": {Name: "INBOX", Type: "system"},
-			})
-			require.NoError(t, err)
-			trash := store.IMAPMailboxDelta{Mailbox: "Trash", Trash: true, State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Trash|1"}}}
-			require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{trash}))
-			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|1"))
-			if scenario == "reset after absence" || scenario == "restore after absence" {
-				missing := trash
-				missing.Memberships = nil
-				missing.VanishedUIDs = []uint32{1}
-				require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{missing}))
-			}
-			copyID := f.createMessage(t, "INBOX|1", "")
-			require.NoError(t, f.store.UpsertMessageRaw(copyID, data))
-			if scenario == "reset" || scenario == "reset after absence" {
-				trash.Reset = true
-				trash.State.UIDValidity = 2
-				trash.Memberships[0].RawSHA256 = sha256.Sum256(data)
-			} else {
-				trash.Memberships = nil
-			}
-			inbox := store.IMAPMailboxDelta{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "INBOX|1", RawSHA256: sha256.Sum256(data)}}}
-			require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{trash, inbox}))
-			assert.Equal(t, scenario != "restore after absence", messageTombstoned(t, f.store, original))
-			if scenario == "reset" || scenario == "reset after absence" {
-				var trashID int64
-				require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = 'Trash' AND uidvalidity = 2 AND uid = 1`), f.source.ID).Scan(&trashID))
-				assert.Equal(t, original, trashID)
-			}
-			id, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 1, 1)
-			if scenario == "restore after absence" {
-				assert.Equal(t, original, id)
-			} else {
-				assert.Equal(t, copyID, id)
-			}
-			assert.False(t, messageTombstoned(t, f.store, copyID))
 		})
 	}
 }

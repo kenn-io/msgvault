@@ -74,7 +74,8 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 Msgvault sets `deleted_from_source_at` when it deletes or trashes a message,
 or sync finds the message missing from its source. For Gmail, IMAP, and Graph,
 sync keeps the mark while a msgvault-trashed message stays in Trash and clears
-it when sync confirms the message outside Trash.
+it when sync confirms the message outside Trash. A restored IMAP copy without
+a Message-ID is ingested as a new message; the original remains marked.
 
 The Store derives `account_address` and `account_path` in the same transaction
 as every message write that changes their inputs: raw MIME, recipients, and

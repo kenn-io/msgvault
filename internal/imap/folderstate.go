@@ -66,18 +66,6 @@ func (c *Client) recordMembershipLocked(
 		mailbox, uid, canonicalSourceMessageID, rfc822MessageID, rawSHA256, rawSize, flags))
 }
 
-func (c *Client) recordFilteredTrashUIDsLocked(mailbox string, validity uint32, uids []uint32) {
-	if !c.labelsSnapshotFilteredLocked() || mailbox != c.trashMailbox || validity == 0 {
-		return
-	}
-	for _, uid := range uids {
-		c.observedMemberships = append(c.observedMemberships, MembershipObservation{
-			Mailbox: mailbox, UIDValidity: validity, UID: uid,
-			SourceMessageID: compositeID(mailbox, imap.UID(uid)),
-		})
-	}
-}
-
 // membershipObservationLocked builds the observation recordMembershipLocked
 // appends, so a caller that knows more about the archived row can add it.
 func (c *Client) membershipObservationLocked(

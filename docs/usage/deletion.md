@@ -165,6 +165,8 @@ clears the mark when it confirms the message outside Trash.
 A filtered IMAP sync can clear the mark when it matches the message in a
 specific mailbox outside Trash and All Mail. It keeps the saved mailbox labels,
 including Trash, until a complete sync reconciles them.
+For IMAP messages without a Message-ID, a restored copy is ingested as a new
+message and the original remains marked.
 
 `--permanent` requests irreversible deletion: Gmail uses its batch API; IMAP
 uses `UID STORE \Deleted` followed by `UID EXPUNGE` for each message. Permanent

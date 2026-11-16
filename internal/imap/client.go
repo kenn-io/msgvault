@@ -1461,7 +1461,6 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 						// mailbox missing from it.
 						trackState.KnownUIDs = scan.known
 						c.observedFolderStates[mailbox] = trackState
-						c.recordFilteredTrashUIDsLocked(mailbox, trackState.UIDValidity, scan.known)
 						c.observedMailboxDeltas = append(c.observedMailboxDeltas, MailboxDelta{
 							Mailbox:     mailbox,
 							State:       trackState,
@@ -1503,7 +1502,6 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		if canTrackFolder {
 			trackState.KnownUIDs = knownUIDs
 			trackState.UIDNext = baselineUIDNext(trackState.UIDNext, knownUIDs)
-			c.recordFilteredTrashUIDsLocked(mailbox, trackState.UIDValidity, knownUIDs)
 			c.trackFolderMessages(mailbox, trackState, uids)
 		}
 		if prior, ok := c.priorFolderStates[mailbox]; ok &&
