@@ -210,6 +210,33 @@ func TestImporterRestoresMissingArchiveForKnownSnapshot(t *testing.T) {
 	assert.Contains(body, "Decide the release scope.")
 }
 
+func TestImporterKeepsMeetingWhenIncompleteSectionHasNoEvidence(t *testing.T) {
+	for _, section := range []string{"summary", "notes"} {
+		t.Run(section, func(t *testing.T) {
+			st, source, imp := newImporterFixture(t)
+			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(t, err)
+			var messageID int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = 'meeting-1'`), first.SourceID).Scan(&messageID))
+			before, err := st.GetMessageBodyText(t.Context(), messageID)
+			require.NoError(t, err)
+			require.NoError(t, st.UpsertMessageRawWithFormat(messageID, []byte("{"), RawFormat))
+			source.blockErrs = map[string]error{section + "-1": &APIError{Kind: ErrRateLimited, Status: 429}}
+			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.Error(t, err)
+			after, err := st.GetMessageBodyText(t.Context(), messageID)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+			checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
+			require.NoError(t, err)
+			var state syncState
+			require.NoError(t, json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+			require.Len(t, state.Pending, 1)
+			assert.True(t, state.Pending[0].Incomplete)
+		})
+	}
+}
+
 func TestImporterRepairsUnavailableRawEvidence(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -305,6 +332,7 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 		triggerColumn, triggerCondition           string
 	}{
 		{name: "another meeting", anotherMeeting: true},
+		{name: "another meeting and failed status write", anotherMeeting: true, triggerColumn: "status", triggerCondition: "NEW.status = 'failed'"},
 		{name: "markdown", markdown: true},
 		{name: "archive", archive: true},
 		{name: "checkpoint", triggerColumn: "cursor_before", triggerCondition: "NEW.status = 'running'"},
@@ -376,7 +404,11 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 					source.onBlock = nil
 				}
 				if tc.triggerColumn != "" {
-					require.ErrorContains(t, err, "forced final write failure")
+					if tc.anotherMeeting {
+						require.ErrorContains(t, err, "forced meeting retrieval failure")
+					} else {
+						require.ErrorContains(t, err, "forced final write failure")
+					}
 					if st.IsPostgreSQL() {
 						_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_final_write ON sync_runs`)
 					} else {

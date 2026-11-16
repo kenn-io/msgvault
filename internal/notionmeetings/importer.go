@@ -362,6 +362,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived evidence: %w", id, recoverErr))
 			continue
 		}
+		if archived.MessageID != 0 && !archived.HasEvidence && (slices.Contains(hydrated.Incomplete, "summary") || slices.Contains(hydrated.Incomplete, "notes")) {
+			queueIncomplete()
+			sum.Errors++
+			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: cannot preserve incomplete sections without archived evidence", id))
+			continue
+		}
 		previousPending, hasPrevious := pendingByID[id]
 		if retained := next.TranscriptRetryUntil[id]; retained != "" {
 			previousPending.RetryUntil = retained
@@ -561,6 +567,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		state.TranscriptRetryUntil = next.TranscriptRetryUntil
 		checkpointPage, err = state.marshal()
 		if err != nil {
+			return sum, errors.Join(errors.Join(hardErrors...), err)
+		}
+		if err := scopedStore.UpdateSyncCheckpoint(syncID, &store.Checkpoint{PageToken: checkpointPage, MessagesProcessed: sum.MeetingsProcessed, MessagesAdded: sum.MeetingsAdded, MessagesUpdated: sum.MeetingsUpdated, ErrorsCount: sum.Errors}); err != nil {
 			return sum, errors.Join(errors.Join(hardErrors...), err)
 		}
 		return sum, errors.Join(hardErrors...)
