@@ -728,7 +728,8 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 
 	// Existing exact IDs only need current label metadata. Clients with a
 	// lightweight metadata path use it for both complete snapshots (replace
-	// labels) and incomplete snapshots (merge labels).
+	// labels) and incomplete snapshots (merge labels). Keep the old fallback
+	// for clients that cannot fetch labels separately.
 	snapshotComplete := s.labelsSnapshotComplete()
 	labelReader, hasLabelReader := s.client.(messageLabelBatchReader)
 	refreshAllExistingLabels := hasLabelReader
@@ -812,7 +813,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				err := errors.New("label metadata missing from batch response")
 				if s.requireLabelRefresh {
 					checkpoint.MessagesUpdated += result.updated
-					return nil, fmt.Errorf("fetch labels for %s: %w", sourceMessageID, err)
+					return nil, fmt.Errorf("fetch recovery labels for %s: %w", sourceMessageID, err)
 				}
 				result.markedLabelError = result.markedLabelError || markedGmail
 				s.logger.Warn("failed to fetch message labels",
@@ -834,7 +835,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			if labelResult.Err != nil {
 				if s.requireLabelRefresh {
 					checkpoint.MessagesUpdated += result.updated
-					return nil, fmt.Errorf("fetch labels for %s: %w", sourceMessageID, labelResult.Err)
+					return nil, fmt.Errorf("fetch recovery labels for %s: %w", sourceMessageID, labelResult.Err)
 				}
 				result.markedLabelError = result.markedLabelError || markedGmail
 				s.logger.Warn("failed to fetch message labels",
