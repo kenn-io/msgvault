@@ -10,12 +10,8 @@ import (
 	"time"
 )
 
-// MaxRawBytes limits raw evidence for meeting formats other than Notion.
+// MaxRawBytes is the largest raw meeting evidence Decode accepts.
 const MaxRawBytes = 64 << 20
-
-// MaxNotionRawBytes allows three sections retained across separate hydrations,
-// their rendered text, and a new hydration of up to 32 MiB of provider data.
-const MaxNotionRawBytes = 256 << 20
 
 const reasonMissingField = "missing_field"
 const reasonInvalidSection = "invalid_section"
@@ -24,11 +20,7 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return unavailableContent("missing_raw")
 	}
-	limit := MaxRawBytes
-	if rawFormat == "notion_meeting_json" {
-		limit = MaxNotionRawBytes
-	}
-	if len(raw) > limit {
+	if len(raw) > MaxRawBytes {
 		return unavailableContent("raw_too_large")
 	}
 	var fields map[string]jsontext.Value

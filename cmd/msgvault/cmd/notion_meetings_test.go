@@ -23,8 +23,8 @@ type fakeNotionProbe struct {
 	blockIDs    *[]string
 }
 
-func (fakeNotionProbe) RetrievePageMarkdown(context.Context, string, bool) (*notionmeetings.MarkdownPage, error) {
-	return nil, nil
+func (fakeNotionProbe) RetrievePageMarkdown(_ context.Context, id string, _ bool) (*notionmeetings.MarkdownPage, error) {
+	return &notionmeetings.MarkdownPage{Object: "page_markdown", ID: id, Raw: []byte(fmt.Sprintf(`{"object":"page_markdown","id":%q,"markdown":""}`, id))}, nil
 }
 
 func (f fakeNotionProbe) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {

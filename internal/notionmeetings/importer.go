@@ -368,6 +368,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			hasPrevious = true
 		}
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
+		if providerTranscriptMissing && (hydrated.PageMarkdown != nil || strings.TrimSpace(meeting.MeetingNotes.Children.TranscriptBlockID) == "") &&
+			(strings.TrimSpace(archived.Evidence.Canonical.Transcript) != "" || transcriptFromArchivedBody(archived.Body) != "") &&
+			!slices.Contains(hydrated.Incomplete, sectionTranscript) {
+			hydrated.markIncomplete(sectionTranscript, "provider omitted the transcript")
+		}
 		if previous, exists := pendingByID[id]; exists && !providerTranscriptMissing {
 			pending, _ := schedulePending(hydrated, now, previous, true, true)
 			pendingByID[id] = pending
@@ -493,7 +498,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: build archive snapshot: %w", id, snapshotErr))
 			continue
 		}
-		if len(snapshot.Raw) > meetingcontent.MaxNotionRawBytes {
+		if len(snapshot.Raw) > meetingcontent.MaxRawBytes {
 			sum.PartialCoverage = true
 			progress("meeting " + id + ": evidence exceeds reader limit; skipped")
 			continue

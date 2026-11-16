@@ -485,7 +485,6 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 				assert.Contains(t, body, "Recovered summary")
 			})
 		}
-
 	})
 	t.Run("recovered transcript", func(t *testing.T) {
 		st, source, imp := newImporterFixture(t)
@@ -515,7 +514,6 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 		body, err := st.GetMessageBodyText(t.Context(), id)
 		require.NoError(t, err)
 		assert.Contains(t, body, "Recovered transcript")
-
 	})
 }
 func TestImporterDetectsHydratedSnapshotChangesWithoutDiscoveryEdit(t *testing.T) {
@@ -749,7 +747,7 @@ func TestImporterUsesPageTranscriptWhenBlockUnavailable(t *testing.T) {
 	assert.Equal(t, "Page transcript", meetingcontent.Decode(RawFormat, raw, nil).Transcript.Text)
 }
 
-func TestImporterKeepsIncompleteSectionAndSavesLargeEdit(t *testing.T) {
+func TestImporterKeepsLastReadableSnapshotWhenEvidenceExceedsLimit(t *testing.T) {
 	st, source, imp := newImporterFixture(t)
 	meeting := hydrationMeeting()
 	meeting.Parent = Parent{Type: "data_source_id"}
@@ -781,34 +779,22 @@ func TestImporterKeepsIncompleteSectionAndSavesLargeEdit(t *testing.T) {
 	var id int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
 
+	before, err := st.GetMessageRaw(id)
+	require.NoError(t, err)
+
 	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}}
 	fillSection("notes")
 	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
 	assert.True(t, result.PartialCoverage)
-	body, err := st.GetMessageBodyText(t.Context(), id)
-	require.NoError(t, err)
-	assert.Contains(t, body, "notes content ")
 	raw, err := st.GetMessageRaw(id)
 	require.NoError(t, err)
-	assert.Greater(t, len(raw), meetingcontent.MaxRawBytes)
-	content := meetingcontent.Decode(RawFormat, raw, nil)
-	assert.Equal(t, meetingcontent.StateAvailable, content.Summary.State)
-	assert.Contains(t, content.Notes.Text, "notes content ")
+	assert.Equal(t, checksumBytes(before), checksumBytes(raw))
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "summary content ")
+	assert.NotContains(t, body, "notes content ")
 	assert.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
-
-	source.blockErrs["notes-1"] = &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}
-	fillSection("transcript")
-	result, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	assert.True(t, result.PartialCoverage)
-	raw, err = st.GetMessageRaw(id)
-	require.NoError(t, err)
-	assert.Greater(t, len(raw), 128<<20)
-	content = meetingcontent.Decode(RawFormat, raw, nil)
-	assert.Equal(t, meetingcontent.StateAvailable, content.Summary.State)
-	assert.Contains(t, content.Notes.Text, "notes content ")
-	assert.Contains(t, content.Transcript.Text, "transcript content ")
 }
 
 func TestImporterStopsAndReopensExpiredTranscriptRetry(t *testing.T) {
@@ -1597,6 +1583,7 @@ func TestImporterRetriesOmittedTranscript(t *testing.T) {
 		{"omitted and markdown truncated", "# Notes\nTranscript heading was truncated", "Saved page transcript", true, true, true, false, false},
 		{"complete empty section", "# Notes\nNo transcript", "", true, false, false, true, false},
 		{"deleted data source transcript", "", "", true, false, true, true, true},
+		{"empty data source section", "", "", true, false, false, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
@@ -1640,7 +1627,15 @@ func TestImporterRetriesOmittedTranscript(t *testing.T) {
 			if tc.wantBody != "" {
 				assert.Contains(t, body, tc.wantBody)
 			}
-			if tc.structured {
+			preserveEmpty := !tc.dataSource && tc.pending && !tc.truncated && tc.wantBody == ""
+			preserveMissing := tc.dataSource && tc.omitted
+			if preserveEmpty || preserveMissing {
+				if tc.structured {
+					assert.Contains(t, body, "Test Speaker: Ready to ship.")
+				} else {
+					assert.Contains(t, body, "Saved page transcript")
+				}
+			} else if tc.structured {
 				assert.NotContains(t, body, "Test Speaker: Ready to ship.")
 			}
 			pending := lastNotionState(t, st, first.SourceID).Pending
@@ -1650,24 +1645,33 @@ func TestImporterRetriesOmittedTranscript(t *testing.T) {
 				return
 			}
 			require.Len(t, pending, 1)
-			assert.Equal(t, tc.truncated, pending[0].Incomplete)
-			assert.Equal(t, tc.truncated, second.PartialCoverage)
-			if tc.omitted && !tc.truncated {
+			assert.Equal(t, tc.truncated || preserveEmpty || preserveMissing, pending[0].Incomplete)
+			assert.Equal(t, tc.truncated || preserveEmpty || preserveMissing, second.PartialCoverage)
+			if tc.omitted && !tc.truncated && !preserveEmpty && !preserveMissing {
 				assert.NotContains(t, body, "Saved page transcript")
 			}
-			if tc.truncated {
+			if tc.truncated || preserveEmpty || preserveMissing {
 				after, err := st.GetMessageRaw(id)
 				require.NoError(t, err)
 				var oldFields, newFields map[string]json.RawMessage
 				require.NoError(t, json.Unmarshal(before, &oldFields))
 				require.NoError(t, json.Unmarshal(after, &newFields))
 				assert.JSONEq(t, string(oldFields["page_markdown"]), string(newFields["page_markdown"]))
-				metadata, err := st.GetMessageMetadata(id)
-				require.NoError(t, err)
-				require.True(t, metadata.Valid)
-				var fields map[string]any
-				require.NoError(t, json.Unmarshal([]byte(metadata.String), &fields))
-				assert.Equal(t, true, fields["markdown_transcript_fallback"])
+				if tc.structured {
+					assert.JSONEq(t, string(oldFields["transcript"]), string(newFields["transcript"]))
+					if preserveMissing {
+						var discovery MeetingNote
+						require.NoError(t, json.Unmarshal(newFields["discovery"], &discovery))
+						assert.Equal(t, "transcript-1", discovery.MeetingNotes.Children.TranscriptBlockID)
+					}
+				} else {
+					metadata, err := st.GetMessageMetadata(id)
+					require.NoError(t, err)
+					require.True(t, metadata.Valid)
+					var fields map[string]any
+					require.NoError(t, json.Unmarshal([]byte(metadata.String), &fields))
+					assert.Equal(t, true, fields["markdown_transcript_fallback"])
+				}
 			}
 		})
 	}
