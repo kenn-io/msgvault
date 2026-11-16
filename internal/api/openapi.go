@@ -425,7 +425,8 @@ import (
 // 5.9.0 adds meeting records.
 // 5.10.0 adds owner meeting link decisions.
 // 5.11.0 adds meeting link suggestions.
-const APISchemaVersion = "5.11.0"
+// 5.12.0 adds owner-only email family lookup.
+const APISchemaVersion = "5.12.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

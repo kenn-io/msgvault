@@ -61,6 +61,7 @@ type catalogCapabilities struct {
 	kataLookup         bool
 	kataDocbank        bool
 	contactRoutes      bool
+	emailFamily        bool
 	identityReview     bool
 	personCardDAV      bool
 	messageTags        bool
@@ -154,6 +155,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		kataLookup:         opts.Kata != nil && opts.KataLookup,
 		kataDocbank:        opts.Kata != nil && opts.KataDocbank,
 		contactRoutes:      opts.ContactRoutesBackend != nil,
+		emailFamily:        opts.EmailFamilyBackend != nil,
 		identityReview:     opts.IdentityReview != nil,
 		personCardDAV:      opts.PersonCardDAV != nil,
 		messageTags:        opts.MessageTags != nil,
@@ -268,6 +270,7 @@ func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 		previewPersonTiersDefinition(),
 		explainPersonTierDefinition(),
 		findContactCandidatesDefinition(),
+		getEmailFamilyDefinition(),
 		getPersonMessagingRoutesDefinition(),
 		getSavedViewDefinition(nil),
 		getStatsDefinition(nil),
