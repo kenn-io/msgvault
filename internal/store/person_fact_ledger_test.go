@@ -555,6 +555,25 @@ func TestPersonFactLedgerPaginationValidationAndOrdering(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(evidence, 3)
 	assertions.True(sort.SliceIsSorted(evidence, func(i, j int) bool { return evidence[i].ID > evidence[j].ID }))
+	selected, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{EvidenceID: evidence[2].ID, Limit: 1})
+	requirements.NoError(err)
+	requirements.Len(selected, 1)
+	assertions.Equal(evidence[2].ID, selected[0].ID)
+	for _, filter := range []personfacts.EvidenceFilter{
+		{EvidenceID: evidence[2].ID, Offset: 1},
+		{EvidenceID: evidence[2].ID, Target: &personfacts.TargetRef{Kind: personfacts.TargetAttribute, Key: "target-c", Revision: "revision-1"}},
+		{EvidenceID: evidence[0].ID + 100000},
+	} {
+		selected, err = st.ListPersonFactEvidenceContext(t.Context(), personID, filter)
+		requirements.NoError(err)
+		assertions.Empty(selected)
+	}
+	var otherID int64
+	requirements.NoError(st.db.QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid) VALUES ('other-evidence-person') RETURNING id`).Scan(&otherID))
+	selected, err = st.ListPersonFactEvidenceContext(t.Context(), otherID, personfacts.EvidenceFilter{EvidenceID: evidence[2].ID})
+	requirements.NoError(err)
+	assertions.Empty(selected)
+
 	statuses, err := st.ListPersonFactEvidenceStatusEventsContext(t.Context(), personID,
 		personfacts.EvidenceStatusFilter{})
 	requirements.NoError(err)

@@ -1283,12 +1283,18 @@ func TestResolverScoreMaximaMatchesMaximumClaim(t *testing.T) {
 }
 
 func TestDecisionOutcomeWhenSavedValueDidNotBlockClaim(t *testing.T) {
-	for _, decision := range []Decision{
-		{Action: DecisionRetained, Reason: ReasonBelowThreshold},
-		{Action: DecisionConflictRejected, Reason: ReasonInsufficientMargin, CompetingClaimKey: "leader"},
+	for _, tc := range []struct {
+		facts OutcomeFacts
+		want  DecisionOutcome
+	}{
+		{OutcomeFacts{Decision: Decision{Action: DecisionConflictRejected, Reason: ReasonInsufficientMargin, CompetingClaimKey: "leader"}, Relation: RelationSupport, HasCurrent: true}, OutcomeNotUsed},
+		{OutcomeFacts{Decision: Decision{Action: DecisionApplied}, Relation: RelationSupport}, OutcomeSaved},
+		{OutcomeFacts{Decision: Decision{Action: DecisionRetained, Projection: &ProjectionRef{Kind: "person_attribute", RowID: 1}}, Relation: RelationSupersede}, OutcomeValueRetired},
+		{OutcomeFacts{Decision: Decision{Action: DecisionInvalid}, Relation: RelationSupport}, OutcomeNotUsed},
+		{OutcomeFacts{Decision: Decision{Action: DecisionRetained, Reason: ReasonExplicitSupersession}, Relation: RelationSupersede}, OutcomeNotUsed},
 	} {
-		outcome, known := DecisionOutcomeFor(OutcomeFacts{Decision: decision, Relation: RelationSupport, HasCurrent: true})
+		outcome, known := DecisionOutcomeFor(tc.facts)
 		require.True(t, known)
-		assert.Equal(t, OutcomeNotUsed, outcome)
+		assert.Equal(t, tc.want, outcome)
 	}
 }
