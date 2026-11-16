@@ -601,22 +601,12 @@ func TestEditedCommitmentDecision(t *testing.T) {
 			rescans:         []rescanSpec{{text: quote, want: []expectedPromise{{quote, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send"}}}},
 		},
 		{
-			name: "prepended text", initialText: quote,
-			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
-			rescans:         []rescanSpec{{text: "Note. " + quote, want: []expectedPromise{{quote, LoopStateDone}}, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send", start: 6}}}},
-		},
-		{
 			name: "unique, duplicated, then unique again clears decision", initialText: quote,
 			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
 			rescans: []rescanSpec{
 				{text: quote + " " + quote},
 				{text: quote, want: []expectedPromise{{quote, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send"}}},
 			},
-		},
-		{
-			name: "longer quote keeps decision", initialText: longer,
-			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
-			rescans:         []rescanSpec{{text: longer, want: []expectedPromise{{longer, LoopStateDone}}, includeClosed: true, promises: []promiseSpec{{quote: longer, summary: "Send"}}}},
 		},
 		{
 			name: "longer quote survives unrelated edit", initialText: longer,

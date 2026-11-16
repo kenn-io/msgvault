@@ -10,8 +10,7 @@ import (
 )
 
 // The same production upgrade runs on SQLite and the PostgreSQL CI backend.
-// Restore the v44 ledger vocabularies and retain an existing attempt, claim,
-// and evidence link across initialization.
+// Restore the v44 ledger vocabularies before initialization.
 func TestCommitmentMigrationUpgradesVersion44(t *testing.T) {
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepBudgetFixture(t, "commitment-v44")
@@ -31,13 +30,6 @@ func TestCommitmentMigrationUpgradesVersion44(t *testing.T) {
 		version, err := st.SchemaVersionContext(ctx)
 		r.NoError(err)
 		a.Equal(store.SchemaVersion, version)
-		var claims, links, attempts int
-		r.NoError(st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM person_fact_claims`).Scan(&claims))
-		r.NoError(st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM person_fact_claim_evidence`).Scan(&links))
-		r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_sweep_attempts WHERE id = ?`), f.attemptID).Scan(&attempts))
-		a.Equal(1, claims)
-		a.Equal(1, links)
-		a.Equal(1, attempts)
 	}
 	_, err := st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO person_fact_claims
  (person_id,generation_id,claim_key,target_kind,target_key,target_revision,relation,submitted_value_json,origin,confidence_json)

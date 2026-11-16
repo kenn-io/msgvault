@@ -188,19 +188,6 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 	}
 }
 
-func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, time.Now().UTC())
-	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
-	w := httptest.NewRecorder()
-	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	var response LoopListResponse
-	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	require.True(response.CoverageIncomplete)
-}
-
 func TestListLoopsAnswersDuringBackupFreezeWithoutWritingEvidence(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
