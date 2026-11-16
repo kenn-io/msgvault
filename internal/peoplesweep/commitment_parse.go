@@ -132,7 +132,7 @@ var (
 	commitmentDateLayouts     = []string{time.DateOnly, "January 2, 2006", "Jan 2, 2006", "2 January 2006", "2 Jan 2006"}
 	commitmentYearlessLayouts = []string{"January 2", "Jan 2", "2 January", "2 Jan"}
 	commitmentYearFollows     = regexp.MustCompile(`^[,\s]*\d{4}\b`)
-	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/\d{4}\b`)
+	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/(?:\d{4}|\d{2})\b`)
 	commitmentTomorrow        = regexp.MustCompile(`\b(day after )?tomorrow\b`)
 	commitmentRelativeDays    = regexp.MustCompile(`\bin ([a-z0-9]+) days?\b`)
 	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(?:(this)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
@@ -153,8 +153,12 @@ func commitmentQuoteHasDate(quote string, due, event time.Time, location *time.L
 			continue
 		}
 		date := quote[span[0]:span[1]]
-		monthFirst, monthErr := time.Parse("1/2/2006", date)
-		dayFirst, dayErr := time.Parse("2/1/2006", date)
+		year := "2006"
+		if len(date)-strings.LastIndexByte(date, '/') == 3 {
+			year = "06"
+		}
+		monthFirst, monthErr := time.Parse("1/2/"+year, date)
+		dayFirst, dayErr := time.Parse("2/1/"+year, date)
 		if (monthErr == nil && (dayErr != nil || monthFirst.Equal(dayFirst)) && monthFirst.Format(time.DateOnly) == due.Format(time.DateOnly)) ||
 			(dayErr == nil && monthErr != nil && dayFirst.Format(time.DateOnly) == due.Format(time.DateOnly)) {
 			return true
