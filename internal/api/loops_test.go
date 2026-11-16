@@ -557,25 +557,25 @@ func (s *conflictingCommitmentStore) DecidePersonCommitmentContext(_ context.Con
 	return store.PersonCommitment{}, sql.ErrNoRows
 }
 
-type pagingCommitmentStore struct {
+type commitmentListStore struct {
 	*store.Store
 
 	includeClosed bool
 }
 
-func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, _ int, includeClosed bool) ([]store.PersonCommitment, error) {
+func (s *commitmentListStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, _ int, includeClosed bool) ([]store.PersonCommitment, error) {
 	s.includeClosed = includeClosed
-	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Start: 0, End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}, {ID: 202, PersonID: 1, TargetKey: "promise-202", AnchorMessageID: 2, Direction: "owed_to", Quote: "I will write.", Start: 0, End: 13, Summary: "Write", Freshness: "stale", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}}, nil
+	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Start: 0, End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}}, nil
 }
 
-func TestListLoopsIncludesClosedCommitments(t *testing.T) {
+func TestListLoopsMapsCommitmentsAndForwardsIncludeClosed(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	st := &pagingCommitmentStore{Store: f.Store}
+	st := &commitmentListStore{Store: f.Store}
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
 	w := httptest.NewRecorder()
-	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops?limit=1&include_closed=true", nil))
+	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops?include_closed=true", nil))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	assert.True(st.includeClosed)
 	var response LoopListResponse

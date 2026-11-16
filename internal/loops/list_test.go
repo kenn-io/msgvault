@@ -823,7 +823,7 @@ type pagingCommitmentStore struct {
 
 func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit int, _ bool) ([]store.PersonCommitment, error) {
 	s.limit = limit
-	return []store.PersonCommitment{{ID: 201, PersonID: 1, PromisedAt: now}, {ID: 202, PersonID: 1, PromisedAt: now}}, nil
+	return []store.PersonCommitment{{ID: 201, PersonID: 1, Direction: "owed_to", Quote: "I will call.", Freshness: "fresh", State: "open", PromisedAt: now}, {ID: 202, PersonID: 1, Direction: "owed_to", Quote: "I will write.", Freshness: "stale", State: "open", PromisedAt: now}}, nil
 }
 
 func TestListPagesCommitments(t *testing.T) {
@@ -838,6 +838,9 @@ func TestListPagesCommitments(t *testing.T) {
 }
 
 func TestParseCommitmentID(t *testing.T) {
+	id, err := loops.ParseCommitmentID("c12")
+	require.NoError(t, err)
+	assert.Equal(t, int64(12), id)
 	for _, value := range []string{"12", "c012"} {
 		t.Run(value, func(t *testing.T) {
 			_, err := loops.ParseCommitmentID(value)

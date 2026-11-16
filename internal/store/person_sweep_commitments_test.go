@@ -379,91 +379,77 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 		})
 	}
 
-	t.Run("recent change to old oversized message", func(t *testing.T) {
-		r, ctx := require.New(t), t.Context()
-		f := newPersonSweepApplyFixture(t, "commitment-old-edit", false)
-		_, persist := newCommitmentTestConversation(t, f)
-		id := persist("old-large", strings.Repeat("x", 200), -40*24*time.Hour)
-		_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-40*24*time.Hour)), id)
-		r.NoError(err)
-		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-time.Hour)), id)
-		r.NoError(err)
-		cfg, profile := commitmentTestConfig()
-		cfg.Commitments.MaxBytes = 30
-		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		r.Empty(window.Sources)
-		request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
-		_, err = f.store.ApplyPersonSweep(ctx, request)
-		r.NoError(err)
-		_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-		r.NoError(err)
-		r.False(complete)
-		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-40*24*time.Hour)), id)
-		r.NoError(err)
-		_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-		r.NoError(err)
-		r.True(complete)
-	})
-
-	t.Run("pending edit waits for journal", func(t *testing.T) {
-		r, ctx := require.New(t), t.Context()
-		f := newPersonSweepApplyFixture(t, "oversized-pending-edit", false)
-		_, persist := newCommitmentTestConversation(t, f)
-		large := persist("large", strings.Repeat("x", 200), -2*time.Hour)
-		cfg, profile := commitmentTestConfig()
-		cfg.Commitments.MaxBytes, cfg.Commitments.MaxItems = 30, 1
-		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-		r.NoError(err)
-		newer := persist("newer", "I will call.", -time.Hour)
-		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_sweep_changes (sequence, person_id, source_lane, change_kind, message_id, recorded_at) SELECT COALESCE(MAX(sequence), 0) + 1, ?, 'conversation_text', 'upsert', ?, ? FROM person_sweep_changes`), f.personID, large, f.store.dialect.TimestampParam(personFactLedgerNow))
-		r.NoError(err)
-		_, err = f.store.db.ExecContext(ctx, `UPDATE person_sweep_change_clock SET sequence = (SELECT MAX(sequence) FROM person_sweep_changes) WHERE singleton = TRUE`)
-		r.NoError(err)
-		cfg.Commitments.MaxBytes = 1000
-		var seen []int64
-		for i := range 2 {
-			f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-retry-%d", i))
-			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	for _, mutation := range []string{"recent change to old oversized message", "pending edit waits for journal", "edited oversized message"} {
+		t.Run(mutation, func(t *testing.T) {
+			r, ctx := require.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "oversized-mutation", false)
+			_, persist := newCommitmentTestConversation(t, f)
+			age := -2 * time.Hour
+			if mutation == "recent change to old oversized message" {
+				age = -40 * 24 * time.Hour
+			}
+			large := persist("large", strings.Repeat("x", 200)+" I will call.", age)
+			if mutation == "recent change to old oversized message" {
+				_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(age)), large)
+				r.NoError(err)
+				_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-time.Hour)), large)
+				r.NoError(err)
+			}
+			cfg, profile := commitmentTestConfig()
+			cfg.Commitments.MaxBytes, cfg.Commitments.MaxItems = 30, 1
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 			r.NoError(err)
-			r.Len(window.Sources, 1)
-			seen = append(seen, window.Sources[0].MessageID)
+			r.Empty(window.Sources)
 			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
 			r.NoError(err)
-		}
-		r.Equal([]int64{newer, large}, seen)
-	})
 
-	t.Run("edited oversized message", func(t *testing.T) {
-		r, a, ctx := require.New(t), assert.New(t), t.Context()
-		f := newPersonSweepApplyFixture(t, "commitment-shrink", false)
-		_, persist := newCommitmentTestConversation(t, f)
-		large := persist("large", strings.Repeat("x", 200)+" I will call.", -2*time.Hour)
-		cfg, profile := commitmentTestConfig()
-		cfg.Commitments.MaxBytes, cfg.Commitments.MaxItems = 30, 1
-		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		r.Empty(window.Sources)
-		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-		r.NoError(err)
-		_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-		r.NoError(err)
-		a.False(complete)
-		_, err = f.store.db.ExecContext(ctx, f.store.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), "I will call.", large)
-		r.NoError(err)
-		f = nextCommitmentTestAttempt(t, f, "-short")
-		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		r.Len(window.Sources, 1)
-		a.Equal(large, window.Sources[0].MessageID)
-		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-		r.NoError(err)
-		_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-		r.NoError(err)
-		a.True(complete)
-	})
+			switch mutation {
+			case "recent change to old oversized message":
+				_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+				r.NoError(err)
+				r.False(complete)
+				_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(age)), large)
+				r.NoError(err)
+				_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+				r.NoError(err)
+				r.True(complete)
+			case "pending edit waits for journal":
+				newer := persist("newer", "I will call.", -time.Hour)
+				_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_sweep_changes (sequence, person_id, source_lane, change_kind, message_id, recorded_at) SELECT COALESCE(MAX(sequence), 0) + 1, ?, 'conversation_text', 'upsert', ?, ? FROM person_sweep_changes`), f.personID, large, f.store.dialect.TimestampParam(personFactLedgerNow))
+				r.NoError(err)
+				_, err = f.store.db.ExecContext(ctx, `UPDATE person_sweep_change_clock SET sequence = (SELECT MAX(sequence) FROM person_sweep_changes) WHERE singleton = TRUE`)
+				r.NoError(err)
+				cfg.Commitments.MaxBytes = 1000
+				var seen []int64
+				for i := range 2 {
+					f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-retry-%d", i))
+					window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+					r.NoError(err)
+					r.Len(window.Sources, 1)
+					seen = append(seen, window.Sources[0].MessageID)
+					_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+					r.NoError(err)
+				}
+				r.Equal([]int64{newer, large}, seen)
+			case "edited oversized message":
+				_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+				r.NoError(err)
+				r.False(complete)
+				_, err = f.store.db.ExecContext(ctx, f.store.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), "I will call.", large)
+				r.NoError(err)
+				f = nextCommitmentTestAttempt(t, f, "-short")
+				window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+				r.NoError(err)
+				r.Len(window.Sources, 1)
+				r.Equal(large, window.Sources[0].MessageID)
+				_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+				r.NoError(err)
+				_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+				r.NoError(err)
+				r.True(complete)
+			}
+		})
+	}
 }
 
 func commitmentSourceID(window peoplesweep.CommitmentWindow, id int64) string {
@@ -549,10 +535,8 @@ func TestCommitmentDecisionReportsConcurrentChange(t *testing.T) {
 	_, err = f.store.updatePersonCommitmentDecision(ctx, snoozed, LoopStateSnoozed, new(first.Add(2*time.Hour)))
 	r.ErrorIs(err, ErrCommitmentChanged)
 
-	reopened, err := f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateOpen, nil, request.CompletedAt)
+	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateOpen, nil, request.CompletedAt)
 	r.NoError(err)
-	r.Equal(LoopStateOpen, reopened.State)
-	r.Nil(reopened.SnoozedUntil)
 	candidate = load()
 
 	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_fact_evidence_status_events
@@ -734,8 +718,13 @@ func TestEditedCommitmentDecision(t *testing.T) {
 			}
 			for i, state := range states {
 				if state == LoopStateOpen {
-					_, err = f.store.DecidePersonCommitmentContext(ctx, items[i].ID, LoopStateDone, nil, request.CompletedAt)
+					until := request.CompletedAt.Add(time.Hour)
+					_, err = f.store.DecidePersonCommitmentContext(ctx, items[i].ID, LoopStateSnoozed, &until, request.CompletedAt)
 					r.NoError(err)
+					reopened, err := f.store.DecidePersonCommitmentContext(ctx, items[i].ID, LoopStateOpen, nil, request.CompletedAt)
+					r.NoError(err)
+					r.Equal(LoopStateOpen, reopened.State)
+					r.Nil(reopened.SnoozedUntil)
 				}
 				var until *time.Time
 				if state == LoopStateSnoozed {
