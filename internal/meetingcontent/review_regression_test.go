@@ -1,6 +1,7 @@
 package meetingcontent
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -249,6 +250,8 @@ func TestNotionTreeTraversalSkipsNestedMeetingType(t *testing.T) {
 		want             []string
 	}{
 		{"legacy nested page", `{"results":[{"id":"nested-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Nested"}],"checked":false}}],"has_more":false},`, CoverageAvailable, []string{"sibling-action"}},
+		{"legacy without parents", `{"results":[{"id":"nested-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Nested"}],"checked":false}}],"has_more":false},`, CoverageUnavailable, []string{}},
+		{"sibling page", ``, CoverageAvailable, []string{"sibling-action"}},
 		{"ambiguous page", ``, CoverageUnavailable, []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -256,6 +259,10 @@ func TestNotionTreeTraversalSkipsNestedMeetingType(t *testing.T) {
 				{"results":[{"id":"nested","type":"meeting_notes","has_children":true},{"id":"sibling","type":"paragraph","has_children":true}],"has_more":false},` + tc.nestedPage + `
 				{"results":[{"id":"sibling-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling"}],"checked":false}}],"has_more":false}
 			]}}`)
+			if tc.name != "ambiguous page" && tc.name != "legacy without parents" {
+				raw = bytes.ReplaceAll(raw, []byte(`"id":"nested-action"`), []byte(`"parent":{"type":"block_id","block_id":"nested"},"id":"nested-action"`))
+				raw = bytes.ReplaceAll(raw, []byte(`"id":"sibling-action"`), []byte(`"parent":{"type":"block_id","block_id":"sibling"},"id":"sibling-action"`))
+			}
 			content := Decode("notion_meeting_json", raw, nil)
 			assert.Equal(t, tc.coverage, content.ActionCoverage)
 			ids := make([]string, len(content.Actions))

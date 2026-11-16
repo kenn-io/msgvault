@@ -1,7 +1,6 @@
 package notionmeetings
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -664,7 +663,7 @@ func TestImporterUsesPageTranscriptWhenBlockUnavailable(t *testing.T) {
 	assert.Equal(t, "Page transcript", meetingcontent.Decode(RawFormat, raw, nil).Transcript.Text)
 }
 
-func TestImporterKeepsReadableSnapshotWhenMergedEvidenceExceedsLimit(t *testing.T) {
+func TestImporterKeepsDataSourceSnapshotWhenMergedEvidenceExceedsLimit(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrCreateSource(SourceType, "work")
 	require.NoError(t, err)
@@ -674,7 +673,11 @@ func TestImporterKeepsReadableSnapshotWhenMergedEvidenceExceedsLimit(t *testing.
 	meeting.MeetingNotes.Children.TranscriptBlockID = ""
 	meetingRaw, err := json.Marshal(meeting)
 	require.NoError(t, err)
-	meetingRaw = bytes.Replace(meetingRaw, []byte(`"type":"data_source_id","page_id":""`), []byte(`"type":"data_source_id","data_source_id":"source-1"`), 1)
+	var fixture map[string]any
+	require.NoError(t, json.Unmarshal(meetingRaw, &fixture))
+	fixture["parent"] = map[string]string{"type": "data_source_id", "data_source_id": "source-1"}
+	meetingRaw, err = json.Marshal(fixture)
+	require.NoError(t, err)
 	seven := strings.Repeat("s", 7<<20)
 	ten := strings.Repeat("n", 10<<20)
 	second := false
@@ -737,46 +740,6 @@ func TestImporterKeepsReadableSnapshotWhenMergedEvidenceExceedsLimit(t *testing.
 	assert.Equal(t, checksum, checksumBytes(raw))
 	assert.Equal(t, meetingcontent.StateAvailable, meetingcontent.Decode(RawFormat, raw, nil).Summary.State)
 	assert.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
-}
-
-func TestImporterRetriesPendingTranscriptOutsideVisibleLimit(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, source, imp := newImporterFixture(t)
-	source.blockErrs = map[string]error{
-		"transcript-1": &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"},
-	}
-	source.markdown.Markdown = "# Weekly planning"
-
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Limit: 1})
-	require.NoError(err)
-	assert.Equal(int64(1), first.MeetingsAdded)
-	state := lastNotionState(t, st, first.SourceID)
-	require.Len(state.Pending, 1)
-	assert.Equal("meeting-1", state.Pending[0].BlockID)
-	var body string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies`).Scan(&body))
-	assert.Contains(body, "Decide the release scope.")
-	assert.NotContains(body, "Transcript:")
-
-	fullDiscovery, err := json.Marshal(hydrationMeeting())
-	require.NoError(err)
-	source.blocks["meeting-1"].Raw = fullDiscovery
-	source.query.Results = nil
-	delete(source.blockErrs, "transcript-1")
-	late := paragraph("transcript-1", "Test Speaker: Transcript arrived.", false)
-	source.blocks["transcript-1"] = &late
-	source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Transcript arrived."
-	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
-
-	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Limit: 1})
-	require.NoError(err)
-	assert.Equal(int64(1), second.MaintenanceRetries)
-	state = lastNotionState(t, st, second.SourceID)
-	assert.Empty(state.Pending)
-
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies`).Scan(&body))
-	assert.Contains(body, "Transcript arrived.")
 }
 
 func TestImporterStopsAndReopensExpiredTranscriptRetry(t *testing.T) {
@@ -1328,6 +1291,7 @@ func TestImporterRetriesIncompleteSections(t *testing.T) {
 			id := section + "-1"
 			source.blockErrs = map[string]error{id: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 			if section == "transcript" {
+				source.blockErrs[id] = &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}
 				source.markdown.Markdown = "# Transcript\nDifferent page transcript"
 				source.markdown.Raw, err = json.Marshal(source.markdown)
 				require.NoError(err)
@@ -1343,6 +1307,12 @@ func TestImporterRetriesIncompleteSections(t *testing.T) {
 			require.NoError(err)
 			assert.True(second.PartialCoverage)
 			require.Len(lastNotionState(t, st, second.SourceID).Pending, 1)
+			if section == "transcript" {
+				fullDiscovery, err := json.Marshal(hydrationMeeting())
+				require.NoError(err)
+				source.blocks["meeting-1"].Raw = fullDiscovery
+				source.query.Results = nil
+			}
 			repeated, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(err)
 			assert.Zero(repeated.MeetingsUpdated)
@@ -1379,9 +1349,15 @@ func TestImporterRetriesIncompleteSections(t *testing.T) {
 			delete(source.blockErrs, id)
 			fresh := paragraph(id, "Recovered "+section, false)
 			source.blocks[id] = &fresh
+			if section == "transcript" {
+				imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+			}
 			third, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(err)
 			assert.False(third.PartialCoverage)
+			if section == "transcript" {
+				assert.Equal(int64(1), third.MaintenanceRetries)
+			}
 			assert.Empty(lastNotionState(t, st, third.SourceID).Pending)
 			body, err = st.GetMessageBodyText(t.Context(), messageID)
 			require.NoError(err)

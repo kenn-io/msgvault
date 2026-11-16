@@ -210,12 +210,6 @@ func TestHydratorResolvesParentForMarkdown(t *testing.T) {
 			meeting.Parent = tc.parent
 			if tc.parent.Type != "" {
 				source.blocks["meeting-1"].Parent = tc.parent
-				var raw map[string]any
-				var err error
-				require.NoError(t, json.Unmarshal(source.blocks["meeting-1"].Raw, &raw))
-				raw["parent"] = map[string]string{"type": "data_source_id", "data_source_id": "source-1"}
-				source.blocks["meeting-1"].Raw, err = json.Marshal(raw)
-				require.NoError(t, err)
 			}
 			empty := paragraph("transcript-1", "", false)
 			source.blocks["transcript-1"] = &empty

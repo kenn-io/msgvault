@@ -89,19 +89,22 @@ func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
 	assert := assert.New(t)
 	meeting := notionmeetings.MeetingNote{
 		ID: "private-block-id", MeetingNotes: notionmeetings.MeetingNotesData{
-			Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}},
+			Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}}, Children: notionmeetings.MeetingChildren{TranscriptBlockID: "transcript-1"},
 		},
 	}
 	var out bytes.Buffer
 	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 		result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}, HasMore: true},
-		block:  &notionmeetings.Block{},
+		block:  &notionmeetings.Block{Type: "paragraph", Paragraph: notionmeetings.RichTextBlock{RichText: []notionmeetings.RichText{{PlainText: "private transcript secret-token"}}}},
 	}, nil)
 	require.NoError(t, err)
 	assert.Contains(out.String(), "Returned meetings: 1")
 	assert.Contains(out.String(), "Partial coverage: true")
 	assert.NotContains(out.String(), "private-block-id")
 	assert.NotContains(out.String(), "Private meeting title")
+	assert.NotContains(out.String(), "private transcript")
+	assert.NotContains(out.String(), "secret-token")
+	assert.Contains(out.String(), "Read Content: available")
 	assert.Contains(out.String(), "User Information: available")
 }
 
@@ -118,8 +121,8 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 		markdownErr                             error
 		wantPage                                bool
 	}{
-		{name: "available", wantIDs: []string{"meeting-1", "summary-1"}},
-		{name: "missing first section", sectionErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
+		{name: "available", blockParent: notionmeetings.Parent{Type: "data_source_id"}, wantIDs: []string{"meeting-1", "summary-1"}},
+		{name: "missing first section", blockParent: notionmeetings.Parent{Type: "data_source_id"}, sectionErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "all sections missing", sectionErr: missing, notesErr: missing, wantErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "later section denied", sectionErr: missing, notesErr: denied, wantErr: denied, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "meeting parent", meetingParent: notionmeetings.Parent{Type: "page_id", PageID: "page-1"}, markdownErr: denied, wantErr: notionmeetings.ErrUnauthorized, wantPage: true},
@@ -144,6 +147,8 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 			if tc.wantPage {
 				assert.Equal(t, []string{"page-1"}, pageIDs)
 				assert.True(t, includeTranscript)
+			} else {
+				assert.Empty(t, pageIDs)
 			}
 			if tc.wantIDs != nil {
 				assert.Equal(t, tc.wantIDs, ids)
