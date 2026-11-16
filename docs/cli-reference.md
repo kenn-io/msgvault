@@ -368,7 +368,7 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 ## archive and unarchive
 
 Remove one Gmail message from its inbox, or restore it, through the selected
-daemon. Use msgvault's positive archived message ID. Requires API schema 4.1.0.
+daemon. Use msgvault's positive archived message ID. Requires API schema 5.7.0.
 
 ```bash
 msgvault archive --message 42 --dry-run --json
