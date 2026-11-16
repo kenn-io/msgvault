@@ -3939,14 +3939,35 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 // allocator exits with the process; the long-lived daemon does neither.
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
 	ctx = a.invocationContext(ctx)
+	if cfg := a.publishedConfig(ctx); cfg != nil && !store.IsPostgresURL(cfg.DatabaseDSN()) {
+		staleness, inspectErr := cacheNeedsBuildForServing(ctx, cfg.DatabaseDSN(), a.analyticsDir)
+		if inspectErr == nil && !staleness.NeedsBuild {
+			state, stateErr := query.ReadCacheSyncState(a.analyticsDir)
+			if stateErr == nil {
+				return state.IdentityRevision, nil
+			}
+		}
+	}
 	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
+		a.requestIdentityCacheRecovery(ctx)
 		return 0, err
 	}
 	state, err := query.ReadCacheSyncState(a.analyticsDir)
 	if err != nil {
+		a.requestIdentityCacheRecovery(ctx)
 		return 0, fmt.Errorf("read refreshed cache revision: %w", err)
 	}
 	return state.IdentityRevision, nil
+}
+
+func (a *storeAPIAdapter) requestIdentityCacheRecovery(ctx context.Context) {
+	if daemonCacheRefresher == nil {
+		return
+	}
+	// The identity write is durable even when the request or sync context ends.
+	if err := rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "carddav"); err != nil {
+		repairLogger(a.logger).Warn("failed to queue CardDAV identity cache recovery", "error", err)
+	}
 }
 
 func (a *storeAPIAdapter) GetActiveSyncReadOnly(ctx context.Context, sourceID int64) (*store.SyncRun, error) {

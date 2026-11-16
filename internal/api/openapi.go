@@ -418,7 +418,7 @@ import (
 // 5.2.0 adds open Kata issue search and optional task search queries.
 // 5.3.0 adds the IMAP authentication method to CLI accounts.
 // 5.4.0 allows native tag reads for source-deleted messages.
-// 5.5.0 adds CardDAV participant binding preview, reconcile, and undo.
+// 5.5.0 adds CardDAV participant binding preview, reconciliation, undo, and sync conflict counts to run history.
 const APISchemaVersion = "5.5.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

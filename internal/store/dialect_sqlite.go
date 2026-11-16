@@ -1962,6 +1962,7 @@ func (d *SQLiteDialect) contentChangedAtDefaultStamps(q querier) (bool, error) {
 // silences these when the column already exists (idempotent migrations).
 func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE carddav_sync_runs ADD COLUMN binding_conflicts INTEGER CHECK (binding_conflicts IS NULL OR binding_conflicts >= 0)`, "carddav_sync_runs.binding_conflicts"},
 		{`ALTER TABLE person_participants ADD COLUMN carddav_owned BOOLEAN NOT NULL DEFAULT FALSE`, "person_participants.carddav_owned"},
 		{`ALTER TABLE carddav_resources ADD COLUMN owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
 		{`ALTER TABLE carddav_resources ADD COLUMN locally_published BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.locally_published"},

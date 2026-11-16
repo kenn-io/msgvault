@@ -1008,6 +1008,50 @@ func TestCardDAVParticipantBindingDisputedAddresses(t *testing.T) {
 	})
 }
 
+func TestCardDAVParticipantBindingDisputedAddressFindsManualOwner(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	supported, err := st.EnsureParticipant("supported@example.test", "Supported", "example.test")
+	require.NoError(err)
+	ownerAlias, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	require.NoError(err)
+	remoteOnly, err := st.EnsureParticipant("remote-only@example.test", "Remote Only", "example.test")
+	require.NoError(err)
+	require.NoError(st.SetParticipantIdentifier(supported, "email", "owner@example.test"))
+
+	card := remoteResource(book.CanonicalURL+"supported.vcf", "supported", "Supported", "supported@example.test", "one")
+	card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:supported\r\nFN:Supported\r\nEMAIL:supported@example.test\r\nEND:VCARD\r\n")
+	applyParticipantBindingCards(t, st, account, book, card)
+	person := bindingCardPerson(t, st, book, card.Href)
+	require.Equal([]int64{supported}, person.ParticipantIDs)
+	require.True(bindingOwned(t, st, supported))
+
+	recordBindingConflict(t, st, book.ID, card, person.ID, []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:supported\r\nFN:Changed\r\nEMAIL:supported@example.test\r\nEMAIL:owner@example.test\r\nEMAIL:remote-only@example.test\r\nEND:VCARD\r\n"))
+	ownerPerson, _, err := st.CreatePersonFromParticipant(ownerAlias)
+	require.NoError(err)
+	preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
+	require.NoError(err)
+	require.Len(preview.ConflictDetails, 1)
+	assert.Equal("existing_person", preview.ConflictDetails[0].Reason)
+	assert.ElementsMatch([]int64{person.ID, ownerPerson.ID}, preview.ConflictDetails[0].PersonIDs)
+	assert.Equal(1, preview.ParticipantsUnbound)
+
+	result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+	require.NoError(err)
+	assert.Equal(preview.ConflictDetails, result.ConflictDetails)
+	person, err = st.PersonForParticipantsContext(t.Context(), []int64{supported})
+	require.NoError(err)
+	assert.Nil(person, "conflicting automatic membership must be removed")
+	owner, err := st.PersonForParticipantsContext(t.Context(), []int64{ownerAlias})
+	require.NoError(err)
+	require.NotNil(owner)
+	assert.Equal(ownerPerson.ID, owner.ID)
+	newBinding, err := st.PersonForParticipantsContext(t.Context(), []int64{remoteOnly})
+	require.NoError(err)
+	assert.Nil(newBinding, "disputed-only evidence must not create a membership")
+}
+
 func TestCardDAVParticipantBindingIndirectCandidateAfterUndo(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
@@ -1080,7 +1124,7 @@ func TestCardDAVParticipantBindingIndirectCandidateAfterUndo(t *testing.T) {
 	require.NoError(err)
 	assert.ElementsMatch([]int64{a, b, c, d}, after.ParticipantIDs)
 	_, err = st.LinkParticipants(a, c)
-	assert.ErrorIs(err, store.ErrAlreadyLinked)
+	require.ErrorIs(err, store.ErrAlreadyLinked)
 	split, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
 		SourcePersonID: person.ID, MergeID: merged.Merge.ID, ParticipantIDs: []int64{d},
 		ExpectedSourceRevision: after.Revision, IdempotencyKey: "indirect-candidate-split", Actor: "test",

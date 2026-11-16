@@ -2224,6 +2224,9 @@ components:
         account_id:
           format: int64
           type: integer
+        binding_conflicts:
+          format: int64
+          type: integer
         books:
           format: int64
           type: integer

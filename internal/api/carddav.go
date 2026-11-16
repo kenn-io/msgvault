@@ -836,20 +836,21 @@ type CardDAVSyncRequest struct {
 }
 
 type CardDAVRunResponse struct {
-	AccountID    int64      `json:"account_id"`
-	Connection   string     `json:"connection,omitempty"`
-	ID           int64      `json:"id"`
-	Trigger      string     `json:"trigger" enum:"manual,scheduled"`
-	Full         bool       `json:"full"`
-	State        string     `json:"state" enum:"running,succeeded,failed,cancelled,partial"`
-	StartedAt    time.Time  `json:"started_at"`
-	FinishedAt   *time.Time `json:"finished_at,omitempty"`
-	Books        int64      `json:"books"`
-	Created      int64      `json:"created"`
-	Updated      int64      `json:"updated"`
-	Removed      int64      `json:"removed"`
-	ErrorCode    string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,google_authorization_required,microsoft_authorization_required,microsoft_contact_too_large,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
-	ErrorMessage string     `json:"error_message,omitempty"`
+	AccountID        int64      `json:"account_id"`
+	Connection       string     `json:"connection,omitempty"`
+	ID               int64      `json:"id"`
+	Trigger          string     `json:"trigger" enum:"manual,scheduled"`
+	Full             bool       `json:"full"`
+	State            string     `json:"state" enum:"running,succeeded,failed,cancelled,partial"`
+	StartedAt        time.Time  `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	Books            int64      `json:"books"`
+	Created          int64      `json:"created"`
+	Updated          int64      `json:"updated"`
+	Removed          int64      `json:"removed"`
+	BindingConflicts *int64     `json:"binding_conflicts,omitempty"`
+	ErrorCode        string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,google_authorization_required,microsoft_authorization_required,microsoft_contact_too_large,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
+	ErrorMessage     string     `json:"error_message,omitempty"`
 }
 
 type CardDAVStatusAccount struct {
@@ -888,7 +889,8 @@ func cardDAVRunResponse(run *store.CardDAVSyncRun) *CardDAVRunResponse {
 		ID: run.ID, AccountID: run.AccountID, Trigger: string(run.Trigger), Full: run.Full, State: string(run.State),
 		StartedAt: run.StartedAt, FinishedAt: run.FinishedAt,
 		Books: run.Books, Created: run.Created, Updated: run.Updated, Removed: run.Removed,
-		ErrorCode: errorCode, ErrorMessage: errorMessage,
+		BindingConflicts: run.BindingConflicts,
+		ErrorCode:        errorCode, ErrorMessage: errorMessage,
 	}
 }
 
@@ -1740,17 +1742,9 @@ func (s *Server) handleCardDAVSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) refreshCardDAVIdentityChanges(ctx context.Context) func() {
-	revisions, ok := s.store.(interface{ IdentityRevision() (int64, error) })
-	if !ok {
-		return func() {}
-	}
-	before, beforeErr := revisions.IdentityRevision()
 	return func() {
-		after, afterErr := revisions.IdentityRevision()
-		if beforeErr != nil || afterErr != nil || before != after {
-			refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
-			defer cancel()
-			s.refreshIdentityCacheState(refreshCtx)
-		}
+		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer cancel()
+		s.refreshIdentityCacheState(refreshCtx)
 	}
 }

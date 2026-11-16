@@ -297,7 +297,6 @@ func (c *CardDAVController) Sync(ctx context.Context, req CardDAVSyncRequest) (c
 			return carddav.SyncResult{}, carddav.ErrConnectionUnavailable
 		}
 		result, err := service.Sync(ctx, carddav.SyncOptions{Full: req.Full, Trigger: store.CardDAVSyncTriggerManual})
-		c.setBindingConflicts(ctx, &result)
 		return result, err
 	}
 	var total carddav.SyncResult
@@ -360,7 +359,11 @@ func (c *CardDAVController) Sync(ctx context.Context, req CardDAVSyncRequest) (c
 			total.Status = "partial"
 		}
 	}
-	c.setBindingConflicts(ctx, &total)
+	if slices.ContainsFunc(total.Connections, func(outcome carddav.ConnectionSyncOutcome) bool {
+		return outcome.RunID != nil
+	}) {
+		c.setBindingConflicts(ctx, &total)
+	}
 	return total, nil
 }
 

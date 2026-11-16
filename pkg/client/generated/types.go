@@ -2125,20 +2125,21 @@ func (c CardDAVResolveRequest) Validate() error {
 }
 
 type CardDAVRunResponse struct {
-	AccountID    int64                        `json:"account_id"`
-	Books        int64                        `json:"books"`
-	Connection   *string                      `json:"connection,omitzero"`
-	Created      int64                        `json:"created"`
-	ErrorCode    *CardDAVRunResponseErrorCode `json:"error_code,omitempty"`
-	ErrorMessage *string                      `json:"error_message,omitzero"`
-	FinishedAt   *time.Time                   `json:"finished_at,omitempty"`
-	Full         bool                         `json:"full"`
-	ID           int64                        `json:"id"`
-	Removed      int64                        `json:"removed"`
-	StartedAt    time.Time                    `json:"started_at" validate:"required"`
-	State        CardDAVRunResponseState      `json:"state" validate:"required"`
-	Trigger      CardDAVRunResponseTrigger    `json:"trigger" validate:"required"`
-	Updated      int64                        `json:"updated"`
+	AccountID        int64                        `json:"account_id"`
+	BindingConflicts *int64                       `json:"binding_conflicts,omitempty"`
+	Books            int64                        `json:"books"`
+	Connection       *string                      `json:"connection,omitzero"`
+	Created          int64                        `json:"created"`
+	ErrorCode        *CardDAVRunResponseErrorCode `json:"error_code,omitempty"`
+	ErrorMessage     *string                      `json:"error_message,omitzero"`
+	FinishedAt       *time.Time                   `json:"finished_at,omitempty"`
+	Full             bool                         `json:"full"`
+	ID               int64                        `json:"id"`
+	Removed          int64                        `json:"removed"`
+	StartedAt        time.Time                    `json:"started_at" validate:"required"`
+	State            CardDAVRunResponseState      `json:"state" validate:"required"`
+	Trigger          CardDAVRunResponseTrigger    `json:"trigger" validate:"required"`
+	Updated          int64                        `json:"updated"`
 }
 
 func (c CardDAVRunResponse) Validate() error {

@@ -297,7 +297,11 @@
               >
               <td>{historyRun.trigger === 'scheduled' ? 'Scheduled' : 'Manual'}</td>
               <td
-                >{counters(historyRun)}{#if historyRun.error_message}<span class="error-copy"
+                >{counters(historyRun)}{#if historyRun.binding_conflicts !== undefined && historyRun.binding_conflicts > 0}<span class="conflict-copy"
+                    >{historyRun.binding_conflicts.toLocaleString()} binding conflicts · Review with <code
+                      >msgvault carddav bind-participants --dry-run</code
+                    ></span
+                  >{/if}{#if historyRun.error_message}<span class="error-copy"
                     >{historyRun.error_message}</span
                   >{/if}</td
               >
@@ -385,6 +389,10 @@
   .error-copy {
     display: block;
     color: var(--text-danger);
+    font-size: var(--font-size-sm);
+  }
+  .conflict-copy {
+    display: block;
     font-size: var(--font-size-sm);
   }
   .history-scroll {

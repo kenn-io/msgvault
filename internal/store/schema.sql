@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS carddav_sync_runs (
     created       INTEGER NOT NULL DEFAULT 0 CHECK (created >= 0),
     updated       INTEGER NOT NULL DEFAULT 0 CHECK (updated >= 0),
     removed       INTEGER NOT NULL DEFAULT 0 CHECK (removed >= 0),
+    binding_conflicts INTEGER CHECK (binding_conflicts IS NULL OR binding_conflicts >= 0),
     error_code    TEXT NOT NULL DEFAULT '' CHECK (
         error_code = '' OR (length(error_code) <= 64 AND
                             substr(error_code, 1, 1) GLOB '[a-z]' AND

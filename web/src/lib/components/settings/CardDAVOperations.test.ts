@@ -217,6 +217,32 @@ describe('CardDAVOperations', () => {
     controller.destroy();
   });
 
+  it('shows binding conflicts and the review command in scheduled run history', async () => {
+    const client = createAPIClient(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/status')) return Response.json({
+        configured: false, available: false, credential_configured: false,
+        enabled: false, scheduled: false, schedule: ''
+      });
+      if (path.endsWith('/runs')) return Response.json({ runs: [{
+        id: 3, account_id: 1, trigger: 'scheduled', full: false, state: 'succeeded',
+        started_at: '2026-08-28T09:00:00Z', finished_at: '2026-08-28T09:01:00Z',
+        books: 1, created: 0, updated: 1, removed: 0, binding_conflicts: 2
+      }] });
+      if (path.endsWith('/books')) return Response.json({ books: [] });
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    const controller = new CardDAVController(client);
+    await controller.load();
+    render(CardDAVOperations, { controller });
+
+    const row = screen.getAllByRole('row')[1];
+    expect(row.textContent).toContain('2 binding conflicts');
+    expect(row.textContent).toContain('msgvault carddav bind-participants --dry-run');
+    controller.destroy();
+  });
+
   it('calls Sync now with the selected connection', async () => {
     const controller = new CardDAVController(createAPIClient(async input => {
       const path = new URL((input as Request).url).pathname;
