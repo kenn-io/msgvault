@@ -3693,7 +3693,7 @@ Freshness uses the newest currently supported evidence that is not future-dated:
 365 days, events for 7 days, and preferences for 90 days. A claim
 without eligible evidence is stale. A claim expires exactly at `valid_until`,
 regardless of evidence freshness. `latest_supported_at` reports the evidence
-time when available. These read fields do not change inference packets.
+time when available.
 
 These commands accept `--json`. Use catalog keys, not slugs, for fact pins.
 Evidence, claims, and decisions accept an exact `--target`; fact-history
