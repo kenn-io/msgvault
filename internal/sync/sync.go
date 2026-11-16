@@ -1127,28 +1127,19 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 
 			if alreadyExists {
 				changed := false
-				_, markedGmail := markedGmailMessageIDs[sourceMessageID]
 				if !s.defersAuthoritativeLabelReconciliation() {
 					changed, err = s.store.ReconcileMessageLabels(
 						ctx,
 						existing.ID,
 						labelIDsFor(raw.LabelIDs, labelMap),
-						markedGmail && snapshotComplete,
+						false,
 					)
 					if err != nil {
-						if markedGmail {
-							return nil, fmt.Errorf("reconcile labels for marked Gmail message %s: %w", sourceMessageID, err)
-						}
 						s.logger.Warn("failed to merge existing message labels",
 							"id", sourceMessageID, "error", err)
 						s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 						checkpoint.ErrorsCount++
 						continue
-					}
-				}
-				if markedGmail && !slices.Contains(raw.LabelIDs, "TRASH") {
-					if err := s.store.ClearRestoredGmailDeletionMark(ctx, sourceID, sourceMessageID); err != nil {
-						return nil, fmt.Errorf("clear Gmail deletion mark for restored message %s: %w", sourceMessageID, err)
 					}
 				}
 				if changed {
