@@ -777,6 +777,7 @@ func TestAgentTokenIncomingSendersIndependentOfDraftIdentities(t *testing.T) {
 		{"top-level null", `null`, []string{"message.archive"}, http.StatusBadRequest},
 		{"unknown field", `{"1":["codes@example.test"]}`, []string{"message.read"}, http.StatusBadRequest},
 		{"duplicate", `{"1":["codes@example.test","CODES@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"duplicate dotless domain", `{"1":["Root@localhost","root@localhost"]}`, []string{"message.archive"}, http.StatusBadRequest},
 		{"invalid mailbox", `{"1":["invalid"]}`, []string{"message.archive"}, http.StatusBadRequest},
 		{"unselected", `{"2":["codes@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
 		{"noncanonical source", `{"01":["codes@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},

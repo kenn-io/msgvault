@@ -911,6 +911,40 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 	}
 }
 
+func TestAgentIncomingSenderDotlessDomain(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("test", "owner@example.test")
+	require.NoError(t, err)
+	_, messageID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "dotless", "visible message", "")
+	require.NoError(t, err)
+	participant, err := st.EnsureParticipant("root@localhost", "", "localhost")
+	require.NoError(t, err)
+	require.NoError(t, st.ReplaceMessageRecipients(messageID, "from", []int64{participant}, nil))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ? AND recipient_type = 'from'"), "root@localhost", messageID)
+	require.NoError(t, err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	defer srv.agentGrants.Close()
+	body := fmt.Sprintf(`{"label":"reader","permissions":["message.read"],"source_ids":[%d],"incoming_senders":{"%d":["Root@localhost"]}}`, src.ID, src.ID)
+	issue := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
+	issue.Header.Set("X-Api-Key", "owner-key")
+	issue.Header.Set("Content-Type", "application/json")
+	issued := httptest.NewRecorder()
+	srv.Router().ServeHTTP(issued, issue)
+	require.Equal(t, http.StatusCreated, issued.Code, issued.Body.String())
+	var response agentTokenIssueResponse
+	require.NoError(t, json.Unmarshal(issued.Body.Bytes(), &response))
+	grant, ok := srv.agentGrants.Lookup(response.Secret)
+	require.True(t, ok)
+	require.Equal(t, []string{"root@localhost"}, grant.Sources[0].IncomingSenderKeys)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", messageID), nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, response.Secret)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "visible message")
+}
+
 func TestAgentIncomingSenderScopesReads(t *testing.T) {
 	requirementsForTest := require.New(t)
 	st := testutil.NewTestStore(t)

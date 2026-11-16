@@ -311,6 +311,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		keys := make([]string, 0, len(selected))
 		for _, value := range selected {
 			key, valid := canonicalMailboxIdentity(value)
+			key = strings.ToLower(key)
 			if !valid || slices.Contains(keys, key) {
 				writeError(w, http.StatusBadRequest, "invalid_sender", "incoming sender must be a valid, unique mailbox")
 				return

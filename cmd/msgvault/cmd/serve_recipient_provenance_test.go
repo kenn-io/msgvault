@@ -104,6 +104,31 @@ func TestDraftRecipientProvenanceWriteOnlyGrantDoesNotReadEvidence(t *testing.T)
 	assert.Empty(t, result.Warnings)
 }
 
+func TestDraftRecipientProvenanceIncomingSenderRestriction(t *testing.T) {
+	f := newDraftReplyFixture(t)
+	other, err := f.store.GetOrCreateSource("gmail", "other@example.test")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name   string
+		grant  *agentgrant.Grant
+		status string
+	}{
+		{"owner", nil, "checked"},
+		{"unrestricted", &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionMessageRead}, Sources: []agentgrant.SourceRef{{Type: f.source.SourceType, Identifier: f.source.Identifier, SenderKeys: []string{testutil.IMAPTestUsername}}}}, "checked"},
+		{"restricted", &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionMessageRead}, Sources: []agentgrant.SourceRef{{Type: f.source.SourceType, Identifier: f.source.Identifier, SenderKeys: []string{testutil.IMAPTestUsername}, IncomingSenderKeys: []string{"allowed@example.test"}}}}, "unchecked"},
+		{"mixed", &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionMessageRead}, Sources: []agentgrant.SourceRef{{Type: f.source.SourceType, Identifier: f.source.Identifier, SenderKeys: []string{testutil.IMAPTestUsername}}, {Type: other.SourceType, Identifier: other.Identifier, IncomingSenderKeys: []string{"allowed@example.test"}}}}, "unchecked"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := composeProvenanceDraft(t, f, tc.grant, "sender@example.com")
+			assert.Equal(t, tc.status, result.RecipientProvenanceStatus)
+			if tc.status == "unchecked" {
+				assert.Empty(t, result.RecipientProvenance)
+				assert.Empty(t, result.Warnings)
+			}
+		})
+	}
+}
+
 func TestDraftRecipientProvenanceReadableGrantCannotSeeOtherSourceEvidence(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
