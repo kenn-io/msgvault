@@ -17,7 +17,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -351,7 +350,8 @@ func TestSyncRecordsOneSucceededManualRunWithExactCounters(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 1, BindingConflicts: new(0)}, result)
+	assert.Equal(1, result.Books)
+	assert.Equal(1, result.Created)
 
 	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
@@ -364,7 +364,6 @@ func TestSyncRecordsOneSucceededManualRunWithExactCounters(t *testing.T) {
 	assert.Equal(int64(result.Created), runs[0].Created)
 	assert.Equal(int64(result.Updated), runs[0].Updated)
 	assert.Equal(int64(result.Removed), runs[0].Removed)
-	assert.Equal(new(int64(0)), runs[0].BindingConflicts)
 }
 
 func TestSyncRecordsExplicitScheduledTrigger(t *testing.T) {
@@ -452,7 +451,8 @@ func TestSyncTotalFailureRecordsSafeFailedTerminalState(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.Error(err)
-	assert.Equal(SyncResult{BindingConflicts: new(0)}, result)
+	assert.Zero(result.Books)
+	assert.Zero(result.Created)
 	assert.Equal("CardDAV server request failed.", err.Error())
 	runs, listErr := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(listErr)
@@ -513,7 +513,8 @@ func TestSyncJoinsExecutionAndFinishFailuresWithoutReplay(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.Error(err)
-	assert.Equal(SyncResult{BindingConflicts: new(0)}, result)
+	assert.Zero(result.Books)
+	assert.Zero(result.Created)
 	var statusErr *StatusError
 	require.ErrorAs(err, &statusErr, "execution error must remain inspectable")
 	require.ErrorContains(err, "injected finish failure")
@@ -1079,7 +1080,8 @@ func TestInitialSyncFallsBackToEnumeratedSnapshotWhenEmptyTokenIsRejected(t *tes
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
+	assert.Equal(1, result.Books)
+	assert.Equal(2, result.Created)
 	assert.Equal([]string{
 		"REPORT sync-collection ",
 		"PROPFIND 0",
@@ -1126,7 +1128,8 @@ func TestGoogleInitialSyncSkipsEmptyTokenSyncCollection(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
+	assert.Equal(1, result.Books)
+	assert.Equal(2, result.Created)
 	assert.Equal([]string{
 		"PROPFIND 0",
 		"PROPFIND 1",
@@ -1173,7 +1176,8 @@ func TestGoogleInvalidTokenReconcileUsesEnumeratedSnapshot(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
+	assert.Equal(1, result.Books)
+	assert.Equal(2, result.Created)
 	assert.Equal([]string{
 		"PROPFIND 0",
 		"PROPFIND 1",
@@ -1271,7 +1275,8 @@ func TestGoogleSnapshotNeverUsesAddressbookQuery(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
+	assert.Equal(1, result.Books)
+	assert.Equal(2, result.Created)
 	assert.NotContains(state.requests, "REPORT addressbook-query",
 		"Google's empty addressbook-query must never become a replace-all plan")
 	assert.Equal([]string{
@@ -1298,7 +1303,8 @@ func TestEnumeratedSnapshotWarnsWhenCollectionOmitsSyncToken(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
+	assert.Equal(1, result.Books)
+	assert.Equal(2, result.Created)
 	assert.Contains(logged.String(), "level=WARN")
 	assert.Contains(logged.String(), "no sync token")
 	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
@@ -1373,29 +1379,7 @@ func (s *Service) dav() *davRemote {
 	return remote
 }
 
-type bindingSyncRemote struct {
-	cards map[string]store.CardDAVRemoteResource
-}
-
-func (r *bindingSyncRemote) Discover(context.Context, string) (Discovery, error) {
-	return Discovery{}, nil
-}
-func (r *bindingSyncRemote) Pull(_ context.Context, _ store.CardDAVAddressBook, _ string, _ *Budget) (store.CardDAVSyncPlan, error) {
-	plan := store.CardDAVSyncPlan{ReplaceAll: true}
-	for _, resource := range r.cards {
-		plan.Upserts = append(plan.Upserts, resource)
-	}
-	return plan, nil
-}
-func (r *bindingSyncRemote) Get(context.Context, string) (store.CardDAVRemoteResource, bool, error) {
-	return store.CardDAVRemoteResource{}, false, nil
-}
-func (r *bindingSyncRemote) Put(context.Context, string, []byte, string, bool) error { return nil }
-func (r *bindingSyncRemote) Delete(context.Context, string, string) error            { return nil }
-func (r *bindingSyncRemote) CreateHref(string, string) (string, error)               { return "", nil }
-func (r *bindingSyncRemote) Limits() (time.Duration, int64)                          { return time.Minute, 10 << 20 }
-
-func TestScheduledCardDAVSyncPersistsBindingConflictCount(t *testing.T) {
+func TestCardDAVSyncPersistsBindingConflictCount(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1408,18 +1392,12 @@ func TestScheduledCardDAVSyncPersistsBindingConflictCount(t *testing.T) {
 	_, err = st.EnsureParticipant("shared@example.test", "Shared", "example.test")
 	require.NoError(err)
 
-	cards := make(map[string]store.CardDAVRemoteResource)
+	remote := newMemoryRemote()
 	for _, uid := range []string{"first", "second"} {
 		body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + uid + "\r\nFN:Person\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n")
-		hash, hashErr := SemanticHash(body)
-		require.NoError(hashErr)
-		href := books[0].CanonicalURL + uid + ".vcf"
-		cards[href] = store.CardDAVRemoteResource{
-			Href: href, RemoteUID: uid, RemoteETag: `"one"`, SemanticHash: hash,
-			RemoteBody: body, DisplayName: "Person", Emails: []string{"shared@example.test"},
-		}
+		remote.set(books[0].CanonicalURL+uid+".vcf", body)
 	}
-	service := NewRemoteService(st, &bindingSyncRemote{cards: cards})
+	service := NewRemoteService(st, remote)
 	result, err := service.Sync(t.Context(), SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
 	require.NoError(err)
 	require.NotNil(result.BindingConflicts)

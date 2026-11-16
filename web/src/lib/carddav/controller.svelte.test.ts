@@ -818,11 +818,16 @@ describe('CardDAVController', () => {
 
 it('uses an explicit selected connection for manual sync while keeping books and history global', async () => {
   const requests: Request[] = [];
+  const nextSync = deferredResponse();
+  let posts = 0;
   const client = createAPIClient(async (input) => {
     const request = requestOf(input);
     requests.push(request);
     const url = new URL(request.url);
-    if (request.method === 'POST') return Response.json({ books: 0, created: 0, updated: 0, removed: 0 });
+    if (request.method === 'POST') {
+      if (++posts === 1) return Response.json({ books: 0, created: 0, updated: 0, removed: 0, binding_conflicts: 1 });
+      return nextSync.promise;
+    }
     if (url.pathname.endsWith('/status')) return Response.json(idleStatus);
     if (url.pathname.endsWith('/books')) return Response.json({ books: [] });
     return Response.json({ runs: [] });
@@ -839,6 +844,11 @@ it('uses an explicit selected connection for manual sync while keeping books and
   expect(
     requests.filter((r) => r.method === 'GET').every((r) => !new URL(r.url).searchParams.has('connection'))
   ).toBe(true);
+  expect(controller.bindingConflicts).toBe(1);
+  const pending = controller.sync('work');
+  expect(controller.bindingConflicts).toBeUndefined();
+  nextSync.resolve(Response.json({ books: 0, created: 0, updated: 0, removed: 0 }));
+  await pending;
   controller.destroy();
 });
 

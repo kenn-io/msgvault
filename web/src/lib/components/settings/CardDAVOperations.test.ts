@@ -267,12 +267,7 @@ describe('CardDAVOperations', () => {
     { name: 'zero', extra: { binding_conflicts: 0 }, warning: undefined },
     { name: 'absent', extra: {}, warning: undefined },
   ])('shows the binding conflict warning after a sync only for a positive count: $name', async ({ extra, warning }) => {
-    let finishSecondSync: (response: Response) => void = () => {};
-    let calls = 0;
-    const controller = new CardDAVController(createAPIClient(syncFetch(() => {
-      if (++calls === 1) return syncResult(extra);
-      return new Promise<Response>(resolve => { finishSecondSync = resolve; });
-    })));
+    const controller = new CardDAVController(createAPIClient(syncFetch(() => syncResult(extra))));
     await controller.load();
     render(CardDAVOperations, { controller });
 
@@ -280,12 +275,6 @@ describe('CardDAVOperations', () => {
 
     await waitFor(() => expect(screen.getByText('CardDAV sync completed.')).toBeDefined());
     expect(warningText()).toBe(warning);
-    if (warning) {
-      await fireEvent.click(await screen.findByRole('button', { name: 'Sync now' }));
-      await waitFor(() => expect(warningText()).toBeUndefined());
-      finishSecondSync(syncResult());
-      await waitFor(() => expect(screen.getByText('CardDAV sync completed.')).toBeDefined());
-    }
     controller.destroy();
   });
 });

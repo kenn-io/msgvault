@@ -354,7 +354,7 @@ func TestCardDAVRunHistoryPagesNewestFirstWithoutRuntimeService(t *testing.T) {
 		run, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual, Full: i == 0})
 		require.NoError(err)
 		ids = append(ids, run.ID)
-		_, err = st.FinishCardDAVSyncRunContext(t.Context(), run.ID, store.CardDAVSyncRunFinish{State: store.CardDAVSyncRunSucceeded, Books: int64(i + 1)})
+		_, err = st.FinishCardDAVSyncRunContext(t.Context(), run.ID, store.CardDAVSyncRunFinish{State: store.CardDAVSyncRunSucceeded, Books: int64(i + 1), BindingConflicts: new(int64(1))})
 		require.NoError(err)
 	}
 	controller := &CardDAVController{cfg: cfg, store: st}
@@ -366,6 +366,7 @@ func TestCardDAVRunHistoryPagesNewestFirstWithoutRuntimeService(t *testing.T) {
 	require.NoError(json.NewDecoder(first.Body).Decode(&firstPage))
 	require.Len(firstPage.Runs, 2)
 	assertions.Equal([]int64{ids[2], ids[1]}, []int64{firstPage.Runs[0].ID, firstPage.Runs[1].ID})
+	assertions.Equal(new(int64(1)), firstPage.Runs[0].BindingConflicts)
 	require.NotNil(firstPage.NextBeforeID)
 	assertions.Equal(ids[1], *firstPage.NextBeforeID)
 

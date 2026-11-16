@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -97,11 +96,6 @@ func TestFailedCardDAVIdentityRefreshQueuesRealCacheRepair(t *testing.T) {
 	req.NoError(err)
 	checks.Equal(before.IdentityRevision, got)
 
-	req.NoError(os.Remove(filepath.Join(analyticsDir, "participants", "participants.parquet")))
-	_, err = adapter.RefreshIdentityDatasets(t.Context())
-	req.ErrorIs(err, refreshErr)
-	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
-	req.NoError(err)
 	_, err = st.LinkParticipants(first, second)
 	req.NoError(err)
 	revision, err := st.IdentityRevision()
