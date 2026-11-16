@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
+	"pgregory.net/rapid"
 )
 
 func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *testing.T) {
@@ -206,7 +206,7 @@ func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
 	}()
 }
 
-func TestHegelAnnualTemperatureRollups(t *testing.T) {
+func TestPropertyAnnualTemperatureRollups(t *testing.T) {
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE `+temperatureBuildRelation+` (
 		canonical_id BIGINT, event_date DATE, sent_count BIGINT, received_count BIGINT,
@@ -215,9 +215,9 @@ func TestHegelAnnualTemperatureRollups(t *testing.T) {
 	require.NoError(t, err)
 	effective := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	query := `WITH anchor AS (SELECT 1)` + relationshipTemperatureCTEs(effective)
-	hegel.Test(t, func(ht *hegel.T) {
-		require := require.New(ht)
-		assert := assert.New(ht)
+	rapid.Check(t, func(rt *rapid.T) {
+		require := require.New(rt)
+		assert := assert.New(rt)
 		_, err := db.ExecContext(t.Context(), `DELETE FROM `+temperatureBuildRelation)
 		require.NoError(err)
 		// One contact has equal temperatures in two years to exercise peak tie-breaking.
@@ -226,21 +226,21 @@ func TestHegelAnnualTemperatureRollups(t *testing.T) {
 			time.Date(2000, 2, 29, 0, 0, 0, 0, time.UTC),
 		}
 		ids := []int64{4, 4}
-		for n := hegel.Draw(ht, hegel.Integers(1, 6)); n > 0; n-- {
+		for n := rapid.IntRange(1, 6).Draw(rt, "contacts"); n > 0; n-- {
 			var date time.Time
-			if hegel.Draw(ht, hegel.Booleans()) {
-				date = hegel.Draw(ht, hegel.Dates().Min(time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)).Max(time.Date(1969, 12, 31, 0, 0, 0, 0, time.UTC)))
+			if rapid.Bool().Draw(rt, "pre1970") {
+				date = drawDate(rt, time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(1969, 12, 31, 0, 0, 0, 0, time.UTC))
 			} else {
-				date = hegel.Draw(ht, hegel.Dates().Min(time.Date(1971, 1, 1, 0, 0, 0, 0, time.UTC)).Max(effective))
+				date = drawDate(rt, time.Date(1971, 1, 1, 0, 0, 0, 0, time.UTC), effective)
 				// Keep the tie fixture alone in both of its years.
 				if date.Year() == 2000 {
 					date = time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
 				}
 			}
 			dates = append(dates, date)
-			ids = append(ids, hegel.Draw(ht, hegel.Integers(int64(5), int64(7))))
+			ids = append(ids, rapid.Int64Range(5, 7).Draw(rt, "id"))
 		}
-		ht.Logf("ids=%v dates=%v", ids, dates)
+		rt.Logf("ids=%v dates=%v", ids, dates)
 		expected := map[int64]map[int]bool{}
 		seen := map[string]bool{}
 		for i, date := range dates {
@@ -319,4 +319,12 @@ func TestHegelAnnualTemperatureRollups(t *testing.T) {
 		}
 		assert.Equal(2000, peaks[4])
 	})
+}
+
+// drawDate draws a UTC calendar date in [lo, hi] by day number, which avoids
+// time.Duration overflow across the full range of years.
+func drawDate(rt *rapid.T, lo, hi time.Time) time.Time {
+	const day = 24 * 60 * 60
+	n := rapid.Int64Range(lo.Unix()/day, hi.Unix()/day).Draw(rt, "day")
+	return time.Unix(n*day, 0).UTC()
 }

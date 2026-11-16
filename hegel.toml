@@ -1,3 +1,0 @@
-[profiles.development]
-derandomize = true
-database = "disabled"

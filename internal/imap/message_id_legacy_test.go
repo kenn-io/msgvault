@@ -7,7 +7,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
+	"pgregory.net/rapid"
 
 	"go.kenn.io/msgvault/internal/mime"
 )
@@ -102,19 +102,19 @@ func TestLegacyMessageIDSourceValidation(t *testing.T) {
 	}
 }
 
-func TestHegelMessageIDContract(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		atom := func(alphabet string) string {
-			return hegel.Draw(ht, hegel.Text().MinSize(1).MaxSize(8).Alphabet(alphabet))
+func TestPropertyMessageIDContract(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		atom := func(label, alphabet string) string {
+			return rapid.StringOfN(rapid.RuneFrom([]rune(alphabet)), 1, 8, -1).Draw(rt, label)
 		}
-		local := atom("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+-")
-		if hegel.Draw(ht, hegel.Booleans()) {
-			local += "." + atom("abcdefghijklmnopqrstuvwxyz0123456789_+-")
+		local := atom("local", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+-")
+		if rapid.Bool().Draw(rt, "dotted") {
+			local += "." + atom("local2", "abcdefghijklmnopqrstuvwxyz0123456789_+-")
 		}
-		id := local + "@" + atom("abcdefghijklmnopqrstuvwxyz0123456789") + ".example.test"
+		id := local + "@" + atom("domain", "abcdefghijklmnopqrstuvwxyz0123456789") + ".example.test"
 		legacy := "[" + local + "==@example.test]"
-		digits := atom("0123456789")
-		form := hegel.Draw(ht, hegel.Integers(0, 9))
+		digits := atom("digits", "0123456789")
+		form := rapid.IntRange(0, 9).Draw(rt, "form")
 		var header, wantIMAP, wantStorage string
 		switch form {
 		case 0:
@@ -139,16 +139,16 @@ func TestHegelMessageIDContract(t *testing.T) {
 		case 9:
 			header, wantIMAP = "<"+id+"> (comment)", id
 		}
-		fold := hegel.Draw(ht, hegel.SampledFrom([]string{" ", "\r\n\t"}))
+		fold := rapid.SampledFrom([]string{" ", "\r\n\t"}).Draw(rt, "fold")
 		raw := []byte("Message-ID:" + fold + header + "\r\n\r\nMessage-ID: decoy@example.test\r\n")
-		if hegel.Draw(ht, hegel.Booleans()) {
+		if rapid.Bool().Draw(rt, "bodyOnly") {
 			raw = []byte("Subject: no identifier\r\n\r\nMessage-ID: <" + id + ">\r\n")
 			wantIMAP, wantStorage = "", ""
 		}
-		ht.Logf("form=%d raw=%q", form, raw)
+		rt.Logf("form=%d raw=%q", form, raw)
 		parsed, err := mime.Parse(raw)
-		require.NoError(ht, err)
-		assert.Equal(ht, wantIMAP, rawMIMEMessageID(raw))
-		assert.Equal(ht, wantStorage, mime.NormalizeMessageID(parsed.MessageID))
+		require.NoError(rt, err)
+		assert.Equal(rt, wantIMAP, rawMIMEMessageID(raw))
+		assert.Equal(rt, wantStorage, mime.NormalizeMessageID(parsed.MessageID))
 	})
 }

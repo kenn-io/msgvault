@@ -192,31 +192,27 @@ automatically. Use `assert` and `require` from testify, with expected values
 first. See [AGENTS.md](https://github.com/kenn-io/msgvault/blob/main/AGENTS.md)
 for repository testing rules.
 
-### Property tests (Hegel)
+### Property tests (rapid)
 
 Use properties for contracts over synthetic inputs, such as parsers and rollups.
-Exercise production entry points and use testify directly with `*hegel.T`.
-The development and CI profiles use deterministic inputs and disable saved examples.
-Run the two focused properties with:
+Write them with [rapid](https://pkg.go.dev/pgregory.net/rapid): exercise
+production entry points and use testify directly with `*rapid.T`. Run the
+focused properties with:
 
 ```bash
-go test -tags "fts5 sqlite_vec" -count=1 -run '^TestHegel(AnnualTemperatureRollups|MessageIDContract)$' ./internal/identityindex ./internal/imap
+go test -tags "fts5 sqlite_vec" -count=1 -run '^TestProperty(AnnualTemperatureRollups|MessageIDContract)$' ./internal/identityindex ./internal/imap
 ```
 
-A weekly or manually dispatched property-discovery workflow uses a fresh seed
-and a larger case budget. To replay a failure, check out the recorded tested
-commit and rerun the command above with `HEGEL_SEED` and `HEGEL_TEST_CASES`
-set to the recorded values and `HEGEL_DERANDOMIZE=false`. Always use
-`-count=1`: Go's test cache cannot see native engine environment variables.
-The retained log includes shrunk inputs; turn useful ones into regression cases.
-The Go runner can print a reproduction blob but cannot directly replay it.
+Each run uses a fresh random seed and 100 cases per property; add
+`-rapid.checks=N` for a larger budget. When a property fails, rapid shrinks the
+input, prints the seed, and writes a fail file under the package's
+`testdata/rapid/` directory (ignored by Git). To replay it, rerun the same test
+with the printed `-rapid.failfile=...` or `-rapid.seed=...` flag. Turn useful
+shrunk inputs into ordinary regression cases.
 
-Hegel embeds native engines for Linux amd64 and arm64, macOS arm64, and
-Windows amd64 and arm64. On another platform, use a supported runner or build
-the matching libhegel version from the Hegel source and set
-`HEGEL_LIBHEGEL_PATH` to the resulting library. When updating the Hegel module,
-read its release notes, update the module and checksums, and check native CI;
-the bundled engine and deterministic generated cases may change.
+A weekly or manually dispatched property-discovery workflow runs 10,000 cases
+per property and keeps the seed, commit, test log, and fail files for 14 days
+when it fails.
 
 ### Timing waits
 
@@ -687,7 +683,7 @@ WHERE EXISTS (
 | `charmbracelet/lipgloss` | TUI styling |
 | `mattn/go-sqlite3` | SQLite with CGO (FTS5) |
 | `duckdb/duckdb-go/v2` | DuckDB driver for Parquet |
-| `hegel.dev/go/hegel` | Property generation and shrinking for Go tests |
+| `pgregory.net/rapid` | Property generation and shrinking for Go tests |
 | `gogs/chardet` | Character set detection |
 | `golang.org/x/text` | Text encoding conversion |
 

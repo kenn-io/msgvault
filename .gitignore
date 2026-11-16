@@ -80,3 +80,6 @@ docs/screenshots/demo-data/
 .docs-fixture-staging/
 .kata.local.toml
 /contextual-retrieval-eval
+
+# rapid property-test failure files
+testdata/rapid/

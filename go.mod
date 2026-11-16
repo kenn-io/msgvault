@@ -71,6 +71,7 @@ require (
 	hegel.dev/go/hegel v0.9.31
 	howett.net/plist v1.0.1
 	maunium.net/go/mautrix v0.32.0
+	pgregory.net/rapid v1.3.0
 )
 
 require (
