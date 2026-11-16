@@ -104,9 +104,13 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 				}
 				slog.Warn("skipping Beeper participant merge due to identity conflict",
 					"loser_participant_id", e.pid, "winner_participant_id", pid, "error", err)
+				if errors.Is(err, store.ErrParticipantAddressConflict) {
+					r.rich[identifier] = richEntry{pid: e.pid, byPhone: true}
+					return e.pid, nil
+				}
 			}
 		}
-		return pid, r.recordRich(ctx, identifier, pid, true)
+		return r.recordRich(ctx, identifier, pid, true)
 	case strings.Contains(u.Email, "@"):
 		// Never downgrade: if a prior run already resolved this Beeper user
 		// by phone, an email-only sighting must keep pointing at that
@@ -124,7 +128,7 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 		if err != nil {
 			return 0, err
 		}
-		return pid, r.recordRich(ctx, identifier, pid, false)
+		return r.recordRich(ctx, identifier, pid, false)
 	default:
 		return r.resolveID(ctx, u.ID, u.FullName)
 	}
@@ -135,10 +139,10 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 // caches) resolve bare sender IDs to the same person. When a weak (bare-ID-only)
 // participant already owns the identifier, its history — messages, reactions,
 // membership — is merged into the rich participant rather than left split.
-func (r *participantResolver) recordRich(ctx context.Context, userID string, pid int64, byPhone bool) error {
+func (r *participantResolver) recordRich(ctx context.Context, userID string, pid int64, byPhone bool) (int64, error) {
 	prev, hasPhone, err := r.store.ParticipantByIdentifierContext(ctx, participantIdentifierType, userID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// A prior owner without a phone — a bare-ID fallback or an email-only
 	// resolution — is the same Beeper user seen with weaker metadata: fold
@@ -147,18 +151,23 @@ func (r *participantResolver) recordRich(ctx context.Context, userID string, pid
 	if prev != 0 && prev != pid && !hasPhone {
 		if err := r.store.MergeParticipantsContext(ctx, prev, pid); err != nil {
 			if !errors.Is(err, store.ErrPersonBindingConflict) && !errors.Is(err, store.ErrParticipantAddressConflict) {
-				return err
+				return 0, err
 			}
 			slog.Warn("skipping Beeper participant merge due to identity conflict",
 				"loser_participant_id", prev, "winner_participant_id", pid, "error", err)
+			if errors.Is(err, store.ErrParticipantAddressConflict) {
+				r.rich[userID] = richEntry{pid: prev, byPhone: byPhone}
+				delete(r.fallback, userID)
+				return prev, nil
+			}
 		}
 	}
 	if err := r.store.SetParticipantIdentifierContext(ctx, pid, participantIdentifierType, userID); err != nil {
-		return err
+		return 0, err
 	}
 	r.rich[userID] = richEntry{pid: pid, byPhone: byPhone}
 	delete(r.fallback, userID)
-	return nil
+	return pid, nil
 }
 
 // resolveID resolves a bare Beeper user ID (message sender, mention, reactor)

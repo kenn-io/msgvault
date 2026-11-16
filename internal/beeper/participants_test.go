@@ -2,6 +2,7 @@ package beeper
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -528,19 +529,46 @@ func TestRichUpgradeDoesNotAbsorbContactOwner(t *testing.T) {
 }
 
 func TestResolveUserContinuesAfterEmailAliasConflict(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	r := newParticipantResolver(st, "account-a")
-	emailUser := &User{ID: "synthetic-user", Email: "absorbed@example.test", FullName: "Absorbed"}
-	_, err := r.resolveUser(t.Context(), emailUser)
-	require.NoError(err)
-	third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
-	require.NoError(err)
-	require.NoError(st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
-	phone, err := st.EnsureParticipantByPhone(t.Context(), "+12025550100", "Phone", "imessage")
-	require.NoError(err)
-	pid, err := r.resolveUser(t.Context(), &User{ID: emailUser.ID, PhoneNumber: "+12025550100", FullName: "Absorbed"})
-	require.NoError(err)
-	assert.Equal(phone, pid)
+	for _, fresh := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fresh=%t", fresh), func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			r := newParticipantResolver(st, "account-a")
+			user := &User{ID: "synthetic-user", Email: "absorbed@example.test", FullName: "Absorbed"}
+			old, err := r.resolveUser(t.Context(), user)
+			require.NoError(t, err)
+			src, err := st.GetOrCreateSource("beeper", "history")
+			require.NoError(t, err)
+			conv, err := st.EnsureConversationWithType(src.ID, "history", "direct_chat", "History")
+			require.NoError(t, err)
+			before, err := st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "before", MessageType: "beeper", SenderID: sql.NullInt64{Int64: old, Valid: true}})
+			require.NoError(t, err)
+			third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
+			require.NoError(t, err)
+			require.NoError(t, st.SetParticipantIdentifier(third, "email", user.Email))
+			phone, err := st.EnsureParticipantByPhone(t.Context(), "+12025550100", "Phone", "imessage")
+			require.NoError(t, err)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET email_address = ? WHERE id = ?`), "phone@example.test", phone)
+			require.NoError(t, err)
+			if fresh {
+				r = newParticipantResolver(st, "account-a")
+			}
+			pid, err := r.resolveUser(t.Context(), &User{ID: user.ID, PhoneNumber: "+12025550100", FullName: "Absorbed"})
+			require.NoError(t, err)
+			assert.Equal(t, old, pid)
+			after, err := st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "after", MessageType: "beeper", SenderID: sql.NullInt64{Int64: pid, Valid: true}})
+			require.NoError(t, err)
+			for _, msg := range []int64{before, after} {
+				var sender int64
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), msg).Scan(&sender))
+				assert.Equal(t, old, sender)
+			}
+			next := newParticipantResolver(st, "account-a")
+			resolved, err := next.resolveID(t.Context(), user.ID, "")
+			require.NoError(t, err)
+			assert.Equal(t, old, resolved)
+			alias, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", user.Email)
+			require.NoError(t, err)
+			assert.Equal(t, third, alias)
+		})
+	}
 }
