@@ -221,6 +221,8 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, -1, ?, ?)`), person.ID, since, peoplesweep.CommitmentScopeFingerprint(profile, cfg.People.Sweep.Commitments), since)
 	requirements.NoError(err)
 	response = read()
+	requirements.NotNil(response.CommitmentsComplete)
+	assertions.True(*response.CommitmentsComplete)
 	requirements.NotNil(response.CommitmentsSince)
 	assertions.True(response.CommitmentsSince.Equal(since))
 	_, err = f.Store.RevokePersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")

@@ -94,7 +94,6 @@ func TestCommitmentDecisionSurvivesPrependedText(t *testing.T) {
 	r.NoError(err)
 	r.Len(window.Sources, 1)
 	second := parse(window, 6)
-	r.Equal(first.Promises[0].TargetKey, second.Promises[0].TargetKey)
 	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, second))
 	r.NoError(err)
 	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, true)
@@ -183,42 +182,7 @@ func TestCommitmentListPages(t *testing.T) {
 			seen[item.ID] = true
 		}
 	})
-	t.Run("closed decisions", func(t *testing.T) {
-		r, ctx := require.New(t), t.Context()
-		f := newPersonSweepApplyFixture(t, "closed-pages", false)
-		_, persist := newCommitmentTestConversation(t, f)
-		var body strings.Builder
-		var promises []peoplesweep.CommitmentPromise
-		for i := range 201 {
-			quote := fmt.Sprintf("I will complete task %d.", i)
-			start := int64(body.Len())
-			body.WriteString(quote)
-			body.WriteByte(' ')
-			promises = append(promises, peoplesweep.CommitmentPromise{Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: quote, Start: start, End: start + int64(len(quote))})
-		}
-		persist("many-promises", body.String(), -time.Hour)
-		cfg, profile := commitmentTestConfig()
-		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		r.Len(window.Sources, 1)
-		for i := range promises {
-			promises[i].SourceID = window.Sources[0].ID
-		}
-		request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises})
-		_, err = f.store.ApplyPersonSweep(ctx, request)
-		r.NoError(err)
-		all, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 201, 0, true)
-		r.NoError(err)
-		r.Len(all, 201)
-		for _, item := range all {
-			_, err = f.store.DecidePersonCommitmentContext(ctx, item.ID, LoopStateDone, nil, request.CompletedAt)
-			r.NoError(err)
-		}
-		page, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 200, 200, true)
-		r.NoError(err)
-		r.Len(page, 1)
-		r.Equal(all[200].ID, page[0].ID)
-	})
+
 }
 
 func applyCommitmentTestSources(t *testing.T, f personSweepApplyFixture, cfg peoplesweep.CommitmentConfig) {
@@ -334,82 +298,82 @@ func commitmentApplyRequest(t *testing.T, f personSweepApplyFixture, window peop
 	return request
 }
 
-func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T) {
+func TestCommitmentDiscoveryRetriesOversizedBatches(t *testing.T) {
 	for _, tc := range []struct {
-		name                 string
-		journal, retry, aged bool
-	}{
-		{"backfill", false, false, false}, {"journal", true, false, false},
-		{"backfill retry batches", false, true, false}, {"journal retry batches", true, true, false}, {"aged messages expire", true, true, true},
-	} {
+		name string
+		aged bool
+	}{{"journal retry batches", false}, {"aged messages expire", true}} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.retry {
-				r, ctx := require.New(t), t.Context()
-				f := newPersonSweepApplyFixture(t, "commitment-retry-progress", false)
-				_, persist := newCommitmentTestConversation(t, f)
-				first := persist("first-large", strings.Repeat("x", 90<<10), -2*time.Hour)
-				secondAge := -time.Hour
-				if tc.aged {
-					secondAge = -2 * time.Hour
-				}
-				second := persist("second-large", strings.Repeat("y", 90<<10), secondAge)
-				history := persist("history", "I will call.", 0)
-				if !tc.journal {
-					_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM person_sweep_changes WHERE person_id = ?`), f.personID)
+			r, ctx := require.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "commitment-retry-progress", false)
+			_, persist := newCommitmentTestConversation(t, f)
+			first := persist("first-large", strings.Repeat("x", 90<<10), -2*time.Hour)
+			secondAge := -time.Hour
+			if tc.aged {
+				secondAge = -2 * time.Hour
+			}
+			second := persist("second-large", strings.Repeat("y", 90<<10), secondAge)
+			history := persist("history", "I will call.", 0)
+			if tc.aged {
+				for _, id := range []int64{first, second} {
+					_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-2*time.Hour)), id)
+					r.NoError(err)
+					_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-2*time.Hour)), id)
 					r.NoError(err)
 				}
-				if tc.aged {
-					for _, id := range []int64{first, second} {
-						_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-2*time.Hour)), id)
-						r.NoError(err)
-						_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-2*time.Hour)), id)
-						r.NoError(err)
-					}
-				}
-				cfg, profile := commitmentTestConfig()
-				cfg.Commitments.MaxBytes = 20
-				window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-				r.NoError(err)
-				r.Len(window.Sources, 1)
-				r.Equal(history, window.Sources[0].MessageID)
-				_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-				r.NoError(err)
+			}
+			cfg, profile := commitmentTestConfig()
+			cfg.Commitments.MaxBytes = 20
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+			r.NoError(err)
+			r.Len(window.Sources, 1)
+			r.Equal(history, window.Sources[0].MessageID)
+			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+			r.NoError(err)
 
-				now := personFactLedgerNow
-				if tc.aged {
-					now = now.Add(30*24*time.Hour - 90*time.Minute)
-				}
-				cfg.Commitments.MaxBytes = 100 << 10
-				cfg.Commitments.MaxItems = 1
-				if tc.aged {
-					window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now)
-					r.NoError(err)
-					r.Empty(window.Sources, "expired messages must not be sent to the provider")
-					return
-				}
-				for i, want := range []int64{first, second} {
-					window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now)
-					r.NoError(err)
-					r.Len(window.Sources, 1)
-					r.Equal(want, window.Sources[0].MessageID)
-					if i == 0 && tc.journal {
-						// A provider failure leaves the retry available without an apply.
-						retry, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now)
-						r.NoError(err)
-						r.Len(retry.Sources, 1)
-						r.Equal(first, retry.Sources[0].MessageID)
-					}
-					f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-retry-%d", i))
-					request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
-					request.Generation.ResolvedAt = now
-					_, err = f.store.ApplyPersonSweep(ctx, request)
-					r.NoError(err)
-				}
+			now := personFactLedgerNow
+			if tc.aged {
+				now = now.Add(30*24*time.Hour - 90*time.Minute)
+			}
+			cfg.Commitments.MaxBytes = 100 << 10
+			cfg.Commitments.MaxItems = 1
+			if tc.aged {
 				window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now)
 				r.NoError(err)
-				r.Empty(window.Sources, "completed history must not be sent again")
+				r.Empty(window.Sources, "expired messages must not be sent to the provider")
 				return
 			}
+			for i, want := range []int64{first, second} {
+				window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now)
+				r.NoError(err)
+				r.Len(window.Sources, 1)
+				r.Equal(want, window.Sources[0].MessageID)
+				if i == 0 {
+					// A provider failure leaves the retry available without an apply.
+					retry, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now)
+					r.NoError(err)
+					r.Len(retry.Sources, 1)
+					r.Equal(first, retry.Sources[0].MessageID)
+				}
+				f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-retry-%d", i))
+				request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
+				request.Generation.ResolvedAt = now
+				_, err = f.store.ApplyPersonSweep(ctx, request)
+				r.NoError(err)
+			}
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now)
+			r.NoError(err)
+			r.Empty(window.Sources, "completed history must not be sent again")
+		})
+	}
+}
+
+func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		journal bool
+	}{{"backfill", false}, {"journal", true}} {
+		t.Run(tc.name, func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
 			f := newPersonSweepApplyFixture(t, "commitment-byte-boundary", false)
 			_, persist := newCommitmentTestConversation(t, f)

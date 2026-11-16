@@ -509,11 +509,17 @@ func TestRunnerExecutionConsentFailureOccursBeforeStartedMarker(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			consent := &countingConsent{active: true, commitmentActive: true}
 			transport := &repairTransport{responses: []peoplesweep.DriverResponse{{CandidateJSON: json.RawMessage(`{"ok":true}`), ProviderVersion: "provider-v1", ModelVersion: "model-v1"}}}
-			runner, err := peoplesweep.NewRunner(runnerTestConfig(), consent, testDriverRegistry(transport), lookupCredentialResolver(func(string) (string, bool) { return "test-key", true }))
+			cfg := runnerTestConfig()
+			mutateActiveProvider(&cfg, func(provider *peoplesweep.ProviderConfig) { provider.AllowSensitive = true })
+			runner, err := peoplesweep.NewRunner(cfg, consent, testDriverRegistry(transport), lookupCredentialResolver(func(string) (string, bool) { return "test-key", true }))
 			r.NoError(err)
 			request := structuredTestRequest()
 			if commitment {
-				request.ProgramID = peoplesweep.CommitmentProgramID
+				request, err = peoplesweep.CommitmentRequestForTest(peoplesweep.CommitmentWindow{
+					Now: time.Date(2025, 8, 20, 12, 0, 0, 0, time.UTC), Timezone: "UTC",
+					Sources: []peoplesweep.CommitmentSource{{ID: "m1", Text: "I will call.", Direction: peoplesweep.CommitmentOwedTo, EventTime: time.Date(2025, 8, 20, 12, 0, 0, 0, time.UTC)}},
+				}, 32)
+				r.NoError(err)
 			}
 			primary, err := runner.PrepareStructured(t.Context(), request)
 			r.NoError(err)
@@ -527,14 +533,14 @@ func TestRunnerExecutionConsentFailureOccursBeforeStartedMarker(t *testing.T) {
 			} else {
 				consent.active = false
 			}
-			beforeStarted, beforeCalls := started, transport.calls
+			beforeCalls := transport.calls
 			_, err = call.Execute(t.Context(), func(context.Context) error { started++; return nil })
 			r.ErrorIs(err, peoplesweep.ErrPersonSweepConsentRevoked)
-			a.Equal(beforeStarted, started)
+			a.Zero(started)
 			a.Equal(beforeCalls, transport.calls)
 			_, err = call.Execute(t.Context(), func(context.Context) error { started++; return nil })
 			r.ErrorContains(err, "already claimed")
-			a.Equal(beforeStarted, started)
+			a.Zero(started)
 		})
 	}
 }

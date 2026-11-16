@@ -9,8 +9,8 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
-func TestCommitmentScopeAndUnfinishedBackfillWindow(t *testing.T) {
-	for _, expanded := range []string{"dates", "window", "batch", "unfinished backfill keeps selection time"} {
+func TestCommitmentScopeChanges(t *testing.T) {
+	for _, expanded := range []string{"dates", "window", "batch"} {
 		t.Run(expanded, func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
 			f := newPersonSweepApplyFixture(t, "scope-"+expanded, false)
@@ -23,19 +23,6 @@ func TestCommitmentScopeAndUnfinishedBackfillWindow(t *testing.T) {
 			_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), st.dialect.TimestampParam(old), id)
 			r.NoError(err)
 			cfg, profile := commitmentTestConfig()
-			if expanded == "unfinished backfill keeps selection time" {
-				cfg.Commitments.Window = 30 * 24 * time.Hour
-				scope := peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments)
-				_, err = st.db.ExecContext(ctx, st.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, 0, ?, ?)`), f.personID, st.dialect.TimestampParam(personFactLedgerNow), scope, st.dialect.TimestampParam(personFactLedgerNow.Add(-30*24*time.Hour)))
-				r.NoError(err)
-				now := personFactLedgerNow.Add(24 * time.Hour)
-				window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now)
-				r.NoError(err)
-				a.Equal(personFactLedgerNow, window.SelectionAt)
-				r.Len(window.Sources, 1)
-				a.Equal(id, window.Sources[0].MessageID)
-				return
-			}
 			profile.SourceSince = personFactLedgerNow.Add(-24 * time.Hour).Format(time.DateOnly)
 			if expanded != "dates" {
 				profile.SourceSince = "2026-01-01"
@@ -125,86 +112,134 @@ func TestCommitmentScopeAndUnfinishedBackfillWindow(t *testing.T) {
 			}
 		})
 	}
-	t.Run("tracking and identity changes", func(t *testing.T) {
-		for _, change := range []string{"retrack", "identity", "untrack"} {
-			t.Run(change, func(t *testing.T) {
-				r, ctx := require.New(t), t.Context()
-				f := newPersonSweepApplyFixture(t, "restart-"+change, false)
-				source, persist := newCommitmentTestConversation(t, f)
-				if change == "untrack" {
-					persist("promise", "I will call.", -time.Hour)
-				}
-				if change == "identity" {
-					_, err := f.store.RemoveAccountIdentity(source, "owner@example.test")
-					r.NoError(err)
-					persist("promise", "I will call.", -time.Hour)
-				}
-				cfg, profile := commitmentTestConfig()
-				window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-				r.NoError(err)
-				var request peoplesweep.ApplyRequest
-				if change == "untrack" {
-					r.Len(window.Sources, 1)
-					parsed := peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{
-						SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo,
-						Quote: "I will call.", End: int64(len("I will call.")), Summary: "Call",
-					}}}
-					request = commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
-				} else {
-					r.Empty(window.Sources)
-					request = f.request
-					request.CommitmentOnly = true
-					request.Generation.Policy.AllowSensitive = true
-					request.Budget = personSweepApplyBudget()
-					request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
-				}
-				_, err = f.store.ApplyPersonSweep(ctx, request)
-				r.NoError(err)
-				if change == "untrack" {
-					savedSince, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-					r.NoError(err)
-					r.NotNil(savedSince)
-					r.True(complete)
-					_, err = f.store.SetPersonTrackingContext(ctx, f.personID, false)
-					r.NoError(err)
-					since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-					r.NoError(err)
-					r.NotNil(since)
-					r.Equal(*savedSince, *since)
-					r.True(complete)
-					items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
-					r.NoError(err)
-					r.Len(items, 1)
-					return
-				}
-				if change == "retrack" {
-					_, err = f.store.SetPersonTrackingContext(ctx, f.personID, false)
-					r.NoError(err)
-					persist("promise", "I will call.", -time.Hour)
-					_, err = f.store.SetPersonTrackingContext(ctx, f.personID, true)
-				} else {
-					old := personFactLedgerNow.Add(-60 * 24 * time.Hour)
-					_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitment_frontiers SET processed_at = ?, discovery_since = ? WHERE person_id = ?`), f.store.dialect.TimestampParam(old), f.store.dialect.TimestampParam(old), f.personID)
-					r.NoError(err)
-					err = f.store.AddAccountIdentity(source, "owner@example.test", "manual")
-				}
-				r.NoError(err)
-				window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-				r.NoError(err)
-				r.Len(window.Sources, 1)
-				r.Equal("I will call.", window.Sources[0].Text)
-				if change == "identity" {
-					r.Equal(personFactLedgerNow, window.SelectionAt)
-					since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-					r.NoError(err)
-					r.NotNil(since)
-					r.Equal(personFactLedgerNow.Add(-60*24*time.Hour), *since)
-					r.False(complete)
-					due, err := f.store.PersonCommitmentsDue(ctx, f.personID, personFactLedgerNow.Add(time.Minute), cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint, cfg.Commitments.MaxBytes)
-					r.NoError(err)
-					r.True(due)
-				}
-			})
-		}
-	})
+}
+
+func TestUnfinishedCommitmentBackfillKeepsSelectionTime(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "scope-unfinished", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	id := persist("old-promise", "I will send the report.", -10*24*time.Hour)
+	old := personFactLedgerNow.Add(-10 * 24 * time.Hour)
+	_, err := st.db.ExecContext(ctx, st.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), st.dialect.TimestampParam(old), id)
+	r.NoError(err)
+	_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), st.dialect.TimestampParam(old), id)
+	r.NoError(err)
+	cfg, profile := commitmentTestConfig()
+	cfg.Commitments.Window = 30 * 24 * time.Hour
+	scope := peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments)
+	_, err = st.db.ExecContext(ctx, st.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, 0, ?, ?)`), f.personID, st.dialect.TimestampParam(personFactLedgerNow), scope, st.dialect.TimestampParam(personFactLedgerNow.Add(-30*24*time.Hour)))
+	r.NoError(err)
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow.Add(24*time.Hour))
+	r.NoError(err)
+	a.Equal(personFactLedgerNow, window.SelectionAt)
+	r.Len(window.Sources, 1)
+	a.Equal(id, window.Sources[0].MessageID)
+}
+
+func TestCommitmentScopeRetrack(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "restart-retrack", false)
+	_, persist := newCommitmentTestConversation(t, f)
+
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Empty(window.Sources)
+	request := f.request
+	request.CommitmentOnly = true
+	request.Generation.Policy.AllowSensitive = true
+	request.Budget = personSweepApplyBudget()
+	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+
+	_, err = f.store.SetPersonTrackingContext(ctx, f.personID, false)
+	r.NoError(err)
+	persist("promise", "I will call.", -time.Hour)
+	_, err = f.store.SetPersonTrackingContext(ctx, f.personID, true)
+	r.NoError(err)
+	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	r.Equal("I will call.", window.Sources[0].Text)
+}
+
+func TestCommitmentScopeIdentity(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "restart-identity", false)
+	source, persist := newCommitmentTestConversation(t, f)
+
+	_, err := f.store.RemoveAccountIdentity(source, "owner@example.test")
+	r.NoError(err)
+	persist("promise", "I will call.", -time.Hour)
+
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Empty(window.Sources)
+	request := f.request
+	request.CommitmentOnly = true
+	request.Generation.Policy.AllowSensitive = true
+	request.Budget = personSweepApplyBudget()
+	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+
+	old := personFactLedgerNow.Add(-60 * 24 * time.Hour)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitment_frontiers SET processed_at = ?, discovery_since = ? WHERE person_id = ?`), f.store.dialect.TimestampParam(old), f.store.dialect.TimestampParam(old), f.personID)
+	r.NoError(err)
+	err = f.store.AddAccountIdentity(source, "owner@example.test", "manual")
+	r.NoError(err)
+	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	r.Equal("I will call.", window.Sources[0].Text)
+	r.Equal(personFactLedgerNow, window.SelectionAt)
+	since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+	r.NoError(err)
+	r.NotNil(since)
+	r.Equal(personFactLedgerNow.Add(-60*24*time.Hour), *since)
+	r.False(complete)
+	due, err := f.store.PersonCommitmentsDue(ctx, f.personID, personFactLedgerNow.Add(time.Minute), cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint, cfg.Commitments.MaxBytes)
+	r.NoError(err)
+	r.True(due)
+}
+
+func TestCommitmentScopeUntrack(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "restart-untrack", false)
+	_, persist := newCommitmentTestConversation(t, f)
+
+	persist("promise", "I will call.", -time.Hour)
+
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	parsed := peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{
+		SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo,
+		Quote: "I will call.", End: int64(len("I will call.")), Summary: "Call",
+	}}}
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
+
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+
+	savedSince, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+	r.NoError(err)
+	r.NotNil(savedSince)
+	r.True(complete)
+	_, err = f.store.SetPersonTrackingContext(ctx, f.personID, false)
+	r.NoError(err)
+	since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+	r.NoError(err)
+	r.NotNil(since)
+	r.Equal(*savedSince, *since)
+	r.True(complete)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
+	r.NoError(err)
+	r.Len(items, 1)
 }

@@ -10,6 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func CommitmentRequestForTest(window CommitmentWindow, maxOutputTokens int64) (StructuredRequest, error) {
+	return commitmentRequest(window, maxOutputTokens)
+}
+
 type commitmentWorkerFixture struct {
 	workerFailureStore
 
@@ -54,6 +58,7 @@ func (commitmentOnlyRunner) OrdinaryInferenceAllowed(context.Context) (bool, err
 func TestTargetedCommitmentOnlyRunSkipsOrdinaryWork(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	worker, st, sink := newConsentOnlyCommitmentWorker(t)
+	worker.Timezone = "America/New_York"
 	seed := packetTestEvidence(71, SourceConversationText, "pending ordinary evidence")
 	source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{
 		GenerationCursorOptimistic: {Seeds: []EvidenceItem{seed}, Changes: []ArchiveChange{{Sequence: 1, PersonID: 7, SourceLane: SourceConversationText}}, NextSequence: 1},
@@ -65,6 +70,8 @@ func TestTargetedCommitmentOnlyRunSkipsOrdinaryWork(t *testing.T) {
 	r.Len(st.claims, 1)
 	r.Len(sink.requests, 1)
 	a.True(sink.requests[0].CommitmentOnly)
+	r.NotNil(sink.requests[0].Commitment)
+	a.Equal("America/New_York", sink.requests[0].Commitment.Window.Timezone)
 	a.Empty(sink.requests[0].Batches)
 }
 
@@ -91,7 +98,7 @@ func TestCommitmentOptionalCallRepair(t *testing.T) {
 	profile, err := cfg.Profile()
 	r.NoError(err)
 	lease := Lease{PersonID: 7, WorkerID: "worker-fixture", Fence: 1, ExpiresAt: now.Add(time.Hour)}
-	worker := Worker{Config: cfg, Timezone: "America/New_York", Store: st, Runner: runner, Clock: func() time.Time { return now }}
+	worker := Worker{Config: cfg, Store: st, Runner: runner, Clock: func() time.Time { return now }}
 	accounting := &sweepCallAccounting{budget: cfg.Budgets}
 	var reservations []BudgetReservation
 	result, class, _, err := worker.runCommitmentCall(t.Context(), briefCall{runID: "run", attemptID: "attempt", lease: lease, catalog: catalog, profile: profile, resolvedAt: now}, accounting, &reservations)
@@ -103,7 +110,6 @@ func TestCommitmentOptionalCallRepair(t *testing.T) {
 	a.Equal(2, driver.calls)
 	a.Len(accounting.completedBatches, 2)
 	r.NotNil(result)
-	a.Equal("America/New_York", result.Window.Timezone)
 	a.Empty(class)
 }
 
