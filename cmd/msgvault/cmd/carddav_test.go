@@ -295,6 +295,61 @@ func TestSyncCardDAVReportsBindingConflicts(t *testing.T) {
 	}
 }
 
+func TestSyncCardDAVFailureReportsBindingConflicts(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		syncStatus    int
+		previewStatus int
+		count         string
+		wantPreview   bool
+		wantWarning   bool
+	}{
+		{name: "conflict", syncStatus: http.StatusConflict, previewStatus: http.StatusOK, count: "2", wantPreview: true, wantWarning: true},
+		{name: "no conflicts", syncStatus: http.StatusConflict, previewStatus: http.StatusOK, count: "0", wantPreview: true},
+		{name: "preview failed", syncStatus: http.StatusConflict, previewStatus: http.StatusInternalServerError, count: "2", wantPreview: true},
+		{name: "bad request", syncStatus: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previewCalls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/carddav/sync":
+					w.WriteHeader(tc.syncStatus)
+					_, _ = w.Write([]byte(`{"error":"sync_failed","message":"sync failed"}`))
+				case "/api/v1/carddav/participant-bindings":
+					previewCalls++
+					var body map[string]bool
+					assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+					assert.Equal(t, map[string]bool{"dry_run": true, "undo": false}, body)
+					w.WriteHeader(tc.previewStatus)
+					_, _ = w.Write([]byte(`{"conflicts":` + tc.count + `}`))
+				default:
+					assert.Fail(t, "unexpected request", "%s", r.URL.Path)
+				}
+			}))
+			t.Cleanup(server.Close)
+			home := t.TempDir()
+			ctx := withStoreResolverConfig(t, &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+			var output bytes.Buffer
+			cmd := newSyncCardDAVCmd()
+			cmd.SilenceUsage = true
+			cmd.SetContext(ctx)
+			cmd.SetOut(&output)
+			cmd.SetArgs([]string{"--connection", "work"})
+			err := cmd.Execute()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "sync failed")
+			assert.Equal(t, tc.wantPreview, previewCalls == 1)
+			if tc.wantWarning {
+				assert.Contains(t, output.String(), "2 CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.")
+			} else {
+				assert.Empty(t, output.String())
+			}
+		})
+	}
+}
+
 func TestCardDAVCLISelectsConnectionsAndReportsAggregateFailures(t *testing.T) {
 	for _, state := range []string{"succeeded", "partial", "failed"} {
 		t.Run(state, func(t *testing.T) {
