@@ -395,16 +395,23 @@ func TestSyncCancellationFinishesRunWithUncancelledCleanupContext(t *testing.T) 
 	t.Cleanup(server.Close)
 	service, st, _ := newPullService(t, server, true)
 	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
+	type outcome struct {
+		result SyncResult
+		err    error
+	}
+	done := make(chan outcome, 1)
 	go func() {
-		_, err := service.Sync(ctx, SyncOptions{})
-		done <- err
+		result, err := service.Sync(ctx, SyncOptions{})
+		done <- outcome{result, err}
 	}()
 	<-requestStarted
 	cancel()
 
-	err := <-done
+	completed := <-done
 	close(releaseRequest)
+	require.ErrorIs(completed.err, context.Canceled)
+	assert.Nil(completed.result.BindingConflicts)
+	_, err := service.cardDAVBindingConflictCount(ctx)
 	require.ErrorIs(err, context.Canceled)
 	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(err)

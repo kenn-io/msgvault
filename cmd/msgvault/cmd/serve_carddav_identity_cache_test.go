@@ -2,10 +2,8 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -55,6 +53,16 @@ func TestCardDAVSchedulerRequestsCacheRebuildAfterFailedSync(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		req.FailNow("cache refresh was not requested")
 	}
+	cfg.Analytics.AutoBuildCache = false
+	adapter := &storeAPIAdapter{config: cfg}
+	adapter.QueueCardDAVIdentityCacheRefresh(t.Context())
+	req.True(refresher.Request("probe"))
+	select {
+	case id := <-requests:
+		req.Equal("probe", id)
+	case <-time.After(10 * time.Second):
+		req.FailNow("cache worker did not process the probe")
+	}
 }
 
 func TestFreshCardDAVIdentityCacheSkipsRebuild(t *testing.T) {
@@ -89,24 +97,18 @@ func TestStaleCardDAVParticipantIdentifierCacheStillRefreshes(t *testing.T) {
 	dbPath := filepath.Join(dir, "msgvault.db")
 	analyticsDir := filepath.Join(dir, "analytics")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	req.NoError(os.MkdirAll(analyticsDir, 0o700))
 	participantID, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
 	req.NoError(err)
-	identityRevision, err := st.IdentityRevisionContext(t.Context())
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	req.NoError(err)
-	identifierRevision, err := st.ParticipantIdentifierRevisionContext(t.Context())
+	nameRevision, err := st.ParticipantDisplayNameRevisionContext(t.Context())
 	req.NoError(err)
-	now := time.Now().UTC()
-	marker, err := json.Marshal(query.CacheSyncState{
-		IdentityRevision:              identityRevision,
-		ParticipantIdentifierRevision: identifierRevision,
-		SchemaVersion:                 query.CacheSchemaVersion,
-		LastSyncAt:                    now,
-		PublishedAt:                   now,
-		DatasetFingerprint:            "committed",
-	})
+	state, err := query.ReadCacheSyncState(analyticsDir)
 	req.NoError(err)
-	req.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), marker, 0o600))
+	req.Equal(nameRevision, state.ParticipantDisplayNameRevision)
+	fresh, err := cacheNeedsBuildForServing(t.Context(), dbPath, analyticsDir)
+	req.NoError(err)
+	req.False(fresh.NeedsBuild, fresh.Reason)
 	req.NoError(st.SetParticipantIdentifier(participantID, "apple_id", "carddav-cache-stale"))
 
 	refreshErr := errors.New("stale participant identifier cache triggered refresh")
@@ -115,6 +117,7 @@ func TestStaleCardDAVParticipantIdentifierCacheStillRefreshes(t *testing.T) {
 	t.Cleanup(func() { runDerivedCacheSubprocess = old })
 
 	cfg := config.NewDefaultConfig()
+	cfg.Analytics.AutoBuildCache = false
 	cfg.Data.DataDir = dir
 	cfg.Data.DatabaseURL = dbPath
 	adapter := &storeAPIAdapter{store: st, config: cfg, analyticsDir: analyticsDir}

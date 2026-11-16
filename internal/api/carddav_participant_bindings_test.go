@@ -109,7 +109,7 @@ func TestCardDAVMutationRefreshesIdentityCache(t *testing.T) {
 			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger(), CardDAV: &CardDAVController{service: service}})
 			response := personRequest(t, srv, tc.method, tc.path, []byte(tc.body), "")
 			assert.Equal(t, tc.wantStatus, response.Code)
-			assert.Equal(t, 1, st.refreshCalls)
+			assert.Equal(t, 1, st.cardDAVRefreshCalls)
 		})
 	}
 }
@@ -122,6 +122,6 @@ func TestCardDAVUnchangedSyncRefreshesIdentityCache(t *testing.T) {
 	})
 	response := personRequest(t, srv, http.MethodPost, "/api/v1/carddav/sync", []byte(`{}`), "")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Equal(t, 1, wrapped.refreshCalls,
+	assert.Equal(t, 1, wrapped.cardDAVRefreshCalls,
 		"an unchanged sync must retry a cache refresh left stale by an earlier failure")
 }

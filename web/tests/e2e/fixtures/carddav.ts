@@ -412,6 +412,7 @@ function historyRun(id: number): Run {
     created: id === 102 ? 1 : 0,
     updated: id === 102 ? 2 : 1,
     removed: 0,
+    binding_conflicts: id === 102 ? 2 : 1,
     private_uid: CARD_DAV_FORBIDDEN_MARKERS[4],
   };
 }

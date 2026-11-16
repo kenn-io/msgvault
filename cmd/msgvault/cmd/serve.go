@@ -4002,6 +4002,10 @@ func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, e
 	return state.IdentityRevision, nil
 }
 
+func (a *storeAPIAdapter) QueueCardDAVIdentityCacheRefresh(ctx context.Context) {
+	a.requestIdentityCacheRecovery(a.invocationContext(ctx))
+}
+
 func (a *storeAPIAdapter) requestIdentityCacheRecovery(ctx context.Context) {
 	if daemonCacheRefresher == nil {
 		return

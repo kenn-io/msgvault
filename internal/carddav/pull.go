@@ -125,7 +125,7 @@ func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncRes
 }
 
 func (s *Service) cardDAVBindingConflictCount(ctx context.Context) (*int, error) {
-	previewCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	previewCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	preview, err := s.store.ReconcileCardDAVParticipantBindingsContext(
 		previewCtx, store.CardDAVParticipantBindingOptions{DryRun: true},
