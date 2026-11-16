@@ -441,7 +441,8 @@ func (s *Store) commitmentMessage(ctx context.Context, personID int64, conv Loop
 	digest := sha256.Sum256([]byte(body))
 	hash := hex.EncodeToString(digest[:])
 	var recorded requiredTimestamp
-	if err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT archived_at FROM messages WHERE id = ?`), m.ID).Scan(&recorded); err != nil {
+	var sourceMessageID string
+	if err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT archived_at, COALESCE(source_message_id, '') FROM messages WHERE id = ?`), m.ID).Scan(&recorded, &sourceMessageID); err != nil {
 		return peoplesweep.CommitmentSource{}, false, err
 	}
 	runes := []rune(body)
@@ -457,9 +458,9 @@ func (s *Store) commitmentMessage(ctx context.Context, personID int64, conv Loop
 		return peoplesweep.CommitmentSource{}, false, nil
 	}
 	runes = runes[first:]
-	return peoplesweep.CommitmentSource{ID: fmt.Sprintf("m%d", m.ID), MessageID: m.ID, SourceID: conv.SourceID,
+	return peoplesweep.CommitmentSource{ID: fmt.Sprintf("m%d", m.ID), MessageID: m.ID, SourceID: conv.SourceID, SourceMessageID: sourceMessageID,
 		Direction: direction, Text: string(runes), Start: int64(first), EventTime: m.OccurredAt.UTC(), RecordedTime: recorded.Time.UTC(),
-		SourceRef: personfacts.CommitmentMessageRefPrefix + strconv.FormatInt(m.ID, 10), SourceVersion: "commitment-body/v1:" + hash, ContentSHA256: hash}, true, nil
+		SourceRef: personfacts.CommitmentMessageRefPrefix + strconv.FormatInt(m.ID, 10), SourceVersion: fmt.Sprintf("commitment-body/v1:%d:%q:%s", conv.SourceID, sourceMessageID, hash), ContentSHA256: hash}, true, nil
 }
 
 // Reuse the reply detector's byte mask while retaining a single original

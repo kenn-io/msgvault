@@ -925,3 +925,61 @@ func TestCommitmentDecisionDoesNotCrossArchiveArrival(t *testing.T) {
 	r.Equal(text, items[0].Quote)
 	r.Equal(LoopStateOpen, items[0].State)
 }
+
+func TestCommitmentDecisionDoesNotCrossReusedMessageID(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "reused-message", false)
+	if f.store.IsPostgreSQL() {
+		t.Skip("SQLite reuses the highest row ID")
+	}
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send it."
+	id := persist("first", quote, -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	output := peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, End: int64(len(quote)), Summary: "Send"}}}
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, output)
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
+	r.NoError(err)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-2*time.Hour)), id)
+	r.NoError(err)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitment_frontiers SET scope_fingerprint = '' WHERE person_id = ?`), f.personID)
+	r.NoError(err)
+	f = nextCommitmentTestAttempt(t, f, "-corrected-time")
+	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	output.Promises[0].SourceID = window.Sources[0].ID
+	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
+	r.NoError(err)
+	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, true)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.Equal(LoopStateDone, items[0].State)
+	recorded := window.Sources[0].RecordedTime
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM messages WHERE id = ?`), id)
+	r.NoError(err)
+	r.Equal(id, persist("second", quote, -time.Hour))
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(recorded), id)
+	r.NoError(err)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitment_frontiers SET scope_fingerprint = '' WHERE person_id = ?`), f.personID)
+	r.NoError(err)
+	f = nextCommitmentTestAttempt(t, f, "-reused")
+	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	output.Promises[0].SourceID = window.Sources[0].ID
+	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
+	r.NoError(err)
+	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.Equal(LoopStateOpen, items[0].State)
+}

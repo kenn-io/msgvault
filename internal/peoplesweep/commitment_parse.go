@@ -26,17 +26,18 @@ const (
 // CommitmentSource is a scoped, participant-verified source. Start is an
 // original-body rune coordinate, never an offset in a generated excerpt.
 type CommitmentSource struct {
-	SourceID      int64     `json:"-"`
-	RecordedTime  time.Time `json:"-"`
-	ID            string    `json:"id"`
-	MessageID     int64     `json:"-"`
-	Direction     string    `json:"direction"`
-	Text          string    `json:"text"`
-	Start         int64     `json:"start"`
-	EventTime     time.Time `json:"event_time"`
-	SourceRef     string    `json:"-"`
-	SourceVersion string    `json:"-"`
-	ContentSHA256 string    `json:"-"`
+	SourceID        int64     `json:"-"`
+	RecordedTime    time.Time `json:"-"`
+	ID              string    `json:"id"`
+	MessageID       int64     `json:"-"`
+	SourceMessageID string    `json:"-"`
+	Direction       string    `json:"direction"`
+	Text            string    `json:"text"`
+	Start           int64     `json:"start"`
+	EventTime       time.Time `json:"event_time"`
+	SourceRef       string    `json:"-"`
+	SourceVersion   string    `json:"-"`
+	ContentSHA256   string    `json:"-"`
 }
 
 type CommitmentWindow struct {
@@ -140,7 +141,7 @@ func UniqueCommitmentTargetKey(personID int64, source CommitmentSource, quote st
 }
 
 func commitmentTargetKey(personID int64, source CommitmentSource, quote, hash string, start, end int64) string {
-	identity := fmt.Sprintf("%d/%s/%d/%s/%s/%d/%d/%s", personID, source.Direction, source.MessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), hash, start, end, quote)
+	identity := fmt.Sprintf("%d/%s/%d/%d/%q/%s/%s/%d/%d/%s", personID, source.Direction, source.MessageID, source.SourceID, source.SourceMessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), hash, start, end, quote)
 	digest := sha256.Sum256([]byte(identity))
 	return "commitment:" + hex.EncodeToString(digest[:])
 }
