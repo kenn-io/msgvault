@@ -579,8 +579,14 @@ func (s *Store) applyIMAPMailboxDeltas(
 				}
 				labelIDs = append(labelIDs, labelID)
 			}
-			if _, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, labelIDs, true); err != nil {
+			changed, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, labelIDs, true)
+			if err != nil {
 				return fmt.Errorf("replace labels for IMAP message %d: %w", messageID, err)
+			}
+			if !changed {
+				if err := s.refreshAccountAttributionIfOutboundChangedTx(ctx, tx, messageID, func() error { return nil }); err != nil {
+					return fmt.Errorf("refresh attribution for IMAP message %d: %w", messageID, err)
+				}
 			}
 			if !hasFolder {
 				if _, err := tx.ExecContext(ctx, fmt.Sprintf(`

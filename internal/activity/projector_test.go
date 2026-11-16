@@ -69,6 +69,35 @@ func TestProjectorSkipsUnsentMessagesForContactState(t *testing.T) {
 	assert.Equal([]string{"message:" + formatProjectorID(receivedID)}, projectedActivityRefs(t, f.Store))
 }
 
+func TestProjectorRefreshesAfterIMAPDraftFlagCleared(t *testing.T) {
+	f := storetest.New(t)
+	var err error
+	f.Source, err = f.Store.GetOrCreateSource("imap", "imaps://owner%40example.com@mail.example.com:993")
+	require.NoError(t, err)
+	f.ConvID, err = f.Store.EnsureConversation(t.Context(), f.Source.ID, "thread", "Thread")
+	require.NoError(t, err)
+	at := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	f, messageID, personID := seedProjectorFixture(t, f, at, false)
+	folder := store.IMAPFolderState{Mailbox: "Scratch", UIDValidity: 3, UIDNext: 2}
+	observation := store.IMAPMembershipObservation{Mailbox: "Scratch", UIDValidity: 3, UID: 1, SourceMessageID: "projector-fixture", Flags: []string{"\\Draft"}}
+	require.NoError(t, f.Store.ApplyIMAPMailboxDeltas(f.Source.ID, []store.IMAPMailboxDelta{{Mailbox: "Scratch", State: folder, Memberships: []store.IMAPMembershipObservation{observation}}}))
+	projector, err := NewProjector(f.Store, Options{Timezone: "UTC"})
+	require.NoError(t, err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(t, err)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, at)
+	require.NoError(t, err)
+	require.Empty(t, state.LastContactRef)
+
+	observation.Flags = nil
+	require.NoError(t, f.Store.ApplyIMAPMailboxDeltas(f.Source.ID, []store.IMAPMailboxDelta{{Mailbox: "Scratch", State: folder, Memberships: []store.IMAPMembershipObservation{observation}}}))
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(t, err)
+	state, err = f.Store.ContactStateContext(t.Context(), personID, at)
+	require.NoError(t, err)
+	assert.Equal(t, "message:"+formatProjectorID(messageID), state.LastContactRef)
+}
+
 func TestProjectorRetractsMessageThatBecomesUnsent(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
