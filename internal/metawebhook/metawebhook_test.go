@@ -169,12 +169,13 @@ func TestWorkerAppliesInOrderRetriesAndDrops(t *testing.T) {
 			applied = append(applied, change.App+":"+change.EntryID+":"+value)
 			return nil
 		}
-		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
+		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed, {"instagram", "messages"}: feed})
 		require.NoError(h.store("9", []byte(`{"object":`)))
 		for _, values := range []string{`"busy"`, `"invalid"},{"field":"feed","value":"same entry"`, `"down"`, `"after"`} {
 			body := `{"object":"page","entry":[{"id":"100","changes":[{"field":"feed","value":` + values + `},{"field":"ratings","value":{}}]}]}`
 			require.NoError(h.store("9", []byte(body)))
 		}
+		require.NoError(h.store("9", []byte(`{"object":"instagram","entry":[{"id":"200","messaging":[{"message":{"mid":"m_1"}}]}]}`)))
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error)
 		go func() { done <- w.Run(ctx) }()
@@ -184,7 +185,8 @@ func TestWorkerAppliesInOrderRetriesAndDrops(t *testing.T) {
 			"a failing delivery blocks later ones; an unrecoverable change skips only itself")
 		time.Sleep(time.Hour)
 		synctest.Wait()
-		assert.Equal([]string{`9:100:"busy"`, `9:100:"same entry"`, `9:100:"after"`}, appliedValues(), "a delivery that keeps failing is dropped after an hour")
+		assert.Equal([]string{`9:100:"busy"`, `9:100:"same entry"`, `9:100:"after"`, `9:200:{"message":{"mid":"m_1"}}`}, appliedValues(),
+			"a delivery that keeps failing is dropped after an hour; messaging events reach the messages handler")
 		mu.Lock()
 		assert.Equal(3, attempts)
 		mu.Unlock()

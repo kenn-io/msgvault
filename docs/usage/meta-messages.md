@@ -58,6 +58,12 @@ marked as yours. The source and message types are `facebook_messages` and
 `instagram_messages`. Customer identities are scoped to the app and inbox; use
 the [people tools](people.md) to link them to other people.
 
+To archive new messages as they arrive, set up
+[Meta webhooks](meta-webhooks.md#inbox-messages). Each new message with text
+is then archived, including the ones the Page or account sends. A message
+whose webhook change was skipped or never delivered is archived only if it is
+still among the 20 most recent when the next sync runs.
+
 Each sync reads every conversation again and updates archived messages in
 place. Each request reads up to 25 conversations, and `--max-requests` limits
 a run; an unfinished run resumes from its saved position. If a sync fails with
@@ -70,4 +76,5 @@ a run; an unfinished run resumes from its saved position. If a sync fails with
 - Message text only: attachments, stickers and reactions are not archived.
 - Only conversations between the Page or account and one other person are
   archived. A sync skips group chats and counts them in its output.
-- Edits replace the archived text; earlier versions and deletions are not kept.
+- Edits replace the archived text; earlier versions and deletions are not
+  kept, and webhooks ignore edit and deletion events.
