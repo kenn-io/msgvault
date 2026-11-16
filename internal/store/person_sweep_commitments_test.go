@@ -323,7 +323,7 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 			request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
 			_, err = f.store.ApplyPersonSweep(ctx, request)
 			r.NoError(err)
-			due, err := f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
+			due, err := f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			r.NoError(err)
 			a.True(due, "an incomplete batch resumes before the minimum interval")
 			items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 5, false)
@@ -354,48 +354,47 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 			r.NoError(err)
 			a.False(complete)
 			if !tc.journal {
-				due, err := f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
+				due, err := f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 				r.NoError(err)
 				a.False(due, "unchanged limits leave an oversized message pending")
 			}
 			cfg.Commitments.MaxBytes = 100 << 10
-			due, err = f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
+			due, err = f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			r.NoError(err)
 			a.True(due, "a raised byte limit schedules a retry immediately")
 			laterNow := personFactLedgerNow.Add(31 * 24 * time.Hour)
-			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, laterNow)
-			r.NoError(err)
-			r.Len(window.Sources, 1, "raising the byte limit retries oversized messages one at a time")
-			a.Equal(laterNow, window.SelectionAt)
-			var largeSource string
-			for _, source := range window.Sources {
-				if source.MessageID == large {
-					a.True(source.MatchesQuote("I will call.", 92161, 92173))
-					largeSource = source.ID
-				}
-			}
-			r.NotEmpty(largeSource)
-			f = nextCommitmentTestAttempt(t, f, "-larger")
-			fits, err := peoplesweep.CommitmentInputFits(window)
-			r.NoError(err)
-			a.True(fits)
-			empty, err = peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":92161,"end":92173,"summary":"Call","due_on":null,"due_phrase":null}]}`, largeSource)), window)
-			r.NoError(err)
-			request = commitmentApplyRequest(t, f, window, cfg.Commitments, empty)
-			request.Generation.ResolvedAt = laterNow
-			_, err = f.store.ApplyPersonSweep(ctx, request)
-			r.NoError(err)
-			if tc.journal {
+			var foundLarge, foundSecond bool
+			for i := range 10 {
 				window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, laterNow)
 				r.NoError(err)
-				r.Len(window.Sources, 1)
-				a.Equal(secondLarge, window.Sources[0].MessageID)
-				f = nextCommitmentTestAttempt(t, f, "-second-larger")
-				request = commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
+				parsed := peoplesweep.ParsedCommitments{}
+				for _, source := range window.Sources {
+					if source.MessageID == large {
+						a.True(source.MatchesQuote("I will call.", 92161, 92173))
+						parsed, err = peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":92161,"end":92173,"summary":"Call","due_on":null,"due_phrase":null}]}`, source.ID)), window)
+						r.NoError(err)
+						foundLarge = true
+					}
+					if source.MessageID == secondLarge && tc.journal {
+						foundSecond = true
+					}
+				}
+				f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-larger-%d", i))
+				request = commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
 				request.Generation.ResolvedAt = laterNow
 				_, err = f.store.ApplyPersonSweep(ctx, request)
 				r.NoError(err)
+				_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+				r.NoError(err)
+				if complete {
+					break
+				}
 			}
+			a.True(foundLarge)
+			if tc.journal {
+				a.True(foundSecond)
+			}
+
 			items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 5, false)
 			r.NoError(err)
 			r.Len(items, 2)
@@ -404,13 +403,13 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 			r.NotNil(since)
 			a.Equal(laterNow.Add(-cfg.Commitments.Window), *since)
 			a.True(complete)
-			due, err = f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
+			due, err = f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			r.NoError(err)
 			a.False(due, "a successful retry clears the scheduling trigger")
 		})
 	}
 
-	for _, mutation := range []string{"recent change to old oversized message", "pending edit waits for journal", "edited oversized message"} {
+	for _, mutation := range []string{"recent change to old oversized message", "edited oversized message"} {
 		t.Run(mutation, func(t *testing.T) {
 			r, ctx := require.New(t), t.Context()
 			f := newPersonSweepApplyFixture(t, "oversized-mutation", false)
@@ -443,25 +442,7 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 				r.NoError(err)
 				_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
 				r.NoError(err)
-				r.True(complete)
-			case "pending edit waits for journal":
-				newer := persist("newer", "I will call.", -time.Hour)
-				_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_sweep_changes (sequence, person_id, source_lane, change_kind, message_id, recorded_at) SELECT COALESCE(MAX(sequence), 0) + 1, ?, 'conversation_text', 'upsert', ?, ? FROM person_sweep_changes`), f.personID, large, f.store.dialect.TimestampParam(personFactLedgerNow))
-				r.NoError(err)
-				_, err = f.store.db.ExecContext(ctx, `UPDATE person_sweep_change_clock SET sequence = (SELECT MAX(sequence) FROM person_sweep_changes) WHERE singleton = TRUE`)
-				r.NoError(err)
-				cfg.Commitments.MaxBytes = 1000
-				var seen []int64
-				for i := range 2 {
-					f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-retry-%d", i))
-					window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-					r.NoError(err)
-					r.Len(window.Sources, 1)
-					seen = append(seen, window.Sources[0].MessageID)
-					_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-					r.NoError(err)
-				}
-				r.Equal([]int64{newer, large}, seen)
+				r.False(complete)
 			case "edited oversized message":
 				_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
 				r.NoError(err)
@@ -477,7 +458,7 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 				r.NoError(err)
 				_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
 				r.NoError(err)
-				r.True(complete)
+				r.False(complete)
 			}
 		})
 	}
@@ -522,38 +503,57 @@ func TestCommitmentApplyRevokedConsentRetainsPaidAccounting(t *testing.T) {
 }
 
 func TestCommitmentDiscoveryCoalescesBackfillAndJournal(t *testing.T) {
-	t.Run("two pages", func(t *testing.T) {
-		r, ctx := require.New(t), t.Context()
-		f := newPersonSweepApplyFixture(t, "journal-repeat", false)
-		_, persist := newCommitmentTestConversation(t, f)
-		first := persist("first", "I will call.", -time.Hour)
-		second := persist("second", "I will write.", -time.Hour)
-		_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "I will call tomorrow.", first)
-		r.NoError(err)
-		cfg, profile := commitmentTestConfig()
-		cfg.Commitments.MaxItems = 1
-		var got []int64
-		for i := range 2 {
-			if i > 0 {
-				f = nextCommitmentTestAttempt(t, f, "-next")
+	for _, oversized := range []bool{false, true} {
+		name := "two pages"
+		if oversized {
+			name = "oversized retry"
+		}
+		t.Run(name, func(t *testing.T) {
+			r, ctx := require.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "journal-repeat", false)
+			_, persist := newCommitmentTestConversation(t, f)
+			body := "I will call."
+			if oversized {
+				body = strings.Repeat("x", 200) + body
 			}
+			first := persist("first", body, -2*time.Hour)
+			cfg, profile := commitmentTestConfig()
+			cfg.Commitments.MaxItems = 1
+			if oversized {
+				cfg.Commitments.MaxBytes = 30
+				window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+				r.NoError(err)
+				r.Empty(window.Sources)
+				_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+				r.NoError(err)
+				cfg.Commitments.MaxBytes = 1000
+			}
+			second := persist("second", "I will write.", -time.Hour)
+			_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), body+" tomorrow.", first)
+			r.NoError(err)
+			var got []int64
+			for i := range 2 {
+				if i > 0 || oversized {
+					f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-next-%d", i))
+				}
+				window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+				r.NoError(err)
+				r.Len(window.Sources, 1)
+				got = append(got, window.Sources[0].MessageID)
+				_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+				r.NoError(err)
+				if i == 0 {
+					_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+					r.NoError(err)
+					r.False(complete)
+				}
+			}
+			r.Equal([]int64{second, first}, got)
 			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 			r.NoError(err)
-			r.Len(window.Sources, 1)
-			got = append(got, window.Sources[0].MessageID)
-			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-			r.NoError(err)
-			if i == 0 {
-				_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-				r.NoError(err)
-				r.False(complete)
-			}
-		}
-		r.Equal([]int64{second, first}, got)
-		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		r.Empty(window.Sources)
-	})
+			r.Empty(window.Sources)
+		})
+	}
 	t.Run("1001 journal rows", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "journal-many", false)

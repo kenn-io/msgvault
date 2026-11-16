@@ -67,11 +67,11 @@ func TestCommitmentScopeChanges(t *testing.T) {
 			a.Zero(through)
 			a.Equal(window.ThroughSequence, observed)
 			if expanded == "dates" {
-				due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
+				due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 				r.NoError(err)
 				a.False(due)
 			}
-			due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.Window), cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
+			due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.Window), cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			r.NoError(err)
 			a.True(due)
 			switch expanded {
@@ -88,7 +88,7 @@ func TestCommitmentScopeChanges(t *testing.T) {
 			default:
 				cfg.Commitments.MaxItems++
 			}
-			due, err = st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
+			due, err = st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			r.NoError(err)
 			if expanded == "batch" {
 				a.False(due, "batch sizing does not invalidate discovery progress")
@@ -192,7 +192,7 @@ func TestCommitmentDiscoveryRestartsWhenOwnershipChangesDuringScan(t *testing.T)
 		r.NotNil(since)
 		r.Equal(personFactLedgerNow.Add(-60*24*time.Hour), *since)
 		r.False(complete)
-		due, err := f.store.PersonCommitmentsDue(ctx, f.personID, personFactLedgerNow.Add(time.Minute), cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint, cfg.Commitments.MaxBytes)
+		due, err := f.store.PersonCommitmentsDue(ctx, f.personID, personFactLedgerNow.Add(time.Minute), cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint)
 		r.NoError(err)
 		r.True(due)
 	})

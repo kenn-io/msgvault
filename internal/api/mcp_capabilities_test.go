@@ -92,7 +92,7 @@ func TestMCPCapabilitiesDescribeRealOperationRoutes(t *testing.T) {
 	assertions.ElementsMatch([]string{"names", "contact_points", "addresses", "dates", "categories", "media"}, routes["patchPersonStructuredProfile"].RequestProperties)
 	assertions.Contains(routes["listDeletions"].QueryParameters, "status")
 	assertions.Contains(routes["runCLI"].RequestProperties, "args")
-	assertions.ElementsMatch([]string{"include_closed", "limit", "person_id"}, routes["listLoops"].QueryParameters)
+	assertions.ElementsMatch([]string{"limit", "person_id"}, routes["listLoops"].QueryParameters)
 	for _, param := range []string{"person_id", "source_id", "conversation_id", "incoming_only"} {
 		assertions.Contains(routes["listChangedMessages"].QueryParameters, param)
 	}

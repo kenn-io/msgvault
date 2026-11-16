@@ -299,8 +299,7 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 	query := `SELECT f.discovery_since, f.backfill_message_id,
 		COALESCE(f.scope_fingerprint, ''),
 		EXISTS(SELECT 1 FROM person_sweep_changes c WHERE c.person_id = ` + personColumn + `
-			AND c.sequence > CASE WHEN COALESCE(f.observed_sequence, 0) > f.through_sequence THEN f.observed_sequence ELSE f.through_sequence END),
-		EXISTS(SELECT 1 FROM person_commitment_oversized o JOIN messages m ON m.id = o.message_id WHERE o.person_id = ` + personColumn + ` AND m.deleted_at IS NULL AND (COALESCE(m.sent_at, m.received_at, m.internal_date, m.archived_at) >= f.discovery_since OR m.archived_at >= f.discovery_since OR EXISTS(SELECT 1 FROM person_sweep_changes c WHERE c.person_id = o.person_id AND c.message_id = o.message_id AND c.source_lane = 'conversation_text' AND ` + s.loopTimeKey("c.recorded_at") + ` >= ` + s.loopTimeKey("f.discovery_since") + `)))
+			AND c.sequence > CASE WHEN COALESCE(f.observed_sequence, 0) > f.through_sequence THEN f.observed_sequence ELSE f.through_sequence END)
 		FROM ` + from
 	if personID > 0 {
 		query += ` WHERE f.person_id = ?`
@@ -316,8 +315,8 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 		var at nullableTimestamp
 		var backfill sql.NullInt64
 		var scope string
-		var pending, oversized bool
-		if err := rows.Scan(&at, &backfill, &scope, &pending, &oversized); err != nil {
+		var pending bool
+		if err := rows.Scan(&at, &backfill, &scope, &pending); err != nil {
 			return nil, false, err
 		}
 		if !at.Valid {
@@ -328,28 +327,25 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 			value := at.Time
 			since = &value
 		}
-		complete = complete && scope == scopeFingerprint && backfill.Valid && backfill.Int64 == -1 && !pending && !oversized
+		complete = complete && scope == scopeFingerprint && backfill.Valid && backfill.Int64 == -1 && !pending
 	}
 	return since, complete && since != nil, rows.Err()
 }
 
-func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration, scopeFingerprint string, maxBytes int) (bool, error) {
+func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration, scopeFingerprint string) (bool, error) {
 	var processed requiredTimestamp
 	var through, backfill int64
 	var observed sql.NullInt64
 	var scope string
-	var retry bool
-	// A message skipped under a smaller byte limit in this scope is offered again.
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT f.processed_at, f.through_sequence, f.observed_sequence, f.backfill_message_id, f.scope_fingerprint,
-		EXISTS(SELECT 1 FROM person_commitment_oversized o WHERE o.person_id = f.person_id AND o.scope_fingerprint = ? AND o.max_bytes < ?)
-		FROM person_commitment_frontiers f WHERE f.person_id = ?`), scopeFingerprint, maxBytes, personID).Scan(&processed, &through, &observed, &backfill, &scope, &retry)
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT processed_at, through_sequence, observed_sequence, backfill_message_id, scope_fingerprint
+		FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&processed, &through, &observed, &backfill, &scope)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	if (scopeFingerprint != "" && scope != scopeFingerprint) || retry || backfill >= 0 {
+	if (scopeFingerprint != "" && scope != scopeFingerprint) || backfill >= 0 || backfill < -2 {
 		return true, nil
 	}
 	if observed.Valid {
@@ -506,21 +502,18 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return window, err
 	}
-	if scope == window.ScopeFingerprint && window.BackfillMessageID != -1 && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
+	if window.BackfillMessageID != -1 && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
 		window.SelectionAt = since.Time.Add(cfg.Window)
 	}
 	if scope != window.ScopeFingerprint {
 		previous, window.BackfillMessageID = 0, 0
-		if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ? AND scope_fingerprint != ?`), personID, window.ScopeFingerprint); err != nil {
-			return window, err
-		}
 	}
 	window.SnapshotSequence, window.ThroughSequence = through, through
 	inProfile := func(at time.Time) bool {
 		day := at.UTC().Format(time.DateOnly)
 		return day >= profile.SourceSince && (profile.SourceUntil == "" || day <= profile.SourceUntil)
 	}
-	err = s.loadCommitmentSources(ctx, &window, cfg, previous, window.ScopeFingerprint, inProfile)
+	err = s.loadCommitmentSources(ctx, &window, cfg, previous, inProfile)
 
 	return window, err
 }
@@ -556,8 +549,22 @@ func (s *Store) scanCommitmentChanges(ctx context.Context, personID, previous, t
 	return changes, rows.Err()
 }
 
-func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, baseScope string, inProfile func(time.Time) bool) error {
+func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, inProfile func(time.Time) bool) error {
 	personID, through := window.PersonID, window.ThroughSequence
+	// Negative values below -1 carry a pending gap and the backfill cursor.
+	gap := window.BackfillMessageID <= -2
+	if window.BackfillMessageID < -2 {
+		window.BackfillMessageID = -(window.BackfillMessageID + 3)
+	}
+	defer func() {
+		if gap {
+			if window.BackfillMessageID < 0 {
+				window.BackfillMessageID = -2
+			} else {
+				window.BackfillMessageID = -window.BackfillMessageID - 3
+			}
+		}
+	}()
 	seen, used := map[int64]bool{}, 0
 	add := func(source peoplesweep.CommitmentSource) (bool, error) {
 		sourceBytes, err := peoplesweep.CommitmentSourceBytes(source.Text)
@@ -565,8 +572,8 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			return false, err
 		}
 		if sourceBytes > cfg.MaxBytes {
-			err = s.recordOversizedCommitment(ctx, personID, source.MessageID, baseScope, cfg.MaxBytes)
-			return true, err
+			gap = true
+			return true, nil
 		}
 		if len(window.Sources) >= cfg.MaxItems || used+sourceBytes > cfg.MaxBytes {
 			return false, nil
@@ -590,16 +597,13 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			single.Sources = []peoplesweep.CommitmentSource{source}
 			fitsAlone, err := peoplesweep.CommitmentInputFits(single)
 			if !fitsAlone && err == nil {
-				err = s.recordOversizedCommitment(ctx, personID, source.MessageID, baseScope, cfg.MaxBytes)
+				gap = true
 			}
 			return !fitsAlone, err
 		}
 		seen[source.MessageID] = true
 		used += sourceBytes
 		return true, nil
-	}
-	if stop, err := s.retryOversizedCommitments(ctx, window, cfg, previous, baseScope, inProfile, add); stop || err != nil {
-		return err
 	}
 	changes, err := s.scanCommitmentChanges(ctx, personID, previous, through)
 	if err != nil {
@@ -734,63 +738,8 @@ func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after,
 	return scanInt64Rows(rows)
 }
 
-func (s *Store) recordOversizedCommitment(ctx context.Context, personID, messageID int64, baseScope string, maxBytes int) error {
-	_, err := s.db.ExecContext(ctx, s.Rebind(`INSERT INTO person_commitment_oversized (person_id, message_id, scope_fingerprint, max_bytes) VALUES (?, ?, ?, ?) ON CONFLICT (person_id, message_id) DO UPDATE SET scope_fingerprint = excluded.scope_fingerprint, max_bytes = excluded.max_bytes`), personID, messageID, baseScope, maxBytes)
-	return err
-}
-
 // commitmentInWindow reports whether a source is inside the discovery window:
 // its event or archive time, or a journal entry, is no older than cutoff.
 func commitmentInWindow(source peoplesweep.CommitmentSource, journalRecent bool, cutoff time.Time) bool {
 	return journalRecent || !source.EventTime.Before(cutoff) || !source.RecordedTime.Before(cutoff)
-}
-
-const oversizedRetryPage = 256
-
-func (s *Store) oversizedRetryIDs(ctx context.Context, personID int64, baseScope string, maxBytes int, previous int64) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT o.message_id FROM person_commitment_oversized o WHERE o.person_id = ? AND o.scope_fingerprint = ? AND o.max_bytes < ? AND NOT EXISTS (SELECT 1 FROM person_sweep_changes c WHERE c.person_id = o.person_id AND c.message_id = o.message_id AND c.source_lane = 'conversation_text' AND c.sequence > ?) ORDER BY o.message_id LIMIT ?`), personID, baseScope, maxBytes, previous, oversizedRetryPage)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	return scanInt64Rows(rows)
-}
-
-// retryOversizedCommitments offers the messages skipped under a smaller
-// max_bytes before any new journal or backfill work. It reports whether the
-// window is full, in which case discovery resumes from the previous frontier.
-func (s *Store) retryOversizedCommitments(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, baseScope string, inProfile func(time.Time) bool, add func(peoplesweep.CommitmentSource) (bool, error)) (bool, error) {
-	personID := window.PersonID
-	ids, err := s.oversizedRetryIDs(ctx, personID, baseScope, cfg.MaxBytes, previous)
-	if err != nil {
-		return false, err
-	}
-	for _, id := range ids {
-		source, ok, err := s.currentCommitmentSource(ctx, personID, id)
-		if ok && err == nil {
-			ok = inProfile(source.EventTime)
-		}
-		if err != nil {
-			return false, err
-		}
-		if !ok {
-			if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`), personID, id); err != nil {
-				return false, err
-			}
-			continue
-		}
-		added, err := add(source)
-		if err != nil {
-			return false, err
-		}
-		if !added {
-			window.ThroughSequence = previous
-			return true, nil
-		}
-	}
-	if len(ids) == oversizedRetryPage {
-		window.ThroughSequence = previous
-		return true, nil
-	}
-	return false, nil
 }

@@ -68,7 +68,7 @@ fails with `<id> isn't an open loop.`
 For cited commitments, use the displayed `c<ID>` with `done`, `snooze`, or
 `reopen`. Add `--include-closed` to find done or snoozed promises. `--questions` selects
 reply-loop question IDs.
-Commitment extraction and decisions require API schema 5.6.0 or newer.
+Commitment extraction and decisions require API schema 5.8.0 or newer.
 See [cited commitments](usage/open-loops.md#see-cited-commitments).
 
 ## cli search
@@ -3754,7 +3754,7 @@ grant consent to a provider or enroll a person in briefs.
 | `person facts pin <person-id> <kind> <key>` | Protect a field's current or empty value |
 | `person facts unpin <person-id> <kind> <key>` | Allow automatic resolution for the field again |
 
-With daemon API schema 5.21.0 or newer, claim reads include `kind` (`fact`, `event`, `preference`, `commitment`)
+With daemon API schema 5.21.0 or newer, claim reads include `kind` (`fact`, `event`, `preference`; `commitment` requires 5.22.0)
 and `status` (`fresh`, `stale`, or `expired`). Kind comes from the claim's saved
 identity. The shipped primary channel, contact frequency, “ask me about,” interest, and favorites
 categories are preferences even if renamed. Custom attributes without an end

@@ -271,11 +271,6 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			}
 		}
 	}
-	for _, source := range sources {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`, request.Lease.PersonID, source.MessageID); err != nil {
-			return err
-		}
-	}
 	return s.saveCommitmentFrontierTx(ctx, tx, request, prepared)
 }
 

@@ -62,10 +62,10 @@ func CommitmentSourceBytes(text string) (int, error) {
 }
 
 // CommitmentScopeFingerprint binds frontier progress to source eligibility.
-// Batch limits are excluded so raising one keeps discovery progress.
+// Changing the byte limit restarts discovery so skipped messages can be retried.
 func CommitmentScopeFingerprint(profile ProviderProfile, cfg CommitmentConfig) string {
-	encoded := fmt.Sprintf("%s|%s|%t|%t|%d", profile.SourceSince, profile.SourceUntil,
-		profile.AllowSensitive, slices.Contains(profile.AllowedSources, SourceConversationText), cfg.Window)
+	encoded := fmt.Sprintf("%s|%s|%t|%t|%d|%d", profile.SourceSince, profile.SourceUntil,
+		profile.AllowSensitive, slices.Contains(profile.AllowedSources, SourceConversationText), cfg.Window, cfg.MaxBytes)
 	digest := sha256.Sum256([]byte(encoded))
 	return hex.EncodeToString(digest[:])
 }
