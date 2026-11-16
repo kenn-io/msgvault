@@ -109,7 +109,12 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 			}
 		}
 		// Human-readable wording is deliberately absent from identity.
-		identity := fmt.Sprintf("%d/%s/%d/%s/%s/%d/%d/%s", window.PersonID, promise.Direction, source.MessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), source.ContentSHA256, promise.Start, promise.End, promise.Quote)
+		hash, start, end := source.ContentSHA256, promise.Start, promise.End
+		first := strings.Index(source.Text, promise.Quote)
+		if first >= 0 && !strings.Contains(source.Text[first+1:], promise.Quote) {
+			hash, start, end = "", 0, 0
+		}
+		identity := fmt.Sprintf("%d/%s/%d/%s/%s/%d/%d/%s", window.PersonID, promise.Direction, source.MessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), hash, start, end, promise.Quote)
 		digest := sha256.Sum256([]byte(identity))
 		promise.TargetKey = "commitment:" + hex.EncodeToString(digest[:])
 		for _, span := range spans[source.MessageID] {

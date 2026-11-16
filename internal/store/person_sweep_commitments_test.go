@@ -701,14 +701,15 @@ func TestCommitmentDiscoveryCoalescesBackfillAndJournal(t *testing.T) {
 	})
 }
 
-func TestRepeatedCommitmentDoesNotInheritDeletedPromiseDecision(t *testing.T) {
+func TestEditedCommitmentDecision(t *testing.T) {
 	for _, tc := range []struct {
 		name, initial, edited string
 		start                 int64
 		repeated              bool
+		wantState             string
 	}{
-		{"deleted repetition", "I will send it. I will send it.", "I will send it.", 0, true},
-		{"prepended text", "I will send it.", "Note. I will send it.", 6, false},
+		{"deleted repetition", "I will send it. I will send it.", "I will send it.", 0, true, LoopStateOpen},
+		{"prepended text", "I will send it.", "Note. I will send it.", 6, false, LoopStateDone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, ctx := require.New(t), t.Context()
@@ -749,11 +750,15 @@ func TestRepeatedCommitmentDoesNotInheritDeletedPromiseDecision(t *testing.T) {
 			promises.Promises[0].End = tc.start + int64(len(quote))
 			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, promises))
 			r.NoError(err)
-			items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, false)
+			items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, true)
 			r.NoError(err)
 			r.Len(items, 1)
-			r.Equal(LoopStateOpen, items[0].State)
-			r.NotEqual(firstKey, items[0].TargetKey)
+			r.Equal(tc.wantState, items[0].State)
+			if tc.repeated {
+				r.NotEqual(firstKey, items[0].TargetKey)
+			} else {
+				r.Equal(firstKey, items[0].TargetKey)
+			}
 		})
 	}
 }

@@ -41,6 +41,23 @@ func TestParseCommitmentsBindsEachPromiseToItsExactLocator(t *testing.T) {
 	a.NotEqual(first, parsed.Promises[0].TargetKey)
 }
 
+func TestParseCommitmentsOverlappingQuotesRemainDistinct(t *testing.T) {
+	r := require.New(t)
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	window := CommitmentWindow{PersonID: 2, Now: now, Sources: []CommitmentSource{{
+		ID: "m1", MessageID: 1, Direction: CommitmentOwedTo, Text: "aaaa", ContentSHA256: "first",
+	}}}
+	output := jsontext.Value(`{"promises":[{"source_id":"m1","direction":"owed_to","quote":"aaa","start":0,"end":3,"summary":"Send","due_on":null}]}`)
+	parsed, err := ParseCommitments(output, window)
+	r.NoError(err)
+	repeated := parsed.Promises[0].TargetKey
+	window.Sources[0].Text = "aaa"
+	window.Sources[0].ContentSHA256 = "second"
+	parsed, err = ParseCommitments(output, window)
+	r.NoError(err)
+	r.NotEqual(repeated, parsed.Promises[0].TargetKey)
+}
+
 func TestParseCommitmentsRejectsWholeUnsupportedOutput(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	source := CommitmentSource{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo,
