@@ -456,6 +456,26 @@ func TestCommitmentApplyRevokedConsentRetainsPaidAccounting(t *testing.T) {
 }
 
 func TestCommitmentDiscoveryCoalescesBackfillAndJournal(t *testing.T) {
+	t.Run("narrow unfinished window", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "narrow-window", false)
+		_, persist := newCommitmentTestConversation(t, f)
+		persist("recent", "I will call.", -time.Hour)
+		persist("old", "I will write.", -48*time.Hour)
+		cfg, profile := commitmentTestConfig()
+		cfg.Commitments.MaxItems = 1
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Len(window.Sources, 1)
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+		r.NoError(err)
+		cfg.Commitments.Window = 24 * time.Hour
+		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		for _, source := range window.Sources {
+			r.NotEqual("I will write.", source.Text)
+		}
+	})
 	t.Run("two pages", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "journal-repeat", false)
