@@ -62,7 +62,7 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	}
 }
 
-func TestCommitmentDecisionSurvivesPrependedText(t *testing.T) {
+func TestCommitmentDecisionReopensAfterPrependedText(t *testing.T) {
 	r, ctx := require.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "promise-prepend", false)
 	_, persist := newCommitmentTestConversation(t, f)
@@ -96,10 +96,10 @@ func TestCommitmentDecisionSurvivesPrependedText(t *testing.T) {
 	second := parse(window, 6)
 	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, second))
 	r.NoError(err)
-	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, true)
+	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, false)
 	r.NoError(err)
 	r.Len(items, 1)
-	r.Equal(LoopStateDone, items[0].State)
+	r.Equal(LoopStateOpen, items[0].State)
 }
 
 func TestCommitmentListPages(t *testing.T) {
@@ -732,4 +732,46 @@ func TestCommitmentDiscoveryCoalescesBackfillAndJournal(t *testing.T) {
 		}
 		r.Equal([]int64{id}, ids)
 	})
+}
+
+func TestRepeatedCommitmentDoesNotInheritDeletedPromiseDecision(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "repeated-promise", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send it."
+	id := persist("promise", quote+" "+quote, -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	promises := peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{
+		{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Start: 0, End: int64(len(quote)), Summary: "Send"},
+		{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Start: int64(len(quote) + 1), End: int64(2*len(quote) + 1), Summary: "Send"},
+	}}
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, promises)
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
+	r.NoError(err)
+	r.Len(items, 2)
+	firstKey := items[0].TargetKey
+	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
+	r.NoError(err)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), quote, id)
+	r.NoError(err)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitment_frontiers SET scope_fingerprint = '' WHERE person_id = ?`), f.personID)
+	r.NoError(err)
+	f = nextCommitmentTestAttempt(t, f, "-edited")
+	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	promises.Promises = promises.Promises[:1]
+	promises.Promises[0].SourceID = window.Sources[0].ID
+	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, promises))
+	r.NoError(err)
+	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.Equal(LoopStateOpen, items[0].State)
+	r.NotEqual(firstKey, items[0].TargetKey)
 }

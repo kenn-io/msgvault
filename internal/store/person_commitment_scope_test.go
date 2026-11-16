@@ -243,3 +243,69 @@ func TestCommitmentScopeUntrack(t *testing.T) {
 	r.NoError(err)
 	r.Len(items, 1)
 }
+
+func TestCommitmentDiscoveryRestartsWhenOwnershipChangesDuringScan(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "identity-during-discovery", false)
+	source, persist := newCommitmentTestConversation(t, f)
+	_, err := f.store.RemoveAccountIdentity(source, "owner@example.test")
+	r.NoError(err)
+	persist("promise", "I will call.", -time.Hour)
+	persist("second", "I will write.", -time.Minute)
+	cfg, profile := commitmentTestConfig()
+	cfg.Commitments.MaxItems = 1
+	scope := peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, -1, ?, ?)`), f.personID, f.store.dialect.TimestampParam(personFactLedgerNow), scope, f.store.dialect.TimestampParam(personFactLedgerNow.Add(-cfg.Commitments.Window)))
+	r.NoError(err)
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Empty(window.Sources)
+	r.NoError(f.store.AddAccountIdentity(source, "owner@example.test", "manual"))
+	request := f.request
+	request.CommitmentOnly = true
+	request.Generation.Policy.AllowSensitive = true
+	request.Budget = personSweepApplyBudget()
+	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+	result, err := f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	r.Equal(peoplesweep.FailureArchiveGap, result.CommitmentFailureClass)
+	r.NoError(f.store.db.QueryRowContext(ctx, f.store.Rebind(`SELECT scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`), f.personID).Scan(&scope))
+	r.Empty(scope)
+	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	r.Equal("I will call.", window.Sources[0].Text)
+	r.Zero(window.BackfillMessageID)
+}
+
+func TestCommitmentOwnershipChangeWaitsForFrontierCommit(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "identity-frontier-lock", false)
+	if !f.store.IsPostgreSQL() {
+		t.Skip("PostgreSQL row locks")
+	}
+	source, _ := newCommitmentTestConversation(t, f)
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, -1, ?, ?)`), f.personID, f.store.dialect.TimestampParam(personFactLedgerNow), window.ScopeFingerprint, f.store.dialect.TimestampParam(personFactLedgerNow.Add(-cfg.Commitments.Window)))
+	r.NoError(err)
+	tx, err := f.store.db.BeginTx(ctx, nil)
+	r.NoError(err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	current, err := f.store.commitmentWindowCurrentTx(ctx, tx, peoplesweep.ApplyRequest{Lease: f.lease, Commitment: &peoplesweep.CommitmentResult{Window: window}}, &preparedCommitmentSweep{snapshot: window.SnapshotSequence})
+	r.NoError(err)
+	r.True(current)
+	done := make(chan error, 1)
+	go func() { done <- f.store.AddAccountIdentity(source, "another@example.test", "manual") }()
+	r.Eventually(func() bool {
+		var waiting int
+		err := f.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting)
+		return err == nil && waiting > 0
+	}, 5*time.Second, 10*time.Millisecond)
+	r.NoError(tx.Commit())
+	r.NoError(<-done)
+	var scope string
+	r.NoError(f.store.db.QueryRowContext(ctx, f.store.Rebind(`SELECT scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`), f.personID).Scan(&scope))
+	r.Empty(scope)
+}

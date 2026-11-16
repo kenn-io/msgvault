@@ -283,6 +283,16 @@ func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error 
 // are watched in the conversation lane. A stale window can be retried without
 // committing its frontier or discarding the ordinary result.
 func (s *Store) commitmentWindowCurrentTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) (bool, error) {
+	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`), accountIdentityRevisionKey); err != nil {
+		return false, err
+	}
+	var revision int64
+	if err := tx.QueryRowContext(ctx, `SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = ?`+s.dialect.SelectForUpdate(), accountIdentityRevisionKey).Scan(&revision); err != nil {
+		return false, err
+	}
+	if revision != request.Commitment.Window.IdentityRevision {
+		return false, nil
+	}
 	var latest int64
 	if err := tx.QueryRowContext(ctx, `SELECT sequence FROM person_sweep_change_clock WHERE singleton = TRUE`).Scan(&latest); err != nil || prepared.snapshot > latest {
 		return false, err

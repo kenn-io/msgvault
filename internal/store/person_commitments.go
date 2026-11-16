@@ -507,6 +507,11 @@ func (s *Store) commitmentChatMembers(ctx context.Context, conversationID, perso
 
 func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, profile peoplesweep.ProviderProfile, cfg peoplesweep.CommitmentConfig, now time.Time) (peoplesweep.CommitmentWindow, error) {
 	window := peoplesweep.CommitmentWindow{PersonID: personID, ScopeFingerprint: peoplesweep.CommitmentScopeFingerprint(profile, cfg), SelectionAt: now, Now: now, Timezone: cfg.Timezone, Sources: []peoplesweep.CommitmentSource{}}
+	revision, err := s.AccountIdentityRevisionContext(ctx)
+	if err != nil {
+		return window, err
+	}
+	window.IdentityRevision = revision
 	if !profile.AllowSensitive || !slices.Contains(profile.AllowedSources, peoplesweep.SourceConversationText) {
 		return window, nil
 	}

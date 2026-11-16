@@ -41,6 +41,7 @@ type CommitmentSource struct {
 
 type CommitmentWindow struct {
 	ScopeFingerprint  string             `json:"-"`
+	IdentityRevision  int64              `json:"-"`
 	SelectionAt       time.Time          `json:"-"`
 	PersonID          int64              `json:"-"`
 	Sources           []CommitmentSource `json:"sources"`
@@ -108,14 +109,7 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 			}
 		}
 		// Human-readable wording is deliberately absent from identity.
-		runes, quote := []rune(source.Text), []rune(promise.Quote)
-		occurrence := 0
-		for i := range int(promise.Start - source.Start) {
-			if i+len(quote) <= len(runes) && string(runes[i:i+len(quote)]) == promise.Quote {
-				occurrence++
-			}
-		}
-		identity := fmt.Sprintf("%d/%s/%d/%s/%d/%s", window.PersonID, promise.Direction, source.MessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), occurrence, promise.Quote)
+		identity := fmt.Sprintf("%d/%s/%d/%s/%s/%d/%d/%s", window.PersonID, promise.Direction, source.MessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), source.ContentSHA256, promise.Start, promise.End, promise.Quote)
 		digest := sha256.Sum256([]byte(identity))
 		promise.TargetKey = "commitment:" + hex.EncodeToString(digest[:])
 		for _, span := range spans[source.MessageID] {

@@ -15,7 +15,7 @@ func TestParseCommitmentsBindsEachPromiseToItsExactLocator(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	source := CommitmentSource{ID: "m1", MessageID: 1, Direction: CommitmentOwedBy,
-		Text: "I will send it. I will send it.", EventTime: now.Add(-time.Hour)}
+		Text: "I will send it. I will send it.", EventTime: now.Add(-time.Hour), ContentSHA256: "9372e6cad8b1cdad07b4aa9848f478a76f55144ee055c373975b1aeed38cd6d9"}
 	window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: now}
 	output := jsontext.Value(`{"promises":[{"source_id":"m1","direction":"owed_by","quote":"I will send it.","start":0,"end":15,"summary":"Send the first item","due_on":null},{"source_id":"m1","direction":"owed_by","quote":"I will send it.","start":16,"end":31,"summary":"Send the second item","due_on":null}]}`)
 	parsed, err := ParseCommitments(output, window)
@@ -28,11 +28,17 @@ func TestParseCommitmentsBindsEachPromiseToItsExactLocator(t *testing.T) {
 	parsed, err = ParseCommitments(output, window)
 	r.NoError(err)
 	a.Equal(first, parsed.Promises[0].TargetKey)
+	window.Sources[0].Text += " Note."
+	window.Sources[0].ContentSHA256 = "81d2971a8cb79776e66a6931f3f0a4fcf94783eafddffa9b1c5c9d6e3f1f9c1a"
+	parsed, err = ParseCommitments(output, window)
+	r.NoError(err)
+	a.NotEqual(first, parsed.Promises[0].TargetKey)
 	window.Sources[0].Text = "Note. " + window.Sources[0].Text
+	window.Sources[0].ContentSHA256 = "1edecdce9eca144e2be1372b7c87fc8f421a766ade855c459a529ba6b316355d"
 	output = jsontext.Value(`{"promises":[{"source_id":"m1","direction":"owed_by","quote":"I will send it.","start":6,"end":21,"summary":"Send","due_on":null}]}`)
 	parsed, err = ParseCommitments(output, window)
 	r.NoError(err)
-	a.Equal(first, parsed.Promises[0].TargetKey)
+	a.NotEqual(first, parsed.Promises[0].TargetKey)
 }
 
 func TestParseCommitmentsRejectsWholeUnsupportedOutput(t *testing.T) {
