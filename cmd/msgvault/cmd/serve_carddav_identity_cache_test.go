@@ -23,40 +23,6 @@ type failingCardDAVService struct {
 	scheduledCardDAVFixture
 }
 
-func TestCardDAVIdentityRefreshReusesOnlyIntactCache(t *testing.T) {
-	req := require.New(t)
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "msgvault.db")
-	analyticsDir := filepath.Join(dir, "analytics")
-	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	participant, err := st.EnsureParticipant("cache@example.test", "Cache Example", "example.test")
-	req.NoError(err)
-	_, _, err = st.CreatePersonFromParticipant(participant)
-	req.NoError(err)
-	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
-	req.NoError(err)
-	archiveRevision, err := st.IdentityRevisionContext(t.Context())
-	req.NoError(err)
-	req.Positive(archiveRevision)
-
-	refreshErr := errors.New("identity cache rebuilt")
-	old := runDerivedCacheSubprocess
-	runDerivedCacheSubprocess = func(context.Context, string) error { return refreshErr }
-	t.Cleanup(func() { runDerivedCacheSubprocess = old })
-	cfg := config.NewDefaultConfig()
-	cfg.Analytics.AutoBuildCache = false
-	cfg.Data.DataDir = dir
-	cfg.Data.DatabaseURL = dbPath
-	adapter := &storeAPIAdapter{store: st, config: cfg, analyticsDir: analyticsDir}
-	got, err := adapter.RefreshIdentityDatasets(t.Context())
-	req.NoError(err)
-	req.Equal(archiveRevision, got)
-
-	req.NoError(os.Remove(filepath.Join(analyticsDir, "participants", "participants.parquet")))
-	_, err = adapter.RefreshIdentityDatasets(t.Context())
-	req.ErrorIs(err, refreshErr)
-}
-
 func (f *failingCardDAVService) Sync(context.Context, carddav.SyncOptions) (carddav.SyncResult, error) {
 	return carddav.SyncResult{}, errors.New("later book failed")
 }
@@ -105,12 +71,6 @@ func TestFailedCardDAVIdentityRefreshQueuesRealCacheRepair(t *testing.T) {
 	req.NoError(err)
 	before, err := query.ReadCacheSyncState(analyticsDir)
 	req.NoError(err)
-	_, err = st.LinkParticipants(first, second)
-	req.NoError(err)
-	revision, err := st.IdentityRevision()
-	req.NoError(err)
-	checks.Greater(revision, before.IdentityRevision)
-	req.True(cacheNeedsBuildForScheduledRefresh(t.Context(), dbPath, analyticsDir).NeedsBuild)
 
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = dir
@@ -133,6 +93,22 @@ func TestFailedCardDAVIdentityRefreshQueuesRealCacheRepair(t *testing.T) {
 	})
 
 	adapter := &storeAPIAdapter{store: st, config: cfg, analyticsDir: analyticsDir}
+	got, err := adapter.RefreshIdentityDatasets(t.Context())
+	req.NoError(err)
+	checks.Equal(before.IdentityRevision, got)
+
+	req.NoError(os.Remove(filepath.Join(analyticsDir, "participants", "participants.parquet")))
+	_, err = adapter.RefreshIdentityDatasets(t.Context())
+	req.ErrorIs(err, refreshErr)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
+	req.NoError(err)
+	_, err = st.LinkParticipants(first, second)
+	req.NoError(err)
+	revision, err := st.IdentityRevision()
+	req.NoError(err)
+	checks.Greater(revision, before.IdentityRevision)
+	req.True(cacheNeedsBuildForScheduledRefresh(t.Context(), dbPath, analyticsDir).NeedsBuild)
+
 	refresher := newBackgroundCacheRefresher(adapter.invocationContext(t.Context()), nil, nil)
 	oldRefresher := daemonCacheRefresher
 	daemonCacheRefresher = refresher
