@@ -3,6 +3,7 @@ package store_test
 import (
 	"crypto/sha256"
 	"database/sql"
+	"fmt"
 	"sort"
 	"testing"
 	"time"
@@ -1573,6 +1574,45 @@ func TestCompleteIMAPRestoreWithAmbiguousRawIdentity(t *testing.T) {
 	id, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 1, 1)
 	assert.Equal(t, copyID, id)
 	assert.False(t, messageTombstoned(t, f.store, copyID))
+}
+
+func TestCompleteIMAPTrashUIDValidityResetWithIdenticalInbox(t *testing.T) {
+	for _, absent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("observed-absence=%t", absent), func(t *testing.T) {
+			f := newIMAPIdentityFixture(t)
+			data := []byte("From: sender@example.test\r\nSubject: identical\r\n\r\nbody\r\n")
+			original := f.createMessage(t, "Trash|1", "")
+			require.NoError(t, f.store.UpsertMessageRaw(original, data))
+			_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
+				"Trash": {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
+				"INBOX": {Name: "INBOX", Type: "system"},
+			})
+			require.NoError(t, err)
+			trash := store.IMAPMailboxDelta{Mailbox: "Trash", Trash: true, State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Trash|1"}}}
+			require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{trash}))
+			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|1"))
+			if absent {
+				missing := trash
+				missing.Memberships = nil
+				missing.VanishedUIDs = []uint32{1}
+				require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{missing}))
+			}
+			copyID := f.createMessage(t, "INBOX|1", "")
+			require.NoError(t, f.store.UpsertMessageRaw(copyID, data))
+			trash.Reset = true
+			trash.State.UIDValidity = 2
+			trash.Memberships[0].RawSHA256 = sha256.Sum256(data)
+			inbox := store.IMAPMailboxDelta{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "INBOX|1", RawSHA256: sha256.Sum256(data)}}}
+			require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{trash, inbox}))
+			assert.True(t, messageTombstoned(t, f.store, original))
+			var trashID int64
+			require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = 'Trash' AND uidvalidity = 2 AND uid = 1`), f.source.ID).Scan(&trashID))
+			assert.Equal(t, original, trashID)
+			id, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 1, 1)
+			assert.Equal(t, copyID, id)
+			assert.False(t, messageTombstoned(t, f.store, copyID))
+		})
+	}
 }
 
 func TestClearMessageDeletedFromSourceCacheSignal(t *testing.T) {

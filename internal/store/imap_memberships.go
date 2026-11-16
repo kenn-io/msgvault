@@ -301,9 +301,22 @@ func (s *Store) applyIMAPMailboxDeltas(
 			return err
 		}
 		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL(), includeMarked: true}
-		resolver.markedStillInTrash, err = imapMarkedStillInTrash(ctx, tx, sourceID, normalizedDeltas)
+		resolver.markedStillInTrash, resolver.trashMailboxes, err = imapMarkedStillInTrash(ctx, tx, sourceID, normalizedDeltas)
 		if err != nil {
 			return err
+		}
+		resolver.trashDigests = make(map[[32]byte]bool)
+		for _, delta := range normalizedDeltas {
+			if delta.delta.Trash {
+				resolver.trashMailboxes[delta.mailbox] = true
+			}
+			if resolver.trashMailboxes[delta.mailbox] {
+				for _, observation := range delta.delta.Memberships {
+					if observation.RawSHA256 != ([32]byte{}) {
+						resolver.trashDigests[observation.RawSHA256] = true
+					}
+				}
+			}
 		}
 		if err := resolver.primeIdentities(ctx, normalizedDeltas); err != nil {
 			return err
@@ -602,7 +615,7 @@ func (s *Store) hideRestoredIMAPCopy(ctx context.Context, tx *loggedTx, resolver
 		resolver.archivedMessages[observation.ArchivedMessageID] || resolver.canonicalMessages[observation.CanonicalSourceMessageID] != 0 {
 		return nil
 	}
-	rawID, unique, err := resolver.resolveRawSHA256(ctx, observation.RawSHA256, observation.RawSize)
+	rawID, unique, err := resolver.resolveRawSHA256(ctx, observation.RawSHA256, observation.RawSize, resolver.trashMailboxes[observation.Mailbox])
 	if err != nil || !unique || rawID != originalID {
 		return err
 	}
@@ -1009,16 +1022,20 @@ type imapMembershipResolver struct {
 	sqlite             bool
 	includeMarked      bool
 	markedStillInTrash map[int64]bool
+	trashMailboxes     map[string]bool
+	trashDigests       map[[32]byte]bool
 	rawMessages        map[int64]map[[32]byte]int64
+	rawBlocked         map[int64]map[[32]byte]bool
 	canonicalMessages  map[string]int64
 	archivedMessages   map[int64]bool
 	legacyMessages     map[string]int64
 }
 
-func imapMarkedStillInTrash(ctx context.Context, tx *loggedTx, sourceID int64, deltas []normalizedIMAPMailboxDelta) (map[int64]bool, error) {
+func imapMarkedStillInTrash(ctx context.Context, tx *loggedTx, sourceID int64, deltas []normalizedIMAPMailboxDelta) (map[int64]bool, map[string]bool, error) {
 	byMailbox := make(map[string]normalizedIMAPMailboxDelta, len(deltas))
 	resetUIDs := make(map[string]map[uint32]bool)
 	vanishedUIDs := make(map[string]map[uint32]bool)
+	trashMailboxes := make(map[string]bool)
 	for _, delta := range deltas {
 		byMailbox[delta.mailbox] = delta
 		if delta.delta.Reset {
@@ -1041,7 +1058,7 @@ func imapMarkedStillInTrash(ctx context.Context, tx *loggedTx, sourceID int64, d
 		LEFT JOIN labels l ON l.source_id = m.source_id AND l.source_label_id = membership.mailbox
 		WHERE m.source_id = ? AND m.deleted_from_source_at IS NOT NULL`, sourceID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	marked := make(map[int64]bool)
@@ -1050,10 +1067,14 @@ func imapMarkedStillInTrash(ctx context.Context, tx *loggedTx, sourceID int64, d
 		var mailbox, role string
 		var validity, uid uint32
 		if err := rows.Scan(&id, &mailbox, &validity, &uid, &role); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		delta, exists := byMailbox[mailbox]
-		if !exists || (!delta.delta.Trash && role != LabelSystemRoleTrash) || delta.uidValidity != validity {
+		if !exists || (!delta.delta.Trash && role != LabelSystemRoleTrash) {
+			continue
+		}
+		trashMailboxes[mailbox] = true
+		if delta.uidValidity != validity {
 			continue
 		}
 		present := !delta.delta.Reset && !vanishedUIDs[mailbox][uid]
@@ -1064,7 +1085,7 @@ func imapMarkedStillInTrash(ctx context.Context, tx *loggedTx, sourceID int64, d
 			marked[id] = true
 		}
 	}
-	return marked, rows.Err()
+	return marked, trashMailboxes, rows.Err()
 }
 
 func (r *imapMembershipResolver) retireObsoleteKeys(ctx context.Context, deltas []normalizedIMAPMailboxDelta, generations []imapMembershipUIDGeneration) error {
@@ -1245,7 +1266,7 @@ func (r *imapMembershipResolver) primeIdentities(
 				observation.RawSHA256 == ([32]byte{}) {
 				continue
 			}
-			if _, _, err := r.resolveRawSHA256(ctx, observation.RawSHA256, observation.RawSize); err != nil {
+			if _, _, err := r.resolveRawSHA256(ctx, observation.RawSHA256, observation.RawSize, r.trashMailboxes[normalized.mailbox]); err != nil {
 				return fmt.Errorf(
 					"snapshot IMAP raw identity for mailbox %q UID %d: %w",
 					normalized.mailbox, observation.UID, err,
@@ -1273,7 +1294,7 @@ func (r *imapMembershipResolver) resolveIdentity(ctx context.Context, observatio
 		}
 	}
 	if observation.RawSHA256 != ([32]byte{}) {
-		messageID, ok, err := r.resolveRawSHA256(ctx, observation.RawSHA256, observation.RawSize)
+		messageID, ok, err := r.resolveRawSHA256(ctx, observation.RawSHA256, observation.RawSize, r.trashMailboxes[observation.Mailbox])
 		if err != nil {
 			return 0, err
 		}
@@ -1354,21 +1375,23 @@ func (r *imapMembershipResolver) resolveRawSHA256(
 	ctx context.Context,
 	digest [32]byte,
 	rawSize int64,
+	allowTrash bool,
 ) (int64, bool, error) {
 	if r.rawMessages == nil {
 		r.rawMessages = make(map[int64]map[[32]byte]int64)
+		r.rawBlocked = make(map[int64]map[[32]byte]bool)
 	}
 	messages, loaded := r.rawMessages[rawSize]
 	if !loaded {
 		messages = make(map[[32]byte]int64)
 		r.rawMessages[rawSize] = messages
+		r.rawBlocked[rawSize] = make(map[[32]byte]bool)
 		query := `
-			SELECT messages.id, message_raw.raw_data, message_raw.compression
+			SELECT messages.id, message_raw.raw_data, message_raw.compression, messages.deleted_from_source_at IS NOT NULL
 			FROM messages
 			JOIN message_raw ON message_raw.message_id = messages.id
 			WHERE messages.source_id = ? AND message_raw.raw_format = 'mime'
 			  AND (? OR messages.deleted_from_source_at IS NULL)
-			  AND messages.deleted_at IS NULL
 			  AND ((? AND messages.deleted_from_source_at IS NOT NULL) OR EXISTS (
 				SELECT 1 FROM imap_message_memberships membership
 				WHERE membership.source_id = messages.source_id
@@ -1391,8 +1414,9 @@ func (r *imapMembershipResolver) resolveRawSHA256(
 				messageID   int64
 				rawData     []byte
 				compression sql.NullString
+				marked      bool
 			)
-			if err := rows.Scan(&messageID, &rawData, &compression); err != nil {
+			if err := rows.Scan(&messageID, &rawData, &compression, &marked); err != nil {
 				return 0, false, fmt.Errorf("scan IMAP raw membership identity: %w", err)
 			}
 			decoded, err := decodeMessageRaw(rawData, compression)
@@ -1400,9 +1424,8 @@ func (r *imapMembershipResolver) resolveRawSHA256(
 				return 0, false, fmt.Errorf("decode IMAP raw membership identity: %w", err)
 			}
 			rawDigest := sha256.Sum256(decoded)
-			if r.markedStillInTrash[messageID] {
-				messages[rawDigest] = 0
-				continue
+			if r.markedStillInTrash[messageID] || (marked && r.trashDigests[rawDigest]) {
+				r.rawBlocked[rawSize][rawDigest] = true
 			}
 			if existingMessageID, exists := messages[rawDigest]; !exists {
 				messages[rawDigest] = messageID
@@ -1417,7 +1440,7 @@ func (r *imapMembershipResolver) resolveRawSHA256(
 		}
 	}
 	messageID, ok := messages[digest]
-	return messageID, ok && messageID != 0, nil
+	return messageID, ok && messageID != 0 && (allowTrash || !r.rawBlocked[rawSize][digest]), nil
 }
 
 func imapRFC822MessageIDCandidates(messageID string) []string {
