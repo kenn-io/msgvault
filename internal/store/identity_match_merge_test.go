@@ -800,7 +800,7 @@ func TestMergeParticipantsRejectsLostEmail(t *testing.T) {
 	third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
 	require.NoError(t, err)
 	require.NoError(t, st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
-	require.Error(t, st.MergeParticipants(absorbed, survivor))
+	require.ErrorIs(t, st.MergeParticipants(absorbed, survivor), store.ErrPersonBindingConflict)
 	owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
 	require.NoError(t, err)
 	assert.Equal(t, third, owner)
