@@ -361,7 +361,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		clusterMemberIDs = []int64{*exactID}
 	}
 	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs,
-		e.parquetPath(datasetParticipantClusters))
+		e.parquetPath(datasetParticipantClusters), e.parquetPath(identityindex.DatasetMeetingGroups))
 	args = append(args, entryArgs...)
 	// bestNameExpr is the shared cluster label policy (see person_label.go).
 	// Listing/search rows are canonical identities, so the label evaluates
@@ -468,6 +468,10 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	}
 	args = append(args, limit, request.Page.Offset)
 	peopleRollup := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
+	meetingOwnerCondition := `(coalesce((SELECT c.canonical_id FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetParticipantClusters)) + `') c WHERE c.participant_id = pe.person_id), pe.person_id), pe.anchor_message_id) IN (SELECT canonical_id, message_id FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingOwners)) + `'))`
+	if exactID != nil {
+		meetingOwnerCondition = `pe.anchor_message_id IN (SELECT message_id FROM person_meeting_owners)`
+	}
 	queryText := buildExploreLogicalSQLNoLists(conditions) + entriesCTE + `
 ), person_population AS (
 	SELECT p.id AS person_id, COALESCE(p.display_name, '') AS display_name,
@@ -476,7 +480,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		` + overrideExpr + ` AS person_display_name,
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
 		COUNT(pe.person_id)::BIGINT AS activity_count,
-		COUNT(*) FILTER (WHERE pe.message_type = 'meeting_transcript' AND (coalesce((SELECT c.canonical_id FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetParticipantClusters)) + `') c WHERE c.participant_id = pe.person_id), pe.person_id), pe.anchor_message_id) IN (SELECT canonical_id, message_id FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingOwners)) + `')))::BIGINT AS meeting_count,
+		COUNT(*) FILTER (WHERE pe.message_type = 'meeting_transcript' AND ` + meetingOwnerCondition + `)::BIGINT AS meeting_count,
 		COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
 	` + populationFrom + `
@@ -556,7 +560,7 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 // Exact-ID lookup uses raw participant links within the analytical context so
 // live membership can differ from the cached identity clusters.
 // Listing/search aggregates edges by canonical ID, so linked aliases count once.
-func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (string, []any) {
+func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob, meetingGroupsGlob string) (string, []any) {
 	if exactID == nil {
 		return fmt.Sprintf(`
 ), clusters AS (
@@ -577,11 +581,23 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 		}
 	}
 	args = append(args, *exactID)
+	// Pick owners from the live members before applying filters. The cached
+	// owner rows can reflect membership from before a link or unlink.
 	return `
 ), person_message_ids AS (
 	SELECT mr.message_id FROM message_recipients mr WHERE mr.participant_id IN ` + memberList + `
 	UNION
 	SELECT m.id AS message_id FROM messages m WHERE m.sender_id IN ` + memberList + `
+), person_meeting_owners AS (
+	SELECT m.id AS message_id
+	FROM messages m
+	JOIN person_message_ids pm ON pm.message_id = m.id
+	JOIN sources s ON s.id = m.source_id
+	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(meetingGroupsGlob) + `') g ON g.message_id = m.id
+	WHERE m.message_type = 'meeting_transcript' AND m.sent_at IS NOT NULL
+		AND NOT EXISTS (SELECT 1 FROM relationship_unsent_messages u WHERE u.message_id = m.id)
+	QUALIFY row_number() OVER (PARTITION BY coalesce(g.group_id, m.id)
+		ORDER BY m.deleted_from_source_at IS NOT NULL, m.sent_at, m.id) = 1
 ), person_chat_conversation_ids AS (
 	SELECT cp.conversation_id FROM conversation_participants cp WHERE cp.participant_id IN ` + memberList + `
 	UNION

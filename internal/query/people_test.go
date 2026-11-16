@@ -694,6 +694,84 @@ func linkedPeopleFixture(t *testing.T) (*TestDataBuilder, int64, int64, int64, i
 	return b, source, alicePrimary, aliceAlias, bob, start
 }
 
+func TestPersonMeetingOwnershipUsesLiveMembershipWithRetainedCache(t *testing.T) {
+	for _, linkedAtBuild := range []bool{false, true} {
+		t.Run(fmt.Sprintf("linked_at_build=%v", linkedAtBuild), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			b := NewTestDataBuilder(t)
+			firstSource := b.AddSourceWithType("first@example.test", "granola")
+			secondSource := b.AddSourceWithType("second@example.test", "zoom")
+			primary := b.AddParticipant("primary@example.test", "example.test", "Primary")
+			alias := b.AddParticipant("alias@example.test", "example.test", "Alias")
+			if linkedAtBuild {
+				b.LinkCluster(primary, alias)
+			}
+			start := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+			first := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: start})
+			second := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: start.Add(2 * time.Hour)})
+			other := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: start.Add(3 * time.Hour)})
+			draft := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: start.Add(-time.Hour)})
+			b.AddTo(first, primary, "Primary")
+			b.AddTo(second, alias, "Alias")
+			b.AddTo(second, primary, "Primary")
+			b.AddTo(other, alias, "Alias")
+			b.AddTo(draft, alias, "Alias")
+			b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", draft)
+			b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d UNION ALL SELECT %d, %d)", first, first, second, first, draft, first)
+			engine := b.BuildEngine()
+			members := []int64{primary, alias}
+			if linkedAtBuild {
+				members = nil // The cache still contains the link that was removed.
+			}
+			firstWant, secondWant := int64(1), int64(1)
+			if linkedAtBuild {
+				firstWant, secondWant = 0, 2
+			}
+			cutoff := start.Add(time.Hour)
+			for _, tc := range []struct {
+				name   string
+				filter Context
+				want   int64
+			}{
+				{"all", Context{}, 2},
+				{"first source", Context{SourceIDs: []int64{firstSource}}, firstWant},
+				{"second source", Context{SourceIDs: []int64{secondSource}}, secondWant},
+				{"before", Context{Before: &cutoff}, firstWant},
+				{"after", Context{After: &cutoff}, secondWant},
+				{"active", Context{Deletion: DeletionActive}, 2},
+				{"deleted", Context{Deletion: DeletionDeleted}, 0},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					assertions, requirements := assert.New(t), require.New(t)
+					detail, err := engine.GetPerson(t.Context(), alias, tc.filter, members)
+					requirements.NoError(err)
+					if detail != nil {
+						assertions.Equal(tc.want, detail.MeetingCount)
+					} else {
+						assertions.Zero(tc.want)
+					}
+					summary, err := engine.GetPersonSummary(t.Context(), alias, ExploreRequest{Context: tc.filter}, members)
+					requirements.NoError(err)
+					if len(summary.Rows) > 0 {
+						assertions.Equal(tc.want, summary.Rows[0].MeetingCount)
+					} else {
+						assertions.Zero(tc.want)
+					}
+				})
+			}
+			for _, tc := range []struct{ id, want int64 }{{first, firstWant}, {second, 1 - firstWant}} {
+				summary, err := engine.GetPersonSummary(t.Context(), alias, ExploreRequest{Search: SearchSpec{Mode: SearchFullText, Query: "meeting", CandidateMessageIDs: []int64{tc.id}, LexicalIndexRevision: "fts5:test"}}, members)
+				requirements.NoError(err)
+				if len(summary.Rows) > 0 {
+					assertions.Equal(tc.want, summary.Rows[0].MeetingCount)
+				} else {
+					assertions.Zero(tc.want)
+				}
+			}
+		})
+	}
+}
+
 func TestGetPersonUsesLiveMembershipAfterUnlinkWithRetainedCache(t *testing.T) {
 	t.Parallel()
 	b, source, primary, alias, _, start := linkedPeopleFixture(t)
