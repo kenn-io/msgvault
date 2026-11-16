@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"slices"
 
@@ -52,6 +53,16 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 			return emailtags.Failure("archive_unsupported", "Archiving is supported only for Gmail messages", nil, nil)
 		}
 		return nil
+	}
+	if err == nil && target.Provider == sourceTypeGmail && change.Archived != nil {
+		if err := authorize(ctx, target); err != nil {
+			return nil, err
+		}
+		labels, labelsErr := a.store.MessageLabelIDsContext(ctx, id)
+		inbox, inboxErr := a.store.LabelIDContext(ctx, target.SourceID, "INBOX")
+		if labelsErr == nil && len(labels) > 0 && (inboxErr == nil || errors.Is(inboxErr, sql.ErrNoRows)) && *change.Archived != slices.Contains(labels, inbox) {
+			return &emailtags.ArchiveResult{MessageID: id, SourceID: target.SourceID, Archived: *change.Archived, DryRun: change.DryRun}, nil
+		}
 	}
 	result, err := a.messageTags(ctx, id, nil, "", acquireWrite, &change, authorize)
 	if failure, ok := errors.AsType[*emailtags.MessageTagError](err); grant != nil && ok && failure.Code == "message_not_found" {

@@ -368,7 +368,7 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 ## archive and unarchive
 
 Remove one Gmail message from its inbox, or restore it, through the selected
-daemon. Use msgvault's positive archived message ID. Requires API schema 5.7.0.
+daemon. Use msgvault's positive archived message ID. Requires API schema 5.9.0.
 
 ```bash
 msgvault archive --message 42 --dry-run --json
@@ -378,8 +378,9 @@ msgvault unarchive --message 42
 
 `--dry-run` previews without changing Gmail or local labels. `--json` returns
 `message_id`, `source_id`, `archived`, `changed`, `dry_run`, and `verified`.
-A repeated request reads current Gmail labels and returns `changed: false`
-without a provider mutation when the desired state is already satisfied.
+A matching local label snapshot returns `changed: false` and `verified: false`
+without contacting Gmail. Otherwise, the daemon reads Gmail and saves the result
+locally after a non-preview request.
 Unrelated labels and read/unread state are preserved.
 
 The owner has access. Delegated calls require `message.archive` on the message's
@@ -6028,7 +6029,7 @@ msgvault agent-token issue --label code-reader \
 ```
 
 Repeat `--incoming-sender SOURCE_ID=ADDRESS` for additional allowed addresses.
-Requires daemon API schema 5.7.0. The bundled client rejects issuance with restrictions against older daemons; older daemons ignore the field in raw API requests.
+Requires daemon API schema 5.9.0. The bundled client rejects issuance with restrictions against older daemons; older daemons ignore the field in raw API requests.
 Omitting the flag allows reads and archiving from any sender on the selected sources.
 The restriction matches recorded From addresses and does not authenticate the sender. It applies to reads, reply parents, and archive writes. The separate `--sender` flag still selects
 confirmed outgoing draft identities. See the [archive API](api-server.md#message-archiving)

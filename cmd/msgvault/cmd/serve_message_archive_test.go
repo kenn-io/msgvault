@@ -267,6 +267,27 @@ func TestArchiveMessageDaemonPreviewDuringSync(t *testing.T) {
 	requirementsForTest.NoError(syncExecution.Release())
 }
 
+func TestArchiveMessageMatchingLocalSnapshot(t *testing.T) {
+	for _, archived := range []bool{true, false} {
+		t.Run(strconv.FormatBool(archived), func(t *testing.T) {
+			st, _, id, _, _, owner, provider := newArchiveDaemon(t)
+			target, err := st.EmailTagTargetContext(t.Context(), id, "")
+			require.NoError(t, err)
+			tags := []string{"UNREAD"}
+			if !archived {
+				tags = append(tags, "INBOX")
+			}
+			require.NoError(t, st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{Provider: "gmail", Tags: tags, Verified: true}))
+			result, err := owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
+			require.NoError(t, err)
+			assert.Equal(t, archived, result.Archived)
+			assert.False(t, result.Changed)
+			assert.False(t, result.Verified)
+			assert.Zero(t, provider.connects.Load())
+		})
+	}
+}
+
 func TestArchiveMessageDaemonWriteAndReconcile(t *testing.T) {
 	assertionsForTest := assert.New(t)
 	requirementsForTest := require.New(t)
