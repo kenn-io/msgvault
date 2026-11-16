@@ -2963,12 +2963,6 @@ const LabelSystemRoleSent = "sent"
 // holds unsent drafts.
 const LabelSystemRoleDrafts = "drafts"
 
-// LabelSystemRoleTrash identifies the mailbox msgvault selected as Trash.
-const LabelSystemRoleTrash = "trash"
-
-// LabelSystemRoleAll identifies an IMAP mailbox containing all messages.
-const LabelSystemRoleAll = "all"
-
 // EnsureLabel gets or creates a label, handling renames and ID changes.
 // For batch operations prefer EnsureLabelsBatch which runs in a single
 // transaction.
@@ -3692,6 +3686,30 @@ func (s *Store) ClearMessageDeletedFromSourceContext(ctx context.Context, source
 		return write(boundQuerier{ctx: ctx, q: s.db})
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
+}
+
+// ClearRestoredGmailDeletionMark clears a restored message and invalidates cached facts.
+func (s *Store) ClearRestoredGmailDeletionMark(ctx context.Context, sourceID int64, sourceMessageID string) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		var messageID int64
+		err := tx.QueryRowContext(ctx, `UPDATE messages SET deleted_from_source_at = NULL
+			WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NOT NULL
+			RETURNING id`, sourceID, sourceMessageID).Scan(&messageID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if s.IsPostgreSQL() {
+			return nil
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('message_facts', ?)`, messageID)
+		return err
+	})
 }
 
 // MarkMessagesDeletedBatch marks multiple messages as deleted from the source in a single transaction.
