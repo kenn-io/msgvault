@@ -754,12 +754,18 @@ func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []API
 		ids[i] = messages[i].ID
 	}
 	metadata := make(map[int64]APIMessage, len(ids))
-	err := queryInChunksContext(ctx, s.db, ids, nil, `SELECT m.id, COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(c.title, '') FROM messages m LEFT JOIN conversations c ON c.id=m.conversation_id WHERE m.id IN (%s)`, func(rows *loggedRows) error {
+	// Saved speech is searchable, so it is classified with the body.
+	voice := make(map[int64]string)
+	err := queryInChunksContext(ctx, s.db, ids, nil, `SELECT m.id, COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(c.title, ''), `+voiceSearchSQL(s.IsPostgreSQL(), "m.id")+` FROM messages m LEFT JOIN conversations c ON c.id=m.conversation_id WHERE m.id IN (%s)`, func(rows *loggedRows) error {
 		var msg APIMessage
-		if err := rows.Scan(&msg.ID, &msg.Subject, &msg.Snippet, &msg.ConversationTitle); err != nil {
+		var speech string
+		if err := rows.Scan(&msg.ID, &msg.Subject, &msg.Snippet, &msg.ConversationTitle, &speech); err != nil {
 			return err
 		}
 		metadata[msg.ID] = msg
+		if speech != "" {
+			voice[msg.ID] = speech
+		}
 		return nil
 	})
 	if err != nil {
@@ -775,5 +781,13 @@ func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []API
 	if err := s.batchPopulateAttachments(ctx, messages, ids); err != nil {
 		return err
 	}
-	return s.batchPopulateBodies(ctx, messages, ids, verification.MaxFieldBytes)
+	if err := s.batchPopulateBodies(ctx, messages, ids, verification.MaxFieldBytes); err != nil {
+		return err
+	}
+	for i := range messages {
+		if speech := voice[messages[i].ID]; speech != "" {
+			messages[i].BodyText += "\n" + speech
+		}
+	}
+	return nil
 }

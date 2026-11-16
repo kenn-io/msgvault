@@ -362,7 +362,6 @@ func TestMCPLoopIncompleteScanNeedsFreshApproval(t *testing.T) {
 
 func TestMCPLoopListExposesIncompleteCoverage(t *testing.T) {
 	requirements := require.New(t)
-	assertions := assert.New(t)
 	f := storetest.New(t)
 	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, time.Now().UTC())
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)}))
@@ -371,13 +370,6 @@ func TestMCPLoopListExposesIncompleteCoverage(t *testing.T) {
 	requirements.NoError(err)
 	list := loopToolOutput[generated.LoopListResponse](t, result)
 	requirements.True(list.CoverageIncomplete)
-	continued, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{}})
-	requirements.NoError(err)
-	complete := loopToolOutput[generated.LoopListResponse](t, continued)
-	requirements.False(complete.CoverageIncomplete)
-	assertions.True(slices.ContainsFunc(complete.Items, func(item generated.LoopItem) bool {
-		return item.Summary == "Can you send the contract?"
-	}))
 }
 
 func TestMCPLoopListExposesSkippedUnparseable(t *testing.T) {

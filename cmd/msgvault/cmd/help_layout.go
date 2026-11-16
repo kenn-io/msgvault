@@ -28,6 +28,7 @@ const (
 )
 
 var topLevelCommandGroups = map[string]string{
+	"cli":                     helpGroupOperations,
 	"source":                  helpGroupSources,
 	"address":                 helpGroupPeople,
 	"activity":                helpGroupIndex,
@@ -98,6 +99,7 @@ var topLevelCommandGroups = map[string]string{
 	"find-chat":               helpGroupRead,
 	"gc":                      helpGroupDelete,
 	"identity":                helpGroupPeople,
+	"import-ics":              helpGroupImport,
 	"import-eml":              helpGroupImport,
 	"import-emlx":             helpGroupImport,
 	"import-gvoice":           helpGroupImport,

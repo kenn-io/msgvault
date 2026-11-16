@@ -1,8 +1,10 @@
+Agents: find the right command with: msgvault cli search "<what you want to do>"
+
 Archive email, chats, and meetings offline.
 
 Start here:
   msgvault list-accounts --json
-  msgvault search 'from:alice@example.com newer_than:30d' --json
+  msgvault search 'from:alice@example.com' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
   msgvault export-messages --help
@@ -117,6 +119,7 @@ Import local exports:
   import-eml             Import a tree of RFC 5322 .eml files
   import-emlx            Import Apple Mail .emlx files into msgvault
   import-gvoice          Import Google Voice history from Takeout export
+  import-ics             Import local ICS events
   import-imazing-csv     Import Messages CSV exports created by iMazing
   import-imessage        Import iMessages from local database
   import-maildir         Import a Maildir or Maildir++ archive
@@ -184,6 +187,7 @@ Maintenance and repair:
 Setup, daemon, and integrations:
   agent        Set up agents
   agent-token  Manage restricted agent grant tokens
+  cli          Discover commands for a task
   completion   Generate shell completion script
   credentials  Manage provider credentials on the daemon host
   daemon       Manage the background daemon

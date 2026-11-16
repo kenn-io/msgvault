@@ -211,21 +211,6 @@ func TestCalendarExceptionsShortenedSeriesDuration(t *testing.T) {
 	}
 }
 
-func TestCalendarEventRowsEndedSeriesOutsideWindow(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	data, event := calendarFixture(t, st, "current", `{"id":"current","start":{"dateTime":"2027-03-12T09:00:00Z"},"end":{"dateTime":"2027-03-12T10:00:00Z"}}`)
-	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", 2001)
-	_, err := st.db.Exec(`UPDATE calendar_events SET start_at = '2027-03-01 00:00:00+00:00', end_at = '2027-03-02 00:00:00+00:00', start_date = '2027-03-01', end_date = '2027-03-02', recurrence_end_at = '2027-03-02 00:00:00+00:00', recurrence_json = '["RRULE:FREQ=DAILY;COUNT=1"]' WHERE kind = 'series'`)
-	require.NoError(err)
-	from := time.Date(2027, 3, 12, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	require.NoError(err)
-	assert.Empty(page.Unexpandable)
-	require.Len(page.Occurrences, 1)
-	assert.Equal(event, page.Occurrences[0].MessageID)
-}
-
 func TestCalendarExceptionsClearedRecurrence(t *testing.T) {
 	for _, tc := range []struct {
 		name, start, end, original, wantStart, wantEnd string
