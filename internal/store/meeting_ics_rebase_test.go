@@ -183,20 +183,6 @@ func TestFrozenICSAllDayOriginalZone(t *testing.T) {
 	}
 }
 
-func TestFrozenICSAllDayOriginalUnknownZone(t *testing.T) {
-	master := string(calendarDocument("REQUEST", "DTSTART;VALUE=DATE:20270302\r\nDTEND;VALUE=DATE:20270303\r\nRRULE:FREQ=DAILY;COUNT=20"))
-	st, series, edit := frozenICSFixture(t, master, "REQUEST", "RECURRENCE-ID;VALUE=DATE:20270304\r\nDTSTART;VALUE=DATE:20270306\r\nDTEND;VALUE=DATE:20270307")
-	_, err := st.db.ExecContext(t.Context(), `UPDATE calendar_events SET event_time_zone = '', calendar_time_zone = '' WHERE message_id = ?`, series)
-	require.NoError(t, err)
-	_, note := projectionFixture(t, st, "unknown-zone-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"family@example.com","startsAt":"2027-03-04T00:00:00Z"}}`)
-	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: edit})
-	require.NoError(t, err)
-	assert.Empty(t, record.MessageIDs)
-	record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
-	require.NoError(t, err)
-	assert.Empty(t, record.Links)
-}
-
 func TestFrozenICSArchivedExceptions(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, properties, original, noteTime string

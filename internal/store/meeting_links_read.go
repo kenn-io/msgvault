@@ -163,7 +163,14 @@ func (s *Store) meetingExpand(ctx context.Context, rows []CalendarEventRow, at t
 	if err != nil {
 		return CalendarOccurrencePage{}, err
 	}
-	return s.expandCalendarRows(ctx, rows, at, at.Add(time.Second), false, budget)
+	page, err := s.expandCalendarRows(ctx, rows, at, at.Add(time.Second), false, budget)
+	if err != nil {
+		return page, err
+	}
+	if *budget < 0 {
+		return CalendarOccurrencePage{}, calendarRecurrenceBudgetError()
+	}
+	return page, nil
 }
 
 func (s *Store) meetingOccurrencesForKeys(ctx context.Context, keys []meetingLinkKey, budget *int, unexpandable *[]CalendarUnexpandable) (map[meetingLinkKey][]CalendarOccurrence, error) {

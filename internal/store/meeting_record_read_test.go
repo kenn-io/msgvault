@@ -859,3 +859,42 @@ func TestUniqueMeetingOccurrencesOrder(t *testing.T) {
 	require.Len(t, got, 4)
 	assert.Equal(t, []string{"evt:1", "evt:11", "evt:9", "evt:10"}, []string{got[0].Ref, got[1].Ref, got[2].Ref, got[3].Ref})
 }
+
+func TestMeetingRecordNoteExpansionExhaustsSharedBudget(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	for i := range 10 {
+		calendarFixture(t, st, fmt.Sprintf("old-series-%d", i), fmt.Sprintf(`{"id":"series-%d","iCalUID":"budget@example.org","start":{"dateTime":"1880-01-01T10:00:00Z"},"end":{"dateTime":"1880-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`, i))
+	}
+	_, note := projectionFixture(t, st, "budget-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"budget@example.org","startsAt":"2027-03-14T12:00:00Z"}}`)
+	_, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	assert.ErrorIs(t, err, ErrQueryTooBroad)
+}
+
+func TestMeetingRecordAllDayMasterWithoutZone(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("gcal", "unknown-zone@example.com")
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"calendar_id":"unknown-zone@example.com"}`))
+	var edit int64
+	for i, raw := range []string{
+		`{"id":"series","iCalUID":"zone@example.org","start":{"date":"2027-03-02"},"end":{"date":"2027-03-03"},"recurrence":["RRULE:FREQ=DAILY;COUNT=20"]}`,
+		`{"id":"edit","iCalUID":"zone@example.org","recurringEventId":"series","originalStartTime":{"date":"2027-03-04"},"start":{"date":"2027-03-06"},"end":{"date":"2027-03-07"}}`,
+	} {
+		id := fmt.Sprintf("unknown-zone-%d", i)
+		data := &MessagePersistData{
+			Message:      &Message{SourceID: source.ID, SourceMessageID: id, MessageType: "calendar_event", Subject: sql.NullString{String: "Example event", Valid: true}},
+			Conversation: &ConversationPersistData{SourceConversationID: id, ConversationType: "calendar", Title: "Example event"},
+			RawMIME:      []byte(raw), RawFormat: "gcal_json", Metadata: &sql.NullString{String: `{"calendar_id":"unknown-zone@example.com"}`, Valid: true},
+		}
+		edit, err = st.PersistMessage(data)
+		require.NoError(t, err)
+	}
+	_, note := projectionFixture(t, st, "unknown-zone-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"zone@example.org","startsAt":"2027-03-04T00:00:00Z"}}`)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: edit})
+	require.NoError(t, err)
+	require.Len(t, record.Links, 1)
+	assert.Empty(t, record.MessageIDs)
+	record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	require.NoError(t, err)
+	assert.Empty(t, record.Links)
+}
