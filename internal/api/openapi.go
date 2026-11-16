@@ -418,7 +418,9 @@ import (
 // 5.2.0 adds open Kata issue search and optional task search queries.
 // 5.3.0 adds the IMAP authentication method to CLI accounts.
 // 5.4.0 allows native tag reads for source-deleted messages.
-const APISchemaVersion = "5.4.0"
+// 5.5.0 adds source account matching repair.
+// 5.6.0 adds a refresh-only identity cache operation.
+const APISchemaVersion = "5.6.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

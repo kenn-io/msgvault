@@ -6,6 +6,10 @@ description: Release history for msgvault
 
 All notable changes to msgvault, grouped by release.
 
+## Unreleased
+
+- Account matching recovers after identity changes. Explore refreshes pending counts and lets you retry matching for each source.
+
 ## 0.25.0
 <small>2026-11-14</small>
 

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,6 +117,84 @@ func TestLinkIdentity_CreatesEdgeAndReportsReadyCache(t *testing.T) {
 	assert.Equal(int64(1), resp.IdentityRevision)
 	assert.Equal(identityCacheStateReady, resp.CacheState)
 	assert.Equal(1, wrapped.refreshCalls)
+}
+
+func TestRefreshIdentityCache(t *testing.T) {
+	t.Parallel()
+	srv, wrapped := newIdentityLinkTestServer(t)
+	wrapped.refreshErr = errors.New("build failed")
+	refresh := func(server *Server) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/identity/cache-refresh", nil)
+		w := httptest.NewRecorder()
+		server.Router().ServeHTTP(w, req)
+		return w
+	}
+	failed := refresh(srv)
+	assert.Equal(t, http.StatusInternalServerError, failed.Code)
+	var failure ErrorResponse
+	require.NoError(t, json.Unmarshal(failed.Body.Bytes(), &failure))
+	assert.Equal(t, "Couldn't refresh related views.", failure.Message)
+	wrapped.refreshErr = nil
+	w := refresh(srv)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, IdentityLinkResponse{IdentityRevision: 1, CacheState: identityCacheStateReady}, decodeIdentityLinkResponse(t, w))
+	assert.Equal(t, 2, wrapped.refreshCalls)
+	for _, tc := range []struct {
+		err     error
+		code    string
+		message string
+	}{
+		{ErrIdentityCacheBuildRequired, "identity_cache_build_required", "Run msgvault build-cache to refresh related views."},
+		{ErrIdentityCacheUnsupported, "identity_cache_unsupported", "People and relationship analytics are unavailable with PostgreSQL."},
+	} {
+		wrapped.refreshErr = tc.err
+		response := refresh(srv)
+		assert.Equal(t, http.StatusServiceUnavailable, response.Code)
+		assert.Contains(t, response.Body.String(), tc.code)
+		assert.Contains(t, response.Body.String(), tc.message)
+	}
+	missing := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, wrapped.Store, nil, testLogger())
+	assert.Equal(t, http.StatusServiceUnavailable, refresh(missing).Code)
+}
+
+type delayedIdentityCacheStore struct {
+	*store.Store
+
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *delayedIdentityCacheStore) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
+	close(s.started)
+	select {
+	case <-s.release:
+		return 1, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+func TestRefreshIdentityCacheOutlastsOrdinaryRequestDeadline(t *testing.T) {
+	t.Parallel()
+	st := testutil.NewTestStore(t)
+	synctest.Test(t, func(t *testing.T) {
+		wrapped := &delayedIdentityCacheStore{Store: st, started: make(chan struct{}), release: make(chan struct{})}
+		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: wrapped, Logger: testLogger(), RequestTimeout: time.Second})
+		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/identity/cache-refresh", nil)
+		w := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() {
+			srv.Router().ServeHTTP(w, req)
+			close(done)
+		}()
+		<-wrapped.started
+		synctest.Sleep(2 * time.Second)
+		close(wrapped.release)
+		<-done
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		assert.Equal(t, identityCacheStateReady, decodeIdentityLinkResponse(t, w).CacheState)
+	})
 }
 
 func TestLinkIdentity_RepeatedExactEdgeIsIdempotent(t *testing.T) {
