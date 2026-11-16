@@ -169,6 +169,25 @@ func TestFrozenICSTimedEditSeriesRef(t *testing.T) {
 	assert.Equal(t, []int64{note}, record.MessageIDs)
 }
 
+func TestFrozenICSManualDecisionOnEditedOccurrence(t *testing.T) {
+	master := string(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=20"))
+	st, series, edit := frozenICSFixture(t, master, "REQUEST", "RECURRENCE-ID:20270304T120000Z\r\nDTSTART:20270304T150000Z\r\nDURATION:PT1H")
+	_, note := projectionFixture(t, st, "frozen-manual-note", "meeting_json", `{}`)
+	seriesRef := MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270304T120000Z")}
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), seriesRef, noteRef, "link")
+	require.NoError(t, err)
+	for _, ref := range []MeetingLinkRef{seriesRef, {Kind: "evt", MessageID: edit}, noteRef} {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		require.NoError(t, err)
+		require.Len(t, record.Links, 1)
+		assert.Equal(t, edit, record.Links[0].MessageID)
+		require.NotNil(t, record.Links[0].Start)
+		assert.Equal(t, time.Date(2027, 3, 4, 15, 0, 0, 0, time.UTC), *record.Links[0].Start)
+		assert.Equal(t, []int64{note}, record.MessageIDs)
+	}
+}
+
 func TestFrozenICSAllDayOriginalZone(t *testing.T) {
 	master := string(calendarDocument("REQUEST", "DTSTART;VALUE=DATE:20270302\r\nDTEND;VALUE=DATE:20270303\r\nRRULE:FREQ=DAILY;COUNT=20"))
 	master = strings.Replace(master, "BEGIN:VEVENT", "X-WR-TIMEZONE:America/New_York\r\nBEGIN:VEVENT", 1)
