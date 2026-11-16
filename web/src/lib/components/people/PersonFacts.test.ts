@@ -9,7 +9,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it('shows the exact summary even when there are more than 50 claims', async () => {
   const fetchFn = vi.fn<typeof fetch>(async input => {
-    if (new URL(requestOf(input).url).pathname.endsWith('/fact-summary')) return Response.json({ claimed_fields: 73, latest_claim_at: '2026-11-01T12:00:00Z', has_stored_facts: true });
+    if (new URL(requestOf(input).url).pathname.endsWith('/fact-summary')) return Response.json({ claimed_fields: 73, latest_claim_at: '2026-11-01T12:00:00Z', has_values: false, has_fact_history: true });
     throw new Error('unexpected request');
   });
   render(PersonFacts, { client: createAPIClient(fetchFn), personID: 42 });
@@ -23,21 +23,21 @@ it('cancels the old summary when the person changes', async () => {
   const fetchFn = vi.fn<typeof fetch>(async input => {
     const request = requestOf(input);
     if (new URL(request.url).pathname.includes('/42/')) { oldRequest = request; return oldResponse; }
-    return Response.json({ claimed_fields: 2, latest_claim_at: '2026-11-03T12:00:00Z', has_stored_facts: true });
+    return Response.json({ claimed_fields: 2, latest_claim_at: '2026-11-03T12:00:00Z', has_values: false, has_fact_history: true });
   });
   const client = createAPIClient(fetchFn);
   const view = render(PersonFacts, { client, personID: 42 });
   await vi.waitFor(() => expect(oldRequest).toBeDefined());
   await view.rerender({ client, personID: 43 });
   expect(oldRequest!.signal.aborted).toBe(true);
-  resolveOld(Response.json({ claimed_fields: 9, latest_claim_at: '2026-11-01T12:00:00Z', has_stored_facts: true }));
+  resolveOld(Response.json({ claimed_fields: 9, latest_claim_at: '2026-11-01T12:00:00Z', has_values: false, has_fact_history: true }));
   await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Facts' }).closest('summary')?.textContent).toContain('2 fields'));
 });
 
 it('opens Facts after the first saved job with lookups off', async () => {
   let hasStored = false;
   const fetchFn = vi.fn<typeof fetch>(async input => {
-    if (new URL(requestOf(input).url).pathname.endsWith('/fact-summary')) return Response.json({ claimed_fields: 0, latest_claim_at: null, has_stored_facts: hasStored });
+    if (new URL(requestOf(input).url).pathname.endsWith('/fact-summary')) return Response.json({ claimed_fields: 0, latest_claim_at: null, has_values: hasStored, has_fact_history: false });
     throw new Error('unexpected request');
   });
   const client = createAPIClient(fetchFn), entity = new DirectoryEntityController(client, 42);
@@ -50,11 +50,21 @@ it('opens Facts after the first saved job with lookups off', async () => {
   entity.destroy();
 });
 
+it('opens Facts when only fact history exists and lookups are off', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async input => {
+    if (new URL(requestOf(input).url).pathname.endsWith('/fact-summary')) return Response.json({ claimed_fields: 0, latest_claim_at: null, has_values: false, has_fact_history: true });
+    throw new Error('unexpected request');
+  });
+  render(PersonFacts, { client: createAPIClient(fetchFn), personID: 42, onSetUp: vi.fn() });
+  await screen.findByText('No claims yet');
+  expect(screen.getByRole('heading', { name: 'Facts' }).closest('summary')).not.toBeNull();
+});
+
 it('keeps Facts openable and retries a failed summary', async () => {
   let fail = true;
   const fetchFn = vi.fn<typeof fetch>(async input => {
     const path = new URL(requestOf(input).url).pathname;
-    if (path.endsWith('/fact-summary')) return fail ? new Response(null, { status: 503 }) : Response.json({ claimed_fields: 0, latest_claim_at: null, has_stored_facts: true });
+    if (path.endsWith('/fact-summary')) return fail ? new Response(null, { status: 503 }) : Response.json({ claimed_fields: 0, latest_claim_at: null, has_values: false, has_fact_history: true });
     if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [] });
     if (path.endsWith('/fact-claims')) return Response.json({ claims: [] });
     if (path.endsWith('/fact-evidence')) return Response.json({ evidence: [] });

@@ -21,7 +21,7 @@
   let stored = $state<{ personID: number; data: FactSummary } | null>(null);
   let summaryError = $state(false);
   let retry = $state(0);
-  const openable = $derived(!onSetUp || summaryError || stored?.personID !== personID || stored.data.has_stored_facts);
+  const openable = $derived(!onSetUp || summaryError || stored?.personID !== personID || stored.data.has_values || stored.data.has_fact_history);
   $effect(() => {
     const id = personID; refreshKey; entity?.employments; profile?.attributes; retry;
     stored = null; summaryError = false;
