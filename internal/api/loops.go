@@ -144,12 +144,7 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err == nil {
-		if values, supplied := r.URL.Query()["include_closed"]; supplied {
-			opts.IncludeClosed, err = strconv.ParseBool(values[0])
-			if len(values) != 1 {
-				err = store.ErrInvalidActivityRequest
-			}
-		}
+		opts.IncludeClosed, _, err = queryBool(r, "include_closed")
 	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "person_id, limit and include_closed must be valid")

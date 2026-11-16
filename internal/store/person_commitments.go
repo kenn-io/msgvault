@@ -261,6 +261,10 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 		return PersonCommitment{}, sql.ErrNoRows
 	}
 	var result PersonCommitment
+	var deadline any
+	if until != nil {
+		deadline = s.dialect.TimestampParam(*until)
+	}
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
 			return err
@@ -268,7 +272,7 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 		var err error
 		result, err = scanPersonCommitment(tx.QueryRowContext(ctx, `UPDATE person_commitments
 			SET owner_state = ?, snoozed_until = ? WHERE id = ? RETURNING `+commitmentColumns,
-			state, s.commitmentDeadline(until), id))
+			state, deadline, id))
 		return err
 	})
 	if err == nil {
@@ -276,14 +280,6 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 		result = current
 	}
 	return result, err
-}
-
-// commitmentDeadline is the bind value for a snooze deadline; nil binds NULL.
-func (s *Store) commitmentDeadline(until *time.Time) any {
-	if until == nil {
-		return nil
-	}
-	return s.dialect.TimestampParam(*until)
 }
 
 // PersonCommitmentDiscoveryContext returns the saved discovery window and progress.

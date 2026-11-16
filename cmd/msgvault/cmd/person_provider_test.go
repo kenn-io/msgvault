@@ -899,7 +899,7 @@ func TestPersonProviderRevokeIsIdempotent(t *testing.T) {
 	assert.Equal(firstStatus.Consent.LastRevoked.ID, secondStatus.Consent.LastRevoked.ID)
 }
 
-func TestPersonProviderCommitmentConsentDisclosesAndReportsStatus(t *testing.T) {
+func TestPersonProviderCommitmentConsentIsSeparate(t *testing.T) {
 	must, check := require.New(t), assert.New(t)
 	cfg := personProviderTestConfig()
 	provider := cfg.Providers["default"]
@@ -922,23 +922,10 @@ func TestPersonProviderCommitmentConsentDisclosesAndReportsStatus(t *testing.T) 
 	check.True(*status.CommitmentsConsent)
 	check.False(status.Consent.Active)
 	check.Equal(profile.Fingerprint, status.Profile.Fingerprint)
-}
-
-func TestPersonProviderRevokesOnlyCommitmentConsent(t *testing.T) {
-	must, check := require.New(t), assert.New(t)
 	ctx := t.Context()
-	cfg := personProviderTestConfig()
-	profile, err := cfg.Profile()
-	must.NoError(err)
-	st := testutil.NewSQLiteTestStore(t)
-	_, err = st.EnsurePersonInferenceProfile(ctx, profile)
-	must.NoError(err)
 	_, _, err = st.GrantPersonInferenceConsent(ctx, profile.Fingerprint, "test")
 	must.NoError(err)
-	_, _, err = st.GrantPersonCommitmentConsent(ctx, profile.Fingerprint, "test")
-	must.NoError(err)
-	deps := localPersonProviderDeps(cfg, st, nil)
-	output, err := executePersonProviderCommand(t, deps, "revoke", "--commitments", "--json")
+	output, err = executePersonProviderCommand(t, deps, "revoke", "--commitments", "--json")
 	must.NoError(err)
 	check.Contains(output, `"revoked":true`)
 	commitments, err := st.HasActivePersonCommitmentConsent(ctx, profile.Fingerprint)
@@ -947,6 +934,43 @@ func TestPersonProviderRevokesOnlyCommitmentConsent(t *testing.T) {
 	must.NoError(err)
 	check.False(commitments)
 	check.True(ordinary)
+}
+
+type commitmentOutputErrorWriter struct{ match string }
+
+func (w commitmentOutputErrorWriter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), w.match) {
+		return 0, io.ErrClosedPipe
+	}
+	return len(p), nil
+}
+
+func TestPersonCommitmentConsentOutputErrors(t *testing.T) {
+	cfg := personProviderTestConfig()
+	provider := cfg.Providers["default"]
+	provider.AllowSensitive = true
+	cfg.Providers["default"] = provider
+	st := testutil.NewSQLiteTestStore(t)
+	deps := localPersonProviderDeps(cfg, st, nil)
+	command := &cobra.Command{}
+	command.SetContext(t.Context())
+
+	command.SetOut(commitmentOutputErrorWriter{match: "Commitment extraction sends"})
+	err := runPersonCommitmentConsent(command, deps, true, false)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+	profile, err := cfg.Profile()
+	require.NoError(t, err)
+	active, err := st.HasActivePersonCommitmentConsent(t.Context(), profile.Fingerprint)
+	require.NoError(t, err)
+	assert.False(t, active)
+
+	command.SetOut(commitmentOutputErrorWriter{match: "Commitment consent active."})
+	err = runPersonCommitmentConsent(command, deps, true, false)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+
+	command.SetOut(commitmentOutputErrorWriter{match: "Commitment consent revoked"})
+	err = runPersonCommitmentRevoke(command, deps, false)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
 }
 
 func TestPersonProviderListsAndRevokesAllGrantsWhenConfigIsDisabled(t *testing.T) {
