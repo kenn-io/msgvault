@@ -98,71 +98,6 @@ func (s *Store) resolveMeetingMessage(ctx context.Context, id int64) (int64, boo
 	return 0, false, errors.New("too many successive merges")
 }
 
-// meetingCopies finds the hidden copies that will return when dedup is undone.
-func (s *Store) meetingCopies(ctx context.Context, id int64) ([]int64, error) {
-	scope, args := sourceScopeClause(ctx, "m.source_id")
-	parentScope, parentArgs := sourceScopeClause(ctx, "parent.source_id")
-	args = append(args, parentArgs...)
-	args = append(args, id)
-	rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `WITH RECURSIVE `+meetingCopyGraphSQL(`SELECT 0,CAST(? AS BIGINT)`, scope, parentScope, "")+` SELECT id FROM copies`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, errors.Join(rows.Err(), rows.Close())
-}
-
-// meetingOccurrenceSeries finds a series directly or through another copy of an edit.
-func (s *Store) meetingOccurrenceSeries(ctx context.Context, id, sourceID int64, providerID string, original calrecur.Identity, budget *int) (int64, error) {
-	reader := s.meetingSQLReader(ctx)
-	seriesRows, err := queryCalendarEventRowsWithinBudget(ctx, reader, `m.source_id = ? AND e.provider_event_id = ? AND e.kind = 'series'`, []any{sourceID, providerID}, *budget)
-	if err != nil {
-		return 0, err
-	}
-	*budget -= len(seriesRows)
-	if len(seriesRows) > 0 {
-		return seriesRows[0].MessageID, nil
-	}
-	var hasChoices bool
-	if err := reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meeting_link_decisions WHERE (left_kind='evt' AND left_key=?) OR (right_kind='evt' AND right_key=?))`, original.Key(), original.Key()).Scan(&hasChoices); err != nil || !hasChoices {
-		return 0, err
-	}
-	copyScope, args := sourceScopeClause(ctx, "m.source_id")
-	parentScope, parentArgs := sourceScopeClause(ctx, "parent.source_id")
-	editScope, editArgs := sourceScopeClause(ctx, "em.source_id")
-	seriesScope, seriesArgs := sourceScopeClause(ctx, "sm.source_id")
-	resultScope, resultArgs := sourceScopeClause(ctx, "result.source_id")
-	var date string
-	var instant any
-	if original.AllDay {
-		date = original.Date
-	} else {
-		instant = original.Instant
-	}
-	args = append(args, parentArgs...)
-	args = append(args, date, instant)
-	args = append(args, editArgs...)
-	args = append(args, seriesArgs...)
-	args = append(args, id)
-	args = append(args, resultArgs...)
-	series := meetingSeriesLinksSQL(` AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)` + editScope + seriesScope)
-	query := `WITH RECURSIVE ` + meetingCopyGraphSQL(`SELECT 0,CAST(? AS BIGINT)`, copyScope, parentScope, series) + ` SELECT e.message_id FROM copies c JOIN calendar_events e ON e.message_id=c.id JOIN messages result ON result.id=e.message_id WHERE e.kind='series'` + resultScope + ` ORDER BY e.message_id LIMIT 1`
-	var seriesID int64
-	err = reader.QueryRowContext(ctx, query, args...).Scan(&seriesID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
-	return seriesID, err
-}
-
 // validateMeetingInput checks a dated event reference before normalizing it.
 func (s *Store) validateMeetingInput(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) error {
 	if endpoint.Kind != meetingRefEvent || endpoint.Key == "" {
@@ -788,11 +723,8 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 		if !purged[edge.a.ID] && !purged[edge.b.ID] {
 			continue
 		}
-		budget := calrecur.RequestReadBudget
-		a, b, ok, err := s.meetingPairEndpoints(ctx, edge.a, edge.b, &budget)
-		if err != nil {
-			return err
-		}
+		// A rescheduled occurrence can be inactive while its saved choice survives.
+		a, b, ok := edge.a, edge.b, true
 		if purged[edge.a.ID] {
 			var found bool
 			a.ID, found = replacement(edge.a.ID, edge.a.Key)
@@ -802,12 +734,6 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 			var found bool
 			b.ID, found = replacement(edge.b.ID, edge.b.Key)
 			ok = ok && found
-		}
-		if !purged[edge.a.ID] {
-			a = edge.a
-		}
-		if !purged[edge.b.ID] {
-			b = edge.b
 		}
 		if compareMeetingEndpoints(a, b) > 0 {
 			a, b = b, a

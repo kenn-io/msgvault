@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -3161,6 +3162,7 @@ func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) err
 		"FROM messages", "FROM src.messages", "JOIN messages", "JOIN src.messages",
 		"FROM calendar_events", "FROM src.calendar_events", "JOIN calendar_events", "JOIN src.calendar_events",
 		"FROM meeting_copy_survivors", "FROM src.meeting_copy_survivors",
+		"FROM meeting_link_decisions", "FROM src.meeting_link_decisions",
 		"FROM source_merge_messages", "FROM src.source_merge_messages",
 		"FROM source_merge_archive_only_messages", "FROM src.source_merge_archive_only_messages",
 	)
@@ -3201,23 +3203,33 @@ func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) err
 		if key.Kind != meetingRefEvent {
 			return endpoint, false, nil
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT e.message_id FROM src.calendar_events e JOIN src.messages m ON m.id=e.message_id JOIN src.calendar_events series ON series.message_id=? JOIN src.messages sm ON sm.id=series.message_id WHERE e.kind='exception' AND e.series_provider_id=series.provider_event_id AND m.source_id=sm.source_id AND e.message_id IN (SELECT id FROM selected_messages) ORDER BY e.message_id`, key.ID)
+		copies, err := s.meetingCopyLookup(ctx, key)
 		if err != nil {
 			return endpoint, false, err
 		}
 		var candidates []int64
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				return endpoint, false, errors.Join(err, rows.Close()) //nolint:sqlclosecheck // Close before returning the scan error.
+		for batch := range slices.Chunk(copies, 100) {
+			args := make([]any, len(batch))
+			for i, id := range batch {
+				args[i] = id
 			}
-			candidates = append(candidates, id)
-		}
-		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-			return endpoint, false, err
+			rows, err := tx.QueryContext(ctx, `SELECT id FROM selected_messages WHERE id IN (`+placeholders(len(batch))+`) ORDER BY id`, args...)
+			if err != nil {
+				return endpoint, false, err
+			}
+			for rows.Next() {
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					return endpoint, false, errors.Join(err, rows.Close()) //nolint:sqlclosecheck // Close before returning the scan error.
+				}
+				candidates = append(candidates, id)
+			}
+			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+				return endpoint, false, err
+			}
 		}
 		for _, id := range candidates {
-			candidate, err := s.meetingOccurrenceKey(ctx, meetingDecisionEndpoint{ID: id, Kind: meetingRefEvent}, &budget)
+			candidate, err := s.meetingOccurrenceKey(ctx, meetingDecisionEndpoint{ID: id, Kind: meetingRefEvent, Key: key.Key}, &budget)
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}

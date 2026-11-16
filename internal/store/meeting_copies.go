@@ -2,7 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
+
+	"go.kenn.io/msgvault/internal/calrecur"
 )
 
 // meetingSuccessorSQL follows dedup history and the current visible calendar copy.
@@ -32,6 +36,89 @@ func meetingCopyGraphSQL(seeds, scope, parentScope, series string) string {
 
 func meetingSeriesLinksSQL(condition string) string {
 	return `SELECT e.message_id,series.message_id,e.original_start_at,e.original_start_date FROM calendar_events e JOIN messages em ON em.id=e.message_id JOIN calendar_events series ON series.provider_event_id=e.series_provider_id AND series.kind='series' JOIN messages sm ON sm.id=series.message_id AND sm.source_id=em.source_id WHERE e.kind='exception' AND e.series_provider_id<>''` + condition
+}
+
+// meetingCopyLookup returns copies and, for a dated event, its series and edits.
+func (s *Store) meetingCopyLookup(ctx context.Context, endpoint meetingDecisionEndpoint) ([]int64, error) {
+	copyScope, args := sourceScopeClause(ctx, "m.source_id")
+	parentScope, parentArgs := sourceScopeClause(ctx, "parent.source_id")
+	args = append(args, parentArgs...)
+	series := ""
+	if endpoint.Kind == meetingRefEvent && endpoint.Key != "" {
+		ref, err := endpoint.meetingRef()
+		if err != nil {
+			return nil, err
+		}
+		var date string
+		var instant any
+		if ref.Identity.AllDay {
+			date = ref.Identity.Date
+		} else {
+			instant = ref.Identity.Instant
+		}
+		editScope, editArgs := sourceScopeClause(ctx, "em.source_id")
+		seriesScope, seriesArgs := sourceScopeClause(ctx, "sm.source_id")
+		args = append(args, date, instant)
+		args = append(args, editArgs...)
+		args = append(args, seriesArgs...)
+		series = meetingSeriesLinksSQL(` AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)` + editScope + seriesScope)
+	}
+	args = append(args, endpoint.ID)
+	query := `WITH RECURSIVE ` + meetingCopyGraphSQL(`SELECT 0,CAST(? AS BIGINT)`, copyScope, parentScope, series) + ` SELECT id FROM copies ORDER BY id`
+	rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, errors.Join(rows.Err(), rows.Close())
+}
+
+func (s *Store) meetingCopies(ctx context.Context, id int64) ([]int64, error) {
+	return s.meetingCopyLookup(ctx, meetingDecisionEndpoint{ID: id})
+}
+
+// meetingOccurrenceSeries finds the visible series directly or through copies.
+func (s *Store) meetingOccurrenceSeries(ctx context.Context, id, sourceID int64, providerID string, original calrecur.Identity, budget *int) (int64, error) {
+	reader := s.meetingSQLReader(ctx)
+	seriesRows, err := queryCalendarEventRowsWithinBudget(ctx, reader, `m.source_id = ? AND e.provider_event_id = ? AND e.kind = 'series'`, []any{sourceID, providerID}, *budget)
+	if err != nil {
+		return 0, err
+	}
+	*budget -= len(seriesRows)
+	if len(seriesRows) > 0 {
+		return seriesRows[0].MessageID, nil
+	}
+	var hasChoices bool
+	if err := reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meeting_link_decisions WHERE (left_kind='evt' AND left_key=?) OR (right_kind='evt' AND right_key=?))`, original.Key(), original.Key()).Scan(&hasChoices); err != nil || !hasChoices {
+		return 0, err
+	}
+	ids, err := s.meetingCopyLookup(ctx, meetingDecisionEndpoint{ID: id, Kind: meetingRefEvent, Key: original.Key()})
+	if err != nil {
+		return 0, err
+	}
+	for batch := range slices.Chunk(ids, 100) {
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := queryCalendarEventRowsWithinBudget(ctx, reader, `e.kind='series' AND e.message_id IN (`+placeholders(len(batch))+`)`, args, *budget)
+		if err != nil {
+			return 0, err
+		}
+		*budget -= len(rows)
+		if len(rows) > 0 {
+			return rows[0].MessageID, nil
+		}
+	}
+	return 0, nil
 }
 
 // recordMeetingCopyTx adds the edge that copy traversal and undo use.

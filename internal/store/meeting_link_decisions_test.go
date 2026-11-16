@@ -2318,3 +2318,94 @@ func TestMeetingDecisionRemoveSeriesSourceAfterEditedCopyMerge(t *testing.T) {
 	r.Contains(record.MessageIDs, note)
 	r.NotContains(record.MessageIDs, otherNote)
 }
+
+func TestMeetingDecisionEditedCopyFollowsMergedSeries(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	seriesRaw := `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
+	editRaw := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`
+	_, unrelated := calendarFixture(t, st, "unrelated-series", seriesRaw, "unrelated@example.com")
+	_, oldSeries := calendarFixture(t, st, "old-series", seriesRaw, "old@example.com")
+	_, oldEdit := calendarFixture(t, st, "old-edit", editRaw, "old@example.com")
+	_, newSeries := calendarFixture(t, st, "new-series", seriesRaw, "new@example.com")
+	_, newEdit := calendarFixture(t, st, "new-edit", editRaw, "orphan@example.com")
+	_, note := projectionFixture(t, st, "merged-series-note", "meeting_json", `{}`)
+	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: oldEdit}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), newSeries, []int64{oldSeries}, "series-copy")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), newEdit, []int64{oldEdit}, "edit-copy")
+	r.NoError(err)
+	for _, id := range []int64{oldEdit, newEdit} {
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: id})
+		r.NoError(err)
+		assert.Contains(t, record.MessageIDs, note)
+	}
+	other := MeetingLinkRef{Kind: "evt", MessageID: unrelated, Identity: occurrenceIdentity(t, "20270314T100000Z")}
+	record, err := st.MeetingRecordContext(t.Context(), other)
+	r.NoError(err)
+	r.NotContains(record.MessageIDs, note)
+}
+
+func TestMeetingDecisionPurgeRescheduledCopyKeepsOriginalChoice(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	original := `{"id":"single","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	_, duplicate := calendarFixture(t, st, "purge-original", original, "old@example.com")
+	data, survivor := calendarFixture(t, st, "purge-survivor", original, "new@example.com")
+	_, note := projectionFixture(t, st, "purge-rescheduled-note", "meeting_json", `{}`)
+	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: duplicate}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "purge-rescheduled")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"single","start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	_, err = st.DeleteDedupedBatchContext(t.Context(), "purge-rescheduled")
+	r.NoError(err)
+	data.RawMIME = []byte(original)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: survivor})
+	r.NoError(err)
+	r.Contains(record.MessageIDs, note)
+}
+
+func TestMeetingDecisionPurgeRescheduledCopyKeepsNewestChoice(t *testing.T) {
+	for _, newest := range []string{"link", "unlink"} {
+		t.Run(newest, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			original := `{"id":"single","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+			_, duplicate := calendarFixture(t, st, "priority-original", original, "old@example.com")
+			data, survivor := calendarFixture(t, st, "priority-survivor", original, "new@example.com")
+			_, note := projectionFixture(t, st, "priority-rescheduled-note", "meeting_json", `{}`)
+			noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+			older := "link"
+			if newest == "link" {
+				older = "unlink"
+			}
+			_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: survivor}, noteRef, older)
+			r.NoError(err)
+			_, err = st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: duplicate}, noteRef, newest)
+			r.NoError(err)
+			_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "priority-rescheduled")
+			r.NoError(err)
+			data.RawMIME = []byte(`{"id":"single","start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`)
+			_, err = st.PersistMessage(data)
+			r.NoError(err)
+			_, err = st.DeleteDedupedBatchContext(t.Context(), "priority-rescheduled")
+			r.NoError(err)
+			data.RawMIME = []byte(original)
+			_, err = st.PersistMessage(data)
+			r.NoError(err)
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: survivor})
+			r.NoError(err)
+			if newest == "link" {
+				r.Contains(record.MessageIDs, note)
+			} else {
+				r.NotContains(record.MessageIDs, note)
+			}
+		})
+	}
+}
