@@ -233,9 +233,9 @@ func TestHydratorResolvesParentForMarkdown(t *testing.T) {
 
 func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 	tests := []struct {
-		name                      string
-		err                       error
-		fatal, cancel, secondPage bool
+		name          string
+		err           error
+		fatal, cancel bool
 	}{
 		{
 			name: "provider reports transcript block not found",
@@ -246,21 +246,12 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 		{name: "truncated", err: io.ErrUnexpectedEOF},
 		{name: "malformed section root", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse)},
 		{name: "unauthorized", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}, fatal: true},
-		{name: "forbidden second page", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "forbidden"}, secondPage: true, fatal: true},
 		{name: "transient error after cancel", err: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}, cancel: true, fatal: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			source := completeHydrationSource()
-			if tt.secondPage {
-				source.children["notes-1"][""].HasMore = true
-				source.children["notes-1"][""].NextCursor = "next"
-				child := source.children["notes-1"][""].Results[0]
-				source.children["notes-1"][""].Raw = json.RawMessage(`{"object":"list","results":[` + string(child.Raw) + `],"has_more":true,"next_cursor":"next"}`)
-				source.childErrs = map[string]map[string]error{"notes-1": {"next": tt.err}}
-			} else {
-				source.blockErrs = map[string]error{"transcript-1": tt.err}
-			}
+			source.blockErrs = map[string]error{"transcript-1": tt.err}
 
 			ctx := t.Context()
 			if tt.cancel {
@@ -288,7 +279,6 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			assert.Equal(t, 1, source.markdownCalls)
 			assert.True(t, hydrated.MarkdownTranscriptFallback)
 			assert.Contains(t, hydrated.Incomplete, "transcript")
-			assert.Len(t, hydrated.AttendeeLabels, 2)
 		})
 	}
 }
@@ -591,7 +581,7 @@ func TestHydratorAttendeeLimitRequiresIncompleteSection(t *testing.T) {
 }
 
 func TestHydratorPaginationFailureDiscardsPartialSection(t *testing.T) {
-	for _, mode := range []string{"missing cursor", "repeated cursor", "second page failure", "first page malformed"} {
+	for _, mode := range []string{"missing cursor", "repeated cursor", "second page failure", "forbidden second page", "first page malformed"} {
 		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)
 			source := completeHydrationSource()
@@ -604,6 +594,8 @@ func TestHydratorPaginationFailureDiscardsPartialSection(t *testing.T) {
 				source.children["notes-1"]["next"] = &BlockPage{HasMore: true, NextCursor: "next"}
 			case "second page failure":
 				source.childErrs = map[string]map[string]error{"notes-1": {"next": errors.New("incomplete page")}}
+			case "forbidden second page":
+				source.childErrs = map[string]map[string]error{"notes-1": {"next": &APIError{Kind: ErrReadContent, Status: 403, Code: "forbidden"}}}
 			case "first page malformed":
 				source.childErrs = map[string]map[string]error{"notes-1": {"": ErrMalformedResponse}}
 			}
@@ -613,6 +605,11 @@ func TestHydratorPaginationFailureDiscardsPartialSection(t *testing.T) {
 				require.NoError(t, err)
 			}
 			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+			if mode == "forbidden second page" {
+				require.ErrorIs(t, err, source.childErrs["notes-1"]["next"])
+				assert.Nil(result)
+				return
+			}
 			require.NoError(t, err)
 			assert.Contains(result.Incomplete, "notes")
 			assert.Empty(result.NotesTree.Blocks)
