@@ -2123,3 +2123,120 @@ func TestMeetingRecordBatchesCopyScans(t *testing.T) {
 	r.Contains(record.MessageIDs, other)
 	r.LessOrEqual(copyScans, 2)
 }
+
+func TestMeetingDecisionClearCopiesThatResolveToSameMessage(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, kept := projectionFixture(t, st, "clear-same-kept", "meeting_json", `{}`)
+	_, first := projectionFixture(t, st, "clear-same-first", "meeting_json", `{}`)
+	_, second := projectionFixture(t, st, "clear-same-second", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(first), ref(second), "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{first}, "clear-same-first")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{second}, "clear-same-second")
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), ref(second), "clear")
+	r.NoError(err)
+	_, err = st.UndoDedup(t.Context(), "clear-same-first")
+	r.NoError(err)
+	_, err = st.UndoDedup(t.Context(), "clear-same-second")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(first))
+	r.NoError(err)
+	r.Equal([]int64{first}, record.MessageIDs)
+}
+
+func TestMeetingDecisionClearRescheduledSingleBeforeTimeRestored(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	original := `{"id":"clear-rescheduled","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	data, event := calendarFixture(t, st, "clear-rescheduled", original)
+	_, note := projectionFixture(t, st, "clear-rescheduled-note", "meeting_json", `{}`)
+	eventRef := MeetingLinkRef{Kind: "evt", MessageID: event}
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "link")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"clear-rescheduled","start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "clear")
+	r.NoError(err)
+	data.RawMIME = []byte(original)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Empty(record.Links)
+}
+
+func TestMeetingDecisionSourceMergeFollowNewLiveCalendarCopy(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"live-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	from, archived := calendarFixture(t, st, "archived-event", raw, "from@example.com")
+	into, _ := calendarFixture(t, st, "destination-other", `{"id":"other"}`, "into@example.com")
+	_, note := projectionFixture(t, st, "live-event-note", "meeting_json", `{}`)
+	eventRef := MeetingLinkRef{Kind: "evt", MessageID: archived}
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "link")
+	r.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: from.Message.SourceID, IntoSourceID: into.Message.SourceID})
+	r.NoError(err)
+	_, live := calendarFixture(t, st, "live-event", raw, "into@example.com")
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: live})
+	r.NoError(err)
+	r.Contains(record.MessageIDs, note)
+	record, err = st.MeetingRecordContext(t.Context(), eventRef)
+	r.NoError(err)
+	r.Contains(record.MessageIDs, note)
+	record, err = st.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	r.Equal(fmt.Sprintf("evt:%d", live), record.Links[0].Ref)
+	_, err = st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: live}, noteRef, "clear")
+	r.NoError(err)
+	record, err = st.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Empty(record.Links)
+}
+
+func TestMeetingDecisionClearRescheduledSingleByCurrentOccurrence(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	original := `{"id":"clear-current","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	data, event := calendarFixture(t, st, "clear-current", original)
+	_, note := projectionFixture(t, st, "clear-current-note", "meeting_json", `{}`)
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, noteRef, "link")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"clear-current","start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	current := MeetingLinkRef{Kind: "evt", MessageID: event, Identity: occurrenceIdentity(t, "20270315T100000Z")}
+	_, err = st.DecideMeetingLinkContext(t.Context(), current, noteRef, "clear")
+	r.NoError(err)
+	data.RawMIME = []byte(original)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Empty(record.Links)
+}
+
+func TestMeetingDecisionClearRejectsWrongSingleOccurrence(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "clear-wrong-single", `{"id":"clear-wrong","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "clear-wrong-note", "meeting_json", `{}`)
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, noteRef, "link")
+	r.NoError(err)
+	wrong := MeetingLinkRef{Kind: "evt", MessageID: event, Identity: occurrenceIdentity(t, "20270321T100000Z")}
+	_, err = st.DecideMeetingLinkContext(t.Context(), wrong, noteRef, "clear")
+	r.ErrorIs(err, sql.ErrNoRows)
+	record, err := st.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+}
