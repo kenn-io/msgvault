@@ -809,7 +809,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			_, markedGmail := markedGmailMessageIDs[sourceMessageID]
 			if i >= len(labelResults) {
 				err := errors.New("label metadata missing from batch response")
-				if s.requireLabelRefresh || markedGmail {
+				if s.requireLabelRefresh {
 					checkpoint.MessagesUpdated += result.updated
 					return nil, fmt.Errorf("fetch labels for %s: %w", sourceMessageID, err)
 				}
@@ -830,7 +830,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				continue
 			}
 			if labelResult.Err != nil {
-				if s.requireLabelRefresh || markedGmail {
+				if s.requireLabelRefresh {
 					checkpoint.MessagesUpdated += result.updated
 					return nil, fmt.Errorf("fetch labels for %s: %w", sourceMessageID, labelResult.Err)
 				}
@@ -955,6 +955,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 						sourceMessageID, err,
 					)
 				}
+				changed = true
 			}
 			if changed {
 				result.updated++

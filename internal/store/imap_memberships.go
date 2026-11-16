@@ -575,7 +575,8 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 		}
 		var candidates []IMAPMembershipObservation
 		for _, observation := range observations {
-			if _, known := roles[observation.Mailbox]; !known {
+			role, known := roles[observation.Mailbox]
+			if !known || role == "trash" || role == "all" {
 				continue
 			}
 			if markedIDs[observation.ArchivedMessageID] || markedKeys[observation.CanonicalSourceMessageID] ||
@@ -587,7 +588,7 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 		if err := resolver.primeIdentities(ctx, []normalizedIMAPMailboxDelta{{delta: IMAPMailboxDelta{Memberships: candidates}}}); err != nil {
 			return err
 		}
-		restored, inTrash := make(map[int64]bool), make(map[int64]bool)
+		restored := make(map[int64]bool)
 		for _, observation := range candidates {
 			messageID, err := resolver.resolveIdentity(ctx, observation, true)
 			if errors.Is(err, sql.ErrNoRows) {
@@ -599,16 +600,10 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 			if !markedIDs[messageID] {
 				continue
 			}
-			if roles[observation.Mailbox] == "trash" {
-				inTrash[messageID] = true
-			} else {
-				restored[messageID] = true
-			}
+			restored[messageID] = true
 		}
 		for messageID := range restored {
-			if inTrash[messageID] {
-				continue
-			}
+			// The filtered scan cannot retire saved memberships; only remove the stale visible Trash label.
 			if _, err := tx.ExecContext(ctx, `DELETE FROM message_labels WHERE message_id = ? AND label_id IN (SELECT id FROM labels WHERE source_id = ? AND system_role = 'trash')`, messageID, sourceID); err != nil {
 				return fmt.Errorf("remove stale IMAP Trash label for message %d: %w", messageID, err)
 			}
