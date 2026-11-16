@@ -52,7 +52,7 @@ func (s *Store) meetingDecisionEdgesBatch(ctx context.Context, endpoints []meeti
 		args = append(args, leftArgs...)
 		args = append(args, rightArgs...)
 		var hasChoices bool
-		err := reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE ((d.left_kind=? AND d.left_key=?) OR (d.right_kind=? AND d.right_key=?))`+leftScope+rightScope+`)`, args...).Scan(&hasChoices)
+		err := reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE ((d.left_kind=? AND (d.left_key=? OR (d.left_kind='evt' AND d.left_key=''))) OR (d.right_kind=? AND (d.right_key=? OR (d.right_kind='evt' AND d.right_key=''))))`+leftScope+rightScope+`)`, args...).Scan(&hasChoices)
 		if err != nil {
 			return nil, err
 		}
@@ -91,7 +91,7 @@ func (s *Store) meetingDecisionEdgesBatch(ctx context.Context, endpoints []meeti
 			args = append(args, *budget+1)
 			series := meetingSeriesLinksSQL(` AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)` + editScope + seriesScope)
 			query := `WITH RECURSIVE inputs(idx,id) AS (VALUES ` + strings.Join(values, ",") + `), ` + meetingCopyGraphSQL(`SELECT i.idx,m.id FROM inputs i JOIN messages m ON m.id=i.id`, copyScope, parentScope, series) + `
- SELECT i.idx,d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM inputs i JOIN meeting_link_decisions d ON ((d.left_message_id IN (SELECT id FROM copies WHERE idx=i.idx) AND d.left_kind=? AND d.left_key=?) OR (d.right_message_id IN (SELECT id FROM copies WHERE idx=i.idx) AND d.right_kind=? AND d.right_key=?)) JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE TRUE` + leftScope + rightScope + ` LIMIT ?`
+ SELECT i.idx,d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM inputs i JOIN meeting_link_decisions d ON ((d.left_message_id IN (SELECT id FROM copies WHERE idx=i.idx) AND d.left_kind=? AND (d.left_key=? OR (d.left_kind='evt' AND d.left_key=''))) OR (d.right_message_id IN (SELECT id FROM copies WHERE idx=i.idx) AND d.right_kind=? AND (d.right_key=? OR (d.right_kind='evt' AND d.right_key='')))) JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE TRUE` + leftScope + rightScope + ` LIMIT ?`
 			err := func() error {
 				rows, err := reader.QueryContext(ctx, query, args...)
 				if err != nil {

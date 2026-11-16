@@ -3161,6 +3161,7 @@ func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) err
 	rewrite := strings.NewReplacer(
 		"FROM messages", "FROM src.messages", "JOIN messages", "JOIN src.messages",
 		"FROM calendar_events", "FROM src.calendar_events", "JOIN calendar_events", "JOIN src.calendar_events",
+		"FROM sources", "FROM src.sources", "JOIN sources", "JOIN src.sources",
 		"FROM meeting_copy_survivors", "FROM src.meeting_copy_survivors",
 		"FROM meeting_link_decisions", "FROM src.meeting_link_decisions",
 		"FROM source_merge_messages", "FROM src.source_merge_messages",

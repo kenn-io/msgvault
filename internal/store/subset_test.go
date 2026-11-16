@@ -5971,3 +5971,34 @@ func TestCopySubsetMeetingDecisionOnEditedCopyInAnotherCalendar(t *testing.T) {
 	r.NoError(destination.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE id=?`, series).Scan(&count))
 	r.Zero(count)
 }
+
+func TestCopySubsetNoteOnlyAfterOccurrenceEdit(t *testing.T) {
+	r := require.New(t)
+	path := filepath.Join(t.TempDir(), "source.db")
+	source, err := Open(path)
+	r.NoError(err)
+	r.NoError(source.InitSchemaContext(t.Context()))
+	seriesData, series := calendarFixture(t, source, "subset-excluded-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "excluded@example.com")
+	_, note := projectionFixture(t, source, "subset-only-note", "meeting_json", `{}`)
+	slot := MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270314T100000Z")}
+	_, err = source.DecideMeetingLinkContext(t.Context(), slot, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+	r.NoError(err)
+	_, edit := calendarFixture(t, source, "subset-excluded-edit", `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`, "excluded@example.com")
+	_, err = source.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at=CASE WHEN id=? THEN '2029-01-01T00:00:00Z' ELSE '2020-01-01T00:00:00Z' END`, note)
+	r.NoError(err)
+	r.NoError(source.Close())
+	dir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), path, dir, 1, false)
+	r.NoError(err)
+	dst, err := Open(filepath.Join(dir, "msgvault.db"))
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(dst.Close()) })
+	var count int
+	r.NoError(dst.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE id IN (?,?)`, series, edit).Scan(&count))
+	r.Zero(count)
+	r.NoError(dst.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sources WHERE id=?`, seriesData.Message.SourceID).Scan(&count))
+	r.Zero(count)
+	record, err := dst.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	r.NoError(err)
+	r.Empty(record.Links)
+}

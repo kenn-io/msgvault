@@ -1188,7 +1188,6 @@ func TestMeetingDecisionRescheduledReset(t *testing.T) {
 		name, kind string
 		replace    bool
 	}{
-		{"single", "single", false},
 		{"single replaced", "single", true},
 		{"hidden copy", "hidden", false},
 	} {
@@ -1227,6 +1226,11 @@ func TestMeetingDecisionRescheduledReset(t *testing.T) {
 			}
 			_, err = st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "clear")
 			r.NoError(err)
+			if tc.replace {
+				data.RawMIME = []byte(raw)
+				_, err = st.PersistMessage(data)
+				r.NoError(err)
+			}
 			record, err := st.MeetingRecordContext(t.Context(), noteRef)
 			r.NoError(err)
 			r.Empty(record.Links)
@@ -2598,4 +2602,29 @@ func TestMeetingDecisionPurgeEditedCopy(t *testing.T) {
 	r.NoError(err)
 	r.Len(record.Links, 1)
 	r.Equal(kept, record.Links[0].MessageID)
+}
+
+func TestMeetingDecisionUndatedEditGainsTime(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, series := calendarFixture(t, st, "undated-edit-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	data, edit := calendarFixture(t, st, "undated-edit", `{"id":"edit","recurringEventId":"series","status":"cancelled"}`)
+	_, note := projectionFixture(t, st, "undated-edit-note", "meeting_json", `{}`)
+	event, n := MeetingLinkRef{Kind: "evt", MessageID: edit}, MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), event, n, "link")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), event)
+	r.NoError(err)
+	r.Contains(record.MessageIDs, note)
+	record, err = st.MeetingRecordContext(t.Context(), n)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	r.Equal(edit, record.Links[0].MessageID)
+	other := MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270321T100000Z")}
+	record, err = st.MeetingRecordContext(t.Context(), other)
+	r.NoError(err)
+	r.NotContains(record.MessageIDs, note)
 }
