@@ -1540,10 +1540,16 @@ func TestImporterRetriesOmittedTranscript(t *testing.T) {
 		pending                  bool
 	}{
 		{"page has transcript", "# Transcript\nNew page transcript", "New page transcript", false},
-		{"page has none", "# Notes\nNo transcript", "", true},
+		{"page has none", "# Notes\nNo transcript", "Saved page transcript", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
+			empty := paragraph("transcript-1", "", false)
+			source.blocks["transcript-1"] = &empty
+			source.markdown.Markdown = "# Transcript\nSaved page transcript"
+			var err error
+			source.markdown.Raw, err = json.Marshal(source.markdown)
+			require.NoError(t, err)
 			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(t, err)
 			var id int64
@@ -1556,18 +1562,40 @@ func TestImporterRetriesOmittedTranscript(t *testing.T) {
 			require.NoError(t, err)
 			body, err := st.GetMessageBodyText(t.Context(), id)
 			require.NoError(t, err)
-			assert.NotContains(t, body, "Test Speaker: Ready to ship.")
+			assert.Contains(t, body, tc.wantBody)
 			pending := lastNotionState(t, st, first.SourceID).Pending
 			if !tc.pending {
-				assert.Contains(t, body, tc.wantBody)
+				assert.NotContains(t, body, "Saved page transcript")
 				assert.Empty(t, pending)
 				return
 			}
 			require.Len(t, pending, 1)
-			assert.False(t, pending[0].Incomplete)
-			assert.False(t, second.PartialCoverage)
+			assert.True(t, pending[0].Incomplete)
+			assert.True(t, second.PartialCoverage)
 		})
 	}
+}
+
+func TestImporterClearsCompletedEmptyTranscript(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	empty := paragraph("transcript-1", "", false)
+	source.blocks["transcript-1"] = &empty
+	source.markdown.Markdown = "# Notes\nNo transcript"
+	source.markdown.Raw, err = json.Marshal(source.markdown)
+	require.NoError(t, err)
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.NotContains(t, body, "Test Speaker: Ready to ship.")
+	assert.False(t, second.PartialCoverage)
+	pending := lastNotionState(t, st, first.SourceID).Pending
+	require.Len(t, pending, 1)
+	assert.False(t, pending[0].Incomplete)
 }
 
 func TestImporterRetriesIncompleteSectionsAcrossWindows(t *testing.T) {
