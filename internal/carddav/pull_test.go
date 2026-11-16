@@ -376,10 +376,7 @@ func TestSyncSucceedsWhenBindingPreviewFails(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	service, st, _ := newPullService(t, server, true)
-	service.bindingPreviewHook = func() {
-		_, err := st.DB().ExecContext(t.Context(), `DROP TABLE participant_identifiers`)
-		require.NoError(t, err)
-	}
+	service.bindingPreviewHook = func() error { return errors.New("synthetic preview failure") }
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Created)

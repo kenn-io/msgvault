@@ -304,9 +304,10 @@ func TestServiceSyncFinishesBeforeBlockedPreview(t *testing.T) {
 	service := NewRemoteService(st, newMemoryRemote())
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	service.bindingPreviewHook = func() {
+	service.bindingPreviewHook = func() error {
 		close(entered)
 		<-release
+		return nil
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)

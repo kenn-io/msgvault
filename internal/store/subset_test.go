@@ -5832,6 +5832,9 @@ func TestCopySubsetKeepsCardDAVMembershipAfterReconcile(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(bound)
 	personID := bound.ID
+	var owned bool
+	require.NoError(source.DB().QueryRowContext(t.Context(), `SELECT carddav_owned FROM person_participants WHERE participant_id = 1`).Scan(&owned))
+	assert.True(owned)
 	require.NoError(source.Close())
 	destinationDir := filepath.Join(t.TempDir(), "subset")
 	_, err = CopySubsetWithOptions(t.Context(), sourcePath, destinationDir, 4, CopySubsetOptions{IncludeIdentity: true, IncludeProfiles: true, IncludeVCardResources: true})
@@ -5845,10 +5848,4 @@ func TestCopySubsetKeepsCardDAVMembershipAfterReconcile(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(bound)
 	assert.Equal(personID, bound.ID)
-	source, err = Open(sourcePath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = source.Close() })
-	var owned bool
-	require.NoError(source.DB().QueryRowContext(t.Context(), `SELECT carddav_owned FROM person_participants WHERE participant_id = 1`).Scan(&owned))
-	assert.True(owned)
 }

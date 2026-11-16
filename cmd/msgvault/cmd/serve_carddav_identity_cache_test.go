@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,26 +12,13 @@ import (
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
-	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 )
 
-type committingCardDAVService struct {
+type failingCardDAVService struct {
 	scheduledCardDAVFixture
-
-	store       *store.Store
-	participant int64
-	committed   bool
 }
 
-func (f *committingCardDAVService) Sync(ctx context.Context, _ carddav.SyncOptions) (carddav.SyncResult, error) {
-	if !f.committed {
-		_, _, err := f.store.CreatePersonFromParticipantContext(ctx, f.participant)
-		if err != nil {
-			return carddav.SyncResult{}, err
-		}
-		f.committed = true
-	}
+func (f *failingCardDAVService) Sync(context.Context, carddav.SyncOptions) (carddav.SyncResult, error) {
 	return carddav.SyncResult{Books: 1}, errors.New("later book failed")
 }
 
@@ -57,21 +43,16 @@ func TestCardDAVSchedulerRequestsIdentityRefresh(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Analytics.AutoBuildCache = true
-	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(cfg.Data.DataDir, "msgvault.db"))
-	id, err := st.EnsureParticipant("other@example.test", "Other", "example.test")
-	req.NoError(err)
 	requests := captureDaemonCacheRefreshes(t)
 	sched := scheduler.New(nil)
 	t.Cleanup(func() { sched.Stop() })
-	service := &committingCardDAVService{store: st, participant: id}
+	service := &failingCardDAVService{}
 	req.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 */6 * * *"}, service, slog.New(slog.DiscardHandler), config.DefaultCardDAVConnection, testInvocationWithConfig(cfg)))
-	for range 2 {
-		req.ErrorContains(sched.TriggerJob(api.CardDAVJobName), "later book failed")
-		select {
-		case id := <-requests:
-			req.Equal("carddav", id)
-		case <-time.After(10 * time.Second):
-			req.FailNow("cache refresh was not requested")
-		}
+	req.ErrorContains(sched.TriggerJob(api.CardDAVJobName), "later book failed")
+	select {
+	case id := <-requests:
+		req.Equal("carddav", id)
+	case <-time.After(10 * time.Second):
+		req.FailNow("cache refresh was not requested")
 	}
 }

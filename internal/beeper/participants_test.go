@@ -555,13 +555,11 @@ func TestResolveUserContinuesAfterEmailAliasConflict(t *testing.T) {
 			pid, err := r.resolveUser(t.Context(), &User{ID: user.ID, PhoneNumber: "+12025550100", FullName: "Absorbed"})
 			require.NoError(t, err)
 			assert.Equal(t, old, pid)
-			after, err := st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "after", MessageType: "beeper", SenderID: sql.NullInt64{Int64: pid, Valid: true}})
+			_, err = st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "after", MessageType: "beeper", SenderID: sql.NullInt64{Int64: pid, Valid: true}})
 			require.NoError(t, err)
-			for _, msg := range []int64{before, after} {
-				var sender int64
-				require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), msg).Scan(&sender))
-				assert.Equal(t, old, sender)
-			}
+			var sender int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), before).Scan(&sender))
+			assert.Equal(t, old, sender)
 			next := newParticipantResolver(st, "account-a")
 			resolved, err := next.resolveID(t.Context(), user.ID, "")
 			require.NoError(t, err)

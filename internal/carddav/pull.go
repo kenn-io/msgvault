@@ -33,7 +33,7 @@ type Service struct {
 	connectionName                   string
 	connectionGeneration             int64
 	conflictOperationMappingReadHook func()
-	bindingPreviewHook               func()
+	bindingPreviewHook               func() error
 	store                            *store.Store
 	remote                           Remote
 }
@@ -116,12 +116,16 @@ func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncRes
 		if recovered != nil {
 			panic(recovered)
 		}
-		if s.bindingPreviewHook != nil {
-			s.bindingPreviewHook()
-		}
 		snapshotCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cardDAVBindingPreviewTimeout)
 		defer cancel()
-		preview, snapshotErr := s.store.ReconcileCardDAVParticipantBindingsContext(snapshotCtx, store.CardDAVParticipantBindingOptions{DryRun: true})
+		var preview *store.CardDAVParticipantBindingResult
+		var snapshotErr error
+		if s.bindingPreviewHook != nil {
+			snapshotErr = s.bindingPreviewHook()
+		}
+		if snapshotErr == nil {
+			preview, snapshotErr = s.store.ReconcileCardDAVParticipantBindingsContext(snapshotCtx, store.CardDAVParticipantBindingOptions{DryRun: true})
+		}
 		if snapshotErr != nil {
 			slog.Warn("CardDAV binding conflict count unavailable", "error", snapshotErr)
 			result.BindingConflictsUnavailable = true

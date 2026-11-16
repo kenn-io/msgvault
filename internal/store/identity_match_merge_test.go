@@ -804,6 +804,23 @@ func TestMergeParticipantsRejectsCompetingEmailAlias(t *testing.T) {
 }
 
 func TestMergeParticipantsAllowsSharedEmail(t *testing.T) {
+	t.Run("different identifier type", func(t *testing.T) {
+		st := storetest.New(t).Store
+		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
+		require.NoError(t, err)
+		survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
+		require.NoError(t, err)
+		third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
+		require.NoError(t, err)
+		require.NoError(t, st.SetParticipantIdentifier(third, "imessage", "absorbed@example.test"))
+		require.NoError(t, st.MergeParticipants(absorbed, survivor))
+		owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
+		require.NoError(t, err)
+		assert.Equal(t, survivor, owner)
+		owner, _, err = st.ParticipantByIdentifierContext(t.Context(), "imessage", "absorbed@example.test")
+		require.NoError(t, err)
+		assert.Equal(t, third, owner)
+	})
 	t.Run("alias in survivor component", func(t *testing.T) {
 		st := storetest.New(t).Store
 		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")

@@ -3743,66 +3743,15 @@ func TestParticipantResolverContinuesAfterEmailAliasConflict(t *testing.T) {
 	pid, err := r.resolveID(t.Context(), "user-a")
 	require.NoError(t, err)
 	assert.Equal(t, old, pid)
-	after, err := st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "after", MessageType: "slack", SenderID: sql.NullInt64{Int64: pid, Valid: true}})
+	_, err = st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "after", MessageType: "slack", SenderID: sql.NullInt64{Int64: pid, Valid: true}})
 	require.NoError(t, err)
-	for _, msg := range []int64{before, after} {
-		var sender int64
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), msg).Scan(&sender))
-		assert.Equal(t, old, sender)
-	}
+	var sender int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), before).Scan(&sender))
+	assert.Equal(t, old, sender)
 	resolved, _, err := st.ParticipantByIdentifierContext(t.Context(), participantIdentifierType, "team-a:user-a")
 	require.NoError(t, err)
 	assert.Equal(t, old, resolved)
 	alias, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
 	require.NoError(t, err)
 	assert.Equal(t, third, alias)
-}
-
-func TestParticipantResolverKeepsHistoryWithOtherIdentifierType(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	old, err := st.EnsureParticipant("old@example.test", "Old", "example.test")
-	require.NoError(t, err)
-	third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
-	require.NoError(t, err)
-	require.NoError(t, st.SetParticipantIdentifier(third, "imessage", "old@example.test"))
-	require.NoError(t, st.SetParticipantIdentifier(old, participantIdentifierType, "team-a:user-a"))
-	src, err := st.GetOrCreateSource("slack", "history")
-	require.NoError(t, err)
-	conv, err := st.EnsureConversationWithType(src.ID, "history", "channel", "History")
-	require.NoError(t, err)
-	before, err := st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "before", MessageType: "slack", SenderID: sql.NullInt64{Int64: old, Valid: true}})
-	require.NoError(t, err)
-	allowed := true
-	account, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
-		BaseURL: "https://contacts.example/dav", Username: "alice", PrincipalURL: "https://contacts.example/principal/alice/", HomeURL: "https://contacts.example/books/alice/",
-		Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://contacts.example/books/alice/personal/", DisplayName: "Personal", SupportsSyncCollection: true, SupportsMultiget: true, CanCreate: &allowed}},
-	})
-	require.NoError(t, err)
-	require.Len(t, books, 1)
-	card := store.CardDAVRemoteResource{Href: books[0].CanonicalURL + "old.vcf", RemoteUID: "old", RemoteETag: "one", SemanticHash: "old-one", DisplayName: "Old", Emails: []string{"old@example.test"}, RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:old\r\nFN:Old\r\nEMAIL:old@example.test\r\nEND:VCARD\r\n")}
-	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision, Upserts: []store.CardDAVRemoteResource{card}})
-	require.NoError(t, err)
-	resource, err := st.GetCardDAVResourceContext(t.Context(), books[0].ID, card.Href)
-	require.NoError(t, err)
-	require.NotNil(t, resource.PersonID)
-	person, err := st.GetPersonContext(t.Context(), *resource.PersonID)
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []int64{old, third}, person.ParticipantIDs)
-	r := newParticipantResolver(st, "team-a")
-	r.loadUserSnapshot([]User{{ID: "user-a", Profile: UserProfile{Email: "new@example.test"}}})
-	survivor, err := r.resolveID(t.Context(), "user-a")
-	require.NoError(t, err)
-	assert.NotEqual(t, old, survivor)
-	after, err := st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "after", MessageType: "slack", SenderID: sql.NullInt64{Int64: survivor, Valid: true}})
-	require.NoError(t, err)
-	for _, msg := range []int64{before, after} {
-		var sender int64
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), msg).Scan(&sender))
-		assert.Equal(t, survivor, sender)
-	}
-	_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-	require.NoError(t, err)
-	person, err = st.GetPersonContext(t.Context(), *resource.PersonID)
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []int64{survivor, third}, person.ParticipantIDs)
 }

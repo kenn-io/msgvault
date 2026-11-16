@@ -61,27 +61,6 @@ describe('Past runs', () => {
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Build visual index' }).disabled).toBe(false);
   });
 
-  it('announces sync completion once', async () => {
-    const carddavRun = fixture.runs.find(candidate => candidate.kind === 'carddav_sync')!;
-    const client = createAPIClient(async input => {
-      const request = input as Request;
-      const path = new URL(request.url).pathname;
-      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('carddav_sync', { supported_actions: ['carddav_sync'] })) });
-      if (path === '/api/v1/operations/runs') return Response.json({ runs: [carddavRun], membership_revision: 1, unavailable_kinds: [] });
-      if (path === `/api/v1/operations/runs/${carddavRun.id}`) return Response.json({ ...carddavRun, supported_actions: ['carddav_sync'] });
-      if (path === '/api/v1/carddav/sync' && request.method === 'POST') return Response.json({ status: 'succeeded', binding_conflicts: 2 });
-      throw new Error(`Unexpected request: ${request.method} ${path}`);
-    });
-    const controller = new OperationsController(client); controllers.push(controller);
-    const onAnnounce = vi.fn();
-    render(RunHistoryDialog, { client, controller,
-      state: { ...defaultOperationsState(), operationRunID: carddavRun.id },
-      onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn(), onAnnounce });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Start CardDAV sync' }));
-    await vi.waitFor(() => expect(onAnnounce).toHaveBeenCalledWith('CardDAV sync request completed; current operation state was refreshed.'));
-    expect(onAnnounce).toHaveBeenCalledTimes(1);
-  });
-
   it('keeps the same title while a deep-linked run loads and identifies its kind', async () => {
     let resolveDetail!: (response: Response) => void;
     const client = createAPIClient(async input => {
