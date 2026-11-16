@@ -1605,15 +1605,27 @@ func TestPersonFactEmploymentPinnedOutcomeMatchesIdentity(t *testing.T) {
 		{"matching", `{"organization":{"name":"Example Company"},"title":"Engineer"}`, `{"organization":{"name":"Example Company"},"title":"Engineer"}`, personfacts.OutcomePinnedValueKept},
 		{"different employer", `{"organization":{"name":"Example Company"},"title":"Engineer"}`, `{"organization":{"name":"Other Company"},"title":"Engineer"}`, personfacts.OutcomeNotUsed},
 		{"different title", `{"organization":{"name":"Example Company"},"title":"Engineer"}`, `{"organization":{"name":"Example Company"},"title":"Manager"}`, personfacts.OutcomeNotUsed},
-		{"separate stints", `{"organization":{"name":"Example Company"},"title":"Engineer","start_date":{"year":2018},"end_date":{"year":2020}}`, `{"organization":{"name":"Example Company"},"title":"Engineer","start_date":{"year":2023},"end_date":{"year":2025}}`, personfacts.OutcomeNotUsed},
+		{"separate stints", "", "", personfacts.OutcomeNotUsed},
 		{"historical", `{"organization":{"name":"Example Company"},"title":"Engineer","end_date":{"year":2020}}`, `{"organization":{"name":"Example Company"},"title":"Engineer","role":"Developer","end_date":{"year":2020}}`, personfacts.OutcomePinnedValueKept},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, personID, _ := newPersonFactProjectionStore(t)
 			target := projectionTargetBySlug(t, st, "employment")
-			seed := personFactProjectionClaim(personID, target, tc.seed, "pin-seed")
-			_, err := st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, "pin-seed", []personfacts.ProposedClaim{seed}, nil), nil)
-			require.NoError(t, err)
+			var err error
+			if tc.name == "separate stints" {
+				organization := createPersonFactOrganization(t, st, "Example Company", "example.org")
+				_, err = st.AddEmploymentContext(t.Context(), EmploymentInput{
+					PersonID: personID, OrganizationID: organization.ID, Title: new("Engineer"),
+					StartDate: &PartialDate{Year: new(2018)}, EndDate: &PartialDate{Year: new(2020)},
+					IsCurrent: new(false), Source: ProvenanceUser,
+				})
+				require.NoError(t, err)
+				tc.claim = fmt.Sprintf(`{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"Engineer","start_date":{"year":2023},"end_date":{"year":2025}}`, organization.ID)
+			} else {
+				seed := personFactProjectionClaim(personID, target, tc.seed, "pin-seed")
+				_, err = st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, "pin-seed", []personfacts.ProposedClaim{seed}, nil), nil)
+				require.NoError(t, err)
+			}
 			_, err = st.SetPersonFactPinContext(t.Context(), personID, personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, true, "test")
 			require.NoError(t, err)
 			claim := personFactProjectionClaim(personID, target, tc.claim, "pin-claim")
