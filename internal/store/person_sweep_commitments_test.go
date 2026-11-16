@@ -62,6 +62,38 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	}
 }
 
+func TestCommitmentWeekdayDueDateSurvivesDecisions(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-weekday", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send it Monday."
+	persist("promise", quote, -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	const due = "2026-08-24"
+	parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send it","due_on":%q}]}`, window.Sources[0].ID, quote, len(quote), due)), window)
+	r.NoError(err)
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.NotNil(items[0].DueOn)
+	r.Equal(due, *items[0].DueOn)
+	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
+	r.NoError(err)
+	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateOpen, nil, request.CompletedAt)
+	r.NoError(err)
+	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.NotNil(items[0].DueOn)
+	r.Equal(due, *items[0].DueOn)
+}
+
 func TestCommitmentListPages(t *testing.T) {
 	t.Run("decision between pages", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()

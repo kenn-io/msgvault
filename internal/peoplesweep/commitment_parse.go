@@ -129,7 +129,7 @@ var (
 	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/(?:\d{4}|\d{2})\b`)
 	commitmentTomorrow        = regexp.MustCompile(`\b(day after )?tomorrow\b`)
 	commitmentRelativeDays    = regexp.MustCompile(`\bin ([a-z0-9]+) days?\b`)
-	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(?:(this|next)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
+	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:(?:by|on)\s+)?(?:(this|next)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
 	commitmentInTail          = regexp.MustCompile(`^\s+in\b`)
 )
 
@@ -162,7 +162,7 @@ func commitmentQuoteHasDate(quote string, due, event time.Time, location *time.L
 		return false
 	}
 	day := event.In(location)
-	return day.Format(time.DateOnly) == due.Format(time.DateOnly) && quoteHasPhrase(quote, "today", nil) || quoteHasTomorrow(quote, due, day) || quoteHasRelativeDays(quote, due, day) || quoteHasYearlessDate(quote, due, day) || quoteHasByWeekday(quote, due, day)
+	return day.Format(time.DateOnly) == due.Format(time.DateOnly) && quoteHasPhrase(quote, "today", nil) || quoteHasTomorrow(quote, due, day) || quoteHasRelativeDays(quote, due, day) || quoteHasYearlessDate(quote, due, day) || quoteHasWeekday(quote, due, day)
 }
 
 // quoteHasPhrase finds phrase as a whole token; allow, when set, vets the text after each match.
@@ -224,7 +224,7 @@ func quoteHasYearlessDate(quote string, due, day time.Time) bool {
 	return false
 }
 
-func quoteHasByWeekday(quote string, due, day time.Time) bool {
+func quoteHasWeekday(quote string, due, day time.Time) bool {
 	for _, span := range commitmentWeekdayDeadline.FindAllStringIndex(quote, -1) {
 		if commitmentInTail.MatchString(quote[span[1]:]) {
 			continue
