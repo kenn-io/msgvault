@@ -769,7 +769,7 @@ export async function installDirectoryReviewArchive(page: Page) {
                 target,
                 submitted_value: '"Allowed synthetic sensitive value."',
                 normalized_value: '"Allowed normalized sensitive value."',
-                kind: 'preference',
+                kind: 'fact',
                 status: 'stale',
                 relation: 'support',
                 origin: 'extraction',
