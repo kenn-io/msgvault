@@ -204,15 +204,6 @@ func newSyncCardDAVCmd() *cobra.Command {
 			return api.SyncCardDAVWithResponse(cmd.Context(), &generated.SyncCardDAVRequestOptions{Body: &body})
 		})
 		if err != nil {
-			if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Status == http.StatusConflict {
-				options := generated.ReconcileCardDAVParticipantBindingsBody{DryRun: true}
-				preview, previewErr := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ReconcileCardDAVParticipantBindingsResp, error) {
-					return api.ReconcileCardDAVParticipantBindingsWithResponse(cmd.Context(), &generated.ReconcileCardDAVParticipantBindingsRequestOptions{Body: &options})
-				})
-				if previewErr == nil && preview.JSON200 != nil && preview.JSON200.Conflicts > 0 {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.\n", preview.JSON200.Conflicts)
-				}
-			}
 			return err
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "CardDAV sync: %d books, %d created, %d updated, %d removed\n", resp.JSON200.Books, resp.JSON200.Created, resp.JSON200.Updated, resp.JSON200.Removed)

@@ -296,9 +296,8 @@ func (c *CardDAVController) Sync(ctx context.Context, req CardDAVSyncRequest) (c
 		if service == nil {
 			return carddav.SyncResult{}, carddav.ErrConnectionUnavailable
 		}
-		started := false
-		result, err := service.Sync(ctx, carddav.SyncOptions{Full: req.Full, Trigger: store.CardDAVSyncTriggerManual, OnRunStarted: func(int64) { started = true }})
-		c.setBindingConflicts(ctx, &result, started)
+		result, err := service.Sync(ctx, carddav.SyncOptions{Full: req.Full, Trigger: store.CardDAVSyncTriggerManual})
+		c.setBindingConflicts(ctx, &result, err == nil)
 		return result, err
 	}
 	var total carddav.SyncResult
