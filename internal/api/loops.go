@@ -111,7 +111,7 @@ func loopListParameters() []*huma.Param {
 	}
 	return []*huma.Param{
 		queryIntegerParam("person_id", "Only loops with this person"),
-		{Name: "include_closed", In: "query", Description: "Include done and snoozed commitments", Schema: &huma.Schema{Type: huma.TypeBoolean}},
+		queryBooleanParam("include_closed", "Include done and snoozed commitments"),
 		bounded("limit", "Maximum loops and commitments to return per collection", loops.DefaultLimit, loops.MaxLimit),
 	}
 }
