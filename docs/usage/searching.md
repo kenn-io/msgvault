@@ -156,8 +156,9 @@ address and calendar events of that calendar.
   import. For a file import you will not run again, use
   [`msgvault repair-derived`](../cli-reference.md#repair-derived).
 - Confirming or removing an address updates the messages it affects before
-  the command returns. If that update is interrupted, the next sync finishes
-  it.
+  the command returns. If that update is interrupted, the running daemon or
+  the next sync finishes it.
+  Explore lists each source with messages still waiting and offers Retry.
 - Both operators work in full-text, vector, and hybrid search.
 
 In the TUI account picker and the Web UI's Explore account filter, a source
@@ -168,7 +169,6 @@ same entries as their `account` argument: the keys that `get_stats` lists
 (`identity:...` or `unattributed:...`). A source's own address or display
 name, in any letter case, still selects that whole source; any other confirmed
 address selects the mail attributed to it on every source.
-Explore refreshes pending account matching and offers Retry for each affected source. Matching also resumes automatically after an identity change.
 
 Delivery headers are routing hints, not proof that you own an address, and
 attribution never lets msgvault send from it. The
