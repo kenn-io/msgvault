@@ -2276,16 +2276,38 @@ func TestMeetingDecisionDedupEditedOccurrenceWithoutSeries(t *testing.T) {
 	r := require.New(t)
 	a := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	_, series := calendarFixture(t, st, "copy-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "original@example.com")
-	raw := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`
+	_, series := calendarFixture(t, st, "copy-series", `{"id":"series","iCalUID":"copy@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "original@example.com")
+	raw := `{"id":"edit","iCalUID":"copy@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`
 	_, original := calendarFixture(t, st, "original-edit", raw, "original@example.com")
 	_, kept := calendarFixture(t, st, "orphan-edit", raw, "other@example.com")
 	_, note := projectionFixture(t, st, "edit-note", "meeting_json", `{}`)
+	_, automaticNote := projectionFixture(t, st, "automatic-edit-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"copy@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
 	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: original}, noteRef, "link")
 	r.NoError(err)
 	_, err = st.MergeDuplicates(t.Context(), kept, []int64{original}, "edited-copy")
 	r.NoError(err)
+	checkAutomatic := func() {
+		for _, ref := range []MeetingLinkRef{{Kind: "msg", MessageID: automaticNote}, {Kind: "evt", MessageID: kept}} {
+			record, err := st.MeetingRecordContext(t.Context(), ref)
+			r.NoError(err)
+			r.Contains(record.MessageIDs, automaticNote)
+			count := 0
+			for _, id := range record.MessageIDs {
+				if id == automaticNote {
+					count++
+				}
+			}
+			a.Equal(1, count)
+			r.Len(record.Links, 1)
+			r.NotNil(record.Links[0].Start)
+			r.NotNil(record.Links[0].End)
+			a.Equal(fmt.Sprintf("evt:%d", kept), record.Links[0].Ref)
+			a.Equal(time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC), *record.Links[0].Start)
+			a.Equal(time.Date(2027, 3, 15, 11, 0, 0, 0, time.UTC), *record.Links[0].End)
+		}
+	}
+	checkAutomatic()
 	for _, id := range []int64{original, kept} {
 		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: id})
 		r.NoError(err)
@@ -2317,6 +2339,9 @@ func TestMeetingDecisionDedupEditedOccurrenceWithoutSeries(t *testing.T) {
 	record, err = st.MeetingRecordContext(t.Context(), second)
 	r.NoError(err)
 	r.NotContains(record.MessageIDs, note)
+	_, err = st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: original}, noteRef, "clear")
+	r.NoError(err)
+	checkAutomatic()
 }
 
 func TestMeetingDecisionRemoveSeriesSourceAfterEditedCopyMerge(t *testing.T) {

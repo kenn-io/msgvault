@@ -88,6 +88,10 @@ func (s *Store) meetingCopies(ctx context.Context, id int64) ([]int64, error) {
 
 // meetingOccurrenceEdits finds the visible edits of one copied occurrence.
 func (s *Store) meetingOccurrenceEdits(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) ([]CalendarEventRow, error) {
+	hasCopies, err := s.meetingHasCopies(ctx)
+	if err != nil || !hasCopies {
+		return nil, err
+	}
 	ids, err := s.meetingCopyLookup(ctx, endpoint)
 	if err != nil {
 		return nil, err
@@ -111,6 +115,12 @@ func (s *Store) meetingOccurrenceEdits(ctx context.Context, endpoint meetingDeci
 	return edits, nil
 }
 
+func (s *Store) meetingHasCopies(ctx context.Context) (bool, error) {
+	var found bool
+	err := s.meetingSQLReader(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meeting_copy_survivors UNION ALL SELECT 1 FROM source_merge_messages)`).Scan(&found)
+	return found, err
+}
+
 // meetingOccurrenceSeries finds the visible series directly or through copies.
 func (s *Store) meetingOccurrenceSeries(ctx context.Context, id, sourceID int64, providerID string, original calrecur.Identity, budget *int) (int64, error) {
 	reader := s.meetingSQLReader(ctx)
@@ -122,8 +132,8 @@ func (s *Store) meetingOccurrenceSeries(ctx context.Context, id, sourceID int64,
 	if len(seriesRows) > 0 {
 		return seriesRows[0].MessageID, nil
 	}
-	var hasChoices bool
-	if err := reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meeting_link_decisions WHERE (left_kind='evt' AND left_key=?) OR (right_kind='evt' AND right_key=?))`, original.Key(), original.Key()).Scan(&hasChoices); err != nil || !hasChoices {
+	hasCopies, err := s.meetingHasCopies(ctx)
+	if err != nil || !hasCopies {
 		return 0, err
 	}
 	ids, err := s.meetingCopyLookup(ctx, meetingDecisionEndpoint{ID: id, Kind: meetingRefEvent, Key: original.Key()})

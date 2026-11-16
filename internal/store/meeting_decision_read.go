@@ -208,6 +208,10 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 				if err != nil {
 					return nil, err
 				}
+				record, err = s.meetingResolveOccurrenceLinks(ctx, record, budget)
+				if err != nil {
+					return nil, err
+				}
 				if endpoint == seeds[0] {
 					automatic = record
 				}
@@ -275,6 +279,57 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 		}
 	}
 	return &meetingDecisionGraph{nodes: nodes, groups: groups, warnings: warnings, candidates: candidates, automatic: automatic}, nil
+}
+
+// Resolve links before marking their members as discovered, including automatic links.
+func (s *Store) meetingResolveOccurrenceLinks(ctx context.Context, record MeetingRecord, budget *int) (MeetingRecord, error) {
+	links := make([]MeetingLink, 0, len(record.Links))
+	seen := map[string]bool{}
+	add := func(link MeetingLink) {
+		if !seen[link.Ref] {
+			links = append(links, link)
+			seen[link.Ref] = true
+		}
+	}
+	for _, link := range record.Links {
+		ref, err := ParseMeetingLinkRef(link.Ref)
+		if err != nil {
+			return record, err
+		}
+		if ref.Identity == (calrecur.Identity{}) {
+			add(link)
+			continue
+		}
+		edits, err := s.meetingOccurrenceEdits(ctx, endpointFromRef(ref), budget)
+		if err != nil {
+			return record, err
+		}
+		var replacements []MeetingLink
+		for _, edit := range edits {
+			copyRecord, err := s.meetingAutomaticRecord(ctx, MeetingLinkRef{Kind: meetingRefEvent, MessageID: edit.MessageID}, budget, false)
+			if err != nil {
+				return record, err
+			}
+			for _, copyLink := range copyRecord.Links {
+				if copyLink.MessageID == edit.MessageID {
+					replacements = append(replacements, copyLink)
+					record.MessageIDs = append(record.MessageIDs, copyRecord.MessageIDs...)
+					record.Unexpandable = append(record.Unexpandable, copyRecord.Unexpandable...)
+				}
+			}
+		}
+		if len(replacements) == 0 {
+			add(link)
+		} else {
+			for _, replacement := range replacements {
+				add(replacement)
+			}
+		}
+	}
+	record.Links = links
+	slices.Sort(record.MessageIDs)
+	record.MessageIDs = slices.Compact(record.MessageIDs)
+	return record, nil
 }
 
 func (g *meetingDecisionGraph) reduce() (func(string) string, []meetingDecisionEdge) {
