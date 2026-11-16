@@ -28,7 +28,7 @@ type MeetingSuggestion struct {
 
 func (s *Store) suggestionIntervalExpressions() (start, duration string) {
 	start = "COALESCE(m.sent_at, m.received_at, m.internal_date)"
-	duration = "CASE WHEN d.duration_seconds > 0 THEN d.duration_seconds ELSE 1800 END"
+	duration = "COALESCE(d.duration_seconds, 1800)"
 	return start, duration
 }
 
@@ -89,7 +89,7 @@ func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMe
 	args := appendInt64Args(nil, ids)
 	args = append(args, scopeArgs...)
 	start, duration := s.suggestionIntervalExpressions()
-	rows, err := r.QueryContext(ctx, `SELECT m.id,COALESCE(m.subject,''),`+start+`,`+duration+`,COALESCE(d.duration_seconds,0) FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL AND m.id IN (`+placeholders(len(ids))+`)`+scope+` ORDER BY m.id`, args...)
+	rows, err := r.QueryContext(ctx, `SELECT m.id,COALESCE(m.subject,''),`+start+`,`+duration+`,d.duration_seconds FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL AND m.id IN (`+placeholders(len(ids))+`)`+scope+` ORDER BY m.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,8 @@ func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMe
 	for rows.Next() {
 		var m suggestMember
 		var start nullableTimestamp
-		var duration, knownDuration float64
+		var duration float64
+		var knownDuration sql.NullFloat64
 		if err := rows.Scan(&m.ID, &m.Title, &start, &duration, &knownDuration); err != nil {
 			_ = rows.Close()
 			return nil, err
@@ -106,7 +107,7 @@ func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMe
 			m.Start = start.Time
 			m.End = m.Start.Add(time.Duration(duration * float64(time.Second)))
 		}
-		m.DurationKnown = knownDuration > 0
+		m.DurationKnown = knownDuration.Valid
 		members = append(members, m)
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
@@ -157,7 +158,7 @@ func (s *Store) suggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			return page, sql.ErrNoRows
 		}
 		member := members[0]
-		if member.Start.IsZero() {
+		if member.Start.IsZero() || !member.End.After(member.Start) {
 			return page, nil
 		}
 		events, err := s.listCalendarOccurrences(ctx, member.Start, member.End, false)
@@ -214,7 +215,7 @@ func (s *Store) suggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		}
 		values := []any{*seed.End, *seed.Start}
 		values = append(values, args...)
-		rows, err := r.QueryContext(ctx, `SELECT m.id FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL AND `+startExpr+` < `+startBound+` AND `+endExpr+` > `+endBound+scope+` ORDER BY m.id LIMIT 2001`, values...)
+		rows, err := r.QueryContext(ctx, `SELECT m.id FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL AND `+duration+` > 0 AND `+startExpr+` < `+startBound+` AND `+endExpr+` > `+endBound+scope+` ORDER BY m.id LIMIT 2001`, values...)
 		if err != nil {
 			return page, err
 		}

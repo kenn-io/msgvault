@@ -421,6 +421,47 @@ func TestMeetingSuggestionsMixedDurationRanking(t *testing.T) {
 	r.Equal(30, page.Suggestions[2].OverlapMinutes)
 }
 
+func TestMeetingSuggestionsZeroAndMissingDuration(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "duration-event", `{"id":"duration","start":{"dateTime":"2027-03-14T10:05:00Z"},"end":{"dateTime":"2027-03-14T10:20:00Z"}}`)
+	zeroData, zero := projectionFixture(t, st, "zero-duration", "meeting_json", `{"duration_seconds":0,"chatwoot":{}}`)
+	insideData, inside := projectionFixture(t, st, "zero-during-event", "meeting_json", `{"duration_seconds":0,"chatwoot":{}}`)
+	missingData, missing := projectionFixture(t, st, "missing-duration", "meeting_json", `{}`)
+	zeroData.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
+	insideData.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 10, 0, 0, time.UTC), Valid: true}
+	missingData.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
+	_, err := st.UpsertMessage(zeroData.Message)
+	r.NoError(err)
+	_, err = st.UpsertMessage(insideData.Message)
+	r.NoError(err)
+	_, err = st.UpsertMessage(missingData.Message)
+	r.NoError(err)
+
+	members, err := st.suggestionMembers(t.Context(), []int64{zero, missing})
+	r.NoError(err)
+	r.Len(members, 2)
+	r.True(members[0].DurationKnown)
+	r.Equal(members[0].Start, members[0].End)
+	r.False(members[1].DurationKnown)
+	r.Equal(30*time.Minute, members[1].End.Sub(members[1].Start))
+
+	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: zero}, 10, nil)
+	r.NoError(err)
+	r.Empty(page.Suggestions)
+	page, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: inside}, 10, nil)
+	r.NoError(err)
+	r.Empty(page.Suggestions)
+	page, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: missing}, 10, nil)
+	r.NoError(err)
+	r.Len(page.Suggestions, 1)
+	r.Equal(fmt.Sprintf("evt:%d", event), page.Suggestions[0].Ref)
+	page, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, 10, nil)
+	r.NoError(err)
+	r.Len(page.Suggestions, 1)
+	r.Equal(missing, page.Suggestions[0].MemberMessageID)
+}
+
 func TestMeetingSuggestionsBudgetAfterFirstResult(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
