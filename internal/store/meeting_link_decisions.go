@@ -181,10 +181,14 @@ func (s *Store) meetingOccurrenceKey(ctx context.Context, endpoint meetingDecisi
 			endpoint.ID = edits[0].MessageID
 		}
 	case calendarExceptionKind:
-		endpoint.Key = ""
+		key := ""
 		if row.Event.Original != nil {
-			endpoint.Key = row.Event.Original.Key()
+			key = row.Event.Original.Key()
 		}
+		if endpoint.Key != "" && endpoint.Key != key {
+			return endpoint, sql.ErrNoRows
+		}
+		endpoint.Key = key
 	default:
 		key := ""
 		if row.Event.Start != nil {

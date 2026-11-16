@@ -2667,3 +2667,33 @@ func TestMeetingDecisionRemoveSourceKeepsEditedOccurrenceKey(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingDecisionEditedOriginalTimeChanges(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	initial := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`
+	data, edit := calendarFixture(t, st, "changing-original-edit", initial)
+	_, note := projectionFixture(t, st, "changing-original-note", "meeting_json", `{}`)
+	event, n := MeetingLinkRef{Kind: "evt", MessageID: edit}, MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), event, n, "link")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"start":{"dateTime":"2027-03-22T10:00:00Z"},"end":{"dateTime":"2027-03-22T11:00:00Z"}}`)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), event)
+	r.NoError(err)
+	r.NotContains(record.MessageIDs, note)
+	record, err = st.MeetingRecordContext(t.Context(), n)
+	r.NoError(err)
+	r.Empty(record.Links)
+	data.RawMIME = []byte(initial)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	record, err = st.MeetingRecordContext(t.Context(), event)
+	r.NoError(err)
+	r.Contains(record.MessageIDs, note)
+	record, err = st.MeetingRecordContext(t.Context(), n)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	r.Equal(edit, record.Links[0].MessageID)
+}
