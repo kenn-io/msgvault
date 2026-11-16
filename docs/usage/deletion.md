@@ -160,8 +160,7 @@ If that move fails, the batch records the failure rather than switching to
 permanent deletion. Microsoft Graph mail moves messages to Deleted Items, where
 you can restore them in Outlook. A later sync keeps them marked as deleted
 while they stay in Deleted Items. Gmail and IMAP follow the same rule: sync
-clears the mark when it confirms the message outside Trash. Trashing a message in
-the provider's own app does not set the mark.
+clears the mark when it confirms the message outside Trash.
 
 A filtered IMAP sync can clear the mark when it matches the message in a
 specific mailbox outside Trash and All Mail. It keeps the saved mailbox labels,

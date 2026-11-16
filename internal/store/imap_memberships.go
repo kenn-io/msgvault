@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // IMAPMembershipObservation records one observed mailbox UID and its message identity.
@@ -565,12 +567,43 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 			if err != nil {
 				return err
 			}
+			if observation.RFC822MessageID == "" && observation.RawSHA256 != ([32]byte{}) {
+				rawID, unique, err := resolver.resolveRawSHA256(ctx, observation.RawSHA256, observation.RawSize)
+				if err != nil {
+					return err
+				}
+				if unique && rawID == messageID {
+					if err := s.hideFilteredIMAPCopy(ctx, tx, sourceID, messageID, observation.SourceMessageID); err != nil {
+						return err
+					}
+				}
+			}
 			if err := s.clearMessageDeletedFromSourceTx(ctx, tx, `id = ? AND source_id = ?`, messageID, sourceID); err != nil {
 				return fmt.Errorf("message %d: %w", messageID, err)
 			}
 		}
 		return nil
 	})
+}
+
+func (s *Store) hideFilteredIMAPCopy(ctx context.Context, tx *loggedTx, sourceID, originalID int64, sourceMessageID string) error {
+	var copyID int64
+	err := tx.QueryRowContext(ctx, fmt.Sprintf(`UPDATE messages SET deleted_at = %s, delete_batch_id = ?
+		WHERE source_id = ? AND source_message_id = ? AND id <> ?
+		  AND deleted_at IS NULL AND deleted_from_source_at IS NULL
+		  AND EXISTS (SELECT 1 FROM messages original WHERE original.id = ? AND original.deleted_from_source_at IS NOT NULL)
+		  AND NOT EXISTS (SELECT 1 FROM imap_message_memberships membership WHERE membership.message_id = messages.id)
+		RETURNING id`, s.dialect.Now()), uuid.NewString(), sourceID, sourceMessageID, originalID, originalID).Scan(&copyID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("hide filtered IMAP copy: %w", err)
+	}
+	if !s.IsPostgreSQL() {
+		_, err = tx.ExecContext(ctx, `INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('message_facts', ?)`, copyID)
+	}
+	return err
 }
 
 // imapMembershipUID identifies one saved membership row within a mailbox.

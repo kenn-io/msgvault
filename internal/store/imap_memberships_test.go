@@ -1502,6 +1502,10 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	for _, id := range []string{"Trash|3", "Trash|4", "Trash|5"} {
 		require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, id))
 	}
+	ambiguousCopy := f.createMessage(t, "INBOX|4", "")
+	require.NoError(t, f.store.UpsertMessageRaw(ambiguousCopy, ambiguousData))
+	uniqueCopy := f.createMessage(t, "INBOX|3", "")
+	require.NoError(t, f.store.UpsertMessageRaw(uniqueCopy, uniqueData))
 	syncID, err := f.store.StartSync(f.source.ID, "full")
 	require.NoError(t, err)
 	require.NoError(t, f.store.CompleteSync(syncID, ""))
@@ -1520,8 +1524,16 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	assert.True(t, messageTombstoned(t, f.store, allOnly))
 	assert.True(t, messageTombstoned(t, f.store, ambiguous))
 	assert.False(t, messageTombstoned(t, f.store, uniqueRaw))
+	var uniqueCopyHidden bool
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL AND deleted_from_source_at IS NULL FROM messages WHERE id = ?`), uniqueCopy).Scan(&uniqueCopyHidden))
+	assert.True(t, uniqueCopyHidden)
 	assert.True(t, messageTombstoned(t, f.store, ambiguousRaw1))
 	assert.True(t, messageTombstoned(t, f.store, ambiguousRaw2))
+	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, ambiguousRaw1))
+	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, ambiguousRaw2))
+	var copyLive bool
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT deleted_at IS NULL AND deleted_from_source_at IS NULL FROM messages WHERE id = ?`), ambiguousCopy).Scan(&copyLive))
+	assert.True(t, copyLive)
 	assert.True(t, messageTombstoned(t, f.store, stillTrash))
 	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, stillTrash))
 	assert.Equal(t, 6, membershipCount(t, f.store, f.source.ID))

@@ -189,6 +189,8 @@ func TestRunScheduledIMAPSync_FilteredRestoreWithoutMessageID(t *testing.T) {
 	var originalID int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), src.ID, "Trash|1").Scan(&originalID))
 	require.NoError(t, st.MarkMessageDeleted(src.ID, "Trash|1"))
+	var journalBaseline int64
+	require.NoError(t, st.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&journalBaseline))
 	testutil.ExpungeIMAPMessage(t, addr, "Trash", imapapi.UID(1))
 	testutil.AppendIMAPRawMessage(t, user, "INBOX", raw)
 	cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
@@ -198,6 +200,24 @@ func TestRunScheduledIMAPSync_FilteredRestoreWithoutMessageID(t *testing.T) {
 	var marked bool
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), originalID).Scan(&marked))
 	assert.False(t, marked, "the original archived message should lose its deletion mark")
+	var hiddenID int64
+	require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = 'INBOX|1' AND deleted_at IS NOT NULL AND deleted_from_source_at IS NULL`), src.ID).Scan(&hiddenID))
+	var journalCount int
+	require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`), journalBaseline, hiddenID).Scan(&journalCount))
+	assert.Positive(t, journalCount)
+	for i := range 2 {
+		var live int
+		require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND deleted_at IS NULL AND deleted_from_source_at IS NULL`), src.ID).Scan(&live))
+		assert.Equal(t, 1, live)
+		plan, err := st.PlanGCContext(ctx)
+		require.NoError(t, err)
+		assert.NotContains(t, plan.SourceDeletedIDs, originalID)
+		if i == 0 {
+			summary, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+			require.NoError(t, err)
+			require.Zero(t, summary.Errors)
+		}
+	}
 }
 
 func TestSaveIMAPFolderStates_ExclusionPreservesPriorState(t *testing.T) {
