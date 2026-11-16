@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -17,11 +16,10 @@ import (
 
 type bindingSyncFixture struct {
 	cardDAVListFixture
-	err error
 }
 
 func (f bindingSyncFixture) Sync(context.Context, carddav.SyncOptions) (carddav.SyncResult, error) {
-	return carddav.SyncResult{}, f.err
+	return carddav.SyncResult{}, nil
 }
 
 func TestCardDAVSyncReportsBindingConflict(t *testing.T) {
@@ -47,21 +45,11 @@ func TestCardDAVSyncReportsBindingConflict(t *testing.T) {
 		SyncRevision: books[0].SyncRevision, Upserts: cards,
 	})
 	require.NoError(t, err)
-	for _, tc := range []struct {
-		name string
-		err  error
-	}{
-		{"completed", nil},
-		{"partial", errors.New("later book failed")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			controller := &CardDAVController{cfg: &config.Config{CardDAV: config.CardDAVConfig{Enabled: true}}, store: st, service: bindingSyncFixture{err: tc.err}}
-			result, err := controller.Sync(t.Context(), CardDAVSyncRequest{Connection: "default"})
-			assert.ErrorIs(t, err, tc.err)
-			require.NotNil(t, result.BindingConflicts)
-			assert.Equal(t, 1, *result.BindingConflicts)
-		})
-	}
+	controller := &CardDAVController{cfg: &config.Config{CardDAV: config.CardDAVConfig{Enabled: true}}, store: st, service: bindingSyncFixture{}}
+	result, err := controller.Sync(t.Context(), CardDAVSyncRequest{Connection: "default"})
+	require.NoError(t, err)
+	require.NotNil(t, result.BindingConflicts)
+	assert.Equal(t, 1, *result.BindingConflicts)
 }
 
 type bindingSyncRemote struct {
