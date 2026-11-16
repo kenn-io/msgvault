@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+
+	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 // ErrAlreadyLinked is returned by LinkParticipants when the requested edge
@@ -363,6 +365,26 @@ func (s *Store) linkParticipantsContextGuarded(
 	return s.linkParticipantsContextGuardedOwned(ctx, a, b, 0, guard, nil)
 }
 
+func (s *Store) restoreConfirmedMembershipsTx(ctx context.Context, tx *loggedTx, personID, lo, hi int64, members []int64, edges []linkEdge) (bool, error) {
+	if err := extendActivePersonMergeLineageTx(ctx, tx, personID, lo, hi, edges, false); err != nil {
+		return false, err
+	}
+	changed, err := s.bindPersonParticipantsOwnedTx(ctx, tx, personID, members, false)
+	if err != nil || !changed {
+		return changed, err
+	}
+	if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
+		return false, err
+	}
+	if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID); err != nil {
+		return false, err
+	}
+	if err := s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}, peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // linkParticipantsContextGuardedOwned is the guarded link transaction with an
 // optional identity-match-candidate owner. A zero owner preserves the
 // ordinary user/import link path. The owner is written with the edge itself,
@@ -420,24 +442,9 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 				membershipChanged := false
 				if confirmMembership && personID != 0 {
 					withoutEdge := slices.DeleteFunc(slices.Clone(edges), func(edge linkEdge) bool { return edge == e })
-					if err := extendActivePersonMergeLineageTx(ctx, tx, personID, lo, hi, withoutEdge, false); err != nil {
-						return err
-					}
-					changed, err := s.bindPersonParticipantsOwnedTx(ctx, tx, personID, unionMembers, false)
+					membershipChanged, err = s.restoreConfirmedMembershipsTx(ctx, tx, personID, lo, hi, unionMembers, withoutEdge)
 					if err != nil {
 						return err
-					}
-					if changed {
-						membershipChanged = true
-						if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
-							return err
-						}
-						if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID); err != nil {
-							return err
-						}
-						if err := s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}); err != nil {
-							return err
-						}
 					}
 				}
 				if ownerCandidateID == 0 {
@@ -483,7 +490,18 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 			// have cleared durable recovery state, so commit that update while
 			// preserving ErrAlreadyLinked for ordinary manual link callers.
 			if ownerCandidateID > 0 {
-				revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
+				changed := false
+				if confirmMembership && personID != 0 {
+					changed, err = s.restoreConfirmedMembershipsTx(ctx, tx, personID, lo, hi, unionMembers, edges)
+					if err != nil {
+						return err
+					}
+				}
+				if changed {
+					revision, err = s.bumpIdentityRevisionContext(ctx, tx)
+				} else {
+					revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
+				}
 				if err != nil {
 					return err
 				}
@@ -549,7 +567,7 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		if err == nil {
 			linked = true
 			if personID != 0 {
-				err = s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID})
+				err = s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}, peoplesweep.EvidenceEffectIdentityReassigned)
 			}
 		}
 		if err == nil && afterLink != nil {
@@ -772,7 +790,7 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 		if err != nil {
 			return err
 		}
-		if err := s.publishPersonIdentityScopeChangesTx(context.Background(), tx, trackedPeople); err != nil {
+		if err := s.publishPersonIdentityScopeChangesTx(context.Background(), tx, trackedPeople, peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
 			return err
 		}
 		return s.invalidatePersonEnrichmentIdentitiesTx(

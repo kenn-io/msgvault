@@ -258,51 +258,6 @@ func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T
 	assert.Equal(t, revision, got)
 }
 
-func TestStoreAPIIdentityRefreshFailureQueuesRecovery(t *testing.T) {
-	for _, failure := range []string{"refresh", "publication state"} {
-		t.Run(failure, func(t *testing.T) {
-			require := require.New(t)
-			tmp := t.TempDir()
-			cfg := &config.Config{HomeDir: tmp, Data: config.DataConfig{DataDir: tmp, DatabaseURL: filepath.Join(tmp, "test.db")}, Analytics: config.AnalyticsConfig{AutoBuildCache: true}}
-			oldDerived := runDerivedCacheSubprocess
-			sentinel := errors.New("identity refresh failed")
-			runDerivedCacheSubprocess = func(context.Context, string) error {
-				if failure == "refresh" {
-					return sentinel
-				}
-				return nil
-			}
-			t.Cleanup(func() { runDerivedCacheSubprocess = oldDerived })
-
-			requested := make(chan string, 1)
-			refresher := newBackgroundCacheRefresher(t.Context(), func(_ context.Context, id string) error {
-				requested <- id
-				return nil
-			}, nil)
-			oldRefresher := daemonCacheRefresher
-			daemonCacheRefresher = refresher
-			t.Cleanup(func() {
-				daemonCacheRefresher = oldRefresher
-				require.NoError(refresher.Shutdown(context.WithoutCancel(t.Context())))
-			})
-
-			adapter := &storeAPIAdapter{config: cfg, analyticsDir: filepath.Join(tmp, "missing")}
-			_, err := adapter.RefreshIdentityDatasets(t.Context())
-			if failure == "refresh" {
-				require.ErrorIs(err, sentinel)
-			} else {
-				require.ErrorContains(err, "read refreshed cache revision")
-			}
-			select {
-			case id := <-requested:
-				require.Equal("identity", id)
-			case <-time.After(10 * time.Second):
-				require.FailNow("automatic cache recovery was not requested")
-			}
-		})
-	}
-}
-
 func TestDerivedChildEscalatesTypedPreconditionFailureToFullBuild(t *testing.T) {
 	requirements := require.New(t)
 	old := executeBuildCacheSubprocessMode

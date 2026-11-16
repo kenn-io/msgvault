@@ -5,29 +5,6 @@ import { createAPIClient } from '../../api/client';
 import { CardDAVController } from '../../carddav/controller.svelte';
 import CardDAVOperations from './CardDAVOperations.svelte';
 
-const readyStatus = { configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '' };
-const conflictWarning = /to review \d+ CardDAV binding conflicts?\./;
-
-function warningText(): string | undefined {
-  return screen.queryByText(conflictWarning)?.textContent?.replace(/\s+/g, ' ').trim();
-}
-
-function syncFetch(sync: () => Response | Promise<Response>) {
-  return vi.fn<typeof fetch>(async (input) => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/status')) return Response.json(readyStatus);
-    if (path.endsWith('/books')) return Response.json({ books: [] });
-    if (path.endsWith('/runs')) return Response.json({ runs: [] });
-    if (path.endsWith('/sync')) return sync();
-    throw new Error(`Unexpected ${request.method} ${path}`);
-  });
-}
-
-function syncResult(extra: Record<string, unknown> = {}) {
-  return Response.json({ status: 'succeeded', books: 1, created: 0, updated: 0, removed: 0, ...extra });
-}
-
 describe('CardDAVOperations', () => {
   it('opens normalized CardDAV operation history through its shell callback', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -229,41 +206,6 @@ describe('CardDAVOperations', () => {
     render(CardDAVOperations, { controller, syncConnection: 'work' });
     await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
     expect(sync).toHaveBeenCalledExactlyOnceWith('work');
-    controller.destroy();
-  });
-
-  it('warns about binding conflicts after a sync and clears the warning when the next sync starts', async () => {
-    let second: ((response: Response) => void) | undefined;
-    let syncs = 0;
-    const controller = new CardDAVController(createAPIClient(syncFetch(() => {
-      if (syncs++ === 0) return syncResult({ binding_conflicts: 1 });
-      return new Promise<Response>((resolve) => { second = resolve; });
-    })));
-    await controller.load();
-    render(CardDAVOperations, { controller });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
-    await waitFor(() => expect(screen.getByText('CardDAV sync completed.')).toBeDefined());
-    expect(warningText()).toBe('Run msgvault carddav bind-participants --dry-run to review 1 CardDAV binding conflict.');
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now' }));
-    await waitFor(() => expect(second).toBeDefined());
-    expect(screen.queryByText(conflictWarning)).toBeNull();
-    controller.destroy();
-  });
-
-  it.each([
-    { name: 'zero', extra: { binding_conflicts: 0 } },
-    { name: 'absent', extra: {} },
-  ])('shows no binding conflict warning when the count is $name', async ({ extra }) => {
-    const controller = new CardDAVController(createAPIClient(syncFetch(() => syncResult(extra))));
-    await controller.load();
-    render(CardDAVOperations, { controller });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
-
-    await waitFor(() => expect(screen.getByText('CardDAV sync completed.')).toBeDefined());
-    expect(screen.queryByText(conflictWarning)).toBeNull();
     controller.destroy();
   });
 });

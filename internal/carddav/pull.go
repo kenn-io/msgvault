@@ -51,13 +51,12 @@ type SyncOptions struct {
 }
 
 type SyncResult struct {
-	Books            int                     `json:"books"`
-	Created          int                     `json:"created"`
-	Updated          int                     `json:"updated"`
-	Removed          int                     `json:"removed"`
-	BindingConflicts *int                    `json:"binding_conflicts,omitempty"`
-	Status           string                  `json:"status,omitempty" enum:"succeeded,partial,failed"`
-	Connections      []ConnectionSyncOutcome `json:"connections,omitempty"`
+	Books       int                     `json:"books"`
+	Created     int                     `json:"created"`
+	Updated     int                     `json:"updated"`
+	Removed     int                     `json:"removed"`
+	Status      string                  `json:"status,omitempty" enum:"succeeded,partial,failed"`
+	Connections []ConnectionSyncOutcome `json:"connections,omitempty"`
 }
 
 type ConnectionSyncOutcome struct {

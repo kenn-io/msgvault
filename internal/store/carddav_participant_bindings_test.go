@@ -1007,3 +1007,85 @@ func TestCardDAVParticipantBindingDisputedAddresses(t *testing.T) {
 		}
 	})
 }
+
+func TestCardDAVParticipantBindingIndirectCandidateAfterUndo(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	a, err := st.EnsureParticipant("alex@example.test", "Alex Example", "example.test")
+	require.NoError(err)
+	b, err := st.EnsureParticipant("blair@example.test", "Blair Example", "example.test")
+	require.NoError(err)
+	c, err := st.EnsureParticipant("casey@example.test", "Casey Example", "example.test")
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(a)
+	require.NoError(err)
+	d, err := st.EnsureParticipant("drew@example.test", "Drew Example", "example.test")
+	require.NoError(err)
+	other, _, err := st.CreatePersonFromParticipant(d)
+	require.NoError(err)
+	merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{
+		SurvivorID: person.ID, AbsorbedID: other.ID,
+		ExpectedSurvivorRevision: person.Revision, ExpectedAbsorbedRevision: other.Revision,
+		IdempotencyKey: "indirect-candidate-merge", Actor: "test",
+	})
+	require.NoError(err)
+	person = &merged.Person
+	card := remoteResource(book.CanonicalURL+"indirect.vcf", person.VCardUID, "Alex Example", "alex@example.test", "one")
+	card.Emails = []string{"alex@example.test", "blair@example.test", "casey@example.test"}
+	card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + person.VCardUID + "\r\nFN:Alex Example\r\nEMAIL:alex@example.test\r\nEMAIL:blair@example.test\r\nEMAIL:casey@example.test\r\nEND:VCARD\r\n")
+	applyParticipantBindingCards(t, st, account, book, card)
+	candidate := func(left, right int64, value, actor string) {
+		t.Helper()
+		match, _, matchErr := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
+			LeftKind: store.IdentityMatchParticipant, LeftID: left, RightKind: store.IdentityMatchParticipant, RightID: right,
+			Basis: store.IdentityMatchStableProviderID, NormalizedValue: &value,
+			State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation,
+		})
+		require.NoError(matchErr)
+		_, _, matchErr = st.AcceptIdentityMatchCandidateContext(t.Context(), match.ID, actor, nil)
+		require.NoError(matchErr)
+	}
+	candidate(a, b, "ab", "system")
+	candidate(b, c, "bc", "system")
+	require.True(bindingOwned(t, st, b))
+	require.True(bindingOwned(t, st, c))
+	_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
+	require.NoError(err)
+	before, err := st.GetPersonContext(t.Context(), person.ID)
+	require.NoError(err)
+	require.ElementsMatch([]int64{a, d}, before.ParticipantIDs)
+	identityBefore, err := st.IdentityRevision()
+	require.NoError(err)
+	candidate(a, c, "ac", "user")
+	after, err := st.GetPersonContext(t.Context(), person.ID)
+	require.NoError(err)
+	assert.ElementsMatch([]int64{a, b, c, d}, after.ParticipantIDs)
+	assert.Greater(after.Revision, before.Revision)
+	identityAfter, err := st.IdentityRevision()
+	require.NoError(err)
+	assert.Greater(identityAfter, identityBefore)
+	var links int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_links`).Scan(&links))
+	assert.Equal(2, links)
+	var lineage int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM person_merge_participants WHERE merge_id = ? AND participant_id IN (?, ?)`), merged.Merge.ID, b, c).Scan(&lineage))
+	assert.Equal(2, lineage)
+	if assert.Contains(after.ParticipantIDs, b) && assert.Contains(after.ParticipantIDs, c) {
+		assert.False(bindingOwned(t, st, b))
+		assert.False(bindingOwned(t, st, c))
+	}
+	applyParticipantBindingCards(t, st, account, book, card)
+	after, err = st.GetPersonContext(t.Context(), person.ID)
+	require.NoError(err)
+	assert.ElementsMatch([]int64{a, b, c, d}, after.ParticipantIDs)
+	_, err = st.LinkParticipants(a, c)
+	assert.ErrorIs(err, store.ErrAlreadyLinked)
+	split, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
+		SourcePersonID: person.ID, MergeID: merged.Merge.ID, ParticipantIDs: []int64{d},
+		ExpectedSourceRevision: after.Revision, IdempotencyKey: "indirect-candidate-split", Actor: "test",
+	})
+	require.NoError(err)
+	assert.ElementsMatch([]int64{a, b, c}, split.SourcePerson.ParticipantIDs)
+	assert.Equal([]int64{d}, split.NewPerson.ParticipantIDs)
+}

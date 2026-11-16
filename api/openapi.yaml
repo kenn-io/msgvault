@@ -16201,9 +16201,6 @@ components:
     SyncResult:
       additionalProperties: true
       properties:
-        binding_conflicts:
-          format: int64
-          type: integer
         books:
           format: int64
           type: integer
