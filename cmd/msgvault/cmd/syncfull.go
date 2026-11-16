@@ -72,6 +72,11 @@ Examples:
 
 func validateSyncFullFlags(cmd *cobra.Command) error {
 	if syncRefreshLabels {
+		if flag := cmd.Flags().Lookup("source-id"); flag != nil {
+			if value, ok := flag.Value.(*fullSyncFlagValue); ok && value.repeated {
+				return usageErr(cmd, errors.New("--refresh-labels requires --source-id to appear once"))
+			}
+		}
 		for _, name := range []string{"query", "before", "after", "folder", "skip-folder"} {
 			if cmd.Flags().Changed(name) {
 				return usageErr(cmd, fmt.Errorf("--refresh-labels cannot be combined with --%s", name))
@@ -1083,16 +1088,23 @@ func init() {
 	rootCmd.AddCommand(addManualSyncCacheFlags(syncFullCmd))
 }
 
-// Keep this flag a boolean for help and interruption commands, while rejecting
-// repeated values as the daemon does instead of silently choosing one.
-type labelRefreshFlagValue struct {
+// Keep scalar flag types for help and interruption commands. Label refresh
+// rejects repeated selectors; ordinary sync retains Cobra's last-value behavior.
+type fullSyncFlagValue struct {
 	pflag.Value
-	flag *pflag.Flag
+	flag     *pflag.Flag
+	single   bool
+	repeated bool
 }
 
-func (v *labelRefreshFlagValue) Set(value string) error {
+func (v *fullSyncFlagValue) Set(value string) error {
 	if v.flag.Changed {
-		return errors.New("--refresh-labels must appear once")
+		if v.single {
+			return fmt.Errorf("--%s must appear once", v.flag.Name)
+		}
+		v.repeated = true
+	} else {
+		v.repeated = false
 	}
 	return v.Value.Set(value)
 }
@@ -1100,5 +1112,8 @@ func (v *labelRefreshFlagValue) Set(value string) error {
 func addGmailLabelRefreshFlag(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&syncRefreshLabels, "refresh-labels", false, "Refresh archived labels for one unrestricted Gmail source")
 	flag := cmd.Flags().Lookup("refresh-labels")
-	flag.Value = &labelRefreshFlagValue{Value: flag.Value, flag: flag}
+	flag.Value = &fullSyncFlagValue{Value: flag.Value, flag: flag, single: true}
+	if sourceID := cmd.Flags().Lookup("source-id"); sourceID != nil {
+		sourceID.Value = &fullSyncFlagValue{Value: sourceID.Value, flag: sourceID}
+	}
 }

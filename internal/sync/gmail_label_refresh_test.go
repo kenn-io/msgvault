@@ -280,6 +280,41 @@ func TestGmailFullLabelRefreshResumesPendingRecovery(t *testing.T) {
 	}
 }
 
+func TestGmailFullLabelRefreshPendingRecoveryAcquiresCatchupMessage(t *testing.T) {
+	for _, refresh := range []bool{false, true} {
+		t.Run(fmt.Sprint(refresh), func(t *testing.T) {
+			e, f, _ := recoveryLabelsEnv(t)
+			api := e.Syncer.client
+			f.expire, f.stopHistory = false, true
+			_, err := e.Syncer.RecoverExpiredHistory(t.Context(), gmailCoverageSource(t.Context(), t, e))
+			require.ErrorContains(t, err, "synthetic interrupted History")
+			reopenAcquisitionStore(t, e)
+			opts := DefaultOptions()
+			opts.RefreshLabels = refresh
+			e.Syncer = New(api, e.Store, opts)
+			f.stopHistory, f.listTokens = false, nil
+			f.event = "arrival"
+			// Catch-up acquisition retains recovery's existing catalog-race
+			// policy even though its caller requested a strict ordinary sweep.
+			f.labels["arrival"] = []string{"INBOX", "Label_unknown"}
+			_, err = e.Syncer.Full(t.Context(), testEmail)
+			require.NoError(t, err)
+			source := gmailCoverageSource(t.Context(), t, e)
+			ids, err := e.Store.MessageExistsBatchContext(t.Context(), source.ID, []string{"arrival"})
+			require.NoError(t, err)
+			require.Len(t, ids, 1)
+			labels, err := e.Store.MessageLabelIDsContext(t.Context(), ids["arrival"])
+			require.NoError(t, err)
+			inbox, err := e.Store.LabelIDContext(t.Context(), source.ID, "INBOX")
+			require.NoError(t, err)
+			assert.Equal(t, []int64{inbox}, labels, "flagged and unflagged pending recovery retain the same catalog policy")
+			assert.Empty(t, f.listTokens, "resume the pinned catch-up phase")
+			assert.Equal(t, "2001", source.SyncCursor.String)
+			assert.Equal(t, 5, f.rawGets, "only catch-up's new message needs RAW")
+		})
+	}
+}
+
 type incompleteLabelRefreshAPI struct {
 	gmail.API
 	messageLabelBatchReader

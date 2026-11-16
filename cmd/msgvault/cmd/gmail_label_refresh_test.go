@@ -45,6 +45,9 @@ func TestSyncFullLabelRefreshRejectsInvalidFlagsBeforeHTTP(t *testing.T) {
 		{"--refresh-labels", "--skip-folder=Trash", "reader@example.test"},
 		{"--refresh-labels", "--limit=1", "reader@example.test"},
 		{"--refresh-labels", "--source-id=42", "reader@example.test"},
+		{"--refresh-labels", "--source-id=42", "--source-id=43"},
+		{"--source-id=42", "--source-id=43", "--refresh-labels"},
+		{"--refresh-labels", "--source-id=42", "--source-id=42"},
 	} {
 		t.Run(strings.Join(flags, " "), func(t *testing.T) {
 			resetSyncFullFlagsForTest(t)
@@ -62,12 +65,12 @@ func TestSyncFullLabelRefreshRejectsInvalidFlagsBeforeHTTP(t *testing.T) {
 }
 
 func TestSyncFullLabelRefreshDaemonJourney(t *testing.T) {
-	for _, mode := range []string{"account", "source-id", "ambiguous", "imap", "false", "interrupted"} {
+	for _, mode := range []string{"account", "source-id", "ambiguous", "imap", "false", "false-source-id", "interrupted"} {
 		t.Run(mode, func(t *testing.T) {
 			resetSyncFullFlagsForTest(t)
 			var syncCalls atomic.Int32
 			accounts := []daemonclient.CLIAccount{{ID: 42, Type: "gmail", Email: "reader@example.test", Alias: "archive"}}
-			if mode == "ambiguous" || mode == "source-id" {
+			if mode == "ambiguous" || mode == "source-id" || mode == "false-source-id" {
 				accounts = append(accounts, daemonclient.CLIAccount{ID: 43, Type: "imap", Email: "reader@example.test"})
 			}
 			if mode == "imap" {
@@ -82,9 +85,12 @@ func TestSyncFullLabelRefreshDaemonJourney(t *testing.T) {
 					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"accounts": accounts}))
 				case "/api/v1/cli/sync-full":
 					syncCalls.Add(1)
-					if mode == "false" {
+					if mode == "false" || mode == "false-source-id" {
 						assert.Empty(t, r.URL.Query().Get("refresh_labels"))
 						assert.Equal(t, "in:inbox", r.URL.Query().Get("query"))
+						if mode == "false-source-id" {
+							assert.Equal(t, "43", r.URL.Query().Get("source_id"), "ordinary scalar selection retains its last value")
+						}
 					} else {
 						assert.Equal(t, "true", r.URL.Query().Get("refresh_labels"))
 						assert.Equal(t, "42", r.URL.Query().Get("source_id"))
@@ -110,6 +116,8 @@ func TestSyncFullLabelRefreshDaemonJourney(t *testing.T) {
 				args = []string{"--refresh-labels", "--source-id=42"}
 			case "false":
 				args = []string{"--refresh-labels=false", "--query=in:inbox"}
+			case "false-source-id":
+				args = []string{"--refresh-labels=false", "--query=in:inbox", "--source-id=42", "--source-id=43"}
 			case "interrupted":
 				args = append(args, "--noresume")
 			}

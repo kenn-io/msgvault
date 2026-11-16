@@ -1708,9 +1708,9 @@ func (s *Syncer) full(
 		s.drainIdentityDiscoveryBacklog(ctx, source.ID)
 	}
 
-	// A full backfill does not consume History or refresh every archived row.
-	// Preserve the saved cursor so the next incremental still sees pending
-	// label changes and deletions, including those before this scan started.
+	// A full scan does not consume History. Even a label refresh is a sequence
+	// of per-message observations, so preserve the consumed cursor until an
+	// incremental replays pending changes and deletions.
 	// A first full sync seeds its starting cursor. Recovery publishes after catch-up.
 	completionHistoryID := handoffHistoryID
 	if !reconcilePresence && isUnrestrictedGmailFull {
