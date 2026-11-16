@@ -351,6 +351,28 @@ func TestApplyIMAPMailboxDeltas_TrashAndAllReconcileDeletionMark(t *testing.T) {
 	}
 }
 
+func TestClearRestoredIMAPDeletionMarksKeepsAmbiguousIdentity(t *testing.T) {
+	f := newIMAPMembershipFixture(t)
+	id := f.createMessage(t, "Trash|1", "<shared@example.com>")
+	f.createMessage(t, "Trash|2", "<shared@example.com>")
+	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|1"))
+	_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
+		"INBOX": {Name: "INBOX", Type: "system"},
+	})
+	require.NoError(t, err)
+	syncID, err := f.store.StartSync(f.source.ID, "full")
+	require.NoError(t, err)
+	require.NoError(t, f.store.CompleteSync(syncID, ""))
+
+	require.NoError(t, f.store.ClearRestoredIMAPDeletionMarksForSyncContext(
+		t.Context(), f.source.ID, syncID, []store.IMAPMembershipObservation{{
+			Mailbox: "INBOX", UIDValidity: 1, UID: 1,
+			SourceMessageID: "INBOX|1", RFC822MessageID: "<shared@example.com>",
+		}},
+	))
+	assert.True(t, messageTombstoned(t, f.store, id))
+}
+
 func TestIMAPFallbackTrashPreservesDeletionMark(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -462,14 +462,13 @@ func (s *Store) applyIMAPMailboxDeltas(
 					return fmt.Errorf("tombstone IMAP message %d: %w", messageID, err)
 				}
 			} else if _, err := tx.ExecContext(ctx, `
-				-- RFC 6154's \All can include Trash, so it is not proof of restore.
 				UPDATE messages SET deleted_from_source_at = NULL
 				WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NOT NULL
 				AND (
 					NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
 						WHERE ml.message_id = messages.id AND l.system_role = 'trash')
 					OR EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
-						WHERE ml.message_id = messages.id AND COALESCE(l.system_role, '') NOT IN ('trash', 'all'))
+						WHERE ml.message_id = messages.id AND `+imapRestoringMailboxRole+`)
 				)
 			`, messageID, sourceID); err != nil {
 				return fmt.Errorf("clear IMAP tombstone for message %d: %w", messageID, err)
@@ -492,6 +491,68 @@ func (s *Store) applyIMAPMailboxDeltas(
 				strconv.FormatUint(delta.State.HighestModSeq, 10),
 			); err != nil {
 				return fmt.Errorf("upsert IMAP folder state for %q: %w", normalized.mailbox, err)
+			}
+		}
+		return nil
+	})
+}
+
+// imapRestoringMailboxRole matches a mailbox label l whose membership proves a
+// message left Trash. RFC 6154's \All can include Trash, so it is not proof.
+const imapRestoringMailboxRole = `COALESCE(l.system_role, '') NOT IN ('trash', 'all')`
+
+// ClearRestoredIMAPDeletionMarksForSyncContext clears deletion marks that a
+// filtered sync's positive observations prove restored. A filtered sync cannot
+// publish mailbox topology, so this changes only the mark: an observation
+// clears it when it is in a specific mailbox outside Trash and All Mail and
+// resolves uniquely to an archived row. Anything else leaves the mark.
+func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
+	ctx context.Context,
+	sourceID int64,
+	syncRunID int64,
+	observations []IMAPMembershipObservation,
+) error {
+	if syncRunID <= 0 {
+		return fmt.Errorf("clear restored IMAP deletion marks: invalid sync generation %d", syncRunID)
+	}
+	if len(observations) == 0 {
+		return nil
+	}
+	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
+		if err := s.validateCurrentSyncGeneration(
+			ctx, tx, sourceID, syncRunID, SyncStatusCompleted,
+		); err != nil {
+			return err
+		}
+		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL()}
+		if err := resolver.primeIdentities(ctx, []normalizedIMAPMailboxDelta{
+			{delta: IMAPMailboxDelta{Memberships: observations}},
+		}); err != nil {
+			return err
+		}
+		for _, observation := range observations {
+			var restoring bool
+			if err := tx.QueryRowContext(ctx, `
+				SELECT EXISTS (SELECT 1 FROM labels l
+					WHERE l.source_id = ? AND l.source_label_id = ? AND `+imapRestoringMailboxRole+`)
+			`, sourceID, observation.Mailbox).Scan(&restoring); err != nil {
+				return fmt.Errorf("read IMAP mailbox role for %q: %w", observation.Mailbox, err)
+			}
+			if !restoring {
+				continue
+			}
+			messageID, err := resolver.resolveIdentity(ctx, observation, true)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE messages SET deleted_from_source_at = NULL
+				WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NOT NULL
+			`, messageID, sourceID); err != nil {
+				return fmt.Errorf("clear restored IMAP deletion mark for message %d: %w", messageID, err)
 			}
 		}
 		return nil
