@@ -50,10 +50,13 @@ const (
 	// rateLimitAttempts bounds total tries (one initial + retries) so a
 	// sustained limit still surfaces instead of hanging the run. Meetings
 	// written before the failure persist, and the next run resumes from
-	// them, so giving up is recoverable.
-	rateLimitAttempts = 5
-	// rateLimitBaseDelay is the first pause; it doubles per attempt, so the
-	// default budget is roughly 2+4+8+16 = 30s of waiting.
+	// them, so giving up is recoverable. Calls run one at a time, so a
+	// waiting call also paces the rest of the run.
+	rateLimitAttempts = 8
+	// rateLimitBaseDelay is the first pause; it doubles per attempt up to
+	// rateLimitMaxDelay, so the default budget is roughly
+	// 2+4+8+16+30+30+30 = 120s of waiting, enough to outlast a one-minute
+	// provider window.
 	rateLimitBaseDelay = 2 * time.Second
 	// rateLimitMaxDelay caps a single pause so the doubling cannot stall a
 	// run for minutes.
