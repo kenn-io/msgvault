@@ -10,7 +10,7 @@ import (
 )
 
 // MessageArchiveMinAPISchemaVersion adds archive actions and incoming sender restrictions.
-const MessageArchiveMinAPISchemaVersion = "5.7.0"
+const MessageArchiveMinAPISchemaVersion = "5.8.0"
 
 // ArchiveMessage sets the desired state without retrying an uncertain write.
 func (c *Client) ArchiveMessage(ctx context.Context, id int64, change emailtags.ArchiveChange) (*emailtags.ArchiveResult, error) {
@@ -23,7 +23,7 @@ func (c *Client) ArchiveMessage(ctx context.Context, id int64, change emailtags.
 			return nil, err
 		}
 		if !supported {
-			return nil, emailtags.Failure("archive_unsupported", "Upgrade the daemon to API schema 5.7.0 for Beeper archiving", nil, nil)
+			return nil, emailtags.Failure("archive_unsupported", fmt.Sprintf("Upgrade the daemon to API schema %s for Beeper archiving", MessageArchiveMinAPISchemaVersion), nil, nil)
 		}
 	}
 	options := &generated.ArchiveMessageRequestOptions{Body: &generated.ArchiveMessageBody{Archived: *change.Archived, DryRun: &change.DryRun, WholeChat: &change.WholeChat}}

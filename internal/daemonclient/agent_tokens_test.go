@@ -182,7 +182,7 @@ func TestIssueAgentTokenExpiryRefusesOldDaemon(t *testing.T) {
 }
 
 func TestIssueIncomingSenderRestrictionsRefusesOldDaemon(t *testing.T) {
-	for _, version := range []string{"5.6.0", "5.7.0"} {
+	for _, version := range []string{"5.7.0", "5.8.0"} {
 		t.Run(version, func(t *testing.T) {
 			assertionsForTest := assert.New(t)
 			requirementsForTest := require.New(t)
@@ -208,7 +208,7 @@ func TestIssueIncomingSenderRestrictionsRefusesOldDaemon(t *testing.T) {
 			requirementsForTest.NoError(err)
 			t.Cleanup(func() { require.NoError(t, client.Close()) })
 			_, err = client.IssueAgentToken(t.Context(), "archive", []string{"message.archive"}, []int64{1}, nil, map[int64][]string{1: {"codes@example.test"}}, time.Time{})
-			if version != "5.7.0" {
+			if version != "5.8.0" {
 				requirementsForTest.ErrorContains(err, "incoming sender restrictions require")
 				assertionsForTest.Zero(posts)
 			} else {
