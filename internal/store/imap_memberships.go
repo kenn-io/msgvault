@@ -604,7 +604,7 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 		}
 		for messageID := range restored {
 			if err := s.clearMessageDeletedFromSourceTx(ctx, tx, `id = ? AND source_id = ?`, messageID, sourceID); err != nil {
-				return fmt.Errorf("clear restored IMAP deletion mark for message %d: %w", messageID, err)
+				return fmt.Errorf("message %d: %w", messageID, err)
 			}
 		}
 		return nil
