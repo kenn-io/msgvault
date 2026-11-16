@@ -421,8 +421,9 @@ import (
 // 5.5.0 adds source account matching repair.
 // 5.6.0 adds a refresh-only identity cache operation.
 // 5.7.0 adds first archived appearance to person contact state.
-// 5.8.0 adds CardDAV participant binding preview, reconciliation, undo, and sync conflict counts to run history.
-const APISchemaVersion = "5.8.0"
+// 5.8.0 advertises structured person-profile routes to MCP.
+// 5.9.0 adds CardDAV participant binding preview, reconciliation, undo, and sync conflict counts to run history.
+const APISchemaVersion = "5.9.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

@@ -57,9 +57,11 @@ msgvault loops reopen 4521
 `list` prints a **Waiting on you** and a **Waiting on them** section, oldest
 first, with the age, person, subject, and message ID of each loop. It adds a
 line when `--limit` cuts the list, when stored messages couldn't be read, or
-when more history remains. Run it again to continue; JSON sets
-`coverage_incomplete`. With nothing open, it prints `No open loops.` Acting on
-a message that doesn't start an open loop, such as one you already answered,
+when more history remains. The daemon continues checking in the background, and
+later requests reuse completed work; JSON sets `coverage_incomplete`. If the
+daemon stops or its background pass times out, a later incomplete request starts
+another pass. With nothing open, it prints `No open loops.` Acting on a message
+that doesn't start an open loop, such as one you already answered,
 fails with `<id> isn't an open loop.`
 
 ## cli search
@@ -886,6 +888,12 @@ The CLI sends the sync request to the configured remote server or local daemon
 and streams the daemon's stdout/stderr back to the terminal. This keeps local
 and remote full sync behavior aligned and avoids running a separate direct
 SQLite writer beside `msgvault serve`.
+
+If a full sync is interrupted, the CLI exits with status 130 and prints a
+command on stderr that you can run yourself. It preserves the account, filters,
+configuration, and logging flags. On Windows, run the displayed command in
+PowerShell 7.3 or later. A fresh sync or an IMAP scan can restart enumeration.
+Run the command from the same directory when it uses relative paths.
 
 `sync-full` does not infer source deletion from messages absent from its result
 set. This is especially important with `--query`, `--limit`, or date filters,
@@ -4802,6 +4810,7 @@ msgvault mcp [flags]
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
 | `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Profile, source, calendar, identity, CardDAV, and Kata writes also need their separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-curated-writes` | `false` | On unreleased `main`, expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--confirm-sensitive-drafts` | `false` | Require client confirmation before creating or editing drafts with detected sensitive content. Grants no tools; HTTP writes still require `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
@@ -4920,6 +4929,7 @@ with the configured owner bearer key. Native MCP never permits keyless access.
 |---|---|---|
 | `--mcp-allow-writes` | `false` | Enable the independent `/mcp/writes` catalog; `/mcp` stays read-only. |
 | `--mcp-allow-profile-writes` | `false` | Enable profile promotion, display-name and Notes writes. |
+| `--mcp-allow-curated-writes` | `false` | On unreleased `main`, enable structured person profile patches requiring explicit client confirmation; the client is responsible for obtaining user approval. |
 | `--mcp-allow-identity-decisions` | `false` | Enable confirmed identity match accept/reject calls. |
 | `--mcp-allow-identity-scoring` | `false` | Enable confirmed manual scoring using the fixed Jev provider. |
 | `--mcp-allow-person-merges` | `false` | Enable confirmed local person merges. |

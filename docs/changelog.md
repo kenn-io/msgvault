@@ -8,9 +8,17 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.
+  With `--allow-curated-writes` and explicit client confirmation, it can apply
+  atomic profile patches. The client is responsible for obtaining user approval.
+
+- Incomplete open-loop lists continue checking history in the background.
+
 - Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
 
 - Account matching recovers after identity changes. Explore refreshes pending counts and lets you retry matching for each source.
+
+- An interrupted `sync-full` prints a command to run again with the same account, filters, configuration, and logging flags. It exits with status 130; on Windows, run the command in PowerShell 7.3 or later.
 
 ## 0.25.0
 <small>2026-11-14</small>
