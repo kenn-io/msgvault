@@ -88,7 +88,7 @@ func TestGmailFullLabelRefreshFailuresRetryPage(t *testing.T) {
 			}
 			_, err := e.Syncer.Full(ctx, testEmail)
 			require.Error(t, err)
-			run, err := e.Store.GetLatestSync(gmailCoverageSource(t.Context(), t, e).ID)
+			run, err := e.Store.GetLatestSyncContext(t.Context(), gmailCoverageSource(t.Context(), t, e).ID, 0)
 			require.NoError(t, err)
 			assert.Equal(t, store.SyncStatusFailed, run.Status)
 			assert.Equal(t, "1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
@@ -136,7 +136,7 @@ func TestGmailFullLabelRefreshFailuresRetryPage(t *testing.T) {
 func TestGmailFullLabelRefreshLocalReplayCheckpointFailure(t *testing.T) {
 	e, f, _ := recoveryLabelsEnv(t)
 	source := gmailCoverageSource(t.Context(), t, e)
-	previous, err := e.Store.GetLatestSync(source.ID)
+	previous, err := e.Store.GetLatestSyncContext(t.Context(), source.ID, 0)
 	require.NoError(t, err)
 	require.NoError(t, e.Store.RecordSyncRunItemContext(t.Context(), store.SyncRunItem{
 		SyncRunID: previous.ID, SourceMessageID: "normal1", Phase: syncItemPhaseIngest,
@@ -152,7 +152,7 @@ func TestGmailFullLabelRefreshLocalReplayCheckpointFailure(t *testing.T) {
 	require.ErrorContains(t, err, "save local replay checkpoint")
 	assert.Equal(t, "1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 	assert.Empty(t, f.listTokens, "failed required checkpoint stops before an empty enumeration can complete the run")
-	run, err := e.Store.GetLatestSync(source.ID)
+	run, err := e.Store.GetLatestSyncContext(t.Context(), source.ID, 0)
 	require.NoError(t, err)
 	assert.Equal(t, store.SyncStatusFailed, run.Status)
 	removeFault()
@@ -230,7 +230,7 @@ func TestGmailFullLabelRefreshAcquiresNewAndMissingRaw(t *testing.T) {
 	e.Syncer = New(e.Syncer.client, e.Store, opts)
 	_, err = e.Syncer.Full(t.Context(), testEmail)
 	require.NoError(t, err)
-	newIDs, err := e.Store.MessageExistsBatch(gmailCoverageSource(t.Context(), t, e).ID, []string{"new", "normal2"})
+	newIDs, err := e.Store.MessageExistsBatchContext(t.Context(), gmailCoverageSource(t.Context(), t, e).ID, []string{"new", "normal2"})
 	require.NoError(t, err)
 	require.Len(t, newIDs, 2)
 	assert.Equal(t, ids["normal2"], newIDs["normal2"], "reacquisition keeps the existing archive identity")
@@ -265,7 +265,12 @@ func TestGmailFullLabelRefreshResumesPendingRecovery(t *testing.T) {
 				require.NoError(t, err)
 				assertRecoveryLabels(t, e, ids, f.labels)
 				assert.Equal(t, "2001", gmailCoverageSource(t.Context(), t, e).SyncCursor.String, "pending recovery still catches up before publishing")
-				assert.NotEmpty(t, f.historyStarts)
+				if noResume {
+					require.NotEmpty(t, f.listTokens)
+					assert.Empty(t, f.listTokens[0], "noresume restarts complete recovery from the current profile boundary")
+				} else {
+					assert.NotEmpty(t, f.historyStarts)
+				}
 				if phase == "catchup" && !noResume {
 					assert.Empty(t, f.listTokens, "a pinned catch-up phase does not repeat completed enumeration")
 				}
@@ -320,7 +325,7 @@ func TestGmailFullLabelRefreshRejectsPartialOrOtherSource(t *testing.T) {
 				source.SourceType = "imap"
 			}
 			e.Syncer = New(e.Syncer.client, e.Store, opts)
-			before, err := e.Store.GetLatestSync(source.ID)
+			before, err := e.Store.GetLatestSyncContext(t.Context(), source.ID, 0)
 			require.NoError(t, err)
 			f.listTokens = nil
 			if scenario == "incremental" {
@@ -329,12 +334,34 @@ func TestGmailFullLabelRefreshRejectsPartialOrOtherSource(t *testing.T) {
 				_, err = e.Syncer.FullWithFinalizer(t.Context(), source, nil)
 			}
 			require.Error(t, err)
-			after, err := e.Store.GetLatestSync(source.ID)
+			after, err := e.Store.GetLatestSyncContext(t.Context(), source.ID, 0)
 			require.NoError(t, err)
 			assert.Equal(t, before.ID, after.ID, "invalid options acquire no new sync execution")
 			assert.Empty(t, f.listTokens)
 			assert.Zero(t, f.metadataGets)
 			assert.Equal(t, 4, f.rawGets)
 		})
+	}
+}
+
+func TestGmailFullLabelRefreshFingerprintCompatibility(t *testing.T) {
+	t.Parallel()
+	// Saved acquire-only request identifiers from the pre-refresh contract.
+	for _, fixture := range []struct {
+		sourceType  string
+		fingerprint string
+	}{
+		{"gmail", "full:v3-history-boundary:864b224bbaf1812b29969fde37ac8c7bb08b34ded81e0bc47e35023e9d480d18"},
+		{"", "full:v3-history-boundary:49af1e10cf1567681f4ebfe29694f3390d5281093d06768e7edafb99a586da38"},
+		{"imap", "full:v1:7dd8be04f24a48298e2f2bb65f25b115ea714582eeea7ddfd578031b3e4cb20b"},
+	} {
+		opts := DefaultOptions()
+		opts.SourceType = fixture.sourceType
+		syncer := &Syncer{opts: opts}
+		assert.Equal(t, fixture.fingerprint, syncer.fullSyncRequestFingerprint())
+		if fixture.sourceType != "imap" {
+			opts.RefreshLabels = true
+			assert.NotEqual(t, fixture.fingerprint, syncer.fullSyncRequestFingerprint())
+		}
 	}
 }

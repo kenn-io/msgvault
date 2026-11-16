@@ -17223,7 +17223,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.8.0
+  version: 5.9.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -21026,6 +21026,11 @@ paths:
         - description: Ignore checkpoints and start fresh
           in: query
           name: noresume
+          schema:
+            type: boolean
+        - description: Refresh archived labels for one unrestricted Gmail source
+          in: query
+          name: refresh_labels
           schema:
             type: boolean
         - description: IMAP folder names to include (repeatable)
