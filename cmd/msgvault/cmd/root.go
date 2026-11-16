@@ -36,7 +36,7 @@ Archive email, chats, and meetings offline.
 
 Start here:
   msgvault list-accounts --json
-  msgvault search 'from:alice@example.com newer_than:30d' --json
+  msgvault search 'from:alice@example.com' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
   msgvault export-messages --help
