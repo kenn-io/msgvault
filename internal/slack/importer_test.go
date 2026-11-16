@@ -456,6 +456,31 @@ func TestImportEndToEnd(t *testing.T) {
 	assert.Equal(3, members)
 }
 
+func TestImportKeepsSlackIdentityWhenEmailMergeConflicts(t *testing.T) {
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+	previous, err := st.EnsureParticipant("previous@example.test", "Alice", "example.test")
+	require.NoError(t, err)
+	require.NoError(t, st.SetParticipantIdentifier(previous, "slack", "T01:UALICE"))
+	third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
+	require.NoError(t, err)
+	require.NoError(t, st.SetParticipantIdentifier(third, "email", "previous@example.test"))
+
+	summary, err := imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	assert.Zero(t, summary.FetchErrors)
+	owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "slack", "T01:UALICE")
+	require.NoError(t, err)
+	assert.Equal(t, previous, owner)
+	owner, _, err = st.ParticipantByIdentifierContext(t.Context(), "email", "previous@example.test")
+	require.NoError(t, err)
+	assert.Equal(t, third, owner)
+	var messages int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE sender_id = ?`), previous).Scan(&messages))
+	assert.Positive(t, messages)
+}
+
 func TestImportUsesNextCursorWhenHasMoreIsFalse(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
