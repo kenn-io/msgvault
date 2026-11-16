@@ -2719,7 +2719,7 @@ func TestGmailFullSyncReacquiresRawForMarkedMessageAndReconcilesLabels(t *testin
 		{name: "restored", labels: []string{"INBOX"}},
 		{name: "still in Trash", labels: []string{"INBOX", "TRASH"}, wantMark: true},
 		{name: "attachment failure", labels: []string{"INBOX"}, attachmentFailure: true},
-		{name: "raw insert failure", labels: []string{"INBOX"}, rawFailure: true},
+		{name: "raw insert failure", labels: []string{"INBOX"}, wantMark: true, rawFailure: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
