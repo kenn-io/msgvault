@@ -1690,6 +1690,12 @@ The canonical source identifier is
 `app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
 scheduler job is `instagram_comments:<source-identifier>`.
 
+Set `mentions = true` to also archive media in which other accounts tag the
+account, as a separate `instagram_mentions` source with the same identifier.
+It defaults to `false`. When the profile has a schedule, the scheduler job is
+`instagram_mentions:<source-identifier>`. See
+[Archive media that tags the account](usage/instagram-comments.md#archive-media-that-tags-the-account).
+
 ### `[feeds]` {#feeds}
 
 Fetch the RSS, Atom, and JSON feeds followed with `msgvault source feeds add`. The
