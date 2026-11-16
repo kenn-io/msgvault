@@ -79,7 +79,8 @@ echo ""
 mkdir -p "$OUTPUT_DIR"
 
 echo "==> Generating SVG screenshots..."
-docker run --rm --user "$DOCKER_USER" -e HOME=/tmp \
+# No network: the TUI's update check would otherwise put a release banner in every image.
+docker run --rm --network none --user "$DOCKER_USER" -e HOME=/tmp \
     -v "$SCRIPT_DIR:/tapes" \
     -v "$DEMO_DATA_DIR:/data" \
     -v "$OUTPUT_DIR:/output" \
