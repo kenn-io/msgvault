@@ -2180,6 +2180,9 @@ func TestMeetingRecordBatchesCopyScans(t *testing.T) {
 	var first int64
 	for i := range 5 {
 		_, id := projectionFixture(t, base, fmt.Sprintf("batch-read-%d", i), "granola_json", raw)
+		_, duplicate := projectionFixture(t, base, fmt.Sprintf("batch-copy-%d", i), "granola_json", raw)
+		_, err := base.MergeDuplicates(t.Context(), id, []int64{duplicate}, fmt.Sprintf("batch-merge-%d", i))
+		r.NoError(err)
 		if i == 0 {
 			first = id
 		}
@@ -2198,6 +2201,7 @@ func TestMeetingRecordBatchesCopyScans(t *testing.T) {
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: first})
 	r.NoError(err)
 	r.Contains(record.MessageIDs, other)
+	r.Positive(copyScans)
 	r.LessOrEqual(copyScans, 2)
 }
 
