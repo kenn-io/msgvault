@@ -136,7 +136,7 @@ func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncRes
 	return s.sync(ctx, options)
 }
 
-func (s *Service) sync(ctx context.Context, options SyncOptions) (total SyncResult, err error) {
+func (s *Service) sync(ctx context.Context, options SyncOptions) (SyncResult, error) {
 	operationCtx, cancel := context.WithTimeout(ctx, s.operationTimeout())
 	defer cancel()
 	if err := s.checkRetry(operationCtx); err != nil {
@@ -152,6 +152,7 @@ func (s *Service) sync(ctx context.Context, options SyncOptions) (total SyncResu
 	var failures []error
 	_, budgetBytes := s.remote.Limits()
 	budget := &Budget{remaining: budgetBytes}
+	var total SyncResult
 	books, err := s.scopedBooks(operationCtx)
 	if err != nil {
 		return total, err

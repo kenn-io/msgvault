@@ -1315,9 +1315,7 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 		Name: jobName, Schedule: cardDAVConfig.Schedule,
 		Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 			result, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
-			if result.BindingConflictsUnavailable {
-				logger.Warn("CardDAV binding conflict count unavailable", "connection", name)
-			} else if result.BindingConflicts > 0 {
+			if result.BindingConflicts > 0 {
 				logger.Warn("CardDAV binding conflicts", "connection", name, "count", result.BindingConflicts)
 			}
 			// Completed books remain committed after cancellation.
