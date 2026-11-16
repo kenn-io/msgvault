@@ -150,6 +150,7 @@ var (
 	commitmentYearlessLayouts = []string{"January 2", "Jan 2", "2 January", "2 Jan"}
 	commitmentYearFollows     = regexp.MustCompile(`^[,\s]*\d{4}\b`)
 	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/(?:\d{4}|\d{2})\b`)
+	commitmentYearlessNumeric = regexp.MustCompile(`\b\d{1,2}/\d{1,2}\b`)
 	commitmentTomorrow        = regexp.MustCompile(`\b(day after )?tomorrow\b`)
 	commitmentRelativeDays    = regexp.MustCompile(`\bin ([a-z0-9]+) (days?|weeks?)\b`)
 	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:(?:by|on)\s+)?(?:(this|next)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
@@ -159,7 +160,7 @@ var (
 // commitmentQuoteHasDate reports whether the quote itself states due, either
 // literally or relative to the source event day in the configured timezone.
 func commitmentQuoteHasDate(quote string, due, event time.Time, location *time.Location) bool {
-	quote = strings.ToLower(quote)
+	quote = normalizeCommitmentOrdinal(strings.ToLower(quote), due.Day())
 	for _, layout := range commitmentDateLayouts {
 		if quoteHasPhrase(quote, strings.ToLower(due.Format(layout)), nil) {
 			return true
@@ -185,7 +186,43 @@ func commitmentQuoteHasDate(quote string, due, event time.Time, location *time.L
 		return false
 	}
 	day := event.In(location)
-	return day.Format(time.DateOnly) == due.Format(time.DateOnly) && quoteHasPhrase(quote, "today", nil) || quoteHasTomorrow(quote, due, day) || quoteHasRelativeDays(quote, due, day) || quoteHasYearlessDate(quote, due, day) || quoteHasWeekday(quote, due, day)
+	return day.Format(time.DateOnly) == due.Format(time.DateOnly) && quoteHasPhrase(quote, "today", nil) || quoteHasTomorrow(quote, due, day) || quoteHasRelativeDays(quote, due, day) || quoteHasYearlessDate(quote, due, day) || quoteHasYearlessNumericDate(quote, due, day) || quoteHasWeekday(quote, due, day)
+}
+
+func quoteHasYearlessNumericDate(quote string, due, day time.Time) bool {
+	start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, due.Location())
+	if due.Before(start) || !due.Before(start.AddDate(1, 0, 0)) {
+		return false
+	}
+	for _, span := range commitmentYearlessNumeric.FindAllStringIndex(quote, -1) {
+		if (span[0] > 0 && quote[span[0]-1] == '/') || (span[1] < len(quote) && quote[span[1]] == '/') || commitmentYearFollows.MatchString(quote[span[1]:]) {
+			continue
+		}
+		date := quote[span[0]:span[1]] + "/" + strconv.Itoa(due.Year())
+		monthFirst, monthErr := time.Parse("1/2/2006", date)
+		dayFirst, dayErr := time.Parse("2/1/2006", date)
+		if (monthErr == nil && (dayErr != nil || monthFirst.Equal(dayFirst)) && monthFirst.Equal(due)) ||
+			(dayErr == nil && monthErr != nil && dayFirst.Equal(due)) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeCommitmentOrdinal(quote string, day int) string {
+	suffix := "th"
+	if day%100 < 11 || day%100 > 13 {
+		switch day % 10 {
+		case 1:
+			suffix = "st"
+		case 2:
+			suffix = "nd"
+		case 3:
+			suffix = "rd"
+		}
+	}
+	ordinal := strconv.Itoa(day) + suffix
+	return regexp.MustCompile(`\b`+ordinal+`\b`).ReplaceAllString(quote, strconv.Itoa(day))
 }
 
 // quoteHasPhrase finds phrase as a whole token; allow, when set, vets the text after each match.

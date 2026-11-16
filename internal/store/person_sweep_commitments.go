@@ -152,7 +152,7 @@ func (s *Store) matchCommitmentCitations(ctx context.Context, personID int64, so
 	if len(args) == 1 {
 		return nil, errCommitmentWindowChanged
 	}
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT d.target_key, e.source_ref, e.source_version, e.subject_ref, e.span_start, e.span_end, e.excerpt
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT d.target_key, e.source_ref, e.source_version, e.subject_ref, e.span_start, e.span_end, e.excerpt, e.recorded_time
 		FROM person_commitments d JOIN person_fact_claims c ON c.person_id = d.person_id AND c.target_kind = 'commitment' AND c.target_key = d.target_key AND c.origin = 'commitment'
 		JOIN person_fact_claim_evidence ce ON ce.claim_id = c.id JOIN person_fact_evidence e ON e.id = ce.evidence_id
 		WHERE d.person_id = ? AND c.relation = 'support' AND c.rejection_action IS NULL AND c.normalized_value_json IS NOT NULL
@@ -160,12 +160,13 @@ func (s *Store) matchCommitmentCitations(ctx context.Context, personID int64, so
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	matches := make([]map[string]bool, len(promises))
 	for rows.Next() {
 		var key, ref, version, subject, quote string
 		var start, end sql.NullInt64
-		if err := rows.Scan(&key, &ref, &version, &subject, &start, &end, &quote); err != nil {
+		var recorded requiredTimestamp
+		if err := rows.Scan(&key, &ref, &version, &subject, &start, &end, &quote, &recorded); err != nil {
 			return nil, err
 		}
 		for i, promise := range promises {
@@ -174,7 +175,7 @@ func (s *Store) matchCommitmentCitations(ctx context.Context, personID int64, so
 			if source.Direction == peoplesweep.CommitmentOwedBy {
 				role = personfacts.CommitmentOwnerSubjectRef
 			}
-			if source.SourceRef != ref || source.SourceVersion != version || subject != role || !start.Valid || !end.Valid ||
+			if source.SourceRef != ref || source.SourceVersion != version || !personFactPortableTime(source.RecordedTime).Equal(recorded.Time) || subject != role || !start.Valid || !end.Valid ||
 				promise.Start >= end.Int64 || start.Int64 >= promise.End || peoplesweep.CommitmentQuoteRepeated(source.Text, quote) || peoplesweep.CommitmentQuoteRepeated(source.Text, promise.Quote) {
 				continue
 			}
@@ -187,23 +188,32 @@ func (s *Store) matchCommitmentCitations(ctx context.Context, personID int64, so
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	return reconcileCommitmentCitations(promises, matches), nil
+}
+
+func reconcileCommitmentCitations(promises []peoplesweep.CommitmentPromise, matches []map[string]bool) []peoplesweep.CommitmentPromise {
 	uses := make(map[string]int)
 	for _, match := range matches {
 		for key := range match {
 			uses[key]++
 		}
 	}
-	promises = append([]peoplesweep.CommitmentPromise(nil), promises...)
+	result := make([]peoplesweep.CommitmentPromise, 0, len(promises))
 	for i, match := range matches {
+		if len(match) > 1 {
+			continue
+		}
+		promise := promises[i]
 		if len(match) == 1 {
 			for key := range match {
 				if uses[key] == 1 {
-					promises[i].TargetKey = key
+					promise.TargetKey = key
 				}
 			}
 		}
+		result = append(result, promise)
 	}
-	return promises, nil
+	return result
 }
 
 func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
@@ -308,12 +318,26 @@ func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, requ
 }
 
 func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID int64) (peoplesweep.CommitmentSource, bool, error) {
-	owners, err := s.loopOwnerIdentities(ctx)
-	if err != nil {
-		return peoplesweep.CommitmentSource{}, false, err
+	return (&commitmentSourceLookup{store: s}).load(ctx, personID, messageID)
+}
+
+type commitmentSourceLookup struct {
+	store         *Store
+	owners        *loopOwners
+	conversations map[[2]int64][]LoopConversation
+}
+
+func (l *commitmentSourceLookup) load(ctx context.Context, personID, messageID int64) (peoplesweep.CommitmentSource, bool, error) {
+	s := l.store
+	if l.owners == nil {
+		owners, err := s.loopOwnerIdentities(ctx)
+		if err != nil {
+			return peoplesweep.CommitmentSource{}, false, err
+		}
+		l.owners = &owners
 	}
 	var conversationID int64
-	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
 		FROM messages m JOIN sources src ON src.id = m.source_id
 		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND `+s.loopLiveMessageSQL()), messageID).Scan(&conversationID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -322,21 +346,29 @@ func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID
 	if err != nil {
 		return peoplesweep.CommitmentSource{}, false, err
 	}
-	heads, err := s.loopConversationHeads(ctx, LoopQuery{PersonID: personID, ConversationID: conversationID})
-	if err != nil {
-		return peoplesweep.CommitmentSource{}, false, err
+	if l.conversations == nil {
+		l.conversations = make(map[[2]int64][]LoopConversation)
 	}
-	conversations, err := s.loopChunk(ctx, heads, owners)
-	if err != nil {
-		return peoplesweep.CommitmentSource{}, false, err
+	key := [2]int64{personID, conversationID}
+	conversations, ok := l.conversations[key]
+	if !ok {
+		heads, err := s.loopConversationHeads(ctx, LoopQuery{PersonID: personID, ConversationID: conversationID})
+		if err != nil {
+			return peoplesweep.CommitmentSource{}, false, err
+		}
+		conversations, err = s.loopChunk(ctx, heads, *l.owners)
+		if err != nil {
+			return peoplesweep.CommitmentSource{}, false, err
+		}
+		l.conversations[key] = conversations
 	}
 	if len(conversations) > 0 {
-		messages, err := s.loopMessages(ctx, []int64{messageID}, owners)
+		messages, err := s.loopMessages(ctx, []int64{messageID}, *l.owners)
 		if err != nil {
 			return peoplesweep.CommitmentSource{}, false, err
 		}
 		if len(messages) == 1 {
-			return s.commitmentMessage(ctx, personID, conversations[0], messages[0], owners)
+			return s.commitmentMessage(ctx, personID, conversations[0], messages[0], *l.owners)
 		}
 	}
 	return peoplesweep.CommitmentSource{}, false, nil

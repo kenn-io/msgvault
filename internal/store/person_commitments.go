@@ -64,7 +64,7 @@ func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64
 	if personID < 0 || limit < 1 || limit > 201 || offset < 0 {
 		return nil, ErrInvalidActivityRequest
 	}
-	result := make([]PersonCommitment, 0, limit)
+	result, lookup := make([]PersonCommitment, 0, limit), commitmentSourceLookup{store: s}
 	position := 0
 	pageSize := min(32, max(8, limit))
 	for _, fresh := range []bool{true, false} {
@@ -75,7 +75,7 @@ func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64
 				return nil, err
 			}
 			for _, candidate := range candidates {
-				c, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now)
+				c, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now, &lookup)
 				if err != nil {
 					return nil, err
 				}
@@ -208,12 +208,12 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 	return nil
 }
 
-func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commitmentCandidate, now time.Time) (PersonCommitment, bool, error) {
+func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commitmentCandidate, now time.Time, lookup *commitmentSourceLookup) (PersonCommitment, bool, error) {
 	c, input := candidate.commitment, candidate.promise.Input
 	if candidate.promise.ID == 0 {
 		return c, false, nil
 	}
-	source, live, err := s.currentCommitmentSource(ctx, c.PersonID, c.AnchorMessageID)
+	source, live, err := lookup.load(ctx, c.PersonID, c.AnchorMessageID)
 	if err != nil || !live || source.Direction != c.Direction || source.SourceVersion != input.SourceVersion ||
 		source.ContentSHA256 != input.ContentSHA256 ||
 		!personFactPortableTime(source.EventTime).Equal(input.EventTime) ||
@@ -244,7 +244,7 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 	if err != nil {
 		return PersonCommitment{}, err
 	}
-	current, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now)
+	current, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now, &commitmentSourceLookup{store: s})
 	if err != nil {
 		return PersonCommitment{}, err
 	}

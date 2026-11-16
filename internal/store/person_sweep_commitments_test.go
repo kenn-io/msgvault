@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +29,7 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	f := newPersonSweepApplyFixture(t, "commitments", false)
 	st := f.store
 	_, persist := newCommitmentTestConversation(t, f)
-	const first, second = "I will send the draft by 2026-08-24.", "I will check the venue."
+	const first, second = "I will send the draft by August 31st.", "I will check the venue."
 	text := first + " " + second
 	id := persist("two-promises", text, -time.Hour)
 	cfg, profile := commitmentTestConfig()
@@ -36,7 +38,7 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	r.Len(window.Sources, 1)
 	start, end := int64(len(first)+1), int64(len(text))
 	parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[
-		{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send the draft","due_on":"2026-08-24","due_phrase":"by 2026-08-24"},
+		{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send the draft","due_on":"2026-08-31","due_phrase":"by August 31st"},
 		{"source_id":%q,"direction":"owed_to","quote":%q,"start":%d,"end":%d,"summary":"Check the venue","due_on":null,"due_phrase":null}
 	]}`, window.Sources[0].ID, first, len(first), window.Sources[0].ID, second, start, end)), window)
 	r.NoError(err)
@@ -51,7 +53,7 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	a.Equal(second, items[1].Quote)
 	a.Equal(id, items[0].AnchorMessageID)
 	r.NotNil(items[0].DueOn)
-	a.Equal("2026-08-24", *items[0].DueOn)
+	a.Equal("2026-08-31", *items[0].DueOn)
 	_, err = st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
 	r.NoError(err)
 	_, err = st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateOpen, nil, request.CompletedAt)
@@ -61,7 +63,7 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	r.Len(items, 2)
 	a.Equal(LoopStateOpen, items[0].State)
 	r.NotNil(items[0].DueOn)
-	a.Equal("2026-08-24", *items[0].DueOn)
+	a.Equal("2026-08-31", *items[0].DueOn)
 	claims, err := st.ListPersonFactClaimsContext(ctx, f.personID, personfacts.ClaimFilter{Limit: 10})
 	r.NoError(err)
 	r.Len(claims, 2)
@@ -74,7 +76,57 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	}
 }
 
+func TestCommitmentYearlessNumericDeadline(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "numeric-deadline", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send the draft by 8/24."
+	persist("promise", quote, -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send","due_on":"2026-08-24","due_phrase":"by 8/24"}]}`, window.Sources[0].ID, quote, len(quote))), window)
+	r.NoError(err)
+	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, parsed))
+	r.NoError(err)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.NotNil(items[0].DueOn)
+	r.Equal("2026-08-24", *items[0].DueOn)
+}
+
 func TestCommitmentListPages(t *testing.T) {
+	t.Run("closed history reuses owner lookup", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "promise-closed-history", false)
+		_, persist := newCommitmentTestConversation(t, f)
+		for i := range 150 {
+			persist(fmt.Sprintf("promise-%d", i), fmt.Sprintf("I will send report %d.", i), -time.Hour+time.Duration(i)*time.Second)
+		}
+		cfg, _ := commitmentTestConfig()
+		cfg.Commitments.MaxItems = 150
+		applyCommitmentTestSources(t, f, cfg.Commitments)
+		items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 150, 0, true)
+		r.NoError(err)
+		r.Len(items, 150)
+		for _, item := range items[:145] {
+			_, err = f.store.DecidePersonCommitmentContext(ctx, item.ID, LoopStateDone, nil, personFactLedgerNow)
+			r.NoError(err)
+		}
+		var logs bytes.Buffer
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		ConfigureSQLLogging(SQLLogOptions{FullTrace: true, MaxStmtChars: 10000})
+		t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}); slog.SetDefault(previous) })
+		items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 1, 0, false)
+		r.NoError(err)
+		r.Len(items, 1)
+		r.Equal("I will send report 145.", items[0].Quote)
+		r.Equal(146, items[0].PagePosition)
+		r.Equal(1, strings.Count(logs.String(), "SELECT p.id FROM account_identities ai"))
+	})
 	t.Run("decision between pages", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "promise-page-decision", false)
@@ -239,6 +291,14 @@ func commitmentApplyRequest(t *testing.T, f personSweepApplyFixture, window peop
 	r.NoError(err)
 	parsed, err = peoplesweep.ParseCommitments(encoded, window)
 	r.NoError(err)
+	if len(window.Sources) == 0 {
+		request := f.request
+		request.CommitmentOnly = true
+		request.Generation.Policy.AllowSensitive = true
+		request.Budget = personSweepApplyBudget()
+		request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg, Output: parsed}
+		return request
+	}
 	st := f.store
 	profile := f.request.Generation.Policy.ProviderPolicyFingerprint
 	budget := personSweepApplyBudget()
@@ -702,6 +762,11 @@ func TestEditedCommitmentDecision(t *testing.T) {
 	combined := first + " " + second
 	cases := []testCase{
 		{
+			name: "omitted promise remains open", initialText: quote,
+			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
+			rescans:         []rescanSpec{{text: quote, wantQuote: quote, wantState: LoopStateOpen}},
+		},
+		{
 			name: "deleted repetition", initialText: quote + " " + quote,
 			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}, {quote: quote, summary: "Send", start: int64(len(quote) + 1)}},
 			rescans:         []rescanSpec{{text: quote, wantQuote: quote, wantState: LoopStateOpen, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send"}}}},
@@ -727,7 +792,7 @@ func TestEditedCommitmentDecision(t *testing.T) {
 		{
 			name: "ambiguous overlap stays open", initialText: combined,
 			initialPromises: []promiseSpec{{quote: first, summary: "Send"}, {quote: second, summary: "Call", start: int64(len(first) + 1)}},
-			rescans:         []rescanSpec{{text: combined, wantQuote: combined, wantState: LoopStateOpen, promises: []promiseSpec{{quote: combined, summary: "Send and call"}}}},
+			rescans:         []rescanSpec{{text: combined, wantQuote: combined, wantState: LoopStateOpen, includeClosed: true, promises: []promiseSpec{{quote: combined, summary: "Send and call"}}}},
 		},
 	}
 	for _, tc := range cases {
@@ -755,6 +820,15 @@ func TestEditedCommitmentDecision(t *testing.T) {
 			r.Len(items, len(initial.Promises))
 			_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
 			r.NoError(err)
+			if tc.name == "omitted promise remains open" {
+				_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateOpen, nil, request.CompletedAt)
+				r.NoError(err)
+			}
+			if tc.name == "ambiguous overlap stays open" {
+				until := request.CompletedAt.Add(24 * time.Hour)
+				_, err = f.store.DecidePersonCommitmentContext(ctx, items[1].ID, LoopStateSnoozed, &until, request.CompletedAt)
+				r.NoError(err)
+			}
 
 			currentText := tc.initialText
 			for i, rescan := range tc.rescans {
@@ -783,6 +857,12 @@ func TestEditedCommitmentDecision(t *testing.T) {
 				}
 				items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, rescan.includeClosed)
 				r.NoError(err)
+				if tc.name == "ambiguous overlap stays open" {
+					r.Len(items, 2)
+					r.Equal(LoopStateDone, items[0].State)
+					r.Equal(LoopStateSnoozed, items[1].State)
+					continue
+				}
 				var found bool
 				for _, item := range items {
 					if item.Quote == rescan.wantQuote {
@@ -794,4 +874,54 @@ func TestEditedCommitmentDecision(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCommitmentDecisionDoesNotCrossArchiveArrival(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "promise-new-arrival", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote, second, text = "I will send it.", "I will call.", "I will send it. I will call."
+	id := persist("first", text, -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	output := peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{
+		{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, End: int64(len(quote)), Summary: "Send"},
+		{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: second, Start: int64(len(quote) + 1), End: int64(len(text)), Summary: "Call"},
+	}}
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, output)
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
+	r.NoError(err)
+	r.Len(items, 2)
+	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
+	r.NoError(err)
+	until := request.CompletedAt.Add(24 * time.Hour)
+	_, err = f.store.DecidePersonCommitmentContext(ctx, items[1].ID, LoopStateSnoozed, &until, request.CompletedAt)
+	r.NoError(err)
+	recorded := window.Sources[0].RecordedTime
+	if !f.store.IsPostgreSQL() {
+		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM messages WHERE id = ?`), id)
+		r.NoError(err)
+		r.Equal(id, persist("second", text, -time.Hour))
+	}
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(recorded.Add(time.Hour)), id)
+	r.NoError(err)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitment_frontiers SET scope_fingerprint = '' WHERE person_id = ?`), f.personID)
+	r.NoError(err)
+	f = nextCommitmentTestAttempt(t, f, "-new-arrival")
+	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	output.Promises = output.Promises[:1]
+	output.Promises[0].SourceID, output.Promises[0].Quote, output.Promises[0].End = window.Sources[0].ID, text, int64(len(text))
+	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
+	r.NoError(err)
+	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.Equal(text, items[0].Quote)
+	r.Equal(LoopStateOpen, items[0].State)
 }
