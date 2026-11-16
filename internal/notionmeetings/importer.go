@@ -285,10 +285,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if errors.Is(loadErr, ErrProvider) {
 				hardErrors = append(hardErrors, fmt.Errorf("load pending Notion meeting %s: %w", id, loadErr))
 			}
-			if pendingExpired(pending, now) {
-				delete(pendingByID, id)
-				continue
-			}
 			pending.NextAttemptAt = now.Add(transcriptRetryCadence).Format(time.RFC3339)
 			pendingByID[id] = pending
 			next.TranscriptRetryUntil[id] = pending.RetryUntil
@@ -365,27 +361,27 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived evidence: %w", id, recoverErr))
 			continue
 		}
-		if strings.TrimSpace(meeting.MeetingNotes.Children.SummaryBlockID) == "" &&
-			(strings.TrimSpace(archived.Evidence.Canonical.Summary) != "" || (len(archived.RawTrees["summary"]) > 0 && string(archived.RawTrees["summary"]) != "null")) {
-			hydrated.markIncomplete("summary", "summary block omitted")
-		}
-		if strings.TrimSpace(meeting.MeetingNotes.Children.NotesBlockID) == "" &&
-			(strings.TrimSpace(archived.Evidence.Canonical.Notes) != "" || (len(archived.RawTrees["notes"]) > 0 && string(archived.RawTrees["notes"]) != "null")) {
-			hydrated.markIncomplete("notes", "notes block omitted")
-		}
-		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
-		if providerTranscriptMissing && strings.TrimSpace(meeting.MeetingNotes.Children.TranscriptBlockID) == "" &&
-			(strings.TrimSpace(archived.Evidence.Canonical.Transcript) != "" || transcriptFromArchivedBody(archived.Body) != "") {
-			hydrated.markIncomplete(sectionTranscript, "transcript block omitted")
-		}
-		terminal := terminalStatus(meeting.MeetingNotes.Status)
-		if len(hydrated.Incomplete) > 0 {
-			sum.PartialCoverage = true
+		if hydrated.PageMarkdownUnavailable && len(archived.Evidence.PageMarkdown) > 0 {
+			hydrated.keptMarkdown = append(jsontext.Value(nil), archived.Evidence.PageMarkdown...)
 		}
 		previousPending, hasPrevious := pendingByID[id]
 		if retained := next.TranscriptRetryUntil[id]; retained != "" {
 			previousPending.RetryUntil = retained
 			hasPrevious = true
+		}
+		_, retryOmissions := schedulePending(hydrated, now, previousPending, hasPrevious, false)
+		if retryOmissions && strings.TrimSpace(meeting.MeetingNotes.Children.SummaryBlockID) == "" &&
+			(strings.TrimSpace(archived.Evidence.Canonical.Summary) != "" || (len(archived.RawTrees["summary"]) > 0 && string(archived.RawTrees["summary"]) != "null")) {
+			hydrated.markIncomplete("summary", "summary block omitted")
+		}
+		if retryOmissions && strings.TrimSpace(meeting.MeetingNotes.Children.NotesBlockID) == "" &&
+			(strings.TrimSpace(archived.Evidence.Canonical.Notes) != "" || (len(archived.RawTrees["notes"]) > 0 && string(archived.RawTrees["notes"]) != "null")) {
+			hydrated.markIncomplete("notes", "notes block omitted")
+		}
+		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
+		terminal := terminalStatus(meeting.MeetingNotes.Status)
+		if len(hydrated.Incomplete) > 0 {
+			sum.PartialCoverage = true
 		}
 		var pending pendingTranscript
 		keep := false
@@ -976,7 +972,10 @@ func schedulePending(meeting *HydratedMeeting, now time.Time, previous pendingTr
 		retryUntil = now.Add(unknownTranscriptRetrySpan)
 	}
 	if !retryUntil.After(now) {
-		return pendingTranscript{}, false
+		if !incomplete {
+			return pendingTranscript{}, false
+		}
+		retryUntil = now.Add(unknownTranscriptRetrySpan)
 	}
 	next := now.Add(transcriptRetryCadence)
 	if next.After(retryUntil) {

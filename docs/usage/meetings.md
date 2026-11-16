@@ -880,20 +880,22 @@ the parent page's Markdown. An incomplete section keeps saved text for retry.
 Provider or network errors, incomplete pagination, and request, response-size,
 block-count, and nesting limits can leave sections incomplete. msgvault keeps
 their archived text and evidence and retries section blocks every six hours,
-even after a meeting leaves the query window. The first retry window ends seven
-days after the meeting ended, or 48 hours after the first retry if the end time
-is unknown. Retries stop at that deadline.
+even after a meeting leaves the query window. If a referenced section remains
+incomplete when its retry window ends, retries continue in a new window. The
+first window ends seven days after the meeting ended, or 48 hours after the
+first retry if the end time is unknown.
 
-If page Markdown is incomplete, msgvault keeps the saved transcript and retries.
+If the transcript depends on incomplete page Markdown, msgvault keeps the saved
+transcript and retries.
 When a transcript is missing without an incomplete section, background retries
 stop at the deadline. The sync summary reports partial coverage when a section
 is incomplete or the Notion query reports more meetings.
 
-An omitted transcript block keeps saved transcript text and stays eligible for
-retry when page Markdown supplies no replacement. A complete empty transcript
-clears saved text when page Markdown supplies none. Omitted summary and notes
-blocks also retain saved text and are retried. A meeting whose saved evidence
-has a newer version keeps that evidence, and the sync reports an error for it.
+An omitted or empty transcript clears saved text when page Markdown supplies no
+replacement. Omitted summary and notes blocks retain saved text during the
+retry window; afterward, they clear if the blocks have not returned. A meeting
+whose saved evidence has a newer version keeps that evidence, and the sync
+reports an error for it.
 Existing `[[notion_meetings]]` settings need no changes. Other hard
 per-meeting failures retain the previous successful state; meetings written
 earlier in that failed run remain safe and idempotent.

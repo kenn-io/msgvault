@@ -49,6 +49,7 @@ type HydratedMeeting struct {
 	NotesTree                  blockTree
 	TranscriptTree             blockTree
 	PageMarkdown               *MarkdownPage
+	PageMarkdownUnavailable    bool
 	Summary                    string
 	Notes                      string
 	Transcript                 string
@@ -185,7 +186,11 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	page, err := h.source.RetrievePageMarkdown(ctx, pageID, true)
 	if err != nil {
 		if ctx.Err() == nil && (transcriptTemporarilyUnavailable(err) || errors.Is(err, ErrMalformedResponse)) {
-			result.markIncomplete(sectionTranscript, "markdown")
+			if strings.TrimSpace(result.Transcript) == "" {
+				result.markIncomplete(sectionTranscript, "markdown")
+			} else {
+				result.PageMarkdownUnavailable = true
+			}
 			return nil
 		}
 		return fmt.Errorf("retrieve Notion page Markdown: %w", err)
