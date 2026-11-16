@@ -1632,6 +1632,33 @@ func TestPersonFactEmploymentPinnedOutcomeMatchesIdentity(t *testing.T) {
 	}
 }
 
+func TestPersonFactEmploymentPinnedManualEndedJobOutcome(t *testing.T) {
+	st, personID, _ := newPersonFactProjectionStore(t)
+	target := projectionTargetBySlug(t, st, "employment")
+	organization := createPersonFactOrganization(t, st, "Example Company", "example.org")
+	_, err := st.AddEmploymentContext(t.Context(), EmploymentInput{
+		PersonID: personID, OrganizationID: organization.ID, Title: new("Engineer"),
+		EndDate: &PartialDate{Year: new(2020)}, IsCurrent: new(false), Source: ProvenanceUser,
+	})
+	require.NoError(t, err)
+	_, err = st.SetPersonFactPinContext(t.Context(), personID, personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, true, "test")
+	require.NoError(t, err)
+	value := fmt.Sprintf(`{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"Engineer","end_date":{"year":2020}}`, organization.ID)
+	claim := personFactProjectionClaim(personID, target, value, "manual-ended-pin")
+	input := personFactProjectionInput(personID, "manual-ended-pin", []personfacts.ProposedClaim{claim}, nil)
+	prepared, err := personfacts.PreparePersonFactGeneration(t.Context(), input, nil)
+	require.NoError(t, err)
+	key, err := personfacts.ClaimKey(prepared.GenerationKey(), prepared.Claims()[0])
+	require.NoError(t, err)
+	_, err = st.ApplyPersonFactGenerationContext(t.Context(), input, nil)
+	require.NoError(t, err)
+	rows, err := st.ListPersonFactDecisionsContext(t.Context(), personID, personfacts.DecisionFilter{ClaimKey: key, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.NotNil(t, rows[0].Outcome)
+	assert.Equal(t, personfacts.OutcomePinnedValueKept, *rows[0].Outcome)
+}
+
 func TestPersonFactEmploymentExpiresOwnedProjectionAtExclusiveValidityEnd(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -786,10 +786,39 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 			return false, err
 		}
 	}
+	pinnedEmployment := remaining
+	if descriptor.Kind == personfacts.TargetEmployment {
+		for _, decision := range resolution.Decisions {
+			if decision.Reason != personfacts.ReasonPinRetained {
+				continue
+			}
+			jobs, loadErr := s.listAllEmploymentsContext(ctx, tx, EmploymentFilter{PersonID: generation.PersonID})
+			if loadErr != nil {
+				return false, loadErr
+			}
+			pinnedEmployment = make([]personfacts.CurrentProjection, 0, len(jobs))
+			for _, job := range jobs {
+				organization, loadErr := getOrganizationTx(ctx, tx, job.OrganizationID)
+				if loadErr != nil {
+					return false, loadErr
+				}
+				normalized, normalizeErr := normalizedPersonFactEmploymentValue(descriptor, job, *organization)
+				if normalizeErr != nil {
+					return false, normalizeErr
+				}
+				pinnedEmployment = append(pinnedEmployment, personfacts.CurrentProjection{Normalized: *normalized})
+			}
+			break
+		}
+	}
 	for _, decision := range resolution.Decisions {
 		claim := claimByKey[decision.ClaimKey]
 		hasCurrent, matchesCurrent := false, false
-		for _, value := range remaining {
+		values := remaining
+		if descriptor.Kind == personfacts.TargetEmployment && decision.Reason == personfacts.ReasonPinRetained {
+			values = pinnedEmployment
+		}
+		for _, value := range values {
 			if descriptor.Kind == personfacts.TargetEmployment {
 				if claim.Normalized == nil {
 					continue
