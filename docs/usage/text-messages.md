@@ -20,7 +20,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
-| [X DMs](#import-x) | Extracted X account archive (unreleased on `main`) |
+| [X DMs](#import-x) | Extracted X account archive |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
 | [Slackdump](/docs/usage/slack/#import-a-slackdump-export) | Export directory or ZIP |
@@ -509,7 +509,7 @@ An interrupted import resumes after the last completed chat when `result.json` i
 
 ## import-x
 
-Available on `main`, unreleased. Import supplied direct and group DMs from an
+Import supplied direct and group DMs from an
 extracted [X account archive](https://help.x.com/en/managing-your-account/how-to-download-your-x-archive):
 
 ```bash

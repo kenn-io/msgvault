@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-14"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -29,7 +29,7 @@ Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-da
 
 ### Filename suggestions
 
-Newer than the latest release, API schema 3.15 adds
+API schema 3.15 adds
 `POST /api/v1/files/suggest` and `POST /api/v1/people/{id}/files/suggest`.
 They suggest attachment filenames without changing existing file or message
 search. Both are read-only operations under existing owner authentication;
@@ -166,7 +166,22 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.1.0**.
+it is separate from the binary release version. The current schema is **5.7.0**.
+
+Schema 5.7.0 adds first-appearance evidence to person contact state.
+
+Schema 5.6.0 adds `POST /api/v1/identity/cache-refresh` to rebuild
+identity-derived datasets without changing links or profiles.
+
+Schema 5.5.0 adds `POST /api/v1/sources/{source_id}/account-attribution/repair`
+to retry account matching for one source.
+
+Schema 5.4.0 allows native tag reads for messages from deleted sources.
+
+Schema 5.3.0 adds `auth_method` to IMAP accounts in `GET /api/v1/cli/accounts`:
+`password` or `xoauth2`, present when the source's settings are readable.
+
+Schema 5.2.0 adds open Kata issue search and optional task search queries.
 
 Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 
@@ -440,6 +455,12 @@ syncs. If the sync ends while the write waits, the write can proceed.
 | `GET /api/v1/messages/{id}/tags` | Read current native tags; optional `mailbox` query selects an exact recorded IMAP copy |
 | `POST /api/v1/messages/{id}/tags` | Apply `add` and `remove` arrays, optional `mailbox`, and optional `dry_run` |
 
+With API schema 5.4.0 or newer, GET can read tags for a message marked deleted
+from its source, such as a message still in Trash. The provider must still
+resolve the stored identity. The read returns the provider's observation and
+leaves the archive unchanged. POST, including `dry_run`, still rejects
+source-deleted messages. Both methods reject locally hidden messages.
+
 `id` is the positive archived message ID. Without `mailbox`, IMAP selects the
 current original copy, then the sole current membership. Multiple surviving
 copies require an explicit mailbox when the original copy is absent.
@@ -493,6 +514,15 @@ Unsupported providers or persistent keyword support return
 501. See the generated OpenAPI contract for response schemas.
 
 ### Identity match review and scoring
+
+`POST /api/v1/identity/cache-refresh` rebuilds identity-derived datasets without
+changing links or profiles. It returns `identity_revision` and
+`cache_state: "ready"` on success. It requires API authentication and the
+mutation gate. When a SQLite cache is absent, it returns HTTP 503 with
+`identity_cache_build_required`; run `msgvault build-cache` before retrying.
+PostgreSQL returns HTTP 503 with `identity_cache_unsupported` because it has
+no Parquet cache. Other build failures return HTTP 500; a missing refresh
+capability returns HTTP 503.
 
 Review identity suggestions through `GET /api/v1/identity/match-candidates`
 and `GET /api/v1/identity/match-candidates/{id}`. Responses include the
@@ -1963,7 +1993,7 @@ Recording search requires Docbank's source-selected search contract: `media_sour
 
 Schema 3.27.0 adds optional `attachments` with `results`, `truncated`, and optional `error` containing `error` and `message`. Each result has `message_id`, `conversation_id`, `attachment_id`, `filename`, `containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches delivered mirror versions using text Docbank has extracted. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. A Docbank result limit or occurrence limit sets `truncated`, meaning more may match. Docbank may include filename-only candidates in its limit even when all extracted-text matches fit. Visibility and Person scope apply to both lists. The limit applies independently to each list. An empty attachment list without an error means no match in extracted text and says nothing about files whose text Docbank hasn't extracted.
 
-Schema 4.2.0 (newer `main`, after v0.23.0) accepts `mode=semantic` and
+Schema 4.2.0 accepts `mode=semantic` and
 `mode=hybrid` for attachment text. `attachments` adds `requested_mode`,
 `actual_mode`, `coverage`, `partial`, and `degradations`. `actual_mode` is
 `unavailable` when no search ran or remote retrieval failed. Coverage describes

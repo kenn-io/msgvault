@@ -235,6 +235,7 @@ import type {
   ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
   ListMessagesParams,
+  ListOpenKataIssuesParams,
   ListOperationRunsParams,
   ListOrganizationAttributesParams,
   ListOrganizationAttributesPathParameters,
@@ -403,6 +404,7 @@ import type {
   RelationshipTypesResponse,
   RemoteImageRequest,
   ReopenLoopPathParameters,
+  RepairAccountAttributionPathParameters,
   ResolveCardDAVConflictPathParameters,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
@@ -1770,6 +1772,17 @@ export const getHealth = (
   );
 };
 /**
+ * @summary Refresh identity datasets
+ */
+export const refreshIdentityCache = (
+  options?: SecondParameter<typeof orvalFetch<IdentityLinkResponse>>,
+) => {
+  return orvalFetch<IdentityLinkResponse>(
+    { url: `/api/v1/identity/cache-refresh`, method: "POST" },
+    options,
+  );
+};
+/**
  * @summary Assert two participants are the same person
  */
 export const linkIdentityParticipants = (
@@ -2161,6 +2174,18 @@ export const linkKataEvidence = (
   );
 };
 /**
+ * @summary List or search Kata issues in the configured project
+ */
+export const listOpenKataIssues = (
+  params?: ListOpenKataIssuesParams,
+  options?: SecondParameter<typeof orvalFetch<KataIssueListResponse>>,
+) => {
+  return orvalFetch<KataIssueListResponse>(
+    { url: `/api/v1/integrations/kata/open-issues`, method: "GET", params },
+    options,
+  );
+};
+/**
  * @summary Get Kata person agenda availability
  */
 export const getKataIntegrationStatus = (
@@ -2175,7 +2200,7 @@ export const getKataIntegrationStatus = (
  * @summary Search tasks in the configured project
  */
 export const searchIntegrationTasks = (
-  params: SearchIntegrationTasksParams,
+  params?: SearchIntegrationTasksParams,
   options?: SecondParameter<typeof orvalFetch<TaskSearchResponse>>,
 ) => {
   return orvalFetch<TaskSearchResponse>(
@@ -4385,6 +4410,21 @@ export const listSourceStatus = (
 ) => {
   return orvalFetch<SourceStatusResponse>(
     { url: `/api/v1/sources/status`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Retry account matching for one source
+ */
+export const repairAccountAttribution = (
+  { sourceId }: RepairAccountAttributionPathParameters,
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/sources/${encodeURIComponent(String(sourceId))}/account-attribution/repair`,
+      method: "POST",
+    },
     options,
   );
 };

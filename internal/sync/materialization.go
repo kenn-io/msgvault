@@ -55,6 +55,26 @@ func (e *committedMessageError) Error() string {
 }
 func (e *committedMessageError) Unwrap() error { return e.err }
 
+// recordIngestOutcome records an ingestion failure before allowing it to count
+// as an acquisition. The returned error is a debt-write failure; callers retain
+// ingestErr for logging or propagation. A post-commit identity survives even a
+// rejected debt write, but that write must succeed before acquired can be true.
+// Provider exceptions, stop conditions and message counters belong to callers.
+func (s *Syncer) recordIngestOutcome(syncID int64, sourceMessageID string, ingestErr error, checkpoint *store.Checkpoint) (committedID int64, acquired bool, recordErr error) {
+	if ingestErr == nil {
+		return 0, true, nil
+	}
+	committed, acquired := errors.AsType[*committedMessageError](ingestErr)
+	if acquired {
+		committedID = committed.messageID
+	}
+	if err := s.recordAcquisitionFailure(syncID, sourceMessageID, syncItemPhaseIngest, syncItemKindIngestError, ingestErr); err != nil {
+		return committedID, false, err
+	}
+	checkpoint.ErrorsCount++
+	return committedID, acquired, nil
+}
+
 func (s *Syncer) requiredMaterialization(data *messageData) materializationWork {
 	work := s.pendingAttachmentRepairs[data.message.SourceMessageID]
 	if s.opts.AttachmentsDir != "" {

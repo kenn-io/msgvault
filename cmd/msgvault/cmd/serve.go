@@ -130,7 +130,10 @@ var runDerivedCacheSubprocess = func(ctx context.Context, analyticsDir string) e
 		// auto_build_cache=false, PostgreSQL) deliberately leaves absent;
 		// the caller reports the cache stale instead.
 		readiness, inspectErr := query.InspectCacheReadiness(analyticsDir)
-		if inspectErr != nil || readiness == query.CacheAbsent {
+		if inspectErr == nil && readiness == query.CacheAbsent {
+			return api.ErrIdentityCacheBuildRequired
+		}
+		if inspectErr != nil {
 			return err
 		}
 		return executeBuildCacheSubprocessMode(ctx, buildCacheModeFull)
@@ -1092,6 +1095,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer = api.NewServerWithOptions(apiOpts)
+	analyticsReady := make(chan struct{})
+	storeAdapter.activateAnalyticsCache = newDaemonAnalyticsCacheActivator(cfg, s, apiServer, analyticsReady, &analyticsInit)
+	apiServer.StartAccountAttributionRecovery()
 	if cfg.People.Sweep.Enabled {
 		// The daemon owns the people sweep worker, so it owns manual brief
 		// generation: POST /api/v1/people/{id}/brief/generate reports
@@ -1126,6 +1132,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			resourceCleanupSafe = false
 		}
 		cancel()
+		close(analyticsReady)
 	} else {
 		listenerReserved = false
 		analyticsServerStarted = true
@@ -1145,6 +1152,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		} else {
 			analyticsInit = completedDaemonAnalyticsInitHandle()
 		}
+		close(analyticsReady)
 		// Wait for the initializer to publish its startup barrier before vector
 		// initialization can compete for shared archive resources.
 		_ = analyticsInit.WaitStarted(ctx)
@@ -1903,7 +1911,19 @@ func hasServeOAuthConfig(c *config.Config) bool {
 	if c == nil {
 		return false
 	}
-	return c.OAuth.HasAnyConfig() || c.Microsoft.ClientID != ""
+	return c.OAuth.HasAnyConfig() || hasMicrosoftServeConfig(c.Microsoft)
+}
+
+func hasMicrosoftServeConfig(c config.MicrosoftConfig) bool {
+	if c.ClientID != "" {
+		return true
+	}
+	for _, app := range c.Apps {
+		if app.ClientID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func effectiveDaemonIdleTimeout(c *config.Config, logger *slog.Logger) time.Duration {
@@ -1966,6 +1986,7 @@ type storeAPIAdapter struct {
 	// analyticsDir is the daemon's Parquet analytics cache directory, used
 	// to read the revision committed by the derived-refresh child.
 	analyticsDir           string
+	activateAnalyticsCache func(context.Context) error
 	cacheJobs              *cacheBuildJobs
 	personEnrichmentConfig personenrichment.Config
 	lookupEnv              personenrichment.CredentialLookup
@@ -2293,6 +2314,9 @@ func (a *storeAPIAdapter) BeginReadSnapshotContext(ctx context.Context) (context
 }
 func (a *storeAPIAdapter) DB() *sql.DB        { return a.store.DB() }
 func (a *storeAPIAdapter) IsPostgreSQL() bool { return a.store.IsPostgreSQL() }
+func (a *storeAPIAdapter) RepairAccountAttributionContext(ctx context.Context, sourceID int64, progress func(store.AccountAttributionRepairSummary)) (store.AccountAttributionRepairSummary, error) {
+	return a.store.RepairAccountAttributionContext(ctx, sourceID, progress)
+}
 
 func (a *storeAPIAdapter) ListMessagesContext(
 	ctx context.Context, offset, limit int, sourceIDs []int64,
@@ -2431,7 +2455,13 @@ func (a *storeAPIAdapter) BuildCLICache(
 	emit func(api.CLICacheBuildEvent) error,
 ) error {
 	ctx = a.invocationContext(ctx)
-	return buildCacheSubprocessStream(ctx, fullRebuild, false, emit)
+	if err := buildCacheSubprocessStream(ctx, fullRebuild, false, emit); err != nil {
+		return err
+	}
+	if a.activateAnalyticsCache != nil {
+		return a.activateAnalyticsCache(ctx)
+	}
+	return nil
 }
 
 func (a *storeAPIAdapter) RunCLISync(
@@ -3112,17 +3142,28 @@ func (a *storeAPIAdapter) ListVirtualAccountsContext(ctx context.Context) (map[i
 	return a.store.ListVirtualAccountsContext(ctx)
 }
 
+func (a *storeAPIAdapter) PendingAccountAttributionSourcesContext(ctx context.Context) ([]int64, error) {
+	return a.store.PendingAccountAttributionSourcesContext(ctx)
+}
+
 // AccountIdentityRevisionContext lets the API tell a catalog read from before
 // an identity change from a current one.
 func (a *storeAPIAdapter) AccountIdentityRevisionContext(ctx context.Context) (int64, error) {
 	return a.store.AccountIdentityRevisionContext(ctx)
 }
 
+// AccountCatalogRevisionContext reports attribution rewrites, including ones
+// committed outside the daemon's repair queue.
+func (a *storeAPIAdapter) AccountCatalogRevisionContext(ctx context.Context) (int64, error) {
+	return a.store.AccountCatalogRevisionContext(ctx)
+}
+
 // The API serves the account catalog only from a store that also reports
-// the identity revision, so the adapter must keep both.
+// the identity and catalog revisions, so the adapter must keep all three.
 var _ interface {
 	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
 	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
+	AccountCatalogRevisionContext(ctx context.Context) (int64, error)
 } = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) ResolveAccountIdentityContext(
@@ -3947,12 +3988,20 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 // allocator exits with the process; the long-lived daemon does neither.
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
 	ctx = a.invocationContext(ctx)
+	if a.store.IsPostgreSQL() {
+		return 0, api.ErrIdentityCacheUnsupported
+	}
 	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
 		return 0, err
 	}
 	state, err := query.ReadCacheSyncState(a.analyticsDir)
 	if err != nil {
 		return 0, fmt.Errorf("read refreshed cache revision: %w", err)
+	}
+	if a.activateAnalyticsCache != nil {
+		if err := a.activateAnalyticsCache(ctx); err != nil {
+			return 0, err
+		}
 	}
 	return state.IdentityRevision, nil
 }

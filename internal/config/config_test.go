@@ -2677,3 +2677,22 @@ func TestRemovedDocumentConfigGuidesMigration(t *testing.T) {
 	assert.Contains(logs.String(), "for Mistral run docbank processing probe --profile <name> --seeds <dir>")
 	assert.Equal(1, strings.Count(logs.String(), "[attachments.documents]"))
 }
+
+func TestMicrosoftNamedApps(t *testing.T) {
+	cfg := MicrosoftConfig{ClientID: "default", TenantID: "tenant-a", RedirectURI: "http://localhost:9000/callback", Apps: map[string]MicrosoftApp{
+		"orgb":  {ClientID: "client-b"},
+		"empty": {},
+	}}
+	app, err := cfg.App("")
+	require.NoError(t, err)
+	assert.Equal(t, "default", app.ClientID)
+	app, err = cfg.App("orgb")
+	require.NoError(t, err)
+	assert.Equal(t, "client-b", app.ClientID)
+	assert.Equal(t, "common", app.EffectiveTenantID())
+	assert.Equal(t, "http://localhost:8089/callback/microsoft", app.EffectiveRedirectURI())
+	_, err = cfg.App("missing")
+	require.ErrorContains(t, err, "[microsoft.apps.missing]")
+	_, err = cfg.App("empty")
+	require.ErrorContains(t, err, "[microsoft.apps.empty]")
+}

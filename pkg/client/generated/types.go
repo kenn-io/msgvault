@@ -2366,6 +2366,7 @@ func (c ChoiceDescriptor) Validate() error {
 
 type CliAccountResponse struct {
 	Alias              *string          `json:"alias" validate:"required"`
+	AuthMethod         *string          `json:"auth_method,omitzero"`
 	DisplayName        string           `json:"display_name" validate:"required"`
 	Email              string           `json:"email" validate:"required"`
 	HistoryOnly        bool             `json:"history_only"`
@@ -3088,28 +3089,49 @@ func (c ContactPointPage) Validate() error {
 }
 
 type ContactState struct {
-	CadenceDueAt        *time.Time `json:"cadence_due_at,omitempty"`
-	CadenceStatus       string     `json:"cadence_status" validate:"required"`
-	ComputedAt          time.Time  `json:"computed_at" validate:"required"`
-	FirstContactAt      *time.Time `json:"first_contact_at,omitempty"`
-	FirstContactRef     *string    `json:"first_contact_ref,omitzero"`
-	InferredChannel     *string    `json:"inferred_channel,omitzero"`
-	InteractionCount    int64      `json:"interaction_count"`
-	LastContactAt       *time.Time `json:"last_contact_at,omitempty"`
-	LastContactChannel  *string    `json:"last_contact_channel,omitzero"`
-	LastContactOwner    *string    `json:"last_contact_owner,omitzero"`
-	LastContactRef      *string    `json:"last_contact_ref,omitzero"`
-	LastContactSourceID *int64     `json:"last_contact_source_id,omitempty"`
-	LastInboundAt       *time.Time `json:"last_inbound_at,omitempty"`
-	LastInboundRef      *string    `json:"last_inbound_ref,omitzero"`
-	LastOutboundAt      *time.Time `json:"last_outbound_at,omitempty"`
-	LastOutboundRef     *string    `json:"last_outbound_ref,omitzero"`
-	PersonID            int64      `json:"person_id"`
-	Stale               bool       `json:"stale"`
+	CadenceDueAt        *time.Time              `json:"cadence_due_at,omitempty"`
+	CadenceStatus       string                  `json:"cadence_status" validate:"required"`
+	ComputedAt          time.Time               `json:"computed_at" validate:"required"`
+	FirstContactAt      *time.Time              `json:"first_contact_at,omitempty"`
+	FirstContactKind    *string                 `json:"first_contact_kind,omitzero"`
+	FirstContactRef     *string                 `json:"first_contact_ref,omitzero"`
+	FirstSeenAt         *time.Time              `json:"first_seen_at,omitempty"`
+	FirstSeenRef        *string                 `json:"first_seen_ref,omitzero"`
+	InferredChannel     *string                 `json:"inferred_channel,omitzero"`
+	InteractionCount    int64                   `json:"interaction_count"`
+	Introducer          *FirstContactIntroducer `json:"introducer,omitempty"`
+	LastContactAt       *time.Time              `json:"last_contact_at,omitempty"`
+	LastContactChannel  *string                 `json:"last_contact_channel,omitzero"`
+	LastContactOwner    *string                 `json:"last_contact_owner,omitzero"`
+	LastContactRef      *string                 `json:"last_contact_ref,omitzero"`
+	LastContactSourceID *int64                  `json:"last_contact_source_id,omitempty"`
+	LastInboundAt       *time.Time              `json:"last_inbound_at,omitempty"`
+	LastInboundRef      *string                 `json:"last_inbound_ref,omitzero"`
+	LastOutboundAt      *time.Time              `json:"last_outbound_at,omitempty"`
+	LastOutboundRef     *string                 `json:"last_outbound_ref,omitzero"`
+	PersonID            int64                   `json:"person_id"`
+	Stale               bool                    `json:"stale"`
 }
 
 func (c ContactState) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.CadenceStatus, "required"); err != nil {
+		errors = errors.Append("CadenceStatus", err)
+	}
+	if err := typesValidator.Var(c.ComputedAt, "required"); err != nil {
+		errors = errors.Append("ComputedAt", err)
+	}
+	if c.Introducer != nil {
+		if v, ok := any(c.Introducer).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Introducer", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ContextPassage struct {
@@ -5743,6 +5765,16 @@ type Filters struct {
 	Senders       []string `json:"senders,omitempty"`
 }
 
+type FirstContactIntroducer struct {
+	DisplayName   string `json:"display_name" validate:"required"`
+	ParticipantID int64  `json:"participant_id"`
+	PersonID      *int64 `json:"person_id,omitempty"`
+}
+
+func (f FirstContactIntroducer) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
 type FormatCoverage struct {
 	Bytes     int64  `json:"bytes"`
 	Current   int64  `json:"current"`
@@ -7023,7 +7055,7 @@ func (k KataIssueCreateRequest) Validate() error {
 type KataIssueListResponse struct {
 	Issues []KataIssueReceipt `json:"issues" validate:"required"`
 
-	// Truncated The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked
+	// Truncated The list may omit matching issues: more matched than were returned, or some citations could not be checked
 	Truncated bool `json:"truncated"`
 }
 
@@ -16470,6 +16502,9 @@ func (t TaskLinkTask) Validate() error {
 
 type TaskSearchResponse struct {
 	Tasks []TaskSummary `json:"tasks" validate:"required"`
+
+	// Truncated More tasks matched than were returned
+	Truncated bool `json:"truncated"`
 }
 
 func (t TaskSearchResponse) Validate() error {

@@ -73,7 +73,7 @@ type TaskLinkOperations interface {
 	Link(ctx context.Context, taskID string, identity tasklinks.MessageIdentity, addedAt time.Time) (taskclient.Task, error)
 	Unlink(ctx context.Context, taskID string, identity tasklinks.MessageIdentity) (taskclient.Task, error)
 	Lookup(ctx context.Context, identity tasklinks.MessageIdentity) tasklinks.LookupResult
-	Search(ctx context.Context, query string) ([]tasklinks.TaskSummary, error)
+	Search(ctx context.Context, query string) ([]tasklinks.TaskSummary, bool, error)
 }
 
 type TaskIdentityResolver func(context.Context, *APIMessage) (tasklinks.MessageIdentity, error)
@@ -315,10 +315,13 @@ type Server struct {
 	idleTracker               *IdleTracker
 	operationGate             OperationGate
 	operationHistoryReader    operations.HistoryReader
+	accountRepairs            map[int64]*accountAttributionRepairJob
 	importContext             context.Context
 	cancelImports             context.CancelFunc
 	importMu                  sync.Mutex
 	importsClosed             bool
+	loopEvidenceRunning       bool
+	loopEvidencePending       []int64
 	importWG                  sync.WaitGroup
 	localEmbeddings           LocalEmbeddingsController
 	localSetup                LocalEmbeddingsStatus
@@ -1213,7 +1216,7 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if cardDAVRequestNeedsProtectiveCeiling(r) ||
-			(r.Method == http.MethodPost && r.URL.Path == "/api/v1/identity/scoring/run") {
+			(r.Method == http.MethodPost && (r.URL.Path == "/api/v1/identity/scoring/run" || r.URL.Path == "/api/v1/identity/cache-refresh")) {
 			serveWithProtectiveRequestDeadline(w, r, next)
 			return
 		}
