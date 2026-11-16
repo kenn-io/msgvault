@@ -311,6 +311,49 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 		assert.True(os.SameFile(before, after), "label-only repair must retain %s", path)
 	}
 
+	// A complete provider snapshot can remove memberships, including all of
+	// them. Verify the cached filter itself, with the old published results
+	// as a control before each ordinary cache refresh.
+	assertCachedMembership := func(filter query.MessageFilter, want []int64) {
+		t.Helper()
+		engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
+		require.NoError(err)
+		defer func() { assert.NoError(engine.Close()) }()
+		messages, err := engine.ListMessages(t.Context(), filter)
+		require.NoError(err)
+		var actual []int64
+		for _, message := range messages {
+			actual = append(actual, message.ID)
+		}
+		assert.ElementsMatch(want, actual, "cached membership filter %+v", filter)
+	}
+	for _, snapshot := range [][]int64{{4}, {}} {
+		st, err = store.Open(dbPath)
+		require.NoError(err)
+		changed, err := st.ReconcileMessageLabels(t.Context(), messageID, snapshot, true)
+		require.NoError(err)
+		require.True(changed)
+		require.NoError(st.Close())
+		assertCachedMembership(query.MessageFilter{Label: "renamed"}, []int64{messageID})
+		if len(snapshot) > 0 {
+			assertCachedMembership(query.MessageFilter{Label: "synthetic"}, []int64{messageID})
+		}
+		result, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
+		require.NoError(err)
+		assert.Zero(result.StagedCount, "membership-only refresh adds no messages")
+		assert.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
+		assertCachedMembership(query.MessageFilter{Label: "synthetic"}, nil)
+		var want []int64
+		unlabeled := []int64{newMessageID}
+		if len(snapshot) > 0 {
+			want = []int64{messageID}
+		} else {
+			unlabeled = append(unlabeled, messageID)
+		}
+		assertCachedMembership(query.MessageFilter{Label: "renamed"}, want)
+		assertCachedMembership(query.MessageFilter{EmptyValueTargets: map[query.ViewType]bool{query.ViewLabels: true}}, unlabeled)
+	}
+
 	// Attachment metadata repairs must replace their totals, not add the old
 	// size again, while keeping old relationship activity in place.
 	st, err = store.Open(dbPath)
