@@ -1627,7 +1627,7 @@ func TestImporterRetriesOmittedTranscript(t *testing.T) {
 			if tc.wantBody != "" {
 				assert.Contains(t, body, tc.wantBody)
 			}
-			preserveEmpty := !tc.dataSource && tc.pending && !tc.truncated && tc.wantBody == ""
+			preserveEmpty := !tc.dataSource && tc.omitted && tc.pending && !tc.truncated && tc.wantBody == ""
 			preserveMissing := tc.dataSource && tc.omitted
 			if preserveEmpty || preserveMissing {
 				if tc.structured {

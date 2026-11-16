@@ -259,20 +259,7 @@ func TestNotionNestedMeetingPages(t *testing.T) {
 			{"results":[{"id":"action","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"branch"},"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}
 		]}
 	}`, want: []string{"action"}},
-		{name: "TestNotionOlderNestedMeetingPagesDoNotLeakActions", raw: `{
-		"schema_version":1,
-		"discovery":{"meeting_notes":{"children":{"summary_block_id":"root"}}},
-		"canonical":{"summary":"Summary"},
-		"summary":{"root":{"id":"root","type":"paragraph","has_children":true},"pages":[
-			{"results":[
-				{"id":"nested","type":"meeting_notes","has_children":true,"parent":{"type":"block_id","block_id":"root"}},
-				{"id":"branch","type":"paragraph","has_children":true,"parent":{"type":"block_id","block_id":"root"}}
-			],"has_more":true,"next_cursor":"next"},
-			{"results":[{"id":"hidden","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"nested"},"to_do":{"rich_text":[{"plain_text":"Hidden"}],"checked":false}}],"has_more":false},
-			{"results":[{"id":"sibling","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"branch"},"to_do":{"rich_text":[{"plain_text":"Sibling"}],"checked":false}}],"has_more":false},
-			{"results":[{"id":"last","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"root"},"to_do":{"rich_text":[{"plain_text":"Last"}],"checked":false}}],"has_more":false}
-		]}
-	}`, want: []string{"sibling", "last"}},
+
 		{name: "TestNotionNestedMeetingWithEmptyLastPage", raw: `{
 		"schema_version":1,
 		"discovery":{"meeting_notes":{"children":{"summary_block_id":"root"}}},

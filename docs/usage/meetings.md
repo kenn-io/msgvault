@@ -889,9 +889,9 @@ stop at the deadline. The sync summary reports partial coverage when a section
 is incomplete or the Notion query reports more meetings.
 
 When a transcript reference disappears without a replacement, msgvault keeps
-the saved transcript and retries. It also keeps the saved transcript when page
-Markdown has no transcript. A complete empty referenced transcript section under
-a data source clears saved text. Other omitted sections clear saved text.
+the saved transcript and retries. A complete empty referenced transcript section
+clears saved text when page Markdown has no replacement. Other omitted sections
+clear saved text.
 
 If combined evidence exceeds 64 MiB, msgvault keeps the last readable archive
 and reports partial coverage.

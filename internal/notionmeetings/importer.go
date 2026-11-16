@@ -368,7 +368,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			hasPrevious = true
 		}
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
-		if providerTranscriptMissing && (hydrated.PageMarkdown != nil || strings.TrimSpace(meeting.MeetingNotes.Children.TranscriptBlockID) == "") &&
+		if providerTranscriptMissing && strings.TrimSpace(meeting.MeetingNotes.Children.TranscriptBlockID) == "" &&
 			(strings.TrimSpace(archived.Evidence.Canonical.Transcript) != "" || transcriptFromArchivedBody(archived.Body) != "") &&
 			!slices.Contains(hydrated.Incomplete, sectionTranscript) {
 			hydrated.markIncomplete(sectionTranscript, "provider omitted the transcript")
