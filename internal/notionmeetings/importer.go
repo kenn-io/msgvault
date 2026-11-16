@@ -397,6 +397,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			}
 		}
 		hydrated.keptRawTrees = map[string]jsontext.Value{}
+		var oldDiscovery MeetingNote
+		if archived.HasEvidence {
+			_ = json.Unmarshal(archived.Evidence.Discovery, &oldDiscovery)
+		}
 		sections := []struct {
 			name    string
 			text    *string
@@ -426,6 +430,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if archived.HasEvidence {
 				if rawTree := archived.RawTrees[section.name]; len(rawTree) > 0 {
 					hydrated.keptRawTrees[section.name] = append(jsontext.Value(nil), rawTree...)
+					oldChildren := oldDiscovery.MeetingNotes.Children
+					switch section.name {
+					case "summary":
+						hydrated.Discovery.MeetingNotes.Children.SummaryBlockID = oldChildren.SummaryBlockID
+					case "notes":
+						hydrated.Discovery.MeetingNotes.Children.NotesBlockID = oldChildren.NotesBlockID
+					case sectionTranscript:
+						hydrated.Discovery.MeetingNotes.Children.TranscriptBlockID = oldChildren.TranscriptBlockID
+					}
 				}
 				markdownPresent := len(archived.Evidence.PageMarkdown) > 0 && string(archived.Evidence.PageMarkdown) != "null"
 				if section.name == sectionTranscript && markdownPresent {
@@ -436,6 +449,28 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				}
 			}
 			hydrated.Warnings = append(hydrated.Warnings, "provider temporarily omitted the "+section.name+"; preserved the archived "+section.name)
+		}
+		if len(hydrated.keptRawTrees) > 0 {
+			var discovery map[string]jsontext.Value
+			var notes map[string]jsontext.Value
+			var children map[string]jsontext.Value
+			if json.Unmarshal(hydrated.Discovery.Raw, &discovery) == nil && json.Unmarshal(discovery["meeting_notes"], &notes) == nil && json.Unmarshal(notes["children"], &children) == nil {
+				for name := range hydrated.keptRawTrees {
+					var id string
+					switch name {
+					case "summary":
+						id = hydrated.Discovery.MeetingNotes.Children.SummaryBlockID
+					case "notes":
+						id = hydrated.Discovery.MeetingNotes.Children.NotesBlockID
+					case sectionTranscript:
+						id = hydrated.Discovery.MeetingNotes.Children.TranscriptBlockID
+					}
+					children[name+"_block_id"], _ = json.Marshal(id)
+				}
+				notes["children"], _ = json.Marshal(children)
+				discovery["meeting_notes"], _ = json.Marshal(notes)
+				hydrated.Discovery.Raw, _ = json.Marshal(discovery)
+			}
 		}
 		if hydrated.AttendeeResolutionDegraded {
 			preserveArchivedAttendees(hydrated, archived.ResolvedUsers)

@@ -1609,3 +1609,37 @@ func TestImporterRetriesIncompleteSectionsAcrossWindows(t *testing.T) {
 		})
 	}
 }
+
+func TestImporterRetainsActionsWhenReplacementSectionFails(t *testing.T) {
+	for _, section := range []string{"summary", "notes"} {
+		t.Run(section, func(t *testing.T) {
+			st, source, imp := newImporterFixture(t)
+			id := section + "-1"
+			var task Block
+			require.NoError(t, json.Unmarshal([]byte(`{"object":"block","id":"`+id+`","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Saved action"}],"checked":false}}`), &task))
+			source.blocks[id] = &task
+			_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(t, err)
+			meeting := hydrationMeeting()
+			meeting.LastEditedTime = "2026-08-29T12:30:00Z"
+			if section == "summary" {
+				meeting.MeetingNotes.Children.SummaryBlockID = "replacement"
+			} else {
+				meeting.MeetingNotes.Children.NotesBlockID = "replacement"
+			}
+			source.query.Results = []MeetingNote{meeting}
+			source.blockErrs = map[string]error{"replacement": &APIError{Kind: ErrRateLimited, Status: 429}}
+			result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(t, err)
+			assert.True(t, result.PartialCoverage)
+			var messageID int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+			raw, err := st.GetMessageRaw(messageID)
+			require.NoError(t, err)
+			content := meetingcontent.Decode(RawFormat, raw, nil)
+			assert.Equal(t, meetingcontent.CoveragePartial, content.ActionCoverage)
+			require.Len(t, content.Actions, 1)
+			assert.Equal(t, "Saved action", content.Actions[0].Title)
+		})
+	}
+}
