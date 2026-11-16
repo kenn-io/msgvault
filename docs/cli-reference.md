@@ -112,7 +112,7 @@ msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 `msgvault meetings links <note-id|ref> [--json]` reads the calendar copies and
 notes that share an exact meeting occurrence. Use a note ID, `msg:<id>`, or an
 event `ref` from `calendar events --json`. This command requires daemon API
-schema 5.7.0 or newer.
+schema 5.8.0 or newer.
 
 ### meetings context
 

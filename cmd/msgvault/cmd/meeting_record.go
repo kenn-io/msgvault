@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const meetingLinksMinAPISchemaVersion = "5.7.0"
+const meetingLinksMinAPISchemaVersion = "5.8.0"
 
 func newMeetingLinksCommand(deps meetingCommandDeps) *cobra.Command {
 	var jsonOutput bool

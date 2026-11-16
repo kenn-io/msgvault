@@ -250,6 +250,7 @@ func TestMCPMeetingRecordDelegated(t *testing.T) {
 	}{
 		{"current", api.APISchemaVersion, []string{"message.read"}, true},
 		{"older daemon", "5.3.0", []string{"message.read"}, false},
+		{"schema 5.7", "5.7.0", []string{"message.read"}, false},
 		{"without message access", api.APISchemaVersion, []string{"search.read"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -272,7 +273,7 @@ func TestMCPMeetingRecordDelegated(t *testing.T) {
 }
 
 func TestMCPMeetingRecordCalendarSources(t *testing.T) {
-	for _, kind := range []string{"ics", "mbox", "gmail", "imap", "eml", "maildir", "pst"} {
+	for _, kind := range []string{"ics", "mbox", "gmail", "imap", "eml", "emlx", "maildir", "pst", "o365", "msmail", "hey", "apple-mail", "google-groups"} {
 		t.Run(kind, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			source, err := st.GetOrCreateSource(kind, "owner@example.com")
