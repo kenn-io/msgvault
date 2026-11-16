@@ -255,7 +255,8 @@ func TestCommitmentDiscoveryRestartsWhenOwnershipChangesDuringScan(t *testing.T)
 	cfg, profile := commitmentTestConfig()
 	cfg.Commitments.MaxItems = 1
 	scope := peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments)
-	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, -1, ?, ?)`), f.personID, f.store.dialect.TimestampParam(personFactLedgerNow), scope, f.store.dialect.TimestampParam(personFactLedgerNow.Add(-cfg.Commitments.Window)))
+	priorSince := personFactLedgerNow.Add(-60 * 24 * time.Hour)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, -1, ?, ?)`), f.personID, f.store.dialect.TimestampParam(personFactLedgerNow), scope, f.store.dialect.TimestampParam(priorSince))
 	r.NoError(err)
 	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 	r.NoError(err)
@@ -271,11 +272,17 @@ func TestCommitmentDiscoveryRestartsWhenOwnershipChangesDuringScan(t *testing.T)
 	r.Equal(peoplesweep.FailureArchiveGap, result.CommitmentFailureClass)
 	r.NoError(f.store.db.QueryRowContext(ctx, f.store.Rebind(`SELECT scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`), f.personID).Scan(&scope))
 	r.Empty(scope)
+	since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+	r.NoError(err)
+	r.NotNil(since)
+	r.Equal(priorSince, *since)
+	r.False(complete)
 	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 	r.NoError(err)
 	r.Len(window.Sources, 1)
 	r.Equal("I will call.", window.Sources[0].Text)
 	r.Zero(window.BackfillMessageID)
+	r.Equal(personFactLedgerNow, window.SelectionAt)
 }
 
 func TestCommitmentOwnershipChangeWaitsForFrontierCommit(t *testing.T) {
@@ -293,7 +300,10 @@ func TestCommitmentOwnershipChangeWaitsForFrontierCommit(t *testing.T) {
 	tx, err := f.store.db.BeginTx(ctx, nil)
 	r.NoError(err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	current, err := f.store.commitmentWindowCurrentTx(ctx, tx, peoplesweep.ApplyRequest{Lease: f.lease, Commitment: &peoplesweep.CommitmentResult{Window: window}}, &preparedCommitmentSweep{snapshot: window.SnapshotSequence})
+	request := f.request
+	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+	prepared := &preparedCommitmentSweep{snapshot: window.SnapshotSequence, through: window.ThroughSequence, backfillMessageID: window.BackfillMessageID, scope: window.ScopeFingerprint, selectionAt: window.SelectionAt}
+	current, err := f.store.commitmentWindowCurrentTx(ctx, tx, request, prepared)
 	r.NoError(err)
 	r.True(current)
 	done := make(chan error, 1)
@@ -303,6 +313,7 @@ func TestCommitmentOwnershipChangeWaitsForFrontierCommit(t *testing.T) {
 		err := f.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting)
 		return err == nil && waiting > 0
 	}, 5*time.Second, 10*time.Millisecond)
+	r.NoError(f.store.saveCommitmentFrontierTx(ctx, tx, request, prepared))
 	r.NoError(tx.Commit())
 	r.NoError(<-done)
 	var scope string
