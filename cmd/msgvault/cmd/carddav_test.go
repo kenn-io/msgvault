@@ -272,6 +272,22 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 	assertions.Equal("CardDAV sync: 1 books, 2 created, 3 updated, 4 removed\n2 CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.\n", stdout.String())
 }
 
+func TestSyncCardDAVReportsUnavailableBindingConflicts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"books":1,"created":1,"updated":0,"removed":0,"binding_conflicts":0,"binding_conflicts_unavailable":true}`))
+	}))
+	t.Cleanup(server.Close)
+	home := t.TempDir()
+	ctx := withStoreResolverConfig(t, &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	var stdout bytes.Buffer
+	cmd := newSyncCardDAVCmd()
+	cmd.SetContext(ctx)
+	cmd.SetOut(&stdout)
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, stdout.String(), "CardDAV binding conflict count unavailable. Run msgvault carddav bind-participants --dry-run for details.")
+}
+
 func TestCardDAVCLISelectsConnectionsAndReportsAggregateFailures(t *testing.T) {
 	for _, state := range []string{"succeeded", "partial", "failed"} {
 		t.Run(state, func(t *testing.T) {

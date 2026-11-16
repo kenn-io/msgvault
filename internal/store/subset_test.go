@@ -5816,7 +5816,7 @@ func TestSubsetKeepsMergedMatrixRoomsOutOfSync(t *testing.T) {
 	assert.Zero(pending, "the merged room's placeholder is not retried")
 }
 
-func TestCopySubsetPreservesAutomaticCardDAVMembership(t *testing.T) {
+func TestCopySubsetKeepsCardDAVMembershipAfterReconcile(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
@@ -5831,6 +5831,7 @@ func TestCopySubsetPreservesAutomaticCardDAVMembership(t *testing.T) {
 	bound, err := source.PersonForParticipantsContext(t.Context(), []int64{1})
 	require.NoError(err)
 	require.NotNil(bound)
+	personID := bound.ID
 	require.NoError(source.Close())
 	destinationDir := filepath.Join(t.TempDir(), "subset")
 	_, err = CopySubsetWithOptions(t.Context(), sourcePath, destinationDir, 4, CopySubsetOptions{IncludeIdentity: true, IncludeProfiles: true, IncludeVCardResources: true})
@@ -5838,10 +5839,16 @@ func TestCopySubsetPreservesAutomaticCardDAVMembership(t *testing.T) {
 	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = destination.Close() })
-	result, err := destination.ReconcileCardDAVParticipantBindingsContext(t.Context(), CardDAVParticipantBindingOptions{Undo: true})
+	_, err = destination.ReconcileCardDAVParticipantBindingsContext(t.Context(), CardDAVParticipantBindingOptions{})
 	require.NoError(err)
-	assert.Equal(1, result.ParticipantsUnbound)
 	bound, err = destination.PersonForParticipantsContext(t.Context(), []int64{1})
 	require.NoError(err)
-	assert.Nil(bound)
+	require.NotNil(bound)
+	assert.Equal(personID, bound.ID)
+	source, err = Open(sourcePath)
+	require.NoError(err)
+	t.Cleanup(func() { _ = source.Close() })
+	var owned bool
+	require.NoError(source.DB().QueryRowContext(t.Context(), `SELECT carddav_owned FROM person_participants WHERE participant_id = 1`).Scan(&owned))
+	assert.True(owned)
 }

@@ -6,6 +6,23 @@ import { CardDAVController } from '../../carddav/controller.svelte';
 import CardDAVOperations from './CardDAVOperations.svelte';
 
 describe('CardDAVOperations', () => {
+  it('reports when a successful sync cannot count binding conflicts', async () => {
+    const controller = new CardDAVController(createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (request.method === 'POST') return Response.json({ status: 'succeeded', binding_conflicts: 0, binding_conflicts_unavailable: true });
+      if (path.endsWith('/status')) return Response.json({ configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '' });
+      if (path.endsWith('/books')) return Response.json({ books: [] });
+      return Response.json({ runs: [] });
+    }));
+    await controller.load();
+    render(CardDAVOperations, { controller });
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('CardDAV binding conflict count unavailable.');
+    expect(screen.getByText('CardDAV sync completed.')).toBeDefined();
+    controller.destroy();
+  });
+
   it('shows sync completion separately from binding conflicts and formats the command', async () => {
     const controller = new CardDAVController(createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);

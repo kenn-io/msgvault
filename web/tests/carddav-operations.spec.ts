@@ -13,6 +13,19 @@ import { installMixedArchive } from './e2e/fixtures/mixed-archive';
 // CardDAV-server or live Go-backend integration. Task 4 generated-client/API
 // tests and the controller request tests own exact wire-contract proof.
 
+test('shows an unavailable conflict count after a successful sync', async ({ page }) => {
+  await installCardDAV(page, { configured: true });
+  await page.route('**/api/v1/carddav/sync', route => route.fulfill({ json: {
+    status: 'succeeded', books: 1, created: 1, updated: 0, removed: 0,
+    binding_conflicts: 0, binding_conflicts_unavailable: true
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
+  await page.getByRole('button', { name: 'Contacts', exact: true }).click();
+  await page.getByRole('button', { name: 'Sync now' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'CardDAV binding conflict count unavailable.' })).toBeInViewport();
+  await expect(page.getByText('CardDAV sync completed.')).toBeVisible();
+});
+
 test('keyboard journey configures CardDAV, reconciles roles, syncs history, and resolves a conflict', async ({ page }) => {
   const fixture = await installCardDAV(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);

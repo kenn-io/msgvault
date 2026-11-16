@@ -1637,10 +1637,10 @@ func TestCardDAVAccountTestMapsCredentialStorageFailure(t *testing.T) {
 func TestCardDAVSyncResponseUsesLowercaseJSONFields(t *testing.T) {
 	t.Parallel()
 	resp := cardDAVRouteResponse(t, cardDAVErrorFixture{syncResult: carddav.SyncResult{
-		Books: 1, Created: 2, Updated: 3, Removed: 4, BindingConflicts: 5,
+		Books: 1, Created: 2, Updated: 3, Removed: 4, BindingConflictsUnavailable: true,
 	}}, http.MethodPost, "/api/v1/carddav/sync", `{}`)
 	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
-	assert.JSONEq(t, `{"books":1,"created":2,"updated":3,"removed":4,"binding_conflicts":5}`, resp.Body.String())
+	assert.JSONEq(t, `{"books":1,"created":2,"updated":3,"removed":4,"binding_conflicts":0,"binding_conflicts_unavailable":true}`, resp.Body.String())
 }
 
 type cardDAVSyncOptionsFixture struct {

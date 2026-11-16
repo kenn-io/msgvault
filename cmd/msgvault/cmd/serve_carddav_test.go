@@ -24,6 +24,7 @@ import (
 type scheduledCardDAVFixture struct {
 	syncs   int
 	options []carddav.SyncOptions
+	result  carddav.SyncResult
 }
 
 func TestRecoverCardDAVSyncRunsAtStartupTerminalizesOrphansAndLogsOnlyCount(t *testing.T) {
@@ -60,7 +61,7 @@ func TestRecoverCardDAVSyncRunsAtStartupReturnsFailure(t *testing.T) {
 func (f *scheduledCardDAVFixture) Sync(_ context.Context, options carddav.SyncOptions) (carddav.SyncResult, error) {
 	f.syncs++
 	f.options = append(f.options, options)
-	return carddav.SyncResult{}, nil
+	return f.result, nil
 }
 func (f *scheduledCardDAVFixture) ListBooks(context.Context) ([]store.CardDAVAddressBook, error) {
 	return nil, nil
@@ -190,6 +191,18 @@ func TestGoogleCardDAVSchedulerWaitsForAuthorization(t *testing.T) {
 	_, err = controller.Save(testCtx, request)
 	required.NoError(err)
 	assertions.False(sched.IsJobScheduled(api.CardDAVJobName), "saving after credentials are removed must unschedule the account")
+}
+
+func TestScheduledCardDAVSyncReportsBindingConflicts(t *testing.T) {
+	sched := scheduler.New(nil)
+	t.Cleanup(func() { sched.Stop() })
+	service := &scheduledCardDAVFixture{result: carddav.SyncResult{BindingConflicts: 2}}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	require.NoError(t, reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 1 * * *"}, service, logger, config.DefaultCardDAVConnection, nil))
+	require.NoError(t, sched.TriggerJob(api.CardDAVJobName))
+	assert.Contains(t, logs.String(), "binding conflicts")
+	assert.Contains(t, logs.String(), "count=2")
 }
 
 func TestReconcileCardDAVSchedulerJobUpdatesRunsAndRemovesStableJob(t *testing.T) {

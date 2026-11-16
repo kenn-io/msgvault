@@ -1314,7 +1314,12 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 	if err := sched.AddJob(scheduler.Job{
 		Name: jobName, Schedule: cardDAVConfig.Schedule,
 		Run: invocationBoundJobRun(state, func(ctx context.Context) error {
-			_, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
+			result, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
+			if result.BindingConflictsUnavailable {
+				logger.Warn("CardDAV binding conflict count unavailable", "connection", name)
+			} else if result.BindingConflicts > 0 {
+				logger.Warn("CardDAV binding conflicts", "connection", name, "count", result.BindingConflicts)
+			}
 			// Completed books remain committed after cancellation.
 			if refreshErr := rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), jobName); refreshErr != nil {
 				logger.Error("identity cache refresh failed", "error", refreshErr)
@@ -3940,12 +3945,10 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
 	ctx = a.invocationContext(ctx)
 	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
-		_ = rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "identity")
 		return 0, err
 	}
 	state, err := query.ReadCacheSyncState(a.analyticsDir)
 	if err != nil {
-		_ = rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "identity")
 		return 0, fmt.Errorf("read refreshed cache revision: %w", err)
 	}
 	return state.IdentityRevision, nil

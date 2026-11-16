@@ -215,6 +215,10 @@ func TestCardDAVMultipleConnectionsAdoptStartedRunConflictSnapshot(t *testing.T)
 	snapshot, err = controller.Sync(t.Context(), CardDAVSyncRequest{})
 	require.NoError(err)
 	assertions.Equal(3, snapshot.BindingConflicts)
+	workConnection.service = &snapshotCardDAVService{CardDAVOperations: workService, unavailable: true, started: true}
+	snapshot, err = controller.Sync(t.Context(), CardDAVSyncRequest{})
+	require.NoError(err)
+	assertions.True(snapshot.BindingConflictsUnavailable)
 }
 
 func TestCardDAVMultipleConnectionsReadSelectorsAndNamedOnlyStatus(t *testing.T) {
@@ -603,8 +607,9 @@ func TestCardDAVMultipleConnectionsTransactionalRetryHeader(t *testing.T) {
 type snapshotCardDAVService struct {
 	CardDAVOperations
 
-	conflicts int
-	started   bool
+	conflicts   int
+	unavailable bool
+	started     bool
 }
 
 func (s *snapshotCardDAVService) Sync(_ context.Context, options carddav.SyncOptions) (carddav.SyncResult, error) {
@@ -612,5 +617,5 @@ func (s *snapshotCardDAVService) Sync(_ context.Context, options carddav.SyncOpt
 		return carddav.SyncResult{}, store.ErrCardDAVSyncActive
 	}
 	options.OnRunStarted(123)
-	return carddav.SyncResult{BindingConflicts: s.conflicts}, nil
+	return carddav.SyncResult{BindingConflicts: s.conflicts, BindingConflictsUnavailable: s.unavailable}, nil
 }

@@ -16204,6 +16204,8 @@ components:
         binding_conflicts:
           format: int64
           type: integer
+        binding_conflicts_unavailable:
+          type: boolean
         books:
           format: int64
           type: integer

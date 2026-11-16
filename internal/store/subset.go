@@ -592,6 +592,9 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 		AND participant_id IN (SELECT id FROM participants)`); err != nil {
 		return nil, fmt.Errorf("copy person_participants: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE person_participants SET carddav_owned = FALSE WHERE carddav_owned = TRUE`); err != nil {
+		return nil, fmt.Errorf("detach copied CardDAV ownership: %w", err)
+	}
 	if err := reconcileSubsetCommunicationServices(ctx, tx, options.IncludeProfiles); err != nil {
 		return nil, err
 	}

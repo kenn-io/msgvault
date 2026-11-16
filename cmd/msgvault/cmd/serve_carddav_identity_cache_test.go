@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,7 +12,6 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -75,43 +73,5 @@ func TestCardDAVSchedulerRequestsIdentityRefresh(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			req.FailNow("cache refresh was not requested")
 		}
-	}
-}
-
-func TestCardDAVIdentityRefreshFailureRequestsRecovery(t *testing.T) {
-	req := require.New(t)
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = t.TempDir()
-	cfg.Analytics.AutoBuildCache = true
-	requests := captureDaemonCacheRefreshes(t)
-	oldBuild := runDerivedCacheSubprocess
-	t.Cleanup(func() { runDerivedCacheSubprocess = oldBuild })
-	adapter := &storeAPIAdapter{config: cfg, analyticsDir: cfg.AnalyticsDir()}
-	runDerivedCacheSubprocess = func(context.Context, string) error { return errors.New("synthetic build failure") }
-	_, err := adapter.RefreshIdentityDatasets(t.Context())
-	req.ErrorContains(err, "synthetic build failure")
-	select {
-	case id := <-requests:
-		req.Equal("identity", id)
-	case <-time.After(10 * time.Second):
-		req.FailNow("cache recovery was not requested")
-	}
-
-	dbPath := filepath.Join(cfg.Data.DataDir, "msgvault.db")
-	testutil.NewSQLiteTestStoreAt(t, dbPath)
-	runDerivedCacheSubprocess = func(ctx context.Context, _ string) error {
-		_, err := buildCache(ctx, dbPath, cfg.AnalyticsDir(), true)
-		if err != nil {
-			return err
-		}
-		return os.Remove(query.CacheStatePath(cfg.AnalyticsDir()))
-	}
-	_, err = adapter.RefreshIdentityDatasets(t.Context())
-	req.ErrorContains(err, "read refreshed cache revision")
-	select {
-	case id := <-requests:
-		req.Equal("identity", id)
-	case <-time.After(10 * time.Second):
-		req.FailNow("cache recovery was not requested")
 	}
 }

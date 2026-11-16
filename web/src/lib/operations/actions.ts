@@ -27,7 +27,9 @@ export async function runOperationAction(action: OperationAction, client: Genera
     return { outcome: 'failed', message: ['Unable to start the operation.', conflicts].filter(Boolean).join(' ') };
   }
   const conflicts = action === 'carddav_sync' && result.data && 'binding_conflicts' in result.data
-    ? cardDAVBindingConflictMessage((result.data as SyncResult).binding_conflicts) : '';
+    ? ((result.data as SyncResult).binding_conflicts_unavailable
+      ? 'CardDAV binding conflict count unavailable. Check CardDAV settings for the review command.'
+      : cardDAVBindingConflictMessage((result.data as SyncResult).binding_conflicts)) : '';
   if (action === 'carddav_sync' && result.data && 'status' in result.data &&
     (result.data.status === 'partial' || result.data.status === 'failed')) {
     const names = ((result.data as SyncResult).connections ?? [])

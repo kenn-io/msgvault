@@ -3,6 +3,11 @@ import { createAPIClient } from '../api/client';
 import { runOperationAction } from './actions';
 
 describe('runOperationAction', () => {
+  it('reports an unavailable conflict count after a successful sync', async () => {
+    const client = createAPIClient(async () => Response.json({ status: 'succeeded', binding_conflicts: 0, binding_conflicts_unavailable: true }));
+    expect(await runOperationAction('carddav_sync', client)).toEqual({ outcome: 'succeeded', message: 'CardDAV binding conflict count unavailable. Check CardDAV settings for the review command.' });
+  });
+
   it('reports conflicts after a 409 sync failure', async () => {
     const client = createAPIClient(async (input) => {
       const path = new URL(new Request(input).url).pathname;

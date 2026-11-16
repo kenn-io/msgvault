@@ -365,6 +365,31 @@ func TestSyncRecordsOneSucceededManualRunWithExactCounters(t *testing.T) {
 	assert.Equal(int64(result.Removed), runs[0].Removed)
 }
 
+func TestSyncSucceedsWhenBindingPreviewFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := readRequestBody(t, r)
+		if strings.Contains(body, "sync-collection") {
+			writeDAVXML(t, w, syncResponse(changedResponse("/books/personal/alice.vcf", `&quot;one&quot;`), "token-1"))
+			return
+		}
+		writeDAVXML(t, w, syncResponse(cardResponse("/books/personal/alice.vcf", `&quot;one&quot;`, "alice"), ""))
+	}))
+	t.Cleanup(server.Close)
+	service, st, _ := newPullService(t, server, true)
+	service.bindingPreviewHook = func() {
+		_, err := st.DB().ExecContext(t.Context(), `DROP TABLE participant_identifiers`)
+		require.NoError(t, err)
+	}
+	result, err := service.Sync(t.Context(), SyncOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Created)
+	assert.True(t, result.BindingConflictsUnavailable)
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, store.CardDAVSyncRunSucceeded, runs[0].State)
+}
+
 func TestSyncRecordsExplicitScheduledTrigger(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

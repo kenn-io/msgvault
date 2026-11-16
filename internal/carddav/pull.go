@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -53,13 +54,14 @@ type SyncOptions struct {
 }
 
 type SyncResult struct {
-	Books            int                     `json:"books"`
-	Created          int                     `json:"created"`
-	Updated          int                     `json:"updated"`
-	Removed          int                     `json:"removed"`
-	BindingConflicts int                     `json:"binding_conflicts"`
-	Status           string                  `json:"status,omitempty" enum:"succeeded,partial,failed"`
-	Connections      []ConnectionSyncOutcome `json:"connections,omitempty"`
+	Books                       int                     `json:"books"`
+	Created                     int                     `json:"created"`
+	Updated                     int                     `json:"updated"`
+	Removed                     int                     `json:"removed"`
+	BindingConflicts            int                     `json:"binding_conflicts"`
+	BindingConflictsUnavailable bool                    `json:"binding_conflicts_unavailable,omitempty"`
+	Status                      string                  `json:"status,omitempty" enum:"succeeded,partial,failed"`
+	Connections                 []ConnectionSyncOutcome `json:"connections,omitempty"`
 }
 
 type ConnectionSyncOutcome struct {
@@ -117,16 +119,16 @@ func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncRes
 		if s.bindingPreviewHook != nil {
 			s.bindingPreviewHook()
 		}
-		// The snapshot must survive cancellation after committed sync work.
 		snapshotCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cardDAVBindingPreviewTimeout)
 		defer cancel()
 		preview, snapshotErr := s.store.ReconcileCardDAVParticipantBindingsContext(snapshotCtx, store.CardDAVParticipantBindingOptions{DryRun: true})
 		if snapshotErr != nil {
-			snapshotErr = fmt.Errorf("preview CardDAV participant conflicts: %w", snapshotErr)
+			slog.Warn("CardDAV binding conflict count unavailable", "error", snapshotErr)
+			result.BindingConflictsUnavailable = true
 		} else {
 			result.BindingConflicts = preview.Conflicts
 		}
-		err = errors.Join(publicCardDAVSyncError(syncErr), finishErr, snapshotErr)
+		err = errors.Join(publicCardDAVSyncError(syncErr), finishErr)
 	}()
 	if options.OnRunStarted != nil {
 		options.OnRunStarted(run.ID)
