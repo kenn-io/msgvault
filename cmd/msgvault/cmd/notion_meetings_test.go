@@ -100,7 +100,7 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 			}
 			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}}, Children: sections}}}, HasMore: true},
-				block:  &notionmeetings.Block{Type: "paragraph", Paragraph: notionmeetings.RichTextBlock{RichText: []notionmeetings.RichText{{PlainText: "private transcript secret-token"}}}}, blockIDs: &ids,
+				block:  &notionmeetings.Block{Type: "meeting_notes"}, blockIDs: &ids,
 				blockErrors: map[string]error{"meeting-1": tc.blockErr, "summary-1": tc.sectionErr, "notes-1": tc.notesErr},
 			}, nil)
 
@@ -121,8 +121,6 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 				assert.Contains(t, out.String(), "User Information: available")
 				assert.NotContains(t, out.String(), "meeting-1")
 				assert.NotContains(t, out.String(), "Private meeting title")
-				assert.NotContains(t, out.String(), "private transcript")
-				assert.NotContains(t, out.String(), "secret-token")
 			}
 		})
 	}
@@ -217,7 +215,7 @@ func TestNotionProbeUsersToken(t *testing.T) {
 			assert := assert.New(t)
 			users := &fakeNotionUsersProbe{user: tc.user, err: tc.err}
 			var out bytes.Buffer
-			probe := fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", Parent: notionmeetings.Parent{PageID: "page-1"}, MeetingNotes: notionmeetings.MeetingNotesData{CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}}}}}, block: &notionmeetings.Block{}, usersErr: notionmeetings.ErrUnauthorized}
+			probe := fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}}}}}, block: &notionmeetings.Block{}, usersErr: notionmeetings.ErrUnauthorized}
 			expectedRequests := 1
 			if tc.noAttendees {
 				probe.result.Results = nil
@@ -246,7 +244,7 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 	newNotionMeetingsClient = func(_ string, token string) notionmeetings.Source {
 		assert.Equal("pat-example", token)
 		return fakeNotionProbe{
-			result:   &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{Object: "block", ID: "meeting-1", Type: "meeting_notes", Parent: notionmeetings.Parent{PageID: "page-1"}, CreatedTime: "2026-08-29T10:00:00Z", MeetingNotes: notionmeetings.MeetingNotesData{Status: "notes_ready", CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}}}}},
+			result:   &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{Object: "block", ID: "meeting-1", Type: "meeting_notes", CreatedTime: "2026-08-29T10:00:00Z", MeetingNotes: notionmeetings.MeetingNotesData{Status: "notes_ready", CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}}}}},
 			block:    &notionmeetings.Block{Object: "block", ID: "meeting-1", Type: "meeting_notes"},
 			usersErr: notionmeetings.ErrUnauthorized,
 		}
