@@ -1,21 +1,68 @@
 package cmd
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestSyncFullCancellationRetainsEarlierSourceError(t *testing.T) {
+	resetSyncFullFlagsForTest(t)
+	dir := t.TempDir()
+	cfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
+	_, err := s.GetOrCreateSource("imap", "bad@example.test")
+	require.NoError(t, err)
+	require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), "bad@example.test", "test"))
+	good, err := s.GetOrCreateSource("imap", "good@example.test")
+	require.NoError(t, err)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	port := addr.Port
+	require.NoError(t, s.UpdateSourceSyncConfig(t.Context(), good.ID, fmt.Sprintf(`{"host":"127.0.0.1","port":%d,"username":"good@example.test","tls":false}`, port)))
+	require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), "good@example.test", "test"))
+	require.NoError(t, s.Close())
+	ctx, cancel := context.WithTimeout(testInvocationContext(t.Context(), cfg, invocationOptions{}), 10*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		conn, err := listener.Accept()
+		if err == nil {
+			cancel()
+			_ = conn.Close()
+		}
+	}()
+	command := &cobra.Command{Use: "sync-full", RunE: runSyncFullLocalForTest}
+	command.SetContext(ctx)
+	output := captureStdout(t)
+	err = command.Execute()
+	printed := output()
+	_ = listener.Close()
+	<-done
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorContains(t, err, "bad@example.test")
+	assert.Contains(t, printed, "bad@example.test")
+}
 
 // fakeClientSecrets is a minimal Google OAuth client_secret.json that
 // oauth.NewManager can parse. No real credentials are exposed.
