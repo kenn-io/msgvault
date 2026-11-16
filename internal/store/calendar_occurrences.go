@@ -13,7 +13,10 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-const calendarSeriesKind = "series"
+const (
+	calendarSeriesKind = "series"
+	calendarSingleKind = "single"
+)
 
 type CalendarOccurrence struct {
 	row               CalendarEventRow
@@ -71,7 +74,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 	byID := make(map[int64]CalendarEventRow, len(rows))
 	for _, row := range rows {
 		byID[row.MessageID] = row
-		if row.Event.Kind == calendarSeriesKind || row.Event.Kind == "single" {
+		if row.Event.Kind == calendarSeriesKind || row.Event.Kind == calendarSingleKind {
 			masters[seriesKey{row.SourceID, row.Event.ProviderEventID}] = row
 		}
 		if row.Event.Kind == calendarExceptionKind {
@@ -162,7 +165,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			}
 		}
 		key := seriesKey{row.SourceID, e.ProviderEventID}
-		if (e.Kind == "single" || e.Kind == calendarSeriesKind) && rangeSeries[key] {
+		if (e.Kind == calendarSingleKind || e.Kind == calendarSeriesKind) && rangeSeries[key] {
 			report(row.MessageID, "unsupported recurrence: RANGE=THISANDFUTURE")
 			if !filterOverlap {
 				for _, ex := range exceptions[key] {
@@ -174,7 +177,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			continue
 		}
 		switch e.Kind {
-		case calendarExceptionKind, "single":
+		case calendarExceptionKind, calendarSingleKind:
 			if _, hasMaster := masters[seriesKey{row.SourceID, e.SeriesProviderID}]; e.Kind == calendarExceptionKind && hasMaster {
 				continue
 			}
@@ -283,7 +286,7 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 		return bounded, 0, "unsupported recurrence", nil //nolint:nilerr // Report an unsupported series alongside readable occurrences.
 	}
 	// A deleted provider series keeps only its archived exceptions.
-	if row.Event.Kind == "single" || (row.Event.Status == "cancelled" && !row.ics) {
+	if row.Event.Kind == calendarSingleKind || (row.Event.Status == "cancelled" && !row.ics) {
 		return resolved, 0, "", nil
 	}
 	const requestLimit = "request work limit reached; long-running series count their steps from their start"

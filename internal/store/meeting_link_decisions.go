@@ -115,7 +115,7 @@ func (s *Store) validateMeetingInput(ctx context.Context, endpoint meetingDecisi
 		return err
 	}
 	*budget--
-	if kind == "single" && (!start.Valid || (calrecur.Identity{Instant: start.Time, Date: date, AllDay: allDay}).Key() != endpoint.Key) {
+	if kind == calendarSingleKind && (!start.Valid || (calrecur.Identity{Instant: start.Time, Date: date, AllDay: allDay}).Key() != endpoint.Key) {
 		return sql.ErrNoRows
 	}
 	if kind == calendarExceptionKind {
@@ -426,7 +426,7 @@ func (s *Store) meetingPairEndpoints(ctx context.Context, a, b meetingDecisionEn
 		if err != nil {
 			return x, y, false, err
 		}
-		if kind == "single" && (start.Valid || date != "") {
+		if kind == calendarSingleKind && (start.Valid || date != "") {
 			return x, y, false, nil
 		}
 	}
@@ -496,7 +496,7 @@ func (s *Store) clearStoredMeetingDecision(ctx context.Context, tx *loggedTx, a,
 			if err := s.meetingSQLReader(ctx).QueryRowContext(ctx, `SELECT kind FROM calendar_events WHERE message_id=?`, id).Scan(&kind); err != nil {
 				return side{}, err
 			}
-			prepared.single = matchSingle && kind == "single"
+			prepared.single = matchSingle && kind == calendarSingleKind
 		}
 		return prepared, nil
 	}
