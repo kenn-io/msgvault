@@ -188,9 +188,9 @@
               <div class="value"><strong class="field-label">{decisionLabel(row)}</strong><span>{decisionText(row)}</span></div>
               {#snippet actions()}{#if sensitivity === 'sensitive'}{#if shown}<Button label="Hide" ariaLabel="Hide sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealedClaims.delete(row.claimKey)} />{:else}<Button label="Reveal" ariaLabel="Reveal sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealClaim(row.claimKey)} />{/if}{/if}{/snippet}
               {#snippet details()}
-                {#if row.scoreMaxima}<ul class="score-parts">{#each SCORE_PARTS as [key, label] (key)}<li>{label}: {row.score[key]} of {row.scoreMaxima[key]}</li>{/each}</ul>{/if}
+                <ul class="score-parts">{#each SCORE_PARTS as [key, label] (key)}<li>{label}: {row.score[key]}{#if row.scoreMaxima}{' of '}{row.scoreMaxima[key]}{/if}</li>{/each}</ul>
               {/snippet}
-              {#snippet meta()}<span class="meta"><time datetime={row.createdAt} title={formatDateTime(row.createdAt)}>{formatShortDate(row.createdAt)}</time></span>{/snippet}
+              {#snippet meta()}<span class="meta"><time datetime={row.createdAt} title={formatDateTime(row.createdAt)}>{formatShortDate(row.createdAt)}</time>{' · Score: '}{row.score.total}{#if row.scoreMaxima}{' of '}{row.scoreMaxima.total}{/if}</span>{/snippet}
             </DetailRow></div>
           {:else}{#if !controller.decisions.error}<EmptyLine message={emptyTitle('decisions')} />{/if}{/each}
         </div>

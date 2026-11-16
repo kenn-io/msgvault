@@ -378,16 +378,27 @@ describe('FactLedger', () => {
     expect(row.textContent).toContain('allowed sensitive value');
   });
 
-  it.each([true, false])('shows score parts when maxima are present: %s', async scored => {
+  it.each([
+    {
+      maxima: true,
+      total: 'Score: 908 of 1550',
+      parts: ['Source: 300 of 500', 'Directness: 400 of 400', 'Authority: 100 of 250', 'Corroboration: 0 of 150', 'Freshness: 100 of 100', 'Confidence: 8 of 100'],
+    },
+    {
+      maxima: false,
+      total: 'Score: 908',
+      parts: ['Source: 300', 'Directness: 400', 'Authority: 100', 'Corroboration: 0', 'Freshness: 100', 'Confidence: 8'],
+    },
+  ])('shows recorded scores with maxima=$maxima', async ({ maxima, total, parts }) => {
     const value = controller();
     value.selectedSection = 'decisions';
     value.decisions.rows[0]!.scoreMaxima!.authority = 250;
-    if (!scored) value.decisions.rows[0]!.scoreMaxima = null;
+    if (!maxima) value.decisions.rows[0]!.scoreMaxima = null;
     render(FactLedger, { controller: value });
     const row = screen.getByLabelText('Historical fact decision');
     await fireEvent.click(within(row).getByRole('button', { name: 'Details' }));
-    expect(within(row).queryAllByRole('listitem')).toHaveLength(scored ? 6 : 0);
-    expect(row.textContent?.includes('Authority: 100 of 250')).toBe(scored);
+    expect(within(row).getAllByRole('listitem').map(item => item.textContent)).toEqual(parts);
+    expect(row.querySelector('.meta')?.textContent).toContain(total);
   });
 
   it('names All fields evidence and decisions', async () => {
