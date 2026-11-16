@@ -69,7 +69,13 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | `size_estimate` | INTEGER | Approximate size in bytes |
 | `has_attachments` | BOOLEAN | Attachment flag |
 | `deleted_at` | DATETIME | Soft-delete timestamp |
-| `deleted_from_source_at` | DATETIME | Set when msgvault deletes or trashes a message, or sync finds it missing from its source; for Gmail, IMAP, and Graph, kept while a msgvault-trashed message stays in Trash and cleared when sync confirms it outside Trash; trashing in the provider's app does not set it |
+| `deleted_from_source_at` | DATETIME | Source deletion timestamp |
+
+Msgvault sets `deleted_from_source_at` when it deletes or trashes a message,
+or sync finds the message missing from its source. For Gmail, IMAP, and Graph,
+sync keeps the mark while a msgvault-trashed message stays in Trash and clears
+it when sync confirms the message outside Trash. Trashing a message in the
+provider's app does not set the mark.
 
 The Store derives `account_address` and `account_path` in the same transaction
 as every message write that changes their inputs: raw MIME, recipients, and
@@ -695,10 +701,10 @@ the archive. Those have no retry row to fall back on. If msgvault cannot save
 one, the run keeps its place in History so the next run reads the same changes
 again. See [`incremental.go`](https://github.com/kenn-io/msgvault/blob/main/internal/sync/incremental.go).
 
-An ordinary Gmail full sync lists Trash once, across all pages. When the main
-listing also finds a marked message outside that Trash listing, sync clears its
-deletion mark and stored Trash label. A failed Trash listing stops the run so it
-can retry.
+When an ordinary Gmail full sync finds a marked message, it lists Trash once
+across all pages. For marked messages in the main listing but outside Trash,
+sync clears the deletion mark and stored Trash label. A failed Trash listing
+stops the run so it can retry.
 
 History recovery runs after Gmail expires the History cursor. It still
 refreshes a message's labels when that message's file work fails. It also
