@@ -176,10 +176,8 @@ func TestCardDAVMultipleConnectionsAggregateSyncReportsActiveAndUnavailable(t *t
 	request.Header.Set("Content-Type", "application/json")
 	server.Router().ServeHTTP(response, request)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	result = carddav.SyncResult{}
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
 	assertions.Equal("failed", result.Status, "every selected enabled connection failed, and diagnostics remain available")
-	assertions.Nil(result.BindingConflicts)
 	assertions.Len(result.Connections, 2)
 	assertions.NotContains(response.Body.String(), "synthetic-secret")
 	beforeRuns, err := controller.store.ListCardDAVSyncRunsContext(t.Context(), 25, nil, store.AllCardDAVAccounts)
