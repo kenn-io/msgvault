@@ -1521,9 +1521,10 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 			require.NoError(t, f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, observations))
 			wantMarked := scenario != "restored" && scenario != "unique raw"
 			assert.Equal(t, wantMarked, messageTombstoned(t, f.store, id))
-			if scenario == "restored" {
+			switch scenario {
+			case "restored":
 				assert.Equal(t, []string{"Projects", "Trash"}, messageLabels(t, f.store, id))
-			} else if scenario == "unique raw" || scenario == "visible membership" {
+			case "unique raw", "visible membership":
 				assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, id))
 			}
 			if copyID != 0 {
