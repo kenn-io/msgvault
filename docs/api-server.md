@@ -472,12 +472,13 @@ it. `dry_run` defaults to `false`; a preview changes neither Gmail nor the local
 archive. The result contains `message_id`, `source_id`, `archived`, `changed`,
 `dry_run`, and `verified`. Previews report the projected state and are unverified.
 
-A write reads current labels, modifies only `INBOX` when needed, reads the labels
-back, then saves the verified snapshot locally. A retry that already matches
-returns `changed: false` without modifying Gmail and still reconciles local
-labels. Unrelated labels and read/unread state are preserved. Source ownership
-and the daemon work gate follow the [native tag write rules](#native-email-tags).
-For 409 `sync_active`, retry after the active sync finishes.
+A Gmail request matching the saved `INBOX` snapshot returns `changed: false` and
+`verified: false` without contacting Gmail. When the snapshot differs or is
+missing, the daemon reads current labels. A write modifies only `INBOX` when
+needed, reads it back, and saves the verified snapshot locally. Unrelated labels and read/unread
+state are preserved. Source ownership and the daemon work gate follow the
+[native tag write rules](#native-email-tags). For 409 `sync_active`, retry after
+the active sync finishes.
 
 For Beeper, send `{"archived":true,"whole_chat":true}` (or `archived:false`
 to restore the chat). This affects the whole chat, including messages newer than
