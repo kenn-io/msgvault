@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	syncStateVersion           = 1
+	syncStateVersion           = 2
 	transcriptRetryCadence     = 6 * time.Hour
 	transcriptRetryWindow      = 7 * 24 * time.Hour
 	unknownTranscriptRetrySpan = 48 * time.Hour
@@ -112,7 +112,8 @@ func (s syncState) marshal() (string, error) {
 }
 
 func (s syncState) validate() error {
-	if s.Version != syncStateVersion {
+	// Remove version 1 cursor support after v0.26.0 ships.
+	if s.Version != 1 && s.Version != syncStateVersion {
 		return fmt.Errorf("unsupported Notion sync cursor version %d", s.Version)
 	}
 	seen := make(map[string]struct{}, len(s.Pending))
@@ -175,6 +176,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	} else if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return sum, fmt.Errorf("load previous Notion sync cursor: %w", err)
 	}
+	state.Version = syncStateVersion
 	if state.Known == nil {
 		state.Known = map[string]knownMeeting{}
 	}
@@ -608,6 +610,10 @@ func (imp *Importer) loadPendingState(ctx context.Context, sourceID int64, state
 	}
 	state.Pending = pending.Pending
 	state.TranscriptRetryUntil = pending.TranscriptRetryUntil
+	if pending.Version == 1 {
+		pending.Version = syncStateVersion
+		return pending.marshal()
+	}
 	return page, nil
 }
 

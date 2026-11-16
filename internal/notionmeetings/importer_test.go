@@ -790,6 +790,7 @@ func TestImporterMigratesPendingRetryDeadlineFromVersionOneCursor(t *testing.T) 
 	summary, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(err)
 	state := lastNotionState(t, st, summary.SourceID)
+	assert.Equal(2, state.Version)
 	assert.Empty(state.Pending)
 	assert.Equal("2026-08-31T12:00:00Z", lastTranscriptRetryUntil(t, st, summary.SourceID)["meeting-1"])
 }
@@ -802,6 +803,48 @@ func TestSyncStateRejectsInvalidTranscriptRetryDeadline(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `transcript retry deadline "meeting-1" is invalid`)
+}
+
+func TestSyncStateVersionTwoValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, cursor, wantErr string
+	}{
+		{"valid incomplete", `{"version":2,"pending":[{"block_id":"meeting-1","next_attempt_at":"2026-08-29T18:00:00Z","retry_until":"2026-08-31T12:00:00Z","incomplete":true}]}`, ""},
+		{"invalid retry", `{"version":2,"pending":[{"block_id":"meeting-1","next_attempt_at":"invalid","retry_until":"2026-08-31T12:00:00Z"}]}`, "invalid next_attempt_at"},
+		{"future version", `{"version":3}`, "unsupported Notion sync cursor version 3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var state syncState
+			require.NoError(t, json.Unmarshal([]byte(tc.cursor), &state))
+			err := state.validate()
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, state.Pending, 1)
+			assert.True(t, state.Pending[0].Incomplete)
+		})
+	}
+}
+
+func TestImporterMigratesVersionOneCheckpointOnFailure(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	sourceRecord, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(t, err)
+	run, err := st.StartSync(sourceRecord.ID, SourceType)
+	require.NoError(t, err)
+	require.NoError(t, st.FailSyncWithCheckpoint(run, "interrupted", &store.Checkpoint{PageToken: `{"version":1,"known":{},"pending":[{"block_id":"meeting-1","next_attempt_at":"2026-08-29T18:00:00Z","retry_until":"2026-08-31T12:00:00Z"}]}`}))
+	source.queryErr = errors.New("query failed")
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.ErrorContains(t, err, "query failed")
+	checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), sourceRecord.ID, SourceType)
+	require.NoError(t, err)
+	var state syncState
+	require.NoError(t, json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+	assert.Equal(t, 2, state.Version)
+	require.Len(t, state.Pending, 1)
+	assert.Equal(t, "meeting-1", state.Pending[0].BlockID)
 }
 
 func TestImporterContinuesWhenUserListingFailsTransiently(t *testing.T) {
