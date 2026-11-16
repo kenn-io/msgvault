@@ -1639,17 +1639,18 @@ func (s *Syncer) full(
 		s.drainIdentityDiscoveryBacklog(ctx, source.ID)
 	}
 
-	// Ordinary full sync publishes its starting History cursor even with item
-	// errors, preserving a newer cursor from an intervening incremental on resume.
-	// Recovery retains H until catch-up succeeds; it cannot publish here.
+	// A full backfill does not consume History or refresh every archived row.
+	// Preserve the saved cursor so the next incremental still sees pending
+	// label changes and deletions, including those before this scan started.
+	// A first full sync seeds its starting cursor. Recovery publishes after catch-up.
 	completionHistoryID := handoffHistoryID
-	if state.wasResumed && !reconcilePresence && isUnrestrictedGmailFull {
+	if !reconcilePresence && isUnrestrictedGmailFull {
 		current, err := s.store.GetSourceByIDContext(ctx, source.ID)
 		if err != nil {
 			s.failStoppedSync(state.syncID, err)
 			return nil, fmt.Errorf("read saved sync progress: %w", err)
 		}
-		if currentHistoryID, err := strconv.ParseUint(current.SyncCursor.String, 10, 64); err == nil && currentHistoryID > completionHistoryID {
+		if currentHistoryID, err := strconv.ParseUint(current.SyncCursor.String, 10, 64); err == nil && currentHistoryID > 0 {
 			completionHistoryID = currentHistoryID
 		}
 	}
