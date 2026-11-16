@@ -140,6 +140,7 @@ type DocbankIntegrationConfig struct {
 	APIKeyFile              string   `toml:"api_key_file"`
 	AllSourcesUploadConsent bool     `toml:"all_sources_upload_consent"`
 	DocumentProfile         string   `toml:"document_profile"`
+	VoiceTranscriptSearch   bool     `toml:"voice_transcript_search"`
 	ASRProfile              string   `toml:"asr_profile"`
 	ReferenceConsent        bool     `toml:"reference_consent"`
 	ReferenceOrigins        []string `toml:"reference_origins"`

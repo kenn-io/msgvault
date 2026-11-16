@@ -315,6 +315,7 @@ type Server struct {
 	idleTracker               *IdleTracker
 	operationGate             OperationGate
 	operationHistoryReader    operations.HistoryReader
+	accountRepairs            map[int64]*accountAttributionRepairJob
 	importContext             context.Context
 	cancelImports             context.CancelFunc
 	importMu                  sync.Mutex
@@ -1213,7 +1214,7 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if cardDAVRequestNeedsProtectiveCeiling(r) ||
-			(r.Method == http.MethodPost && r.URL.Path == "/api/v1/identity/scoring/run") {
+			(r.Method == http.MethodPost && (r.URL.Path == "/api/v1/identity/scoring/run" || r.URL.Path == "/api/v1/identity/cache-refresh")) {
 			serveWithProtectiveRequestDeadline(w, r, next)
 			return
 		}
