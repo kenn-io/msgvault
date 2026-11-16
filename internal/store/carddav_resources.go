@@ -2051,9 +2051,9 @@ func (s *Store) deleteUntouchedCardDAVImportedPersonTx(
 	var revision, otherMappings int64
 	var hasMemberships bool
 	err := tx.QueryRowContext(ctx, `SELECT revision,
-  (SELECT COUNT(*) FROM carddav_resources WHERE person_id = persons.id),
-  EXISTS (SELECT 1 FROM person_participants WHERE person_id = persons.id AND carddav_owned = FALSE)
-  FROM persons WHERE id = ?`, *resource.PersonID).Scan(&revision, &otherMappings, &hasMemberships)
+		(SELECT COUNT(*) FROM carddav_resources WHERE person_id = persons.id),
+		EXISTS (SELECT 1 FROM person_participants WHERE person_id = persons.id AND carddav_owned = FALSE)
+		FROM persons WHERE id = ?`, *resource.PersonID).Scan(&revision, &otherMappings, &hasMemberships)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -2086,11 +2086,8 @@ func (s *Store) deleteUntouchedCardDAVImportedPersonTx(
 	if err := s.applyCardDAVParticipantBindingsTx(ctx, tx, plan); err != nil {
 		return err
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT revision, EXISTS (SELECT 1 FROM person_participants WHERE person_id = persons.id) FROM persons WHERE id = ?`, *resource.PersonID).Scan(&revision, &hasMemberships); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM persons WHERE id = ?`, *resource.PersonID).Scan(&revision); err != nil {
 		return err
-	}
-	if hasMemberships {
-		return nil
 	}
 	if err := s.deleteIdentityMatchCandidatesForPersonTx(ctx, tx, *resource.PersonID); err != nil {
 		return err
