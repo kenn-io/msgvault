@@ -179,7 +179,7 @@ func (c *Client) applyFetchResults(
 		}
 		canonicalSourceMessageID := ""
 		var rawSHA256 [32]byte
-		if rfc822MessageID == "" && (c.preferredRawSourceIDs != nil || c.labelsSnapshotFilteredLocked()) {
+		if rfc822MessageID == "" {
 			rawSHA256 = sha256.Sum256(rawMIME)
 		}
 		if rfc822MessageID == "" && c.preferredRawSourceIDs != nil {
