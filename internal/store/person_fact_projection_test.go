@@ -1906,7 +1906,7 @@ func TestPersonFactOutcomeUpgradeClassifiesKnownHistory(t *testing.T) {
 }
 
 func TestPersonFactSummaryCountsClaimsAndStoredFacts(t *testing.T) {
-	for _, kind := range []string{"empty", "claims", "evidence", "pin", "attribute", "ended employment"} {
+	for _, kind := range []string{"empty", "claims", "evidence", "pin", "attribute", "removed attribute", "ended employment"} {
 		t.Run(kind, func(t *testing.T) {
 			st, personID, targets := newPersonFactProjectionStore(t)
 			target := targets[AttributeSlugPrimaryChannel]
@@ -1932,6 +1932,16 @@ func TestPersonFactSummaryCountsClaimsAndStoredFacts(t *testing.T) {
 			case "attribute":
 				_, err := st.db.ExecContext(t.Context(), st.Rebind(`INSERT INTO person_attribute_values (person_id, definition_id, value_text, source) SELECT ?, id, 'email', 'user' FROM attribute_definitions WHERE slug = ?`), personID, AttributeSlugPrimaryChannel)
 				require.NoError(t, err)
+			case "removed attribute":
+				write, err := st.SetPersonAttributeValueContext(t.Context(), PersonAttributeValueInput{
+					PersonID: personID, DefinitionSlug: AttributeSlugPrimaryChannel,
+					Value: AttributeValue{Type: AttributeValueText, Text: new("email")}, Source: ProvenanceUser,
+				})
+				require.NoError(t, err)
+				_, err = st.SupersedePersonAttributeValueContext(t.Context(), PersonAttributeSupersedeInput{
+					PersonID: personID, DefinitionSlug: AttributeSlugPrimaryChannel, ExpectedValueID: &write.Value.ID,
+				})
+				require.NoError(t, err)
 			case "ended employment":
 				org := createPersonFactOrganization(t, st, "Example Company", "example.org")
 				_, err := st.db.ExecContext(t.Context(), st.Rebind(`INSERT INTO employments (person_id, organization_id, is_current, end_year) VALUES (?, ?, FALSE, 2020)`), personID, org.ID)
@@ -1940,7 +1950,7 @@ func TestPersonFactSummaryCountsClaimsAndStoredFacts(t *testing.T) {
 			summary, err := st.PersonFactSummaryContext(t.Context(), personID)
 			require.NoError(t, err)
 			assert.Equal(t, kind == "attribute" || kind == "ended employment" || kind == "claims", summary.HasValues)
-			assert.Equal(t, kind == "evidence" || kind == "pin" || kind == "claims", summary.HasFactHistory)
+			assert.Equal(t, kind == "evidence" || kind == "pin" || kind == "claims" || kind == "removed attribute", summary.HasFactHistory)
 			if kind == "claims" {
 				assert.Equal(t, 2, summary.ClaimedFields)
 				assert.NotNil(t, summary.LatestClaimAt)

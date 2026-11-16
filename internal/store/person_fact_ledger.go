@@ -494,7 +494,7 @@ func (s *Store) PersonFactSummaryContext(ctx context.Context, personID int64) (p
 		err := tx.QueryRowContext(ctx, `SELECT
 			(SELECT COUNT(*) FROM (SELECT target_kind, target_key FROM person_fact_claims WHERE person_id = ? GROUP BY target_kind, target_key) fields),
 			(SELECT MAX(created_at) FROM person_fact_claims WHERE person_id = ?),
-			(EXISTS(SELECT 1 FROM person_attribute_values WHERE person_id = ?)
+			(EXISTS(SELECT 1 FROM person_attribute_values WHERE person_id = ? AND active_until IS NULL AND superseded_at IS NULL)
 			 OR EXISTS(SELECT 1 FROM employments WHERE person_id = ?)),
 			(EXISTS(SELECT 1 FROM person_fact_claims WHERE person_id = ?)
 			 OR EXISTS(SELECT 1 FROM person_fact_evidence WHERE person_id = ?)
