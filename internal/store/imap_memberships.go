@@ -300,7 +300,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 		if err != nil {
 			return err
 		}
-		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL(), includeMarked: true}
+		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL()}
 		resolver.markedStillInTrash, resolver.trashMailboxes, err = imapMarkedStillInTrash(ctx, tx, sourceID, normalizedDeltas)
 		if err != nil {
 			return err
@@ -587,7 +587,7 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 				candidates = append(candidates, observation)
 			}
 		}
-		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL(), includeMarked: true}
+		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL()}
 		if err := resolver.recordFilteredTrashObservations(ctx, observations); err != nil {
 			return err
 		}
@@ -1063,7 +1063,6 @@ type imapMembershipResolver struct {
 	tx                 *loggedTx
 	sourceID           int64
 	sqlite             bool
-	includeMarked      bool
 	markedStillInTrash map[int64]bool
 	trashMailboxes     map[string]bool
 	trashDigests       map[[32]byte]bool
@@ -1434,14 +1433,13 @@ func (r *imapMembershipResolver) resolveRawSHA256(
 			FROM messages
 			JOIN message_raw ON message_raw.message_id = messages.id
 			WHERE messages.source_id = ? AND message_raw.raw_format = 'mime'
-			  AND (? OR messages.deleted_from_source_at IS NULL)
-			  AND ((? AND messages.deleted_from_source_at IS NOT NULL) OR EXISTS (
+			  AND (messages.deleted_from_source_at IS NOT NULL OR EXISTS (
 				SELECT 1 FROM imap_message_memberships membership
 				WHERE membership.source_id = messages.source_id
 				  AND membership.message_id = messages.id
 			  ))
 		`
-		args := []any{r.sourceID, r.includeMarked, r.includeMarked}
+		args := []any{r.sourceID}
 		if rawSize > 0 {
 			query += ` AND messages.size_estimate = ?`
 			args = append(args, rawSize)
