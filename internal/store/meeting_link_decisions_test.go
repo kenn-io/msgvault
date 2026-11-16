@@ -2137,6 +2137,42 @@ func TestMeetingRecordWithoutChoicesAvoidsCopyScan(t *testing.T) {
 	r.Zero(copyScans)
 }
 
+func TestMeetingRecordUnrelatedChoiceWithoutCopiesAvoidsCopyScan(t *testing.T) {
+	for _, unrelatedCopies := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unrelated_copies_%t", unrelatedCopies), func(t *testing.T) {
+			r := require.New(t)
+			base := newRFC822IDBackfillBackendStore(t)
+			_, first := projectionFixture(t, base, "choice-scan-first", "meeting_json", `{}`)
+			_, second := projectionFixture(t, base, "choice-scan-second", "meeting_json", `{}`)
+			_, unrelated := projectionFixture(t, base, "choice-scan-unrelated", "meeting_json", `{}`)
+			if unrelatedCopies {
+				_, duplicate := projectionFixture(t, base, "choice-scan-copy", "meeting_json", `{}`)
+				_, kept := projectionFixture(t, base, "choice-scan-kept", "meeting_json", `{}`)
+				_, err := base.MergeDuplicates(t.Context(), kept, []int64{duplicate}, "choice-scan-batch")
+				r.NoError(err)
+			}
+			ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+			_, err := base.DecideMeetingLinkContext(t.Context(), ref(first), ref(second), "link")
+			r.NoError(err)
+			var copyScans int
+			gate := &meetingProjectionGate{before: func(_ context.Context, query string, _ []driver.NamedValue) error {
+				if strings.HasPrefix(query, "WITH RECURSIVE") && strings.Contains(query, "meeting_copy_survivors") {
+					copyScans++
+				}
+				return nil
+			}}
+			st := gatedMeetingProjectionStore(t, base, gate)
+			record, err := st.MeetingRecordContext(t.Context(), ref(unrelated))
+			r.NoError(err)
+			r.Equal([]int64{unrelated}, record.MessageIDs)
+			record, err = st.MeetingRecordContext(t.Context(), ref(first))
+			r.NoError(err)
+			r.Equal([]int64{first, second}, record.MessageIDs)
+			r.Zero(copyScans)
+		})
+	}
+}
+
 func TestMeetingRecordBatchesCopyScans(t *testing.T) {
 	r := require.New(t)
 	base := newRFC822IDBackfillBackendStore(t)
@@ -2730,4 +2766,57 @@ func TestMeetingDecisionEditedOriginalTimeChanges(t *testing.T) {
 	r.NoError(err)
 	r.Len(record.Links, 1)
 	r.Equal(edit, record.Links[0].MessageID)
+}
+
+func TestMeetingDecisionResetEditedOriginalTimeChanges(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	initial := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`
+	data, edit := calendarFixture(t, st, "reset-changing-original-edit", initial)
+	_, note := projectionFixture(t, st, "reset-changing-original-note", "meeting_json", `{}`)
+	event, n := MeetingLinkRef{Kind: "evt", MessageID: edit}, MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), event, n, "link")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"start":{"dateTime":"2027-03-22T10:00:00Z"},"end":{"dateTime":"2027-03-22T11:00:00Z"}}`)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), event, n, "link")
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), event, n, "clear")
+	r.NoError(err)
+	data.RawMIME = []byte(initial)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), event)
+	r.NoError(err)
+	r.NotContains(record.MessageIDs, note)
+	record, err = st.MeetingRecordContext(t.Context(), n)
+	r.NoError(err)
+	r.Empty(record.Links)
+}
+
+func TestMeetingDecisionDatedResetKeepsOtherEditedTime(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	initial := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`
+	data, edit := calendarFixture(t, st, "dated-reset-edit", initial)
+	_, note := projectionFixture(t, st, "dated-reset-note", "meeting_json", `{}`)
+	event, n := MeetingLinkRef{Kind: "evt", MessageID: edit}, MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), event, n, "link")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"start":{"dateTime":"2027-03-22T10:00:00Z"},"end":{"dateTime":"2027-03-22T11:00:00Z"}}`)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), event, n, "link")
+	r.NoError(err)
+	event.Identity = occurrenceIdentity(t, "20270321T100000Z")
+	_, err = st.DecideMeetingLinkContext(t.Context(), event, n, "clear")
+	r.NoError(err)
+	data.RawMIME = []byte(initial)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	event.Identity = calrecur.Identity{}
+	record, err := st.MeetingRecordContext(t.Context(), event)
+	r.NoError(err)
+	r.Contains(record.MessageIDs, note)
 }

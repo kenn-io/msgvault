@@ -72,26 +72,56 @@ func (s *Store) meetingDecisionEdgesBatch(ctx context.Context, endpoints []meeti
 				originalTime = ref.Identity.Instant
 			}
 		}
+		type decisionBatch struct {
+			endpoints []meetingDecisionEndpoint
+			direct    bool
+		}
+		var batches []decisionBatch
 		for batch := range slices.Chunk(groups[k], 100) {
+			if k.kind != meetingRefMessage {
+				batches = append(batches, decisionBatch{endpoints: batch})
+				continue
+			}
+			withoutCopies, withCopies, err := s.partitionMeetingNotesByCopies(ctx, batch)
+			if err != nil {
+				return nil, err
+			}
+			if len(withoutCopies) > 0 {
+				batches = append(batches, decisionBatch{endpoints: withoutCopies, direct: true})
+			}
+			if len(withCopies) > 0 {
+				batches = append(batches, decisionBatch{endpoints: withCopies})
+			}
+		}
+		for _, item := range batches {
+			batch := item.endpoints
 			values := make([]string, len(batch))
 			args := make([]any, 0, len(batch)*2+9)
 			for i, endpoint := range batch {
 				values[i] = "(CAST(? AS INTEGER), CAST(? AS BIGINT))"
 				args = append(args, i, endpoint.ID)
 			}
-			args = append(args, copyArgs...)
-			args = append(args, originalDate, originalTime)
-			args = append(args, editArgs...)
-			args = append(args, seriesArgs...)
-			// The series CTE precedes relations in meetingCopyGraphSQL.
-			args = append(args, parentArgs...)
+			var prefix, matches string
+			if item.direct {
+				prefix = `WITH inputs(idx,id) AS (VALUES ` + strings.Join(values, ",") + `)`
+				matches = `i.id`
+			} else {
+				args = append(args, copyArgs...)
+				args = append(args, originalDate, originalTime)
+				args = append(args, editArgs...)
+				args = append(args, seriesArgs...)
+				// The series CTE precedes relations in meetingCopyGraphSQL.
+				args = append(args, parentArgs...)
+				series := meetingSeriesLinksSQL(` AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)` + editScope + seriesScope)
+				prefix = `WITH RECURSIVE inputs(idx,id) AS (VALUES ` + strings.Join(values, ",") + `), ` + meetingCopyGraphSQL(`SELECT i.idx,m.id FROM inputs i JOIN messages m ON m.id=i.id`, copyScope, parentScope, series)
+				matches = `(SELECT id FROM copies WHERE idx=i.idx)`
+			}
 			args = append(args, k.kind, k.occurrence, k.kind, k.occurrence)
 			args = append(args, leftArgs...)
 			args = append(args, rightArgs...)
 			args = append(args, *budget+1)
-			series := meetingSeriesLinksSQL(` AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)` + editScope + seriesScope)
-			query := `WITH RECURSIVE inputs(idx,id) AS (VALUES ` + strings.Join(values, ",") + `), ` + meetingCopyGraphSQL(`SELECT i.idx,m.id FROM inputs i JOIN messages m ON m.id=i.id`, copyScope, parentScope, series) + `
- SELECT i.idx,d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM inputs i JOIN meeting_link_decisions d ON ((d.left_message_id IN (SELECT id FROM copies WHERE idx=i.idx) AND d.left_kind=? AND (d.left_key=? OR (d.left_kind='evt' AND d.left_key=''))) OR (d.right_message_id IN (SELECT id FROM copies WHERE idx=i.idx) AND d.right_kind=? AND (d.right_key=? OR (d.right_kind='evt' AND d.right_key='')))) JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE TRUE` + leftScope + rightScope + ` LIMIT ?`
+			query := prefix + `
+ SELECT i.idx,d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM inputs i JOIN meeting_link_decisions d ON ((d.left_message_id IN (` + matches + `) AND d.left_kind=? AND (d.left_key=? OR (d.left_kind='evt' AND d.left_key=''))) OR (d.right_message_id IN (` + matches + `) AND d.right_kind=? AND (d.right_key=? OR (d.right_kind='evt' AND d.right_key='')))) JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE TRUE` + leftScope + rightScope + ` LIMIT ?`
 			err := func() error {
 				rows, err := reader.QueryContext(ctx, query, args...)
 				if err != nil {
@@ -118,6 +148,43 @@ func (s *Store) meetingDecisionEdgesBatch(ctx context.Context, endpoints []meeti
 		}
 	}
 	return result, nil
+}
+
+// A note can only have copies if it appears at either end of copy metadata.
+func (s *Store) partitionMeetingNotesByCopies(ctx context.Context, batch []meetingDecisionEndpoint) (without, with []meetingDecisionEndpoint, err error) {
+	values := make([]string, len(batch))
+	args := make([]any, 0, len(batch)*2)
+	for i, endpoint := range batch {
+		values[i] = "(CAST(? AS INTEGER), CAST(? AS BIGINT))"
+		args = append(args, i, endpoint.ID)
+	}
+	query := `WITH inputs(idx,id) AS (VALUES ` + strings.Join(values, ",") + `)
+ SELECT idx FROM inputs i WHERE EXISTS (SELECT 1 FROM meeting_copy_survivors c WHERE c.message_id=i.id OR c.survivor_message_id=i.id)
+ OR EXISTS (SELECT 1 FROM source_merge_messages c WHERE c.message_id=i.id OR c.survivor_message_id=i.id)`
+	rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	indices := make(map[int]bool)
+	for rows.Next() {
+		var index int
+		if err := rows.Scan(&index); err != nil {
+			return nil, nil, err
+		}
+		indices[index] = true
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, nil, err
+	}
+	for i, endpoint := range batch {
+		if indices[i] {
+			with = append(with, endpoint)
+		} else {
+			without = append(without, endpoint)
+		}
+	}
+	return without, with, nil
 }
 
 // MeetingRecordContext follows automatic evidence and owner choices in one snapshot.

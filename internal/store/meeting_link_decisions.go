@@ -264,11 +264,11 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		bareB := b.Kind == meetingRefEvent && b.Key == ""
 		ca, err := s.meetingOccurrenceKey(ctx, a, &budget)
 		if err != nil {
-			return s.clearStoredMeetingDecision(ctx, tx, a, b, bareA, bareB, decision, err, &result)
+			return s.clearStoredMeetingDecision(ctx, tx, a, b, bareA, bareB, bareA, bareB, decision, err, &result)
 		}
 		cb, err := s.meetingOccurrenceKey(ctx, b, &budget)
 		if err != nil {
-			return s.clearStoredMeetingDecision(ctx, tx, a, b, bareA, bareB, decision, err, &result)
+			return s.clearStoredMeetingDecision(ctx, tx, a, b, bareA, bareB, bareA, bareB, decision, err, &result)
 		}
 		for _, endpoint := range []meetingDecisionEndpoint{a, b} {
 			if err := s.validateMeetingInput(ctx, endpoint, &budget); err != nil {
@@ -280,6 +280,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		}
 		if compareMeetingEndpoints(ca, cb) > 0 {
 			ca, cb = cb, ca
+			bareA, bareB = bareB, bareA
 		}
 		leftRef, err := s.meetingPublicRef(ctx, ca, &budget)
 		if err != nil {
@@ -345,7 +346,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 				cause = sql.ErrNoRows
 			}
 			var ignored MeetingLinkDecisionResult
-			if err := s.clearStoredMeetingDecision(ctx, tx, a, b, true, true, decision, cause, &ignored); err != nil {
+			if err := s.clearStoredMeetingDecision(ctx, tx, a, b, true, true, bareA, bareB, decision, cause, &ignored); err != nil {
 				return err
 			}
 			result = MeetingLinkDecisionResult{Left: leftRef, Right: rightRef, State: "automatic"}
@@ -468,16 +469,17 @@ func (s *Store) equivalentMeetingDecisions(ctx context.Context, a, b meetingDeci
 	return matches, nil
 }
 
-func (s *Store) clearStoredMeetingDecision(ctx context.Context, tx *loggedTx, a, b meetingDecisionEndpoint, matchSingleA, matchSingleB bool, decision string, cause error, result *MeetingLinkDecisionResult) error {
+func (s *Store) clearStoredMeetingDecision(ctx context.Context, tx *loggedTx, a, b meetingDecisionEndpoint, matchSingleA, matchSingleB, bareA, bareB bool, decision string, cause error, result *MeetingLinkDecisionResult) error {
 	if decision != "clear" || (cause != nil && !errors.Is(cause, sql.ErrNoRows) && !errors.Is(cause, ErrMeetingOccurrenceRequired)) {
 		return cause
 	}
 	type side struct {
-		endpoint meetingDecisionEndpoint
-		copies   []int64
-		single   bool
+		endpoint  meetingDecisionEndpoint
+		copies    []int64
+		single    bool
+		exception bool
 	}
-	prepare := func(endpoint meetingDecisionEndpoint, matchSingle bool) (side, error) {
+	prepare := func(endpoint meetingDecisionEndpoint, matchSingle, bare bool) (side, error) {
 		id, ok, err := s.resolveMeetingMessage(ctx, endpoint.ID)
 		if err != nil {
 			return side{}, err
@@ -497,25 +499,26 @@ func (s *Store) clearStoredMeetingDecision(ctx context.Context, tx *loggedTx, a,
 				return side{}, err
 			}
 			prepared.single = matchSingle && kind == calendarSingleKind
+			prepared.exception = bare && kind != calendarSeriesKind
 		}
 		return prepared, nil
 	}
-	left, err := prepare(a, matchSingleA)
+	left, err := prepare(a, matchSingleA, bareA)
 	if err != nil {
 		return err
 	}
-	right, err := prepare(b, matchSingleB)
+	right, err := prepare(b, matchSingleB, bareB)
 	if err != nil {
 		return err
 	}
 	match := func(column string, count int) string {
-		return column + `_message_id IN (` + placeholders(count) + `) AND ` + column + `_kind=? AND (` + column + `_key=? OR (? AND EXISTS (SELECT 1 FROM calendar_events WHERE message_id=` + column + `_message_id AND kind='single')))`
+		return column + `_message_id IN (` + placeholders(count) + `) AND ` + column + `_kind=? AND (` + column + `_key=? OR (? AND EXISTS (SELECT 1 FROM calendar_events WHERE message_id=` + column + `_message_id AND kind='single')) OR (? AND EXISTS (SELECT 1 FROM calendar_events WHERE message_id=` + column + `_message_id AND kind='exception')))`
 	}
 	appendSide := func(args []any, s side, ids []int64) []any {
 		for _, id := range ids {
 			args = append(args, id)
 		}
-		return append(args, s.endpoint.Kind, s.endpoint.Key, s.single)
+		return append(args, s.endpoint.Kind, s.endpoint.Key, s.single, s.exception)
 	}
 	var count int64
 	for leftIDs := range slices.Chunk(left.copies, 100) {
