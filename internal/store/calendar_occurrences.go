@@ -66,13 +66,13 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		id     string
 	}
 	exceptions := map[seriesKey][]CalendarEventRow{}
-	masters := map[seriesKey]bool{}
+	masters := map[seriesKey]CalendarEventRow{}
 	rangeSeries := map[seriesKey]bool{}
 	byID := make(map[int64]CalendarEventRow, len(rows))
 	for _, row := range rows {
 		byID[row.MessageID] = row
 		if row.Event.Kind == calendarSeriesKind || row.Event.Kind == "single" {
-			masters[seriesKey{row.SourceID, row.Event.ProviderEventID}] = true
+			masters[seriesKey{row.SourceID, row.Event.ProviderEventID}] = row
 		}
 		if row.Event.Kind == calendarExceptionKind {
 			key := seriesKey{row.SourceID, row.Event.SeriesProviderID}
@@ -153,24 +153,29 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			report(row.MessageID, "exception has no original start")
 		}
 		if e.Kind == calendarExceptionKind && calendarRangeException(e) {
-			if !filterOverlap || !masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
+			_, hasMaster := masters[seriesKey{row.SourceID, e.SeriesProviderID}]
+			if !filterOverlap || !hasMaster {
 				report(row.MessageID, "unsupported recurrence: RANGE=THISANDFUTURE")
 			}
-			if !filterOverlap {
-				add(row, 0, calendarEventOccurrence(e, row.MessageID), time.Time{})
+			if filterOverlap {
+				continue
 			}
-			continue
 		}
-		if (e.Kind == "single" || e.Kind == calendarSeriesKind) && rangeSeries[seriesKey{row.SourceID, e.ProviderEventID}] {
+		key := seriesKey{row.SourceID, e.ProviderEventID}
+		if (e.Kind == "single" || e.Kind == calendarSeriesKind) && rangeSeries[key] {
 			report(row.MessageID, "unsupported recurrence: RANGE=THISANDFUTURE")
+			if !filterOverlap {
+				for _, ex := range exceptions[key] {
+					if err := addSeriesOccurrence(row, calendarEventOccurrence(ex.Event, ex.MessageID)); err != nil {
+						return page, err
+					}
+				}
+			}
 			continue
 		}
 		switch e.Kind {
 		case calendarExceptionKind, "single":
-			if e.Kind == calendarExceptionKind && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
-				if !filterOverlap && e.Start != nil && e.End != nil && rangeSeries[seriesKey{row.SourceID, e.SeriesProviderID}] {
-					add(row, 0, calendarEventOccurrence(e, row.MessageID), time.Time{})
-				}
+			if _, hasMaster := masters[seriesKey{row.SourceID, e.SeriesProviderID}]; e.Kind == calendarExceptionKind && hasMaster {
 				continue
 			}
 			if e.Start == nil || e.End == nil {
@@ -241,6 +246,9 @@ func calendarEventOccurrence(e calevent.Event, id int64) calrecur.Occurrence {
 func calendarOriginalStart(original calrecur.Identity, event calevent.Event) (time.Time, error) {
 	if !original.AllDay {
 		return original.Instant, nil
+	}
+	if event.EventTimeZone == "" && event.CalendarTimeZone == "" {
+		return time.Time{}, nil
 	}
 	zone, err := calendarEventZone(event)
 	if err != nil {
