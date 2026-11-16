@@ -10,18 +10,18 @@ import (
 )
 
 // The same production upgrade runs on SQLite and the PostgreSQL CI backend.
-// Restore the v43 ledger vocabularies and retain an existing attempt, claim,
+// Restore the v44 ledger vocabularies and retain an existing attempt, claim,
 // and evidence link across initialization.
-func TestCommitmentMigrationUpgradesVersion43(t *testing.T) {
+func TestCommitmentMigrationUpgradesVersion44(t *testing.T) {
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
-	f := newPersonSweepBudgetFixture(t, "commitment-v43")
+	f := newPersonSweepBudgetFixture(t, "commitment-v44")
 	st := f.store
 	seedPersonFactClaimLedger(t, st, f.personID, "before-commitment")
 	installPersonFactClaimOrigin(t, st, `CHECK (origin IN ('extraction', 'enrichment', 'brief', 'system', 'invalid'))`)
 	installPersonSweepBatchPurpose(t, st, `CHECK ((call_ordinal = 0 AND purpose IN ('primary', 'brief')) OR (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair')))`)
 	for _, query := range []string{
 		`DELETE FROM applied_migrations WHERE name = 'person_commitments_v1'`,
-		`UPDATE archive_metadata SET value = '43' WHERE key = 'schema_version'`,
+		`UPDATE archive_metadata SET value = '44' WHERE key = 'schema_version'`,
 	} {
 		_, err := st.DB().ExecContext(ctx, query)
 		r.NoError(err)

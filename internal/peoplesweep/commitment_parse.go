@@ -51,6 +51,9 @@ type CommitmentWindow struct {
 	BackfillMessageID int64              `json:"-"`
 	SnapshotSequence  int64              `json:"-"`
 	ThroughSequence   int64              `json:"-"`
+	SkippedMessageIDs []int64            `json:"-"`
+	RetriedMessageIDs []int64            `json:"-"`
+	ResetSkipped      bool               `json:"-"`
 }
 
 type CommitmentPromise struct {

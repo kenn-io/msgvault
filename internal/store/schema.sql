@@ -4466,3 +4466,9 @@ CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  scope_fingerprint TEXT NOT NULL DEFAULT '',
  discovery_since DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS person_commitment_skipped (
+ person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+ message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ max_bytes INTEGER NOT NULL,
+ PRIMARY KEY (person_id, message_id)
+);

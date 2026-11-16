@@ -19,7 +19,7 @@ import (
 
 const (
 	loopsMinAPISchemaVersion      = "3.44.0"
-	commitmentMinAPISchemaVersion = "5.8.0"
+	commitmentMinAPISchemaVersion = "5.10.0"
 )
 
 func init() {

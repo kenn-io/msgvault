@@ -498,11 +498,13 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return window, err
 	}
-	if window.BackfillMessageID != -1 && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
+	sameEligibility := len(scope) == 64 && scope[:56] == window.ScopeFingerprint[:56]
+	if sameEligibility && window.BackfillMessageID != -1 && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
 		window.SelectionAt = since.Time.Add(cfg.Window)
 	}
-	if scope != window.ScopeFingerprint {
+	if !sameEligibility {
 		previous, window.BackfillMessageID = 0, 0
+		window.ResetSkipped = true
 	}
 	window.SnapshotSequence, window.ThroughSequence = through, through
 	inProfile := func(at time.Time) bool {
@@ -548,9 +550,11 @@ func (s *Store) scanCommitmentChanges(ctx context.Context, personID, previous, t
 func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, inProfile func(time.Time) bool) error {
 	personID, through := window.PersonID, window.ThroughSequence
 	// Negative values below -1 carry a pending gap and the backfill cursor.
-	gap := window.BackfillMessageID <= -2
+	gap := false
 	if window.BackfillMessageID < -2 {
 		window.BackfillMessageID = -(window.BackfillMessageID + 3)
+	} else if window.BackfillMessageID == -2 {
+		window.BackfillMessageID = -1
 	}
 	defer func() {
 		if gap {
@@ -569,6 +573,8 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 		}
 		if sourceBytes > cfg.MaxBytes {
 			gap = true
+			seen[source.MessageID] = true
+			window.SkippedMessageIDs = append(window.SkippedMessageIDs, source.MessageID)
 			return true, nil
 		}
 		if len(window.Sources) >= cfg.MaxItems || used+sourceBytes > cfg.MaxBytes {
@@ -594,12 +600,57 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			fitsAlone, err := peoplesweep.CommitmentInputFits(single)
 			if !fitsAlone && err == nil {
 				gap = true
+				seen[source.MessageID] = true
+				window.SkippedMessageIDs = append(window.SkippedMessageIDs, source.MessageID)
 			}
 			return !fitsAlone, err
 		}
 		seen[source.MessageID] = true
 		used += sourceBytes
 		return true, nil
+	}
+	if !window.ResetSkipped {
+		rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT message_id, max_bytes FROM person_commitment_skipped WHERE person_id = ? ORDER BY message_id`), personID)
+		if err != nil {
+			return err
+		}
+		type skippedMessage struct {
+			id       int64
+			maxBytes int
+		}
+		var skipped []skippedMessage
+		for rows.Next() {
+			var item skippedMessage
+			if err := rows.Scan(&item.id, &item.maxBytes); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			skipped = append(skipped, item)
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+		for _, item := range skipped {
+			if item.maxBytes >= cfg.MaxBytes {
+				gap = true
+				continue
+			}
+			source, ok, err := s.currentCommitmentSource(ctx, personID, item.id)
+			if err != nil {
+				return err
+			}
+			if ok && inProfile(source.EventTime) {
+				added, err := add(source)
+				if err != nil || !added {
+					gap = true
+					window.ThroughSequence = previous
+					return err
+				}
+			}
+			window.RetriedMessageIDs = append(window.RetriedMessageIDs, item.id)
+		}
 	}
 	changes, err := s.scanCommitmentChanges(ctx, personID, previous, through)
 	if err != nil {

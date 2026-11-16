@@ -363,6 +363,7 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 				r.NoError(err)
 				parsed := peoplesweep.ParsedCommitments{}
 				for _, source := range window.Sources {
+					a.True(source.MessageID == large || (tc.journal && source.MessageID == secondLarge), "already scanned message %d was sent again", source.MessageID)
 					if source.MessageID == large {
 						a.True(source.MatchesQuote("I will call.", 92161, 92173))
 						parsed, err = peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":92161,"end":92173,"summary":"Call","due_on":null,"due_phrase":null}]}`, source.ID)), window)
@@ -402,6 +403,23 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 			a.False(due, "a successful retry clears the scheduling trigger")
 		})
 	}
+
+	t.Run("larger limit without skipped messages", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "no-skipped-messages", false)
+		_, persist := newCommitmentTestConversation(t, f)
+		persist("small", "I will call.", -time.Hour)
+		cfg, profile := commitmentTestConfig()
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Len(window.Sources, 1)
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+		r.NoError(err)
+		cfg.Commitments.MaxBytes += 1024
+		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Empty(window.Sources)
+	})
 
 	t.Run("recent change to old oversized message", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
@@ -461,7 +479,11 @@ func TestCommitmentDiscoveryCoalescesBackfillAndJournal(t *testing.T) {
 		f := newPersonSweepApplyFixture(t, "narrow-window", false)
 		_, persist := newCommitmentTestConversation(t, f)
 		persist("recent", "I will call.", -time.Hour)
-		persist("old", "I will write.", -48*time.Hour)
+		old := persist("old", "I will write.", -48*time.Hour)
+		_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-48*time.Hour)), old)
+		r.NoError(err)
+		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-48*time.Hour)), old)
+		r.NoError(err)
 		cfg, profile := commitmentTestConfig()
 		cfg.Commitments.MaxItems = 1
 		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
@@ -470,6 +492,7 @@ func TestCommitmentDiscoveryCoalescesBackfillAndJournal(t *testing.T) {
 		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
 		r.NoError(err)
 		cfg.Commitments.Window = 24 * time.Hour
+		cfg.Commitments.MaxItems = 60
 		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 		r.NoError(err)
 		for _, source := range window.Sources {
@@ -594,6 +617,22 @@ func TestEditedCommitmentDecision(t *testing.T) {
 			name: "longer quote keeps decision", initialText: longer,
 			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
 			rescans:         []rescanSpec{{text: longer, want: []expectedPromise{{longer, LoopStateDone}}, includeClosed: true, promises: []promiseSpec{{quote: longer, summary: "Send"}}}},
+		},
+		{
+			name: "longer quote survives unrelated edit", initialText: longer,
+			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
+			rescans: []rescanSpec{
+				{text: longer, want: []expectedPromise{{longer, LoopStateDone}}, includeClosed: true, promises: []promiseSpec{{quote: longer, summary: "Send"}}},
+				{text: "Note. " + longer, want: []expectedPromise{{longer, LoopStateDone}}, includeClosed: true, promises: []promiseSpec{{quote: longer, summary: "Send", start: 6}}},
+			},
+		},
+		{
+			name: "restored wording preserves decision", initialText: quote,
+			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
+			rescans: []rescanSpec{
+				{text: "Note. " + quote, want: []expectedPromise{{quote, LoopStateDone}}, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send", start: 6}}},
+				{text: quote, want: []expectedPromise{{quote, LoopStateDone}}, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send"}}},
+			},
 		},
 		{
 			name: "ambiguous overlap retains decisions", initialText: combined, initialStates: []string{LoopStateDone, LoopStateSnoozed},

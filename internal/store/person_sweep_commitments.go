@@ -88,6 +88,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	generation := request.Generation
 	generation.ProgramID, generation.ProgramVersion = peoplesweep.CommitmentProgramID, peoplesweep.CommitmentProgramVersion
 	generation.ProgramFingerprint = peoplesweep.CommitmentProgramFingerprint()
+	generation.SourceCursors = []personfacts.SourceCursor{{Lane: "commitments", Start: fmt.Sprint(window.BackfillMessageID), End: fmt.Sprintf("%d:%d", window.ThroughSequence, window.SnapshotSequence)}}
 	generation.Claims, generation.EvidenceStatusChanges = nil, nil
 	promises, err := s.matchCommitmentCitations(ctx, personID, sources, result.Output.Promises)
 	if err != nil {
@@ -158,6 +159,7 @@ func (s *Store) matchCommitmentCitations(ctx context.Context, personID int64, so
 	}
 	defer func() { _ = rows.Close() }()
 	matches := make([]map[string]bool, len(promises))
+	oldMatches := make([]map[string]bool, len(promises))
 	for rows.Next() {
 		var key, ref, version, subject, quote string
 		var start, end sql.NullInt64
@@ -171,18 +173,28 @@ func (s *Store) matchCommitmentCitations(ctx context.Context, personID int64, so
 			if source.Direction == peoplesweep.CommitmentOwedBy {
 				role = personfacts.CommitmentOwnerSubjectRef
 			}
-			if source.SourceRef != ref || source.SourceVersion != version || !personFactPortableTime(source.RecordedTime).Equal(recorded.Time) || subject != role || !start.Valid || !end.Valid ||
-				promise.Start >= end.Int64 || start.Int64 >= promise.End || peoplesweep.CommitmentQuoteRepeated(source.Text, quote) || peoplesweep.CommitmentQuoteRepeated(source.Text, promise.Quote) {
+			identity := fmt.Sprintf("commitment-body/v1:%d:%q:", source.SourceID, source.SourceMessageID)
+			if source.SourceRef != ref || !strings.HasPrefix(version, identity) || !personFactPortableTime(source.RecordedTime).Equal(recorded.Time) || subject != role || !start.Valid || !end.Valid ||
+				(source.SourceVersion != version && promise.Quote != quote) || (source.SourceVersion == version && (promise.Start >= end.Int64 || start.Int64 >= promise.End)) || peoplesweep.CommitmentQuoteRepeated(source.Text, quote) || peoplesweep.CommitmentQuoteRepeated(source.Text, promise.Quote) {
 				continue
 			}
-			if matches[i] == nil {
-				matches[i] = make(map[string]bool)
+			target := &matches[i]
+			if source.SourceVersion != version {
+				target = &oldMatches[i]
 			}
-			matches[i][key] = true
+			if *target == nil {
+				*target = make(map[string]bool)
+			}
+			(*target)[key] = true
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	for i := range matches {
+		if len(matches[i]) == 0 && len(oldMatches[i]) == 1 {
+			matches[i] = oldMatches[i]
+		}
 	}
 	return reconcileCommitmentCitations(promises, matches), nil
 }
@@ -272,6 +284,22 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 
 // Save discovery progress after the fenced apply.
 func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
+	window := request.Commitment.Window
+	if window.ResetSkipped {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_skipped WHERE person_id = ?`, request.Lease.PersonID); err != nil {
+			return err
+		}
+	}
+	for _, id := range window.RetriedMessageIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_skipped WHERE person_id = ? AND message_id = ?`, request.Lease.PersonID, id); err != nil {
+			return err
+		}
+	}
+	for _, id := range window.SkippedMessageIDs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_skipped (person_id, message_id, max_bytes) VALUES (?, ?, ?) ON CONFLICT (person_id, message_id) DO UPDATE SET max_bytes = excluded.max_bytes`, request.Lease.PersonID, id, request.Commitment.Config.MaxBytes); err != nil {
+			return err
+		}
+	}
 	through, backfill := prepared.through, prepared.backfillMessageID
 	var observed any
 	if prepared.observedOnly {
@@ -283,7 +311,7 @@ func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, requ
 		}
 		observed = through
 		through = 0
-		if scope == prepared.scope {
+		if len(scope) == 64 && scope[:56] == prepared.scope[:56] {
 			through = previous
 		}
 	}
