@@ -991,6 +991,51 @@ func TestCardDAVParticipantBindingDisputedAddresses(t *testing.T) {
 	})
 }
 
+func TestCardDAVParticipantBindingKeepsPendingConflictClaims(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	first := remoteResource(book.CanonicalURL+"first.vcf", "first", "First", "shared@example.test", "one")
+	applyParticipantBindingCards(t, st, account, book, first)
+	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, first.Href)
+	require.NoError(err)
+	personID := *mapping.PersonID
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+	require.NoError(err)
+	_, err = st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
+		PersonID: personID, Desired: true, AddressBookID: book.ID, Href: first.Href,
+		OutgoingBody: first.RemoteBody, OutgoingSemanticHash: first.SemanticHash, LocalHash: snapshot.Fingerprint,
+	})
+	require.NoError(err)
+	mapping, err = st.GetCardDAVResourceContext(t.Context(), book.ID, first.Href)
+	require.NoError(err)
+	conflict, err := st.RecordCardDAVConflictContext(t.Context(), store.CardDAVConflictCapture{
+		AddressBookID: book.ID, Href: first.Href, ExpectedPersonID: personID,
+		ExpectedMappingRevision: mapping.MappingRevision, BaseLocalHash: mapping.LocalHash,
+		LocalHash: snapshot.Fingerprint, BaseRemoteHash: mapping.RemoteSemanticHash,
+		BaseRemoteETag: mapping.RemoteETag, LocalBody: first.RemoteBody, RemoteTombstone: true,
+	})
+	require.NoError(err)
+	pending, err := st.PrepareCardDAVConflictLocalContext(t.Context(), store.CardDAVConflictLocalPlan{
+		ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision,
+		RemoteTombstone: true, OutgoingSemanticHash: "restore-first",
+	})
+	require.NoError(err)
+	require.Equal(store.CardDAVMutationCreate, pending.PendingOperation)
+	participant, err := st.EnsureParticipant("shared@example.test", "Shared", "example.test")
+	require.NoError(err)
+	second := remoteResource(book.CanonicalURL+"second.vcf", "second", "Second", "shared@example.test", "one")
+	applyParticipantBindingCards(t, st, account, book, second)
+	secondPerson := bindingCardPerson(t, st, book, second.Href)
+	result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
+	require.NoError(err)
+	require.Len(result.ConflictDetails, 1)
+	assert.ElementsMatch([]int64{personID, secondPerson.ID}, result.ConflictDetails[0].PersonIDs)
+	bound, err := st.PersonForParticipantsContext(t.Context(), []int64{participant})
+	require.NoError(err)
+	assert.Nil(bound)
+}
+
 func TestCardDAVParticipantBindingDisputedAddressFindsManualOwner(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)

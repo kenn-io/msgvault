@@ -55,10 +55,10 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
  WHERE resource.mapping_status = ? AND resource.person_id IS NOT NULL
  AND EXISTS (SELECT 1 FROM carddav_address_books book
    WHERE book.id = resource.address_book_id AND book.is_subscribed = TRUE)
- AND NOT EXISTS (SELECT 1 FROM carddav_publications publication
+ AND (conflict.id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM carddav_publications publication
    WHERE publication.person_id = resource.person_id
    AND publication.address_book_id = resource.address_book_id AND publication.href = resource.href
-   AND publication.pending_operation = 'create') ORDER BY resource.id`, CardDAVMappingMapped)
+   AND publication.pending_operation = 'create')) ORDER BY resource.id`, CardDAVMappingMapped)
 	if err != nil {
 		return nil, nil, nil, nil, 0, fmt.Errorf("read CardDAV participant claims: %w", err)
 	}
