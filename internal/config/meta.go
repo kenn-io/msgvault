@@ -102,9 +102,13 @@ type InstagramCommentsSource struct {
 	PageID             string `toml:"page_id"`
 	InstagramAccountID string `toml:"instagram_account_id"`
 	TokenEnv           string `toml:"token_env"`
-	Enabled            bool   `toml:"enabled"`
-	Schedule           string `toml:"schedule"`
-	Mentions           bool   `toml:"mentions"` // also archive tagged media as an instagram_mentions source
+	// AdAccountID and AdTokenEnv, set together, add the media used by the ad
+	// account's creatives. The ad token is read from its own variable.
+	AdAccountID string `toml:"ad_account_id"`
+	AdTokenEnv  string `toml:"ad_token_env"`
+	Enabled     bool   `toml:"enabled"`
+	Schedule    string `toml:"schedule"`
+	Mentions    bool   `toml:"mentions"` // also archive tagged media as an instagram_mentions source
 	// Actions opts the profile in to changing comments on Meta.
 	Actions []string `toml:"actions"`
 }
@@ -168,6 +172,9 @@ func validateInstagramProfiles(section string, profiles []InstagramCommentsSourc
 		assets[key] = true
 		if !envutil.ValidName(source.TokenEnv) {
 			return fmt.Errorf("%s[%d].token_env must name an explicit environment variable", section, i)
+		}
+		if (source.AdAccountID != "" || source.AdTokenEnv != "") && (!meta.ValidAccountID(source.AdAccountID) || !envutil.ValidName(source.AdTokenEnv)) {
+			return fmt.Errorf("instagram_comments[%d] requires a decimal ad_account_id without act_ and an ad_token_env variable name together", i)
 		}
 		if err := validateCommentActions(source.Actions); err != nil {
 			return fmt.Errorf("%s[%d].actions: %w", section, i, err)

@@ -96,7 +96,7 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 		meta.Organic = true
 	case VisitorPosts:
 		meta.Visitor = true
-	case AdsPosts:
+	case AdsPosts, adCreativesEdge:
 		meta.Ad = true
 	}
 	var reply sql.NullInt64
