@@ -379,6 +379,7 @@ func TestPeopleMeetingSourceUsesFilteredDateWindow(t *testing.T) {
 }
 
 func TestPeopleMeetingFullTextSourceOwnership(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	b := NewTestDataBuilder(t)
 	firstSource := b.AddSourceWithType("first@example.test", "granola")
 	secondSource := b.AddSourceWithType("second@example.test", "zoom")
@@ -395,13 +396,13 @@ func TestPeopleMeetingFullTextSourceOwnership(t *testing.T) {
 			Search:  SearchSpec{Mode: SearchFullText, Query: "alpha", CandidateMessageIDs: []int64{first, second}, LexicalIndexRevision: "fts5:test"},
 		}}
 		indexed, err := engine.SearchPeople(t.Context(), request)
-		require.NoError(t, err)
-		require.Len(t, indexed.Rows, 1)
-		assert.Equal(t, tc.want, indexed.Rows[0].MeetingCount)
+		require.NoError(err)
+		require.Len(indexed.Rows, 1)
+		assert.Equal(tc.want, indexed.Rows[0].MeetingCount)
 		legacy, err := engine.searchPeopleLegacy(t.Context(), request, nil, nil, false)
-		require.NoError(t, err)
-		require.Len(t, legacy.Rows, 1)
-		assert.Equal(t, tc.want, legacy.Rows[0].MeetingCount)
+		require.NoError(err)
+		require.Len(legacy.Rows, 1)
+		assert.Equal(tc.want, legacy.Rows[0].MeetingCount)
 	}
 }
 

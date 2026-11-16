@@ -52,18 +52,19 @@ func TestMeetingRecordSourceScope(t *testing.T) {
 }
 
 func TestMeetingRecordLinkedTranscriptsWithinSourceScope(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	data, first := projectionFixture(t, st, "first", "meeting_json", `{}`)
 	_, second := projectionFixture(t, st, "second", "meeting_json", `{}`)
 	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: first}, MeetingLinkRef{Kind: "msg", MessageID: second}, "link")
-	require.NoError(t, err)
+	require.NoError(err)
 	other, err := st.GetOrCreateSource("meeting_import", "other@example.test")
-	require.NoError(t, err)
+	require.NoError(err)
 	for _, sources := range [][]int64{{data.Message.SourceID}, {data.Message.SourceID, other.ID}} {
 		ctx := sourcescope.WithSourceIDs(t.Context(), sources)
 		record, err := st.MeetingRecordContext(ctx, MeetingLinkRef{Kind: "msg", MessageID: first})
-		require.NoError(t, err)
-		assert.ElementsMatch(t, []int64{first, second}, record.MessageIDs)
+		require.NoError(err)
+		assert.ElementsMatch([]int64{first, second}, record.MessageIDs)
 	}
 }
 

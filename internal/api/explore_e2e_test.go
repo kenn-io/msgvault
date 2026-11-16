@@ -72,11 +72,12 @@ func TestPeopleHTTPCountsMeetingGroups(t *testing.T) {
 }
 
 func TestPeopleFullTextMeetingSourceAttribution(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	archive := testutil.NewTestStore(t)
 	var ids []int64
 	for i, account := range []string{"first@example.test", "second@example.test"} {
 		source, err := archive.GetOrCreateSource("meeting_import", account)
-		require.NoError(t, err)
+		requirements.NoError(err)
 		key := fmt.Sprintf("meeting-%d", i)
 		subject := "alpha"
 		if i == 1 {
@@ -87,13 +88,13 @@ func TestPeopleFullTextMeetingSourceAttribution(t *testing.T) {
 			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"},
 			RawMIME:      []byte(`{}`), RawFormat: "meeting_json",
 		})
-		require.NoError(t, err)
+		requirements.NoError(err)
 		ids = append(ids, id)
 	}
 	_, err := archive.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "msg", MessageID: ids[0]}, store.MeetingLinkRef{Kind: "msg", MessageID: ids[1]}, "link")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = archive.BackfillFTS(nil)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	messages := strings.ReplaceAll(exploreFixtureDefaultMessages, "'email', NULL::VARCHAR", "'meeting_transcript', NULL::VARCHAR")
 	messages = strings.Replace(messages, "(2::BIGINT, 1::BIGINT, 'm2'", "(2::BIGINT, 2::BIGINT, 'm2'", 1)
 	engine, _ := newExploreDuckDBFixtureWithClusters(t, messages, exploreFixtureDefaultRecipients, "", 3, identityCacheFixtureOptions{
@@ -111,18 +112,19 @@ func TestPeopleFullTextMeetingSourceAttribution(t *testing.T) {
 		{"only later copy matches", "beta", `[{"dimension":"source","values":["2"]}]`, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			predicate := fmt.Sprintf(`{"query":%q,"search_mode":"full_text","filters":%s}`, tc.term, tc.filters)
 			response := postExploreJSON(t, srv, "/api/v1/participants/search", fmt.Sprintf(`{"identity_query":"Alice","predicate":%s}`, predicate))
-			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
 			var search ParticipantSearchHTTPResponse
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &search))
-			require.Len(t, search.Rows, 1)
-			assert.Equal(t, tc.want, search.Rows[0].MeetingCount)
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &search))
+			require.Len(search.Rows, 1)
+			assert.Equal(tc.want, search.Rows[0].MeetingCount)
 			response = postExploreJSON(t, srv, "/api/v1/participants/1/summary", predicate)
-			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
 			var summary ParticipantContextSummaryHTTPResponse
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &summary))
-			assert.Equal(t, tc.want, summary.Summary.MeetingCount)
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &summary))
+			assert.Equal(tc.want, summary.Summary.MeetingCount)
 		})
 	}
 	srv.lexicalCandidateCap = 1
@@ -132,8 +134,8 @@ func TestPeopleFullTextMeetingSourceAttribution(t *testing.T) {
 			predicate = fmt.Sprintf(`{"predicate":%s}`, predicate)
 		}
 		response := postExploreJSON(t, srv, path, predicate)
-		assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
-		assert.Contains(t, response.Body.String(), "candidate_pool_saturated")
+		assertions.Equal(http.StatusConflict, response.Code, response.Body.String())
+		assertions.Contains(response.Body.String(), "candidate_pool_saturated")
 	}
 }
 
