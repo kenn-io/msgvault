@@ -120,6 +120,7 @@ type Client struct {
 	trashMailbox                string               // cached trash mailbox name
 	junkMailbox                 string               // cached junk/spam mailbox name
 	allMailFolder               string               // mailbox with \All attribute (empty if not detected)
+	allMailMailboxes            map[string]bool      // LIST-advertised \All mailboxes
 	advertisedOutgoingMailboxes map[string]bool      // unambiguous LIST-advertised \Sent or \Drafts placement
 	advertisedSentMailboxes     map[string]bool      // unambiguous LIST-advertised \Sent placement
 	advertisedDraftsMailboxes   map[string]bool      // unambiguous LIST-advertised \Drafts placement
@@ -730,8 +731,14 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 				}
 			}
 		}
-		if c.allMailFolder == "" && hasAttr(item.Attrs, imap.MailboxAttrAll) {
-			c.allMailFolder = item.Mailbox
+		if hasAttr(item.Attrs, imap.MailboxAttrAll) {
+			if c.allMailMailboxes == nil {
+				c.allMailMailboxes = make(map[string]bool)
+			}
+			c.allMailMailboxes[item.Mailbox] = true
+			if c.allMailFolder == "" {
+				c.allMailFolder = item.Mailbox
+			}
 		}
 		if c.junkMailbox == "" && hasAttr(item.Attrs, imap.MailboxAttrJunk) {
 			c.junkMailbox = item.Mailbox
@@ -773,6 +780,7 @@ func (c *Client) clearMailboxDiscoveryLocked() {
 	c.trashMailbox = ""
 	c.junkMailbox = ""
 	c.allMailFolder = ""
+	c.allMailMailboxes = nil
 	c.advertisedOutgoingMailboxes = nil
 	c.advertisedSentMailboxes = nil
 	c.advertisedDraftsMailboxes = nil

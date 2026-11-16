@@ -98,6 +98,69 @@ func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
 	assert.Contains(logs.String(), "account=user@example.com")
 }
 
+func TestRunScheduledIMAPSync_AllMailCombinedRoles(t *testing.T) {
+	for _, role := range []struct {
+		name string
+		attr imapapi.MailboxAttr
+	}{
+		{"sent", imapapi.MailboxAttrSent},
+		{"drafts", imapapi.MailboxAttrDrafts},
+	} {
+		for _, filtered := range []bool{false, true} {
+			t.Run(role.name+"/filtered="+strconv.FormatBool(filtered), func(t *testing.T) {
+				addr, user := testutil.StartIMAPMemServerWithSpecialUse(t,
+					map[string]int{"INBOX": 0, "Trash": 0, "All Mail": 0, "Combined": 0},
+					map[string][]imapapi.MailboxAttr{"Trash": {imapapi.MailboxAttrTrash}, "All Mail": {imapapi.MailboxAttrAll}, "Combined": {imapapi.MailboxAttrAll, role.attr}})
+				raw := "Message-ID: <combined@example.com>\r\nFrom: alice@example.com\r\nTo: bob@example.com\r\nSubject: combined roles\r\n\r\nbody\r\n"
+				for _, mailbox := range []string{"Trash", "All Mail", "Combined"} {
+					testutil.AppendIMAPRawMessage(t, user, mailbox, []byte(raw))
+				}
+				host, portText, err := net.SplitHostPort(addr)
+				require.NoError(t, err)
+				port, err := strconv.Atoi(portText)
+				require.NoError(t, err)
+				imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
+				st := testutil.NewTestStore(t)
+				src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
+				require.NoError(t, err)
+				configJSON, err := imapCfg.ToJSON()
+				require.NoError(t, err)
+				require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, configJSON))
+				src, err = st.GetSourceByID(src.ID)
+				require.NoError(t, err)
+				home := t.TempDir()
+				cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
+				require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
+				ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+				invocationFromContext(ctx).logger = testDiscardLogger()
+				syncMailbox := func() {
+					summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+					require.NoError(t, err)
+					require.Zero(t, summary.Errors)
+				}
+				syncMailbox()
+				var count int
+				require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), src.ID).Scan(&count))
+				require.Equal(t, 1, count)
+				var savedRole string
+				require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT system_role FROM labels WHERE source_id = ? AND source_label_id = 'Combined'`), src.ID).Scan(&savedRole))
+				assert.Equal(t, role.name, savedRole)
+				_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE source_id = ?`), src.ID)
+				require.NoError(t, err)
+				testutil.SetIMAPFlags(t, addr, "Combined", 1, imapapi.FlagSeen)
+				if filtered {
+					cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
+				}
+				syncMailbox()
+				assert.Equal(t, 1, imapTombstonedMessageCount(t, st, src.ID), "All Mail does not confirm a restore")
+				testutil.AppendIMAPRawMessage(t, user, "INBOX", []byte(raw))
+				syncMailbox()
+				assert.Zero(t, imapTombstonedMessageCount(t, st, src.ID), "Inbox confirms a restore")
+			})
+		}
+	}
+}
+
 func TestRunScheduledIMAPSync_FilteredRestoreWithoutMessageID(t *testing.T) {
 	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Trash": 0})
 	raw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Restored\r\n\r\nbody\r\n")
