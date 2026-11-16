@@ -13,8 +13,8 @@ import (
 // MaxRawBytes limits raw evidence for meeting formats other than Notion.
 const MaxRawBytes = 64 << 20
 
-// MaxNotionRawBytes allows retained section evidence and text alongside a new
-// hydration, which is bounded to 32 MiB of provider responses.
+// MaxNotionRawBytes allows three sections retained across separate hydrations,
+// their rendered text, and a new hydration of up to 32 MiB of provider data.
 const MaxNotionRawBytes = 256 << 20
 
 const reasonMissingField = "missing_field"

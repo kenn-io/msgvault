@@ -643,32 +643,62 @@ func TestImporterKeepsIncompleteSectionAndSavesLargeEdit(t *testing.T) {
 	meeting := hydrationMeeting()
 	meeting.Parent = Parent{Type: "data_source_id"}
 	meeting.MeetingNotes.CalendarEvent.Attendees = nil
-	meeting.MeetingNotes.Children.TranscriptBlockID = ""
 	source.query.Results = []MeetingNote{meeting}
 	source.blocks["meeting-1"].Parent = meeting.Parent
-	summary := paragraph("summary-1", strings.Repeat("s", 17<<20), false)
-	source.blocks["summary-1"] = &summary
+	for _, section := range []string{"summary", "notes", "transcript"} {
+		block := paragraph(section+"-1", "", false)
+		source.blocks[section+"-1"] = &block
+	}
+	fillSection := func(section string) {
+		root := paragraph(section+"-1", "", true)
+		source.blocks[section+"-1"] = &root
+		first := paragraph(section+"-child-1", section+" content "+strings.Repeat("x", 11<<20), false)
+		second := paragraph(section+"-child-2", strings.Repeat("y", 11<<20), false)
+		firstRaw := json.RawMessage(`{"results":[` + string(first.Raw) + `],"has_more":true,"next_cursor":"next"}`)
+		secondRaw := json.RawMessage(`{"results":[` + string(second.Raw) + `],"has_more":false}`)
+		require.Less(t, int64(len(firstRaw)), maxResponseSize)
+		require.Less(t, int64(len(secondRaw)), maxResponseSize)
+		require.Less(t, len(firstRaw)+len(secondRaw), maxHydrationBytes)
+		source.children[section+"-1"] = map[string]*BlockPage{
+			"":     {Results: []Block{first}, HasMore: true, NextCursor: "next", Raw: firstRaw},
+			"next": {Results: []Block{second}, Raw: secondRaw},
+		}
+	}
+	fillSection("summary")
 	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
 	var id int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
 
 	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}}
-	notes := paragraph("notes-1", "Edited notes "+strings.Repeat("n", 17<<20), false)
-	source.blocks["notes-1"] = &notes
+	fillSection("notes")
 	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
 	assert.True(t, result.PartialCoverage)
 	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(t, err)
-	assert.Contains(t, body, "Edited notes ")
+	assert.Contains(t, body, "notes content ")
 	raw, err := st.GetMessageRaw(id)
 	require.NoError(t, err)
 	assert.Greater(t, len(raw), meetingcontent.MaxRawBytes)
 	content := meetingcontent.Decode(RawFormat, raw, nil)
 	assert.Equal(t, meetingcontent.StateAvailable, content.Summary.State)
-	assert.Contains(t, content.Notes.Text, "Edited notes ")
+	assert.Contains(t, content.Notes.Text, "notes content ")
 	assert.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
+
+	body, raw, content = "", nil, meetingcontent.Content{}
+	source.blockErrs["notes-1"] = &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}
+	fillSection("transcript")
+	result, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.True(t, result.PartialCoverage)
+	raw, err = st.GetMessageRaw(id)
+	require.NoError(t, err)
+	assert.Greater(t, len(raw), 128<<20)
+	content = meetingcontent.Decode(RawFormat, raw, nil)
+	assert.Equal(t, meetingcontent.StateAvailable, content.Summary.State)
+	assert.Contains(t, content.Notes.Text, "notes content ")
+	assert.Contains(t, content.Transcript.Text, "transcript content ")
 }
 
 func TestImporterStopsAndReopensExpiredTranscriptRetry(t *testing.T) {
