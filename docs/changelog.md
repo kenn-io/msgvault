@@ -17,6 +17,7 @@ All notable changes to msgvault, grouped by release.
 - Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
 
 - Account matching recovers after identity changes. Explore refreshes pending counts and lets you retry matching for each source.
+- MCP operation tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unusable. This replaces `operation_response_limit_exceeded`, `operation_response_failed`, and `invalid_operation_response` for those write receipts. Read current state before retrying.
 
 - New Messenger and Instagram inbox messages, including the ones the Page or
   account sends, are archived as they arrive when the
