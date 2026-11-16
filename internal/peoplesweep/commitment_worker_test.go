@@ -11,10 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func CommitmentRequestForTest(window CommitmentWindow, maxOutputTokens int64) (StructuredRequest, error) {
-	return commitmentRequest(window, maxOutputTokens)
-}
-
 type commitmentWorkerFixture struct {
 	workerFailureStore
 

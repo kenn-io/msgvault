@@ -554,7 +554,9 @@ type commitmentListStore struct {
 
 func (s *commitmentListStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, _ int, includeClosed bool) ([]store.PersonCommitment, error) {
 	s.includeClosed = includeClosed
-	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Start: 0, End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}}, nil
+	due := "2026-01-15"
+	until := time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)
+	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Start: 0, End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "snoozed", DueOn: &due, SnoozedUntil: &until}}, nil
 }
 
 func TestListLoopsMapsCommitmentsAndForwardsIncludeClosed(t *testing.T) {
@@ -570,5 +572,7 @@ func TestListLoopsMapsCommitmentsAndForwardsIncludeClosed(t *testing.T) {
 	var response LoopListResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 	require.NotEmpty(response.Commitments)
-	assert.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call.", Start: 0, End: 12}, PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Freshness: "fresh", State: "open"}, response.Commitments[0])
+	due := "2026-01-15"
+	until := time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)
+	assert.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call.", Start: 0, End: 12}, PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Freshness: "fresh", State: "snoozed", DueOn: &due, SnoozedUntil: &until}, response.Commitments[0])
 }

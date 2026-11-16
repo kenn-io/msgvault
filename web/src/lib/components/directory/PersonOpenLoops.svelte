@@ -83,7 +83,7 @@
     if (!since) return data.commitments_complete ? '' : 'Promise discovery has not started.';
     if (until && until < since) return 'No messages were eligible for promise discovery in the current window.';
     const day = (date: string) => formatShortDate(`${date}T00:00:00`);
-    return `Promise discovery ${until ? `from ${day(since)} through ${day(until)}` : `since ${day(since)}`} is ${data.commitments_complete ? 'complete' : 'incomplete'}.`;
+    return `Promises ${until ? `from ${day(since)} through ${day(until)}` : `since ${day(since)}`}${data.commitments_complete ? '' : ' · still searching'}`;
   }
 
   const groups = $derived([
@@ -112,6 +112,7 @@
   }
 </script>
 
+<div class="open-loops-section">
 <DetailSection title="Open loops">
   {#snippet control()}{#if !loading && !failed && openCount > 0}<span class="muted">{openCount}{truncated ? '+' : ''} open</span>{/if}{/snippet}
   <div class="open-loops">
@@ -128,7 +129,7 @@
             {#each group.items as loop (loop.anchor_message_id)}
               <li>
                 <a href={`/messages/${loop.anchor_message_id}`} title={loop.summary || '(no subject)'}>{loop.summary || '(no subject)'}</a>
-                <span class="muted" title={`Since ${formatContactDate(loop.owed_since_at)}`}>{ageLabel(loop.owed_since_at)}</span>
+                <span class="muted" title={`Since ${formatContactDate(loop.owed_since_at)}`}>{ageLabel(loop.owed_since_at)} ago</span>
               </li>
             {/each}
           </ul>
@@ -137,14 +138,14 @@
     {/each}
     {#each promiseGroups as group (group.key)}
       {#if group.items.length > 0}
-        <div class="group" class:stale={group.key.startsWith('stale-')}>
+        <div class="group">
           <h4>{group.label}</h4>
           <ul>
             {#each group.items as promise (promise.id)}
               <li class="promise">
                 <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>“{promise.promise.text}”</a>
                 <span class="muted">
-                  {#if promise.due_on}{#if isOverdue(promise.due_on)}<span class="overdue">overdue {formatShortDate(`${promise.due_on}T00:00:00`)}</span>{:else}due {formatShortDate(`${promise.due_on}T00:00:00`)}{/if}{' · '}{/if}made {ageLabel(promise.promised_at)} ago
+                  {#if promise.due_on}{isOverdue(promise.due_on) ? 'overdue' : 'due'} {formatShortDate(`${promise.due_on}T00:00:00`)}{' · '}{/if}made {ageLabel(promise.promised_at)} ago
                 </span>
               </li>
             {/each}
@@ -165,23 +166,21 @@
   {/if}
 </div>
 </DetailSection>
+</div>
 
 <style>
-  .open-loops { display: grid; gap: var(--space-2); min-width: 0; }
+  .open-loops-section { min-width: 0; padding: 0 var(--space-4); }
+  .open-loops { display: grid; gap: var(--space-2); min-width: 0; padding-bottom: var(--space-4); }
   h4, p, ul { margin: 0; }
   h4 { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; }
   .group { display: grid; gap: var(--space-1); }
-  .group + .group { margin-top: var(--space-4); }
+  .group + .group, .group + .discovery-status { margin-top: var(--space-4); }
   ul { display: grid; gap: var(--space-1); padding: 0; list-style: none; }
   li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); min-width: 0; }
   a { min-width: 0; overflow: hidden; color: var(--link-ink); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
   a:hover { text-decoration: underline; }
-  .stale { padding-left: var(--space-3); border-left: var(--border-width) solid var(--border-default); }
-  .stale h4 { font-style: italic; }
-  .stale a { text-decoration: underline; }
-  .overdue { padding: 0 var(--chip-pad-x); border-radius: var(--radius-md); background: var(--status-warning-bg); color: var(--status-warning-ink); }
   li > span { flex: none; }
   .muted { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
-  .discovery-status { padding-top: var(--space-2); border-top: var(--border-width) solid var(--border-muted); font-size: var(--font-size-xs); line-height: 1.5; }
+  .discovery-status { font-size: var(--font-size-xs); line-height: 1.5; }
   [role="alert"] { color: var(--text-danger); }
 </style>

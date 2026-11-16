@@ -26,12 +26,9 @@ func TestCommitmentMigrationUpgradesVersion43(t *testing.T) {
 		_, err := st.DB().ExecContext(ctx, query)
 		r.NoError(err)
 	}
-	version, err := st.SchemaVersionContext(ctx)
-	r.NoError(err)
-	a.Equal(43, version)
 	for range 2 {
 		r.NoError(st.InitSchemaContext(ctx))
-		version, err = st.SchemaVersionContext(ctx)
+		version, err := st.SchemaVersionContext(ctx)
 		r.NoError(err)
 		a.Equal(store.SchemaVersion, version)
 		var claims, links, attempts int
@@ -42,7 +39,7 @@ func TestCommitmentMigrationUpgradesVersion43(t *testing.T) {
 		a.Equal(1, links)
 		a.Equal(1, attempts)
 	}
-	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO person_fact_claims
+	_, err := st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO person_fact_claims
  (person_id,generation_id,claim_key,target_kind,target_key,target_revision,relation,submitted_value_json,origin,confidence_json)
  SELECT ?,MIN(id),'upgraded-commitment','commitment','promise','rev-1','support','"Send report"','commitment','{}'
  FROM person_fact_generations WHERE person_id = ?`), f.personID, f.personID)

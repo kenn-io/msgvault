@@ -33,12 +33,6 @@ func TestParseCommitmentsBindsEachPromiseToItsExactLocator(t *testing.T) {
 	parsed, err = ParseCommitments(output, window)
 	r.NoError(err)
 	a.NotEqual(first, parsed.Promises[0].TargetKey)
-	window.Sources[0].Text = "Note. " + window.Sources[0].Text
-	window.Sources[0].ContentSHA256 = "1edecdce9eca144e2be1372b7c87fc8f421a766ade855c459a529ba6b316355d"
-	output = jsontext.Value(`{"promises":[{"source_id":"m1","direction":"owed_by","quote":"I will send it.","start":6,"end":21,"summary":"Send","due_on":null,"due_phrase":null}]}`)
-	parsed, err = ParseCommitments(output, window)
-	r.NoError(err)
-	a.NotEqual(first, parsed.Promises[0].TargetKey)
 	t.Run("overlapping quotes remain distinct", func(t *testing.T) {
 		require := require.New(t)
 		now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)

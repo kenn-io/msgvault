@@ -47,9 +47,6 @@ func (w *Worker) runCommitmentCall(
 	}
 	cfg := w.Config.Commitments
 	cfg.Timezone = w.Timezone
-	if cfg.Timezone == "" {
-		cfg.Timezone = "UTC"
-	}
 	window, err := store.LoadPersonCommitmentWindow(ctx, lease.PersonID, call.profile, cfg, call.resolvedAt)
 	if err != nil {
 		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)

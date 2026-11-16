@@ -94,15 +94,12 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		return nil, err
 	}
 	aligner := make(commitmentEvidenceAligner)
-	evidence := make([]personfacts.EvidenceInput, len(promises))
-	for i, promise := range promises {
+	for _, promise := range promises {
 		source, ok := sources[promise.SourceID]
 		if !ok {
 			return nil, errCommitmentWindowChanged
 		}
-		evidence[i] = commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
-	}
-	for i, promise := range promises {
+		evidence := commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
 		descriptor := personfacts.TargetDescriptor{Kind: personfacts.TargetCommitment,
 			Key: promise.TargetKey, Slug: "commitment", ValueType: personfacts.ValueCommitment,
 			Cardinality: personfacts.CardinalitySingle, Sensitive: true, MaxLength: 240}
@@ -115,19 +112,18 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		if err != nil {
 			return nil, err
 		}
-		key, err := personfacts.EvidenceKey(evidence[i])
+		key, err := personfacts.EvidenceKey(evidence)
 		if err != nil {
 			return nil, err
 		}
-		aligner[key] = evidence[i]
+		aligner[key] = evidence
 		generation.Claims = append(generation.Claims, personfacts.ProposedClaim{
 			Target: descriptor, Relation: personfacts.RelationSupport, Origin: personfacts.OriginCommitment,
-			SubmittedValue: value, Evidence: []personfacts.EvidenceInput{evidence[i]},
+			SubmittedValue: value, Evidence: []personfacts.EvidenceInput{evidence},
 		})
 		prepared.promises = append(prepared.promises, promise)
 	}
 	if len(generation.Claims) != 0 {
-		var err error
 		prepared.generation, err = personfacts.PreparePersonFactGeneration(ctx, generation, aligner)
 		if err != nil {
 			return nil, err

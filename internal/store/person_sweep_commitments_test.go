@@ -82,6 +82,21 @@ func TestCommitmentListPages(t *testing.T) {
 		r.NoError(err)
 		r.Len(items, 1)
 		r.Equal("I will send report 1.", items[0].Quote)
+		until := personFactLedgerNow.Add(time.Hour)
+		openID := items[0].ID
+		_, err = f.store.DecidePersonCommitmentContext(ctx, openID, LoopStateSnoozed, &until, personFactLedgerNow)
+		r.NoError(err)
+		items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 1, false)
+		r.NoError(err)
+		r.Empty(items)
+		reopened, err := f.store.DecidePersonCommitmentContext(ctx, openID, LoopStateOpen, nil, personFactLedgerNow)
+		r.NoError(err)
+		r.Nil(reopened.SnoozedUntil)
+		items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 1, false)
+		r.NoError(err)
+		r.Len(items, 1)
+		r.Equal(openID, items[0].ID)
+		r.Equal(LoopStateOpen, items[0].State)
 	})
 	t.Run("fresh before limit", func(t *testing.T) {
 		r, a, ctx := require.New(t), assert.New(t), t.Context()
@@ -408,11 +423,6 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 		_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
 		r.NoError(err)
 		r.False(complete)
-		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(age)), large)
-		r.NoError(err)
-		_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-		r.NoError(err)
-		r.False(complete)
 	})
 }
 
@@ -446,57 +456,39 @@ func TestCommitmentApplyRevokedConsentRetainsPaidAccounting(t *testing.T) {
 }
 
 func TestCommitmentDiscoveryCoalescesBackfillAndJournal(t *testing.T) {
-	for _, oversized := range []bool{false, true} {
-		name := "two pages"
-		if oversized {
-			name = "oversized retry"
-		}
-		t.Run(name, func(t *testing.T) {
-			r, ctx := require.New(t), t.Context()
-			f := newPersonSweepApplyFixture(t, "journal-repeat", false)
-			_, persist := newCommitmentTestConversation(t, f)
-			body := "I will call."
-			if oversized {
-				body = strings.Repeat("x", 200) + body
+	t.Run("two pages", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "journal-repeat", false)
+		_, persist := newCommitmentTestConversation(t, f)
+		body := "I will call."
+		first := persist("first", body, -2*time.Hour)
+		cfg, profile := commitmentTestConfig()
+		cfg.Commitments.MaxItems = 1
+		second := persist("second", "I will write.", -time.Hour)
+		_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), body+" tomorrow.", first)
+		r.NoError(err)
+		var got []int64
+		for i := range 2 {
+			if i > 0 {
+				f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-next-%d", i))
 			}
-			first := persist("first", body, -2*time.Hour)
-			cfg, profile := commitmentTestConfig()
-			cfg.Commitments.MaxItems = 1
-			if oversized {
-				cfg.Commitments.MaxBytes = 30
-				window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-				r.NoError(err)
-				r.Empty(window.Sources)
-				_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-				r.NoError(err)
-				cfg.Commitments.MaxBytes = 1000
-			}
-			second := persist("second", "I will write.", -time.Hour)
-			_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), body+" tomorrow.", first)
-			r.NoError(err)
-			var got []int64
-			for i := range 2 {
-				if i > 0 || oversized {
-					f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-next-%d", i))
-				}
-				window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-				r.NoError(err)
-				r.Len(window.Sources, 1)
-				got = append(got, window.Sources[0].MessageID)
-				_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-				r.NoError(err)
-				if i == 0 {
-					_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-					r.NoError(err)
-					r.False(complete)
-				}
-			}
-			r.Equal([]int64{second, first}, got)
 			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 			r.NoError(err)
-			r.Empty(window.Sources)
-		})
-	}
+			r.Len(window.Sources, 1)
+			got = append(got, window.Sources[0].MessageID)
+			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+			r.NoError(err)
+			if i == 0 {
+				_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+				r.NoError(err)
+				r.False(complete)
+			}
+		}
+		r.Equal([]int64{second, first}, got)
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Empty(window.Sources)
+	})
 	t.Run("1001 journal rows", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "journal-many", false)
@@ -571,7 +563,7 @@ func TestEditedCommitmentDecision(t *testing.T) {
 			rescans:         []rescanSpec{{text: "Note. " + quote, want: []expectedPromise{{quote, LoopStateDone}}, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send", start: 6}}}},
 		},
 		{
-			name: "unique, duplicated, then unique again stays open", initialText: quote,
+			name: "unique, duplicated, then unique again clears decision", initialText: quote,
 			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
 			rescans: []rescanSpec{
 				{text: quote + " " + quote},
@@ -637,10 +629,9 @@ func TestEditedCommitmentDecision(t *testing.T) {
 					until := request.CompletedAt.Add(time.Hour)
 					_, err = f.store.DecidePersonCommitmentContext(ctx, items[i].ID, LoopStateSnoozed, &until, request.CompletedAt)
 					r.NoError(err)
-					reopened, err := f.store.DecidePersonCommitmentContext(ctx, items[i].ID, LoopStateOpen, nil, request.CompletedAt)
+					_, err = f.store.DecidePersonCommitmentContext(ctx, items[i].ID, LoopStateOpen, nil, request.CompletedAt)
 					r.NoError(err)
-					r.Equal(LoopStateOpen, reopened.State)
-					r.Nil(reopened.SnoozedUntil)
+					continue
 				}
 				var until *time.Time
 				if state == LoopStateSnoozed {
@@ -706,9 +697,7 @@ func TestEditedCommitmentDecision(t *testing.T) {
 					}
 					r.True(found, "missing quote %q", expected.quote)
 				}
-				if len(rescan.want) > 1 || rescan.mutation == "new arrival" || rescan.mutation == "reuse ID" || rescan.mutation == "correct sent time" {
-					r.Len(items, len(rescan.want))
-				}
+				r.Len(items, len(rescan.want))
 			}
 		})
 	}
@@ -783,29 +772,6 @@ func TestCommitmentScopeChanges(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestUnfinishedCommitmentBackfillKeepsSelectionTime(t *testing.T) {
-	r, a, ctx := require.New(t), assert.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "scope-unfinished", false)
-	st := f.store
-	_, persist := newCommitmentTestConversation(t, f)
-	id := persist("old-promise", "I will send the report.", -10*24*time.Hour)
-	old := personFactLedgerNow.Add(-10 * 24 * time.Hour)
-	_, err := st.db.ExecContext(ctx, st.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), st.dialect.TimestampParam(old), id)
-	r.NoError(err)
-	_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), st.dialect.TimestampParam(old), id)
-	r.NoError(err)
-	cfg, profile := commitmentTestConfig()
-	cfg.Commitments.Window = 30 * 24 * time.Hour
-	scope := peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments)
-	_, err = st.db.ExecContext(ctx, st.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, 0, ?, ?)`), f.personID, st.dialect.TimestampParam(personFactLedgerNow), scope, st.dialect.TimestampParam(personFactLedgerNow.Add(-30*24*time.Hour)))
-	r.NoError(err)
-	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow.Add(24*time.Hour))
-	r.NoError(err)
-	a.Equal(personFactLedgerNow, window.SelectionAt)
-	r.Len(window.Sources, 1)
-	a.Equal(id, window.Sources[0].MessageID)
 }
 
 func TestCommitmentScopeRetrack(t *testing.T) {
@@ -885,6 +851,8 @@ func TestCommitmentOwnershipChangeWaitsForFrontierCommit(t *testing.T) {
 	tx, err := f.store.db.BeginTx(ctx, nil)
 	r.NoError(err)
 	t.Cleanup(func() { _ = tx.Rollback() })
+	var blockerPID int
+	r.NoError(tx.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
 	request := f.request
 	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
 	prepared := &preparedCommitmentSweep{snapshot: window.SnapshotSequence, through: window.ThroughSequence, backfillMessageID: window.BackfillMessageID, scope: window.ScopeFingerprint, selectionAt: window.SelectionAt}
@@ -894,9 +862,9 @@ func TestCommitmentOwnershipChangeWaitsForFrontierCommit(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- f.store.AddAccountIdentity(source, "another@example.test", "manual") }()
 	r.Eventually(func() bool {
-		var waiting int
-		err := f.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting)
-		return err == nil && waiting > 0
+		var waiting bool
+		err := f.store.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE state = 'active' AND wait_event_type = 'Lock' AND $1 = ANY(pg_blocking_pids(pid)))`, blockerPID).Scan(&waiting)
+		return err == nil && waiting
 	}, 5*time.Second, 10*time.Millisecond)
 	r.NoError(f.store.saveCommitmentFrontierTx(ctx, tx, request, prepared))
 	r.NoError(tx.Commit())

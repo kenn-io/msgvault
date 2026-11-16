@@ -59,7 +59,7 @@ describe("PersonOpenLoops", () => {
     ).toBe("/messages/43");
     expect(screen.getByText("Waiting on you")).toBeDefined();
     expect(screen.getByText("Waiting on them")).toBeDefined();
-    expect(screen.getAllByText("2d")).toHaveLength(2);
+    expect(screen.getAllByText("2d ago")).toHaveLength(2);
     expect(screen.getByText("2 open")).toBeDefined();
     expect(screen.queryByText(/could not be read/)).toBeNull();
     const request = fetcher.mock.calls[0]?.[0];
@@ -77,8 +77,8 @@ describe("PersonOpenLoops", () => {
       items: [loop(42), loop(43), loop(44), loop(45), loop(46)],
       truncated: true,
       commitments: [
-        { id: "c12", person_id: 7, summary: "Send the draft", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 22, text: "I will send the draft." }, promised_at: "2026-10-12T12:00:00Z", due_on: "2099-11-20" },
-        { id: "c13", person_id: 7, summary: "Check the venue", state: "open", direction: "owed_to", freshness: "stale", promise: { message_id: 53, start: 0, end: 23, text: "I will check the venue." }, promised_at: "2026-10-12T12:00:00Z", due_on: "2000-11-15" },
+        { ...promise(12, "I will send the draft.", 52), summary: "Send the draft", due_on: "2099-11-20" },
+        { ...promise(13, "I will check the venue.", 53), summary: "Check the venue", direction: "owed_to", freshness: "stale", due_on: "2000-11-15" },
       ],
     }));
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
@@ -185,7 +185,7 @@ describe("PersonOpenLoops", () => {
       client: respond({ commitments_complete: false, commitments_since: "2000-10-01T00:00:00Z" }),
       personID: 7,
     });
-    expect(await screen.findByText("Promise discovery since Oct 1, 2000 is incomplete.")).toBeDefined();
+    expect(await screen.findByText("Promises since Oct 1, 2000 · still searching")).toBeDefined();
     expect(screen.queryByText("Nothing open with this person.")).toBeNull();
     view.unmount();
 
@@ -193,7 +193,7 @@ describe("PersonOpenLoops", () => {
       client: respond({ items: [loop()], commitments_complete: false, commitments_since: "2000-10-01T00:00:00Z", commitments_until: "2000-10-31T00:00:00Z" }),
       personID: 7,
     });
-    expect(await screen.findByText("Promise discovery from Oct 1, 2000 through Oct 31, 2000 is incomplete.")).toBeDefined();
+    expect(await screen.findByText("Promises from Oct 1, 2000 through Oct 31, 2000 · still searching")).toBeDefined();
     expect(screen.getByRole("link", { name: "Review the draft?" })).toBeDefined();
     withLoops.unmount();
 
@@ -205,7 +205,7 @@ describe("PersonOpenLoops", () => {
       commitments_complete: true,
       commitments_since: "2000-10-01T00:00:00Z", commitments_until: "2000-10-31T00:00:00Z",
     }), personID: 7 });
-    expect(await screen.findByText("Promise discovery from Oct 1, 2000 through Oct 31, 2000 is complete.")).toBeDefined();
+    expect(await screen.findByText("Promises from Oct 1, 2000 through Oct 31, 2000")).toBeDefined();
   });
 
   it("shows an error", async () => {

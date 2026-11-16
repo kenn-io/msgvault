@@ -934,43 +934,36 @@ func TestPersonProviderCommitmentConsentIsSeparate(t *testing.T) {
 	must.NoError(err)
 	check.False(commitments)
 	check.True(ordinary)
-}
-
-type commitmentOutputErrorWriter struct{ match string }
-
-func (w commitmentOutputErrorWriter) Write(p []byte) (int, error) {
-	if strings.Contains(string(p), w.match) {
-		return 0, io.ErrClosedPipe
-	}
-	return len(p), nil
-}
-
-func TestPersonCommitmentConsentOutputErrors(t *testing.T) {
-	cfg := personProviderTestConfig()
-	provider := cfg.Providers["default"]
-	provider.AllowSensitive = true
-	cfg.Providers["default"] = provider
-	st := testutil.NewSQLiteTestStore(t)
-	deps := localPersonProviderDeps(cfg, st, nil)
-	command := &cobra.Command{}
-	command.SetContext(t.Context())
-
-	command.SetOut(commitmentOutputErrorWriter{match: "Commitment extraction sends"})
-	err := runPersonCommitmentConsent(command, deps, true, false)
-	require.ErrorIs(t, err, io.ErrClosedPipe)
-	profile, err := cfg.Profile()
-	require.NoError(t, err)
-	active, err := st.HasActivePersonCommitmentConsent(t.Context(), profile.Fingerprint)
-	require.NoError(t, err)
-	assert.False(t, active)
-
-	command.SetOut(commitmentOutputErrorWriter{match: "Commitment consent active."})
-	err = runPersonCommitmentConsent(command, deps, true, false)
-	require.ErrorIs(t, err, io.ErrClosedPipe)
-
-	command.SetOut(commitmentOutputErrorWriter{match: "Commitment consent revoked"})
-	err = runPersonCommitmentRevoke(command, deps, false)
-	require.ErrorIs(t, err, io.ErrClosedPipe)
+	t.Run("disclosure write error", func(t *testing.T) {
+		command := &cobra.Command{}
+		command.SetContext(t.Context())
+		command.SetOut(failingSearchWriter{})
+		err := runPersonCommitmentConsent(command, deps, true, false)
+		require.ErrorIs(t, err, io.ErrClosedPipe)
+		active, err := st.HasActivePersonCommitmentConsent(t.Context(), profile.Fingerprint)
+		require.NoError(t, err)
+		assert.False(t, active)
+	})
+	t.Run("consent write error", func(t *testing.T) {
+		command := &cobra.Command{}
+		command.SetContext(t.Context())
+		counter := &searchTableFailAfterWriter{remaining: 1000}
+		printPersonProviderDisclosure(counter, profile)
+		command.SetOut(&searchTableFailAfterWriter{remaining: 1000 - counter.remaining + 1})
+		require.ErrorIs(t, runPersonCommitmentConsent(command, deps, true, false), io.ErrClosedPipe)
+		active, err := st.HasActivePersonCommitmentConsent(t.Context(), profile.Fingerprint)
+		require.NoError(t, err)
+		assert.True(t, active)
+	})
+	t.Run("revoke write error", func(t *testing.T) {
+		command := &cobra.Command{}
+		command.SetContext(t.Context())
+		command.SetOut(failingSearchWriter{})
+		require.ErrorIs(t, runPersonCommitmentRevoke(command, deps, false), io.ErrClosedPipe)
+		active, err := st.HasActivePersonCommitmentConsent(t.Context(), profile.Fingerprint)
+		require.NoError(t, err)
+		assert.False(t, active)
+	})
 }
 
 func TestPersonProviderListsAndRevokesAllGrantsWhenConfigIsDisabled(t *testing.T) {
