@@ -12,9 +12,10 @@ import (
 
 func TestCardDAVSyncReportsBindingConflict(t *testing.T) {
 	st := testutil.NewTestStore(t)
+	allowed := true
 	account, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
 		BaseURL: "https://memory.test", Username: "alice", PrincipalURL: "https://memory.test/principal/", HomeURL: "https://memory.test/books/",
-		Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://memory.test/books/personal/", DisplayName: "Personal"}},
+		Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://memory.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}},
 	})
 	require.NoError(t, err)
 	_, err = st.EnsureParticipant("shared@example.test", "Shared", "example.test")
