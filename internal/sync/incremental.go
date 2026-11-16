@@ -716,7 +716,7 @@ func (s *Syncer) reconcileGmailTrashRemovals(
 			if slices.Contains(result.LabelIDs, "TRASH") {
 				continue
 			}
-			if err := s.store.ClearRestoredGmailDeletionMark(ctx, sourceID, messageID); err != nil {
+			if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, messageID); err != nil {
 				return fmt.Errorf("clear deletion mark for restored message %s: %w", messageID, err)
 			}
 		}

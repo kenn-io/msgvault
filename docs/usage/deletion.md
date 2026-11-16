@@ -159,8 +159,8 @@ server's discovered Trash folder, falling back to a folder named `Trash`.
 If that move fails, the batch records the failure rather than switching to
 permanent deletion. Microsoft Graph mail moves messages to Deleted Items, where
 you can restore them in Outlook. A later sync keeps them marked as deleted
-while they stay in Deleted Items. Gmail follows the same rule: sync
-clears the mark when it sees the message outside Trash. Trashing a message in
+while they stay in Deleted Items. Gmail and IMAP follow the same rule: sync
+clears the mark when it confirms the message outside Trash. Trashing a message in
 the provider's own app does not set the mark.
 
 `--permanent` requests irreversible deletion: Gmail uses its batch API; IMAP
