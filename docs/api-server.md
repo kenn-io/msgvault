@@ -445,6 +445,12 @@ syncs. If the sync ends while the write waits, the write can proceed.
 | `GET /api/v1/messages/{id}/tags` | Read current native tags; optional `mailbox` query selects an exact recorded IMAP copy |
 | `POST /api/v1/messages/{id}/tags` | Apply `add` and `remove` arrays, optional `mailbox`, and optional `dry_run` |
 
+With API schema 5.4.0 or newer, GET can read tags for a message marked deleted
+from its source, such as a message still in Trash. The provider must still
+resolve the stored identity. The read returns the provider's observation and
+leaves the archive unchanged. POST, including `dry_run`, still rejects
+source-deleted messages. Both methods reject locally hidden messages.
+
 `id` is the positive archived message ID. Without `mailbox`, IMAP selects the
 current original copy, then the sole current membership. Multiple surviving
 copies require an explicit mailbox when the original copy is absent.

@@ -324,6 +324,12 @@ msgvault message-tags 42 --add Next --remove Old --mailbox INBOX
 msgvault message-tags 73 --add Next --remove Old --json
 ```
 
+A plain read can inspect a message marked deleted from its source, including
+one still in Trash, with daemon API schema 5.4.0 or newer. It leaves the
+archive unchanged; edits and edit previews still reject source-deleted
+messages. The provider must resolve the recorded message identity. See the
+[native tag API](api-server.md#native-email-tags) for the read contract.
+
 The same command selects the backend from the archived message's account:
 
 | Account connection | Editable tags |
