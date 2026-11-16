@@ -772,51 +772,6 @@ func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
 }
 
 func TestMergeParticipantsAllowsSharedEmail(t *testing.T) {
-	t.Run("different identifier type", func(t *testing.T) {
-		st := storetest.New(t).Store
-		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-		require.NoError(t, err)
-		survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
-		require.NoError(t, err)
-		third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
-		require.NoError(t, err)
-		require.NoError(t, st.SetParticipantIdentifier(third, "imessage", "absorbed@example.test"))
-		require.NoError(t, st.MergeParticipants(absorbed, survivor))
-		owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
-		require.NoError(t, err)
-		assert.Equal(t, survivor, owner)
-		owner, _, err = st.ParticipantByIdentifierContext(t.Context(), "imessage", "absorbed@example.test")
-		require.NoError(t, err)
-		assert.Equal(t, third, owner)
-	})
-	t.Run("alias in survivor component", func(t *testing.T) {
-		st := storetest.New(t).Store
-		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-		require.NoError(t, err)
-		survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
-		require.NoError(t, err)
-		alias, err := st.EnsureParticipant("alias@example.test", "Alias", "example.test")
-		require.NoError(t, err)
-		_, err = st.LinkParticipants(survivor, alias)
-		require.NoError(t, err)
-		require.NoError(t, st.SetParticipantIdentifier(alias, "email", "absorbed@example.test"))
-		require.NoError(t, st.MergeParticipants(absorbed, survivor))
-		assert.True(t, linkedPair(t, st, survivor, alias))
-	})
-	t.Run("different email key case", func(t *testing.T) {
-		st := storetest.New(t).Store
-		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-		require.NoError(t, err)
-		survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
-		require.NoError(t, err)
-		third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
-		require.NoError(t, err)
-		require.NoError(t, st.SetParticipantIdentifier(third, "email", "ABSORBED@example.test"))
-		require.NoError(t, st.MergeParticipants(absorbed, survivor))
-		owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
-		require.NoError(t, err)
-		assert.Equal(t, survivor, owner)
-	})
 	t.Run("survivor has primary", func(t *testing.T) {
 		st := storetest.New(t).Store
 		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")

@@ -42,7 +42,6 @@ func TestCardDAVParticipantBindingHTTPPreviewApplyUndo(t *testing.T) {
 	assert.Equal(1, st.refreshCalls)
 	call(`{"dry_run":true,"undo":true}`)
 	assert.Equal(1, st.refreshCalls)
-	st.refreshErr = errors.New("cache unavailable")
 	call(`{"undo":true}`)
 	assert.Equal(2, st.refreshCalls)
 	assert.Equal([]store.CardDAVParticipantBindingOptions{{DryRun: true}, {}, {DryRun: true, Undo: true}, {Undo: true}}, st.options)

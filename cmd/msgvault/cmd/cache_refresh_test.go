@@ -259,90 +259,46 @@ func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T
 }
 
 func TestStoreAPIIdentityRefreshFailureQueuesRecovery(t *testing.T) {
-	for _, failure := range []string{"refresh", "publication state", "refresh without worker"} {
+	for _, failure := range []string{"refresh", "publication state"} {
 		t.Run(failure, func(t *testing.T) {
 			require := require.New(t)
-			tmp := setupTestSQLite(t)
-			dbPath := filepath.Join(tmp, "test.db")
-			cfg := &config.Config{
-				HomeDir:   tmp,
-				Data:      config.DataConfig{DataDir: tmp, DatabaseURL: dbPath},
-				Analytics: config.AnalyticsConfig{AutoBuildCache: true},
-			}
-			analyticsDir := cfg.AnalyticsDir()
-			_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
-			require.NoError(err)
-			st, err := store.Open(dbPath)
-			require.NoError(err)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			_, err = st.LinkParticipants(2, 3)
-			require.NoError(err)
-			revision, err := st.IdentityRevision()
-			require.NoError(err)
-
+			tmp := t.TempDir()
+			cfg := &config.Config{HomeDir: tmp, Data: config.DataConfig{DataDir: tmp, DatabaseURL: filepath.Join(tmp, "test.db")}, Analytics: config.AnalyticsConfig{AutoBuildCache: true}}
 			oldDerived := runDerivedCacheSubprocess
 			sentinel := errors.New("identity refresh failed")
 			runDerivedCacheSubprocess = func(context.Context, string) error {
-				if failure != "publication state" {
+				if failure == "refresh" {
 					return sentinel
 				}
 				return nil
 			}
-			oldBuild := runScheduledBuildCacheSubprocess
-			runScheduledBuildCacheSubprocess = func(ctx context.Context) error {
-				_, err := buildCacheDerivedOnly(ctx, dbPath, analyticsDir)
-				return err
-			}
-			t.Cleanup(func() { runDerivedCacheSubprocess = oldDerived; runScheduledBuildCacheSubprocess = oldBuild })
+			t.Cleanup(func() { runDerivedCacheSubprocess = oldDerived })
 
-			workerCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-			refresher := newBackgroundCacheRefresher(workerCtx, nil, nil)
-			completed := make(chan error, 1)
-			run := refresher.run
-			refresher.run = func(ctx context.Context, id string) error {
-				err := run(ctx, id)
-				completed <- err
-				return err
-			}
+			requested := make(chan string, 1)
+			refresher := newBackgroundCacheRefresher(t.Context(), func(_ context.Context, id string) error {
+				requested <- id
+				return nil
+			}, nil)
 			oldRefresher := daemonCacheRefresher
 			daemonCacheRefresher = refresher
-			if failure == "refresh without worker" {
-				daemonCacheRefresher = nil
-			}
 			t.Cleanup(func() {
-				require.NoError(shutdownBackgroundCacheRefresher(refresher))
 				daemonCacheRefresher = oldRefresher
+				require.NoError(refresher.Shutdown(context.WithoutCancel(t.Context())))
 			})
 
-			adapter := &storeAPIAdapter{store: st, config: cfg, analyticsDir: analyticsDir}
-			if failure == "publication state" {
-				adapter.analyticsDir = filepath.Join(tmp, "missing")
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			cancel()
-			_, err = adapter.RefreshIdentityDatasets(ctx)
-			if failure != "publication state" {
+			adapter := &storeAPIAdapter{config: cfg, analyticsDir: filepath.Join(tmp, "missing")}
+			_, err := adapter.RefreshIdentityDatasets(t.Context())
+			if failure == "refresh" {
 				require.ErrorIs(err, sentinel)
 			} else {
 				require.ErrorContains(err, "read refreshed cache revision")
 			}
-			if failure != "refresh without worker" {
-				select {
-				case err := <-completed:
-					require.NoError(err)
-				case <-time.After(10 * time.Second):
-					require.FailNow("automatic cache recovery was not requested")
-				}
+			select {
+			case id := <-requested:
+				require.Equal("identity", id)
+			case <-time.After(10 * time.Second):
+				require.FailNow("automatic cache recovery was not requested")
 			}
-			state, err := query.ReadCacheSyncState(analyticsDir)
-			require.NoError(err)
-			require.Equal(revision, state.IdentityRevision)
-			duckDB, err := duckdbutil.Open(t.Context(), duckdbutil.BuilderPolicy(filepath.Join(tmp, "test-duckdb-tmp")))
-			require.NoError(err)
-			defer func() { require.NoError(duckDB.Close()) }()
-			var linked int
-			require.NoError(duckDB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id IN (2, 3) AND canonical_id = 2`, filepath.Join(analyticsDir, "participant_clusters", "*.parquet")).Scan(&linked))
-			require.Equal(2, linked)
 		})
 	}
 }

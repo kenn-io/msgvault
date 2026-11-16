@@ -24,7 +24,6 @@ import (
 type scheduledCardDAVFixture struct {
 	syncs   int
 	options []carddav.SyncOptions
-	result  carddav.SyncResult
 }
 
 func TestRecoverCardDAVSyncRunsAtStartupTerminalizesOrphansAndLogsOnlyCount(t *testing.T) {
@@ -61,7 +60,7 @@ func TestRecoverCardDAVSyncRunsAtStartupReturnsFailure(t *testing.T) {
 func (f *scheduledCardDAVFixture) Sync(_ context.Context, options carddav.SyncOptions) (carddav.SyncResult, error) {
 	f.syncs++
 	f.options = append(f.options, options)
-	return f.result, nil
+	return carddav.SyncResult{}, nil
 }
 func (f *scheduledCardDAVFixture) ListBooks(context.Context) ([]store.CardDAVAddressBook, error) {
 	return nil, nil

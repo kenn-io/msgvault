@@ -20,11 +20,14 @@ type failingCardDAVService struct {
 }
 
 func (f *failingCardDAVService) Sync(context.Context, carddav.SyncOptions) (carddav.SyncResult, error) {
-	return f.result, errors.New("later book failed")
+	return carddav.SyncResult{}, errors.New("later book failed")
 }
 
-func captureDaemonCacheRefreshes(t *testing.T) <-chan string {
-	t.Helper()
+func TestCardDAVSchedulerRequestsIdentityRefresh(t *testing.T) {
+	req := require.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Analytics.AutoBuildCache = true
 	requests := make(chan string, 2)
 	refresher := newBackgroundCacheRefresher(t.Context(), func(_ context.Context, id string) error {
 		requests <- id
@@ -34,20 +37,11 @@ func captureDaemonCacheRefreshes(t *testing.T) <-chan string {
 	daemonCacheRefresher = refresher
 	t.Cleanup(func() {
 		daemonCacheRefresher = old
-		require.NoError(t, refresher.Shutdown(context.WithoutCancel(t.Context())))
+		req.NoError(refresher.Shutdown(context.WithoutCancel(t.Context())))
 	})
-	return requests
-}
-
-func TestCardDAVSchedulerRequestsIdentityRefresh(t *testing.T) {
-	req := require.New(t)
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = t.TempDir()
-	cfg.Analytics.AutoBuildCache = true
-	requests := captureDaemonCacheRefreshes(t)
 	sched := scheduler.New(nil)
 	t.Cleanup(func() { sched.Stop() })
-	service := &failingCardDAVService{scheduledCardDAVFixture{result: carddav.SyncResult{Books: 1}}}
+	service := &failingCardDAVService{}
 	req.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 */6 * * *"}, service, slog.New(slog.NewTextHandler(io.Discard, nil)), config.DefaultCardDAVConnection, testInvocationWithConfig(cfg)))
 	req.ErrorContains(sched.TriggerJob(api.CardDAVJobName), "later book failed")
 	select {

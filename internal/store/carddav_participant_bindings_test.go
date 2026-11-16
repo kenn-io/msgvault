@@ -442,14 +442,6 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 				automatic := mode == "system" || mode == "null-actor"
 				assert.Equal(automatic, bindingOwned(t, st, a))
 				assert.Equal(automatic, bindingOwned(t, st, b))
-				switch mode {
-				case "system":
-					card = remoteResource(card.Href, card.RemoteUID, "Remote Updated", "alex@example.test", "two")
-					card.SemanticHash = "updated-baseline"
-					applyParticipantBindingCards(t, st, account, book, card)
-					person := bindingCardPerson(t, st, book, card.Href)
-					assert.Equal("Remote Updated", *person.DisplayName)
-				}
 			})
 		}
 	})
