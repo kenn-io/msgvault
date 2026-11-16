@@ -420,7 +420,8 @@ import (
 // 5.4.0 allows native tag reads for source-deleted messages.
 // 5.5.0 adds source account matching repair.
 // 5.6.0 adds a refresh-only identity cache operation.
-const APISchemaVersion = "5.6.0"
+// 5.7.0 adds first archived appearance to person contact state.
+const APISchemaVersion = "5.7.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
