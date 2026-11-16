@@ -349,6 +349,35 @@ describe('FactLedger', () => {
     entity.destroy();
   });
 
+  it('shows a fact-saved past job in Work and Pins', async () => {
+    const value = controller();
+    const canonical = `employment:system:employment:${revision}`;
+    value.targets = [{ optionID: 'work', name: 'Work', targetKey: 'system:employment', description: 'Work', kind: 'employment', valueType: 'object', cardinality: 'multi', sensitive: false, canonical }];
+    value.pins.rows = [{ kind: 'employment', pinned: true, targetKey: 'system:employment', targetCanonical: canonical }];
+    value.selectedTargetOption = 'work';
+    const entity = new DirectoryEntityController(createAPIClient(vi.fn()), 42);
+    entity.employments = [employment(11, 1, { is_current: false, source: 'extraction', source_ref: 'person-fact-decision:123' })];
+    entity.organizations = [organization()];
+    render(FactLedger, { controller: value, entity });
+    expect(screen.getByRole('region', { name: 'Selected saved value' }).textContent).toContain('Engineer at Synthetic Org');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Pins' }));
+    expect(screen.getByRole('region', { name: 'Saved employment' }).textContent).toContain('Engineer at Synthetic Org');
+    entity.destroy();
+  });
+
+  it('identifies an unused sensitive claim only after reveal', async () => {
+    const value = controller();
+    value.selectedSection = 'decisions';
+    value.decisions.rows[0]!.outcome = 'not-used';
+    value.decisions.rows[0]!.reason = 'below-threshold';
+    render(FactLedger, { controller: value });
+    const row = screen.getByLabelText('Historical fact decision');
+    expect(row.textContent).toContain('Hidden');
+    expect(row.textContent).not.toContain('allowed sensitive value');
+    await fireEvent.click(within(row).getByRole('button', { name: 'Reveal sensitive fact value' }));
+    expect(row.textContent).toContain('allowed sensitive value');
+  });
+
   it.each([true, false])('shows score parts when maxima are present: %s', async scored => {
     const value = controller();
     value.selectedSection = 'decisions';

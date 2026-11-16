@@ -59,6 +59,7 @@
     return displayClaimValue({ title: value.title, role: value.role, organization: entity?.organizationName(value.organization_id) }, 'employment');
   }
   function sameInstant(a: string, b: string): boolean { return Date.parse(a) === Date.parse(b); }
+  function savedJob(value: import('../../directory/models').Employment): boolean { return value.is_current || !!value.source_ref?.startsWith('person-fact-decision:'); }
   onDestroy(() => { destroyed = true; });
 
   const sectionOptions = [
@@ -230,13 +231,13 @@
       {/if}
       {#each pins.filter(pin => pin.kind === 'employment') as pin (pin.targetKey)}
         <section aria-label="Saved employment">
-          {#if entity && !entity.employments.some(value => value.is_current) && !entity.errors.employments && !entity.employmentsLoading}
+          {#if entity && !entity.employments.some(savedJob) && !entity.errors.employments && !entity.employmentsLoading}
             <DetailRow><strong class="field-label">{controller.fieldName(pin, definitions)}</strong><EmptyLine message={entity.employments.length ? "No current job" : "No saved value"} /></DetailRow>
-          {:else if !entity?.employments.some(value => value.is_current)}<strong class="field-label">{controller.fieldName(pin, definitions)}</strong>{/if}
+          {:else if !entity?.employments.some(savedJob)}<strong class="field-label">{controller.fieldName(pin, definitions)}</strong>{/if}
           {#if entity?.employmentsLoading}<p role="status">Loading employment…</p>{/if}
           {#if !entity || entity.errors.employments}<InlineNotice message="Couldn't load saved employment." actionLabel={entity ? 'Retry' : undefined} onaction={() => void entity?.refreshEmployments()} />{/if}
           {#if entity}
-            {#each entity.employments.filter(value => value.is_current) as value (value.id)}
+            {#each entity.employments.filter(savedJob) as value (value.id)}
               {@render EmploymentRow(value, controller.pins.loading || controller.pins.error ? '' : 'Pinned', controller.fieldName(pin, definitions))}
             {/each}
 
@@ -258,7 +259,7 @@
     {@const field = fields.find(field => field.definition.universal_id === selectedTarget?.targetKey)}
     {@const pinned = controller.pins.rows.some(pin => pin.pinned && pin.targetCanonical === selectedTarget?.canonical)}
     {@const pinState = controller.pins.loading || controller.pins.error ? '' : pinned ? 'Pinned' : 'Unpinned'}
-    {@const jobs = entity?.employments.filter(value => value.is_current) ?? []}
+    {@const jobs = entity?.employments.filter(savedJob) ?? []}
     <section aria-label="Selected saved value">
       {#if (selectedTarget?.kind === 'employment' && jobs.length) || (selectedTarget?.kind !== 'employment' && field?.current.length)}<strong class="saved-label">Saved value</strong>{/if}
       {#if selectedTarget?.kind === 'employment'}

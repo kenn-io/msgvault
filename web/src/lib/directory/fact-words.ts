@@ -61,11 +61,11 @@ const NOT_USED_REASONS: Record<string, string> = {
 export function decisionSentence(outcome: string | null, reason: string, value: string): string {
   switch (outcome) {
     case 'saved': return `Saved: ${value}`;
-    case 'value-retired': return 'This value is no longer saved';
-    case 'current-value-kept': return reason === 'insufficient-margin' ? `Kept the current value; ${value} wasn't far enough ahead` : 'Kept the current value';
-    case 'pinned-value-kept': return 'Kept your pinned value';
-    case 'too-close-to-choose': return 'The evidence was too close to choose';
-    case 'not-used': return NOT_USED_REASONS[reason] ? `Not used: ${NOT_USED_REASONS[reason]}` : 'Not used';
+    case 'value-retired': return `This value is no longer saved: ${value}`;
+    case 'current-value-kept': return reason === 'insufficient-margin' ? `Kept the current value; ${value} wasn't far enough ahead` : `${value}: Kept the current value`;
+    case 'pinned-value-kept': return `${value}: Kept your pinned value`;
+    case 'too-close-to-choose': return `The evidence was too close to choose: ${value}`;
+    case 'not-used': return NOT_USED_REASONS[reason] ? `Not used: ${value} · ${NOT_USED_REASONS[reason]}` : `Not used: ${value}`;
     default: return 'Result unavailable';
   }
 }
