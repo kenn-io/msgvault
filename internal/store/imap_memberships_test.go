@@ -1535,10 +1535,12 @@ func TestFilteredIMAPRestoreUpdatesOnlyTrashProjection(t *testing.T) {
 	f := newIMAPIdentityFixture(t)
 	restored := f.createMessage(t, "restored", "<restored@example.com>")
 	stillTrash := f.createMessage(t, "still-trash", "<still-trash@example.com>")
+	allOnly := f.createMessage(t, "all-only", "<all-only@example.com>")
 	require.NoError(t, f.store.UpsertFTS(restored, "restoredexample", "", "", "", ""))
 	_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 		"Trash":    {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
 		"All Mail": {Name: "All Mail", Type: "system", SystemRole: store.LabelSystemRoleAll},
+		"INBOX":    {Name: "INBOX", Type: "system"},
 	})
 	require.NoError(t, err)
 	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
@@ -1550,11 +1552,14 @@ func TestFilteredIMAPRestoreUpdatesOnlyTrashProjection(t *testing.T) {
 	}}))
 	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "restored"))
 	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "still-trash"))
+	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "all-only"))
 	syncID, err := f.store.StartSync(f.source.ID, "full")
 	require.NoError(t, err)
 	require.NoError(t, f.store.CompleteSync(syncID, ""))
 	require.NoError(t, f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, []store.IMAPMembershipObservation{
-		{Mailbox: "All Mail", SourceMessageID: "All Mail|1", RFC822MessageID: "<restored@example.com>"},
+		{Mailbox: "INBOX", SourceMessageID: "INBOX|1", RFC822MessageID: "<restored@example.com>"},
+		{Mailbox: "Trash", ArchivedMessageID: restored},
+		{Mailbox: "All Mail", ArchivedMessageID: allOnly},
 		{Mailbox: "Trash", ArchivedMessageID: stillTrash},
 		{Mailbox: "All Mail", ArchivedMessageID: stillTrash},
 	}))
@@ -1563,6 +1568,7 @@ func TestFilteredIMAPRestoreUpdatesOnlyTrashProjection(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
 	assert.Equal(t, []string{"Projects"}, messageLabels(t, f.store, restored))
+	assert.True(t, messageTombstoned(t, f.store, allOnly))
 	assert.True(t, messageTombstoned(t, f.store, stillTrash))
 	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, stillTrash))
 	assert.Equal(t, 3, membershipCount(t, f.store, f.source.ID))
