@@ -28,6 +28,37 @@ import (
 // allowedDelegatedOps is the exact set. Keep in sync with delegatedOperationAllowed.
 var allowedDelegatedOps = []string{"runCLI", "getHealth", "controlCalendar", "getAgentTokenSelf"}
 
+// These expectations stay independent of the production policy.
+type delegatedReadFixture struct {
+	path, want string
+	permission agentgrant.Permission
+}
+
+func delegatedReads(identifier string, id, attachmentID int64, hash string) map[string]delegatedReadFixture {
+	return map[string]delegatedReadFixture{
+		"searchCLI":               {"/api/v1/cli/search?q=glacier", identifier, agentgrant.PermissionSearchRead},
+		"searchMessages":          {"/api/v1/search?q=glacier", identifier, agentgrant.PermissionSearchRead},
+		"fastSearch":              {"/api/v1/search/fast?q=glacier", identifier, agentgrant.PermissionSearchRead},
+		"deepSearch":              {"/api/v1/search/deep?q=glacier", identifier, agentgrant.PermissionSearchRead},
+		"getAggregates":           {"/api/v1/aggregates?view_type=senders", identifier, agentgrant.PermissionSearchRead},
+		"getSubAggregates":        {"/api/v1/aggregates/sub?view_type=senders", identifier, agentgrant.PermissionSearchRead},
+		"filterMessages":          {"/api/v1/messages/filter", identifier, agentgrant.PermissionSearchRead},
+		"listMessages":            {"/api/v1/messages", identifier, agentgrant.PermissionSearchRead},
+		"searchMessagesByDomains": {"/api/v1/search/domains?domains=example.test", identifier, agentgrant.PermissionSearchRead},
+		"getStats":                {"/api/v1/stats", `"total_messages":1`, agentgrant.PermissionStatsRead},
+		"getCLIStats":             {"/api/v1/cli/stats", `"total_messages":1`, agentgrant.PermissionStatsRead},
+		"getTotalStats":           {"/api/v1/stats/total", `"message_count":1`, agentgrant.PermissionStatsRead},
+		"getCLIMessageThread":     {fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), identifier, agentgrant.PermissionMessageRead},
+		"getMessage":              {fmt.Sprintf("/api/v1/messages/%d", id), identifier, agentgrant.PermissionMessageRead},
+		"getCLIMessage":           {fmt.Sprintf("/api/v1/cli/message?id=%d", id), identifier, agentgrant.PermissionMessageRead},
+		"getAttachment":           {fmt.Sprintf("/api/v1/attachments/%d", attachmentID), "permitted.bin", agentgrant.PermissionAttachmentRead},
+		"getAttachmentContent":    {"/api/v1/attachments/" + hash + "/content", "permitted bytes", agentgrant.PermissionAttachmentRead},
+		"getCLIAttachment":        {"/api/v1/cli/attachment?content_hash=" + hash, "permitted bytes", agentgrant.PermissionAttachmentRead},
+		"listCLIAccounts":         {"/api/v1/cli/accounts", identifier, agentgrant.PermissionSearchRead},
+		"listCLICollections":      {"/api/v1/cli/collections", `"name":"Selected"`, agentgrant.PermissionSearchRead},
+	}
+}
+
 // stubSourceResolverStore wraps mockStore and adds GetSourceByIDContext.
 type stubSourceStore struct {
 	mockStore
@@ -276,29 +307,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	t.Cleanup(srv.agentGrants.Close)
 	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 	requirements.NoError(err)
-	// These expectations stay independent of the production permission map.
-	reads := map[string]struct{ path, want string }{
-		"searchCLI":               {"/api/v1/cli/search?q=glacier", src.Identifier},
-		"searchMessages":          {"/api/v1/search?q=glacier", src.Identifier},
-		"fastSearch":              {"/api/v1/search/fast?q=glacier", src.Identifier},
-		"deepSearch":              {"/api/v1/search/deep?q=glacier", src.Identifier},
-		"getAggregates":           {"/api/v1/aggregates?view_type=senders", src.Identifier},
-		"getSubAggregates":        {"/api/v1/aggregates/sub?view_type=senders", src.Identifier},
-		"filterMessages":          {"/api/v1/messages/filter", src.Identifier},
-		"listMessages":            {"/api/v1/messages", src.Identifier},
-		"searchMessagesByDomains": {"/api/v1/search/domains?domains=example.test", src.Identifier},
-		"getStats":                {"/api/v1/stats", `"total_messages":1`},
-		"getCLIStats":             {"/api/v1/cli/stats", `"total_messages":1`},
-		"getTotalStats":           {"/api/v1/stats/total", `"message_count":1`},
-		"getCLIMessageThread":     {fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), src.Identifier},
-		"getMessage":              {fmt.Sprintf("/api/v1/messages/%d", id), src.Identifier},
-		"getCLIMessage":           {fmt.Sprintf("/api/v1/cli/message?id=%d", id), src.Identifier},
-		"getAttachment":           {fmt.Sprintf("/api/v1/attachments/%d", attachmentID), "permitted.bin"},
-		"getAttachmentContent":    {"/api/v1/attachments/" + hash + "/content", "permitted bytes"},
-		"getCLIAttachment":        {"/api/v1/cli/attachment?content_hash=" + hash, "permitted bytes"},
-		"listCLIAccounts":         {"/api/v1/cli/accounts", src.Identifier},
-		"listCLICollections":      {"/api/v1/cli/collections", `"name":"Selected"`},
-	}
+	reads := delegatedReads(src.Identifier, id, attachmentID, hash)
 	allowed := make(map[string]bool, len(allowedDelegatedOps))
 	for _, op := range allowedDelegatedOps {
 		allowed[op] = true
