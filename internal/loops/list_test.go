@@ -823,7 +823,7 @@ type pagingCommitmentStore struct {
 
 func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit int, _ bool) ([]store.PersonCommitment, error) {
 	s.limit = limit
-	return []store.PersonCommitment{{ID: 201, PersonID: 1, Direction: "owed_to", Quote: "I will call.", Freshness: "fresh", State: "open", PromisedAt: now}, {ID: 202, PersonID: 1, Direction: "owed_to", Quote: "I will write.", Freshness: "stale", State: "open", PromisedAt: now}}, nil
+	return []store.PersonCommitment{{ID: 201, PersonID: 1, Direction: "owed_to", Quote: "I will call.", Freshness: "fresh", State: "open", PromisedAt: now}, {ID: 202, PersonID: 1, Direction: "owed_to", Quote: "I will write.", Freshness: "stale", State: "open", PromisedAt: now.Add(-91 * 24 * time.Hour)}}, nil
 }
 
 func TestListPagesCommitments(t *testing.T) {

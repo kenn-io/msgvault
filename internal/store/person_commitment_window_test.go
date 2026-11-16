@@ -79,9 +79,10 @@ func TestCommitmentWindowScopesBothSidesOfDirectConversations(t *testing.T) {
 
 func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		encoded bool
-	}{{"fit bound", false}, {"encoded bytes", true}} {
+		name     string
+		encoded  bool
+		timezone bool
+	}{{"fit bound", false, false}, {"encoded bytes", true, false}, {"timezone", false, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			f := storetest.New(t)
@@ -90,6 +91,49 @@ func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
 			person, _, err := f.Store.CreatePersonFromParticipant(participant)
 			r.NoError(err)
 			cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 65536}
+			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+			if tc.timezone {
+				first := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will send the first.", SentAt: loopAgo(2 * time.Hour)})
+				second := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will send the second.", SentAt: loopAgo(time.Hour)})
+				ids := []int64{first, second}
+				for i := range 120 {
+					ids = append(ids, f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will call.", SentAt: loopAgo(time.Minute + time.Duration(i)*time.Second)}))
+				}
+				for _, id := range ids {
+					_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_sweep_changes (sequence, person_id, source_lane, change_kind, message_id, recorded_at) SELECT COALESCE(MAX(sequence), 0) + 1, ?, 'conversation_text', 'upsert', ?, ? FROM person_sweep_changes`), person.ID, id, loopNow)
+					r.NoError(err)
+				}
+				_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE person_sweep_change_clock SET sequence = (SELECT MAX(sequence) FROM person_sweep_changes) WHERE singleton = TRUE`)
+				r.NoError(err)
+				cfg.Timezone, cfg.MaxItems, cfg.MaxBytes = "UTC", 200, 120<<10
+				window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow)
+				r.NoError(err)
+				r.Len(window.Sources, len(ids))
+				last := len(window.Sources) - 1
+				low, high := 0, 120<<10
+				for low < high {
+					mid := (low + high + 1) / 2
+					window.Sources[last].Text = strings.Repeat("y", mid)
+					fits, err := peoplesweep.CommitmentInputFits(window)
+					r.NoError(err)
+					if fits {
+						low = mid
+					} else {
+						high = mid - 1
+					}
+				}
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), strings.Repeat("y", low), window.Sources[last].MessageID)
+				r.NoError(err)
+				baseline, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow)
+				r.NoError(err)
+				r.Len(baseline.Sources, len(ids))
+				cfg.Timezone = "America/New_York"
+				window, err = f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow)
+				r.NoError(err)
+				r.Len(window.Sources, len(ids)-1)
+				r.Less(window.ThroughSequence, window.SnapshotSequence)
+				return
+			}
 			var large, shorter int64
 			if tc.encoded {
 				large = f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will call.\n> " + strings.Repeat("q", 30000), SentAt: loopAgo(2 * time.Hour)})
@@ -100,7 +144,6 @@ func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
 					f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will send the draft.\n> " + strings.Repeat("quoted history ", 150), SentAt: loopAgo(time.Duration(i+1) * time.Hour)})
 				}
 			}
-			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
 			window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow)
 			r.NoError(err)
 			r.NotEmpty(window.Sources)
@@ -117,53 +160,4 @@ func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCommitmentWindowCountsTimezoneInInputBound(t *testing.T) {
-	r := require.New(t)
-	f := storetest.New(t)
-	r.NoError(f.Store.AddAccountIdentity(f.Source.ID, loopOwner, "manual"))
-	participant := f.EnsureParticipant(loopAlex, "", "example.test")
-	person, _, err := f.Store.CreatePersonFromParticipant(participant)
-	r.NoError(err)
-	first := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will send the first.", SentAt: loopAgo(2 * time.Hour)})
-	second := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will send the second.", SentAt: loopAgo(time.Hour)})
-	ids := []int64{first, second}
-	for i := range 120 {
-		ids = append(ids, f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will call.", SentAt: loopAgo(time.Minute + time.Duration(i)*time.Second)}))
-	}
-	for _, id := range ids {
-		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_sweep_changes (sequence, person_id, source_lane, change_kind, message_id, recorded_at) SELECT COALESCE(MAX(sequence), 0) + 1, ?, 'conversation_text', 'upsert', ?, ? FROM person_sweep_changes`), person.ID, id, loopNow)
-		r.NoError(err)
-	}
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE person_sweep_change_clock SET sequence = (SELECT MAX(sequence) FROM person_sweep_changes) WHERE singleton = TRUE`)
-	r.NoError(err)
-	cfg := peoplesweep.CommitmentConfig{Enabled: true, Timezone: "UTC", Window: 30 * loopDay, MaxItems: 200, MaxBytes: 120 << 10}
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-	window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow)
-	r.NoError(err)
-	r.Len(window.Sources, len(ids))
-	last := len(window.Sources) - 1
-	low, high := 0, 120<<10
-	for low < high {
-		mid := (low + high + 1) / 2
-		window.Sources[last].Text = strings.Repeat("y", mid)
-		fits, err := peoplesweep.CommitmentInputFits(window)
-		r.NoError(err)
-		if fits {
-			low = mid
-		} else {
-			high = mid - 1
-		}
-	}
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), strings.Repeat("y", low), window.Sources[last].MessageID)
-	r.NoError(err)
-	baseline, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow)
-	r.NoError(err)
-	r.Len(baseline.Sources, len(ids))
-	cfg.Timezone = "America/New_York"
-	window, err = f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow)
-	r.NoError(err)
-	r.Len(window.Sources, len(ids)-1)
-	r.Less(window.ThroughSequence, window.SnapshotSequence)
 }

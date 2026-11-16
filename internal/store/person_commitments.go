@@ -633,10 +633,8 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			return err
 		}
 		for _, item := range skipped {
-			pending[item.id] = true
-		}
-		for _, item := range skipped {
 			if item.maxBytes >= cfg.MaxBytes {
+				pending[item.id] = true
 				continue
 			}
 			source, ok, err := s.currentCommitmentSource(ctx, personID, item.id)
@@ -644,16 +642,12 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 				return err
 			}
 			if ok && inProfile(source.EventTime) {
-				delete(pending, item.id)
 				added, err := add(source)
 				if err != nil || !added {
 					pending[item.id] = true
 					window.ThroughSequence = previous
 					return err
 				}
-			}
-			if !ok || !inProfile(source.EventTime) {
-				delete(pending, item.id)
 			}
 			window.RetriedMessageIDs = append(window.RetriedMessageIDs, item.id)
 		}

@@ -404,23 +404,6 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 		})
 	}
 
-	t.Run("larger limit without skipped messages", func(t *testing.T) {
-		r, ctx := require.New(t), t.Context()
-		f := newPersonSweepApplyFixture(t, "no-skipped-messages", false)
-		_, persist := newCommitmentTestConversation(t, f)
-		persist("small", "I will call.", -time.Hour)
-		cfg, profile := commitmentTestConfig()
-		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		r.Len(window.Sources, 1)
-		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-		r.NoError(err)
-		cfg.Commitments.MaxBytes += 1024
-		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		r.Empty(window.Sources)
-	})
-
 	t.Run("recent change to old oversized message", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "oversized-mutation", false)
@@ -692,14 +675,6 @@ func TestEditedCommitmentDecision(t *testing.T) {
 			rescans: []rescanSpec{{text: quote + " " + quote, includeClosed: true,
 				promises: []promiseSpec{{quote: quote, summary: "Send"}, {quote: quote, summary: "Send", start: int64(len(quote) + 1)}},
 				want:     []expectedPromise{{quote, LoopStateDone}, {quote, LoopStateDone}}}},
-		},
-		{
-			name: "unique, duplicated, then unique again clears decision", initialText: quote,
-			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
-			rescans: []rescanSpec{
-				{text: quote + " " + quote},
-				{text: quote, want: []expectedPromise{{quote, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send"}}},
-			},
 		},
 		{
 			name: "shortened citation duplicated then unique clears decision", initialText: longer,

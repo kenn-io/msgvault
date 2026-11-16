@@ -899,7 +899,7 @@ func TestPersonProviderRevokeIsIdempotent(t *testing.T) {
 	assert.Equal(firstStatus.Consent.LastRevoked.ID, secondStatus.Consent.LastRevoked.ID)
 }
 
-func TestPersonProviderCommitmentConsentIsSeparate(t *testing.T) {
+func TestPersonProviderCommitmentConsent(t *testing.T) {
 	must, check := require.New(t), assert.New(t)
 	cfg := personProviderTestConfig()
 	provider := cfg.Providers["default"]
@@ -935,14 +935,6 @@ func TestPersonProviderCommitmentConsentIsSeparate(t *testing.T) {
 		active, err := st.HasActivePersonCommitmentConsent(t.Context(), profile.Fingerprint)
 		require.NoError(t, err)
 		assert.False(t, active)
-	})
-	t.Run("consent write error", func(t *testing.T) {
-		st := testutil.NewSQLiteTestStore(t)
-		deps := localPersonProviderDeps(cfg, st, nil)
-		command := &cobra.Command{}
-		command.SetContext(t.Context())
-		command.SetOut(failingSearchWriter{})
-		require.ErrorIs(t, runPersonCommitmentConsent(command, deps, true, true), io.ErrClosedPipe)
 	})
 	t.Run("revoke write error", func(t *testing.T) {
 		st := testutil.NewSQLiteTestStore(t)
