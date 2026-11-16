@@ -2240,3 +2240,81 @@ func TestMeetingDecisionClearRejectsWrongSingleOccurrence(t *testing.T) {
 	r.NoError(err)
 	r.Len(record.Links, 1)
 }
+
+func TestMeetingDecisionRemoveSourceWithKeptAndLinkedCopies(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("meeting_import", "removed-copies@example.com")
+	r.NoError(err)
+	makeNote := func(key string) int64 {
+		id, err := st.PersistMessage(&MessagePersistData{Message: &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "meeting_transcript"}, Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
+		r.NoError(err)
+		return id
+	}
+	kept, linked := makeNote("kept"), makeNote("linked")
+	_, restored := projectionFixture(t, st, "remaining-copy", "meeting_json", `{}`)
+	_, note := projectionFixture(t, st, "linked-note", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(linked), ref(note), "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{linked}, "linked-copy")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{restored}, "remaining-copy")
+	r.NoError(err)
+	r.NoError(st.RemoveSource(source.ID))
+	_, err = st.UndoDedup(t.Context(), "remaining-copy")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(restored))
+	r.NoError(err)
+	r.ElementsMatch([]int64{restored, note}, record.MessageIDs)
+}
+
+func TestMeetingDecisionDedupEditedOccurrenceWithoutSeries(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, series := calendarFixture(t, st, "copy-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "original@example.com")
+	raw := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`
+	_, original := calendarFixture(t, st, "original-edit", raw, "original@example.com")
+	_, kept := calendarFixture(t, st, "orphan-edit", raw, "other@example.com")
+	_, note := projectionFixture(t, st, "edit-note", "meeting_json", `{}`)
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: original}, noteRef, "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{original}, "edited-copy")
+	r.NoError(err)
+	for _, id := range []int64{original, kept} {
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: id})
+		r.NoError(err)
+		r.Contains(record.MessageIDs, note)
+	}
+	record, err := st.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	second := MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270321T100000Z")}
+	record, err = st.MeetingRecordContext(t.Context(), second)
+	r.NoError(err)
+	r.NotContains(record.MessageIDs, note)
+}
+
+func TestMeetingDecisionRemoveSeriesSourceAfterEditedCopyMerge(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	series, seriesID := calendarFixture(t, st, "remove-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "removed-series@example.com")
+	raw := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`
+	_, original := calendarFixture(t, st, "remove-edit", raw, "removed-series@example.com")
+	_, kept := calendarFixture(t, st, "keep-edit", raw, "remaining-series@example.com")
+	_, note := projectionFixture(t, st, "series-removal-note", "meeting_json", `{}`)
+	_, otherNote := projectionFixture(t, st, "other-occurrence-note", "meeting_json", `{}`)
+	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: original}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+	r.NoError(err)
+	other := MeetingLinkRef{Kind: "evt", MessageID: seriesID, Identity: occurrenceIdentity(t, "20270321T100000Z")}
+	_, err = st.DecideMeetingLinkContext(t.Context(), other, MeetingLinkRef{Kind: "msg", MessageID: otherNote}, "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{original}, "series-removal")
+	r.NoError(err)
+	r.NoError(st.RemoveSource(series.Message.SourceID))
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: kept})
+	r.NoError(err)
+	r.Contains(record.MessageIDs, note)
+	r.NotContains(record.MessageIDs, otherNote)
+}

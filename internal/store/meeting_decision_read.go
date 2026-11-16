@@ -44,6 +44,9 @@ func (s *Store) meetingDecisionEdgesBatch(ctx context.Context, endpoints []meeti
 	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
 	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
 	copyScope, copyArgs := sourceScopeClause(ctx, "m.source_id")
+	parentScope, parentArgs := sourceScopeClause(ctx, "parent.source_id")
+	editScope, editArgs := sourceScopeClause(ctx, "em.source_id")
+	seriesScope, seriesArgs := sourceScopeClause(ctx, "sm.source_id")
 	for _, k := range keys {
 		args := []any{k.kind, k.occurrence, k.kind, k.occurrence}
 		args = append(args, leftArgs...)
@@ -76,17 +79,18 @@ func (s *Store) meetingDecisionEdgesBatch(ctx context.Context, endpoints []meeti
 				values[i] = "(CAST(? AS INTEGER), CAST(? AS BIGINT))"
 				args = append(args, i, endpoint.ID)
 			}
-			args = append(args, originalDate, originalTime)
 			args = append(args, copyArgs...)
+			args = append(args, parentArgs...)
+			args = append(args, originalDate, originalTime)
+			args = append(args, editArgs...)
+			args = append(args, seriesArgs...)
 			args = append(args, k.kind, k.occurrence, k.kind, k.occurrence)
 			args = append(args, leftArgs...)
 			args = append(args, rightArgs...)
 			args = append(args, *budget+1)
-			query := `WITH RECURSIVE inputs(idx,id) AS (VALUES ` + strings.Join(values, ",") + `), ids(idx,id) AS (
- SELECT i.idx,m.id FROM inputs i JOIN messages m ON m.id=i.id
- UNION SELECT i.idx,e.message_id FROM inputs i JOIN calendar_events series ON series.message_id=i.id JOIN messages sm ON sm.id=series.message_id JOIN calendar_events e ON e.series_provider_id=series.provider_event_id JOIN messages m ON m.id=e.message_id AND m.source_id=sm.source_id WHERE e.kind='exception' AND e.series_provider_id<>'' AND series.kind='series' AND m.deleted_at IS NULL AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)
- UNION SELECT c.idx,m.id FROM messages m JOIN ids c ON c.id=` + meetingSuccessorSQL() + ` WHERE (m.deleted_at IS NOT NULL OR EXISTS (SELECT 1 FROM calendar_events e WHERE e.message_id=m.id AND NOT ` + calendarEventVisibility("e", "m") + `))` + copyScope + `
- ) SELECT i.idx,d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM inputs i JOIN meeting_link_decisions d ON ((d.left_message_id IN (SELECT id FROM ids WHERE idx=i.idx) AND d.left_kind=? AND d.left_key=?) OR (d.right_message_id IN (SELECT id FROM ids WHERE idx=i.idx) AND d.right_kind=? AND d.right_key=?)) JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE TRUE` + leftScope + rightScope + ` LIMIT ?`
+			series := meetingSeriesLinksSQL(` AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)` + editScope + seriesScope)
+			query := `WITH RECURSIVE inputs(idx,id) AS (VALUES ` + strings.Join(values, ",") + `), ` + meetingCopyGraphSQL(`SELECT i.idx,m.id FROM inputs i JOIN messages m ON m.id=i.id`, copyScope, parentScope, series) + `
+ SELECT i.idx,d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM inputs i JOIN meeting_link_decisions d ON ((d.left_message_id IN (SELECT id FROM copies WHERE idx=i.idx) AND d.left_kind=? AND d.left_key=?) OR (d.right_message_id IN (SELECT id FROM copies WHERE idx=i.idx) AND d.right_kind=? AND d.right_key=?)) JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE TRUE` + leftScope + rightScope + ` LIMIT ?`
 			err := func() error {
 				rows, err := reader.QueryContext(ctx, query, args...)
 				if err != nil {

@@ -74,14 +74,6 @@ func validateMeetingLinkDecision(decision string) error {
 	return nil
 }
 
-// meetingSuccessorSQL follows dedup history and the current visible calendar copy.
-func meetingSuccessorSQL() string {
-	return fmt.Sprintf(`COALESCE(
- (SELECT survivor_message_id FROM meeting_copy_survivors WHERE message_id=%[1]s.id AND %[1]s.delete_batch_id IS NOT NULL),
- (SELECT visible.message_id FROM calendar_events original JOIN calendar_events visible ON visible.provider_event_id=original.provider_event_id JOIN messages vm ON vm.id=visible.message_id AND vm.source_id=%[1]s.source_id WHERE original.message_id=%[1]s.id AND %[1]s.deleted_at IS NULL AND NOT %[2]s AND vm.deleted_at IS NULL AND %[3]s ORDER BY visible.message_id LIMIT 1),
- (SELECT survivor_message_id FROM source_merge_messages WHERE message_id=%[1]s.id))`, "m", calendarEventVisibility("original", "m"), calendarEventVisibility("visible", "vm"))
-}
-
 // resolveMeetingMessage follows the survivor of each hidden message.
 func (s *Store) resolveMeetingMessage(ctx context.Context, id int64) (int64, bool, error) {
 	for range 100 {
@@ -109,10 +101,10 @@ func (s *Store) resolveMeetingMessage(ctx context.Context, id int64) (int64, boo
 // meetingCopies finds the hidden copies that will return when dedup is undone.
 func (s *Store) meetingCopies(ctx context.Context, id int64) ([]int64, error) {
 	scope, args := sourceScopeClause(ctx, "m.source_id")
-	args = append([]any{id}, args...)
-	rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `WITH RECURSIVE copies(id) AS (
- SELECT CAST(? AS BIGINT) UNION SELECT m.id FROM messages m JOIN copies c ON c.id=`+meetingSuccessorSQL()+` WHERE (m.deleted_at IS NOT NULL OR EXISTS (SELECT 1 FROM calendar_events e WHERE e.message_id=m.id AND NOT `+calendarEventVisibility("e", "m")+`))`+scope+`
- ) SELECT id FROM copies`, args...)
+	parentScope, parentArgs := sourceScopeClause(ctx, "parent.source_id")
+	args = append(args, parentArgs...)
+	args = append(args, id)
+	rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `WITH RECURSIVE `+meetingCopyGraphSQL(`SELECT 0,CAST(? AS BIGINT)`, scope, parentScope, "")+` SELECT id FROM copies`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +118,49 @@ func (s *Store) meetingCopies(ctx context.Context, id int64) ([]int64, error) {
 		ids = append(ids, id)
 	}
 	return ids, errors.Join(rows.Err(), rows.Close())
+}
+
+// meetingOccurrenceSeries finds a series directly or through another copy of an edit.
+func (s *Store) meetingOccurrenceSeries(ctx context.Context, id, sourceID int64, providerID string, original calrecur.Identity, budget *int) (int64, error) {
+	reader := s.meetingSQLReader(ctx)
+	seriesRows, err := queryCalendarEventRowsWithinBudget(ctx, reader, `m.source_id = ? AND e.provider_event_id = ? AND e.kind = 'series'`, []any{sourceID, providerID}, *budget)
+	if err != nil {
+		return 0, err
+	}
+	*budget -= len(seriesRows)
+	if len(seriesRows) > 0 {
+		return seriesRows[0].MessageID, nil
+	}
+	var hasChoices bool
+	if err := reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meeting_link_decisions WHERE (left_kind='evt' AND left_key=?) OR (right_kind='evt' AND right_key=?))`, original.Key(), original.Key()).Scan(&hasChoices); err != nil || !hasChoices {
+		return 0, err
+	}
+	copyScope, args := sourceScopeClause(ctx, "m.source_id")
+	parentScope, parentArgs := sourceScopeClause(ctx, "parent.source_id")
+	editScope, editArgs := sourceScopeClause(ctx, "em.source_id")
+	seriesScope, seriesArgs := sourceScopeClause(ctx, "sm.source_id")
+	resultScope, resultArgs := sourceScopeClause(ctx, "result.source_id")
+	var date string
+	var instant any
+	if original.AllDay {
+		date = original.Date
+	} else {
+		instant = original.Instant
+	}
+	args = append(args, parentArgs...)
+	args = append(args, date, instant)
+	args = append(args, editArgs...)
+	args = append(args, seriesArgs...)
+	args = append(args, id)
+	args = append(args, resultArgs...)
+	series := meetingSeriesLinksSQL(` AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)` + editScope + seriesScope)
+	query := `WITH RECURSIVE ` + meetingCopyGraphSQL(`SELECT 0,CAST(? AS BIGINT)`, copyScope, parentScope, series) + ` SELECT e.message_id FROM copies c JOIN calendar_events e ON e.message_id=c.id JOIN messages result ON result.id=e.message_id WHERE e.kind='series'` + resultScope + ` ORDER BY e.message_id LIMIT 1`
+	var seriesID int64
+	err = reader.QueryRowContext(ctx, query, args...).Scan(&seriesID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return seriesID, err
 }
 
 // validateMeetingInput checks a dated event reference before normalizing it.
@@ -199,14 +234,12 @@ func (s *Store) meetingOccurrenceKey(ctx context.Context, endpoint meetingDecisi
 			endpoint.Key = row.Event.Original.Key()
 		}
 		if row.Event.Original != nil && row.Event.SeriesProviderID != "" {
-			series, err := queryCalendarEventRowsWithinBudget(ctx, s.meetingSQLReader(ctx), `m.source_id = ? AND e.provider_event_id = ? AND e.kind = 'series'`, []any{row.SourceID, row.Event.SeriesProviderID}, *budget)
+			seriesID, err := s.meetingOccurrenceSeries(ctx, id, row.SourceID, row.Event.SeriesProviderID, *row.Event.Original, budget)
 			if err != nil {
 				return endpoint, err
 			}
-			*budget -= len(series)
-			if len(series) > 0 {
-				endpoint.ID = series[0].MessageID
-				endpoint.Key = row.Event.Original.Key()
+			if seriesID != 0 {
+				endpoint.ID = seriesID
 			}
 		}
 	default:
@@ -570,17 +603,11 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 	visibilityAfterPurge := calendarEventVisibilityExcluding("e", "m", " AND om.id NOT IN (SELECT id FROM targets)")
 	rows, err := reader.QueryContext(ctx, `WITH RECURSIVE
  targets(id) AS (SELECT id FROM messages WHERE (`+predicate+`) AND message_type IN ('calendar_event', 'meeting_transcript')),
- links(id, parent) AS (
- SELECT m.id, `+meetingSuccessorSQL()+`
- FROM messages m WHERE m.deleted_at IS NOT NULL OR EXISTS (SELECT 1 FROM calendar_events e WHERE e.message_id=m.id AND NOT `+calendarEventVisibility("e", "m")+`)
- ),
- copies(id) AS (
- SELECT id FROM targets UNION
- SELECT CASE WHEN l.id=c.id THEN l.parent ELSE l.id END FROM copies c JOIN links l ON (l.id=c.id OR l.parent=c.id) WHERE l.parent IS NOT NULL
- )
+ `+meetingCopyGraphSQL(`SELECT 0,id FROM targets`, "", "", meetingSeriesLinksSQL(""))+`
  SELECT c.id, l.parent, EXISTS(SELECT 1 FROM targets t WHERE t.id=c.id),
- EXISTS(SELECT 1 FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE e.message_id=c.id AND m.deleted_at IS NULL AND m.id NOT IN (SELECT id FROM targets) AND `+visibilityAfterPurge+`)
- FROM copies c LEFT JOIN links l ON l.id=c.id`, args...)
+ EXISTS(SELECT 1 FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE e.message_id=c.id AND m.deleted_at IS NULL AND m.id NOT IN (SELECT id FROM targets) AND `+visibilityAfterPurge+`),
+ sl.parent, sl.original_start_at, sl.original_start_date
+ FROM copies c LEFT JOIN links l ON l.id=c.id LEFT JOIN series_links sl ON sl.id=c.id`, args...)
 	if err != nil {
 		return err
 	}
@@ -588,13 +615,21 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 	purged := map[int64]bool{}
 	children := map[int64][]int64{}
 	parents := map[int64]int64{}
+	type occurrenceCopy struct {
+		id  int64
+		key string
+	}
+	occurrences := map[int64][]occurrenceCopy{}
 	var ids []int64
 	var visibleAfter []int64
 	for rows.Next() {
 		var id int64
 		var parent sql.NullInt64
+		var series sql.NullInt64
+		var original nullableTimestamp
+		var date sql.NullString
 		var deleted, visible bool
-		if err := rows.Scan(&id, &parent, &deleted, &visible); err != nil {
+		if err := rows.Scan(&id, &parent, &deleted, &visible, &series, &original, &date); err != nil {
 			return errors.Join(err, rows.Close())
 		}
 		ids = append(ids, id)
@@ -606,6 +641,11 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 			children[parent.Int64] = append(children[parent.Int64], id)
 			parents[id] = parent.Int64
 		}
+		if series.Valid && (original.Valid || date.String != "") {
+			key := (calrecur.Identity{Instant: original.Time, Date: date.String, AllDay: date.String != ""}).Key()
+			occurrences[id] = append(occurrences[id], occurrenceCopy{series.Int64, key})
+			occurrences[series.Int64] = append(occurrences[series.Int64], occurrenceCopy{id, key})
+		}
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
@@ -613,8 +653,14 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 	if len(ids) == 0 {
 		return nil
 	}
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
 	for id := range children {
 		slices.Sort(children[id])
+		children[id] = slices.Compact(children[id])
+	}
+	for id := range occurrences {
+		slices.SortFunc(occurrences[id], func(a, b occurrenceCopy) int { return cmp.Compare(a.id, b.id) })
 	}
 	preferred := map[int64]int64{}
 	root := func(id int64) int64 {
@@ -630,7 +676,7 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 			preferred[parent] = id
 		}
 	}
-	replacement := func(id int64) (int64, bool) {
+	replacement := func(id int64, key string) (int64, bool) {
 		seen := map[int64]bool{id: true}
 		for parent := parents[id]; parent != 0 && !seen[parent]; parent = parents[parent] {
 			if !purged[parent] {
@@ -638,10 +684,11 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 			}
 			seen[parent] = true
 		}
-		if copyID, ok := preferred[id]; ok {
+		ancestor := root(id)
+		if copyID, ok := preferred[ancestor]; ok {
 			return copyID, true
 		}
-		queue := []int64{id}
+		queue := []int64{ancestor}
 		seen = map[int64]bool{}
 		for len(queue) > 0 {
 			current := queue[0]
@@ -654,6 +701,30 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 				return current, true
 			}
 			queue = append(queue, children[current]...)
+		}
+		if key != "" {
+			queue = []int64{id}
+			seen = map[int64]bool{}
+			for len(queue) > 0 {
+				current := queue[0]
+				queue = queue[1:]
+				if seen[current] {
+					continue
+				}
+				seen[current] = true
+				if !purged[current] {
+					return current, true
+				}
+				queue = append(queue, children[current]...)
+				if parent := parents[current]; parent != 0 {
+					queue = append(queue, parent)
+				}
+				for _, occurrence := range occurrences[current] {
+					if occurrence.key == key {
+						queue = append(queue, occurrence.id)
+					}
+				}
+			}
 		}
 		return 0, false
 	}
@@ -724,12 +795,12 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 		}
 		if purged[edge.a.ID] {
 			var found bool
-			a.ID, found = replacement(edge.a.ID)
+			a.ID, found = replacement(edge.a.ID, edge.a.Key)
 			ok = ok && found
 		}
 		if purged[edge.b.ID] {
 			var found bool
-			b.ID, found = replacement(edge.b.ID)
+			b.ID, found = replacement(edge.b.ID, edge.b.Key)
 			ok = ok && found
 		}
 		if !purged[edge.a.ID] {
@@ -761,7 +832,7 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 		}
 		if next == 0 || visited[next] {
 			var ok bool
-			next, ok = replacement(id)
+			next, ok = replacement(id, "")
 			if !ok {
 				continue
 			}
