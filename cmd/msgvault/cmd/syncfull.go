@@ -533,7 +533,6 @@ func applyIMAPMailboxDeltas(
 		}
 		storeDeltas = append(storeDeltas, store.IMAPMailboxDelta{
 			Mailbox: delta.Mailbox,
-			AllMail: delta.AllMail,
 			Trash:   delta.Trash,
 			State: store.IMAPFolderState{
 				Mailbox:       delta.Mailbox,
@@ -556,8 +555,6 @@ func applyIMAPMailboxDeltas(
 func imapStoreObservation(observation imaplib.MembershipObservation) store.IMAPMembershipObservation {
 	return store.IMAPMembershipObservation{
 		Mailbox:                  observation.Mailbox,
-		AllMail:                  observation.AllMail,
-		Trash:                    observation.Trash,
 		UIDValidity:              observation.UIDValidity,
 		UID:                      observation.UID,
 		SourceMessageID:          observation.SourceMessageID,
@@ -592,14 +589,6 @@ func saveIMAPFolderStates(
 		return nil
 	}
 	if imapClient.LabelsSnapshotFiltered() {
-		observations := imapClient.ObservedMemberships()
-		storeObservations := make([]store.IMAPMembershipObservation, 0, len(observations))
-		for _, observation := range observations {
-			storeObservations = append(storeObservations, imapStoreObservation(observation))
-		}
-		if err := s.ClearRestoredIMAPDeletionMarksForSyncContext(ctx, src.ID, summary.SyncRunID, storeObservations); err != nil {
-			return fmt.Errorf("clear restored IMAP deletion marks: %w", err)
-		}
 		return nil
 	}
 	if !imapClient.LabelsSnapshotComplete() {

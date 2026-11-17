@@ -145,9 +145,8 @@ func TestRunScheduledIMAPSync_CombinedMailboxRoles(t *testing.T) {
 func TestRunScheduledIMAPSync_KeepsMarkWhileInTrash(t *testing.T) {
 	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Trash": 0})
 	raw := []byte("Message-ID: <overlap@example.test>\r\nFrom: sender@example.test\r\nTo: recipient@example.test\r\nSubject: overlap\r\n\r\nbody\r\n")
-	testutil.AppendIMAPRawMessage(t, user, "INBOX", raw)
 	testutil.AppendIMAPRawMessage(t, user, "Trash", raw)
-	st, src, _, ctx := scheduledIMAPTestSetup(t, addr)
+	st, src, cfg, ctx := scheduledIMAPTestSetup(t, addr)
 	invocationFromContext(ctx).logger = testDiscardLogger()
 	syncMailbox := func() {
 		summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
@@ -157,6 +156,11 @@ func TestRunScheduledIMAPSync_KeepsMarkWhileInTrash(t *testing.T) {
 	syncMailbox()
 	_, err := st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE source_id = ?`), src.ID)
 	require.NoError(t, err)
+	cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
+	testutil.AppendIMAPRawMessage(t, user, "INBOX", raw)
+	syncMailbox()
+	assert.Equal(t, 1, imapTombstonedMessageCount(t, st, src.ID))
+	cfg.Sync.IMAPSkipFolders = nil
 	testutil.SetIMAPFlags(t, addr, "Trash", 1, imapapi.FlagSeen)
 	syncMailbox()
 	assert.Equal(t, 1, imapTombstonedMessageCount(t, st, src.ID))
@@ -215,7 +219,7 @@ func TestSaveIMAPFolderStates_FilteredRestore(t *testing.T) {
 	opts := append(imapFolderStateOptions(st, src, false, testConfigValue(), testDiscardLogger()), imaplib.WithFolderFilter(nil, []string{"Trash"}))
 	second, _ := syncedIMAPClient(t, addr, opts...)
 	require.NoError(saveIMAPFolderStates(t.Context(), st, src, second, completedIMAPSyncSummary(t, st, src), 0))
-	assert.Equal(0, imapTombstonedMessageCount(t, st, src.ID))
+	assert.Equal(1, imapTombstonedMessageCount(t, st, src.ID))
 }
 
 // listedIMAPClient returns an IMAP client that has enumerated the test

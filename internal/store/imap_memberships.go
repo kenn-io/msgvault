@@ -17,8 +17,6 @@ import (
 // IMAPMembershipObservation records one observed mailbox UID and its message identity.
 type IMAPMembershipObservation struct {
 	Mailbox                  string
-	AllMail                  bool
-	Trash                    bool
 	UIDValidity              uint32
 	UID                      uint32
 	SourceMessageID          string
@@ -37,7 +35,6 @@ type IMAPMembershipObservation struct {
 // IMAPMailboxDelta is the durable state change collected for one mailbox.
 type IMAPMailboxDelta struct {
 	Mailbox      string
-	AllMail      bool
 	Trash        bool
 	State        IMAPFolderState
 	Memberships  []IMAPMembershipObservation
@@ -499,50 +496,6 @@ func (s *Store) applyIMAPMailboxDeltas(
 				strconv.FormatUint(delta.State.HighestModSeq, 10),
 			); err != nil {
 				return fmt.Errorf("upsert IMAP folder state for %q: %w", normalized.mailbox, err)
-			}
-		}
-		return nil
-	})
-}
-
-// ClearRestoredIMAPDeletionMarksForSyncContext reconciles marked messages seen
-// by a filtered sync without changing the saved mailbox memberships.
-func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
-	ctx context.Context,
-	sourceID int64,
-	syncRunID int64,
-	observations []IMAPMembershipObservation,
-) error {
-	if syncRunID <= 0 {
-		return fmt.Errorf("clear restored IMAP deletion marks: invalid sync generation %d", syncRunID)
-	}
-	if len(observations) == 0 {
-		return nil
-	}
-	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
-		if err := s.validateCurrentSyncGeneration(ctx, tx, sourceID, syncRunID, SyncStatusCompleted); err != nil {
-			return err
-		}
-		var candidates []IMAPMembershipObservation
-		for _, observation := range observations {
-			if !observation.AllMail && !observation.Trash {
-				candidates = append(candidates, observation)
-			}
-		}
-		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL()}
-		if err := resolver.primeIdentities(ctx, []normalizedIMAPMailboxDelta{{delta: IMAPMailboxDelta{Memberships: candidates}}}); err != nil {
-			return err
-		}
-		for _, observation := range candidates {
-			messageID, err := resolver.resolveIdentity(ctx, observation, true)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if err := s.clearMessageDeletedFromSourceTx(ctx, tx, `id = ? AND source_id = ?`, messageID, sourceID); err != nil {
-				return fmt.Errorf("message %d: %w", messageID, err)
 			}
 		}
 		return nil

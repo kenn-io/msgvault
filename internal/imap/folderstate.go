@@ -13,8 +13,6 @@ import (
 // identity without coupling the IMAP protocol package to the durable store.
 type MembershipObservation struct {
 	Mailbox                  string
-	AllMail                  bool
-	Trash                    bool
 	UIDValidity              uint32
 	UID                      uint32
 	SourceMessageID          string
@@ -40,8 +38,6 @@ func (c *Client) ObservedMemberships() []MembershipObservation {
 	}
 	observations := make([]MembershipObservation, len(c.observedMemberships))
 	for i, observation := range c.observedMemberships {
-		observation.AllMail = c.allMailMailboxes[observation.Mailbox]
-		observation.Trash = c.trashMailboxes[observation.Mailbox]
 		if observation.Flags != nil {
 			observation.Flags = append([]string{}, observation.Flags...)
 		}

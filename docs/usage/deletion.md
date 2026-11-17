@@ -162,9 +162,8 @@ you can restore them in Outlook. A later sync keeps them marked as deleted
 while they stay in Deleted Items. Gmail and IMAP follow the same rule: sync
 clears the mark when it confirms the message outside Trash.
 
-A filtered IMAP sync can clear the mark when it matches the message in a
-specific mailbox outside Trash and All Mail. It keeps the saved mailbox labels,
-including Trash, until a complete sync reconciles them.
+A filtered IMAP sync keeps the mark and saved mailbox labels until a complete
+sync confirms the message is absent from Trash.
 For IMAP messages without a Message-ID, a restored copy is ingested as a new
 message and the original remains marked.
 
