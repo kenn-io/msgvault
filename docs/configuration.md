@@ -922,16 +922,20 @@ When deletion tracking runs with saved Trash or Junk exclusions:
 
 - msgvault advances cursors and replaces memberships only for the folders it
   scanned, and skips QRESYNC. Unchanged folders reuse their saved state.
-- A message becomes eligible for `gc` only when no stored folder membership
-  remains. Memberships already recorded in a skipped folder stay unchanged, so a
-  message recorded in Trash by an earlier unfiltered sync stays live.
+- Sync marks a message deleted only when no stored folder membership remains.
+  Memberships already recorded in a skipped folder stay unchanged, so sync
+  does not mark a message recorded in Trash by an earlier unfiltered sync. A
+  message msgvault moved to Trash keeps its mark, and stays eligible for
+  `gc`, until sync finds it in a scanned folder.
 - Messages archived by earlier filtered syncs are checked too. A message whose
   folder was scanned but no longer holds it is marked deleted.
 - An archived draft is replaced by its sent copy, as in a complete sync, while
   labels from skipped folders are kept.
 - A deleted or renamed folder keeps its messages live until a sync without
-  folder exclusions. So does a scanned folder the server recreated with a new
-  UIDVALIDITY before its earlier messages got memberships.
+  folder exclusions.
+- When the server recreates a scanned folder with a new UIDVALIDITY, sync
+  checks its earlier messages against the new contents. A message it cannot
+  match there, and that no other stored folder holds, is marked deleted.
 
 A later sync without folder filters reconciles the whole account, including
 older imports. See [IMAP folder filtering](usage/imap.md#what-filtering-changes)
