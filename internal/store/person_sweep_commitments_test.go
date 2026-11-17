@@ -786,9 +786,9 @@ func TestEditedCommitmentDecision(t *testing.T) {
 			rescans:         []rescanSpec{{text: combined, want: []expectedPromise{{first, LoopStateDone}, {second, LoopStateSnoozed}, {combined, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: combined, summary: "Send and call"}}}},
 		},
 		{
-			name: "new archive arrival", initialText: combined, initialStates: []string{LoopStateDone, LoopStateSnoozed},
-			initialPromises: []promiseSpec{{quote: first, summary: "Send"}, {quote: second, summary: "Call", start: int64(len(first) + 1)}},
-			rescans:         []rescanSpec{{text: combined, mutation: "new arrival", promises: []promiseSpec{{quote: combined, summary: "Send and call"}}, want: []expectedPromise{{combined, LoopStateOpen}}}},
+			name: "new archive arrival", initialText: quote,
+			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
+			rescans:         []rescanSpec{{text: quote, mutation: "new arrival", promises: []promiseSpec{{quote: quote, summary: "Send"}}, want: []expectedPromise{{quote, LoopStateOpen}}}},
 		},
 		{
 			name: "same second reused ID", initialText: quote, sqliteOnly: true,
@@ -855,7 +855,7 @@ func TestEditedCommitmentDecision(t *testing.T) {
 					_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-2*time.Hour)), id)
 					r.NoError(err)
 				case "new arrival", "reuse ID":
-					if !f.store.IsPostgreSQL() {
+					if rescan.mutation == "reuse ID" && !f.store.IsPostgreSQL() {
 						_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM messages WHERE id = ?`), id)
 						r.NoError(err)
 						r.Equal(id, persist("replacement", currentText, -time.Hour))
@@ -1041,6 +1041,81 @@ func TestCommitmentDiscoveryRestartsWhenOwnershipChangesDuringScan(t *testing.T)
 	r.Equal("I will call.", window.Sources[0].Text)
 	r.Zero(window.BackfillMessageID)
 	r.Equal(personFactLedgerNow, window.SelectionAt)
+}
+
+func TestCommitmentDiscoveryRestartsWhenOwnerAliasIsLinked(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "owner-alias-discovery", false)
+	source, persist := newCommitmentTestConversation(t, f)
+	owner, err := f.store.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	r.NoError(err)
+	_, _, err = f.store.CreatePersonFromParticipant(owner)
+	r.NoError(err)
+	alias, err := f.store.EnsureParticipant("alias@example.test", "Alias", "example.test")
+	r.NoError(err)
+	alice, err := f.store.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	r.NoError(err)
+	thread, err := f.store.EnsureConversationWithType(source, "alias-chat", "direct_chat", "Alias chat")
+	r.NoError(err)
+	r.NoError(f.store.EnsureConversationParticipant(thread, alias, "member"))
+	r.NoError(f.store.EnsureConversationParticipant(thread, alice, "member"))
+	id, err := f.store.PersistMessageContext(ctx, &MessagePersistData{Message: &Message{
+		SourceID: source, ConversationID: thread, MessageType: "whatsapp", SourceMessageID: "alias-promise",
+		SenderID: sql.NullInt64{Int64: alice, Valid: true}, SentAt: sql.NullTime{Time: personFactLedgerNow.Add(-time.Hour), Valid: true},
+	}, BodyText: sql.NullString{String: "I will write.", Valid: true}})
+	r.NoError(err)
+	persist("known-promise", "I will call.", -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: "I will call.", Start: 0, End: 12, Summary: "Call"}}})
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
+	r.NoError(err)
+	_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+	r.NoError(err)
+	r.True(complete)
+	f = nextCommitmentTestAttempt(t, f, "-inflight")
+	inflight, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	inflightRequest := commitmentApplyRequest(t, f, inflight, cfg.Commitments, peoplesweep.ParsedCommitments{})
+	_, err = f.store.LinkParticipants(owner, alias)
+	r.NoError(err)
+	result, err := f.store.ApplyPersonSweep(ctx, inflightRequest)
+	r.NoError(err)
+	r.Equal(peoplesweep.FailureArchiveGap, result.CommitmentFailureClass)
+	due, err := f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint)
+	r.NoError(err)
+	r.True(due)
+	_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+	r.NoError(err)
+	r.False(complete)
+	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 2)
+	r.Contains([]int64{window.Sources[0].MessageID, window.Sources[1].MessageID}, id)
+	f = nextCommitmentTestAttempt(t, f, "-rescan")
+	var promises []peoplesweep.CommitmentPromise
+	for _, source := range window.Sources {
+		promises = append(promises, peoplesweep.CommitmentPromise{SourceID: source.ID, Direction: peoplesweep.CommitmentOwedTo, Quote: source.Text, Start: 0, End: int64(len(source.Text)), Summary: source.Text})
+	}
+	rescan := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises})
+	_, err = f.store.ApplyPersonSweep(ctx, rescan)
+	r.NoError(err)
+	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, true)
+	r.NoError(err)
+	r.Len(items, 2)
+	states := map[string]string{}
+	for _, item := range items {
+		states[item.Quote] = item.State
+	}
+	r.Equal(LoopStateDone, states["I will call."])
+	r.Equal(LoopStateOpen, states["I will write."])
 }
 
 func TestCommitmentOwnershipChangeWaitsForFrontierLock(t *testing.T) {

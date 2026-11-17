@@ -309,13 +309,14 @@ func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error 
 // The change journal covers message content and person identity changes between
 // source alignment and the fenced apply. Window sources and person-level changes
 // are watched in the conversation lane. A stale window can be retried without
-// committing its frontier or discarding the ordinary result.
+// committing its frontier or discarding the ordinary result. The identity
+// revision also fences owner links that change other people's eligible sources.
 func (s *Store) commitmentWindowCurrentTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) (bool, error) {
-	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`), accountIdentityRevisionKey); err != nil {
+	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`), identityRevisionKey); err != nil {
 		return false, err
 	}
 	var revision int64
-	if err := tx.QueryRowContext(ctx, `SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = ?`+s.dialect.SelectForUpdate(), accountIdentityRevisionKey).Scan(&revision); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = ?`+s.dialect.SelectForUpdate(), identityRevisionKey).Scan(&revision); err != nil {
 		return false, err
 	}
 	if revision != request.Commitment.Window.IdentityRevision {
