@@ -190,7 +190,7 @@ func TestLoopAgendaRequiresLinkedPerson(t *testing.T) {
 	response := httptest.NewRecorder()
 	apiServer.Router().ServeHTTP(response, request)
 	require.Equal(t, http.StatusConflict, response.Code)
-	assert.JSONEq(t, `{"error":"person_required","message":"link the contact to a person first"}`, response.Body.String())
+	assert.JSONEq(t, `{"error":"person_required","message":"link the contact to a person first: alex@example.test"}`, response.Body.String())
 	require.NoError(t, agenda.Run(t.Context(), now))
 	client, err := connectKata(t.Context(), cfg)
 	require.NoError(t, err)

@@ -102,7 +102,11 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 		input.SourceTime = loop.Anchor.OccurredAt
 		input.Title = fmt.Sprintf("Reply to %s: %s", loop.Counterparty.DisplayName, loop.Summary)
 		if loop.Counterparty.PersonID == 0 {
-			return kataissues.Result{}, errAgendaPersonRequired
+			name := loop.Counterparty.DisplayName
+			if name == "" {
+				name = loop.Counterparty.Address
+			}
+			return kataissues.Result{}, fmt.Errorf("%w: %s", errAgendaPersonRequired, name)
 		}
 		input.PersonID, input.List = &loop.Counterparty.PersonID, "replies"
 		selectors = []kataevidence.Selector{{Kind: "message", MessageID: id, MaxChars: new(kataevidence.MaxChars)}}
@@ -221,10 +225,6 @@ func (s *Server) registerLoopAgenda(api huma.API) {
 }
 
 func (s *Server) handleLoopAgenda(w http.ResponseWriter, r *http.Request) {
-	if s.loopAgenda == nil {
-		writeError(w, http.StatusServiceUnavailable, "kata_unavailable", "Kata agenda is unavailable")
-		return
-	}
 	ref := r.PathValue("message_id")
 	commitment := ref == ""
 	if commitment {
@@ -240,7 +240,7 @@ func (s *Server) handleLoopAgenda(w http.ResponseWriter, r *http.Request) {
 	result, err := s.loopAgenda.File(r.Context(), ref, s.clockNow().UTC())
 	switch {
 	case errors.Is(err, errAgendaPersonRequired):
-		writeError(w, http.StatusConflict, "person_required", errAgendaPersonRequired.Error())
+		writeError(w, http.StatusConflict, "person_required", err.Error())
 	case errors.Is(err, loops.ErrNotOpen) || !commitment && errors.Is(err, sql.ErrNoRows):
 		writeError(w, http.StatusNotFound, "loop_not_open", "Loop not open")
 	case commitment && errors.Is(err, sql.ErrNoRows):
