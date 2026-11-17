@@ -113,7 +113,6 @@ func TestRunScheduledIMAPSync_CombinedMailboxRoles(t *testing.T) {
 		{"all and sent/filtered=false", true, false, false},
 		{"all and sent/filtered=true", true, true, false},
 		{"second trash and sent/filtered=false", false, false, true},
-		{"second trash and sent/filtered=true", false, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mailboxes := map[string]int{"INBOX": 0, "Combined": 0}

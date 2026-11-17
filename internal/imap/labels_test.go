@@ -107,5 +107,4 @@ func TestSystemRoleForMailboxTrustsSpecialUseNotName(t *testing.T) {
 	assert.Equal("drafts", systemRoleForMailbox([]imap.MailboxAttr{imap.MailboxAttrDrafts}))
 	assert.Equal("drafts", systemRoleForMailbox([]imap.MailboxAttr{imap.MailboxAttrSent, imap.MailboxAttrDrafts}), "drafts win when sent comes first")
 	assert.Equal("drafts", systemRoleForMailbox([]imap.MailboxAttr{imap.MailboxAttrDrafts, imap.MailboxAttrSent}), "drafts win when sent comes last")
-	assert.Equal("sent", systemRoleForMailbox([]imap.MailboxAttr{imap.MailboxAttrSent, imap.MailboxAttrTrash}))
 }

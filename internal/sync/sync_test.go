@@ -2610,7 +2610,7 @@ func TestIncrementalSyncRemovedLabelPreservesOrClearsDeletion(t *testing.T) {
 			}
 			api := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}
 			env.Syncer = New(api, env.Store, nil)
-			if tc.label == "TRASH" && !tc.retrash {
+			if !tc.retrash {
 				env.Mock.Messages["msg1"].LabelIDs = []string{"INBOX"}
 			}
 			history := []gmail.HistoryRecord{historyLabelRemoved("msg1", tc.label)}
