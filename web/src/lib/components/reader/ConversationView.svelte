@@ -111,6 +111,7 @@
   let generation = 0;
   let loadedWindowKey = '';
   const anchorLoaded = $derived(messages.some((message) => message.id === activeAnchor));
+  const loadedIDs = $derived(messages.map((message) => message.id));
   $effect(() => { if (error) return reportError(() => apiClient, () => 'message'); });
 
   // Expansion is local: a new anchor that is already inside the loaded
@@ -333,6 +334,7 @@
           viewMode={viewModes[message.id] ?? 'html'}
           bodyPending={loadingBodies.has(message.id)}
           bodyError={bodyErrors[message.id] ?? ''}
+          loadedIDs={loadedIDs}
           onToggle={toggleMessage}
           onViewModeChange={changeViewMode}
         />

@@ -210,6 +210,30 @@ applies to the open message. Light mode preserves designed email colors.
 
 Each expanded message lists its files, recordings, linked tasks, and Kata issues below the body. Click a linked sender or recipient to open that exact person; Back returns to the message. The **⋯** menu offers **Add to task…**, **Download original** for email, **Export meeting…** for a meeting transcript, and plain text or HTML when available. **Add to task…** keeps task creation, existing-task search, priority, labels, and the outbound metadata disclosure together. Disabled Tasks connections offer **Set up**; other service or index failures offer **Open Settings**.
 
+### Related copies
+
+Choose **Related copies** above a message to see its other archived copies,
+and the replies and forwards that name it, across accounts and conversations.
+Each row shows the account, whether that account sent or received the copy (or
+holds it as a draft), the date, and the evidence that connects it: the same
+message, a reply, a forward, shared references, a relation through another copy,
+or, for sources that keep the provider's own threads such as Gmail, the same
+thread as the email or one of its exact copies. Messages already shown in the
+conversation have no row; messages outside its loaded window still appear.
+Open a row to read that copy. The panel loads when you open it and makes no
+request while closed.
+
+A warning appears when the opened email, a copy, or any email in the archive
+hasn't been indexed yet, because it could be a related copy the panel cannot
+see. It also explains when an original message is missing, its format or
+identifiers could not be read, or it has no stored Message-ID. Replies naming
+a copy without a stored Message-ID cannot find it. The next sync indexes
+pending emails; for a source that no longer syncs, run
+`msgvault repair-derived`. When the lookup stops at its
+500-email or 5,000-identifier limit, the panel says which. An empty panel
+reports what the search found, so it never claims that no related copy exists.
+Only the owner can use the panel.
+
 ## Meeting context and follow-ups
 
 Filter Messages to meetings to see the meeting count and known duration. Choose **Action items** to filter recorded follow-ups by status or assignee.
