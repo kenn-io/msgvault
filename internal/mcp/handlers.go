@@ -39,11 +39,13 @@ const (
 	defaultSearchLimit     = 20
 	// searchContextChars is the max byte length of each matches[] snippet in
 	// search_message_bodies and search_in_message.
-	searchContextChars   = 300
-	defaultBodyChars     = 2000
-	bodyFormatAuto       = "auto"
-	bodyFormatText       = "text"
-	bodyFormatHTML       = "html"
+	searchContextChars = 300
+	defaultBodyChars   = 2000
+	bodyFormatAuto     = "auto"
+	bodyFormatText     = "text"
+	bodyFormatHTML     = "html"
+	// bodyFormatHTMLText labels text derived from an HTML-only body.
+	bodyFormatHTMLText   = "html_text"
 	toolArgQuery         = "query"
 	toolArgLimit         = "limit"
 	toolArgCursor        = "cursor"
@@ -1516,10 +1518,10 @@ func lineNumberAt(body string, byteOffset int) int {
 
 type getMessageResponse struct {
 	SenderAuth           *senderauth.Verdict       `json:"sender_auth,omitempty"`
-	SegmentsVersion      string                    `json:"segments_version,omitempty" jsonschema:"Segment classification version, present when plain-text ranges were requested."`
+	SegmentsVersion      string                    `json:"segments_version,omitempty" jsonschema:"Segment classification version, present when ranges were returned."`
 	Segments             []msgsegment.Segment      `json:"segments,omitempty" jsonschema:"Ranges overlapping this body window, with absolute, unclipped byte offsets."`
 	SegmentsTruncated    bool                      `json:"segments_truncated,omitzero" jsonschema:"The 1 MiB scan limit was reached; unexamined bytes keep the last label."`
-	SegmentsUnavailable  string                    `json:"segments_unavailable,omitempty" jsonschema:"unsupported_format when ranges were requested for HTML."`
+	SegmentsUnavailable  string                    `json:"segments_unavailable,omitempty" jsonschema:"unsupported_format when ranges were requested with body_format=html."`
 	WebURL               string                    `json:"web_url,omitempty"`
 	ID                   int64                     `json:"id"`
 	SourceMessageID      string                    `json:"source_message_id"`
@@ -1542,7 +1544,7 @@ type getMessageResponse struct {
 	BodyText             string                    `json:"body_text"`
 	BodyHTML             string                    `json:"body_html"`
 	HiddenTextPresent    bool                      `json:"hidden_text_present"`
-	BodyFormat           string                    `json:"body_format,omitempty"`
+	BodyFormat           string                    `json:"body_format,omitempty" jsonschema:"text, html, or html_text: text derived from an HTML-only body, returned in body_text when include_segments is set with body_format=auto."`
 	BodyLength           int                       `json:"body_length"`
 	BodyReturned         int                       `json:"body_returned"`
 	Offset               int                       `json:"offset"`
@@ -1579,11 +1581,16 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		requestedBodyFormat = bodyFormatAuto
 	}
 
+	includeSegments, _ := args["include_segments"].(bool)
 	fullBody := msg.BodyText
 	bodyFormat := bodyFormatText
 	switch requestedBodyFormat {
 	case bodyFormatAuto:
 		fullBody, bodyFormat = automaticMessageBody(msg)
+		if includeSegments && bodyFormat == bodyFormatHTML {
+			// Ranges index text, so page the text derived from the HTML.
+			fullBody, bodyFormat = msgsegment.HTMLText(fullBody), bodyFormatHTMLText
+		}
 	case bodyFormatText:
 	case bodyFormatHTML:
 		fullBody = msg.BodyHTML
@@ -1646,7 +1653,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		Labels:               msg.Labels,
 		Attachments:          msg.Attachments,
 	}
-	if includeSegments, _ := args["include_segments"].(bool); includeSegments {
+	if includeSegments {
 		if bodyFormat == bodyFormatHTML {
 			response.SegmentsUnavailable = "unsupported_format"
 		} else {

@@ -620,8 +620,18 @@ Their byte offsets refer to the whole selected body, with an exclusive `end`,
 and stay unclipped across pages. Classification examines at most 1 MiB,
 stopping at the last complete line; remaining bytes keep the last label.
 `segments_truncated: true` reports the scan limit. Non-email messages get one
-authored range. HTML returns `segments_unavailable: "unsupported_format"` with
-no ranges.
+authored range.
+
+HTML-only email gets ranges too. With the default `body_format: "auto"`,
+`include_segments: true` pages text derived from the HTML in `body_text` and
+reports `body_format: "html_text"`. Offsets, `body_length`, and ranges refer to
+that text, not the raw markup, so `center_at` offsets from `search_in_message`,
+which searches the raw HTML, don't apply to it. In the derived text, lines
+inside a `blockquote` element get one `>` per enclosing `blockquote`, and lines inside a
+`div` whose class contains `gmail_quote` get one `>` when no `blockquote`
+encloses them. Those lines are quoted; the plain-text rules above label the
+rest. Requesting `body_format: "html"` still returns
+`segments_unavailable: "unsupported_format"` with no ranges.
 
 For a calendar event, `get_message` also returns `calendar` with `status`,
 `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`, so an

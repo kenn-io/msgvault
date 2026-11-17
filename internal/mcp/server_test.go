@@ -1836,7 +1836,8 @@ func TestGetMessage(t *testing.T) {
 			{"first page", "New\n> Old\n", "email", "", map[string]any{"max_chars": float64(6)}, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 4}, {Kind: msgsegment.Quoted, Start: 4, End: 10, Depth: 1}}, false},
 			{"second page", "New\n> Old\n", "email", "", map[string]any{"offset": float64(6)}, []msgsegment.Segment{{Kind: msgsegment.Quoted, Start: 4, End: 10, Depth: 1}}, false},
 			{"chat", "> my markdown\n", "beeper", "", nil, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 14}}, false},
-			{"HTML only", "", "email", "<p>Hello</p>", nil, nil, false},
+			{"HTML only", "", "email", "<p>Hello</p>", nil, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 5}}, false},
+			{"HTML only chat", "", "beeper", "<blockquote>Hi</blockquote>", nil, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 4}}, false},
 			{"explicit HTML", "Hello", "email", "<p>Hello</p>", map[string]any{"body_format": "html"}, nil, false},
 			{"empty text", "", "beeper", "", nil, nil, false},
 			{"past end", "New\n> Old\n", "email", "", map[string]any{"offset": float64(10)}, nil, false},
@@ -1860,6 +1861,34 @@ func TestGetMessage(t *testing.T) {
 				}
 			})
 		}
+	})
+
+	t.Run("HTML-only reply", func(t *testing.T) {
+		assert := assert.New(t)
+		html := `<div dir="ltr">Sounds good.</div><div class="gmail_quote"><div class="gmail_attr">On Mon, Jan 5, 2026 at 9:00 AM Alice &lt;alice@example.com&gt; wrote:</div><blockquote class="gmail_quote"><div>Lunch at noon?</div></blockquote></div>`
+		text := "Sounds good.\n\n> On Mon, Jan 5, 2026 at 9:00 AM Alice <alice@example.com> wrote:\n\n> Lunch at noon?"
+		h := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{
+			42: testutil.NewMessageDetail(42).WithBodyText("").WithBodyHTML(html).BuildPtr(),
+		}})
+		got := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(42), "include_segments": true, "full_body": true})
+		assert.Equal("html_text", got.BodyFormat)
+		assert.Equal(text, got.BodyText)
+		assert.Empty(got.BodyHTML)
+		assert.Equal(len(text), got.BodyLength)
+		assert.Equal(msgsegment.Version, got.SegmentsVersion)
+		quoteStart := strings.Index(text, "> On")
+		assert.Equal([]msgsegment.Segment{
+			{Kind: msgsegment.Authored, Start: 0, End: quoteStart},
+			{Kind: msgsegment.Quoted, Start: quoteStart, End: len(text), Depth: 1},
+		}, got.Segments)
+
+		page := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(42), "include_segments": true, "offset": float64(quoteStart), "max_chars": float64(10)})
+		assert.Equal(text[quoteStart:quoteStart+10], page.BodyText)
+		assert.Equal([]msgsegment.Segment{{Kind: msgsegment.Quoted, Start: quoteStart, End: len(text), Depth: 1}}, page.Segments)
+
+		raw := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(42), "full_body": true})
+		assert.Equal(bodyFormatHTML, raw.BodyFormat)
+		assert.Equal(html, raw.BodyHTML)
 	})
 
 	t.Run("alternating body", func(t *testing.T) {
