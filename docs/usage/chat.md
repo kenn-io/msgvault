@@ -178,7 +178,7 @@ archive or unarchive its entire chat. This needs
 owner access or a source-wide grant without incoming sender restrictions;
 results include `chat_id`. Other providers return `archive_unsupported`.
 
-The tool requires daemon API schema 5.12.0. Delegated sessions list it when the
+The tool requires daemon API schema 5.13.0. Delegated sessions list it when the
 grant includes `message.archive`; the daemon checks the message's source.
 Owners can restrict incoming senders with
 [`--incoming-sender`](../cli-reference.md#restrict-incoming-senders).
