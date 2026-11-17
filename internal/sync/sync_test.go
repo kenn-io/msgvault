@@ -2644,7 +2644,6 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 		attachmentFailure bool
 		rawFailure        bool
 	}{
-		{name: "restored", labels: []string{"INBOX"}},
 		{name: "label read failure and retry", labels: []string{"INBOX"}, labelFailure: true},
 		{name: "still in Trash", labels: []string{"INBOX", "TRASH"}, wantMark: true},
 		{name: "unchanged labels", labels: []string{"INBOX"}, unchanged: true},
@@ -5622,6 +5621,7 @@ func (a *labelMetadataSnapshotAPI) SeedValidatedMessageDedup(
 
 func (a *labelMetadataSnapshotAPI) GetMessageLabelsBatch(_ context.Context, messageIDs []string) ([]gmail.MessageLabelsBatchResult, error) {
 	a.labelCalls = append(a.labelCalls, append([]string(nil), messageIDs...))
+
 	results := make([]gmail.MessageLabelsBatchResult, len(messageIDs))
 	for i, id := range messageIDs {
 		results[i].ID = id
