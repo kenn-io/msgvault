@@ -41,8 +41,9 @@ func TestOperationalCatalogUsesFixedNamesAndWriteGates(t *testing.T) {
 	assertions.NotContains(readOnly, "create_import_job")
 	opts.DelegatedOnly = true
 	delegatedTools := toolsByName(t, rawListTools(t, opts, true))
-	assertions.Len(delegatedTools, 1)
+	assertions.Len(delegatedTools, 2)
 	assertions.Contains(delegatedTools, ToolSearchTools)
+	assertions.Contains(delegatedTools, ToolSkills)
 }
 
 func TestOperationalCatalogSchemaRootsAreStable(t *testing.T) {

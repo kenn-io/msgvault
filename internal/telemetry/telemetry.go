@@ -17,6 +17,7 @@ import (
 	"github.com/emersion/go-imap/v2"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/beeper"
+	"go.kenn.io/msgvault/internal/bland"
 	"go.kenn.io/msgvault/internal/calcontrol"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/chatwoot"
@@ -64,7 +65,7 @@ const (
 var actionProperties = map[string]map[string][]string{
 	EventSearchEmpty:   {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
 	EventErrorShown:    {propertySurface: {"web", "tui"}, "kind": {"search", "message", "sync", "other"}},
-	EventSyncFailed:    {"sync_source": {"gmail", "imap", "msmail", "teams", "discord", "beeper", "matrix", "slack", "carddav", "chatwoot", "facebook_comments", "instagram_comments", "instagram_mentions", "facebook_messages", "instagram_messages", "synctech_sms", "gcal", "omi", "granola", "plaud", "pocket", "circleback", "notion_meetings", "twilio", "twenty", "muesli"}, "reason": {"auth", "network", "rate_limited", "other"}},
+	EventSyncFailed:    {"sync_source": {"gmail", "imap", "msmail", "teams", "discord", "beeper", "matrix", "slack", "carddav", "chatwoot", "facebook_comments", "instagram_comments", "instagram_mentions", "facebook_messages", "instagram_messages", "synctech_sms", "gcal", "omi", "granola", "plaud", "pocket", "circleback", "notion_meetings", "twilio", "bland", "twenty", "muesli"}, "reason": {"auth", "network", "rate_limited", "other"}},
 	EventSearchRun:     {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
 	EventMessageOpened: {propertySurface: {"web", "tui", "cli"}},
 	EventSyncFinished:  {propertySurface: {"web", "cli"}},
@@ -196,6 +197,8 @@ func reason(err error) string {
 	} else if e, ok := errors.AsType[*msgraph.StatusError](err); ok {
 		status = e.StatusCode
 	} else if e, ok := errors.AsType[*twilio.APIError](err); ok {
+		status = e.StatusCode
+	} else if e, ok := errors.AsType[*bland.HTTPError](err); ok {
 		status = e.StatusCode
 	} else if e, ok := errors.AsType[*discord.APIError](err); ok {
 		status = e.StatusCode

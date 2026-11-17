@@ -135,6 +135,10 @@ func TestToolDiscoveryVisibilityMatchesToolsList(t *testing.T) {
 			}
 			// Every advertised operation is discoverable by its exact tool name.
 			for name := range listed {
+				if name == ToolSkills {
+					// Server instructions name the guide tool; search_tools covers the archive catalog.
+					continue
+				}
 				response := searchToolsResponse(t, mode.opts, mode.writes, name, 0)
 				names := make([]string, 0, len(response.Results))
 				for _, result := range response.Results {

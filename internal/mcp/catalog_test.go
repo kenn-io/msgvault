@@ -363,6 +363,7 @@ func TestCatalogSchemas(t *testing.T) {
 					"search_metadata",
 					ToolSearchPersonFiles,
 					ToolSearchTools,
+					ToolSkills,
 					"semantic_search_messages",
 				}
 				if shape.similar {
@@ -416,6 +417,10 @@ func TestCatalogSchemas(t *testing.T) {
 				}
 
 				for _, tool := range tools {
+					if tool["name"] == ToolSkills {
+						// Kit owns the guide tool's schemas and annotations.
+						continue
+					}
 					inputSchema, ok := tool["inputSchema"].(map[string]any)
 					must.True(ok, "%s inputSchema", tool["name"])
 					checks.Equal("https://json-schema.org/draft/2020-12/schema", inputSchema["$schema"], "%s input dialect", tool["name"])

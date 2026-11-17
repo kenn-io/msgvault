@@ -43,6 +43,8 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 		return decodePocket(fields)
 	case "twilio_call_json":
 		return decodeTwilio(fields)
+	case "bland_call_json":
+		return decodeBland(fields)
 	case "twenty_json":
 		return decodeTwenty(fields)
 	case "meeting_json":
