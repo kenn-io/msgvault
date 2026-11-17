@@ -67,6 +67,7 @@ const (
 	ToolPreviewPersonTiers        = "preview_person_tiers"
 	ToolExplainPersonTier         = "explain_person_tier"
 	ToolFindContactCandidates     = "find_contact_candidates"
+	ToolGetEmailFamily            = "get_email_family"
 	ToolGetPersonMessagingRoutes  = "get_person_messaging_routes"
 	ToolPromotePerson             = "promote_person"
 	ToolUpdatePersonNotes         = "update_person_notes"
@@ -142,6 +143,7 @@ type ServeOptions struct {
 	PersonTierBackend      PersonTierBackend
 	Kata                   KataBackend
 	ContactRoutesBackend   ContactRoutesBackend
+	EmailFamilyBackend     EmailFamilyBackend
 	// KataLookup enables issue lookup and context reads.
 	KataLookup  bool
 	KataDocbank bool
@@ -430,6 +432,7 @@ func newMCPServerWithPolicy(
 		drafts:               opts.Drafts,
 		contactRoutesBackend: opts.ContactRoutesBackend,
 		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
+		emailFamilyBackend:   opts.EmailFamilyBackend,
 	}
 
 	definitions := authorizedOperationCatalog(opts, allowWrites)

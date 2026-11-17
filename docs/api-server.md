@@ -166,7 +166,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.11.0**.
+it is separate from the binary release version. The current schema is **5.12.0**.
+
+Schema 5.12.0 adds owner-only [related copies](#get-apiv1messagesidfamily).
 
 Schema 5.11.0 adds meeting link suggestions.
 
@@ -1862,6 +1864,61 @@ The `cc`, `bcc`, and `body_html` fields are included only when present. `body` i
 API schema 3.41.0 adds `body_text` for a single message's stored plain-text body, which can be generated from the HTML part and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit `body_text`, and `body` keeps its HTML fallback.
 
 Schema 3.42.0 adds an optional `sender_auth` object to message details and `GET /api/v1/cli/message` for email sources with [receiver pins](configuration.md#sender-authentication). It carries `verified`, `domain`, `authserv_id`, `spf`, `dkim`, and `dmarc`. Only `verified` is always present. Empty results carry `verified: false`. Verification covers the From domain, as reported by the pinned receiving server. List and search responses omit this field.
+
+---
+
+### Related copies {#get-apiv1messagesidfamily}
+
+**Endpoint:** `GET /api/v1/messages/{id}/family`
+
+The other archived copies of an email, plus the replies and forwards that name
+it, across accounts and conversations. Owner credentials only; delegated agent
+tokens are refused. The response is never cached.
+
+**Response:**
+
+```json
+{
+  "anchor_message_id": 12345,
+  "truncated": false,
+  "pending_linkage": false,
+  "members": [
+    {
+      "message_id": 12345,
+      "source_id": 1,
+      "source_type": "imap",
+      "source_identifier": "work@example.com",
+      "account_address": "work@example.com",
+      "account_path": "inbound",
+      "draft": false,
+      "conversation_id": 77,
+      "subject": "Q4 Planning",
+      "sent_at": "2024-10-15T09:30:00Z",
+      "linkage_outcome": "complete",
+      "evidence": "anchor"
+    }
+  ]
+}
+```
+
+`members` includes the opened email. `evidence` is the member's relation to it:
+`anchor`, `copy` (the same Message-ID), `reply`, `replied_to`, `forward`,
+`forwarded_original`, `references`, `indirect` (found through another member) or
+`thread` (in the provider's thread for the opened email or one of its exact copies, with no header link). Members are
+in ascending `message_id` order.
+`account_path` is `inbound` or `sent`, and `draft` is true while the copy is a
+draft. `linkage_outcome` is `complete`, `pending` before the copy's identifiers
+are derived, `missing_message_id` when the copy was indexed but has no stored
+Message-ID for replies to match, or the reason its identifiers could not be
+read; anything other than `complete` may hide relations. The lookup follows Message-ID, In-Reply-To, References and
+attached-original identifiers, and, for Gmail and Google Groups, the provider threads of the email and its exact copies. It stops at 500 copies or 5,000 identifiers, setting `truncated`
+and `truncated_reason` (`members` or `identifiers`); the identifier limit can be
+reached with far fewer than 500 copies. When 500 is exceeded, copies with the same
+Message-ID stay first, then direct replies and forwards, then shared references.
+`pending_linkage` is true while any email in the archive has no derived
+identifiers yet; it could be a related copy the lookup cannot see, so an empty or
+short list is not complete. Deleted and non-email messages are
+left out. A missing message returns 404.
 
 ---
 
