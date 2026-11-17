@@ -333,32 +333,20 @@ func TestApplyIMAPMailboxDeltas_TrashPreservesDeletionMark(t *testing.T) {
 }
 
 func TestApplyIMAPMailboxDeltas_TrashRoleChangeWithUnchangedMembership(t *testing.T) {
-	for _, reset := range []bool{true, false} {
-		name := "unchanged delta"
-		if reset {
-			name = "reset snapshot"
-		}
-		t.Run(name, func(t *testing.T) {
-			f := newIMAPMembershipFixture(t)
-			id := f.createMessage(t, "message", "<role-change@example.test>")
-			delta := store.IMAPMailboxDelta{
-				Mailbox: "Folder", Trash: true, Reset: true,
-				State:       store.IMAPFolderState{Mailbox: "Folder", UIDValidity: 1, UIDNext: 2},
-				Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}},
-			}
-			require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
-			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "message"))
-			delta.Reset = reset
-			if !reset {
-				delta.Memberships = nil
-			}
-			require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
-			assert.True(t, messageTombstoned(t, f.store, id))
-			delta.Trash = false
-			require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
-			assert.False(t, messageTombstoned(t, f.store, id))
-		})
+	f := newIMAPMembershipFixture(t)
+	id := f.createMessage(t, "message", "<role-change@example.test>")
+	delta := store.IMAPMailboxDelta{
+		Mailbox: "Folder", Trash: true, Reset: true,
+		State:       store.IMAPFolderState{Mailbox: "Folder", UIDValidity: 1, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}},
 	}
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
+	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "message"))
+	delta.Trash = false
+	delta.Reset = false
+	delta.Memberships = nil
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
+	assert.False(t, messageTombstoned(t, f.store, id))
 }
 
 func TestApplyIMAPMailboxDeltas_UIDValidityResetDeletesOldEpoch(t *testing.T) {

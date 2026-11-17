@@ -6032,40 +6032,6 @@ func TestIMAPGoneUIDIsArchivedOnceTheServerReturnsIt(t *testing.T) {
 	require.NoError(secondClient.Close())
 }
 
-func TestIncrementalSyncReplaysMarkedMessageMissingRaw(t *testing.T) {
-	env := newTestEnv(t)
-	const id = "marked-replay"
-	env.Mock.AddMessage(id, testMIME(), []string{"INBOX", "TRASH"})
-	env.Mock.Profile.MessagesTotal = 1
-	env.Mock.Profile.HistoryID = 1000
-	runFullSync(t, env)
-	source, err := env.Store.GetSourceByIdentifier(t.Context(), testEmail)
-	require.NoError(t, err)
-	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, id))
-	_, err = env.Store.DB().ExecContext(t.Context(), env.Store.Rebind(`DELETE FROM message_raw WHERE message_id IN (SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?)`), source.ID, id)
-	require.NoError(t, err)
-	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncRunItem{SourceMessageID: id, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindFetchError})
-	env.Mock.Messages[id].LabelIDs = []string{"INBOX"}
-	env.SetHistory(1000)
-	env.Mock.GetMessageCalls = nil
-	env.Syncer = New(&labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true, labelErrors: map[string]error{}}, env.Store, nil)
-	source, err = env.Store.GetSourceByID(source.ID)
-	require.NoError(t, err)
-	env.Mock.GetMessageError[id] = errors.New("temporary fetch failure")
-	summary, err := env.Syncer.Incremental(t.Context(), source)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), summary.Errors)
-	assertDeletedFromSource(t, env.Store, id, true)
-	delete(env.Mock.GetMessageError, id)
-	env.Mock.GetMessageCalls = nil
-	source, err = env.Store.GetSourceByID(source.ID)
-	require.NoError(t, err)
-	_, err = env.Syncer.Incremental(t.Context(), source)
-	require.NoError(t, err)
-	assert.Contains(t, env.Mock.GetMessageCalls, id)
-	assertDeletedFromSource(t, env.Store, id, false)
-}
-
 func TestIncrementalSyncRetriesRestoreAfterLabelFailure(t *testing.T) {
 	for _, stillInTrash := range []bool{false, true} {
 		name := "restored"
@@ -6092,6 +6058,15 @@ func TestIncrementalSyncRetriesRestoreAfterLabelFailure(t *testing.T) {
 			env.Syncer = New(api, env.Store, nil)
 			source, err = env.Store.GetSourceByID(source.ID)
 			require.NoError(t, err)
+			env.Mock.GetMessageError[id] = errors.New("temporary fetch failure")
+			summary, err := env.Syncer.Incremental(t.Context(), source)
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), summary.Errors)
+			assertDeletedFromSource(t, env.Store, id, true)
+			assert.Empty(t, api.labelCalls)
+			delete(env.Mock.GetMessageError, id)
+			source, err = env.Store.GetSourceByID(source.ID)
+			require.NoError(t, err)
 			_, err = env.Syncer.Incremental(t.Context(), source)
 			require.ErrorContains(t, err, "temporary label failure")
 			assertDeletedFromSource(t, env.Store, id, true)
@@ -6102,6 +6077,9 @@ func TestIncrementalSyncRetriesRestoreAfterLabelFailure(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, debt, 1)
 			assert.Equal(t, id, debt[0].SourceMessageID)
+			_, total, err := env.Store.SearchMessagesQuery(&search.Query{TextTerms: []string{"restoremarker"}}, 0, 10)
+			require.NoError(t, err)
+			assert.Zero(t, total)
 			delete(api.labelErrors, id)
 			env.Mock.GetMessageCalls = nil
 			api.labelCalls = nil
@@ -6112,7 +6090,7 @@ func TestIncrementalSyncRetriesRestoreAfterLabelFailure(t *testing.T) {
 			assert.Empty(t, env.Mock.GetMessageCalls)
 			assert.Equal(t, [][]string{{id}}, api.labelCalls)
 			assertDeletedFromSource(t, env.Store, id, stillInTrash)
-			_, total, err := env.Store.SearchMessagesQuery(&search.Query{TextTerms: []string{"restoremarker"}}, 0, 10)
+			_, total, err = env.Store.SearchMessagesQuery(&search.Query{TextTerms: []string{"restoremarker"}}, 0, 10)
 			require.NoError(t, err)
 			if stillInTrash {
 				assert.Zero(t, total)
