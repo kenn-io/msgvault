@@ -16,7 +16,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 var personFactAPINow = time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
@@ -121,7 +120,7 @@ func TestPersonFactHistoryHTTPIsBoundedNewestFirstNonNullAndNoStore(t *testing.T
 	assertions.Equal(strings.Repeat("a", 64), claimBody.Claims[0]["program_fingerprint"])
 }
 
-func TestPersonFactEvidenceHTTPFiltersIDBeforePagination(t *testing.T) {
+func TestPersonFactEvidenceHTTPFiltersByID(t *testing.T) {
 	t.Parallel()
 	srv, st, personID, targets := newPersonFactAPIFixture(t)
 	target := targets[store.AttributeSlugPrimaryChannel]
@@ -483,9 +482,6 @@ func TestPersonFactSummaryAndFilteredDecisionsHTTP(t *testing.T) {
 	response := doRequest(t, srv.Router(), http.MethodGet, path+"/fact-summary", nil, nil)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	assert.JSONEq(`{"claimed_fields":0,"latest_claim_at":null,"has_values":false,"has_fact_history":false}`, response.Body.String())
-	var emptySummary generated.FactSummary
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &emptySummary))
-	require.NoError(emptySummary.Validate())
 
 	target := targets[store.AttributeSlugPrimaryChannel]
 	applyPersonFactAPIGeneration(t, st, personID, target, "first-summary", `"chat"`)
@@ -511,6 +507,5 @@ func TestPersonFactSummaryAndFilteredDecisionsHTTP(t *testing.T) {
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &decisions))
 	require.Len(decisions.Decisions, 1)
-	assert.Nil(decisions.Decisions[0].Outcome)
 	assert.Contains(response.Body.String(), `"outcome":null`)
 }

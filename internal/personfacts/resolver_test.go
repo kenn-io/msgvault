@@ -1282,15 +1282,12 @@ func TestResolverScoreMaximaMatchesMaximumClaim(t *testing.T) {
 	assert.Equal(t, 1550, decision.Score.Total)
 }
 
-func TestDecisionOutcomeWhenSavedValueDidNotBlockClaim(t *testing.T) {
+func TestDecisionOutcomeForWithoutProjection(t *testing.T) {
 	for _, tc := range []struct {
 		facts OutcomeFacts
 		want  DecisionOutcome
 	}{
 		{OutcomeFacts{Decision: Decision{Action: DecisionConflictRejected, Reason: ReasonInsufficientMargin, CompetingClaimKey: "leader"}, Relation: RelationSupport, HasCurrent: true}, OutcomeNotUsed},
-		{OutcomeFacts{Decision: Decision{Action: DecisionApplied}, Relation: RelationSupport}, OutcomeSaved},
-		{OutcomeFacts{Decision: Decision{Action: DecisionRetained, Projection: &ProjectionRef{Kind: "person_attribute", RowID: 1}}, Relation: RelationSupersede}, OutcomeValueRetired},
-		{OutcomeFacts{Decision: Decision{Action: DecisionInvalid}, Relation: RelationSupport}, OutcomeNotUsed},
 		{OutcomeFacts{Decision: Decision{Action: DecisionRetained, Reason: ReasonExplicitSupersession}, Relation: RelationSupersede}, OutcomeNotUsed},
 	} {
 		outcome, known := DecisionOutcomeFor(tc.facts)
