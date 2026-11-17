@@ -121,32 +121,45 @@ func TestCommitmentListPages(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "promise-overdue-order", false)
 		_, persist := newCommitmentTestConversation(t, f)
-		for i := range 5 {
+		for i := range 40 {
 			persist(fmt.Sprintf("undated-%d", i), fmt.Sprintf("I will send report %d.", i), -48*time.Hour+time.Duration(i)*time.Minute)
 		}
-		const quote = "I will call by 2026-08-21."
+		const quote = "I will call by 2026-08-22."
 		persist("overdue", quote, -24*time.Hour)
 		cfg, profile := commitmentTestConfig()
 		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 		r.NoError(err)
-		r.Len(window.Sources, 6)
+		r.Len(window.Sources, 41)
 		output := peoplesweep.ParsedCommitments{}
 		for _, source := range window.Sources {
 			promise := peoplesweep.CommitmentPromise{SourceID: source.ID, Direction: source.Direction, Quote: source.Text, Start: source.Start, End: source.Start + int64(len([]rune(source.Text))), Summary: "Keep the promise"}
 			if source.Text == quote {
-				promise.DueOn = new("2026-08-21")
-				promise.DuePhrase = new("by 2026-08-21")
+				promise.DueOn = new("2026-08-22")
+				promise.DuePhrase = new("by 2026-08-22")
 			}
 			output.Promises = append(output.Promises, promise)
 		}
 		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
 		r.NoError(err)
-		items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 5, false)
+		items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 40, false)
 		r.NoError(err)
-		r.Len(items, 5)
+		r.Len(items, 40)
+		for _, item := range items {
+			r.NotEqual(quote, item.Quote)
+		}
+		location, err := time.LoadLocation("Pacific/Kiritimati")
+		r.NoError(err)
+		items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow.In(location), 40, false)
+		r.NoError(err)
+		r.Len(items, 40)
 		r.Equal(quote, items[0].Quote)
 		r.NotNil(items[0].DueOn)
-		r.Equal("2026-08-21", *items[0].DueOn)
+		r.Equal("2026-08-22", *items[0].DueOn)
+		seen := make(map[int64]bool)
+		for _, item := range items {
+			r.False(seen[item.ID])
+			seen[item.ID] = true
+		}
 	})
 	t.Run("submillisecond times", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()

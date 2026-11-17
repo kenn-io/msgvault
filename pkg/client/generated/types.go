@@ -7335,6 +7335,7 @@ type LoopCommitment struct {
 	DueOn        *string                 `json:"due_on,omitzero"`
 	Freshness    LoopCommitmentFreshness `json:"freshness" validate:"required"`
 	ID           string                  `json:"id" validate:"required"`
+	Overdue      bool                    `json:"overdue"`
 	PersonID     int64                   `json:"person_id"`
 	Promise      CommitmentQuote         `json:"promise"`
 	PromisedAt   time.Time               `json:"promised_at" validate:"required"`

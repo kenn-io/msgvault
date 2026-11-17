@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -539,10 +541,12 @@ type commitmentListStore struct {
 	includeClosed bool
 	until         time.Time
 	promisedAt    time.Time
+	selectionDay  string
 }
 
 func (s *commitmentListStore) ListPersonCommitmentsContext(_ context.Context, _ int64, now time.Time, _ int, includeClosed bool) ([]store.PersonCommitment, error) {
 	s.includeClosed = includeClosed
+	s.selectionDay = now.Format(time.DateOnly)
 	now = now.UTC()
 	due := "2026-01-15"
 	until := now.Add(24 * time.Hour)
@@ -551,12 +555,46 @@ func (s *commitmentListStore) ListPersonCommitmentsContext(_ context.Context, _ 
 	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Start: 0, End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: now, State: "snoozed", DueOn: &due, SnoozedUntil: &until}}, nil
 }
 
+func TestListLoopsUsesCurrentActivityTimezone(t *testing.T) {
+	r := require.New(t)
+	f := storetest.New(t)
+	st := &commitmentListStore{Store: f.Store}
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	r.NoError(os.WriteFile(cfg.ConfigFilePath(), []byte("[activity]\ntimezone = 'America/New_York'\n"), 0o600))
+	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+	server.clock = func() time.Time { return time.Date(2026, 1, 16, 2, 0, 0, 0, time.UTC) }
+	w := httptest.NewRecorder()
+	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
+	r.Equal(http.StatusOK, w.Code, w.Body.String())
+	r.Equal("2026-01-15", st.selectionDay)
+	var response struct {
+		Commitments []struct {
+			Overdue bool `json:"overdue"`
+		} `json:"commitments"`
+	}
+	r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	r.Len(response.Commitments, 1)
+	r.False(response.Commitments[0].Overdue)
+	r.NoError(os.WriteFile(cfg.ConfigFilePath(), []byte("[activity]\ntimezone = 'UTC'\n"), 0o600))
+	w = httptest.NewRecorder()
+	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
+	r.Equal(http.StatusOK, w.Code, w.Body.String())
+	r.Equal("2026-01-16", st.selectionDay)
+	r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	r.Len(response.Commitments, 1)
+	r.True(response.Commitments[0].Overdue)
+}
+
 func TestListLoopsMapsCommitmentsAndForwardsIncludeClosed(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	st := &commitmentListStore{Store: f.Store}
-	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+	server.clock = func() time.Time { return time.Date(2026, 1, 16, 2, 0, 0, 0, time.UTC) }
 	w := httptest.NewRecorder()
 	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops?include_closed=true", nil))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
@@ -566,5 +604,5 @@ func TestListLoopsMapsCommitmentsAndForwardsIncludeClosed(t *testing.T) {
 	require.NotEmpty(response.Commitments)
 	due := "2026-01-15"
 	until := st.until
-	assert.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call.", Start: 0, End: 12}, PromisedAt: st.promisedAt, Freshness: "fresh", State: "snoozed", DueOn: &due, SnoozedUntil: &until}, response.Commitments[0])
+	assert.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call.", Start: 0, End: 12}, PromisedAt: st.promisedAt, Freshness: "fresh", State: "snoozed", DueOn: &due, SnoozedUntil: &until, Overdue: true}, response.Commitments[0])
 }

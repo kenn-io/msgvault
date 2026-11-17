@@ -104,12 +104,6 @@
     if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h`;
     return `${Math.floor(seconds / 60)}m`;
   }
-
-  function isOverdue(day: string): boolean {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return new Date(`${day}T00:00:00`) < today;
-  }
 </script>
 
 <div class="open-loops-section">
@@ -145,7 +139,7 @@
               <li class="promise">
                 <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>“{promise.promise.text}”</a>
                 <span class="muted">
-                  {#if promise.due_on}{isOverdue(promise.due_on) ? 'overdue' : 'due'} {formatShortDate(`${promise.due_on}T00:00:00`)}{' · '}{/if}made {ageLabel(promise.promised_at)} ago
+                  {#if promise.due_on}{promise.overdue ? 'overdue' : 'due'} {formatShortDate(`${promise.due_on}T00:00:00`)}{' · '}{/if}made {ageLabel(promise.promised_at)} ago
                 </span>
               </li>
             {/each}

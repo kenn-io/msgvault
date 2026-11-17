@@ -78,7 +78,7 @@ describe("PersonOpenLoops", () => {
       truncated: true,
       commitments: [
         { ...promise(12, "I will send the draft.", 52), summary: "Send the draft", due_on: "2099-11-20" },
-        { ...promise(13, "I will check the venue.", 53), summary: "Check the venue", direction: "owed_to", freshness: "stale", due_on: "2000-11-15" },
+        { ...promise(13, "I will check the venue.", 53), summary: "Check the venue", direction: "owed_to", freshness: "stale", due_on: "2000-11-15", overdue: true },
       ],
     }));
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
@@ -92,6 +92,16 @@ describe("PersonOpenLoops", () => {
     expect(cite.closest("li")?.textContent).toContain("due Nov 20, 2099");
     expect(cite.closest("li")?.textContent).toMatch(/made \d+[dhm] ago/);
     expect(stale.closest("li")?.textContent).toContain("overdue Nov 15, 2000");
+  });
+
+  it("uses the archive's overdue status rather than the browser date", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({
+      items: [],
+      commitments: [{ ...promise(12, "I will send it."), due_on: "2099-11-20", overdue: true }],
+    }));
+    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+    const cite = await screen.findByRole("link", { name: "“I will send it.”" });
+    expect(cite.closest("li")?.textContent).toContain("overdue Nov 20, 2099");
   });
 
   it("shows a plus when more loops are open than the card lists", async () => {

@@ -11,6 +11,7 @@ export interface LoopCommitment {
   due_on?: string;
   freshness: LoopCommitmentFreshness;
   id: string;
+  overdue: boolean;
   person_id: number;
   promise: CommitmentQuote;
   promised_at: string;

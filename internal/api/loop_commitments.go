@@ -30,6 +30,7 @@ type LoopCommitment struct {
 	State        string          `json:"state" enum:"open,done,snoozed"`
 	SnoozedUntil *time.Time      `json:"snoozed_until,omitempty"`
 	DueOn        *string         `json:"due_on,omitempty"`
+	Overdue      bool            `json:"overdue"`
 }
 
 type CommitmentDecisionRequest struct {
@@ -43,12 +44,12 @@ type CommitmentDecisionResponse struct {
 	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
 }
 
-func loopCommitments(commitments []store.PersonCommitment) []LoopCommitment {
+func loopCommitments(commitments []store.PersonCommitment, now time.Time) []LoopCommitment {
 	var response []LoopCommitment
 	for _, c := range commitments {
 		response = append(response, LoopCommitment{
 			ID: loops.FormatCommitmentID(c.ID), PersonID: c.PersonID,
-			Direction: c.Direction, Summary: c.Summary, PromisedAt: c.PromisedAt, DueOn: c.DueOn,
+			Direction: c.Direction, Summary: c.Summary, PromisedAt: c.PromisedAt, DueOn: c.DueOn, Overdue: c.DueOn != nil && *c.DueOn < now.Format(time.DateOnly),
 			Freshness: string(c.Freshness), State: c.State, SnoozedUntil: c.SnoozedUntil,
 			Promise: CommitmentQuote{MessageID: c.AnchorMessageID, Text: c.Quote, Start: c.Start, End: c.End},
 		})

@@ -150,14 +150,13 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "person_id, limit and include_closed must be valid")
 		return
 	}
-	evidence := &gatedLoopEvidence{Store: loopStore, gate: s.operationGate}
-	result, err := loops.List(r.Context(), evidence, opts, s.clockNow().UTC())
+	result, now, err := s.listLoops(r.Context(), loopStore, opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list open loops")
 		return
 	}
 	response := loopListResponse(result)
-	response.Commitments = loopCommitments(result.Commitments)
+	response.Commitments = loopCommitments(result.Commitments, now)
 	if !s.addCommitmentDiscovery(w, r, loopStore, opts.PersonID, &response) {
 		return
 	}
@@ -181,6 +180,28 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 	if result.CoverageIncomplete {
 		s.startLoopEvidence(loopStore, opts.PersonID)
 	}
+}
+
+func (s *Server) listLoops(ctx context.Context, loopStore loops.Store, opts loops.Options) (loops.Result, time.Time, error) {
+	now := s.clockNow().UTC()
+	if s.cfg != nil {
+		cfg, err := s.currentPersonTierConfig()
+		if err != nil {
+			return loops.Result{}, now, err
+		}
+		zone := cfg.Activity.Timezone
+		if zone == "" {
+			zone = "UTC"
+		}
+		location, err := time.LoadLocation(zone)
+		if err != nil {
+			return loops.Result{}, now, err
+		}
+		now = now.In(location)
+	}
+	evidence := &gatedLoopEvidence{Store: loopStore, gate: s.operationGate}
+	result, err := loops.List(ctx, evidence, opts, now)
+	return result, now, err
 }
 
 // startLoopEvidence continues an incomplete request under the server lifetime.
