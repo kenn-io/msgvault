@@ -291,7 +291,8 @@ msgvault person identities 7
 
 The report gives `cards_scanned`, `participants_bound`, `participants_unbound`,
 and `conflicts`. Counts in a dry run describe its read snapshot; an apply
-recomputes them. Conflict details contain participant and person IDs, without
+recomputes them. Sync output and run history report binding conflicts archive-wide
+at the time of that run, including conflicts from other connections. Conflict details contain participant and person IDs, without
 addresses. A shared address claimed by different saved people, or a participant
 already bound to another person, is reported without moving it or merging
 profiles. Correct the cards or inspect the people and explicitly merge them

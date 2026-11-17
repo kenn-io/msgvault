@@ -848,7 +848,7 @@ type CardDAVRunResponse struct {
 	Created          int64      `json:"created"`
 	Updated          int64      `json:"updated"`
 	Removed          int64      `json:"removed"`
-	BindingConflicts *int64     `json:"binding_conflicts,omitempty"`
+	BindingConflicts *int64     `json:"binding_conflicts,omitempty" doc:"CardDAV binding conflicts archive-wide at this run."`
 	ErrorCode        string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,google_authorization_required,microsoft_authorization_required,microsoft_contact_too_large,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
 	ErrorMessage     string     `json:"error_message,omitempty"`
 }

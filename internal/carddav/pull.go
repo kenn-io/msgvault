@@ -55,7 +55,7 @@ type SyncResult struct {
 	Created          int                     `json:"created"`
 	Updated          int                     `json:"updated"`
 	Removed          int                     `json:"removed"`
-	BindingConflicts *int                    `json:"binding_conflicts,omitempty"`
+	BindingConflicts *int                    `json:"binding_conflicts,omitempty" doc:"CardDAV binding conflicts archive-wide at this run."`
 	Status           string                  `json:"status,omitempty" enum:"succeeded,partial,failed"`
 	Connections      []ConnectionSyncOutcome `json:"connections,omitempty"`
 }

@@ -224,8 +224,8 @@ describe('CardDAVOperations', () => {
     render(CardDAVOperations, { controller });
 
     const rows = screen.getAllByRole('row');
-    expect(rows[1].textContent).toContain('2 binding conflicts');
-    expect(rows[2].textContent).toContain('1 binding conflict');
+    expect(rows[1].textContent).toContain('2 binding conflicts archive-wide at this run');
+    expect(rows[2].textContent).toContain('1 binding conflict archive-wide at this run');
     expect(screen.getAllByText('msgvault carddav bind-participants --dry-run')).toHaveLength(1);
     controller.destroy();
   });
@@ -246,7 +246,7 @@ describe('CardDAVOperations', () => {
   });
 
   it.each([
-    { name: 'one', count: 1, warning: 'Run msgvault carddav bind-participants --dry-run to review 1 CardDAV binding conflict.' },
+    { name: 'one', count: 1, warning: 'Run msgvault carddav bind-participants --dry-run to review 1 CardDAV binding conflict archive-wide at this run.' },
     { name: 'zero', count: 0, warning: undefined },
     { name: 'absent', count: undefined, warning: undefined },
   ])('shows the binding conflict warning only for a positive count: $name', ({ count, warning }) => {

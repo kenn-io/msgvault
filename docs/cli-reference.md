@@ -3789,6 +3789,8 @@ with no enabled connection fails as unavailable. Aggregate sync prints counts
 and safe failure codes per connection, and exits nonzero for partial or failed
 outcomes. Book IDs, publication commands and conflict commands remain global;
 network operations use the owning connection's credentials.
+Sync reports binding conflicts archive-wide at the time of the run, including
+conflicts from other connections.
 
 Directory and integrations can also use the
 [publication API](/docs/usage/people-carddav/#sync-and-publish-selected-people).

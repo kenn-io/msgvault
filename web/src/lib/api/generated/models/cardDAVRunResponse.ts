@@ -7,6 +7,7 @@ import type { CardDAVRunResponseTrigger } from "./cardDAVRunResponseTrigger";
 
 export interface CardDAVRunResponse {
   account_id: number;
+  /** CardDAV binding conflicts archive-wide at this run. */
   binding_conflicts?: number;
   books: number;
   connection?: string;

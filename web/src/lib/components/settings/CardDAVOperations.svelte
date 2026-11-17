@@ -159,7 +159,7 @@
     {#if (controller.bindingConflicts ?? 0) > 0}
       <p class="notice notice--warning" role="status">
         <span>Run <code>msgvault carddav bind-participants --dry-run</code> to review
-          {controller.bindingConflicts?.toLocaleString()} CardDAV binding {controller.bindingConflicts === 1 ? 'conflict' : 'conflicts'}.</span>
+          {controller.bindingConflicts?.toLocaleString()} CardDAV binding {controller.bindingConflicts === 1 ? 'conflict' : 'conflicts'} archive-wide at this run.</span>
       </p>
     {/if}
     {#if controller.syncUnknown}
@@ -272,7 +272,7 @@
     {#if !controller.runsLoading && controller.runs.length === 0}<p>No CardDAV sync history yet.</p>{/if}
     {#if controller.runs.length > 0}
       {#if controller.runs.some((run) => (run.binding_conflicts ?? 0) > 0)}
-        <p class="helper">Review binding conflicts with <code>msgvault carddav bind-participants --dry-run</code>.</p>
+        <p class="helper">Review archive-wide binding conflicts with <code>msgvault carddav bind-participants --dry-run</code>.</p>
       {/if}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex (the overflow region must accept keyboard focus) -->
       <div class="history-scroll" role="region" aria-label="Scrollable CardDAV sync history" tabindex="0">
@@ -301,7 +301,7 @@
               <td>{historyRun.trigger === 'scheduled' ? 'Scheduled' : 'Manual'}</td>
               <td
                 >{counters(historyRun)}{#if historyRun.binding_conflicts !== undefined && historyRun.binding_conflicts > 0}<span class="conflict-copy"
-                    >{historyRun.binding_conflicts.toLocaleString()} binding conflict{historyRun.binding_conflicts === 1 ? '' : 's'}</span
+                    >{historyRun.binding_conflicts.toLocaleString()} binding conflict{historyRun.binding_conflicts === 1 ? '' : 's'} archive-wide at this run</span
                   >{/if}{#if historyRun.error_message}<span class="error-copy"
                     >{historyRun.error_message}</span
                   >{/if}</td

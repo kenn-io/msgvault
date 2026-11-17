@@ -2125,7 +2125,9 @@ func (c CardDAVResolveRequest) Validate() error {
 }
 
 type CardDAVRunResponse struct {
-	AccountID        int64                        `json:"account_id"`
+	AccountID int64 `json:"account_id"`
+
+	// BindingConflicts CardDAV binding conflicts archive-wide at this run.
 	BindingConflicts *int64                       `json:"binding_conflicts,omitempty"`
 	Books            int64                        `json:"books"`
 	Connection       *string                      `json:"connection,omitzero"`
@@ -16259,6 +16261,7 @@ func (s Summary) Validate() error {
 }
 
 type SyncResult struct {
+	// BindingConflicts CardDAV binding conflicts archive-wide at this run.
 	BindingConflicts *int64                  `json:"binding_conflicts,omitempty"`
 	Books            int64                   `json:"books"`
 	Connections      []ConnectionSyncOutcome `json:"connections,omitempty"`

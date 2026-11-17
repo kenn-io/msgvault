@@ -2247,6 +2247,7 @@ components:
           format: int64
           type: integer
         binding_conflicts:
+          description: CardDAV binding conflicts archive-wide at this run.
           format: int64
           type: integer
         books:
@@ -15969,6 +15970,7 @@ components:
     SyncResult:
       properties:
         binding_conflicts:
+          description: CardDAV binding conflicts archive-wide at this run.
           format: int64
           type: integer
         books:
