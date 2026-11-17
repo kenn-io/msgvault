@@ -34,6 +34,8 @@ type BeginGoogleCardDAVAuthorizationBody = CardDAVGoogleAuthorizeRequest
 
 type CompleteGoogleCardDAVAuthorizationBody = CardDAVGoogleCallbackRequest
 
+type ReconcileCardDAVParticipantBindingsBody = CardDAVParticipantBindingOptions
+
 type ApproveCardDAVPublicationBody = CardDAVPublicationApprovalRequest
 
 type SyncCardDAVBody = CardDAVSyncRequest

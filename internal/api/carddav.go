@@ -836,20 +836,21 @@ type CardDAVSyncRequest struct {
 }
 
 type CardDAVRunResponse struct {
-	AccountID    int64      `json:"account_id"`
-	Connection   string     `json:"connection,omitempty"`
-	ID           int64      `json:"id"`
-	Trigger      string     `json:"trigger" enum:"manual,scheduled"`
-	Full         bool       `json:"full"`
-	State        string     `json:"state" enum:"running,succeeded,failed,cancelled,partial"`
-	StartedAt    time.Time  `json:"started_at"`
-	FinishedAt   *time.Time `json:"finished_at,omitempty"`
-	Books        int64      `json:"books"`
-	Created      int64      `json:"created"`
-	Updated      int64      `json:"updated"`
-	Removed      int64      `json:"removed"`
-	ErrorCode    string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,google_authorization_required,microsoft_authorization_required,microsoft_contact_too_large,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
-	ErrorMessage string     `json:"error_message,omitempty"`
+	AccountID        int64      `json:"account_id"`
+	Connection       string     `json:"connection,omitempty"`
+	ID               int64      `json:"id"`
+	Trigger          string     `json:"trigger" enum:"manual,scheduled"`
+	Full             bool       `json:"full"`
+	State            string     `json:"state" enum:"running,succeeded,failed,cancelled,partial"`
+	StartedAt        time.Time  `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	Books            int64      `json:"books"`
+	Created          int64      `json:"created"`
+	Updated          int64      `json:"updated"`
+	Removed          int64      `json:"removed"`
+	BindingConflicts *int64     `json:"binding_conflicts,omitempty" doc:"CardDAV binding conflicts archive-wide at this run."`
+	ErrorCode        string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,google_authorization_required,microsoft_authorization_required,microsoft_contact_too_large,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
+	ErrorMessage     string     `json:"error_message,omitempty"`
 }
 
 type CardDAVStatusAccount struct {
@@ -888,7 +889,8 @@ func cardDAVRunResponse(run *store.CardDAVSyncRun) *CardDAVRunResponse {
 		ID: run.ID, AccountID: run.AccountID, Trigger: string(run.Trigger), Full: run.Full, State: string(run.State),
 		StartedAt: run.StartedAt, FinishedAt: run.FinishedAt,
 		Books: run.Books, Created: run.Created, Updated: run.Updated, Removed: run.Removed,
-		ErrorCode: errorCode, ErrorMessage: errorMessage,
+		BindingConflicts: run.BindingConflicts,
+		ErrorCode:        errorCode, ErrorMessage: errorMessage,
 	}
 }
 
@@ -1067,6 +1069,7 @@ func (c *CardDAVController) Runs(ctx context.Context, limit int, beforeID *int64
 }
 
 func (s *Server) registerCardDAVRoutes(api huma.API) {
+	s.registerCardDAVParticipantBindingRoutes(api)
 	authorize := rawAPIV1Operation("beginGoogleCardDAVAuthorization", http.MethodPost, "/carddav/google/authorize", "Start Google Contacts authorization in a browser")
 	authorize.Description = "Start sign-in from the msgvault Web UI. The Origin header must match the redirect_uri origin, and redirect_uri must be the Web UI's root URL. For terminal authorization, use msgvault carddav authorize-google."
 	authorize.Parameters = append(authorize.Parameters, &huma.Param{Name: "Origin", In: "header", Required: true,
@@ -1318,6 +1321,7 @@ func (s *Server) handleCardDAVAccountSave(w http.ResponseWriter, r *http.Request
 	if !decodeCardDAV(w, r, &req) {
 		return
 	}
+	defer s.refreshCardDAVIdentityChanges(r.Context())()
 	result, err := s.cardDAV.Save(r.Context(), req)
 	if err != nil {
 		s.writeCardDAVAccountError(w, err, "CardDAV discovery or save failed")
@@ -1516,6 +1520,7 @@ func (s *Server) handleCardDAVBookRoles(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bad_request", "write_target, subscribed, and lookup_source are required")
 		return
 	}
+	defer s.refreshCardDAVIdentityChanges(r.Context())()
 	if err = svc.SetBookRoles(r.Context(), id, carddav.BookRoles{WriteTarget: *req.WriteTarget, Subscribed: *req.Subscribed, LookupSource: *req.LookupSource}); err != nil {
 		s.writeCardDAVOperationError(w, err, "CardDAV role update failed")
 		return
@@ -1575,6 +1580,7 @@ func (s *Server) mutatePublication(w http.ResponseWriter, r *http.Request, mutat
 		writeError(w, 400, "bad_request", err.Error())
 		return
 	}
+	defer s.refreshCardDAVIdentityChanges(r.Context())()
 	if err = mutate(svc, id); err != nil {
 		s.writeCardDAVOperationError(w, err, "CardDAV publication failed")
 		return
@@ -1695,6 +1701,7 @@ func (s *Server) handleCardDAVResolve(w http.ResponseWriter, r *http.Request) {
 	if !decodeCardDAV(w, r, &req) {
 		return
 	}
+	defer s.refreshCardDAVIdentityChanges(r.Context())()
 	if err = svc.ResolveConflict(r.Context(), id, req.Choice); err != nil {
 		s.writeCardDAVOperationError(w, err, "CardDAV conflict resolution failed")
 		return
@@ -1710,6 +1717,7 @@ func (s *Server) handleCardDAVSync(w http.ResponseWriter, r *http.Request) {
 	if !decodeCardDAV(w, r, &req) {
 		return
 	}
+	defer s.refreshCardDAVIdentityChanges(r.Context())()
 	var result carddav.SyncResult
 	var err error
 	if s.cardDAV.cfg == nil {
@@ -1731,4 +1739,12 @@ func (s *Server) handleCardDAVSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, result)
+}
+
+func (s *Server) refreshCardDAVIdentityChanges(ctx context.Context) func() {
+	return func() {
+		if refresher, ok := s.store.(interface{ QueueCardDAVIdentityCacheRefresh(ctx context.Context) }); ok {
+			refresher.QueueCardDAVIdentityCacheRefresh(context.WithoutCancel(ctx))
+		}
+	}
 }

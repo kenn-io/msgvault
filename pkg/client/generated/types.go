@@ -1959,6 +1959,59 @@ func (c CardDAVGoogleCallbackRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type CardDAVParticipantBindingConflict struct {
+	ParticipantID int64                                   `json:"participant_id"`
+	PersonIds     []int64                                 `json:"person_ids" validate:"required"`
+	Reason        CardDAVParticipantBindingConflictReason `json:"reason" validate:"required"`
+}
+
+func (c CardDAVParticipantBindingConflict) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.PersonIds, "required"); err != nil {
+		errors = errors.Append("PersonIds", err)
+	}
+	if v, ok := any(c.Reason).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Reason", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CardDAVParticipantBindingOptions struct {
+	DryRun bool `json:"dry_run"`
+	Undo   bool `json:"undo"`
+}
+
+type CardDAVParticipantBindingResult struct {
+	CardsScanned        int64                               `json:"cards_scanned"`
+	ConflictDetails     []CardDAVParticipantBindingConflict `json:"conflict_details" validate:"required"`
+	Conflicts           int64                               `json:"conflicts"`
+	ParticipantsBound   int64                               `json:"participants_bound"`
+	ParticipantsUnbound int64                               `json:"participants_unbound"`
+}
+
+func (c CardDAVParticipantBindingResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.ConflictDetails, "required"); err != nil {
+		errors = errors.Append("ConflictDetails", err)
+	}
+	for i, item := range c.ConflictDetails {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("ConflictDetails[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CardDAVPublicationApprovalRequest struct {
 	ApprovalToken string `json:"approval_token" validate:"required,min=1"`
 }
@@ -2072,20 +2125,23 @@ func (c CardDAVResolveRequest) Validate() error {
 }
 
 type CardDAVRunResponse struct {
-	AccountID    int64                        `json:"account_id"`
-	Books        int64                        `json:"books"`
-	Connection   *string                      `json:"connection,omitzero"`
-	Created      int64                        `json:"created"`
-	ErrorCode    *CardDAVRunResponseErrorCode `json:"error_code,omitempty"`
-	ErrorMessage *string                      `json:"error_message,omitzero"`
-	FinishedAt   *time.Time                   `json:"finished_at,omitempty"`
-	Full         bool                         `json:"full"`
-	ID           int64                        `json:"id"`
-	Removed      int64                        `json:"removed"`
-	StartedAt    time.Time                    `json:"started_at" validate:"required"`
-	State        CardDAVRunResponseState      `json:"state" validate:"required"`
-	Trigger      CardDAVRunResponseTrigger    `json:"trigger" validate:"required"`
-	Updated      int64                        `json:"updated"`
+	AccountID int64 `json:"account_id"`
+
+	// BindingConflicts CardDAV binding conflicts archive-wide at this run.
+	BindingConflicts *int64                       `json:"binding_conflicts,omitempty"`
+	Books            int64                        `json:"books"`
+	Connection       *string                      `json:"connection,omitzero"`
+	Created          int64                        `json:"created"`
+	ErrorCode        *CardDAVRunResponseErrorCode `json:"error_code,omitempty"`
+	ErrorMessage     *string                      `json:"error_message,omitzero"`
+	FinishedAt       *time.Time                   `json:"finished_at,omitempty"`
+	Full             bool                         `json:"full"`
+	ID               int64                        `json:"id"`
+	Removed          int64                        `json:"removed"`
+	StartedAt        time.Time                    `json:"started_at" validate:"required"`
+	State            CardDAVRunResponseState      `json:"state" validate:"required"`
+	Trigger          CardDAVRunResponseTrigger    `json:"trigger" validate:"required"`
+	Updated          int64                        `json:"updated"`
 }
 
 func (c CardDAVRunResponse) Validate() error {
@@ -16205,12 +16261,14 @@ func (s Summary) Validate() error {
 }
 
 type SyncResult struct {
-	Books       int64                   `json:"books"`
-	Connections []ConnectionSyncOutcome `json:"connections,omitempty"`
-	Created     int64                   `json:"created"`
-	Removed     int64                   `json:"removed"`
-	Status      *SyncResultStatus       `json:"status,omitempty"`
-	Updated     int64                   `json:"updated"`
+	// BindingConflicts CardDAV binding conflicts archive-wide at this run.
+	BindingConflicts *int64                  `json:"binding_conflicts,omitempty"`
+	Books            int64                   `json:"books"`
+	Connections      []ConnectionSyncOutcome `json:"connections,omitempty"`
+	Created          int64                   `json:"created"`
+	Removed          int64                   `json:"removed"`
+	Status           *SyncResultStatus       `json:"status,omitempty"`
+	Updated          int64                   `json:"updated"`
 }
 
 func (s SyncResult) Validate() error {

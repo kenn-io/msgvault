@@ -156,6 +156,12 @@
     {/if}
     {#if controller.syncError}<p class="notice notice--error" role="alert">{controller.syncError}</p>{/if}
     {#if controller.syncStatus}<p class="notice notice--success" role="status">{controller.syncStatus}</p>{/if}
+    {#if (controller.bindingConflicts ?? 0) > 0}
+      <p class="notice notice--warning" role="status">
+        <span><span>{controller.bindingConflicts?.toLocaleString()} archive‑wide CardDAV binding {controller.bindingConflicts === 1 ? 'conflict' : 'conflicts'}.</span>
+          <span class="conflict-command">Run <code>msgvault carddav bind-participants --dry-run</code> for details.</span></span>
+      </p>
+    {/if}
     {#if controller.syncUnknown}
       <div class="notice notice--error" role="alert">
         <span>Current CardDAV sync state is unknown. Refresh state before starting another sync.</span>
@@ -265,6 +271,9 @@
     {/if}
     {#if !controller.runsLoading && controller.runs.length === 0}<p>No CardDAV sync history yet.</p>{/if}
     {#if controller.runs.length > 0}
+      {#if controller.runs.some((run) => (run.binding_conflicts ?? 0) > 0)}
+        <p class="helper">Review archive-wide binding conflicts with <code>msgvault carddav bind-participants --dry-run</code>.</p>
+      {/if}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex (the overflow region must accept keyboard focus) -->
       <div class="history-scroll" role="region" aria-label="Scrollable CardDAV sync history" tabindex="0">
         <Table ariaLabel="CardDAV sync history" zebra={false} class="history-table" unsorted>
@@ -291,7 +300,9 @@
               >
               <td>{historyRun.trigger === 'scheduled' ? 'Scheduled' : 'Manual'}</td>
               <td
-                >{counters(historyRun)}{#if historyRun.error_message}<span class="error-copy"
+                >{counters(historyRun)}{#if historyRun.binding_conflicts !== undefined && historyRun.binding_conflicts > 0}<span class="conflict-copy"
+                    >{historyRun.binding_conflicts.toLocaleString()} binding conflict{historyRun.binding_conflicts === 1 ? '' : 's'} archive‑wide as of this run</span
+                  >{/if}{#if historyRun.error_message}<span class="error-copy"
                     >{historyRun.error_message}</span
                   >{/if}</td
               >
@@ -351,6 +362,10 @@
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
+  .helper code {
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
+  }
   .notice {
     display: flex;
     align-items: center;
@@ -371,9 +386,25 @@
     background: var(--status-success-bg);
     color: var(--status-success-ink);
   }
+  .notice--warning {
+    border-color: var(--status-warning-ink);
+    background: var(--status-warning-bg);
+    color: var(--status-warning-ink);
+  }
+  .notice--warning code {
+    font-size: 0.85em;
+    overflow-wrap: anywhere;
+  }
+  .conflict-command {
+    display: block;
+  }
   .error-copy {
     display: block;
     color: var(--text-danger);
+    font-size: var(--font-size-sm);
+  }
+  .conflict-copy {
+    display: block;
     font-size: var(--font-size-sm);
   }
   .history-scroll {

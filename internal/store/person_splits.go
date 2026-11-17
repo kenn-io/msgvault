@@ -210,7 +210,7 @@ func (s *Store) splitPersonMergeOnce(
 			args := []any{newPersonID, request.SourcePersonID}
 			args = append(args, personMergeSnapshotIDArgs(request.ParticipantIDs)...)
 			bindingResult, err := tx.ExecContext(ctx, `UPDATE person_participants
-				SET person_id = ? WHERE person_id = ? AND participant_id IN (`+
+				SET person_id = ?, carddav_owned = FALSE WHERE person_id = ? AND participant_id IN (`+
 				personMergeSnapshotPlaceholders(len(request.ParticipantIDs))+`)`, args...)
 			if err != nil {
 				return fmt.Errorf("move split participant bindings: %w", err)

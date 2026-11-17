@@ -740,3 +740,54 @@ func TestMergeParticipantsRollsBackWhenCandidateRewriteFails(t *testing.T) {
 		"candidate endpoints must roll back",
 	)
 }
+
+func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
+	for _, tc := range []struct {
+		name, survivorEmail, want string
+		thirdHolder, conflict     bool
+	}{
+		{name: "different survivor email", survivorEmail: "survivor@example.test"},
+		{name: "survivor has primary", survivorEmail: "ABSORBED@example.test", want: "ABSORBED@example.test"},
+		{name: "another participant holds identifier", survivorEmail: "survivor@example.test", thirdHolder: true, conflict: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := storetest.New(t).Store
+			absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
+			require.NoError(t, err)
+			survivor, err := st.EnsureParticipant(tc.survivorEmail, "Survivor", "example.test")
+			require.NoError(t, err)
+			var third int64
+			if tc.thirdHolder {
+				third, err = st.EnsureParticipant("third@example.test", "Third", "example.test")
+				require.NoError(t, err)
+				require.NoError(t, st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
+			}
+			err = st.MergeParticipants(absorbed, survivor)
+			if tc.conflict {
+				require.ErrorIs(t, err, store.ErrIdentifierAddressConflict)
+				var count int
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participants WHERE id IN (?, ?)`), absorbed, survivor).Scan(&count))
+				assert.Equal(t, 2, count)
+			} else {
+				require.NoError(t, err)
+				var primary string
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), survivor).Scan(&primary))
+				if tc.want != "" {
+					assert.Equal(t, tc.want, primary)
+					var count int
+					require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND LOWER(identifier_value) = LOWER(?)`), survivor, "absorbed@example.test").Scan(&count))
+					assert.Zero(t, count)
+				} else {
+					var count int
+					require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND identifier_value = ?`), survivor, "absorbed@example.test").Scan(&count))
+					assert.Equal(t, 1, count)
+				}
+			}
+			if tc.thirdHolder {
+				owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
+				require.NoError(t, err)
+				assert.Equal(t, third, owner)
+			}
+		})
+	}
+}
