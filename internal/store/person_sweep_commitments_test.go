@@ -64,6 +64,25 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	}
 }
 
+func TestCommitmentListKeepsUnknownEvidenceVersion(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "promise-unknown-version", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	messageID := persist("promise", "I will send the draft.", -time.Hour)
+	cfg, _ := commitmentTestConfig()
+	applyCommitmentTestSources(t, f, cfg.Commitments, nil)
+	result, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_fact_evidence SET source_version = 'commitment-body/v2:future' WHERE person_id = ? AND source_ref = ?`), f.personID, fmt.Sprintf("commitment-message:%d", messageID))
+	r.NoError(err)
+	changed, err := result.RowsAffected()
+	r.NoError(err)
+	r.EqualValues(1, changed)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 5, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.Equal("I will send the draft.", items[0].Quote)
+	r.Equal(personfacts.StatusStale, items[0].Freshness)
+}
+
 func TestCommitmentListPages(t *testing.T) {
 	t.Run("open list skips closed history", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()

@@ -259,8 +259,15 @@ func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commit
 		return c, false, nil
 	}
 	source, live, err := s.currentCommitmentSource(ctx, c.PersonID, c.AnchorMessageID)
-	if err != nil || !live || source.Direction != c.Direction || !personFactPortableTime(source.RecordedTime).Equal(input.RecordedTime) || !strings.HasPrefix(input.SourceVersion, fmt.Sprintf("commitment-body/v1:%d:%q:", source.SourceID, source.SourceMessageID)) {
+	if err != nil || !live || source.Direction != c.Direction || !personFactPortableTime(source.RecordedTime).Equal(input.RecordedTime) {
 		return c, false, err
+	}
+	if strings.HasPrefix(input.SourceVersion, "commitment-body/v1:") {
+		if !strings.HasPrefix(input.SourceVersion, fmt.Sprintf("commitment-body/v1:%d:%q:", source.SourceID, source.SourceMessageID)) {
+			return c, false, nil
+		}
+	} else if !source.MatchesQuote(c.Quote, c.Start, c.End) {
+		return c, false, nil
 	}
 	c.Freshness = commitmentCitationFreshness(source, input, c, now)
 	if c.State == LoopStateSnoozed && c.SnoozedUntil != nil && !c.SnoozedUntil.After(now) {

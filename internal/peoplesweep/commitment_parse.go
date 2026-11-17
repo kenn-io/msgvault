@@ -96,8 +96,8 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 		}
 		sources[source.ID] = source
 	}
-	type promiseSpan struct{ start, end int64 }
-	spans := make(map[int64][]promiseSpan)
+	seen := make(map[string]bool)
+	accepted := parsed.Promises[:0]
 	for index := range parsed.Promises {
 		promise := &parsed.Promises[index]
 		source, ok := sources[promise.SourceID]
@@ -119,13 +119,12 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 			hash, start, end = "", 0, 0
 		}
 		promise.TargetKey = commitmentTargetKey(window.PersonID, source, promise.Quote, hash, start, end)
-		for _, span := range spans[source.MessageID] {
-			if promise.Start < span.end && span.start < promise.End {
-				return invalid()
-			}
+		if !seen[promise.TargetKey] {
+			seen[promise.TargetKey] = true
+			accepted = append(accepted, *promise)
 		}
-		spans[source.MessageID] = append(spans[source.MessageID], promiseSpan{promise.Start, promise.End})
 	}
+	parsed.Promises = accepted
 	return parsed, nil
 }
 
@@ -185,7 +184,8 @@ func commitmentQuoteHasDate(quote string, due, event time.Time, location *time.L
 		return false
 	}
 	day := event.In(location)
-	return day.Format(time.DateOnly) == due.Format(time.DateOnly) && quoteHasPhrase(quote, "today", nil) || quoteHasTomorrow(quote, due, day) || quoteHasRelativeDays(quote, due, day) || quoteHasYearlessDate(quote, due, day) || quoteHasYearlessNumericDate(quote, due, day) || quoteHasWeekday(quote, due, day)
+	endOfMonth := time.Date(day.Year(), day.Month()+1, 0, 0, 0, 0, 0, time.UTC)
+	return day.Format(time.DateOnly) == due.Format(time.DateOnly) && quoteHasPhrase(quote, "today", nil) || due.Equal(endOfMonth) && quoteHasPhrase(quote, "end of this month", nil) || quoteHasTomorrow(quote, due, day) || quoteHasRelativeDays(quote, due, day) || quoteHasYearlessDate(quote, due, day) || quoteHasYearlessNumericDate(quote, due, day) || quoteHasWeekday(quote, due, day)
 }
 
 func quoteHasYearlessNumericDate(quote string, due, day time.Time) bool {

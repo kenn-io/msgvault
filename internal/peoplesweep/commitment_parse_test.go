@@ -169,6 +169,8 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 		{name: "in three days wrong date", text: "I will call in three days.", quote: "I will call in three days.", due: "2026-11-12"},
 		{name: "tomorrow", text: "I will call tomorrow.", quote: "I will call tomorrow.", due: "2026-11-11", keep: true},
 		{name: "today", text: "I will call today.", quote: "I will call today.", due: "2026-11-10", keep: true},
+		{name: "end of this month", text: "I will call by the end of this month.", quote: "I will call by the end of this month.", due: "2026-11-30", keep: true},
+		{name: "end of this month wrong date", text: "I will call by the end of this month.", quote: "I will call by the end of this month.", due: "2026-12-31"},
 		{name: "today wrong date", text: "I will call today.", quote: "I will call today.", due: "2026-11-11"},
 		{name: "day after tomorrow", text: "I will call the day after tomorrow.", quote: "I will call the day after tomorrow.", due: "2026-11-12", keep: true},
 		{name: "day after tomorrow rejects tomorrow", text: "I will call the day after tomorrow.", quote: "I will call the day after tomorrow.", due: "2026-11-11"},
@@ -199,4 +201,15 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseCommitmentsKeepsOverlappingCitations(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	window := CommitmentWindow{PersonID: 2, Now: now, Sources: []CommitmentSource{{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo, Text: "I will send the draft and call."}}}
+	output := jsontext.Value(`{"promises":[{"source_id":"m1","direction":"owed_to","quote":"I will send the draft","start":0,"end":21,"summary":"Send draft","due_on":null,"due_phrase":null},{"source_id":"m1","direction":"owed_to","quote":"send the draft and call","start":7,"end":30,"summary":"Call","due_on":null,"due_phrase":null},{"source_id":"m1","direction":"owed_to","quote":"I will send the draft","start":0,"end":21,"summary":"Send draft again","due_on":null,"due_phrase":null}]}`)
+	parsed, err := ParseCommitments(output, window)
+	require.NoError(t, err)
+	require.Len(t, parsed.Promises, 2)
+	assert.Equal(t, "Send draft", parsed.Promises[0].Summary)
+	assert.Equal(t, "Call", parsed.Promises[1].Summary)
 }
