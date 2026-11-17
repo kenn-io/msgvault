@@ -40,8 +40,8 @@ func TestHTMLText(t *testing.T) {
 		},
 		{
 			"markers already in the text are dropped",
-			"<p>a﷐b</p><blockquote>c&#xFDD1;</blockquote>",
-			"ab\n\n> c",
+			"<p>a﷐b</p><blockquote>c&#xFDD1;<p>d &amp; e</p></blockquote>",
+			"ab\n\n> c\n> d & e",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

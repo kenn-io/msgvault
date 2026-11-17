@@ -126,7 +126,8 @@ func markQuoteContainers(rawHTML string) string {
 			}
 			out.WriteString(raw)
 		case tokenType == html.TextToken:
-			out.WriteString(stripMarkers.Replace(raw))
+			// Filter decoded text so entity-encoded markers cannot end a quote.
+			out.WriteString(html.EscapeString(stripMarkers.Replace(string(tokenizer.Text()))))
 		default:
 			out.WriteString(raw)
 		}

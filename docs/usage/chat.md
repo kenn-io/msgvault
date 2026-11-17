@@ -630,7 +630,8 @@ which searches the raw HTML, don't apply to it. In the derived text, lines
 inside a `blockquote` element get one `>` per enclosing `blockquote`, and lines inside a
 `div` whose class contains `gmail_quote` get one `>` when no `blockquote`
 encloses them. Those lines are quoted; the plain-text rules above label the
-rest. Requesting `body_format: "html"` still returns
+rest. Because HTML collapses the trailing space, a line of exactly `--` outside
+quotes counts as the `-- ` signature delimiter. Requesting `body_format: "html"` still returns
 `segments_unavailable: "unsupported_format"` with no ranges.
 
 For a calendar event, `get_message` also returns `calendar` with `status`,
