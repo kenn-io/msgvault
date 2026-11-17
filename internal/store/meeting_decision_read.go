@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -12,13 +13,13 @@ import (
 )
 
 // MeetingTranscriptGroupsContext resolves all visible transcripts in one graph.
-// When the shared read budget is exhausted, each transcript remains separate.
-func (s *Store) MeetingTranscriptGroupsContext(ctx context.Context, through int64) (map[int64]int64, bool, error) {
+// It fails if the shared read budget is exhausted.
+func (s *Store) MeetingTranscriptGroupsContext(ctx context.Context, through int64) (map[int64]int64, error) {
 	return s.meetingTranscriptGroupsContext(ctx, through, calrecur.RequestReadBudget)
 }
 
 // MeetingTranscriptGroupsSQLiteSnapshotContext resolves groups through a caller-owned SQLite snapshot.
-func MeetingTranscriptGroupsSQLiteSnapshotContext(ctx context.Context, reader SQLReader, through int64) (map[int64]int64, bool, error) {
+func MeetingTranscriptGroupsSQLiteSnapshotContext(ctx context.Context, reader SQLReader, through int64) (map[int64]int64, error) {
 	dialect := &SQLiteDialect{}
 	// This store has no connection pool: all reads must use the supplied snapshot.
 	s := &Store{db: newLoggedDB(nil, dialect.Rebind), dialect: dialect}
@@ -26,10 +27,10 @@ func MeetingTranscriptGroupsSQLiteSnapshotContext(ctx context.Context, reader SQ
 	return s.MeetingTranscriptGroupsContext(ctx, through)
 }
 
-func (s *Store) meetingTranscriptGroupsContext(ctx context.Context, through int64, batchBudget int) (map[int64]int64, bool, error) {
+func (s *Store) meetingTranscriptGroupsContext(ctx context.Context, through int64, batchBudget int) (map[int64]int64, error) {
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	defer release()
 	var seeds []meetingDecisionEndpoint
@@ -51,21 +52,21 @@ func (s *Store) meetingTranscriptGroupsContext(ctx context.Context, through int6
 		return rows.Err()
 	}()
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if len(seeds) == 0 {
-		return groups, false, nil
+		return groups, nil
 	}
 	budget := batchBudget * ((len(seeds) + 999) / 1000)
 	graph, err := s.loadMeetingDecisionGraph(ctx, seeds, &budget, false)
 	if errors.Is(err, ErrQueryTooBroad) {
-		return groups, true, nil
+		return nil, fmt.Errorf("meeting grouping exceeded its read budget: %w", ErrQueryTooBroad)
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if budget <= 0 {
-		return groups, true, nil
+		return nil, fmt.Errorf("meeting grouping exceeded its read budget: %w", ErrQueryTooBroad)
 	}
 	root, _ := graph.reduce()
 	minimum := make(map[string]int64)
@@ -78,7 +79,20 @@ func (s *Store) meetingTranscriptGroupsContext(ctx context.Context, through int6
 	for _, seed := range seeds {
 		groups[seed.ID] = minimum[root(seed.ref())]
 	}
-	return groups, false, nil
+	for key, node := range graph.nodes {
+		if node.endpoint.Kind != meetingRefEvent {
+			continue
+		}
+		group, ok := minimum[root(key)]
+		if !ok {
+			continue
+		}
+		id := node.endpoint.ID
+		if old, exists := groups[id]; !exists || group < old {
+			groups[id] = group
+		}
+	}
+	return groups, nil
 }
 
 type meetingDecisionEdge struct {

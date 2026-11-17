@@ -72,19 +72,11 @@ func TestBuildCountsMeetingGroupsAcrossSources(t *testing.T) {
 	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root, MeetingGroups: "(SELECT 100::BIGINT AS message_id, 100::BIGINT AS group_id UNION ALL SELECT 101, 100)"})
 	requirements.NoError(err)
 	var activity, meetings, firstSource, secondSource int64
-	err = db.QueryRowContext(t.Context(), `SELECT activity_count, meeting_count, source_rollups[1].meeting_count, source_rollups[2].meeting_count FROM read_parquet(?) WHERE canonical_id = 1`, relationshipParquetGlob(root, DatasetPeople)).Scan(&activity, &meetings, &firstSource, &secondSource)
+	err = db.QueryRowContext(t.Context(), `SELECT activity_count, meeting_count, len(source_rollups[1].meeting_groups), len(source_rollups[2].meeting_groups) FROM read_parquet(?) WHERE canonical_id = 1`, relationshipParquetGlob(root, DatasetPeople)).Scan(&activity, &meetings, &firstSource, &secondSource)
 	requirements.NoError(err)
 	assertions.Equal(int64(2), activity)
 	assertions.Equal(int64(1), meetings)
 	assertions.Equal(int64(1), firstSource)
-	assertions.Zero(secondSource)
-	var owner int64
-	err = db.QueryRowContext(t.Context(), `SELECT message_id FROM read_parquet(?) WHERE canonical_id = 4`, relationshipParquetGlob(root, DatasetMeetingOwners)).Scan(&owner)
-	requirements.NoError(err)
-	assertions.Equal(int64(101), owner)
-	err = db.QueryRowContext(t.Context(), `SELECT meeting_count, source_rollups[1].meeting_count FROM read_parquet(?) WHERE canonical_id = 4`, relationshipParquetGlob(root, DatasetPeople)).Scan(&meetings, &secondSource)
-	requirements.NoError(err)
-	assertions.Equal(int64(1), meetings)
 	assertions.Equal(int64(1), secondSource)
 }
 
@@ -394,7 +386,7 @@ func assertIncrementalContributionsMatchFullReduction(
 		{"logical", DatasetLogicalContributions,
 			buildLogicalActivityMaterializationSQL(fullActivity)},
 		{"temperature", DatasetTemperatureContributions,
-			buildRelationshipTemperatureDailySQL(fullActivity, effectiveAt)},
+			buildRelationshipTemperatureDailySQL(fullActivity, "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)", effectiveAt)},
 	} {
 		t.Run(check.name+" contributions match full reduction", func(t *testing.T) {
 			expectedTable := "expected_" + check.name

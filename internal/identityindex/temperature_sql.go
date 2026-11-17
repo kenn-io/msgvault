@@ -17,7 +17,7 @@ const relationshipTemperatureFirstYear = 1970
 // message and canonical person. activity is a trusted DuckDB relation rendered
 // by the cache/query packages; it is not user input. The shared SQL keeps cache
 // scores and local-year calendars on one attribution contract.
-func RelationshipTemperatureFactsSQL(activity string, effectiveAt time.Time) string {
+func RelationshipTemperatureFactsSQL(activity, groups string, effectiveAt time.Time) string {
 	cutoff := effectiveAt.UTC().Format("2006-01-02 15:04:05.999999999")
 	return fmt.Sprintf(`
 WITH message_owner AS (
@@ -29,6 +29,7 @@ WITH message_owner AS (
 	       min(f.occurred_at)::TIMESTAMP AS occurred_at,
 	       bool_or(f.is_chat) AS is_chat,
 	       arg_min(f.entry_kind, f.occurred_at)::VARCHAR AS entry_kind,
+	       arg_min(f.message_type, f.occurred_at)::VARCHAR AS message_type,
 	       arg_min(f.conversation_type, f.occurred_at)::VARCHAR AS conversation_type,
 	       bool_or(f.is_from_me) AS is_from_me,
 	       bool_or(f.is_direct) AS is_direct,
@@ -92,13 +93,20 @@ SELECT message_id, canonical_id, occurred_at,
 	   (NOT is_meeting AND is_chat) AS chat,
 	   is_meeting AS meeting,
 	   modality_mask
-FROM qualifying
+FROM (
+	SELECT q.*, `+MeetingCopyRank("q.canonical_id", "q.message_id", "q.message_type", "q.occurred_at")+` AS meeting_rank
+	FROM qualifying q
+	LEFT JOIN %[6]s g ON g.message_id = q.message_id
+	WHERE NOT is_meeting OR message_type = 'meeting_transcript'
+) ranked
+WHERE NOT is_meeting OR meeting_rank = 1
 `,
 		activity,
 		cutoff,
 		ModalityMeeting,
 		ModalityChat,
 		ModalityEmail,
+		groups,
 	)
 }
 
@@ -106,10 +114,10 @@ FROM qualifying
 // canonical-person UTC day. It deliberately does not reuse
 // relationship_daily: that dataset is logical-entry grain and collapses a
 // chat conversation to its newest event.
-func buildRelationshipTemperatureDailySQL(activity string, effectiveAt time.Time) string {
+func buildRelationshipTemperatureDailySQL(activity, groups string, effectiveAt time.Time) string {
 	return `
 WITH relationship_facts AS (
-` + RelationshipTemperatureFactsSQL(activity, effectiveAt) + `
+` + RelationshipTemperatureFactsSQL(activity, groups, effectiveAt) + `
 )
 SELECT canonical_id,
 	   occurred_at::DATE AS event_date,

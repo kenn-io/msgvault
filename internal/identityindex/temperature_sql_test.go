@@ -19,7 +19,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.ExecContext(t.Context(), `
 		CREATE TEMP TABLE synthetic_temperature_activity AS
-		SELECT *, false AS unsent, false AS email_invite FROM (VALUES
+		SELECT *, CASE WHEN entry_kind = 'meeting' THEN 'meeting_transcript' ELSE entry_kind END AS message_type, false AS unsent, false AS email_invite FROM (VALUES
 			-- Direct chat written by the owner: the explicit edge identifies
 			-- person 2 even when the importer has no conversation roster.
 			(1::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 12:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, false, true),
@@ -56,7 +56,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	var sent, received, meetings, email, chat, total int64
 	var modality uint8
 	query := buildRelationshipTemperatureDailySQL(
-		"synthetic_temperature_activity",
+		"synthetic_temperature_activity", "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)",
 		time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC),
 	)
 	err = db.QueryRowContext(t.Context(), `
@@ -80,7 +80,7 @@ func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.ExecContext(t.Context(), `
 		CREATE TEMP TABLE synthetic_unsent_activity AS
-		SELECT *, false AS email_invite FROM (VALUES
+		SELECT *, entry_kind AS message_type, false AS email_invite FROM (VALUES
 			(8::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, true, true, true),
 			(8::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, true, true, false, false, true)
 		) AS t(message_id, canonical_id, occurred_at, is_chat, entry_kind,
@@ -88,7 +88,7 @@ func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 			is_author, is_owner, unsent)
 	`)
 	require.NoError(err)
-	query := buildRelationshipTemperatureDailySQL("synthetic_unsent_activity", time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC))
+	query := buildRelationshipTemperatureDailySQL("synthetic_unsent_activity", "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)", time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC))
 	var count int
 	require.NoError(db.QueryRowContext(t.Context(), "SELECT count(*) FROM ("+query+")").Scan(&count))
 	assert.Zero(t, count, "an owner-authored unsent chat contributes no daily contact activity")

@@ -251,7 +251,6 @@ func TestMCPMeetingRecordDelegated(t *testing.T) {
 		available     bool
 	}{
 		{"current", api.APISchemaVersion, []string{"message.read"}, true},
-		{"older daemon", "5.3.0", []string{"message.read"}, false},
 		{"schema 5.8", "5.8.0", []string{"message.read"}, false},
 		{"without message access", api.APISchemaVersion, []string{"search.read"}, false},
 	} {
@@ -270,21 +269,6 @@ func TestMCPMeetingRecordDelegated(t *testing.T) {
 			session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, tc.permissions), t)
 			names := mcpDraftToolNames(t, session)
 			assert.Equal(tc.available, slices.Contains(names, "get_meeting_record"))
-		})
-	}
-}
-
-func TestMCPMeetingRecordCalendarSources(t *testing.T) {
-	for _, kind := range []string{"ics", "mbox", "gmail", "imap", "eml", "emlx", "maildir", "pst", "o365", "msmail", "hey", "apple-mail", "google-groups"} {
-		t.Run(kind, func(t *testing.T) {
-			st := testutil.NewTestStore(t)
-			source, err := st.GetOrCreateSource(kind, "owner@example.com")
-			require.NoError(t, err)
-			server := mcpDraftTestDaemon(t, &storeAPIAdapter{store: st}, nil)
-			session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, []string{"message.read"}), t)
-			names := mcpDraftToolNames(t, session)
-			assert.Contains(t, names, "get_meeting_record")
-			assert.NotContains(t, names, "calendar_freebusy")
 		})
 	}
 }

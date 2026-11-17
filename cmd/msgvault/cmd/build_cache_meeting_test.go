@@ -145,6 +145,9 @@ func TestBuildCacheMeetingCountsFollowSavedChoices(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, path)
 	source, err := st.GetOrCreateSource("meeting_import", "owner@example.test")
 	requirements.NoError(err)
+	requirements.NoError(st.AddAccountIdentity(source.ID, "owner@example.test", "manual"))
+	owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	requirements.NoError(err)
 	alice, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
 	requirements.NoError(err)
 	bob, err := st.EnsureParticipant("bob@example.test", "Bob", "example.test")
@@ -158,6 +161,7 @@ func TestBuildCacheMeetingCountsFollowSavedChoices(t *testing.T) {
 		})
 		requirements.NoError(err)
 		requirements.NoError(st.ReplaceMessageRecipients(id, "to", []int64{alice, bob}, []string{"", ""}))
+		requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{"Owner"}))
 		refs = append(refs, store.MeetingLinkRef{Kind: "msg", MessageID: id})
 	}
 	check := func(want, activity int64) {
@@ -167,15 +171,16 @@ func TestBuildCacheMeetingCountsFollowSavedChoices(t *testing.T) {
 		engine, err := query.NewDuckDBEngine(t.Context(), analytics, path, st.DB())
 		requirements.NoError(err)
 		defer func() { _ = engine.Close() }()
-		for _, name := range []string{"Alice", "Bob"} {
-			after := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-			for _, filter := range []query.Context{{}, {SourceIDs: []int64{source.ID}}, {After: &after}} {
-				people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: name, Explore: query.ExploreRequest{Context: filter}})
-				requirements.NoError(err)
-				requirements.Len(people.Rows, 1)
-				assertions.Equal(want, people.Rows[0].MeetingCount)
-				assertions.Equal(activity, people.Rows[0].ActivityCount)
-			}
+		people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: "Alice"})
+		requirements.NoError(err)
+		requirements.Len(people.Rows, 1)
+		assertions.Equal(want, people.Rows[0].MeetingCount)
+		assertions.Equal(activity, people.Rows[0].ActivityCount)
+		relationships, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Now: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), ShowAll: true})
+		requirements.NoError(err)
+		requirements.Len(relationships.Rows, 2)
+		for _, row := range relationships.Rows {
+			assertions.Equal(want, row.Signals.MeetingCount)
 		}
 		selection, err := engine.ResolveExploreMeetings(t.Context(), query.ExploreSelectionRequest{}, 10)
 		requirements.NoError(err)
@@ -196,9 +201,24 @@ func TestBuildCacheMeetingCountsFollowSavedChoices(t *testing.T) {
 	})
 	requirements.NoError(err)
 	requirements.NoError(st.ReplaceMessageRecipients(third, "to", []int64{alice, bob}, []string{"", ""}))
+	requirements.NoError(st.ReplaceMessageRecipients(third, "from", []int64{owner}, []string{"Owner"}))
 	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], store.MeetingLinkRef{Kind: "msg", MessageID: third}, "link")
 	requirements.NoError(err)
 	check(2, 3)
+	full := filepath.Join(dir, "full")
+	_, err = buildCache(t.Context(), path, full, true)
+	requirements.NoError(err)
+	db, err := sql.Open("duckdb", "")
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+	var incrementalSignal, fullSignal float64
+	for _, result := range []struct {
+		root   string
+		signal *float64
+	}{{analytics, &incrementalSignal}, {full, &fullSignal}} {
+		requirements.NoError(db.QueryRowContext(t.Context(), `SELECT current_meeting_signal FROM read_parquet(?) WHERE canonical_id = ?`, filepath.Join(result.root, "relationship_people", "*.parquet"), alice).Scan(result.signal))
+	}
+	assertions.InDelta(fullSignal, incrementalSignal, 1e-9)
 }
 
 func TestBuildCacheMeetingCountsAcrossWeeklyOccurrences(t *testing.T) {

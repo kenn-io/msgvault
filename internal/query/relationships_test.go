@@ -12,6 +12,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRelationshipsCountLinkedTranscriptsOnce(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("owner@example.test")
+	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+	person := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	other := b.AddParticipant("bob@example.test", "example.test", "Bob")
+	b.AddOwnerParticipant(source, owner)
+	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	first := b.AddMessage(MessageOpt{SourceID: source, MessageType: "meeting_transcript", SentAt: now.Add(-2 * time.Hour)})
+	second := b.AddMessage(MessageOpt{SourceID: source, MessageType: "meeting_transcript", SentAt: now.Add(-time.Hour)})
+	calendar := b.AddMessage(MessageOpt{SourceID: source, MessageType: "calendar_event", SentAt: now.Add(-3 * time.Hour)})
+	for _, id := range []int64{first, second, calendar} {
+		b.AddFrom(id, owner, "Owner")
+		b.AddTo(id, person, "Alice")
+	}
+	event := b.AddMessage(MessageOpt{SourceID: source, MessageType: "calendar_event", SentAt: now.Add(-time.Hour)})
+	b.AddFrom(event, owner, "Owner")
+	b.AddTo(event, other, "Bob")
+	email := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", IsFromMe: true, SentAt: now.Add(-time.Hour)})
+	b.AddFrom(email, owner, "Owner")
+	b.AddTo(email, other, "Bob")
+	b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d UNION ALL SELECT %d, %d)", first, first, second, first, calendar, first)
+	engine := b.BuildEngine()
+	for _, filter := range []Context{{}, {SourceIDs: []int64{source}}} {
+		result, err := engine.Relationships(t.Context(), RelationshipsRequest{Now: now, Limit: 10, ShowAll: true, Context: filter})
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 2)
+		counts := make(map[int64]int64, len(result.Rows))
+		for _, row := range result.Rows {
+			counts[row.CanonicalID] = row.Signals.MeetingCount
+		}
+		assert.Equal(t, int64(1), counts[person])
+		assert.Equal(t, int64(0), counts[other])
+	}
+}
+
 // TestRelationshipsRanksByReciprocityAndGatesNewsletters builds an owner
 // (O), a reciprocal counterpart (A, clustered with a second identity A2 that
 // only has chat activity), and an inbound-only newsletter sender (B). It
@@ -41,7 +77,7 @@ func TestRelationshipsRanksByReciprocityAndGatesNewsletters(t *testing.T) {
 	}
 
 	// One meeting together (owner + A).
-	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "calendar_event", SentAt: now.AddDate(0, 0, -2)})
+	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "meeting_transcript", SentAt: now.AddDate(0, 0, -2)})
 	b.AddFrom(meetingID, ownerID, "Owner")
 	b.AddTo(meetingID, aID, "Alice")
 
@@ -354,7 +390,7 @@ func TestRelationshipsWithOwnerResolvesAlias(t *testing.T) {
 	otherID := b.AddParticipant("x@example.com", "example.com", "X")
 
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "calendar_event", SentAt: now.AddDate(0, 0, -1)})
+	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "meeting_transcript", SentAt: now.AddDate(0, 0, -1)})
 	b.AddFrom(meetingID, ownerAliasID, "Owner Alias")
 	b.AddTo(meetingID, otherID, "X")
 
@@ -661,7 +697,7 @@ func TestRelationshipsClampsFutureEntryDecayAtOne(t *testing.T) {
 	// An upcoming meeting a year out has a negative age; its decay weight
 	// must clamp at exp(0) = 1, not grow to exp(+rate*365).
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "calendar_event",
+	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "meeting_transcript",
 		SentAt: now.AddDate(1, 0, 0)})
 	b.AddFrom(meetingID, ownerID, "Owner")
 	b.AddTo(meetingID, xID, "X")
@@ -708,7 +744,7 @@ func TestRelationshipsFutureRowsPreserveGateModalitiesAndLastTimestamp(t *testin
 	meetingAt := time.Date(2026, 1, 4, 16, 45, 12, 0, time.UTC)
 	meeting := b.AddMessage(MessageOpt{
 		SourceID:    sourceID,
-		MessageType: "calendar_event",
+		MessageType: "meeting_transcript",
 		SentAt:      meetingAt,
 	})
 	b.AddFrom(meeting, ownerID, "Owner")

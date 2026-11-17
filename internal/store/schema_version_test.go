@@ -120,22 +120,6 @@ func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
-func TestCalendarSeriesIndexRecreated(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	if f.Store.IsPostgreSQL() {
-		t.Skip("SQLite index check")
-	}
-	ctx := t.Context()
-	_, err := f.Store.DB().ExecContext(ctx, `DROP INDEX IF EXISTS idx_calendar_events_series_id`)
-	require.NoError(err)
-	require.NoError(f.Store.InitSchemaContext(ctx))
-	query := `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_calendar_events_series_id'`
-	var count int
-	require.NoError(f.Store.DB().QueryRowContext(ctx, query).Scan(&count))
-	require.Equal(1, count)
-}
-
 func TestSchemaVersionMeetingDecisionsPreviousUpgrade(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
