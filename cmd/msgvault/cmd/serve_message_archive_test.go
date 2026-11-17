@@ -395,7 +395,15 @@ func TestArchiveIncomingSenderRecheckedUnderLock(t *testing.T) {
 	requirementsForTest.NoError(err)
 	archived := true
 	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageArchive}, Sources: []agentgrant.SourceRef{{Type: source.SourceType, Identifier: source.Identifier, IncomingSenderKeys: []string{"allowed@example.test"}}}}
-	adapter := &storeAPIAdapter{store: st}
+	var providerCalls int
+	adapter := &storeAPIAdapter{
+		store:  st,
+		config: &config.Config{OAuth: config.OAuthConfig{ServiceAccountKey: "synthetic-service-account"}},
+		emailTagClientFactory: func(context.Context, *store.Source) (gmail.API, error) {
+			providerCalls++
+			return nil, errors.New("provider must not be reached")
+		},
+	}
 	data := &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "changing", MessageType: "email"}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{participant}, EmailAddresses: []string{"allowed@example.test"}}}}
 	id, err := st.PersistMessageContext(t.Context(), data)
 	requirementsForTest.NoError(err)
@@ -407,6 +415,7 @@ func TestArchiveIncomingSenderRecheckedUnderLock(t *testing.T) {
 		return func() {}, err
 	})
 	assertionsForTest.True(entered)
+	assertionsForTest.Zero(providerCalls)
 	var failure *emailtags.MessageTagError
 	requirementsForTest.ErrorAs(err, &failure)
 	assertionsForTest.Equal("message_not_found", failure.Code)
