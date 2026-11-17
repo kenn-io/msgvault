@@ -1,7 +1,7 @@
 ---
 title: Agent quickstart
 description: Connect an agent to msgvault and work safely with an archive.
-last_edited: "2026-11-13"
+last_edited: "2026-11-17"
 ---
 
 Use msgvault's MCP server to find and read conversations, analyze archive
@@ -56,6 +56,11 @@ to see its tools. A missing tool or denied call can
 mean the grant is too narrow or a write class is disabled; ask the owner to
 review access instead of attempting to bypass it. A grant without `stats.read`
 cannot use `get_stats` as a universal connection check.
+
+Call `msgvault.skills {}` to list the bundled guides and
+`msgvault.skills {"name":"<guide-name>"}` to read one. They include this
+quickstart as `workflow` and every [agent skill](../guides/agent-skills.md). The
+tool works in every session, including delegated ones, and reads no archive data.
 
 ## Find people and read conversations
 
@@ -300,6 +305,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
+| `msgvault.skills` | read | — | guidance-only |
 | `prepare_kata_evidence` | read | — | owner-only |
 | `preview_carddav_publication` | read | — | owner-only |
 | `preview_person_tiers` | read | — | owner-only |

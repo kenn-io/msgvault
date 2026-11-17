@@ -36,6 +36,7 @@ var task5StableToolNames = []string{
 	ToolListMessages,
 	ToolListSavedViews,
 	ToolListThread,
+	ToolSkills,
 	ToolRunSavedView,
 	ToolSearchByDomains,
 	ToolSearchInMessage,
@@ -350,6 +351,8 @@ func task5ToolArguments(name, shape, exportDir string) (map[string]any, bool) {
 	switch name {
 	case ToolSearchTools:
 		return map[string]any{"query": "read one message", "limit": 3}, true
+	case ToolSkills:
+		return map[string]any{}, true
 	case ToolCreateSavedView:
 		return map[string]any{
 			"name": "Created view", "schema_version": 1,
@@ -732,6 +735,12 @@ func TestAllAdvertisedToolOutputs(t *testing.T) {
 						text, ok := result.Content[0].(*sdkmcp.TextContent)
 						must.True(ok, "semantic unavailable content type: %T", result.Content[0])
 						checks.Contains(text.Text, "vector_not_enabled")
+						continue
+					}
+					if tool.Name == ToolSkills {
+						// Guide text is Markdown, not JSON; skills_test.go covers its content.
+						must.False(result.IsError, task5SDKResultText(result))
+						successful[tool.Name] = true
 						continue
 					}
 					task5AssertJSONParity(t, tool.Name, result)

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-06
+last_edited: 2026-11-17
 title: Agent Skills
 description: Teach coding agents the msgvault CLI with installable skills
 ---
@@ -54,6 +54,14 @@ coexist: MCP suits chat apps (Claude Desktop), while skills suit
 terminal coding agents that already run shell commands and can pipe
 `--json` output through `jq`. Skill content is validated against the
 CLI's command tree in CI, so examples stay correct as the CLI evolves.
+
+MCP clients can read the same guides without installing files. Call
+`msgvault.skills {}` to list them, and `msgvault.skills {"name":"workflow"}`
+to read the [agent quickstart](agent-quickstart.md). The list holds
+`workflow` followed by every skill bundled with the running binary, so new
+skills appear without configuration. Skills installed on disk do not change
+it. The tool is read-only, reads no archive data, and is available in
+delegated sessions.
 
 ## Follow through on feedback
 

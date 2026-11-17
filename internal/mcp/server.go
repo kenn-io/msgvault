@@ -376,7 +376,7 @@ func newMCPServerWithPolicy(
 	}
 	capabilities := &sdkmcp.ServerCapabilities{Tools: &sdkmcp.ToolCapabilities{}}
 	instructions := archiveSafetyInstructions + " " + decisionMemoryInstructions + " Use returned web_url values when linking to archived messages."
-	instructions += " Agent guide: https://msgvault.io/docs/guides/agent-quickstart.md (msgvault quickstart --mcp)."
+	instructions += " Agent guide: https://msgvault.io/docs/guides/agent-quickstart.md (msgvault quickstart --mcp). " + bundledSkills().Instructions()
 	if !opts.DelegatedOnly {
 		capabilities.Resources = &sdkmcp.ResourceCapabilities{}
 	} else {
@@ -396,6 +396,8 @@ func newMCPServerWithPolicy(
 		invocationPolicyMiddleware(policy),
 		cachePolicyMiddleware,
 	)
+	// Guides need no archive access, so every session, including delegated ones, gets them.
+	bundledSkills().Register(s)
 
 	if opts.downloads == nil {
 		opts.downloads = &downloadCache{}

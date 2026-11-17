@@ -15,9 +15,9 @@ Examples:
   msgvault source feeds add --opml ~/Downloads/subscriptions.opml
 
 Flags:
-      --build-cache      refresh analytics cache after this sync
-  -h, --help             help for add
-      --no-build-cache   skip analytics cache refresh after this sync
-      --opml string      OPML subscription file
+      --build-cache[=true|false]      refresh analytics cache after this sync
+  -h, --help[=true|false]             help for add
+      --no-build-cache[=true|false]   skip analytics cache refresh after this sync
+      --opml string                   OPML subscription file
 
 Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')

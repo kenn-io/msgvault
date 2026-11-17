@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/beeper"
+	"go.kenn.io/msgvault/internal/bland"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/discord"
@@ -47,6 +48,8 @@ func TestReason(t *testing.T) {
 		{slack.ErrAuth, "auth"},
 		{&twilio.APIError{StatusCode: 401}, "auth"},
 		{&twilio.APIError{StatusCode: 429}, "rate_limited"},
+		{&bland.HTTPError{StatusCode: 401}, "auth"},
+		{&bland.HTTPError{StatusCode: 429}, "rate_limited"},
 		{&discord.APIError{StatusCode: 401}, "auth"},
 		{&discord.APIError{StatusCode: 429}, "rate_limited"},
 		{&imap.Error{Code: imap.ResponseCodeAuthenticationFailed}, "auth"},

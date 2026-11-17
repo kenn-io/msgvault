@@ -33,6 +33,7 @@ import (
 	"go.kenn.io/kit/packstore"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/attachmentstore"
+	"go.kenn.io/msgvault/internal/bland"
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/clirun"
@@ -4553,6 +4554,7 @@ func TestSchedulerJobNameForSource(t *testing.T) {
 		{"circleback", circleback.SourceType, "acct-2", "circleback:acct-2", true},
 		{"notion meetings", notionmeetings.SourceType, "acct-3", "notion-meetings:acct-3", true},
 		{"muesli", muesli.SourceType, "mac", "muesli:mac", true},
+		{"bland", bland.SourceType, "work", "bland:work", true},
 		{"beeper", "beeper", "beeper-account-1", "beeper", true},
 		{"matrix", "matrix", "@archive:example.org", "matrix", true},
 		{"slack", "slack", "T01:U01", "slack", true},
