@@ -658,8 +658,9 @@ func TestAgentSearchAndLabelInventoryIncomingScope(t *testing.T) {
 	}{{allowed, "codes@example.test"}, {denied, "other@example.test"}} {
 		participant, err := st.EnsureParticipant(tc.address, "", "example.test")
 		requirements.NoError(err)
-		requirements.NoError(st.ReplaceMessageRecipients(tc.id, "from", []int64{participant}, nil))
-		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), tc.address, tc.id)
+		msg, err := st.GetMessage(tc.id)
+		requirements.NoError(err)
+		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: first.ID, ConversationID: msg.ConversationID, SourceMessageID: msg.SourceMessageID, MessageType: "email", Subject: sql.NullString{String: msg.Subject, Valid: true}}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{participant}, EmailAddresses: []string{tc.address}}}})
 		requirements.NoError(err)
 	}
 	for _, tc := range []struct {

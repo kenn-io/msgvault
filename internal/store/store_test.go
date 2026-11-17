@@ -2349,9 +2349,9 @@ func TestIncomingSenderScopedCountsUseMessageIDs(t *testing.T) {
 		var err error
 		source, id, err = testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", message.provider, message.provider, "")
 		requirements.NoError(err)
-		requirements.NoError(st.ReplaceMessageRecipients(id, "to", []int64{participants[message.to]}, nil))
-		requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participants[message.from]}, nil))
-		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = CASE recipient_type WHEN 'from' THEN ? ELSE ? END WHERE message_id = ?"), message.from, message.to, id)
+		msg, err := st.GetMessage(id)
+		requirements.NoError(err)
+		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: msg.ConversationID, SourceMessageID: msg.SourceMessageID, MessageType: "email", Subject: sql.NullString{String: msg.Subject, Valid: true}}, Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{participants[message.to]}, EmailAddresses: []string{message.to}}, {Type: "from", ParticipantIDs: []int64{participants[message.from]}, EmailAddresses: []string{message.from}}}})
 		requirements.NoError(err)
 		if message.deleted {
 			_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), id)

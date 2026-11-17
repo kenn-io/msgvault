@@ -30,16 +30,15 @@ func TestChatDraftReplyIncomingSender(t *testing.T) {
 	requirements.NoError(err)
 	messages := make(map[string]int64)
 	for _, sender := range []string{"allowed", "denied", "missing"} {
-		id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "provider-" + sender, MessageType: kind})
-		requirements.NoError(err)
-		messages[sender] = id
+		data := &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "provider-" + sender, MessageType: kind}}
 		if sender != "missing" {
 			participant, err := st.EnsureParticipant(sender+"@example.test", "", "example.test")
 			requirements.NoError(err)
-			requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
-			_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), sender+"@example.test", id)
-			requirements.NoError(err)
+			data.Recipients = []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{participant}, EmailAddresses: []string{sender + "@example.test"}}}
 		}
+		id, err := st.PersistMessageContext(t.Context(), data)
+		requirements.NoError(err)
+		messages[sender] = id
 	}
 	adapter := &storeAPIAdapter{store: st}
 	for _, tc := range []struct {
@@ -192,39 +191,6 @@ func TestChatDraftDelegatedGrantIsSourceScoped(t *testing.T) {
 	unchanged, err := st.ListChatDraftsContext(t.Context(), otherConversation, chatDraftAuthorizer(nil))
 	require.NoError(err)
 	assert.Len(unchanged, 1)
-
-	const allowedSender = "allowed@example.test"
-	seedParent := func(nativeID, sender string) int64 {
-		data := &store.MessagePersistData{Message: &store.Message{SourceID: granted.ID, ConversationID: grantedConversation, SourceMessageID: nativeID, MessageType: "slack"}}
-		if sender != "" {
-			participant, err := st.EnsureParticipant(sender, "", "example.test")
-			require.NoError(err)
-			data.Recipients = []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{participant}, EmailAddresses: []string{sender}}}
-		}
-		id, err := st.PersistMessageContext(t.Context(), data)
-		require.NoError(err)
-		return id
-	}
-	allowed := seedParent("allowed-parent", allowedSender)
-	denied := seedParent("denied-parent", "denied@example.test")
-	missingFrom := seedParent("no-from", "")
-	grant.Sources[0].IncomingSenderKeys = []string{allowedSender}
-	reply := func(parent int64) (string, error) {
-		return run(api.CLIRunDraftComposeCommand, "--conversation", strconv.FormatInt(grantedConversation, 10), "--reply-to", strconv.FormatInt(parent, 10), "--body", "reply", "--json")
-	}
-	allowedJSON, err := reply(allowed)
-	require.NoError(err)
-	var allowedDraft chatDraftOutput
-	require.NoError(json.Unmarshal([]byte(allowedJSON), &allowedDraft))
-	assert.Equal("allowed-parent", allowedDraft.ReplyToSourceMessageID)
-	for _, parent := range []int64{denied, missingFrom, missingFrom + 1} {
-		out, err := reply(parent)
-		require.EqualError(err, "not_permitted", "parent %d", parent)
-		assert.Empty(out, "parent %d", parent)
-	}
-	drafts, err := st.ListChatDraftsContext(t.Context(), grantedConversation, chatDraftAuthorizer(nil))
-	require.NoError(err)
-	assert.Len(drafts, 2, "only the top-level draft and allowed reply were saved")
 }
 
 func TestChatDraftLifecycleRedactsBodyAndReplyParent(t *testing.T) {

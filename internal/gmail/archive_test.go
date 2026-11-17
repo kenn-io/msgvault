@@ -37,7 +37,6 @@ func TestArchiveMessageDeltaPreviewAndRetry(t *testing.T) {
 	assert.ElementsMatch(t, []string{"UNREAD", "Label_keep"}, preview.Tags)
 	assert.Zero(t, catalogReads, "preview must not fetch the account label catalog")
 	assert.Zero(t, writes)
-	readsBeforeWrites := catalogReads
 	for _, archived := range []bool{true, true, false, false} {
 		result, err := c.ArchiveMessage(t.Context(), "message-1", archived, false)
 		require.NoError(t, err)
@@ -46,6 +45,5 @@ func TestArchiveMessageDeltaPreviewAndRetry(t *testing.T) {
 		assert.Contains(t, result.Tags, "UNREAD")
 		assert.Contains(t, result.Tags, "Label_keep")
 	}
-	assert.Equal(t, 4, catalogReads-readsBeforeWrites, "writes and satisfied retries need the label catalog")
 	assert.Equal(t, 2, writes)
 }

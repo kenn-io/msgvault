@@ -772,6 +772,7 @@ func TestAgentTokenIncomingSendersIndependentOfDraftIdentities(t *testing.T) {
 		status             int
 	}{
 		{"canonical incoming", `{"1":["Code Sender <CODES@example.test>"]}`, []string{"message.read", "message.archive", "draft.create"}, http.StatusCreated},
+		{"dotless", `{"1":["Root@localhost"]}`, []string{"message.read"}, http.StatusCreated},
 		{"omitted", "", []string{"message.archive"}, http.StatusCreated},
 		{"empty", `{"1":[]}`, []string{"message.archive"}, http.StatusBadRequest},
 		{"top-level null", `null`, []string{"message.archive"}, http.StatusBadRequest},
@@ -816,8 +817,12 @@ func TestAgentTokenIncomingSendersIndependentOfDraftIdentities(t *testing.T) {
 			if tc.restrictions == "" {
 				assertionsForTest.Empty(grant.Sources[0].IncomingSenderKeys)
 			} else {
-				assertionsForTest.Equal([]string{"codes@example.test"}, grant.Sources[0].IncomingSenderKeys)
-				assertionsForTest.Equal([]string{"codes@example.test"}, issued.Sources[0].IncomingSenders)
+				expected := "codes@example.test"
+				if tc.name == "dotless" {
+					expected = "root@localhost"
+				}
+				assertionsForTest.Equal([]string{expected}, grant.Sources[0].IncomingSenderKeys)
+				assertionsForTest.Equal([]string{expected}, issued.Sources[0].IncomingSenders)
 			}
 		})
 	}
