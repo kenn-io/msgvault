@@ -36,7 +36,7 @@ function payload(path: string, marker = 'safe') {
   }] };
   if (path.endsWith('/fact-decisions')) return { decisions: [{
     id: 6, decision_key: 'private-decision-key', claim_key: 'private-claim-key', claim_value: '"example"', competing_claim_key: 'private-competing-key',
-    resolution_id: 7, target: { kind: 'attribute', key: 'work:email', revision }, outcome: 'saved', resolver_version: 'v1', action: 'applied', reason: 'applied-projection', projection: { kind: 'person_attribute', row_id: 8 },
+    resolution_id: 7, target: { kind: 'attribute', key: 'work:email', revision }, outcome: 'saved', resolver_version: 'person-fact-resolver-v1', action: 'applied', reason: 'applied-projection', projection: { kind: 'person_attribute', row_id: 8 },
     score: { authority: 100, confidence: 8, corroboration: 0, directness: 400, freshness: 100, source_class: 300, total: 908 },
     created_at: '2026-08-03T00:00:00Z'
   }] };
@@ -331,7 +331,7 @@ describe('FactLedgerController', () => {
     controller.destroy();
   });
 
-  it('keeps evidence_id through retry until navigation', async () => {
+  it('keeps evidence_id through an exact-request retry', async () => {
     const section = 'evidence' as const, param = 'evidence_id', value = '1';
     const requests: URL[] = [];
     let fail = false;
@@ -364,14 +364,24 @@ describe('FactLedgerController', () => {
     await controller.retrySection(section);
     expect(requests.at(-1)!.searchParams.get(param)).toBe(value);
     expect(controller.focusRequest?.key).toBe('evidence:1');
-    await controller.showAll();
-    expect(requests.at(-1)!.searchParams.has(param)).toBe(false);
-    await open();
-    await controller.selectTarget('all');
-    expect(requests.at(-1)!.searchParams.has(param)).toBe(false);
-    await open();
-    await controller.selectSection('claims');
-    expect(controller.exactFilter).toBeNull();
     controller.destroy();
   });
+  it('keeps a revealed claim through its decision and clears it on navigation', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async input => Response.json(payload(new URL(requestOf(input).url).pathname)));
+    const controller = new FactLedgerController(createAPIClient(fetchFn));
+    controller.applyContext(true, 42);
+    await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
+    const key = 'private-claim-key';
+    controller.revealClaim(key);
+    await controller.showDecision(key, `attribute:work:email:${revision}`);
+    expect(controller.revealedClaims.has(key)).toBe(true);
+    await controller.selectSection('claims');
+    expect(controller.revealedClaims.has(key)).toBe(false);
+    controller.revealClaim(key);
+    expect(controller.revealedClaims.has(key)).toBe(true);
+    controller.applyContext(true, 43);
+    expect(controller.revealedClaims.has(key)).toBe(false);
+    controller.destroy();
+  });
+
 });

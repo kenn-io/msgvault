@@ -768,7 +768,7 @@ export async function installDirectoryReviewArchive(page: Page) {
                 competing_claim_key: 'forbidden-competing-claim-key',
                 resolution_id: 82,
                 action: 'retained',
-                outcome: 'not-used', target, resolver_version: 'v1',
+                outcome: 'not-used', target, resolver_version: 'person-fact-resolver-v1',
                 score_maxima: { authority: 300, confidence: 100, corroboration: 150, directness: 400, freshness: 100, source_class: 500, total: 1550 },
                 reason: 'below-threshold',
                 score: {

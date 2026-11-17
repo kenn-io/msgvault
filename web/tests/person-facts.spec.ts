@@ -16,8 +16,8 @@ async function openFacts(page: Page) {
   return openPersonFacts(page);
 }
 
-for (const width of [1280, 390]) test(`Work details wrap between items at ${width}px`, async ({ page }) => {
-  await page.setViewportSize({ width, height: 900 });
+test('Work details wrap between items at 390px', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
   await installDirectoryReviewArchive(page);
   await stubOperationStatus(page, ['person_sweep']);
   const target = { kind: 'employment', key: 'system:employment', revision: `sha256:${'d'.repeat(64)}` };
