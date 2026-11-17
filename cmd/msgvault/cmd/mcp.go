@@ -172,6 +172,8 @@ func prepareMCPHTTP(cmd *cobra.Command, cfg *config.Config) (string, string, err
 // Views through POST /api/v1/saved-views/{id}/run.
 const savedViewsMinAPISchemaVersion = "2.21.0"
 const personCardDAVMinAPISchemaVersion = "2.32.0"
+const personCreateMinAPISchemaVersion = "5.16.0"
+const personCreateIfExistsMinAPISchemaVersion = "5.17.0"
 const identityReviewMinAPISchemaVersion = "3.0.0"
 const identityScoringMinAPISchemaVersion = "3.0.0"
 const draftsMinAPISchemaVersion = "3.0.0"
@@ -304,6 +306,10 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.PeopleBackend = people
 		if supportsNamedPromotion(capabilities) {
 			opts.PeopleBackend = daemonMCPNamedPeopleBrowser{PeopleBrowser: people, client: st}
+		}
+		if daemonclient.APISchemaVersionAtLeast(schemaVersion, personCreateMinAPISchemaVersion) {
+			opts.PersonCreator = people
+			opts.PersonCreateIfExists = daemonclient.APISchemaVersionAtLeast(schemaVersion, personCreateIfExistsMinAPISchemaVersion)
 		}
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.ChatDiscoveryMinAPISchemaVersion) {

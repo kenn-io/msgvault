@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type PersonProfile struct {
@@ -15,6 +16,42 @@ type PersonProfile struct {
 	Dates         []PersonDate         `json:"dates"`
 	Categories    []PersonCategory     `json:"categories"`
 	Media         []PersonMedia        `json:"media"`
+}
+
+// DerivedVCardFullName returns the full name the vCard projector uses when
+// the profile has no rendered formatted name. A nonzero sourceNameID means
+// the value comes from a structured name; otherwise it comes from display_name.
+func (profile PersonProfile) DerivedVCardFullName() (value string, sourceNameID int64, inferred bool, ok bool) {
+	for _, name := range profile.Names {
+		projection, renders := name.VCardProjection()
+		if renders && projection.Property == "FN" {
+			return "", 0, false, false
+		}
+	}
+	for _, name := range profile.Names {
+		if name.NameKind != PersonNameStructured {
+			continue
+		}
+		parts := make([]string, 0, 7)
+		for _, part := range []string{
+			derefString(name.HonorificPrefixes), derefString(name.GivenName),
+			derefString(name.AdditionalNames), derefString(name.FamilyName),
+			derefString(name.SecondarySurname), derefString(name.Generation),
+			derefString(name.HonorificSuffixes),
+		} {
+			if part = strings.TrimSpace(part); part != "" {
+				parts = append(parts, part)
+			}
+		}
+		if value = strings.Join(parts, " "); value != "" {
+			return value, name.Envelope.ID, provenanceIsInferred(name.Envelope.Source), true
+		}
+	}
+	if profile.Person.DisplayName == nil {
+		return "", 0, false, false
+	}
+	value = *profile.Person.DisplayName
+	return value, 0, false, strings.TrimSpace(value) != ""
 }
 
 type PersonProfilePatch struct {
@@ -98,6 +135,16 @@ func (s *Store) ApplyPersonProfilePatchContext(
 	if operations > MaxPersonProfilePatchOperations {
 		return nil, ErrPersonProfilePatchTooLarge
 	}
+	return retryContendedWrite(ctx, s, "apply person profile patch", func() (*PersonProfile, error) {
+		return s.applyPersonProfilePatchOnce(ctx, personID, expectedRevision, patch)
+	})
+}
+
+func (s *Store) applyPersonProfilePatchOnce(
+	ctx context.Context,
+	personID, expectedRevision int64,
+	patch PersonProfilePatch,
+) (*PersonProfile, error) {
 	var profile *PersonProfile
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
@@ -117,7 +164,9 @@ func (s *Store) ApplyPersonProfilePatchContext(
 		if err != nil {
 			return fmt.Errorf("update person profile revision: %w", err)
 		}
-		if err := s.applyPersonProfilePatchTx(ctx, tx, personID, patch); err != nil {
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {
+			return s.applyPersonProfilePatchTx(ctx, tx, personID, patch)
+		}); err != nil {
 			return err
 		}
 		if personProfilePatchChangesEnrichmentIdentity(patch) {
