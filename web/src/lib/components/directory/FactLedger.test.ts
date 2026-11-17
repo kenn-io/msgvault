@@ -486,8 +486,12 @@ describe('FactLedger', () => {
     render(FactLedger, { controller: value });
     const sentence = () => screen.getByLabelText('Historical fact decision').querySelector('.value > span')?.textContent;
     await fireEvent.click(screen.getByRole('button', { name: 'Reveal sensitive fact value' }));
-    await fireEvent.click(screen.getByRole('radio', { name: 'Decisions' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Show decision' }));
     await vi.waitFor(() => expect(sentence()).toBe('Saved: allowed sensitive value'));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Evidence' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Decisions' }));
+    await vi.waitFor(() => expect(sentence()).toBe('Saved: Hidden'));
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Reveal sensitive fact value' })).toBeDefined());
     await fireEvent.click(screen.getByRole('radio', { name: 'Decisions' }));
@@ -497,7 +501,7 @@ describe('FactLedger', () => {
 
   it.each([
     { evidenceIDs: [1], button: /show evidence/i, expectedID: 1 },
-    { evidenceIDs: [1, 2], button: /Show source: Source 2/, expectedID: 2 },
+    { evidenceIDs: [1, 2], button: /Show source 2: Source 2/, expectedID: 2 },
   ])('offers claim sources in Details for $evidenceIDs', async ({ evidenceIDs, button, expectedID }) => {
     const value = controller();
     value.targets[0]!.sensitive = false;
@@ -507,6 +511,16 @@ describe('FactLedger', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: button }));
     expect(navigate).toHaveBeenCalledWith(expectedID, value.claims.rows[0]!.targetCanonical);
+  });
+
+  it('distinguishes source links with the same description', async () => {
+    const value = controller();
+    value.claims.rows[0]!.evidenceIDs = [1, 2];
+    value.evidence.rows.push({ ...value.evidence.rows[0]!, evidenceID: 2, rowToken: 'evidence-1' });
+    render(FactLedger, { controller: value });
+    await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+    expect(screen.getByRole('button', { name: 'Show source 1: From a message they sent' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Show source 2: From a message they sent' })).toBeDefined();
   });
 
   it('focuses a related decision when requested', async () => {

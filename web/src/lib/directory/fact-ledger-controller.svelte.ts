@@ -231,7 +231,7 @@ export class FactLedgerController {
     if (!this.active || this.personID === null || this.disposed) return;
     this.selectedTargetOption = this.targets.find(target => target.canonical === targetCanonical)?.optionID ?? 'all';
     this.selectedSection = section;
-    this.clearDisclosureAndDialog();
+    this.clearDisclosureAndDialog(section === 'decisions' ? String(key) : undefined);
     this.exactFilter = { section, key };
     this.clearPage(section);
     await this.loadPage(section, 0, this.contextGeneration);
@@ -239,7 +239,7 @@ export class FactLedgerController {
   async showAll(): Promise<void> {
     const section = this.exactFilter?.section;
     this.exactFilter = null;
-    if (section) { this.clearPage(section); await this.loadPage(section, 0, this.contextGeneration); }
+    if (section) { this.clearDisclosureAndDialog(); this.clearPage(section); await this.loadPage(section, 0, this.contextGeneration); }
   }
   hasPrevious(section: PagedSection): boolean {
     return this[section].offset > 0;
@@ -354,8 +354,11 @@ export class FactLedgerController {
     this.revealedEvidence.clear();
     this.revealedClaims.clear();
   }
-  private clearDisclosureAndDialog(): void {
+  private clearDisclosureAndDialog(keepClaim?: string): void {
     this.revealedEvidence.clear();
+    const keepRevealed = keepClaim !== undefined && this.revealedClaims.has(keepClaim);
+    this.revealedClaims.clear();
+    if (keepRevealed) this.revealedClaims.add(keepClaim);
     if (this.historyOpen) this.closeEvidenceHistory();
     this.focusRequest = null;
   }

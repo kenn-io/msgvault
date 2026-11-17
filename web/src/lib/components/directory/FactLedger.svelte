@@ -156,7 +156,7 @@
                 <dl>
                   <div><dt>Reported confidence</dt><dd>{scoreWords(row.reportedScore)}</dd></div>
                   {#if row.evidenceIDs.length > 1}
-                    <div><dt>Sources</dt><dd class="links">{#each row.evidenceIDs as id, index (id)}{@const words = relatedSource(id, index)}<Button label={words} ariaLabel={`Show source: ${words}`} class="text-action" size="sm" onclick={() => void controller.showEvidence(id, row.targetCanonical)} />{/each}</dd></div>
+                    <div><dt>Sources</dt><dd class="links">{#each row.evidenceIDs as id, index (id)}{@const words = relatedSource(id, index)}<Button label={words} ariaLabel={`Show source ${index + 1}: ${words}`} class="text-action" size="sm" onclick={() => void controller.showEvidence(id, row.targetCanonical)} />{/each}</dd></div>
                   {/if}
                   {#if row.validFrom || row.validUntil}<div><dt>Valid</dt><dd>{row.validFrom ? formatShortDate(row.validFrom) : 'No start'} – {row.validUntil ? formatShortDate(row.validUntil) : 'No end'}</dd></div>{/if}
                   <div><dt>Created</dt><dd><time datetime={row.createdAt} title={formatDateTime(row.createdAt, 'long')}>{formatShortDateTime(row.createdAt)}</time></dd></div>
