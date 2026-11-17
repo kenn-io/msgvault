@@ -1177,3 +1177,49 @@ func TestDraftReplyPersistDataScopesComposeConversationByUIDValidity(t *testing.
 	requirements.Equal("Drafts|4", first.Message.SourceMessageID)
 	requirements.Equal("Drafts|4", second.Message.SourceMessageID)
 }
+
+func TestDraftReplyIncomingSenderCrossSource(t *testing.T) {
+	assertionsForTest := assert.New(t)
+	requirementsForTest := require.New(t)
+	fixture := newDraftReplyFixture(t)
+	adapter := fixture.grantedAdapter()
+	ref := draftSourceRef(fixture.source)
+	ref.SenderKeys = []string{store.NormalizeIdentifierForCompare(testutil.IMAPTestUsername)}
+	ref.IncomingSenderKeys = []string{"sender@example.com"}
+	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{ref}}
+	for _, requested := range []string{"", testutil.IMAPTestUsername} {
+		target, _, _, err := adapter.resolveDraftTarget(t.Context(), &fixture.parentID, "", 0, false, requested, grant, true)
+		requirementsForTest.NoError(err)
+		assertionsForTest.Contains(string(target.raw), "Subject: Question")
+		grant.Sources[0].IncomingSenderKeys = []string{"other@example.com"}
+		_, _, _, err = adapter.resolveDraftTarget(t.Context(), &fixture.parentID, "", 0, false, requested, grant, true)
+		requirementsForTest.Error(err)
+		assertionsForTest.Equal("not_permitted", err.Error())
+		grant.Sources[0].IncomingSenderKeys = []string{"sender@example.com"}
+	}
+	parentSource, err := fixture.store.GetOrCreateSource("mbox", "import@example.test")
+	requirementsForTest.NoError(err)
+	conversation, err := fixture.store.EnsureConversation(t.Context(), parentSource.ID, "imported", "Imported")
+	requirementsForTest.NoError(err)
+	sender, err := fixture.store.EnsureParticipant("sender@example.test", "Sender", "example.test")
+	requirementsForTest.NoError(err)
+	raw := []byte("From: sender@example.test\r\nTo: " + testutil.IMAPTestUsername + "\r\nSubject: Imported\r\nMessage-ID: <parent@example.test>\r\n\r\nbody\r\n")
+	id, err := fixture.store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message:    &store.Message{SourceID: parentSource.ID, SourceMessageID: "imported", ConversationID: conversation, MessageType: "email"},
+		RawMIME:    raw,
+		Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}, EmailAddresses: []string{"sender@example.test"}}},
+	})
+	requirementsForTest.NoError(err)
+	destination := draftSourceRef(fixture.source)
+	destination.SenderKeys = []string{store.NormalizeIdentifierForCompare(testutil.IMAPTestUsername)}
+	parent := draftSourceRef(parentSource)
+	parent.IncomingSenderKeys = []string{"other@example.test"}
+	grant = &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{parent, destination}}
+	_, _, _, err = adapter.resolveDraftTarget(t.Context(), &id, "", fixture.source.ID, true, testutil.IMAPTestUsername, grant, true) //nolint:dogsled // Only denial matters here.
+	requirementsForTest.Error(err)
+	assertionsForTest.Equal("not_permitted", err.Error())
+	grant.Sources[0].IncomingSenderKeys = []string{"sender@example.test"}
+	target, _, _, err := adapter.resolveDraftTarget(t.Context(), &id, "", fixture.source.ID, true, testutil.IMAPTestUsername, grant, true)
+	requirementsForTest.NoError(err)
+	assertionsForTest.Contains(string(target.raw), "Subject: Imported")
+}

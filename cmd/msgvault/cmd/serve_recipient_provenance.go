@@ -43,7 +43,10 @@ func (a *storeAPIAdapter) draftRecipientAdvisory(
 		readable = make([]int64, 0)
 		currentReadable := false
 		for _, source := range sources {
-			if grant.MatchesSource(draftSourceRef(source)) {
+			if matched, ok := grant.MatchingSource(draftSourceRef(source)); ok {
+				if len(matched.IncomingSenderKeys) > 0 {
+					return unchecked
+				}
 				readable = append(readable, source.ID)
 				currentReadable = currentReadable || source.ID == sourceID
 			}

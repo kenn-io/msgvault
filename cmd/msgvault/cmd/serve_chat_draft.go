@@ -37,21 +37,30 @@ type chatDraftOutput struct {
 // chatDraftAuthorizer admits the owner, or a grant holding one of permissions
 // on the conversation's source.
 func chatDraftAuthorizer(grant *agentgrant.Grant, permissions ...agentgrant.Permission) store.ChatDraftAuthorizer {
-	return func(sourceType, identifier string) error {
-		ref := agentgrant.SourceRef{Type: sourceType, Identifier: identifier}
-		if grant == nil || slices.ContainsFunc(permissions, func(p agentgrant.Permission) bool { return grant.Allows(p, ref) }) {
-			return nil
+	return func(sourceType, identifier string) ([]string, error) {
+		if grant == nil {
+			return []string{}, nil
 		}
-		return draftReplyNotPermitted(fmt.Errorf("source %s:%s is not in grant %s", sourceType, identifier, grant.ID))
+		selected, ok := grant.MatchingSource(agentgrant.SourceRef{Type: sourceType, Identifier: identifier})
+		if ok && slices.ContainsFunc(permissions, grant.HasPermission) {
+			return selected.IncomingSenderKeys, nil
+		}
+		return nil, draftReplyNotPermitted(fmt.Errorf("source %s:%s is not in grant %s", sourceType, identifier, grant.ID))
 	}
 }
 
-// redactChatDraftBody keeps delete access metadata-only, like the email draft path.
-func redactChatDraftBody(grant *agentgrant.Grant, draft store.ChatDraft) store.ChatDraft {
-	if grant != nil && !grant.Allows(agentgrant.PermissionDraftEdit, agentgrant.SourceRef{
-		Type: draft.SourceType, Identifier: draft.SourceIdentifier,
-	}) {
+// redactChatDraft keeps delete access metadata-only and hides reply parent IDs
+// from lifecycle operations that do not authorize the parent message.
+func redactChatDraft(grant *agentgrant.Grant, draft store.ChatDraft) store.ChatDraft {
+	if grant == nil {
+		return draft
+	}
+	selected, ok := grant.MatchingSource(agentgrant.SourceRef{Type: draft.SourceType, Identifier: draft.SourceIdentifier})
+	if !ok || !grant.HasPermission(agentgrant.PermissionDraftEdit) {
 		draft.Body = ""
+	}
+	if !ok || len(selected.IncomingSenderKeys) > 0 {
+		draft.ReplyToSourceMessageID = ""
 	}
 	return draft
 }
@@ -92,14 +101,16 @@ func (a *storeAPIAdapter) runCLIChatDraftCreate(
 	}
 	authorize := chatDraftAuthorizer(grant, agentgrant.PermissionDraftCreate)
 	authorized := false
+	restricted := false
 	draft, err := a.store.CreateChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, intent.Body,
-		func(sourceType, identifier string) error {
-			err := authorize(sourceType, identifier)
+		func(sourceType, identifier string) ([]string, error) {
+			senders, err := authorize(sourceType, identifier)
 			authorized = err == nil
-			return err
+			restricted = len(senders) > 0 && intent.ReplyTo != 0
+			return senders, err
 		})
 	if err != nil {
-		if authorized {
+		if authorized && !restricted {
 			grant = nil // the grant covers this source, so later errors reveal nothing to hide
 		}
 		return chatDraftStoreError(err, grant)
@@ -122,13 +133,13 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 			return chatDraftStoreError(err, grant)
 		}
 		for i := range drafts {
-			drafts[i] = redactChatDraftBody(grant, drafts[i])
+			drafts[i] = redactChatDraft(grant, drafts[i])
 		}
 		return emitChatDrafts(emit, intent.JSON, true, "ok", drafts...)
 	}
 	draft, err := a.store.GetChatDraftContext(ctx, intent.DraftID)
 	if err == nil {
-		err = authorize(draft.SourceType, draft.SourceIdentifier)
+		_, err = authorize(draft.SourceType, draft.SourceIdentifier)
 	}
 	if err != nil {
 		return chatDraftStoreError(err, grant)
@@ -148,10 +159,7 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 	if err != nil {
 		return chatDraftStoreError(err, grant)
 	}
-	if intent.Operation != api.CLIRunDraftEditCommand {
-		draft = redactChatDraftBody(grant, draft)
-	}
-	return emitChatDrafts(emit, intent.JSON, false, status, draft)
+	return emitChatDrafts(emit, intent.JSON, false, status, redactChatDraft(grant, draft))
 }
 
 // emitChatDrafts writes one draft, or a list as a JSON array, to stdout.

@@ -15,12 +15,13 @@ import (
 )
 
 var (
-	agentTokenExpires     string
-	agentTokenLabel       string
-	agentTokenPermissions []string
-	agentTokenSourceIDs   string // comma-separated source IDs
-	agentTokenSenders     []string
-	agentTokenJSON        bool
+	agentTokenExpires         string
+	agentTokenLabel           string
+	agentTokenPermissions     []string
+	agentTokenSourceIDs       string // comma-separated source IDs
+	agentTokenSenders         []string
+	agentTokenIncomingSenders []string
+	agentTokenJSON            bool
 )
 
 var agentTokenCmd = &cobra.Command{
@@ -47,7 +48,11 @@ var agentTokenIssueCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		senderSelections, err := parseAgentTokenSenders(agentTokenSenders)
+		senderSelections, err := parseAgentTokenSenders(agentTokenSenders, "--sender")
+		if err != nil {
+			return err
+		}
+		incomingSenders, err := parseAgentTokenSenders(agentTokenIncomingSenders, "--incoming-sender")
 		if err != nil {
 			return err
 		}
@@ -59,7 +64,7 @@ var agentTokenIssueCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		result, err := client.IssueAgentToken(cmd.Context(), agentTokenLabel, agentTokenPermissions, sourceIDs, senderSelections, expires)
+		result, err := client.IssueAgentToken(cmd.Context(), agentTokenLabel, agentTokenPermissions, sourceIDs, senderSelections, incomingSenders, expires)
 		if err != nil {
 			return err
 		}
@@ -130,7 +135,7 @@ func parseAgentTokenSourceIDs(raw string) ([]int64, error) {
 	return ids, nil
 }
 
-func parseAgentTokenSenders(values []string) (map[int64][]string, error) {
+func parseAgentTokenSenders(values []string, flag string) (map[int64][]string, error) {
 	if len(values) == 0 {
 		return nil, nil //nolint:nilnil // Omitted sender selections use the daemon's default.
 	}
@@ -138,11 +143,11 @@ func parseAgentTokenSenders(values []string) (map[int64][]string, error) {
 	for _, value := range values {
 		sourceID, address, ok := strings.Cut(value, "=")
 		if !ok || strings.TrimSpace(address) == "" {
-			return nil, errors.New("--sender must use SOURCE_ID=ADDRESS")
+			return nil, errors.New(flag + " must use SOURCE_ID=ADDRESS")
 		}
 		id, err := strconv.ParseInt(strings.TrimSpace(sourceID), 10, 64)
 		if err != nil || id <= 0 {
-			return nil, errors.New("invalid sender source ID " + strconv.Quote(sourceID))
+			return nil, fmt.Errorf("%s requires a positive source ID, got %q", flag, sourceID)
 		}
 		result[id] = append(result[id], strings.TrimSpace(address))
 	}
@@ -158,6 +163,9 @@ func printAgentTokenIssueResult(cmd *cobra.Command, r *generated.AgentTokenIssue
 		parts := make([]string, len(r.Sources))
 		for i, s := range r.Sources {
 			parts[i] = fmt.Sprintf("%d (%s; senders: %s)", s.ID, s.Identifier, strings.Join(s.SenderKeys, ","))
+			if len(s.IncomingSenders) > 0 {
+				parts[i] += "; incoming senders: " + strings.Join(s.IncomingSenders, ",")
+			}
 		}
 		_, _ = fmt.Fprintf(w, "Sources:     %s\n", strings.Join(parts, ", "))
 	}
@@ -184,6 +192,9 @@ func printAgentTokenList(cmd *cobra.Command, tokens []generated.AgentTokenView) 
 		sourceParts := make([]string, len(t.Sources))
 		for i, s := range t.Sources {
 			sourceParts[i] = fmt.Sprintf("%d/%s/%s[%s]", s.ID, s.Type, s.Identifier, strings.Join(s.SenderKeys, ","))
+			if len(s.IncomingSenders) > 0 {
+				sourceParts[i] += "[incoming senders: " + strings.Join(s.IncomingSenders, ",") + "]"
+			}
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			t.ID,
@@ -205,11 +216,13 @@ func init() {
 	agentTokenIssueCmd.Flags().StringVar(&agentTokenLabel, "label", "",
 		"Human-readable label for the token (required)")
 	agentTokenIssueCmd.Flags().StringSliceVar(&agentTokenPermissions, "permissions", nil,
-		"Comma-separated permissions (search.read, message.read, verification.read, attachment.read, stats.read, draft.create, draft.edit, draft.delete, calendar.read, calendar.event.read, calendar.write, calendar.invite)")
+		"Comma-separated permissions (search.read, message.read, verification.read, attachment.read, stats.read, message.archive, draft.create, draft.edit, draft.delete, calendar.read, calendar.event.read, calendar.write, calendar.invite)")
 	agentTokenIssueCmd.Flags().StringVar(&agentTokenSourceIDs, "source-ids", "",
 		"Comma-separated list of source IDs the token may access")
 	agentTokenIssueCmd.Flags().StringArrayVar(&agentTokenSenders, "sender", nil,
 		"Restrict one source's sender identity (repeat as SOURCE_ID=ADDRESS)")
+	agentTokenIssueCmd.Flags().StringArrayVar(&agentTokenIncomingSenders, "incoming-sender", nil,
+		"Restrict reads and archive writes to incoming From addresses (repeat as SOURCE_ID=ADDRESS)")
 	agentTokenIssueCmd.Flags().BoolVar(&agentTokenJSON, flagJSON, false, "Output as JSON")
 	agentTokenListCmd.Flags().BoolVar(&agentTokenJSON, flagJSON, false, "Output as JSON")
 }

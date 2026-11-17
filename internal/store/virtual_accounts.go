@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 // VirtualAccount is one selectable slice of a source's email and calendar
@@ -66,7 +68,7 @@ func ParseVirtualAccountKey(key string) (sourceID int64, address string, unattri
 
 // ListVirtualAccountsContext reads the virtual account catalog.
 func (s *Store) ListVirtualAccountsContext(ctx context.Context) (map[int64][]VirtualAccount, error) {
-	return ReadVirtualAccountsContext(ctx, s.db.DB, s.Rebind)
+	return ReadVirtualAccountsContext(ctx, s.db.DB, s.Rebind, s.dialect.UnicodeLowerExpression)
 }
 
 // ReadVirtualAccountsContext lists, per source with email or calendar rows,
@@ -75,9 +77,12 @@ func (s *Store) ListVirtualAccountsContext(ctx context.Context) (map[int64][]Vir
 // to ctx is used when it belongs to db, so an agent read sees the same sources
 // its authorization checked.
 func ReadVirtualAccountsContext(
-	ctx context.Context, db *sql.DB, rebind func(string) string,
+	ctx context.Context, db *sql.DB, rebind func(string) string, lower func(string) string,
 ) (map[int64][]VirtualAccount, error) {
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	incoming, incomingArgs := sourcescope.IncomingPredicate(ctx, "m.id", "m.source_id", lower)
+	scope += " AND " + incoming
+	scopeArgs = append(scopeArgs, incomingArgs...)
 	stmt := fmt.Sprintf(`
 		WITH counts AS (
 			SELECT m.source_id, m.account_address AS address,

@@ -907,3 +907,112 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		assertions.Equal(scope.id, response.Messages[0].ID)
 	}
 }
+
+func TestAgentIncomingSenderScopesReads(t *testing.T) {
+	requirementsForTest := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("test", "owner@example.test")
+	requirementsForTest.NoError(err)
+	_, err = st.EnsureConversation(t.Context(), src.ID, "thread", "private code")
+	requirementsForTest.NoError(err)
+	_, denied, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "denied", "private code", "")
+	requirementsForTest.NoError(err)
+	_, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "allowed", "allowed code", "")
+	requirementsForTest.NoError(err)
+	for _, entry := range []struct {
+		id      int64
+		address string
+	}{{allowed, "codes@example.test"}, {denied, "other@example.test"}} {
+		participant, err := st.EnsureParticipant(entry.address, "", "example.test")
+		requirementsForTest.NoError(err)
+		msg, err := st.GetMessage(entry.id)
+		requirementsForTest.NoError(err)
+		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: src.ID, ConversationID: msg.ConversationID, SourceMessageID: msg.SourceMessageID, MessageType: "email", Subject: sql.NullString{String: msg.Subject, Valid: true}}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{participant}, EmailAddresses: []string{entry.address}}}})
+		requirementsForTest.NoError(err)
+		if entry.id == allowed {
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE participants SET email_address = ? WHERE id = ?"), "changed@example.test", participant)
+			requirementsForTest.NoError(err)
+		}
+	}
+	_, err = st.CreateCollection("sender-scoped", "", []int64{src.ID})
+	requirementsForTest.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
+	hash, content := strings.Repeat("b", 64), "synthetic private attachment"
+	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(os.MkdirAll(filepath.Dir(path), 0700))
+	requirementsForTest.NoError(os.WriteFile(path, []byte(content), 0600))
+	requirementsForTest.NoError(st.UpsertAttachment(t.Context(), denied, "private.bin", "application/octet-stream", filepath.Join(hash[:2], hash), hash, len(content)))
+	var deniedAttachment int64
+	requirementsForTest.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id = ?"), denied).Scan(&deniedAttachment))
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	defer srv.agentGrants.Close()
+	contentRoute := "/api/v1/attachments/" + hash + "/content"
+	contentRequest := httptest.NewRequestWithContext(t.Context(), http.MethodGet, contentRoute, nil)
+	contentRequest.Header.Set("X-Api-Key", "owner-key")
+	contentResponse := httptest.NewRecorder()
+	srv.Router().ServeHTTP(contentResponse, contentRequest)
+	requirementsForTest.Equal(http.StatusOK, contentResponse.Code, contentResponse.Body.String())
+	requirementsForTest.Equal(content, contentResponse.Body.String())
+	body := fmt.Sprintf(`{"label":"reader","permissions":["search.read","message.read","stats.read","attachment.read","verification.read"],"source_ids":[%d],"incoming_senders":{"%d":["codes@example.test"]}}`, src.ID, src.ID)
+	issue := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
+	issue.Header.Set("X-Api-Key", "owner-key")
+	issue.Header.Set("Content-Type", "application/json")
+	issued := httptest.NewRecorder()
+	srv.Router().ServeHTTP(issued, issue)
+	requirementsForTest.Equal(http.StatusCreated, issued.Code, issued.Body.String())
+	var grant agentTokenIssueResponse
+	requirementsForTest.NoError(json.Unmarshal(issued.Body.Bytes(), &grant))
+	token := grant.Secret
+	for _, tc := range []struct {
+		path               string
+		status             int
+		contains, excludes string
+	}{
+		{"/api/v1/messages", http.StatusOK, "allowed code", "private code"},
+		{"/api/v1/search?q=code", http.StatusOK, "allowed code", "private code"},
+		{"/api/v1/messages/filter", http.StatusOK, "allowed code", "private code"},
+		{"/api/v1/stats/total", http.StatusOK, `"message_count":1`, `"message_count":2`},
+		{"/api/v1/cli/collections", http.StatusOK, `"message_count":1`, `"message_count":2`},
+		{fmt.Sprintf("/api/v1/cli/message/thread?id=%d", allowed), http.StatusOK, "allowed code", "private code"},
+		{fmt.Sprintf("/api/v1/cli/message/thread?id=%d", denied), http.StatusNotFound, "", "private code"},
+		{fmt.Sprintf("/api/v1/attachments/%d", deniedAttachment), http.StatusNotFound, "", "private.bin"},
+		{contentRoute, http.StatusNotFound, "", content},
+		{fmt.Sprintf("/api/v1/messages/%d", allowed), http.StatusOK, "allowed code", "private code"},
+		{fmt.Sprintf("/api/v1/messages/%d", denied), http.StatusNotFound, "", "private code"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil)
+			r.Header.Set(apiprotocol.AgentTokenHeader, token)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, r)
+			require.Equal(t, tc.status, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), tc.contains)
+			assert.NotContains(t, w.Body.String(), tc.excludes)
+		})
+	}
+
+	other, err := st.GetOrCreateSource("test", "other-account@example.test")
+	requirementsForTest.NoError(err)
+	_, err = st.EnsureConversation(t.Context(), other.ID, "thread", "other account title")
+	requirementsForTest.NoError(err)
+	_, otherID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "other-account@example.test", "other-message", "other subject", "")
+	requirementsForTest.NoError(err)
+	_, mixedToken, _, err := srv.agentGrants.Issue("mixed", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{
+		{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier, IncomingSenderKeys: []string{"codes@example.test"}},
+		{ID: other.ID, Type: other.SourceType, Identifier: other.Identifier},
+	}, time.Time{})
+	requirementsForTest.NoError(err)
+	for _, tc := range []struct {
+		id            int64
+		want, exclude string
+	}{{allowed, "allowed code", "private code"}, {otherID, "other account title", "private code"}} {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", tc.id), nil)
+		r.Header.Set(apiprotocol.AgentTokenHeader, mixedToken)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		requirementsForTest.Equal(http.StatusOK, w.Code, w.Body.String())
+		requirementsForTest.Contains(w.Body.String(), tc.want)
+		requirementsForTest.NotContains(w.Body.String(), tc.exclude)
+	}
+}

@@ -18,6 +18,7 @@ const (
 	PermissionVerificationRead  Permission = "verification.read"
 	PermissionSearchRead        Permission = "search.read"
 	PermissionMessageRead       Permission = "message.read"
+	PermissionMessageArchive    Permission = "message.archive"
 	PermissionAttachmentRead    Permission = "attachment.read"
 	PermissionStatsRead         Permission = "stats.read"
 	PermissionDraftCreate       Permission = "draft.create"
@@ -30,6 +31,7 @@ const (
 )
 
 var knownPermissions = map[string]Permission{
+	string(PermissionMessageArchive):    PermissionMessageArchive,
 	string(PermissionVerificationRead):  PermissionVerificationRead,
 	string(PermissionSearchRead):        PermissionSearchRead,
 	string(PermissionMessageRead):       PermissionMessageRead,
@@ -55,6 +57,8 @@ type SourceRef struct {
 	Type       string
 	Identifier string
 	SenderKeys []string
+	// IncomingSenderKeys limits incoming From envelopes; empty permits all senders.
+	IncomingSenderKeys []string
 }
 
 type Grant struct {
@@ -75,13 +79,19 @@ func (g Grant) Allows(p Permission, src SourceRef) bool {
 	return g.HasPermission(p) && g.MatchesSource(src)
 }
 
-func (g Grant) MatchesSource(src SourceRef) bool {
-	for _, s := range g.Sources {
-		if s.Type == src.Type && s.Identifier == src.Identifier {
-			return true
+// MatchingSource returns the granted source with the same type and identifier.
+func (g Grant) MatchingSource(src SourceRef) (SourceRef, bool) {
+	for _, source := range g.Sources {
+		if source.Type == src.Type && source.Identifier == src.Identifier {
+			return source, true
 		}
 	}
-	return false
+	return SourceRef{}, false
+}
+
+func (g Grant) MatchesSource(src SourceRef) bool {
+	_, ok := g.MatchingSource(src)
+	return ok
 }
 
 // AllowsSender reports whether the grant permits one canonical sender on a
@@ -90,12 +100,8 @@ func (g Grant) AllowsSender(p Permission, src SourceRef, senderKey string) bool 
 	if senderKey == "" || !g.HasPermission(p) {
 		return false
 	}
-	for _, source := range g.Sources {
-		if source.Type == src.Type && source.Identifier == src.Identifier && slices.Contains(source.SenderKeys, senderKey) {
-			return true
-		}
-	}
-	return false
+	source, ok := g.MatchingSource(src)
+	return ok && slices.Contains(source.SenderKeys, senderKey)
 }
 
 func cloneGrant(g Grant) Grant {
@@ -109,10 +115,11 @@ func cloneGrant(g Grant) Grant {
 	}
 	for i, source := range g.Sources {
 		clone.Sources[i] = SourceRef{
-			ID:         source.ID,
-			Type:       source.Type,
-			Identifier: source.Identifier,
-			SenderKeys: append([]string(nil), source.SenderKeys...),
+			ID:                 source.ID,
+			Type:               source.Type,
+			Identifier:         source.Identifier,
+			SenderKeys:         append([]string(nil), source.SenderKeys...),
+			IncomingSenderKeys: append([]string(nil), source.IncomingSenderKeys...),
 		}
 	}
 	return clone

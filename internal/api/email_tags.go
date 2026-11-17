@@ -91,7 +91,7 @@ func (s *Server) writeEmailTagError(w http.ResponseWriter, err error) {
 		status = http.StatusForbidden
 	case "stale_identity", "sync_active":
 		status = http.StatusConflict
-	case "unsupported_provider", "unsupported_keywords":
+	case "unsupported_provider", "unsupported_keywords", "archive_unsupported":
 		status = http.StatusNotImplemented
 	case "remote_accepted_local_failed", "local_failed":
 		status = http.StatusInternalServerError

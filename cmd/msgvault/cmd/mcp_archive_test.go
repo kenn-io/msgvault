@@ -26,23 +26,63 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func archiveMCPCatalog(t *testing.T, opts mcpserver.ServeOptions) *sdkmcp.ListToolsResult {
+func TestMCPDelegatedArchive(t *testing.T) {
+	requirements := require.New(t)
+	_, source, allowed, _, serverURL, owner, provider := newArchiveDaemon(t)
+	grant, err := owner.IssueAgentToken(t.Context(), "code reader", []string{"message.archive"}, []int64{source.ID}, nil, nil, time.Time{})
+	requirements.NoError(err)
+	client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: grant.Secret, AllowInsecure: true})
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	opts, err := delegatedMCPServeOptions(t.Context(), client)
+	requirements.NoError(err)
+	session, closeSession := archiveMCPSession(t, opts)
+	defer closeSession()
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "archive_message", Arguments: map[string]any{"message_id": allowed, "archived": true}})
+	requirements.NoError(err)
+	requirements.False(result.IsError, "%v", result.Content)
+	assert.Contains(t, mcpDraftResultText(t, result), fmt.Sprintf(`"message_id":%d`, allowed))
+	assert.EqualValues(t, 1, provider.connects.Load())
+}
+
+func archiveMCPSession(t *testing.T, opts mcpserver.ServeOptions) (*sdkmcp.ClientSession, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
 	done := make(chan error, 1)
 	go func() { done <- mcpserver.ServeTransport(ctx, opts, serverTransport) }()
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "archive-test", Version: "1"}, nil)
 	session, err := client.Connect(ctx, clientTransport, nil)
-	require.NoError(t, err)
-	listed, err := session.ListTools(ctx, nil)
-	require.NoError(t, err)
-	require.NoError(t, session.Close())
-	cancel()
-	if err := <-done; err != nil {
-		require.ErrorIs(t, err, context.Canceled)
+	if err != nil {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			assert.Fail(t, "MCP server did not stop")
+		}
+		require.NoError(t, err)
 	}
+	return session, func() {
+		closeErr := session.Close()
+		cancel()
+		select {
+		case err := <-done:
+			require.NoError(t, closeErr)
+			if err != nil {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+		case <-time.After(5 * time.Second):
+			assert.Fail(t, "MCP server did not stop")
+		}
+	}
+}
+
+func archiveMCPCatalog(t *testing.T, opts mcpserver.ServeOptions) *sdkmcp.ListToolsResult {
+	t.Helper()
+	session, closeSession := archiveMCPSession(t, opts)
+	defer closeSession()
+	listed, err := session.ListTools(t.Context(), nil)
+	require.NoError(t, err)
 	return listed
 }
 
@@ -294,8 +334,8 @@ func TestMCPArchiveCatalogBudgets(t *testing.T) {
 		kinds  []string
 		budget int
 	}{
-		{"mail only", []string{"mbox"}, 215_341},
-		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 267_991},
+		{"mail only", []string{"mbox"}, 217_709},
+		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 270_359},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)

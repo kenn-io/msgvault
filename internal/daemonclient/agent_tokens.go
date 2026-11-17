@@ -18,14 +18,20 @@ const agentTokenSenderMinAPISchemaVersion = "2.32.0"
 const AgentReadMinAPISchemaVersion = "3.9.0"
 
 // IssueAgentToken creates a restricted agent grant and returns its one-time secret.
-func (c *Client) IssueAgentToken(
-	ctx context.Context,
-	label string,
-	permissions []string,
-	sourceIDs []int64,
-	senderSelections map[int64][]string,
-	expires time.Time,
-) (*generated.AgentTokenIssueResponse, error) {
+func (c *Client) IssueAgentToken(ctx context.Context, label string, permissions []string, sourceIDs []int64, senderSelections, incomingSenders map[int64][]string, expires time.Time) (*generated.AgentTokenIssueResponse, error) {
+	if len(incomingSenders) > 0 {
+		compatible, err := c.SupportsAPISchemaVersion(ctx, MessageArchiveMinAPISchemaVersion)
+		if err != nil {
+			return nil, fmt.Errorf("check incoming sender capability: %w", err)
+		}
+		if !compatible {
+			return nil, fmt.Errorf("incoming sender restrictions require daemon API schema %s or newer", MessageArchiveMinAPISchemaVersion)
+		}
+	}
+	encodedIncomingSenders := make(map[string][]string, len(incomingSenders))
+	for sourceID, values := range incomingSenders {
+		encodedIncomingSenders[strconv.FormatInt(sourceID, 10)] = append([]string(nil), values...)
+	}
 	if senderSelections != nil {
 		compatible, err := c.SupportsAPISchemaVersion(ctx, agentTokenSenderMinAPISchemaVersion)
 		if err != nil {
@@ -57,6 +63,7 @@ func (c *Client) IssueAgentToken(
 				Label: label, Permissions: permissions, SourceIds: sourceIDs,
 				ExpiresAt:        expiresAt,
 				SenderSelections: encodedSelections,
+				IncomingSenders:  encodedIncomingSenders,
 			},
 		})
 	})

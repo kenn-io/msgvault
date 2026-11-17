@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
@@ -64,6 +65,30 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 			r.Len(page.Suggestions, tc.count)
 		})
 	}
+	t.Run("incoming sender scope", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			senders []string
+			status  int
+		}{
+			{"unrestricted", nil, http.StatusOK},
+			{"restricted", []string{"allowed@example.test"}, http.StatusForbidden},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				granted := append([]agentgrant.SourceRef(nil), sources...)
+				granted[0].IncomingSenderKeys = tc.senders
+				_, token, _, err := srv.agentGrants.Issue(tc.name, []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, granted, time.Time{})
+				require.NoError(t, err)
+				for _, route := range []string{"record", "suggestions"} {
+					req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/%s?ref=msg:%d", route, note), nil)
+					req.Header.Set(apiprotocol.AgentTokenHeader, token)
+					w := httptest.NewRecorder()
+					srv.Router().ServeHTTP(w, req)
+					assert.Equal(t, tc.status, w.Code, "%s: %s", route, w.Body.String())
+				}
+			})
+		}
+	})
 	t.Run("limit", func(t *testing.T) {
 		for _, limit := range []string{"0", "-1", "101", "bad"} {
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/suggestions?ref=msg:%d&limit=%s", note, limit), nil)

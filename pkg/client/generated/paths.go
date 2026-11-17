@@ -387,6 +387,11 @@ type GetMessagePath struct {
 	ID int64 `json:"id"`
 }
 
+type ArchiveMessagePath struct {
+	// ID Archived message ID
+	ID int `json:"id"`
+}
+
 type GetEmailFamilyPath struct {
 	// ID Live archived email message ID
 	ID int64 `json:"id"`

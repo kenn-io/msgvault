@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -344,6 +345,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		wantCardDAV            bool
 		wantMessageTags        bool
 		wantContacts           bool
+		wantMessageArchive     bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -365,7 +367,8 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "meeting record predecessor", schemaVersion: "5.3.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "meeting decisions predecessor", schemaVersion: "5.9.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "suggestion predecessor", schemaVersion: "5.10.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantMeetingDecisions: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
-		{name: "current schema", schemaVersion: api.APISchemaVersion, wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantMeetingDecisions: true, wantMeetingSuggestions: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "archive predecessor", schemaVersion: "5.12.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantMeetingDecisions: true, wantMeetingSuggestions: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "current schema", schemaVersion: api.APISchemaVersion, wantMessageArchive: true, wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantMeetingDecisions: true, wantMeetingSuggestions: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "tags predecessor 3.14.0", schemaVersion: "3.14.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "before contact schema", schemaVersion: "3.19.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
 		{name: "contact schema", schemaVersion: "3.20.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantContacts: true, wantMessageTags: true},
@@ -414,6 +417,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			assert.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
 			assert.Equal(tt.wantScoring, opts.IdentityScoring != nil)
 			assert.Equal(tt.wantMessageTags, opts.MessageTags != nil)
+			assert.Equal(tt.wantMessageArchive, opts.MessageArchive != nil)
 		})
 	}
 }
@@ -660,4 +664,31 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	assert.False(opts.KataDocbank)
 	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
 	assert.Contains(logs.String(), "503")
+}
+
+func TestDelegatedMCPArchiveCapability(t *testing.T) {
+	for _, version := range []string{"5.12.0"} {
+		t.Run(version, func(t *testing.T) {
+			assertionsForTest := assert.New(t)
+			requirementsForTest := require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version}))
+				case "/api/v1/agent-tokens/self":
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": "fixture", "label": "agent", "permissions": []string{"message.archive"}, "sources": []any{map[string]any{"id": 1, "type": "gmail", "identifier": "owner@example.test"}}, "created_at": time.Now().UTC()}))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: "fixture", AllowInsecure: true})
+			requirementsForTest.NoError(err)
+			t.Cleanup(func() { _ = client.Close() })
+			opts, err := delegatedMCPServeOptions(t.Context(), client)
+			requirementsForTest.NoError(err)
+			assertionsForTest.Nil(opts.MessageArchive)
+		})
+	}
 }

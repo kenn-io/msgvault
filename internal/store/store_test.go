@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -2322,4 +2323,91 @@ func TestStore_GetStatsForScope_ExcludesSourceDeleted(t *testing.T) {
 	stats, err := f.Store.GetStatsForScope([]int64{f.Source.ID})
 	require.NoError(t, err, "GetStatsForScope")
 	assert.Equal(t, int64(1), stats.MessageCount, "MessageCount (source-deleted excluded)")
+}
+
+func TestIncomingSenderScopedCountsUseMessageIDs(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	const allowed, denied = "codes@example.test", "other@example.test"
+	participants := make(map[string]int64)
+	for _, address := range []string{allowed, denied} {
+		id, err := st.EnsureParticipant(address, "", "example.test")
+		requirements.NoError(err)
+		participants[address] = id
+	}
+	var source *store.Source
+	for _, message := range []struct {
+		provider, from, to string
+		deleted            bool
+	}{
+		{"allowed-live", allowed, denied, false},
+		{"denied-live", denied, allowed, false},
+		{"allowed-deleted", allowed, denied, true},
+		{"denied-deleted", denied, allowed, true},
+	} {
+		var id int64
+		var err error
+		source, id, err = testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", message.provider, message.provider, "")
+		requirements.NoError(err)
+		msg, err := st.GetMessage(id)
+		requirements.NoError(err)
+		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: msg.ConversationID, SourceMessageID: msg.SourceMessageID, MessageType: "email", Subject: sql.NullString{String: msg.Subject, Valid: true}}, Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{participants[message.to]}, EmailAddresses: []string{message.to}}, {Type: "from", ParticipantIDs: []int64{participants[message.from]}, EmailAddresses: []string{message.from}}}})
+		requirements.NoError(err)
+		if message.deleted {
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), id)
+			requirements.NoError(err)
+		}
+	}
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {allowed}})
+	stats, err := st.GetStatsForScopeContext(ctx, []int64{source.ID})
+	requirements.NoError(err)
+	requirements.Equal(int64(1), stats.MessageCount)
+	requirements.Equal(int64(1), stats.SourceDeletedCount)
+	active, err := st.CountActiveMessagesContext(ctx, source.ID)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), active)
+	deleted, err := st.CountSourceDeletedMessagesContext(ctx, source.ID)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), deleted)
+	perSource, err := st.CountMessagesForSourceContext(ctx, source.ID)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), perSource)
+}
+
+func TestRelatedMessageIncomingScope(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "allowed", "allowed", "")
+	requirements.NoError(err)
+	_, target, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "target", "target", "")
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		id      int64
+		address string
+	}{{allowed, "codes@example.test"}, {target, "other@example.test"}} {
+		participant, err := st.EnsureParticipant(tc.address, "", "example.test")
+		requirements.NoError(err)
+		msg, err := st.GetMessage(tc.id)
+		requirements.NoError(err)
+		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: msg.ConversationID, SourceMessageID: msg.SourceMessageID, MessageType: "email", Subject: sql.NullString{String: msg.Subject, Valid: true}}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{participant}, EmailAddresses: []string{tc.address}}}})
+		requirements.NoError(err)
+	}
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ?, metadata = ? WHERE id = ?"), "chatwoot", fmt.Sprintf(`{"meeting_message_id":%d}`, target), allowed)
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ? WHERE id = ?"), "meeting_transcript", target)
+	requirements.NoError(err)
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {"codes@example.test"}})
+	checkRelated := func(want *int64) {
+		storeMessage, err := st.GetMessageContext(ctx, allowed)
+		requirements.NoError(err)
+		requirements.Equal(want, storeMessage.RelatedMessageID)
+	}
+	checkRelated(nil)
+	participant, err := st.EnsureParticipant("codes@example.test", "", "example.test")
+	requirements.NoError(err)
+	msg, err := st.GetMessage(target)
+	requirements.NoError(err)
+	_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: msg.ConversationID, SourceMessageID: msg.SourceMessageID, MessageType: "meeting_transcript", Subject: sql.NullString{String: msg.Subject, Valid: true}}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{participant}, EmailAddresses: []string{"codes@example.test"}}}})
+	requirements.NoError(err)
+	checkRelated(&target)
 }

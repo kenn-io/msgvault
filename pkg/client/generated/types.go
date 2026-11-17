@@ -252,6 +252,7 @@ func (a Address) Validate() error {
 
 type AgentTokenIssueRequest struct {
 	ExpiresAt        *time.Time          `json:"expires_at,omitempty"`
+	IncomingSenders  map[string][]string `json:"incoming_senders,omitempty"`
 	Label            string              `json:"label" validate:"required"`
 	Permissions      []string            `json:"permissions" validate:"required"`
 	SenderSelections map[string][]string `json:"sender_selections,omitempty"`
@@ -332,10 +333,11 @@ func (a AgentTokenListResponse) Validate() error {
 }
 
 type AgentTokenSourceView struct {
-	ID         int64    `json:"id"`
-	Identifier string   `json:"identifier" validate:"required"`
-	SenderKeys []string `json:"sender_keys" validate:"required"`
-	Type       string   `json:"type" validate:"required"`
+	ID              int64    `json:"id"`
+	Identifier      string   `json:"identifier" validate:"required"`
+	IncomingSenders []string `json:"incoming_senders" validate:"required"`
+	SenderKeys      []string `json:"sender_keys" validate:"required"`
+	Type            string   `json:"type" validate:"required"`
 }
 
 func (a AgentTokenSourceView) Validate() error {
@@ -481,6 +483,22 @@ func (a AppendPersonNoteRequest) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type ArchiveChange struct {
+	Archived  bool  `json:"archived"`
+	DryRun    *bool `json:"dry_run,omitempty"`
+	WholeChat *bool `json:"whole_chat,omitempty"`
+}
+
+type ArchiveResult struct {
+	Archived  bool    `json:"archived"`
+	Changed   bool    `json:"changed"`
+	ChatID    *string `json:"chat_id,omitzero"`
+	DryRun    bool    `json:"dry_run"`
+	MessageID int64   `json:"message_id"`
+	SourceID  int64   `json:"source_id"`
+	Verified  bool    `json:"verified"`
 }
 
 type AttachmentInfo struct {
