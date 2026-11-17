@@ -17,6 +17,15 @@ func (s *Store) MeetingTranscriptGroupsContext(ctx context.Context, through int6
 	return s.meetingTranscriptGroupsContext(ctx, through, calrecur.RequestReadBudget)
 }
 
+// MeetingTranscriptGroupsSQLiteSnapshotContext resolves groups through a caller-owned SQLite snapshot.
+func MeetingTranscriptGroupsSQLiteSnapshotContext(ctx context.Context, reader SQLReader, through int64) (map[int64]int64, bool, error) {
+	dialect := &SQLiteDialect{}
+	// This store has no connection pool: all reads must use the supplied snapshot.
+	s := &Store{db: newLoggedDB(nil, dialect.Rebind), dialect: dialect}
+	ctx = WithReadSnapshotReaderContext(ctx, nil, reader)
+	return s.MeetingTranscriptGroupsContext(ctx, through)
+}
+
 func (s *Store) meetingTranscriptGroupsContext(ctx context.Context, through int64, batchBudget int) (map[int64]int64, bool, error) {
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {

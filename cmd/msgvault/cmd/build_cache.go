@@ -1399,7 +1399,7 @@ func buildCacheLockedAttempt(
 			afterMessageIDs[dataset] = 0
 		}
 	}
-	if err := stageMeetingGroups(ctx, sourceSnapshot, dbPath, maxID); err != nil {
+	if err := stageMeetingGroups(ctx, sourceSnapshot, maxID); err != nil {
 		return nil, err
 	}
 	if err := sourceSnapshot.Prepare(ctx, maxID, afterMessageIDs); err != nil {
@@ -2046,14 +2046,8 @@ func sqliteQueryArgs(args []any) []any {
 	return result
 }
 
-func stageMeetingGroups(ctx context.Context, snapshot *cacheSourceSnapshot, dbPath string, through int64) error {
-	archive, err := store.OpenReadOnlyContext(ctx, dbPath)
-	if err != nil {
-		return fmt.Errorf("open archive for meeting groups: %w", err)
-	}
-	defer func() { _ = archive.Close() }()
-	ctx = store.WithReadSnapshotReaderContext(ctx, archive.DB(), snapshot)
-	groups, fallback, err := archive.MeetingTranscriptGroupsContext(ctx, through)
+func stageMeetingGroups(ctx context.Context, snapshot *cacheSourceSnapshot, through int64) error {
+	groups, fallback, err := store.MeetingTranscriptGroupsSQLiteSnapshotContext(ctx, snapshot, through)
 	if err != nil {
 		return fmt.Errorf("resolve meeting groups: %w", err)
 	}

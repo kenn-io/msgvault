@@ -211,7 +211,7 @@ func refreshDerivedDatasetsOnly(
 			relatedReplacements[dataset] = true
 		}
 	}
-	if err := stageMeetingGroups(ctx, sourceSnapshot, dbPath, state.LastMessageID); err != nil {
+	if err := stageMeetingGroups(ctx, sourceSnapshot, state.LastMessageID); err != nil {
 		return nil, err
 	}
 	if err := sourceSnapshot.PrepareDatasets(ctx, state.LastMessageID, datasets...); err != nil {
