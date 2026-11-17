@@ -187,9 +187,9 @@ func TestSchemaVersionFactOutcomeUpgradeFrom45(t *testing.T) {
 	require.Error(t, f.Store.ValidateSchemaContext(ctx))
 	require.NoError(t, f.Store.InitSchemaUnlessCurrentContext(ctx))
 	require.NoError(t, f.Store.ValidateSchemaContext(ctx))
-	rows, err := f.Store.DB().QueryContext(ctx, "SELECT outcome FROM person_fact_decisions LIMIT 1")
-	require.NoError(t, err)
-	require.NoError(t, rows.Close())
+	var count int
+	require.NoError(t, f.Store.DB().QueryRowContext(ctx, "SELECT COUNT(outcome) FROM person_fact_decisions").Scan(&count))
+	assert.Zero(t, count)
 }
 
 func TestSchemaVersionSQLiteFailedUpgrade(t *testing.T) {

@@ -972,9 +972,12 @@ func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 	if err != nil {
 		return personfacts.Decision{}, err
 	}
-	decision.Outcome, err = personFactStoredOutcome(outcome)
+	value, known, err := personFactStoredOutcome(outcome)
 	if err != nil {
 		return personfacts.Decision{}, err
+	}
+	if known {
+		decision.Outcome = &value
 	}
 	decision.ScoreMaxima = personfacts.ScoreMaxima(decision.ResolverVersion)
 	if err := json.Unmarshal([]byte(scoreJSON), &decision.Score); err != nil {
@@ -987,17 +990,17 @@ func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 	return decision, nil
 }
 
-func personFactStoredOutcome(outcome sql.NullString) (*personfacts.DecisionOutcome, error) {
+func personFactStoredOutcome(outcome sql.NullString) (personfacts.DecisionOutcome, bool, error) {
 	if !outcome.Valid {
-		return nil, nil
+		return "", false, nil
 	}
 	value := personfacts.DecisionOutcome(outcome.String)
 	switch value {
 	case personfacts.OutcomeSaved, personfacts.OutcomeValueRetired, personfacts.OutcomeCurrentValueKept,
 		personfacts.OutcomePinnedValueKept, personfacts.OutcomeTooCloseToChoose, personfacts.OutcomeNotUsed:
-		return &value, nil
+		return value, true, nil
 	default:
-		return nil, fmt.Errorf("unknown fact decision outcome %q", outcome.String)
+		return "", false, fmt.Errorf("unknown fact decision outcome %q", outcome.String)
 	}
 }
 
