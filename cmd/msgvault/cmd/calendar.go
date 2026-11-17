@@ -1110,10 +1110,11 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 		return fmt.Errorf("gcal source %q email is required", src.Name)
 	}
 	// A [[gcal]] entry also schedules a Microsoft calendar account.
-	if ok, err := hasMSCalendarSources(st, email); err != nil || ok {
-		if err != nil {
-			return err
-		}
+	hasMS, lookupErr := hasMSCalendarSources(st, email)
+	if lookupErr != nil {
+		return lookupErr
+	}
+	if hasMS {
 		// Even a failed sync can have stored Microsoft events, so every
 		// return path refreshes the cache once.
 		refreshed := false
@@ -1123,9 +1124,9 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 			}
 		}()
 		_, msErr := runMSCalendarSync(ctx, st, email, false, state)
-		google, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, email)
-		if err != nil {
-			return errors.Join(msErr, err)
+		google, googleErr := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, email)
+		if googleErr != nil {
+			return errors.Join(msErr, googleErr)
 		}
 		// Calendars the entry lists are Google calendars, registered or not.
 		if len(activeSyncSources(google)) == 0 && len(src.Calendars) == 0 {

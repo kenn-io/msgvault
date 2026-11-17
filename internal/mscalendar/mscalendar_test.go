@@ -542,3 +542,40 @@ func TestSyncAttributesEveryOwnedCalendarToTheAccount(t *testing.T) {
 		assert.Equal(t, "me@example.com", address, id)
 	}
 }
+
+func TestSyncCountsOnlyNewEventsAsAdded(t *testing.T) {
+	requirements := require.New(t)
+	ts := newTestSync(t)
+	added := func() int64 {
+		sources, err := ts.st.GetSourcesByTypeAndAccount(SourceType, "me@example.com")
+		requirements.NoError(err)
+		requirements.Len(sources, 1)
+		run, err := ts.st.GetLastSuccessfulSyncContext(t.Context(), sources[0].ID)
+		requirements.NoError(err)
+		requirements.NotNil(run)
+		return run.MessagesAdded
+	}
+	_, err := ts.run("me@example.com")
+	requirements.NoError(err)
+	assert.Equal(t, int64(3), added(), "the first sync stores the single event, the series, and its edit")
+	_, err = ts.run("me@example.com")
+	requirements.NoError(err)
+	assert.Equal(t, int64(0), added(), "an unchanged calendar adds nothing")
+}
+
+func TestSyncKeepsARenamedCalendarSource(t *testing.T) {
+	requirements := require.New(t)
+	ts := newTestSync(t)
+	_, err := ts.run("me@example.com")
+	requirements.NoError(err)
+	sources, err := ts.st.GetSourcesByTypeAndAccount(SourceType, "me@example.com")
+	requirements.NoError(err)
+	requirements.Len(sources, 1)
+	requirements.NoError(ts.st.UpdateSourceDisplayName(sources[0].ID, "Work calendar"))
+
+	_, err = ts.run("me@example.com")
+	requirements.NoError(err)
+	sources, err = ts.st.GetSourcesByTypeAndAccount(SourceType, "me@example.com")
+	requirements.NoError(err)
+	assert.Equal(t, "Work calendar", sources[0].DisplayName.String)
+}

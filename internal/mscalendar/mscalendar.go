@@ -180,8 +180,11 @@ func configure(ctx context.Context, st *store.Store, src *store.Source, email st
 	if err := st.UpdateSourceSyncConfig(ctx, src.ID, string(cfg)); err != nil {
 		return err
 	}
-	if err := st.UpdateSourceDisplayName(src.ID, email+" / "+cal.Name); err != nil {
-		return err
+	// Name a new source only, so a name set with update-account survives.
+	if !src.DisplayName.Valid || src.DisplayName.String == "" {
+		if err := st.UpdateSourceDisplayName(src.ID, email+" / "+cal.Name); err != nil {
+			return err
+		}
 	}
 	// Graph confirmed the signed-in mailbox, which owns this calendar.
 	for _, address := range []string{email, calevent.NormalizeEmail(cal.Owner.Address)} {
@@ -283,8 +286,9 @@ func syncCalendar(ctx context.Context, st *store.Store, c *Client, src *store.So
 	ec := &eventContext{calendarID: cal.ID, email: email, mailbox: calevent.NormalizeEmail(cal.Owner.Address), zone: cal.Zone}
 	seen := map[string]struct{}{}
 	errorsBefore, eventsBefore := sum.Errors, sum.Events
+	var added int64
 	persist := func(raw []byte) {
-		id, perr := persistEvent(ctx, scoped, src.ID, ec, raw)
+		id, inserted, perr := persistEvent(ctx, scoped, src.ID, ec, raw)
 		if perr == nil {
 			// An event that returns after a deletion is current again.
 			perr = scoped.ClearMessageDeletedFromSourceContext(ctx, src.ID, id)
@@ -296,6 +300,9 @@ func syncCalendar(ctx context.Context, st *store.Store, c *Client, src *store.So
 		}
 		seen[id] = struct{}{}
 		sum.Events++
+		if inserted {
+			added++
+		}
 	}
 
 	var masters []string
@@ -427,7 +434,7 @@ func syncCalendar(ctx context.Context, st *store.Store, c *Client, src *store.So
 	if _, err := scoped.ReconcileSourceMessageSnapshot(ctx, src.ID, seen); err != nil {
 		return err
 	}
-	if err := scoped.UpdateSyncCheckpointContext(ctx, syncID, &store.Checkpoint{MessagesProcessed: int64(sum.Events - eventsBefore)}); err != nil {
+	if err := scoped.UpdateSyncCheckpointContext(ctx, syncID, &store.Checkpoint{MessagesProcessed: int64(sum.Events - eventsBefore), MessagesAdded: added}); err != nil {
 		return err
 	}
 	return scoped.CompleteSyncAndPreserveSourceCursorContext(ctx, syncID, src.ID, "")
@@ -442,14 +449,14 @@ type eventContext struct {
 	superseded   bool
 }
 
-func persistEvent(ctx context.Context, st *store.Store, sourceID int64, ec *eventContext, raw []byte) (string, error) {
+func persistEvent(ctx context.Context, st *store.Store, sourceID int64, ec *eventContext, raw []byte) (string, bool, error) {
 	calendarID, email := ec.calendarID, ec.email
 	g, err := calevent.DecodeGraphEvent(raw)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if g.ID == "" {
-		return "", errors.New("event has no id")
+		return "", false, errors.New("event has no id")
 	}
 	organizer := calevent.NormalizeEmail(g.Organizer.EmailAddress.Address)
 	participants := []store.ParticipantPersistData{}
@@ -498,7 +505,7 @@ func persistEvent(ctx context.Context, st *store.Store, sourceID int64, ec *even
 	metaValue.Superseded = ec.superseded
 	meta, err := json.Marshal(metaValue, json.Deterministic(true))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	// Google metadata carries the series rule; keep the same key.
 	if ev, ok, derr := calevent.Decode(calevent.MSGraphRawFormat, raw, meta, ec.zone); derr == nil && ok && len(ev.Recurrence) > 0 {
@@ -506,7 +513,7 @@ func persistEvent(ctx context.Context, st *store.Store, sourceID int64, ec *even
 		meta, err = json.Marshal(metaValue, json.Deterministic(true))
 	}
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	metadata := sql.NullString{String: string(meta), Valid: true}
 	fromMe := g.ResponseStatus.Response == "organizer" || organizer == email
@@ -517,7 +524,7 @@ func persistEvent(ctx context.Context, st *store.Store, sourceID int64, ec *even
 	for _, p := range participants {
 		id, err := st.EnsureParticipant(p.EmailAddress, p.DisplayName, p.Domain)
 		if err != nil {
-			return "", fmt.Errorf("participant: %w", err)
+			return "", false, fmt.Errorf("participant: %w", err)
 		}
 		ids = append(ids, id)
 	}
@@ -542,6 +549,11 @@ func persistEvent(ctx context.Context, st *store.Store, sourceID int64, ec *even
 	if organizer != "" {
 		msg.SenderID = sql.NullInt64{Int64: ids[0], Valid: true}
 	}
+	existing, err := st.MessageExistsBatchContext(ctx, sourceID, []string{g.ID})
+	if err != nil {
+		return "", false, err
+	}
+	_, found := existing[g.ID]
 	_, err = st.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:      msg,
 		Conversation: &store.ConversationPersistData{SourceConversationID: "event:" + series, ConversationType: conversationType, Title: title},
@@ -553,7 +565,7 @@ func persistEvent(ctx context.Context, st *store.Store, sourceID int64, ec *even
 			DisplayNames: toNames, EmailAddresses: toEmails}),
 		FTS: &store.FTSDoc{Subject: g.Subject, Body: body, FromAddr: organizer, ToAddrs: strings.Join(toEmails, " ")},
 	})
-	return g.ID, err
+	return g.ID, !found, err
 }
 
 func participant(email, name string) store.ParticipantPersistData {
