@@ -375,6 +375,10 @@ func (s *Store) meetingResolveOccurrenceLinks(ctx context.Context, record Meetin
 		if err != nil {
 			return record, err
 		}
+		if member.ID == ref.MessageID && len(edits) > 1 {
+			add(link)
+			continue
+		}
 		var replacements []MeetingLink
 		for _, edit := range edits {
 			if member.ID != ref.MessageID && edit.MessageID != member.ID {

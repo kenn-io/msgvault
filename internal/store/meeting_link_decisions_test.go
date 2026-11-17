@@ -2633,6 +2633,33 @@ func TestMeetingDecisionSeparateEditsAfterSeriesMerge(t *testing.T) {
 	r.Equal(eb, record.Links[0].MessageID)
 }
 
+func TestMeetingDecisionAmbiguousEditsAfterSeriesMerge(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	series := `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
+	editA := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`
+	editB := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-16T10:00:00Z"},"end":{"dateTime":"2027-03-16T11:00:00Z"}}`
+	_, sa := calendarFixture(t, st, "ambiguous-sa", series, "a@example.com")
+	_, ea := calendarFixture(t, st, "ambiguous-ea", editA, "a@example.com")
+	_, sb := calendarFixture(t, st, "ambiguous-sb", series, "b@example.com")
+	_, eb := calendarFixture(t, st, "ambiguous-eb", editB, "b@example.com")
+	_, sc := calendarFixture(t, st, "ambiguous-sc", series, "c@example.com")
+	_, note := projectionFixture(t, st, "ambiguous-note", "meeting_json", `{}`)
+	_, err := st.MergeDuplicates(t.Context(), sc, []int64{sa, sb}, "ambiguous-series")
+	r.NoError(err)
+	n := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err = st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: ea}, n, "link")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: sc, Identity: occurrenceIdentity(t, "20270314T100000Z")})
+	r.NoError(err)
+	r.NotContains(record.MessageIDs, note)
+	record, err = st.MeetingRecordContext(t.Context(), n)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	r.Equal(ea, record.Links[0].MessageID)
+	r.NotEqual(eb, record.Links[0].MessageID)
+}
+
 func TestMeetingDecisionStaleSlotAndPurgedEdit(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

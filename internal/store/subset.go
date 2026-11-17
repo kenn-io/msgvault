@@ -3188,6 +3188,16 @@ func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) err
 	resolve := func(endpoint meetingDecisionEndpoint) (meetingDecisionEndpoint, bool, error) {
 		budget := calrecur.RequestReadBudget
 		key, err := s.meetingOccurrenceKey(ctx, endpoint, &budget)
+		inactive := errors.Is(err, sql.ErrNoRows) && endpoint.Kind == meetingRefEvent
+		if inactive {
+			id, ok, resolveErr := s.resolveMeetingMessage(ctx, endpoint.ID)
+			if resolveErr != nil || !ok {
+				return endpoint, false, resolveErr
+			}
+			key = endpoint
+			key.ID = id
+			err = nil
+		}
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMeetingOccurrenceRequired) {
 			return endpoint, false, nil
 		}
@@ -3230,6 +3240,17 @@ func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) err
 			}
 		}
 		for _, id := range candidates {
+			if inactive {
+				resolved, ok, err := s.resolveMeetingMessage(ctx, id)
+				if err != nil {
+					return endpoint, false, err
+				}
+				if ok && resolved == key.ID {
+					key.ID = id
+					return key, true, nil
+				}
+				continue
+			}
 			candidate, err := s.meetingOccurrenceKey(ctx, meetingDecisionEndpoint{ID: id, Kind: meetingRefEvent, Key: key.Key}, &budget)
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
@@ -3251,7 +3272,7 @@ func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) err
 			return err
 		}
 		if !valid {
-			continue
+			left, right = edge.a, edge.b
 		}
 		a, ok, err := resolve(left)
 		if err != nil {
