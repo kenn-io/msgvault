@@ -14,13 +14,19 @@ const temperatureBuildRelation = "relationship_build_temperature_daily"
 const relationshipTemperatureFirstYear = 1970
 
 // RelationshipTemperatureFactsSQL selects one qualifying row per stored
-// message and canonical person. activity is a trusted DuckDB relation rendered
-// by the cache/query packages; it is not user input. The shared SQL keeps cache
-// scores and local-year calendars on one attribution contract.
-func RelationshipTemperatureFactsSQL(activity, groups string, effectiveAt time.Time) string {
+// message and canonical person. The relations are trusted DuckDB SQL rendered
+// by the cache/query packages. ownerActivity includes meeting copies outside
+// activity's date window so the calendar retains group-level owner evidence.
+func RelationshipTemperatureFactsSQL(activity, ownerActivity, groups string, effectiveAt time.Time) string {
 	cutoff := effectiveAt.UTC().Format("2006-01-02 15:04:05.999999999")
 	return fmt.Sprintf(`
-WITH message_owner AS (
+WITH meeting_owners AS (
+	SELECT coalesce(g.group_id, a.message_id) AS meeting_group
+	FROM %[7]s a
+	LEFT JOIN %[6]s g ON g.message_id = a.message_id
+	WHERE a.is_owner AND a.message_type = 'meeting_transcript' AND NOT a.unsent AND NOT a.email_invite
+	GROUP BY meeting_group
+), message_owner AS (
 	SELECT message_id, bool_or(is_owner) AS owner_present
 	FROM %[1]s
 	GROUP BY message_id
@@ -60,7 +66,10 @@ WITH message_owner AS (
 	SELECT *,
 	       entry_kind IN ('event', 'meeting') AS is_meeting,
 	       CASE
-	           WHEN entry_kind IN ('event', 'meeting') THEN owner_present
+	           WHEN entry_kind IN ('event', 'meeting') THEN EXISTS (
+	               SELECT 1 FROM meeting_owners o
+	               LEFT JOIN %[6]s g ON g.message_id = person_messages.message_id
+	               WHERE o.meeting_group = coalesce(g.group_id, person_messages.message_id))
 	           WHEN is_chat AND lower(conversation_type) = 'direct_chat' THEN
 	               owner_present AND (is_conversation_member OR is_direct)
 	               AND (is_from_me OR is_author)
@@ -107,6 +116,7 @@ WHERE NOT is_meeting OR meeting_rank = 1
 		ModalityChat,
 		ModalityEmail,
 		groups,
+		ownerActivity,
 	)
 }
 
@@ -117,7 +127,7 @@ WHERE NOT is_meeting OR meeting_rank = 1
 func buildRelationshipTemperatureDailySQL(activity, groups string, effectiveAt time.Time) string {
 	return `
 WITH relationship_facts AS (
-` + RelationshipTemperatureFactsSQL(activity, groups, effectiveAt) + `
+` + RelationshipTemperatureFactsSQL(activity, activity, groups, effectiveAt) + `
 )
 SELECT canonical_id,
 	   occurred_at::DATE AS event_date,

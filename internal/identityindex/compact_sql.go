@@ -149,12 +149,19 @@ func MeetingCopyRank(person, message, messageType, occurredAt string) string {
 
 func buildRelationshipDailySQL(groups string) string {
 	return fmt.Sprintf(`
-WITH logical_people AS (
+WITH meeting_owners AS (
+	SELECT coalesce(g.group_id, l.anchor_message_id) AS meeting_group
+	FROM `+logicalBuildRelation+` l
+	LEFT JOIN `+groups+` g ON g.message_id = l.anchor_message_id
+	WHERE l.relation_kind = 1 AND l.message_type = 'meeting_transcript' AND l.with_owner
+	GROUP BY meeting_group
+), logical_people AS (
 	SELECT l.*, `+MeetingCopyRank("l.canonical_id", "l.anchor_message_id", "l.message_type", "l.occurred_at")+` AS meeting_rank
 	FROM `+logicalBuildRelation+` l
 	LEFT JOIN `+groups+` g ON g.message_id = l.anchor_message_id
 	WHERE l.relation_kind = 1 AND NOT l.is_owner
-	  AND NOT (l.entry_kind IN ('event','meeting') AND (NOT l.with_owner OR l.message_type <> 'meeting_transcript'))
+	  AND NOT (l.entry_kind IN ('event','meeting') AND (l.message_type <> 'meeting_transcript'
+	      OR NOT EXISTS (SELECT 1 FROM meeting_owners o WHERE o.meeting_group = coalesce(g.group_id, l.anchor_message_id))))
 ), interactions AS (
 	SELECT p.*,
 	       CASE WHEN p.is_from_me

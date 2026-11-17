@@ -79,19 +79,6 @@ func (s *Store) meetingTranscriptGroupsContext(ctx context.Context, through int6
 	for _, seed := range seeds {
 		groups[seed.ID] = minimum[root(seed.ref())]
 	}
-	for key, node := range graph.nodes {
-		if node.endpoint.Kind != meetingRefEvent {
-			continue
-		}
-		group, ok := minimum[root(key)]
-		if !ok {
-			continue
-		}
-		id := node.endpoint.ID
-		if old, exists := groups[id]; !exists || group < old {
-			groups[id] = group
-		}
-	}
 	return groups, nil
 }
 

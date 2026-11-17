@@ -86,7 +86,7 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 				base("participants"), base("participant_clusters"), base("owner_participants"))
 			if tc.mixed {
 				var meetingFacts, earlierRosterAttendeeFacts int64
-				facts := RelationshipTemperatureFactsSQL(bounded, "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+				facts := RelationshipTemperatureFactsSQL(bounded, bounded, "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
 				requirements.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FILTER (WHERE meeting),
 					count(*) FILTER (WHERE meeting AND canonical_id = 4 AND message_id < 19)
 					FROM (`+facts+`)`).Scan(&meetingFacts, &earlierRosterAttendeeFacts))
@@ -99,7 +99,7 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 			}{
 				{"logical", buildLogicalActivityMaterializationSQL},
 				{"temperature", func(activity string) string {
-					return RelationshipTemperatureFactsSQL(activity, "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+					return RelationshipTemperatureFactsSQL(activity, activity, "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
 				}},
 			} {
 				t.Run(reduction.name, func(t *testing.T) {

@@ -139,12 +139,6 @@ func TestMeetingTranscriptGroupsFollowChoices(t *testing.T) {
 	_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), ref(copyID), "unlink")
 	requirements.NoError(err)
 	check(map[int64]int64{first: first, copyID: copyID, other: first})
-	_, event := calendarFixture(t, st, "group-event", `{"id":"group-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
-	_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), MeetingLinkRef{Kind: "evt", MessageID: event}, "link")
-	requirements.NoError(err)
-	groups, err = st.MeetingTranscriptGroupsContext(t.Context(), event)
-	requirements.NoError(err)
-	assertions.Equal(first, groups[event])
 }
 
 func TestMeetingLinkDecisionConflictIdempotenceAndClear(t *testing.T) {

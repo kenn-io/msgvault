@@ -322,11 +322,18 @@ func (e *DuckDBEngine) buildFilteredRelationshipsSQL(
 		e.parquetPath(identityindex.DatasetPeople),
 	)
 	queryText := logicalSQL + `,
-relationship_ranked AS (
+meeting_owners AS (
+	SELECT coalesce(g.group_id, a.message_id) AS meeting_group
+	FROM relationship_activity_expanded a
+	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = a.message_id
+	WHERE a.is_owner AND a.message_type = 'meeting_transcript' AND NOT a.unsent AND NOT a.email_invite
+	GROUP BY meeting_group
+), relationship_ranked AS (
 	SELECT p.*, ` + identityindex.MeetingCopyRank("p.canonical_id", "p.entry_num", "p.message_type", "p.occurred_at") + ` AS meeting_rank
 	FROM logical_people p
 	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = p.entry_num
-	WHERE NOT p.is_owner AND NOT (p.entry_kind IN ('event','meeting') AND (NOT p.with_owner OR p.message_type <> 'meeting_transcript'))
+	WHERE NOT p.is_owner AND NOT (p.entry_kind IN ('event','meeting') AND (p.message_type <> 'meeting_transcript'
+	    OR NOT EXISTS (SELECT 1 FROM meeting_owners o WHERE o.meeting_group = coalesce(g.group_id, p.entry_num))))
 ), relationship_interactions AS (
 	SELECT p.*,
 	       CASE WHEN p.is_from_me
