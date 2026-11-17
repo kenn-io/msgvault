@@ -521,7 +521,9 @@
                 onpointerdown={() => {
                   activeKey = row.key;
                   onActiveKey?.(row.key);
-                  gridElement?.focus();
+                  // Scrolling the grid into view here would move the row out
+                  // from under the pointer before mouseup, and the click would be lost.
+                  gridElement?.focus({ preventScroll: true });
                 }}
                 onclick={() => onOpen?.(row)}
               >
