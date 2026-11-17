@@ -48,22 +48,13 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 		response.Error = &ErrorResponse{Error: "server_error", Message: "Attachment search is unavailable."}
 		return response, err
 	}
-	profile := reader.SearchProfile
-	if mode == mediaSearchModeLexical {
-		profile = suppliedTranscriptProfile
+	profile, actual, err := searchProfile(mode, reader.SearchProfile)
+	if err != nil {
+		return fail(err)
 	}
-	actual := mode
-	if profile == "" {
-		// Lexical spans profiles but still requires a registered profile name.
-		profile = suppliedTranscriptProfile
-		if mode == "semantic" {
-			return fail(errMediaSearchMode)
-		}
-		if mode == "hybrid" {
-			actual = mediaSearchModeLexical
-			response.Partial = true
-			response.Degradations = append(response.Degradations, "semantic_unconfigured")
-		}
+	if actual != mode {
+		response.Partial = true
+		response.Degradations = append(response.Degradations, "semantic_unconfigured")
 	}
 	request := docbankmedia.SearchRequest{Query: query, Mode: actual, ContentFirst: true, Profile: profile, Limit: limit}
 	if len(versions) == 0 {

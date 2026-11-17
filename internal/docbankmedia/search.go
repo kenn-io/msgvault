@@ -89,7 +89,7 @@ type SearchReport struct {
 
 func validSearchRequest(request SearchRequest) bool {
 	return strings.TrimSpace(request.Query) != "" &&
-		request.Mode == "lexical" && request.Profile != "" && request.ContentFirst &&
+		(request.Mode == "lexical" || request.Mode == "semantic" || request.Mode == "hybrid") && request.Profile != "" && request.ContentFirst &&
 		request.Limit > 0 && request.Limit <= MaxSearchResults
 }
 
@@ -143,29 +143,39 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchRepor
 	builds := make(map[[2]string]bool)
 	for i := range report.Results {
 		hit := &report.Results[i]
-		if !validSearchHit(*hit, request.Fence.VaultUID, ids) || len(hit.Evidence) != 1 {
+		// A hybrid hit can carry lexical and embedding evidence for one build.
+		// The first evidence supplies the excerpt, timing and sources.
+		if !validSearchHit(*hit, request.Fence.VaultUID, ids) || len(hit.Evidence) == 0 || len(hit.Evidence) > 2 {
 			return SearchReport{}, ErrInvalidReceipt
 		}
-		for _, evidence := range hit.Evidence {
-			if evidence.Kind != "rendition_segment" || evidence.BuildID == "" || evidence.SegmentID == "" ||
-				len(evidence.MediaSources) == 0 {
+		first := hit.Evidence[0]
+		key := [2]string{hit.ContentVersionID, first.BuildID}
+		if builds[key] {
+			return SearchReport{}, ErrInvalidReceipt
+		}
+		builds[key] = true
+		for j, evidence := range hit.Evidence {
+			lexical := evidence.Kind == "rendition_segment" && evidence.SegmentID != ""
+			semantic := evidence.Kind == "embedding" && request.Mode != "lexical"
+			if (!lexical && !semantic) || evidence.BuildID == "" || evidence.BuildID != first.BuildID ||
+				len(evidence.MediaSources) == 0 || (j > 0 && evidence.Kind == first.Kind) {
 				return SearchReport{}, ErrInvalidReceipt
-			}
-			key := [2]string{hit.ContentVersionID, evidence.BuildID}
-			if builds[key] {
-				return SearchReport{}, ErrInvalidReceipt
-			}
-			builds[key] = true
-			for _, source := range evidence.MediaSources {
-				_, known := selections[source]
-				if !known || selected[source] || source.ContentVersionID != hit.ContentVersionID {
-					return SearchReport{}, ErrInvalidReceipt
-				}
-				selected[source] = true
 			}
 			if evidence.TimeSpan != nil && (evidence.TimeSpan.StartMS < 0 || evidence.TimeSpan.EndMS <= evidence.TimeSpan.StartMS) {
 				return SearchReport{}, ErrInvalidReceipt
 			}
+			for _, source := range evidence.MediaSources {
+				if !slices.Contains(first.MediaSources, source) {
+					return SearchReport{}, ErrInvalidReceipt
+				}
+			}
+		}
+		for _, source := range first.MediaSources {
+			_, known := selections[source]
+			if !known || selected[source] || source.ContentVersionID != hit.ContentVersionID {
+				return SearchReport{}, ErrInvalidReceipt
+			}
+			selected[source] = true
 		}
 		hit.Excerpt = plainExcerpt(hit.Excerpt)
 	}
@@ -178,7 +188,11 @@ func (c *Client) searchReport(ctx context.Context, request SearchRequest) (Searc
 	if err := c.jsonRequestLimits(ctx, http.MethodPost, "/api/v1/search", request, &report, maxSearchBytes, maxSearchBytes); err != nil {
 		return SearchReport{}, err
 	}
-	if (report.ActualMode != request.Mode && (request.Mode != "hybrid" || report.ActualMode != "lexical")) || report.RequestedMode != request.Mode || report.Results == nil || len(report.Results) > request.Limit ||
+	// Hybrid may fall back to lexical. Semantic falls back only when Docbank
+	// says the embeddings are unavailable, as selected recording search does.
+	downgraded := report.ActualMode == "lexical" &&
+		(request.Mode == "hybrid" || request.Mode == "semantic" && slices.Contains(report.Degradations, "semantic_unavailable"))
+	if (report.ActualMode != request.Mode && !downgraded) || report.RequestedMode != request.Mode || report.Results == nil || len(report.Results) > request.Limit ||
 		report.Coverage.State == "" || report.Coverage.ScopedDocuments < 0 || report.Coverage.CompleteDocuments < 0 ||
 		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments {
 		return SearchReport{}, ErrInvalidReceipt

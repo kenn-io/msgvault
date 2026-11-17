@@ -60,9 +60,12 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 		if err := writer.Flush(); err != nil {
 			return fmt.Errorf("render media search results: %w", err)
 		}
-		_, err = fmt.Fprintf(command.OutOrStdout(), "Coverage %s; pending %d; unavailable %d; attribution unavailable %d; partial %t; truncated %t\n", textutil.SanitizeTerminal(response.Coverage.State), response.PendingOccurrences, response.UnavailableOccurrences, response.AttributionUnavailable, response.Partial, response.Truncated)
+		_, err = fmt.Fprintf(command.OutOrStdout(), "Recordings mode %s; coverage %s; pending %d; unavailable %d; attribution unavailable %d; partial %t; truncated %t\n", textutil.SanitizeTerminal(response.ActualMode), textutil.SanitizeTerminal(response.Coverage.State), response.PendingOccurrences, response.UnavailableOccurrences, response.AttributionUnavailable, response.Partial, response.Truncated)
 		if err != nil {
 			return fmt.Errorf("render media search coverage: %w", err)
+		}
+		if err := printDegradations(command, response.Degradations); err != nil {
+			return err
 		}
 		if response.Attachments != nil {
 			_, _ = fmt.Fprintln(writer, "MESSAGE\tCONVERSATION\tATTACHMENT\tFILENAME\tEXCERPT")
@@ -75,13 +78,8 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 			if _, err := fmt.Fprintf(command.OutOrStdout(), "Attachments mode %s; coverage %s; partial %t; truncated %t\n", textutil.SanitizeTerminal(response.Attachments.ActualMode), textutil.SanitizeTerminal(response.Attachments.Coverage.State), response.Attachments.Partial, response.Attachments.Truncated); err != nil {
 				return fmt.Errorf("render media search status: %w", err)
 			}
-			for _, degradation := range response.Attachments.Degradations {
-				if degradation == "semantic_unconfigured" {
-					degradation = "Semantic search is not configured."
-				}
-				if _, err := fmt.Fprintln(command.OutOrStdout(), textutil.SanitizeTerminal(degradation)); err != nil {
-					return fmt.Errorf("render attachment degradation: %w", err)
-				}
+			if err := printDegradations(command, response.Attachments.Degradations); err != nil {
+				return err
 			}
 			if response.Attachments.Truncated {
 				if _, err := fmt.Fprintln(command.OutOrStdout(), "More may match"); err != nil {
@@ -101,7 +99,7 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 		}
 		return nil
 	}}
-	search.Flags().StringVar(&request.Mode, "mode", "lexical", "Attachment mode: lexical, semantic, or hybrid; recordings support lexical only")
+	search.Flags().StringVar(&request.Mode, "mode", "lexical", "Search mode: lexical, semantic, or hybrid")
 	search.Flags().Int64Var(&request.PersonID, "person", 0, "Limit to one durable person")
 	search.Flags().StringSliceVar(&directions, "direction", nil, "Person relation: from_person, to_person, or group")
 	search.Flags().IntVarP(&request.Limit, "limit", "n", 20, "Maximum occurrences per list, 1 to 100")
@@ -109,6 +107,18 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 	clisearch.SetKeywords(search, "extracted document attachments")
 	parent.AddCommand(search)
 	return parent
+}
+
+func printDegradations(command *cobra.Command, degradations []string) error {
+	for _, degradation := range degradations {
+		if degradation == "semantic_unconfigured" {
+			degradation = "Semantic search is not configured."
+		}
+		if _, err := fmt.Fprintln(command.OutOrStdout(), textutil.SanitizeTerminal(degradation)); err != nil {
+			return fmt.Errorf("render media search degradation: %w", err)
+		}
+	}
+	return nil
 }
 
 func init() {

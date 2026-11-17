@@ -21,7 +21,7 @@ export function recordingSearchHit(overrides: Partial<MediaSearchResult> = {}): 
 }
 
 export function recordingSearchReport(overrides: Partial<MediaSearchResponse> = {}): MediaSearchResponse {
-  return { results: [recordingSearchHit()],
+  return { actual_mode: 'lexical', degradations: [], results: [recordingSearchHit()],
     coverage: { state: 'complete', binding_required: false, complete_documents: 1, scoped_documents: 1 },
     partial: false, truncated: false, pending_occurrences: 0, unavailable_occurrences: 0, attribution_unavailable: 0, ...overrides };
 }

@@ -7620,6 +7620,9 @@ components:
     MediaSearchResponse:
       additionalProperties: true
       properties:
+        actual_mode:
+          description: "Recording mode Docbank ran: lexical, semantic, hybrid, or unavailable when no recording search ran"
+          type: string
         attachments:
           $ref: "#/components/schemas/MediaAttachmentSearch"
         attribution_unavailable:
@@ -7628,6 +7631,11 @@ components:
           type: integer
         coverage:
           $ref: "#/components/schemas/SearchCoverage"
+        degradations:
+          description: Why recording search ran below the requested mode, such as semantic_unconfigured or semantic_unavailable
+          items:
+            type: string
+          type: array
         partial:
           description: Coverage or occurrence attribution is incomplete, even with no matching excerpts
           type: boolean
@@ -7646,6 +7654,8 @@ components:
           format: int64
           type: integer
       required:
+        - actual_mode
+        - degradations
         - coverage
         - pending_occurrences
         - unavailable_occurrences
@@ -17466,7 +17476,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.14.0
+  version: 5.15.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24990,7 +25000,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: "Attachment mode: lexical (default), semantic, or hybrid; recordings support lexical only"
+        - description: "Search mode for recordings and attachments: lexical (default), semantic, or hybrid"
           in: query
           name: mode
           schema:

@@ -159,7 +159,8 @@ Continue with the same `id` and advance `offset` by `body_returned` while
   using the profile selected by
   `integrations.docbank.attachment_search_profile`. Check the
   attachment list's actual mode, coverage, partial status and degradations.
-  Recordings support lexical mode only. See [attachment search](../usage/searching.md#search-mirrored-attachment-text).
+  Recordings use `integrations.docbank.recording_search_profile` and report
+  their own actual mode and degradations. See [attachment search](../usage/searching.md#search-mirrored-attachment-text).
 - Page search results with `offset` and `limit`; check `has_more`. See
   [search syntax](../usage/searching.md) and the tool schema for supported filters.
 - Use `aggregate` with `group_by`, such as `sender` or `time`, for grouped
