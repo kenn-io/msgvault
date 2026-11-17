@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/kataissues"
 	"go.kenn.io/msgvault/internal/loops"
+	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/katatest"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -410,4 +411,25 @@ func TestLoopAgendaRunSkipsChangedQuote(t *testing.T) {
 	require.NoError(t, agenda.Run(t.Context(), now))
 	_, err = agenda.File(t.Context(), "c1", now)
 	assert.ErrorIs(t, err, kataevidence.ErrChanged)
+}
+
+func TestLoopAgendaRunSkipsPersonWithoutStableIdentity(t *testing.T) {
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	body := "I will send it."
+	id := f.PersistEmail(storetest.EmailSpec{Thread: "identity", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: body, SentAt: now.Add(-time.Hour)})
+	p := f.EnsureParticipant("alex@example.test", "Alex", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(p)
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE persons SET vcard_uid = ? WHERE id = ?"), "", person.ID)
+	require.NoError(t, err)
+	native := katatest.New(t)
+	server := httptest.NewServer(native.Service.Handler())
+	t.Cleanup(server.Close)
+	cfg := config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}
+	agenda := NewLoopAgenda(cfg, f.Store, "http://localhost:8080")
+	agenda.archive = &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{{ID: 1, PersonID: person.ID, AnchorMessageID: id, Direction: "owed_by", Quote: body, End: int64(len(body)), Summary: "Send it", PromisedAt: now.Add(-time.Hour)}}}
+	_, err = agenda.File(t.Context(), "c1", now)
+	require.ErrorIs(t, err, personagenda.ErrPersonIdentity)
+	require.NoError(t, agenda.Run(t.Context(), now))
 }

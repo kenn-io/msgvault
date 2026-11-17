@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/kataissues"
 	"go.kenn.io/msgvault/internal/loops"
+	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -165,7 +166,7 @@ func (a *LoopAgenda) Run(ctx context.Context, now time.Time) error {
 				created++
 			}
 		}
-		if err != nil && !errors.Is(err, errAgendaPersonRequired) && !errors.Is(err, kataissues.ErrIssueDeleted) && !errors.Is(err, kataevidence.ErrUnsupported) && !errors.Is(err, kataevidence.ErrChanged) && !errors.Is(err, kataissues.ErrUnsupportedEvidence) {
+		if err != nil && !errors.Is(err, errAgendaPersonRequired) && !errors.Is(err, kataissues.ErrIssueDeleted) && !errors.Is(err, kataevidence.ErrUnsupported) && !errors.Is(err, kataevidence.ErrChanged) && !errors.Is(err, kataissues.ErrUnsupportedEvidence) && !errors.Is(err, kataissues.ErrEvidenceLimit) && !errors.Is(err, personagenda.ErrPersonIdentity) && !errors.Is(err, loops.ErrNotOpen) {
 			failures = append(failures, err)
 		}
 		if created == 25 {
