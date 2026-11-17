@@ -302,3 +302,21 @@ func TestLoopsReopenClearsDecision(t *testing.T) {
 	}
 	assert.Contains(anchors, anchor)
 }
+
+func TestLoopsAgendaPersonRequired(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if req.URL.Path == "/api/v1/health" {
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.13.0"}`))
+			assert.NoError(t, err)
+			return
+		}
+		w.WriteHeader(http.StatusConflict)
+		_, err := w.Write([]byte(`{"error":"person_required","message":"link the contact to a person first"}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_, err := runLoops(ctx, t, "agenda", "42")
+	require.ErrorContains(t, err, "link the contact to a person first")
+}

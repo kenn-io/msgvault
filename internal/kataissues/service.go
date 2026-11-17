@@ -118,6 +118,7 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 	if input.Thread != "" {
 		thread := kataevidence.Digest("msgvault.kata.thread.v1", archive, input.Thread)
 		metadata["msgvault.thread"] = thread
+		metadata["msgvault.conversation"] = input.Thread
 		parent, found, err := s.Kata.FindOpenMetadataTask(ctx, s.Project, "msgvault.thread", thread)
 		if err != nil {
 			return Result{}, err

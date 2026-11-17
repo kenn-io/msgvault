@@ -25,6 +25,8 @@ type loopAgendaArchive interface {
 	GetPersonCommitmentContext(context.Context, int64, time.Time) (store.PersonCommitment, error)
 }
 
+var errAgendaPersonRequired = errors.New("link the contact to a person first")
+
 // LoopAgenda files open obligations with their archive citations.
 type LoopAgenda struct {
 	archive loopAgendaArchive
@@ -79,9 +81,10 @@ func (a *LoopAgenda) File(ctx context.Context, ref string, now time.Time) (katai
 		}
 		messageID, conversationID = id, loop.ConversationID
 		input.Title = fmt.Sprintf("Reply to %s: %s", loop.Counterparty.DisplayName, loop.Summary)
-		if loop.Counterparty.PersonID != 0 {
-			input.PersonID, input.List = &loop.Counterparty.PersonID, "replies"
+		if loop.Counterparty.PersonID == 0 {
+			return kataissues.Result{}, errAgendaPersonRequired
 		}
+		input.PersonID, input.List = &loop.Counterparty.PersonID, "replies"
 		selectors = []kataevidence.Selector{{Kind: "message", MessageID: id, MaxChars: new(kataevidence.MaxChars)}}
 		key = fmt.Sprintf("loop:%d", id)
 	}
@@ -130,7 +133,7 @@ func (a *LoopAgenda) Run(ctx context.Context, now time.Time) error {
 	for _, ref := range refs {
 		result, err := a.File(ctx, ref, now)
 		if err != nil {
-			if !errors.Is(err, kataissues.ErrIssueDeleted) && !errors.Is(err, kataevidence.ErrUnsupported) && !errors.Is(err, kataissues.ErrUnsupportedEvidence) {
+			if !errors.Is(err, errAgendaPersonRequired) && !errors.Is(err, kataissues.ErrIssueDeleted) && !errors.Is(err, kataevidence.ErrUnsupported) && !errors.Is(err, kataissues.ErrUnsupportedEvidence) {
 				failures = append(failures, err)
 			}
 			continue
@@ -181,6 +184,8 @@ func (s *Server) handleLoopAgenda(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.loopAgenda.File(r.Context(), ref, s.clockNow().UTC())
 	switch {
+	case errors.Is(err, errAgendaPersonRequired):
+		writeError(w, http.StatusConflict, "person_required", errAgendaPersonRequired.Error())
 	case errors.Is(err, loops.ErrNotOpen):
 		writeError(w, http.StatusNotFound, "loop_not_open", "Loop not open")
 	case commitment && errors.Is(err, sql.ErrNoRows):
