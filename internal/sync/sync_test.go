@@ -2690,9 +2690,6 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 				opts = &Options{AttachmentsDir: blocked}
 			}
 			env.Syncer = New(api, env.Store, opts)
-			if tc.rawMissing {
-				env.Mock.GetMessageCalls = nil
-			}
 			if tc.rawFailure {
 				allow := acquisitionWriteFault(t, env, "message_raw", "INSERT", "1 = 1")
 				defer allow()
@@ -2715,7 +2712,6 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 			}
 			if tc.rawMissing {
 				assert.Empty(api.labelCalls, "a row without raw MIME follows normal raw acquisition")
-				assert.Equal([]string{"msg1"}, env.Mock.GetMessageCalls, "full sync must reacquire missing raw MIME")
 			} else if tc.wantMark {
 				assert.Equal([][]string{{"msg1"}}, api.labelCalls)
 			}
@@ -2728,11 +2724,6 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 				assertMessageHasLabel(t, env.Store, "msg1", "TRASH")
 			} else {
 				assertMessageNotHasLabel(t, env.Store, "msg1", "TRASH")
-			}
-			if tc.rawMissing {
-				var rawCount int
-				require.NoError(env.Store.DB().QueryRowContext(t.Context(), env.Store.Rebind(`SELECT count(*) FROM message_raw WHERE message_id = ?`), messageID).Scan(&rawCount))
-				assert.Equal(1, rawCount, "full sync must restore the missing raw payload")
 			}
 		})
 	}

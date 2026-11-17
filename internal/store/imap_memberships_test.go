@@ -314,37 +314,28 @@ func TestApplyIMAPMailboxDeltas_TrashAndAllReconcileDeletionMark(t *testing.T) {
 	for _, tc := range []struct {
 		name                    string
 		trash, inbox, all, want bool
-		plainTrash, plainAll    bool
+		plainTrash              bool
 	}{
 		{name: "marked in trash", trash: true, want: true, plainTrash: true},
 		{name: "marked in trash and inbox", trash: true, inbox: true, want: false},
-		{name: "marked in trash and all", trash: true, all: true, want: true, plainAll: true},
+		{name: "marked in trash and all", trash: true, all: true, want: true},
 		{name: "marked in all only", all: true, want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newIMAPMembershipFixture(t)
 			id := f.createMessage(t, "message", "<trash@example.com>")
-			// Another advertised mailbox may own the selected Trash or All Mail flag.
-			trashRole, allRole := "sent", "sent"
+			// A secondary Trash mailbox can retain the Trash role.
+			trashRole := "sent"
 			if tc.plainTrash {
 				trashRole = store.LabelSystemRoleTrash
 			}
-			if tc.plainAll {
-				allRole = store.LabelSystemRoleAll
-			}
 			_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 				"Trash":    {Name: "Trash", Type: "system", SystemRole: trashRole},
-				"All Mail": {Name: "All Mail", Type: "system", SystemRole: allRole},
+				"All Mail": {Name: "All Mail", Type: "system", SystemRole: "sent"},
 			})
 			require.NoError(t, err)
 			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "message"))
 			var deltas []store.IMAPMailboxDelta
-			if tc.plainTrash {
-				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "Other Trash", Trash: true, State: store.IMAPFolderState{Mailbox: "Other Trash", UIDValidity: 4, UIDNext: 1}})
-			}
-			if tc.plainAll {
-				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "Other All", AllMail: true, State: store.IMAPFolderState{Mailbox: "Other All", UIDValidity: 4, UIDNext: 1}})
-			}
 			if tc.trash {
 				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "Trash", Trash: !tc.plainTrash, State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
 			}
@@ -352,7 +343,7 @@ func TestApplyIMAPMailboxDeltas_TrashAndAllReconcileDeletionMark(t *testing.T) {
 				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 2, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
 			}
 			if tc.all {
-				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "All Mail", AllMail: !tc.plainAll, State: store.IMAPFolderState{Mailbox: "All Mail", UIDValidity: 3, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
+				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "All Mail", AllMail: true, State: store.IMAPFolderState{Mailbox: "All Mail", UIDValidity: 3, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
 			}
 			require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, deltas))
 			assert.Equal(t, tc.want, messageTombstoned(t, f.store, id))
@@ -1479,7 +1470,7 @@ func TestApplyIMAPMailboxDeltas_EmptyBaselineCleansLegacyLabelsOnce(t *testing.T
 }
 
 func TestFilteredIMAPRestoreClearsOnlyOnDistinctEvidence(t *testing.T) {
-	for _, scenario := range []string{"restored", "all only", "shared RFC822"} {
+	for _, scenario := range []string{"restored", "all only", "shared RFC822", "no Message-ID"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newIMAPIdentityFixture(t)
 			_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
@@ -1501,6 +1492,12 @@ func TestFilteredIMAPRestoreClearsOnlyOnDistinctEvidence(t *testing.T) {
 				deltas := []store.IMAPMailboxDelta{{Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Trash|1"}}}}
 				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "Projects", State: store.IMAPFolderState{Mailbox: "Projects", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Trash|1"}}})
 				require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, deltas))
+			}
+			if scenario == "no Message-ID" {
+				raw := []byte("From: sender@example.test\r\nSubject: no identity\r\n\r\nbody\r\n")
+				require.NoError(t, f.store.UpsertMessageRaw(id, raw))
+				require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Trash|1"}}}}))
+				observations = []store.IMAPMembershipObservation{{Mailbox: "INBOX", UIDValidity: 1, UID: 1, SourceMessageID: "INBOX|1", RawSHA256: sha256.Sum256(raw)}}
 			}
 			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|1"))
 			switch scenario {
