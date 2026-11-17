@@ -179,9 +179,9 @@ func (a *staticLabelsAPI) ListLabels(_ context.Context) ([]*gmail.Label, error) 
 	return a.labels, nil
 }
 
-func recordIncrementalSyncRunItems(t *testing.T, env *TestEnv, sourceID int64, status string, items ...store.SyncRunItem) {
+func recordIncrementalSyncRunItems(t *testing.T, env *TestEnv, sourceID int64, items ...store.SyncRunItem) {
 	t.Helper()
-	recordSyncRunItemsOfType(t, env, sourceID, "incremental", status, items...)
+	recordSyncRunItemsOfType(t, env, sourceID, "incremental", store.SyncStatusCompleted, items...)
 }
 
 func recordSyncRunItemsOfType(t *testing.T, env *TestEnv, sourceID int64, syncType, status string, items ...store.SyncRunItem) {
@@ -233,7 +233,7 @@ func TestIncrementalSyncReplayRecordsEachErrorResultClass(t *testing.T) {
 			ErrorKind:       syncItemKindFetchError,
 		})
 	}
-	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted, items...)
+	recordIncrementalSyncRunItems(t, env, source.ID, items...)
 	env.SetHistory(1000)
 
 	env.Mock.GetMessageError["b-nil"] = errors.New("temporary transport failure")
@@ -1615,7 +1615,7 @@ func TestIncrementalSyncFiltersFetchReplayCandidates(t *testing.T) {
 		eligibleID    = "replay-eligible"
 		batchEligible = "replay-batch-eligible"
 	)
-	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted,
+	recordIncrementalSyncRunItems(t, env, source.ID,
 		store.SyncRunItem{SourceMessageID: eligibleID, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindFetchError},
 		store.SyncRunItem{SourceMessageID: eligibleID, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindBatchFetchError},
 		store.SyncRunItem{SourceMessageID: batchEligible, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindBatchFetchError},
@@ -6044,7 +6044,7 @@ func TestIncrementalSyncReplaysMarkedMessageMissingRaw(t *testing.T) {
 	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, id))
 	_, err = env.Store.DB().ExecContext(t.Context(), env.Store.Rebind(`DELETE FROM message_raw WHERE message_id IN (SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?)`), source.ID, id)
 	require.NoError(t, err)
-	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted, store.SyncRunItem{SourceMessageID: id, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindFetchError})
+	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncRunItem{SourceMessageID: id, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindFetchError})
 	env.Mock.Messages[id].LabelIDs = []string{"INBOX"}
 	env.SetHistory(1000)
 	env.Mock.GetMessageCalls = nil
@@ -6082,7 +6082,7 @@ func TestIncrementalSyncRetriesRestoreAfterLabelFailure(t *testing.T) {
 			require.NoError(t, env.Store.MarkMessageDeleted(source.ID, id))
 			_, err = env.Store.DB().ExecContext(t.Context(), env.Store.Rebind(`DELETE FROM message_raw WHERE message_id IN (SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?)`), source.ID, id)
 			require.NoError(t, err)
-			recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted, store.SyncRunItem{SourceMessageID: id, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindFetchError})
+			recordIncrementalSyncRunItems(t, env, source.ID, store.SyncRunItem{SourceMessageID: id, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindFetchError})
 			env.Mock.Messages[id].LabelIDs = []string{"INBOX"}
 			if stillInTrash {
 				env.Mock.Messages[id].LabelIDs = append(env.Mock.Messages[id].LabelIDs, "TRASH")
