@@ -1092,6 +1092,7 @@ func init() {
 // rejects repeated selectors; ordinary sync retains Cobra's last-value behavior.
 type fullSyncFlagValue struct {
 	pflag.Value
+
 	flag     *pflag.Flag
 	single   bool
 	repeated bool
@@ -1106,7 +1107,10 @@ func (v *fullSyncFlagValue) Set(value string) error {
 	} else {
 		v.repeated = false
 	}
-	return v.Value.Set(value)
+	if err := v.Value.Set(value); err != nil {
+		return fmt.Errorf("set --%s: %w", v.flag.Name, err)
+	}
+	return nil
 }
 
 func addGmailLabelRefreshFlag(cmd *cobra.Command) {

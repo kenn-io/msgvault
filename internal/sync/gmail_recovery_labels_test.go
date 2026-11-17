@@ -212,7 +212,7 @@ func TestGmailArchivedLabelDriftNeedsCompleteRefresh(t *testing.T) {
 	// The archived-RAW shortcut still skips membership reads. Reconstruct
 	// the pre-#2236 completion step using its production Store operation:
 	// publish the profile cursor without having consumed the label changes.
-	historicalCursor := fmt.Sprint(f.history)
+	historicalCursor := strconv.FormatUint(f.history, 10)
 	_, err := e.Syncer.Full(t.Context(), testEmail)
 	require.NoError(t, err)
 	assertRecoveryLabels(t, e, ids, oldLabels)
@@ -237,7 +237,7 @@ func TestGmailArchivedLabelDriftNeedsCompleteRefresh(t *testing.T) {
 		_, err = e.Syncer.Full(t.Context(), testEmail)
 		require.NoError(t, err)
 		assertRecoveryLabels(t, e, ids, oldLabels)
-		assert.Equal(t, fmt.Sprint(f.history), gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+		assert.Equal(t, strconv.FormatUint(f.history, 10), gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 	}
 	assert.Equal(t, []string{historicalCursor}, f.historyStarts, "History after the jumped cursor does not contain the missed label changes")
 	assert.Equal(t, 4, f.rawGets)
@@ -265,7 +265,7 @@ func (f *replayedLabelHistoryTransport) RoundTrip(r *http.Request) (*http.Respon
 	if err != nil {
 		return nil, fmt.Errorf("parse label replay cursor: %w", err)
 	}
-	f.historyStarts = append(f.historyStarts, fmt.Sprint(start))
+	f.historyStarts = append(f.historyStarts, strconv.FormatUint(start, 10))
 	events := []any{}
 	for _, event := range []struct {
 		id     uint64

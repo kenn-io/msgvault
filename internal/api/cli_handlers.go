@@ -1257,10 +1257,8 @@ func parseCLISyncRequest(r *http.Request, full bool) (CLISyncRequest, *apiHTTPEr
 		if (strings.TrimSpace(req.Email) == "" && !req.SourceIDSet) || len(values["email"]) > 1 {
 			return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_source_selector", "label refresh requires one explicit Gmail account or source_id")
 		}
-		for _, name := range []string{"query", "before", "after", "folder", "skip-folder"} {
-			if values.Has(name) {
-				return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_refresh_labels", "label refresh requires an unfiltered full sync")
-			}
+		if slices.ContainsFunc([]string{"query", "before", "after", "folder", "skip-folder"}, values.Has) {
+			return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_refresh_labels", "label refresh requires an unfiltered full sync")
 		}
 		if raw, present := values["limit"]; present && (len(raw) != 1 || raw[0] == "" || req.Limit != 0) {
 			return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_refresh_labels", "label refresh requires an unlimited full sync")

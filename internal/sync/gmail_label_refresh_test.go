@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -282,7 +283,7 @@ func TestGmailFullLabelRefreshResumesPendingRecovery(t *testing.T) {
 
 func TestGmailFullLabelRefreshPendingRecoveryAcquiresCatchupMessage(t *testing.T) {
 	for _, refresh := range []bool{false, true} {
-		t.Run(fmt.Sprint(refresh), func(t *testing.T) {
+		t.Run(strconv.FormatBool(refresh), func(t *testing.T) {
 			e, f, _ := recoveryLabelsEnv(t)
 			api := e.Syncer.client
 			f.expire, f.stopHistory = false, true
@@ -324,12 +325,14 @@ func (incompleteLabelRefreshAPI) LabelsSnapshotComplete() bool { return false }
 
 func TestGmailFullLabelRefreshRequiresCompleteMetadata(t *testing.T) {
 	for _, incomplete := range []bool{false, true} {
-		t.Run(fmt.Sprint(incomplete), func(t *testing.T) {
+		t.Run(strconv.FormatBool(incomplete), func(t *testing.T) {
 			e, f, _ := recoveryLabelsEnv(t)
 			api := e.Syncer.client
 			var wrapped gmail.API = struct{ gmail.API }{api}
 			if incomplete {
-				wrapped = incompleteLabelRefreshAPI{api, api.(messageLabelBatchReader)}
+				reader, ok := api.(messageLabelBatchReader)
+				require.True(t, ok)
+				wrapped = incompleteLabelRefreshAPI{api, reader}
 			}
 			opts := DefaultOptions()
 			opts.RefreshLabels = true
