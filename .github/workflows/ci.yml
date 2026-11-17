@@ -1078,6 +1078,7 @@ jobs:
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Enable pgvector extension
+        id: pgvector-extension
         run: |
           docker exec "${{ job.services.postgres.id }}" \
             psql -U msgvault_test -d msgvault_test \
@@ -1110,8 +1111,13 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+      # Run after a failed pgvector-tagged test step, but not after failed
+      # setup. Without the extension in public, the first test's CREATE
+      # EXTENSION puts it in that test's schema, off every other test's
+      # search_path, and concurrent tests fail with type "vector" does not
+      # exist.
       - name: Test package in isolated shards (pgvector-tagged)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.pgvector-extension.outcome == 'success' }}
         run: scripts/test-package-shards.sh ./cmd/msgvault/cmd 4 "fts5 sqlite_vec pgvector" 18m pgvector-cli
 
       - name: Upload test events
