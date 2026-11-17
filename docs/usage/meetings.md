@@ -48,6 +48,50 @@ matches. Meetings mode does not offer selection or deletion.
 Unscoped search includes meetings and chats. Email-specific CLI and TUI
 aggregates remain email-only unless you choose another message type.
 
+## Link calendar events and notes
+
+Use `msgvault meetings links <note-id>` to see the calendar copies and notes
+that share an exact occurrence. You can also pass `msg:<id>` or an event `ref`
+from the `REF` column of `msgvault calendar events`, for example
+`msgvault meetings links evt:23@20270321T100000Z`. The API and MCP expose the same record.
+Twenty notes use their iCalendar UID and scheduled time. Granola notes use the
+Google event ID only when their owner matches the archived calendar's mailbox.
+Twenty notes with the same UID and time and Granola notes with the same
+instance-suffixed Google ID can link before a calendar is imported. A bare
+Google series ID cannot identify one week, so those notes remain separate.
+A calendar single or exception can prove that a bare ID names one event,
+including after a reschedule. Other note formats remain separate unless linked by the owner.
+
+Use `msgvault meetings suggest <ref>` to find events that overlap a meeting note, or notes that overlap a calendar event. Use `msgvault meetings link <ref> <ref>` to accept a suggestion. Suggestions rank shared attendees, overlap, and title words. The API and MCP tool `suggest_meeting_links` return the same suggestions.
+
+When a note has no known duration, the search uses a 30-minute window and reports the resulting estimated overlap. For ranking, known overlaps come ahead of estimated overlaps when attendee counts tie; title words break ties between estimates.
+
+Each result's `ref` identifies the calendar event, and `member_message_id` identifies the meeting note. For a note seed, `ref` is the suggested event; for an event seed, `member_message_id` is the suggested note. The `title` and `start` describe the suggestion.
+
+Use `msgvault meetings link <ref> <ref>` to join copies, including notes from
+an unscheduled call. Use `msgvault meetings unlink <ref> <ref>` to separate an
+automatic match. Either command replaces the previous choice. Use
+`msgvault meetings reset-link <ref> <ref>` to clear the choice and restore
+automatic matching. Choices survive projection rebuilds. Deduplication and source
+merges carry choices to the kept copy; undoing deduplication leaves that copy unchanged.
+If carried choices conflict, a choice already on the kept copy wins; otherwise, the
+newest carried choice wins. If a third copy matches both sides of a split, it joins
+the first compatible group in a stable order. A link or split that would break
+another saved link returns a conflict. Reset the conflicting pair first to make
+that change.
+
+Records show whether a calendar copy was cancelled or deleted at its source.
+When a recurrence cannot be expanded, the record keeps the copies it found and
+reports the affected message IDs and reasons in `unexpandable`. The CLI table
+prints those warnings to stderr; JSON and MCP return them with the record.
+
+An archived cancellation stays in the record even when its series master hasn't
+been archived. Its `start` and `end` are `null` in JSON and `unknown` in the
+CLI table, and `unexpandable` reports the missing series and bounds. A known
+bound is kept even if the other is missing. Importing the master later fills
+in the times. Note matches, calendar candidate reads, and recurrence steps share
+one request work limit; exceeding it returns `query_too_broad`.
+
 ## Export context and read follow-ups
 
 In Messages, select meeting rows and choose **Meeting context…** in the

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"testing"
@@ -17,11 +18,12 @@ import (
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result) {
+func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result, int64, int64) {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	importer := meetingimport.NewImporter(st, meetingimport.Hooks{})
@@ -59,6 +61,12 @@ func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.R
 		results[i], err = importer.Import(t.Context(), request)
 		require.NoError(t, err)
 	}
+	calendar, err := st.GetOrCreateSource("gcal", "owner@example.com")
+	require.NoError(t, err)
+	cancelled, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: calendar.ID, SourceMessageID: "cancelled", MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: "cancelled", ConversationType: "calendar"}, RawMIME: []byte(`{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`), RawFormat: "gcal_json"})
+	require.NoError(t, err)
+	event, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: calendar.ID, SourceMessageID: "suggestion", MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: "suggestion", ConversationType: "calendar"}, RawMIME: []byte(`{"id":"suggestion","start":{"dateTime":"2026-05-01T10:00:00Z"},"end":{"dateTime":"2026-05-01T10:20:00Z"}}`), RawFormat: "gcal_json"})
+	require.NoError(t, err)
 	server := httptest.NewServer(api.NewServer(
 		&config.Config{}, st, nil, slog.New(slog.DiscardHandler),
 	).Router())
@@ -68,19 +76,19 @@ func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.R
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
-	return client, results
+	return client, results, cancelled, event
 }
 
 func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
-	backend, imported := newMeetingMCPBackend(t)
+	backend, imported, cancelled, event := newMeetingMCPBackend(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
 	serverSession, err := newMCPServer(ServeOptions{
-		Engine: &querytest.MockEngine{}, Meetings: backend,
+		Engine: &querytest.MockEngine{}, Meetings: backend, MeetingRecords: true, MeetingSuggestions: true,
 	}, false).Connect(ctx, serverTransport, nil)
 	must.NoError(err)
 	t.Cleanup(func() { checks.NoError(serverSession.Close()) })
@@ -102,6 +110,43 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 		must.Contains(tools, name)
 		checks.True(tools[name].Annotations.ReadOnlyHint)
 	}
+	suggestions, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolSuggestMeetingLinks, Arguments: map[string]any{"ref": fmt.Sprintf("msg:%d", imported[0].MessageID)}})
+	must.NoError(err)
+	must.False(suggestions.IsError)
+	items, ok := meetingStructuredContent(t, suggestions)["suggestions"].([]any)
+	must.True(ok)
+	must.Len(items, 1)
+	item, ok := items[0].(map[string]any)
+	must.True(ok)
+	checks.Equal(fmt.Sprintf("evt:%d", event), item["ref"])
+	checks.InDelta(float64(imported[0].MessageID), item["member_message_id"], 0)
+	recordResult, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{
+		Name:      ToolGetMeetingRecord,
+		Arguments: map[string]any{"ref": fmt.Sprintf("msg:%d", imported[0].MessageID)},
+	})
+	must.NoError(err)
+	must.False(recordResult.IsError)
+	missing, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingRecord, Arguments: map[string]any{"ref": "msg:999999"}})
+	must.NoError(err)
+	must.True(missing.IsError)
+	must.NotEmpty(missing.Content)
+	missingText, ok := missing.Content[0].(*sdkmcp.TextContent)
+	must.True(ok)
+	checks.Contains(missingText.Text, "meeting_not_found")
+	checks.Equal(map[string]any{"links": []any{}, "message_ids": []any{float64(imported[0].MessageID)}, "unexpandable": []any{}}, meetingStructuredContent(t, recordResult))
+	recordResult, err = clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingRecord, Arguments: map[string]any{"ref": fmt.Sprintf("evt:%d", cancelled)}})
+	must.NoError(err)
+	must.False(recordResult.IsError)
+	structured := meetingStructuredContent(t, recordResult)
+	links, ok := structured["links"].([]any)
+	must.True(ok)
+	must.Len(links, 1)
+	link, ok := links[0].(map[string]any)
+	must.True(ok)
+	checks.Equal(fmt.Sprintf("evt:%d", cancelled), link["ref"])
+	checks.Nil(link["start"])
+	checks.Nil(link["end"])
+	checks.Equal("cancelled", link["status"])
 
 	contextResult, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{
 		Name: ToolGetMeetingContext,
@@ -247,9 +292,17 @@ func TestMeetingCatalogUsesClosedTypedSchemasAndStablePointers(t *testing.T) {
 	for _, definition := range without {
 		assertions.NotContains([]string{ToolGetMeetingContext, ToolListMeetingActionItems, ToolGetMeetingMetrics}, definition.name)
 	}
+	withoutDecisions := operationCatalog(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend, MeetingRecords: true}, &handlers{})
+	for _, definition := range withoutDecisions {
+		assertions.NotContains([]string{"link_meeting", "unlink_meeting", "reset_meeting_link"}, definition.name)
+	}
 }
 
 type meetingBackendFixture struct{}
+
+func (meetingBackendFixture) MeetingRecord(context.Context, string) (store.MeetingRecord, error) {
+	return store.MeetingRecord{}, nil
+}
 
 func (meetingBackendFixture) GetMeetingContext(context.Context, generated.GetMeetingContextBody) (*meetingcontent.PacketResult, error) {
 	return &meetingcontent.PacketResult{}, nil
@@ -261,4 +314,36 @@ func (meetingBackendFixture) ListMeetingActionItems(context.Context, generated.L
 
 func (meetingBackendFixture) GetMeetingMetrics(context.Context, generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error) {
 	return &meetingcontent.Metrics{}, nil
+}
+
+type recordingMeetingDecisionBackend struct {
+	meetingBackendFixture
+
+	calls [][3]string
+}
+
+func (b *recordingMeetingDecisionBackend) DecideMeetingLink(_ context.Context, left, right, decision string) (store.MeetingLinkDecisionResult, error) {
+	b.calls = append(b.calls, [3]string{left, right, decision})
+	return store.MeetingLinkDecisionResult{}, nil
+}
+
+func TestMeetingDecisionMCPWrites(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	backend := &recordingMeetingDecisionBackend{}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+	server, err := newMCPServer(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend, MeetingRecords: true, MeetingDecisions: true}, true).Connect(ctx, serverTransport, nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(server.Close()) })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "meeting-decision-test", Version: "1.0.0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(session.Close()) })
+	for _, name := range []string{"link_meeting", "unlink_meeting", "reset_meeting_link"} {
+		result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: name, Arguments: map[string]any{"left": "msg:11", "right": "evt:22"}})
+		requirements.NoError(err)
+		requirements.False(result.IsError)
+	}
+	assertions.Equal([][3]string{{"msg:11", "evt:22", "link"}, {"msg:11", "evt:22", "unlink"}, {"msg:11", "evt:22", "clear"}}, backend.calls)
 }

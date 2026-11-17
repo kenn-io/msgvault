@@ -1298,6 +1298,8 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_message_recipients_normalized_email", messageRecipientsNormalizedEmailIndexDefinition},
 		{"idx_source_merge_archive_only_original", "ON source_merge_archive_only_messages(original_source_message_id)"},
 		{"idx_calendar_events_series_id", "ON calendar_events(series_provider_id, message_id)"},
+		{"idx_calendar_events_ical_uid", "ON calendar_events(ical_uid)"},
+		{"idx_meeting_details_link_key", "ON meeting_details(link_key) WHERE link_key IS NOT NULL"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -1827,6 +1829,7 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	// buildLargeIndexesConcurrently.
 	if !s.IsPostgreSQL() {
 		for _, index := range []struct{ name, definition string }{
+			{"idx_meeting_details_link_key", "ON meeting_details(link_key) WHERE link_key IS NOT NULL"},
 			{"idx_messages_account", messagesAccountIndexDefinition},
 			{"idx_messages_account_pending", messagesAccountPendingIndexDefinition},
 			{"idx_messages_email_linkage_pending", messagesEmailLinkagePendingIndexDefinition},
@@ -2209,6 +2212,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	// 30s statement_timeout (finding S1). IF NOT EXISTS is idempotent per start.
 	if !s.IsPostgreSQL() {
 		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_calendar_events_ical_uid ON calendar_events(ical_uid)`); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, id)`); err != nil {
 				return err
 			}

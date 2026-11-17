@@ -422,8 +422,11 @@ import (
 // 5.6.0 adds a refresh-only identity cache operation.
 // 5.7.0 adds first archived appearance to person contact state.
 // 5.8.0 advertises structured person-profile routes to MCP.
-// 5.9.0 adds explicit archived Gmail label refresh to CLI full sync.
-const APISchemaVersion = "5.9.0"
+// 5.9.0 adds meeting records.
+// 5.10.0 adds owner meeting link decisions.
+// 5.11.0 adds meeting link suggestions.
+// 5.12.0 adds explicit archived Gmail label refresh to CLI full sync.
+const APISchemaVersion = "5.12.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

@@ -107,6 +107,25 @@ msgvault meetings actions --status pending --assignee alex@example.com --json
 msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 ```
 
+### meetings links
+
+`msgvault meetings links <note-id|ref> [--json]` reads the calendar copies and
+notes that share an exact meeting occurrence. Use a note ID, `msg:<id>`, or an
+event `ref` from `calendar events --json`. This command requires daemon API
+schema 5.9.0 or newer.
+
+### meetings suggest
+
+`msgvault meetings suggest <ref> [--limit N] [--json]` ranks overlapping meeting notes and calendar events. Use `meetings link` to accept a suggestion. This command requires daemon API schema 5.11.0 or newer.
+
+### meetings link, unlink, and reset-link
+
+`msgvault meetings link <ref> <ref>` joins two meeting copies, and
+`msgvault meetings unlink <ref> <ref>` separates them. Either replaces the
+previous choice. `msgvault meetings reset-link <ref> <ref>` clears the choice
+and restores automatic matching. These commands require
+daemon API schema 5.10.0 or newer.
+
 ### meetings context
 
 | Flag | Contract |

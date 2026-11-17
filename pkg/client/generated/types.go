@@ -1172,6 +1172,7 @@ type CalendarOccurrence struct {
 	End               time.Time  `json:"end" validate:"required"`
 	EndDate           string     `json:"end_date" validate:"omitempty"`
 	MessageID         int64      `json:"message_id"`
+	Ref               *string    `json:"ref,omitzero"`
 	SeriesMessageID   int64      `json:"series_message_id"`
 	SourceID          int64      `json:"source_id"`
 	Start             time.Time  `json:"start" validate:"required"`
@@ -7746,6 +7747,31 @@ func (m MeetingContextRequest) Validate() error {
 	return errors
 }
 
+type MeetingDecisionRequest struct {
+	Decision MeetingDecisionRequestDecision `json:"decision" validate:"required"`
+	Left     string                         `json:"left" validate:"required"`
+	Right    string                         `json:"right" validate:"required"`
+}
+
+func (m MeetingDecisionRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Decision).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Decision", err)
+		}
+	}
+	if err := typesValidator.Var(m.Left, "required"); err != nil {
+		errors = errors.Append("Left", err)
+	}
+	if err := typesValidator.Var(m.Right, "required"); err != nil {
+		errors = errors.Append("Right", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MeetingExploreScope struct {
 	CacheRevision       string             `json:"cache_revision" validate:"required"`
 	CandidateSnapshotID *string            `json:"candidate_snapshot_id,omitzero"`
@@ -7820,6 +7846,29 @@ func (m MeetingImportResponse) Validate() error {
 	return errors
 }
 
+type MeetingLink struct {
+	DeletedFromSource bool       `json:"deleted_from_source"`
+	End               *time.Time `json:"end"`
+	Ref               string     `json:"ref" validate:"required"`
+	Start             *time.Time `json:"start"`
+	Status            string     `json:"status" validate:"required"`
+	Subject           *string    `json:"subject,omitzero"`
+}
+
+func (m MeetingLink) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingLinkDecisionResult struct {
+	Left  string `json:"left" validate:"required"`
+	Right string `json:"right" validate:"required"`
+	State string `json:"state" validate:"required"`
+}
+
+func (m MeetingLinkDecisionResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
 type MeetingMetricsRequest struct {
 	Explore *MeetingExploreScope `json:"explore,omitempty"`
 	Scope   *MeetingScopeRequest `json:"scope,omitempty"`
@@ -7860,6 +7909,43 @@ type MeetingPerson struct {
 
 func (m MeetingPerson) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingRecord struct {
+	Links        []MeetingLink          `json:"links" validate:"required"`
+	MessageIds   []int64                `json:"message_ids" validate:"required"`
+	Unexpandable []CalendarUnexpandable `json:"unexpandable" validate:"required"`
+}
+
+func (m MeetingRecord) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Links, "required"); err != nil {
+		errors = errors.Append("Links", err)
+	}
+	for i, item := range m.Links {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Links[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.MessageIds, "required"); err != nil {
+		errors = errors.Append("MessageIds", err)
+	}
+	if err := typesValidator.Var(m.Unexpandable, "required"); err != nil {
+		errors = errors.Append("Unexpandable", err)
+	}
+	for i, item := range m.Unexpandable {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Unexpandable[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type MeetingRef struct {
@@ -7940,6 +8026,60 @@ func (m MeetingScopeRequest) Validate() error {
 	for i, item := range m.SourceIds {
 		if err := typesValidator.Var(item, "gte=1,lte=9007199254740991"); err != nil {
 			errors = errors.Append(fmt.Sprintf("SourceIds[%d]", i), err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MeetingSuggestion struct {
+	// MemberMessageID Meeting note ID; the suggestion when the seed is an event
+	MemberMessageID int64 `json:"member_message_id"`
+	OverlapMinutes  int64 `json:"overlap_minutes"`
+
+	// Ref Calendar event reference; the suggestion when the seed is a note
+	Ref             string `json:"ref" validate:"required"`
+	SharedAttendees int64  `json:"shared_attendees"`
+
+	// Start Start of the suggested event or note
+	Start time.Time `json:"start" validate:"required"`
+
+	// Title Title of the suggested event or note
+	Title       string `json:"title" validate:"required"`
+	TitleTokens int64  `json:"title_tokens"`
+}
+
+func (m MeetingSuggestion) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingSuggestionPage struct {
+	Suggestions  []MeetingSuggestion    `json:"suggestions" validate:"required"`
+	Unexpandable []CalendarUnexpandable `json:"unexpandable" validate:"required"`
+}
+
+func (m MeetingSuggestionPage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Suggestions, "required"); err != nil {
+		errors = errors.Append("Suggestions", err)
+	}
+	for i, item := range m.Suggestions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Suggestions[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.Unexpandable, "required"); err != nil {
+		errors = errors.Append("Unexpandable", err)
+	}
+	for i, item := range m.Unexpandable {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Unexpandable[%d]", i), err)
+			}
 		}
 	}
 	if len(errors) == 0 {

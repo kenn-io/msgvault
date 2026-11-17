@@ -166,7 +166,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.8.0**.
+it is separate from the binary release version. The current schema is **5.11.0**.
+
+Schema 5.11.0 adds meeting link suggestions.
+
+Schema 5.10.0 adds owner meeting link decisions.
+
+Schema 5.9.0 adds meeting records.
 
 Schema 5.8.0 advertises the existing structured person profile routes to MCP:
 `GET` and `PATCH /api/v1/people/{id}/profile`,
@@ -2477,6 +2483,18 @@ for the user workflow and coverage meanings.
 | `POST /api/v1/meetings/context` | Exactly one of `message_ids` or an Explore `selection`; returns a context packet envelope |
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
+
+`GET /api/v1/meetings/suggestions?ref=...` ranks overlapping meeting notes and calendar events; use `POST /api/v1/meetings/links/decisions` to link a suggested pair. It requires API schema 5.11.0. Without `verification.read`, withheld titles add no title words and withheld partner titles are masked.
+
+`GET /api/v1/meetings/record?ref=...` returns the notes and calendar copies
+for a `msg:<id>` or `evt:<id>[@occurrence key]` reference. It requires API
+schema 5.9.0. A `message.read` grant returns notes and calendar copies from its authorized sources.
+
+`POST /api/v1/meetings/links/decisions` accepts owner requests with `left`,
+`right`, and `decision` (`link`, `unlink`, or `clear`). It returns the canonical refs and
+`state` (`link`, `split`, or `automatic`). Link and unlink replace the saved
+choice; clear restores automatic matching. A conflicting choice returns 409. This
+operation requires API schema 5.10.0.
 
 Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
 `include_transcript` (default false), and `max_bytes` (default 131072, range

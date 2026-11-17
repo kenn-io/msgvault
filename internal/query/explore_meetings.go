@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 // ExploreMeetingResolver is the optional cache-backed capability used by
@@ -68,8 +70,9 @@ selected AS (
 	FROM logical_entries`+selection+`
 ), selection_counts AS (
 	SELECT COUNT(*)::BIGINT AS selected_count,
-		COALESCE(SUM(CASE WHEN message_type = 'meeting_transcript' THEN 1 ELSE 0 END), 0)::BIGINT AS meeting_count
-	FROM selected
+		COUNT(DISTINCT coalesce(g.group_id, s.anchor_message_id)) FILTER (WHERE s.message_type = 'meeting_transcript')::BIGINT AS meeting_count
+	FROM selected s
+	LEFT JOIN read_parquet('`+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups))+`') g ON g.message_id = s.anchor_message_id
 ), meeting_ids AS (
 	SELECT anchor_message_id AS message_id
 	FROM selected

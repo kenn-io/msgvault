@@ -4160,7 +4160,8 @@ CREATE TABLE IF NOT EXISTS meeting_details (
     duration_seconds REAL,
     duration_basis TEXT NOT NULL DEFAULT '',
     action_coverage TEXT NOT NULL,
-    transcript_state TEXT NOT NULL
+    transcript_state TEXT NOT NULL,
+    link_key TEXT
 );
 CREATE TABLE IF NOT EXISTS meeting_action_items (
     message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -4323,6 +4324,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     projection_version INTEGER NOT NULL,
     content_hash TEXT NOT NULL,
     provider_event_id TEXT NOT NULL DEFAULT '',
+    ical_uid TEXT NOT NULL DEFAULT '',
     series_provider_id TEXT NOT NULL DEFAULT '',
     kind TEXT NOT NULL DEFAULT '',
     original_start_at DATETIME,
@@ -4425,3 +4427,20 @@ CREATE INDEX IF NOT EXISTS idx_meta_comment_replies_comment
  ON meta_comment_replies(source_id, comment_id);
 CREATE INDEX IF NOT EXISTS idx_meta_comment_replies_sent
  ON meta_comment_replies(source_id, reply_id) WHERE state = 'sent';
+CREATE TABLE IF NOT EXISTS meeting_link_decisions (
+    id INTEGER PRIMARY KEY,
+    left_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    left_kind TEXT NOT NULL CHECK (left_kind IN ('msg', 'evt')),
+    left_key TEXT NOT NULL,
+    right_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    right_kind TEXT NOT NULL CHECK (right_kind IN ('msg', 'evt')),
+    right_key TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK (decision IN ('link', 'split'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_pair ON meeting_link_decisions(left_message_id, left_kind, left_key, right_message_id, right_kind, right_key);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_right ON meeting_link_decisions(right_message_id);
+CREATE TABLE IF NOT EXISTS meeting_copy_survivors (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    survivor_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_copy_survivors_survivor ON meeting_copy_survivors(survivor_message_id);
