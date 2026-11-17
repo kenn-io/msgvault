@@ -591,14 +591,15 @@ slice of the body plus `body_length`, `body_returned`, `offset`, and
 being returned in a single response.
 
 `get_message` with `include_segments: true` returns
-`segments_version: "seg-v2"` and `segments` with `kind`, `start`, and `end`.
+`segments_version: "seg-v3"` and `segments` with `kind`, `start`, and `end`.
 For plain-text email, kinds are `authored`, `quoted`, `forwarded`, and
 `signature`. Quoted ranges carry `depth`, the count of leading `>` markers,
 or 1 for an attribution line or unprefixed history block.
 
 Outlook history blocks are quoted for both replies and forwards. They require
 consecutive `From:` and `Sent:` lines, then a `Subject:` within the first 64
-lines, before any blank line. `Date:` can replace `Sent:` only when an
+lines, before any blank line. Header names may be bold, as in `*From:*`, which
+is how Outlook's HTML-only replies read as text. `Date:` can replace `Sent:` only when an
 underscore divider of at least ten characters precedes the block. Recognized
 separators are English `Original Message`, `Forwarded message`, and
 `Begin forwarded message:`, plus Thunderbird's German `Original-Nachricht`
@@ -622,17 +623,15 @@ stopping at the last complete line; remaining bytes keep the last label.
 `segments_truncated: true` reports the scan limit. Non-email messages get one
 authored range.
 
-HTML-only email gets ranges too. With the default `body_format: "auto"`,
-`include_segments: true` pages text derived from the HTML in `body_text` and
+HTML-only email is segmented through its stored text, which msgvault
+converts from the HTML at import; quoted `blockquote` lines become `>` lines.
+When a message has HTML but no stored text, the default `body_format: "auto"`
+with `include_segments: true` pages the same conversion in `body_text` and
 reports `body_format: "html_text"`. Offsets, `body_length`, and ranges refer to
-that text, not the raw markup, so `center_at` offsets from `search_in_message`,
-which searches the raw HTML, don't apply to it. In the derived text, lines
-inside a `blockquote` element get one `>` per enclosing `blockquote`, and lines inside a
-`div` whose class contains `gmail_quote` get one `>` when no `blockquote`
-encloses them. Those lines are quoted; the plain-text rules above label the
-rest. Because HTML collapses the trailing space, a line of exactly `--` outside
-quotes counts as the `-- ` signature delimiter. Requesting `body_format: "html"` still returns
-`segments_unavailable: "unsupported_format"` with no ranges.
+that text, so `char_offset` values from `search_in_message`, which searches the
+raw HTML for such messages, don't apply to it. Requesting
+`body_format: "html"` returns `segments_unavailable: "unsupported_format"`
+with no ranges.
 
 For a calendar event, `get_message` also returns `calendar` with `status`,
 `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`, so an

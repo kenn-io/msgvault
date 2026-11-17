@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/testutil/messagebody"
 )
 
@@ -200,6 +201,8 @@ func TestSplitOutlook(t *testing.T) {
 		{"blank before subject", "From: sender@example.com\nSent: today\n\nSubject: Earlier\nOld claim", false},
 		{"64th line subject", "From: sender@example.com\nSent: today\n" + strings.Repeat("Cc: reader@example.com\n", 61) + "Subject: Earlier\nOld claim", true},
 		{"65th line subject", "From: sender@example.com\nSent: today\n" + strings.Repeat("Cc: reader@example.com\n", 62) + "Subject: Earlier\nOld claim", false},
+		{"bold headers", "*From:* sender@example.com\n*Sent:* today\n*To:* reader@example.com\n*Subject:* Earlier\n\nOld claim", true},
+		{"bold empty From", "*From:*\n*Sent:* today\n*Subject:* Earlier\nOld claim", false},
 		{"wrapped recipients", "From: sender@example.com\nSent: today\nTo: reader@example.com,\n    a@example.com,\n    b@example.com,\n    c@example.com,\n    d@example.com,\n    e@example.com,\n    f@example.com\nSubject: Earlier\nOld claim", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -217,4 +220,13 @@ func TestSplitOutlook(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSplitOutlookHTMLReply(t *testing.T) {
+	// Outlook's HTML-only replies bold the header names; stored text keeps
+	// that bold as asterisks.
+	text := mime.HTMLBodyText(`<div>Sounds good.</div><hr><div id="divRplyFwdMsg"><b>From:</b> Alice &lt;alice@example.com&gt;<br><b>Sent:</b> Monday, January 5, 2026 9:00 AM<br><b>To:</b> Bob &lt;bob@example.com&gt;<br><b>Subject:</b> Lunch</div><div>Lunch at noon?</div>`)
+	historyStart := strings.Index(text, "*From:*")
+	require.Positive(t, historyStart, text)
+	assert.Equal(t, []Segment{{Authored, 0, historyStart, 0}, {Quoted, historyStart, len(text), 1}}, Split(text).Segments)
 }
