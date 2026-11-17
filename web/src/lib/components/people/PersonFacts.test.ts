@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { requestOf } from '../../directory/entity-fixtures.test-support';
@@ -12,9 +12,14 @@ it('shows the field count and latest date in the closed header', async () => {
     throw new Error('unexpected request');
   });
   render(PersonFacts, { client: createAPIClient(fetchFn), personID: 42 });
-  const summary = await screen.findByText('73 fields · last found Nov 1');
-  expect(summary.closest('header')?.textContent).toContain('Facts');
-  expect(screen.getByRole('button', { name: 'Show' })).toBeDefined();
+  await screen.findByText('73 fields · last found Nov 1');
+  const facts = screen.getByRole('region', { name: 'Facts' });
+  expect(within(facts).getByRole('heading', { name: 'Facts' })).toBeDefined();
+  await fireEvent.click(within(facts).getByRole('button', { name: 'Show' }));
+  expect(within(facts).queryByText('73 fields · last found Nov 1')).toBeNull();
+  await fireEvent.click(within(facts).getByRole('button', { name: 'Hide' }));
+  expect(within(facts).getByText('73 fields · last found Nov 1')).toBeDefined();
+  expect(within(facts).getByRole('button', { name: 'Show' })).toBeDefined();
 });
 
 it('discards a summary response for the previous person', async () => {
@@ -48,8 +53,10 @@ it('keeps Claims available beside Set up with no stored facts', async () => {
     throw new Error('unexpected request');
   });
   render(PersonFacts, { client: createAPIClient(fetchFn), personID: 42, onSetUp: vi.fn() });
-  expect(screen.getByRole('button', { name: 'Set up Facts' })).toBeDefined();
-  await fireEvent.click(screen.getByRole('button', { name: 'Show' }));
-  expect(await screen.findByRole('radio', { name: 'Claims' })).toBeDefined();
-  expect(screen.getByRole('region', { name: 'Facts' }).querySelector('.section-body')).not.toBeNull();
+  const facts = screen.getByRole('region', { name: 'Facts' });
+  expect(within(facts).getByRole('button', { name: 'Set up Facts' })).toBeDefined();
+  await fireEvent.click(within(facts).getByRole('button', { name: 'Show' }));
+  expect(await within(facts).findByRole('radio', { name: 'Claims' })).toBeDefined();
+  await fireEvent.click(within(facts).getByRole('button', { name: 'Hide' }));
+  expect(within(facts).getByRole('button', { name: 'Show' })).toBeDefined();
 });
