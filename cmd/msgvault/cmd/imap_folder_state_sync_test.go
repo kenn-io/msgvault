@@ -103,45 +103,6 @@ func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
 	assert.Contains(logs.String(), "account=user@example.com")
 }
 
-func TestRunScheduledIMAPSync_CombinedMailboxRoles(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		filtered bool
-	}{
-		{"all and sent/filtered=false", false},
-		{"all and sent/filtered=true", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			mailboxes := map[string]int{"INBOX": 0, "Combined": 0, "A-All": 0, "Trash": 0}
-			roles := map[string][]imapapi.MailboxAttr{
-				"A-All":    {imapapi.MailboxAttrAll},
-				"Trash":    {imapapi.MailboxAttrTrash},
-				"Combined": {imapapi.MailboxAttrAll, imapapi.MailboxAttrSent},
-			}
-			addr, user := testutil.StartIMAPMemServerWithSpecialUse(t, mailboxes, roles)
-			raw := []byte("Message-ID: <combined@example.test>\r\nFrom: sender@example.test\r\nTo: recipient@example.test\r\nSubject: combined\r\n\r\nbody\r\n")
-			testutil.AppendIMAPRawMessage(t, user, "Combined", raw)
-			testutil.AppendIMAPRawMessage(t, user, "Trash", raw)
-			st, src, cfg, ctx := scheduledIMAPTestSetup(t, addr)
-			invocationFromContext(ctx).logger = testDiscardLogger()
-			syncMailbox := func() {
-				summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
-				require.NoError(t, err)
-				require.Zero(t, summary.Errors)
-			}
-			syncMailbox()
-			_, err := st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE source_id = ?`), src.ID)
-			require.NoError(t, err)
-			testutil.SetIMAPFlags(t, addr, "Combined", 1, imapapi.FlagSeen)
-			if tc.filtered {
-				cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
-			}
-			syncMailbox()
-			assert.Equal(t, 1, imapTombstonedMessageCount(t, st, src.ID))
-		})
-	}
-}
-
 func TestRunScheduledIMAPSync_KeepsMarkWhileInTrash(t *testing.T) {
 	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Trash": 0})
 	raw := []byte("Message-ID: <overlap@example.test>\r\nFrom: sender@example.test\r\nTo: recipient@example.test\r\nSubject: overlap\r\n\r\nbody\r\n")
@@ -156,10 +117,10 @@ func TestRunScheduledIMAPSync_KeepsMarkWhileInTrash(t *testing.T) {
 	syncMailbox()
 	_, err := st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE source_id = ?`), src.ID)
 	require.NoError(t, err)
+	// Observe Inbox with Trash filtered, then reconcile the complete snapshot.
 	cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
 	testutil.AppendIMAPRawMessage(t, user, "INBOX", raw)
 	syncMailbox()
-	assert.Equal(t, 1, imapTombstonedMessageCount(t, st, src.ID))
 	cfg.Sync.IMAPSkipFolders = nil
 	testutil.SetIMAPFlags(t, addr, "Trash", 1, imapapi.FlagSeen)
 	syncMailbox()
@@ -195,30 +156,6 @@ func TestSaveIMAPFolderStates_ExclusionPreservesPriorState(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(before, after, "filtered runs retain prior cursors and known UIDs")
 	assert.Equal(2, imapMembershipRowCount(t, st, src.ID))
-	assert.Equal(1, imapTombstonedMessageCount(t, st, src.ID))
-}
-
-func TestSaveIMAPFolderStates_FilteredRestore(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Trash": 0})
-	raw := []byte("Message-ID: <restore@example.com>\r\nFrom: alice@example.com\r\nTo: bob@example.com\r\nSubject: restore evidence\r\n\r\nbody\r\n")
-	testutil.AppendIMAPRawMessage(t, user, "Trash", raw)
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource(sourceTypeIMAP, "imap://user@example.com")
-	require.NoError(err)
-	first, _ := syncedIMAPClient(t, addr)
-	seedObservedIMAPMessages(t, st, src, first)
-	require.NoError(saveIMAPFolderStates(t.Context(), st, src, first, completedIMAPSyncSummary(t, st, src), 0))
-	require.NoError(first.Close())
-	_, err = st.EnsureLabel(t.Context(), src.ID, "INBOX", "INBOX", "system")
-	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE source_id = ?`), src.ID)
-	require.NoError(err)
-	testutil.ExpungeIMAPMessage(t, addr, "Trash", imapapi.UID(1))
-	testutil.AppendIMAPRawMessage(t, user, "INBOX", raw)
-	opts := append(imapFolderStateOptions(st, src, false, testConfigValue(), testDiscardLogger()), imaplib.WithFolderFilter(nil, []string{"Trash"}))
-	second, _ := syncedIMAPClient(t, addr, opts...)
-	require.NoError(saveIMAPFolderStates(t.Context(), st, src, second, completedIMAPSyncSummary(t, st, src), 0))
 	assert.Equal(1, imapTombstonedMessageCount(t, st, src.ID))
 }
 

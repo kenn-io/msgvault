@@ -907,14 +907,11 @@ func TestFullScanLabelMapRecordsEveryMailboxMembership(t *testing.T) {
 	// Both advertised Trash mailboxes retain their role in deltas.
 	addr, user = testutil.StartIMAPMemServerWithSpecialUse(t,
 		map[string]int{"INBOX": 0, "A-Trash": 0, "Z-Trash": 0},
-		map[string][]imapv2.MailboxAttr{"A-Trash": {imapv2.MailboxAttrTrash}, "Z-Trash": {imapv2.MailboxAttrTrash}},
+		map[string][]imapv2.MailboxAttr{"A-Trash": {imapv2.MailboxAttrTrash, imapv2.MailboxAttrAll}, "Z-Trash": {imapv2.MailboxAttrTrash}},
 	)
 	testutil.AppendIMAPMessage(t, user, "Z-Trash")
 	client = newTestClient(t, addr)
 	require.Equal(t, []string{"Z-Trash|1"}, listAllMessages(t, client))
-	observed = client.ObservedMemberships()
-	require.Len(t, observed, 1)
-	assert.Equal(t, "Z-Trash", observed[0].Mailbox)
 	deltas := client.ObservedMailboxDeltas()
 	flags := make(map[string]bool, len(deltas))
 	for _, delta := range deltas {

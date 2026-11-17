@@ -723,10 +723,8 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 				c.trashMailbox = item.Mailbox
 			}
 		}
-		if hasAttr(item.Attrs, imap.MailboxAttrAll) {
-			if c.allMailFolder == "" {
-				c.allMailFolder = item.Mailbox
-			}
+		if c.allMailFolder == "" && hasAttr(item.Attrs, imap.MailboxAttrAll) {
+			c.allMailFolder = item.Mailbox
 		}
 		if c.junkMailbox == "" && hasAttr(item.Attrs, imap.MailboxAttrJunk) {
 			c.junkMailbox = item.Mailbox

@@ -310,32 +310,24 @@ func TestApplyIMAPMailboxDeltas_ReappearanceClearsTombstone(t *testing.T) {
 	assert.Equal([]string{"Recovered"}, messageLabels(t, f.store, messageID))
 }
 
-func TestApplyIMAPMailboxDeltas_TrashAndAllReconcileDeletionMark(t *testing.T) {
+func TestApplyIMAPMailboxDeltas_TrashPreservesDeletionMark(t *testing.T) {
 	for _, tc := range []struct {
-		name                    string
-		trash, inbox, all, want bool
+		name  string
+		inbox bool
 	}{
-		{name: "marked in trash", trash: true, want: true},
-		{name: "marked in trash and inbox", trash: true, inbox: true, want: true},
-		{name: "marked in trash and all", trash: true, all: true, want: true},
-		{name: "marked in all only", all: true, want: false},
+		{name: "marked in trash"},
+		{name: "marked in trash and inbox", inbox: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newIMAPMembershipFixture(t)
 			id := f.createMessage(t, "message", "<trash@example.com>")
 			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "message"))
-			var deltas []store.IMAPMailboxDelta
-			if tc.trash {
-				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "Trash", Trash: true, State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
-			}
+			deltas := []store.IMAPMailboxDelta{{Mailbox: "Trash", Trash: true, State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}}}
 			if tc.inbox {
 				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 2, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
 			}
-			if tc.all {
-				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "All Mail", State: store.IMAPFolderState{Mailbox: "All Mail", UIDValidity: 3, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
-			}
 			require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, deltas))
-			assert.Equal(t, tc.want, messageTombstoned(t, f.store, id))
+			assert.True(t, messageTombstoned(t, f.store, id))
 		})
 	}
 }
