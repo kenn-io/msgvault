@@ -110,7 +110,7 @@ func TestRunScheduledIMAPSync_KeepsMarkWhileInTrash(t *testing.T) {
 	st, src, _, ctx := scheduledIMAPTestSetup(t, addr)
 	invocationFromContext(ctx).logger = testDiscardLogger()
 	syncMailbox := func() {
-		summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+		summary, _, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
 		require.NoError(t, err)
 		require.Zero(t, summary.Errors)
 	}
