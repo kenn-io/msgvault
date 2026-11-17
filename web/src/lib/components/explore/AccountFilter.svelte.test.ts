@@ -205,17 +205,25 @@ describe('AccountFilter', () => {
     }
   });
 
-  it('discovers pending matching after an empty catalog and stops polling on disposal', async () => {
+  it('does not poll a settled catalog', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      let count = 0;
-      const fetchFn = vi.fn<typeof fetch>(async () => pendingCatalog(count));
-      const view = render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
+      const fetchFn = vi.fn<typeof fetch>(async () => pendingCatalog(0));
+      render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
       await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1));
-      count = 2;
-      await vi.advanceTimersByTimeAsync(30000);
-      expect(screen.getByText('inbox@example.net: 2 messages to match.')).toBeTruthy();
-      expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(600000);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops polling pending matching on disposal', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const fetchFn = vi.fn<typeof fetch>(async () => pendingCatalog(2));
+      const view = render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
+      await screen.findByRole('button', { name: 'Retry' });
       view.unmount();
       const calls = fetchFn.mock.calls.length;
       await vi.advanceTimersByTimeAsync(60000);
