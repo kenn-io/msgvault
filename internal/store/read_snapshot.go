@@ -94,6 +94,11 @@ func WithReadSnapshotContext(ctx context.Context, db *sql.DB, tx *sql.Tx) contex
 	return context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: db, tx: &loggedTx{Tx: tx}})
 }
 
+// WithReadSnapshotReaderContext binds archive reads to a caller-owned snapshot reader.
+func WithReadSnapshotReaderContext(ctx context.Context, db *sql.DB, reader SQLReader) context.Context {
+	return context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: db, reader: reader})
+}
+
 // WithoutReadSnapshotContext preserves request lifetime and values for physical reads.
 func WithoutReadSnapshotContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, readSnapshotKey{}, struct{}{})

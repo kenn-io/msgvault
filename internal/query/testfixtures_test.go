@@ -185,6 +185,7 @@ type TestDataBuilder struct {
 	ownerParticipants        []OwnerParticipantFixture
 	participantClusters      []ParticipantClusterFixture
 	unsentMessages           string
+	meetingGroups            string
 
 	emptyAttachments bool // if true, write empty attachments file
 	// legacyRecipientSchema writes message_recipients without the
@@ -727,6 +728,7 @@ func (b *TestDataBuilder) Build() (string, func()) {
 
 	pb := newParquetBuilder(b.t)
 	pb.unsentMessages = b.unsentMessages
+	pb.meetingGroups = b.meetingGroups
 	pb.legacyRecipientSchema = b.legacyRecipientSchema
 	b.addMessageTables(pb)
 	b.addAuxiliaryTables(pb)
@@ -858,6 +860,7 @@ type parquetBuilder struct {
 	t                     testing.TB
 	tables                []parquetTable
 	unsentMessages        string
+	meetingGroups         string
 	legacyRecipientSchema bool
 }
 
@@ -884,6 +887,7 @@ func (b *parquetBuilder) contentKey() [sha256.Size]byte {
 		}
 	}
 	_, _ = fmt.Fprintf(h, "%d:%s:%t", len(b.unsentMessages), b.unsentMessages, b.legacyRecipientSchema)
+	_, _ = fmt.Fprintf(h, "%d:%s", len(b.meetingGroups), b.meetingGroups)
 	return [sha256.Size]byte(h.Sum(nil))
 }
 
@@ -987,6 +991,7 @@ func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResul
 		StagedBaseRoot: tmpDir,
 		OutputRoot:     tmpDir,
 		UnsentMessages: b.unsentMessages,
+		MeetingGroups:  b.meetingGroups,
 	})
 	require.NoError(b.t, err, "derive identity fixture datasets")
 	if b.legacyRecipientSchema {

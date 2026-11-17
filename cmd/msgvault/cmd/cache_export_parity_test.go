@@ -30,7 +30,7 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 	sourceID, alice, bob, carol := cacheExportParityParticipants(t, st)
 	var conversations []int64
 	for i, sender := range []int64{alice, bob} {
-		conv, _ := addCacheExportParityMessage(t, st, sourceID, sender, alice+bob-sender, i)
+		conv, _ := addCacheExportParityMessage(t, st, sourceID, sender, alice+bob-sender, i, "email")
 		conversations = append(conversations, conv)
 	}
 	person, _, err := st.CreatePersonFromParticipant(bob)
@@ -86,13 +86,13 @@ func cacheExportParityParticipants(t *testing.T, st *store.Store) (sourceID, ali
 	return source.ID, alice, bob, carol
 }
 
-func addCacheExportParityMessage(t *testing.T, st *store.Store, sourceID, sender, recipient int64, i int) (conversationID, messageID int64) {
+func addCacheExportParityMessage(t *testing.T, st *store.Store, sourceID, sender, recipient int64, i int, messageType string) (conversationID, messageID int64) {
 	t.Helper()
 	require := require.New(t)
 	conv, err := st.EnsureConversationWithType(sourceID, fmt.Sprintf("thread-%d", i), "direct_chat", "Thread")
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{
-		ConversationID: conv, SourceID: sourceID, SourceMessageID: fmt.Sprintf("message-%d", i), MessageType: "email",
+		ConversationID: conv, SourceID: sourceID, SourceMessageID: fmt.Sprintf("message-%d", i), MessageType: messageType,
 		SenderID: sql.NullInt64{Int64: sender, Valid: true},
 		SentAt:   sql.NullTime{Time: time.Date(2025, 4, 1, 12, 0, 0, 0, time.UTC), Valid: true},
 	})

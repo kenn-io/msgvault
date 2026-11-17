@@ -132,6 +132,7 @@ WITH new_rows AS (
 	       arg_max(c.message_type, struct_pack(at := c.occurred_at, id := c.anchor_message_id)) AS message_type,
 	       arg_max(c.entry_kind, struct_pack(at := c.occurred_at, id := c.anchor_message_id)) AS entry_kind,
 	       arg_max(c.is_from_me, struct_pack(at := c.occurred_at, id := c.anchor_message_id)) AS is_from_me,
+	       arg_max(c.deleted_from_source, struct_pack(at := c.occurred_at, id := c.anchor_message_id)) AS deleted_from_source,
 	       max(p.attachment_count)::BIGINT AS attachment_count,
 	       bool_or(c.is_owner) AS with_owner
 	FROM combined c
@@ -161,7 +162,8 @@ SELECT m.relation_kind, m.entry_key,
        CASE WHEN m.relation_kind = 1 THEN m.is_author ELSE NULL::BOOLEAN END AS is_author,
        CASE WHEN m.relation_kind = 1 THEN m.is_owner ELSE NULL::BOOLEAN END AS is_owner,
        CASE WHEN m.relation_kind = 1 THEN u.with_owner ELSE NULL::BOOLEAN END AS with_owner,
-       m.domain
+       m.domain,
+       CASE WHEN m.relation_kind = 3 THEN NULL::BOOLEAN ELSE u.deleted_from_source END AS deleted_from_source
 FROM merged m LEFT JOIN units u USING (entry_key)
 UNION ALL
 SELECT o.* FROM read_parquet('%[1]s') o
