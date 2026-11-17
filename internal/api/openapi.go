@@ -430,7 +430,8 @@ import (
 // 5.14.0 adds each decision's submitted claim value to its history row.
 // 5.15.0 applies media search mode to recordings and reports their actual mode and degradations.
 // 5.16.0 adds standalone person creation at POST /api/v1/people/create.
-const APISchemaVersion = "5.16.0"
+// 5.17.0 adds if_exists=return and structured match details to person creation.
+const APISchemaVersion = "5.17.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1268,6 +1269,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 		for _, propertyName := range []string{"rejected_at", "superseded_at"} {
 			nullableSchemaProperty(brief, propertyName)
+		}
+	}
+	// Creation conflicts carry either ambiguity or participant-promotion data.
+	// Keep that JSON intact instead of generating an empty details struct.
+	if response := schemas["PersonCreateErrorResponse"]; response != nil {
+		if details := response.Properties["details"]; details != nil {
+			if details.Extensions == nil {
+				details.Extensions = map[string]any{}
+			}
+			details.Extensions["x-go-type"] = "jsontext.Value"
+			details.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json/jsontext"}
 		}
 	}
 	nullableSchemaProperty(schemas["PersonBriefEnrollment"], "enabled_at")

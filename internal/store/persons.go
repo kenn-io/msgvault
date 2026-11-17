@@ -47,14 +47,15 @@ func (e *PersonBindingConflictError) Unwrap() error {
 // edge never deletes or moves them, so one person may intentionally span
 // multiple clusters until the user re-links or unbinds those participants.
 type Person struct {
-	ID              int64            `json:"id"`
-	VCardUID        string           `json:"vcard_uid"`
-	CardDAVBindings []CardDAVBinding `json:"carddav_bindings,omitempty"`
-	DisplayName     *string          `json:"display_name,omitzero" nullable:"false"`
-	Revision        int64            `json:"revision"`
-	ParticipantIDs  []int64          `json:"participant_ids"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
+	Ensure          *PersonEnsureInfo `json:"ensure,omitempty"`
+	ID              int64             `json:"id"`
+	VCardUID        string            `json:"vcard_uid"`
+	CardDAVBindings []CardDAVBinding  `json:"carddav_bindings,omitempty"`
+	DisplayName     *string           `json:"display_name,omitzero" nullable:"false"`
+	Revision        int64             `json:"revision"`
+	ParticipantIDs  []int64           `json:"participant_ids"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 }
 
 func (s *Store) CreatePersonFromParticipant(participantID int64) (*Person, bool, error) {

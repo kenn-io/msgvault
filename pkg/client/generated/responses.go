@@ -2723,9 +2723,11 @@ type FindContactCandidatesErrorResponseJSONDefault = ErrorResponse
 
 type CreateStandalonePersonResponse = Person
 
+type CreateStandalonePersonResponseJSON = Person
+
 type CreateStandalonePersonErrorResponse = ErrorResponse
 
-type CreateStandalonePersonErrorResponseJSON = ErrorResponse
+type CreateStandalonePersonErrorResponseJSON = PersonCreateErrorResponse
 
 type CreateStandalonePersonErrorResponseJSON503 = ErrorResponse
 
@@ -6604,6 +6606,10 @@ type FindContactCandidatesResp struct {
 	JSONDefault  *FindContactCandidatesErrorResponseJSONDefault
 }
 
+type CreateStandalonePersonResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
 type CreateStandalonePersonResp201Headers struct {
 	ETag string `header:"ETag"`
 }
@@ -6612,7 +6618,9 @@ type CreateStandalonePersonResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
-	JSON201      *CreateStandalonePersonResponse
+	JSON200      *CreateStandalonePersonResponse
+	Headers200   *CreateStandalonePersonResp200Headers
+	JSON201      *CreateStandalonePersonResponseJSON
 	Headers201   *CreateStandalonePersonResp201Headers
 	JSON400      *CreateStandalonePersonErrorResponse
 	JSON409      *CreateStandalonePersonErrorResponseJSON
