@@ -58,8 +58,7 @@ describe('FactLedger', () => {
   it('reveals only the selected decision claim', async () => {
     const value = controller();
     value.selectedSection = 'decisions';
-    value.decisions.rows.push({ ...value.decisions.rows[0]!, rowToken: 'decision-1', claimKey: 'another' });
-    value.claims.rows.push({ ...value.claims.rows[0]!, rowToken: 'claim-1', claimKey: 'another', displayValue: 'another private value', parsedValue: 'another private value' });
+    value.decisions.rows.push({ ...value.decisions.rows[0]!, rowToken: 'decision-1', claimKey: 'another', displayValue: 'another private value', parsedValue: 'another private value' });
     render(FactLedger, { controller: value });
     const rows = screen.getAllByLabelText('Historical fact decision');
     expect(rows[0]!.textContent).toContain('Saved: Hidden');

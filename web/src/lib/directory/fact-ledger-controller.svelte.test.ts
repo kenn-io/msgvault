@@ -50,8 +50,9 @@ describe('FactLedgerController', () => {
   it('decodes serialized claim values and keeps structured values intact', () => {
     expect(claimValue('"New York"', 'attribute')).toEqual({ parsedValue: 'New York', displayValue: 'New York' });
     expect(claimValue('9007199254740993', 'attribute').displayValue).toBe('9007199254740993');
-    const job = { title: 'Engineer', organization: { name: 'Acme' } };
-    expect(claimValue(job, 'employment')).toEqual({ parsedValue: job, displayValue: 'Engineer at Acme' });
+    expect(claimValue('{"title":"Engineer","organization":{"name":"Acme"}}', 'employment')).toEqual({
+      parsedValue: { title: 'Engineer', organization: { name: 'Acme' } }, displayValue: 'Engineer at Acme'
+    });
   });
 
   it('projects a decision value when the claims page does not contain its claim', async () => {
