@@ -136,6 +136,7 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		{"ExploreCacheUnavailableResponse", "RecoveryAction", "e"},
 		{"Evidence", "Excerpt", "e"},
 		{"ContactCandidate", "DisplayName", "c"},
+		{"CardDAVBinding", "RemoteUID", "c"},
 		{"MessagingRoute", "MergedIntoChatID", "m"},
 		{"MessagingRoute", "Network", "m"},
 		{"MessagingRoute", "NetworkLabel", "m"},

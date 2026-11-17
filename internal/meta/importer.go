@@ -24,8 +24,13 @@ type ImportOptions struct {
 type ImportSummary struct {
 	MessagesProcessed int
 	MessagesAdded     int
+	MessagesUpdated   int
 	Requests          int
-	Partial           bool
+	// ConversationsSkipped counts inbox conversations that were not archived
+	// because they are not one-to-one chats with the inbox owner.
+	ConversationsSkipped int
+	Partial              bool
+	AdMediaSkipped       int
 }
 
 type Importer struct {
@@ -33,6 +38,8 @@ type Importer struct {
 	api       API
 	instagram string
 	igAPI     instagramAPI
+	adAccount string
+	ads       *Client
 }
 
 func NewImporter(st *store.Store, api API) *Importer { return &Importer{store: st, api: api} }
@@ -57,40 +64,130 @@ func (imp *Importer) Register(ctx context.Context, app, page string) (*store.Sou
 	if err != nil {
 		return nil, err
 	}
+	anchor, provenance := ActorIdentifier(app, page, page), "facebook_page_token"
 	if imp.instagram != "" {
 		account, err := imp.igAPI.LinkedInstagramAccount(ctx, page, imp.instagram)
 		if err != nil {
 			return nil, err
 		}
 		identity.Name = account.Username
+		anchor, provenance = instagramActorIdentifier(app, page, imp.instagram, "ig_user", imp.instagram), "instagram_page_token"
 	}
-	source, err := imp.store.GetOrCreateSourceContext(ctx, imp.sourceType(), imp.sourceIdentifier(app, page))
+	return registerSource(ctx, imp.store, imp.sourceType(), imp.sourceIdentifier(app, page), anchor, provenance, identity.Name)
+}
+
+// registerSource records a verified account as a source and names it.
+func registerSource(ctx context.Context, st *store.Store, sourceType, identifier, anchor, provenance, name string) (*store.Source, error) {
+	source, err := st.GetOrCreateSourceContext(ctx, sourceType, identifier)
 	if err != nil {
 		return nil, err
 	}
-	execution, err := imp.store.AcquireSyncExecutionContext(ctx, source.ID)
+	source, execution, err := acquireSource(ctx, st, source.SourceType, source.Identifier)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = execution.Release() }()
-	current, err := imp.store.GetSourceByIDContext(ctx, source.ID)
+	if err = st.AddAccountIdentityContext(ctx, source.ID, anchor, provenance); err != nil {
+		return nil, err
+	}
+	if err = st.UpdateSourceDisplayNameContext(ctx, source.ID, name); err != nil {
+		return nil, err
+	}
+	return st.GetSourceByIDContext(ctx, source.ID)
+}
+
+// acquireSource takes the source's execution lock and refuses a retired
+// source. The caller releases the returned execution.
+func acquireSource(ctx context.Context, st *store.Store, sourceType, identifier string) (*store.Source, *store.SyncExecution, error) {
+	source, err := st.GetSourceByTypeAndIdentifier(ctx, sourceType, identifier)
+	if err != nil {
+		return nil, nil, err
+	}
+	execution, err := st.AcquireSyncExecutionContext(ctx, source.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	source, err = st.GetSourceByIDContext(ctx, source.ID)
+	if err == nil && (source.HistoryOnly || source.MergedIntoSourceID != 0) {
+		err = store.ErrSourceRetired
+	}
+	if err != nil {
+		return nil, nil, errors.Join(err, execution.Release())
+	}
+	return source, execution, nil
+}
+
+// pollPages runs a polling sync of one cursor-paged edge, as tag and inbox
+// sync do. page archives the page at after and returns the next cursor; an
+// empty cursor ends the scan. The checkpoint holds that cursor, so a run that
+// stops early resumes where it stopped, and a complete scan starts over.
+func pollPages(ctx context.Context, st *store.Store, sourceType, identifier string, opts ImportOptions, page func(st *store.Store, source *store.Source, sum *ImportSummary, after string) (string, error)) (sum *ImportSummary, retErr error) {
+	if opts.MaxRequests < 0 {
+		return nil, errors.New("invalid import options")
+	}
+	source, execution, err := acquireSource(ctx, st, sourceType, identifier)
 	if err != nil {
 		return nil, err
 	}
-	if current.HistoryOnly || current.MergedIntoSourceID != 0 {
-		return nil, store.ErrSourceRetired
+	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
+	after := ""
+	if !opts.Full {
+		if after, err = savedCheckpoint(ctx, st, source); err != nil {
+			return nil, err
+		}
 	}
-	anchor, provenance := ActorIdentifier(app, page, page), "facebook_page_token"
-	if imp.instagram != "" {
-		anchor, provenance = instagramActorIdentifier(app, page, imp.instagram, "ig_user", imp.instagram), "instagram_page_token"
-	}
-	if err = imp.store.AddAccountIdentityContext(ctx, source.ID, anchor, provenance); err != nil {
+	syncID, err := execution.StartSyncContext(ctx, sourceType, "")
+	if err != nil {
 		return nil, err
 	}
-	if err = imp.store.UpdateSourceDisplayNameContext(ctx, source.ID, identity.Name); err != nil {
-		return nil, err
+	scoped := st.ScopedToSync(source.ID, syncID)
+	sum = &ImportSummary{}
+	done := false
+	checkpoint := func() *store.Checkpoint {
+		return &store.Checkpoint{PageToken: after, MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
 	}
-	return imp.store.GetSourceByIDContext(ctx, source.ID)
+	defer func() {
+		sum.Partial = retErr != nil || !done
+		retErr = finishSync(ctx, st, source.ID, syncID, checkpoint(), sum.Partial, retErr)
+	}()
+	maximum := opts.MaxRequests
+	if maximum == 0 {
+		maximum = DefaultMaxRequests
+	}
+	for !done && sum.Requests < maximum {
+		if err := ctx.Err(); err != nil {
+			return sum, err
+		}
+		sum.Requests++
+		next, err := page(scoped, source, sum, after)
+		if apiErr, ok := errors.AsType[*APIError](err); ok && after != "" && apiErr.Status == 400 {
+			// A 400 can also mean a missing permission, so say both.
+			return sum, fmt.Errorf("continuation request failed; if the token and its permissions are valid, the saved position has expired: run this sync again with --full: %w", err)
+		} else if err != nil {
+			return sum, err
+		}
+		after, done = next, next == ""
+		if err := scoped.UpdateSyncCheckpointContext(ctx, syncID, checkpoint()); err != nil {
+			return sum, err
+		}
+	}
+	return sum, nil
+}
+
+// finishSync records how a polling run ended. Only a complete run advances the
+// source cursor; a failed or paused run keeps its checkpoint for the next run.
+func finishSync(ctx context.Context, st *store.Store, sourceID, syncID int64, cp *store.Checkpoint, partial bool, runErr error) error {
+	switch {
+	case runErr != nil:
+		if jobctx.ErrorAfterYield(ctx, runErr) != nil {
+			cp.ErrorsCount = 1
+		}
+		return errors.Join(runErr, st.InterruptSyncWithCheckpoint(ctx, syncID, runErr, cp))
+	case partial:
+		return st.PauseSyncWithCheckpoint(ctx, syncID, cp)
+	default:
+		return st.ScopedToSync(sourceID, syncID).CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, sourceID, cp.PageToken)
+	}
 }
 
 type importRun struct {
@@ -107,23 +204,12 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	if !ValidAccountID(app) || !ValidAccountID(page) || opts.MaxRequests < 0 {
 		return nil, errors.New("invalid Facebook import options")
 	}
-	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, imp.sourceType(), imp.sourceIdentifier(app, page))
-	if err != nil {
-		return nil, err
-	}
-	execution, err := imp.store.AcquireSyncExecutionContext(ctx, source.ID)
+	source, execution, err := acquireSource(ctx, imp.store, imp.sourceType(), imp.sourceIdentifier(app, page))
 	if err != nil {
 		return nil, err
 	}
 	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
-	source, err = imp.store.GetSourceByIDContext(ctx, source.ID)
-	if err != nil {
-		return nil, err
-	}
-	if source.HistoryOnly || source.MergedIntoSourceID != 0 {
-		return nil, store.ErrSourceRetired
-	}
-	state, err := loadState(ctx, imp.store, source, opts.Full)
+	state, err := loadState(ctx, imp.store, source, opts.Full, imp.adAccount)
 	if err != nil {
 		return nil, err
 	}
@@ -146,17 +232,11 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 			retErr = errors.Join(retErr, err)
 			return
 		}
-		if retErr != nil {
-			if jobctx.ErrorAfterYield(ctx, retErr) != nil {
-				checkpoint.ErrorsCount = 1
-			}
-			retErr = errors.Join(retErr, imp.store.InterruptSyncWithCheckpoint(ctx, syncID, retErr, checkpoint))
-		} else if sum.Partial {
-			retErr = imp.store.PauseSyncWithCheckpoint(ctx, syncID, checkpoint)
-		} else {
-			retErr = scoped.store.CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, source.ID, checkpoint.PageToken)
-		}
+		retErr = finishSync(ctx, imp.store, source.ID, syncID, checkpoint, sum.Partial, retErr)
 	}()
+	if err = run.dropDeletedFrames(ctx); err != nil {
+		return sum, err
+	}
 	// Publish the inherited state before any new request, so a crash cannot
 	// conceal a newer failed/paused checkpoint behind this run.
 	if err = run.save(ctx); err != nil {
@@ -194,6 +274,47 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	return sum, phaseErr
 }
 
+// dropDeletedFrames removes saved traversal of comments deleted through
+// msgvault since the checkpoint was saved: frames reading their replies and
+// saved copies still waiting to be archived. Meta has no replies left to read
+// there, so asking would fail on every run. The run holds the source lock, so
+// no comment is deleted while it traverses.
+func (r *importRun) dropDeletedFrames(ctx context.Context) error {
+	deleted := func(id string) (bool, error) {
+		return r.imp.store.MessageDeletedFromSourceContext(ctx, r.source.ID, id)
+	}
+	for _, p := range r.state.Phases {
+		for i := range p.Stack {
+			f := &p.Stack[i]
+			if f.Parent != f.Root {
+				gone, err := deleted(f.Parent)
+				if err != nil {
+					return err
+				}
+				if gone {
+					// Each frame's comment was already taken from the frame
+					// below, so cutting here loses only its own subtree.
+					p.Stack = p.Stack[:i]
+					break
+				}
+			}
+			// A new slice keeps the saved list intact if a lookup fails.
+			pending := make([]Object, 0, len(f.Pending))
+			for _, child := range f.Pending {
+				gone, err := deleted(child.ID)
+				if err != nil {
+					return err
+				}
+				if !gone {
+					pending = append(pending, child)
+				}
+			}
+			f.Pending = pending
+		}
+	}
+	return nil
+}
+
 func (r *importRun) verify(ctx context.Context) error {
 	reads := []func() error{func() error {
 		_, err := r.imp.api.VerifyPage(ctx, r.page)
@@ -225,7 +346,7 @@ func (r *importRun) checkpoint() (*store.Checkpoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &store.Checkpoint{PageToken: string(data), MessagesAdded: int64(r.sum.MessagesAdded), MessagesProcessed: int64(r.sum.MessagesProcessed)}, nil
+	return &store.Checkpoint{PageToken: string(data), MessagesAdded: int64(r.sum.MessagesAdded), MessagesUpdated: int64(r.sum.MessagesUpdated), MessagesProcessed: int64(r.sum.MessagesProcessed)}, nil
 }
 
 func (r *importRun) save(ctx context.Context) error {
@@ -265,12 +386,20 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 				return err
 			}
 		} else if len(p.Posts) > 0 {
-			post := p.Posts[0]
-			if err := r.persist(ctx, post, post.ID, "", edge); err != nil {
-				return fmt.Errorf("%s post %q: %w", r.providerName(), post.ID, err)
+			post, owned := p.Posts[0], true
+			if edge == adCreativesEdge {
+				var err error
+				if post, owned, err = r.adMedia(ctx, post.ID); err != nil {
+					return fmt.Errorf("%s ad media %q: %w", r.providerName(), p.Posts[0].ID, err)
+				}
+			}
+			if owned {
+				if err := r.persist(ctx, post, post.ID, "", edge); err != nil {
+					return fmt.Errorf("%s post %q: %w", r.providerName(), post.ID, err)
+				}
+				p.Stack = append(p.Stack, commentFrame{Root: post.ID, Parent: post.ID})
 			}
 			p.Posts = p.Posts[1:]
-			p.Stack = append(p.Stack, commentFrame{Root: post.ID, Parent: post.ID})
 		} else if p.Exhausted {
 			p.Done = true
 		} else {
