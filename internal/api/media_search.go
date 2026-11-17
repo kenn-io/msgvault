@@ -176,7 +176,9 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	if s.writeIfContextError(w, r.Context().Err()) {
 		return
 	}
-	if mode != mediaSearchModeLexical && attachmentErr != nil {
+	// When both nonlexical searches fail, the attachment error carries the more
+	// specific profile or consent guidance. A recording success keeps its hits.
+	if mode != mediaSearchModeLexical && attachmentErr != nil && err != nil {
 		if s.writeIfContextError(w, attachmentErr) {
 			return
 		}

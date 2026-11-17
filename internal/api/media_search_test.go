@@ -1441,6 +1441,35 @@ func TestMediaSearchRecordingModes(t *testing.T) {
 	}
 }
 
+func TestMediaSearchRecordingModesKeepHitsWhenAttachmentsFail(t *testing.T) {
+	for _, mode := range []string{"semantic", "hybrid"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			seed := f.match(t, "audio")
+			server := f.server(true)
+			server.messageRecordings.SearchProfile = "transcript-vectors"
+			f.report.RequestedMode, f.report.ActualMode = mode, mode
+			f.document(t, server)
+			if mode == "hybrid" {
+				// Semantic without a profile fails locally; hybrid needs a remote failure.
+				server.docbankAttachments.SearchProfile = "attachment-vectors"
+				f.documentStatus = http.StatusServiceUnavailable
+			}
+			status, response, raw := searchMediaFor(t, server, "q=telescope&mode="+mode)
+			require.Equal(http.StatusOK, status, raw)
+			require.Len(response.Results, 1)
+			assert.Equal(seed.messageID, response.Results[0].MessageID)
+			assert.Equal(mode, response.ActualMode)
+			assert.Nil(response.RecordingsError)
+			require.NotNil(response.Attachments)
+			require.NotNil(response.Attachments.Error)
+			assert.Empty(response.Attachments.Results)
+		})
+	}
+}
+
 func TestMediaSearchRecordingModesWithoutSearch(t *testing.T) {
 	t.Run("semantic unconfigured", func(t *testing.T) {
 		assert := assert.New(t)
