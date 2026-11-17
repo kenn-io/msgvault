@@ -5,9 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
-	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +24,7 @@ import (
 type loopAgendaArchive interface {
 	loops.Store
 	GetPersonCommitmentContext(context.Context, int64, time.Time) (store.PersonCommitment, error)
+	GetPersonContext(context.Context, int64) (*store.Person, error)
 	WalkOpenPersonCommitments(context.Context, time.Time, func(store.PersonCommitment) error) error
 }
 
@@ -68,6 +68,18 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 		}
 		conversationID = conversation.ConversationID
 		input.Title, input.List, input.PersonID, input.DeadlineOn = c.Summary, "promises", &c.PersonID, c.DueOn
+		input.SourceTime = c.PromisedAt
+		if c.Direction == "owed_to" {
+			person, err := a.archive.GetPersonContext(ctx, c.PersonID)
+			if err != nil {
+				return kataissues.Result{}, err
+			}
+			name := fmt.Sprintf("person %d", c.PersonID)
+			if person.DisplayName != nil && *person.DisplayName != "" {
+				name = *person.DisplayName
+			}
+			input.Title, input.List = fmt.Sprintf("Waiting on %s: %s", name, c.Summary), "waiting"
+		}
 		expected = c.Quote
 		for offset := int(c.Start); offset < int(c.End); offset += kataevidence.MaxChars {
 			start, end := offset, min(offset+kataevidence.MaxChars, int(c.End))
@@ -87,6 +99,7 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 			return kataissues.Result{}, loops.ErrNotOpen
 		}
 		messageID, conversationID = id, loop.ConversationID
+		input.SourceTime = loop.Anchor.OccurredAt
 		input.Title = fmt.Sprintf("Reply to %s: %s", loop.Counterparty.DisplayName, loop.Summary)
 		if loop.Counterparty.PersonID == 0 {
 			return kataissues.Result{}, errAgendaPersonRequired
@@ -109,13 +122,7 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 		return kataissues.Result{}, kataevidence.ErrChanged
 	}
 	input.Thread = strconv.FormatInt(conversationID, 10)
-	origin := apiprotocol.BrowserOrigin(ctx, "")
-	if origin == "" {
-		origin = a.origin
-		if parsed, err := url.Parse(origin); err == nil && (parsed.Hostname() == "localhost" || net.ParseIP(parsed.Hostname()).IsLoopback()) {
-			origin = ""
-		}
-	}
+	origin := apiprotocol.BrowserOrigin(ctx, a.origin)
 	if origin != "" {
 		input.OriginLink = fmt.Sprintf("[Open the original message](%s/messages/%d)", strings.TrimRight(origin, "/"), messageID)
 	}
@@ -154,7 +161,7 @@ func (a *LoopAgenda) Run(ctx context.Context, now time.Time) error {
 				created++
 			}
 		}
-		if err != nil && !errors.Is(err, errAgendaPersonRequired) && !errors.Is(err, kataissues.ErrIssueDeleted) && !errors.Is(err, kataevidence.ErrUnsupported) && !errors.Is(err, kataissues.ErrUnsupportedEvidence) {
+		if err != nil && !errors.Is(err, errAgendaPersonRequired) && !errors.Is(err, kataissues.ErrIssueDeleted) && !errors.Is(err, kataevidence.ErrUnsupported) && !errors.Is(err, kataevidence.ErrChanged) && !errors.Is(err, kataissues.ErrUnsupportedEvidence) {
 			failures = append(failures, err)
 		}
 		if created == 25 {
@@ -162,20 +169,33 @@ func (a *LoopAgenda) Run(ctx context.Context, now time.Time) error {
 		}
 		return nil
 	}
-	err = loops.WalkOpen(ctx, a.archive, now, func(l loops.Loop) error {
-		if l.Kind != loops.ReplyOwed || l.Counterparty.PersonID == 0 {
-			return nil
-		}
-		return file(strconv.FormatInt(l.Anchor.ID, 10), fmt.Sprintf("loop:%d", l.Anchor.ID))
-	})
-	if err == nil {
-		err = a.archive.WalkOpenPersonCommitments(ctx, now, func(c store.PersonCommitment) error {
-			ref := fmt.Sprintf("c%d", c.ID)
-			return file(ref, "commitment:"+ref)
-		})
+	type candidate struct {
+		ref, key string
+		at       time.Time
 	}
-	if err != nil && !errors.Is(err, stop) {
+	var candidates []candidate
+	err = loops.WalkOpen(ctx, a.archive, now, func(l loops.Loop) error {
+		if l.Kind == loops.ReplyOwed && l.Counterparty.PersonID != 0 {
+			candidates = append(candidates, candidate{strconv.FormatInt(l.Anchor.ID, 10), fmt.Sprintf("loop:%d", l.Anchor.ID), l.Anchor.OccurredAt})
+		}
+		return nil
+	})
+	if err != nil {
 		failures = append(failures, err)
+	}
+	err = a.archive.WalkOpenPersonCommitments(ctx, now, func(c store.PersonCommitment) error {
+		ref := fmt.Sprintf("c%d", c.ID)
+		candidates = append(candidates, candidate{ref, "commitment:" + ref, c.PromisedAt})
+		return nil
+	})
+	if err != nil {
+		failures = append(failures, err)
+	}
+	slices.SortStableFunc(candidates, func(a, b candidate) int { return a.at.Compare(b.at) })
+	for _, item := range candidates {
+		if errors.Is(file(item.ref, item.key), stop) {
+			break
+		}
 	}
 	return errors.Join(failures...)
 }

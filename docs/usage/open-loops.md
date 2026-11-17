@@ -33,7 +33,15 @@ another pass.
 
 ## File obligations in Kata
 
-With [Kata enabled](../configuration.md#integrationskata), the daemon files open promises and replies you owe in the configured project each hour. Each issue quotes its source message and links to it when a usable origin is available. A promise's due date becomes its Kata deadline. A later obligation in the same conversation becomes a child of the oldest open issue filed for that conversation.
+With [Kata enabled](../configuration.md#integrationskata), the daemon files open promises and replies you owe in the configured project each hour. Each issue quotes its source message and links to it. A promise's due date becomes its Kata deadline. A later obligation for the same person in the same conversation becomes a child of an earlier open issue. Obligations from the same message stay separate.
+
+Each issue carries these metadata keys:
+
+- `msgvault.person`: the person’s vCard UID.
+- `msgvault.conversation`: the conversation ID.
+- `msgvault.thread`: an archive-scoped parent marker for the conversation and person.
+- `msgvault.source_time`: the source message time used to find an earlier parent.
+- `deadline_on`: the promise’s due date, when present.
 
 The automatic pass files at most 25 new issues per hour. Set `auto_agenda = false` in `[integrations.kata]` to turn off automatic filing. You can still file an open obligation yourself with its message ID or promise ID:
 

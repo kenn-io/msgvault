@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/personagenda"
@@ -38,7 +39,7 @@ type Kata interface {
 	CreateTaskReused(ctx context.Context, project, idempotencyKey string, create taskclient.KataCreate) (taskclient.KataTask, bool, error)
 	GetTask(ctx context.Context, project, taskID string) (taskclient.KataTask, error)
 	FindActionTask(ctx context.Context, project, action string) (taskclient.KataTask, bool, error)
-	FindOpenMetadataTask(ctx context.Context, project, key, value string) (taskclient.KataTask, bool, error)
+	FindOpenMetadataTask(ctx context.Context, project, key, value string, before time.Time) (taskclient.KataTask, bool, error)
 	FindMetadataTasks(ctx context.Context, project, key string, limit int) ([]taskclient.KataTask, error)
 	MutateMetadataKey(ctx context.Context, project, taskID, key string, previous, value any) (taskclient.KataTask, error)
 	AddComment(ctx context.Context, project, taskID, idempotencyKey, body string) error
@@ -59,6 +60,7 @@ type Service struct {
 type CreateInput struct {
 	OriginLink string                   `json:"-"`
 	Thread     string                   `json:"-"`
+	SourceTime time.Time                `json:"-"`
 	DeadlineOn *string                  `json:"-"`
 	Title      string                   `json:"title"`
 	Brief      string                   `json:"brief"`
@@ -117,10 +119,14 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 	metadata := map[string]any{taskclient.ActionMetadataKey: marker, RequestMetadataKey: hash}
 	var parentRef string
 	if input.Thread != "" {
-		thread := kataevidence.Digest("msgvault.kata.thread.v1", archive, input.Thread)
+		if input.PersonID == nil || input.SourceTime.IsZero() {
+			return Result{}, ErrInvalidRequest
+		}
+		thread := kataevidence.Digest("msgvault.kata.thread.v2", archive, input.Thread, strconv.FormatInt(*input.PersonID, 10))
 		metadata["msgvault.thread"] = thread
 		metadata["msgvault.conversation"] = input.Thread
-		parent, found, err := s.Kata.FindOpenMetadataTask(ctx, s.Project, "msgvault.thread", thread)
+		metadata["msgvault.source_time"] = input.SourceTime.UTC().Format(time.RFC3339Nano)
+		parent, found, err := s.Kata.FindOpenMetadataTask(ctx, s.Project, "msgvault.thread", thread, input.SourceTime)
 		if err != nil {
 			return Result{}, err
 		}

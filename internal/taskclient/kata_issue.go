@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	kata "go.kenn.io/kata/pkg/client/generated"
 )
@@ -46,16 +47,38 @@ func (c *KataClient) FindActionTask(ctx context.Context, project, action string)
 	return tasks[0], true, nil
 }
 
-// FindOpenMetadataTask returns the oldest open matching issue in the configured project.
-func (c *KataClient) FindOpenMetadataTask(ctx context.Context, project, key, value string) (KataTask, bool, error) {
+// FindOpenMetadataTask returns the oldest filed open issue whose source predates before.
+func (c *KataClient) FindOpenMetadataTask(ctx context.Context, project, key, value string, before time.Time) (KataTask, bool, error) {
 	if key == "" || value == "" {
 		return KataTask{}, false, ErrRequestRejected
 	}
-	tasks, _, err := c.listProjectIssues(ctx, project, url.Values{"meta": {key + "=" + value}, "status": {"open"}, "sort": {"oldest"}, "limit": {"1"}})
-	if err != nil || len(tasks) == 0 {
-		return KataTask{}, false, err
+	query := url.Values{"meta": {key + "=" + value}, "status": {"open"}, "sort": {"oldest"}, "limit": {"100"}}
+	for {
+		path, err := c.issuePath(ctx, project, "?"+query.Encode())
+		if err != nil {
+			return KataTask{}, false, err
+		}
+		transport := *c.transport
+		transport.maxResponseBytes = max(transport.maxResponseBytes, issueListMaxResponseBytes)
+		var response kata.ListIssuesResponseBody
+		if err := transport.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
+			return KataTask{}, false, err
+		}
+		for _, issue := range response.Issues {
+			stamp, _ := issue.Metadata["msgvault.source_time"].(string)
+			at, err := time.Parse(time.RFC3339Nano, stamp)
+			if err != nil || !at.Before(before) {
+				continue
+			}
+			task := taskFromKataIssue(project, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, issue.Labels, issue.WebURL)
+			task.QualifiedRef = issue.QualifiedID
+			return task, true, nil
+		}
+		if response.NextCursor == nil || *response.NextCursor == "" {
+			return KataTask{}, false, nil
+		}
+		query.Set("cursor", *response.NextCursor)
 	}
-	return tasks[0], true, nil
 }
 
 // FindMetadataTasks returns up to limit open or closed issues carrying the

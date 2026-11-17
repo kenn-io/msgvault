@@ -19,8 +19,9 @@ import (
 
 const (
 	loopsMinAPISchemaVersion = "3.44.0"
-	// commitmentMinAPISchemaVersion covers commitments, decisions, and agenda filing.
+	// commitmentMinAPISchemaVersion covers commitments and decisions.
 	commitmentMinAPISchemaVersion = "5.22.0"
+	agendaMinAPISchemaVersion     = "5.23.0"
 )
 
 func init() {
@@ -439,7 +440,7 @@ func newLoopsAgendaCommand() *cobra.Command {
 		} else if _, err := positivePersonCLIArg(cmd, ref, "message"); err != nil {
 			return err
 		}
-		return withLoopsClientVersion(cmd, commitmentMinAPISchemaVersion, func(client *daemonclient.Client, _ string) error {
+		return withLoopsClientVersion(cmd, agendaMinAPISchemaVersion, func(client *daemonclient.Client, _ string) error {
 			result, err := client.FileLoopAgenda(cmd.Context(), ref)
 			if err != nil {
 				return err

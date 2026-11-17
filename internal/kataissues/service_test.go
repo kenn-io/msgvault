@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -882,10 +883,11 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 
 func TestCreateThreadParentAndDeadline(t *testing.T) {
 	f := newFixture(t)
-	input := kataissues.CreateInput{Title: "First obligation", Thread: "conversation-1", DeadlineOn: new("2026-12-01"), Evidence: []kataevidence.Reference{f.evidence(t, 0).Reference}}
+	input := kataissues.CreateInput{Title: "First obligation", Thread: "conversation-1", PersonID: new(int64(7)), SourceTime: time.Now().UTC().Add(-time.Hour), DeadlineOn: new("2026-12-01"), Evidence: []kataevidence.Reference{f.evidence(t, 0).Reference}}
 	first, err := f.service.Create(t.Context(), "thread-first", input)
 	require.NoError(t, err)
 	input.Title = "Follow up"
+	input.SourceTime = input.SourceTime.Add(time.Minute)
 	input.DeadlineOn = nil
 	second, err := f.service.Create(t.Context(), "thread-second", input)
 	require.NoError(t, err)
