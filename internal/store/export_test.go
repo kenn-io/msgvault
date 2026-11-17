@@ -303,7 +303,7 @@ func ReservePersonEnrichmentBudgetForTest(
 		if err != nil {
 			return err
 		}
-		return s.reservePersonEnrichmentBudgetTx(ctx, tx, policy, start)
+		return s.reservePersonEnrichmentBudgetTx(ctx, tx, policy, start, s.personEnrichmentTime())
 	})
 }
 
