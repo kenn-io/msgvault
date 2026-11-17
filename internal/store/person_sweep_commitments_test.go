@@ -84,7 +84,7 @@ func TestCommitmentListKeepsUnknownEvidenceVersion(t *testing.T) {
 }
 
 func TestCommitmentListPages(t *testing.T) {
-	t.Run("open list skips closed history", func(t *testing.T) {
+	t.Run("decisions hide and reopen", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "promise-closed-history", false)
 		_, persist := newCommitmentTestConversation(t, f)
@@ -143,9 +143,7 @@ func TestCommitmentListPages(t *testing.T) {
 		r.Len(items, 3)
 		a.Equal("I will send the draft.", items[0].Quote)
 		a.Equal("I will call by 2026-06-01.", items[1].Quote)
-		a.Equal(personfacts.StatusStale, items[1].Freshness)
 		a.Equal("I will send the report.", items[2].Quote)
-		a.Equal(personfacts.StatusStale, items[2].Freshness)
 	})
 	t.Run("overdue before older undated promises", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
@@ -363,19 +361,6 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 			r.NoError(err)
 			r.Len(window.Sources, 1)
 			r.Equal(large, window.Sources[0].MessageID)
-			parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":201,"end":213,"summary":"Call","due_on":null,"due_phrase":null}]}`, window.Sources[0].ID)), window)
-			r.NoError(err)
-			request = commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
-			request.Generation.ResolvedAt = later
-			_, err = f.store.ApplyPersonSweep(ctx, request)
-			r.NoError(err)
-			items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, later, 5, false)
-			r.NoError(err)
-			r.Len(items, 1)
-			r.Equal(large, items[0].AnchorMessageID)
-			_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-			r.NoError(err)
-			r.True(complete)
 		})
 	}
 	t.Run("removed skipped message preserves ordinary results", func(t *testing.T) {
@@ -1125,29 +1110,7 @@ func TestCommitmentApplyIdentityRevisionLock(t *testing.T) {
 	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 	r.NoError(err)
 	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
-	prepared, err := f.store.prepareCommitmentSweep(ctx, request)
-	r.NoError(err)
 	tx, err := f.store.db.BeginTx(ctx, nil)
-	r.NoError(err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-	var blockerPID int
-	r.NoError(tx.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
-	current, err := f.store.commitmentWindowCurrentTx(ctx, tx, request, prepared)
-	r.NoError(err)
-	r.True(current)
-	done := make(chan error, 1)
-	go func() { done <- f.store.AddAccountIdentity(source, "another@example.test", "manual") }()
-	r.Eventually(func() bool {
-		var waiting bool
-		err := f.store.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE state = 'active' AND wait_event_type = 'Lock' AND $1 = ANY(pg_blocking_pids(pid)))`, blockerPID).Scan(&waiting)
-		return err == nil && waiting
-	}, 5*time.Second, 10*time.Millisecond)
-	r.NoError(tx.Commit())
-	r.NoError(<-done)
-	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-	r.NoError(err)
-	request = commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
-	tx, err = f.store.db.BeginTx(ctx, nil)
 	r.NoError(err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	var blocker int

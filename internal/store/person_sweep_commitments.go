@@ -304,11 +304,8 @@ func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error 
 // committing its frontier or discarding the ordinary result. The identity
 // revision also fences owner links that change other people's eligible sources.
 func (s *Store) commitmentWindowCurrentTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) (bool, error) {
-	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`), identityRevisionKey); err != nil {
-		return false, err
-	}
 	var revision int64
-	if err := tx.QueryRowContext(ctx, `SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = ?`+s.dialect.SelectForUpdate(), identityRevisionKey).Scan(&revision); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = ?`, identityRevisionKey).Scan(&revision); err != nil {
 		return false, err
 	}
 	if revision != request.Commitment.Window.IdentityRevision {

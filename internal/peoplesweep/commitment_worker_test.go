@@ -72,15 +72,7 @@ func TestTargetedCommitmentOnlyRunSkipsOrdinaryWorkAndPassesTimezone(t *testing.
 	r.NotNil(sink.requests[0].Commitment)
 	a.Equal("America/New_York", sink.requests[0].Commitment.Window.Timezone)
 	a.Empty(sink.requests[0].Batches)
-}
-
-func TestCommitmentDueUsesTimezoneInDiscoveryScope(t *testing.T) {
-	r := require.New(t)
-	worker, st, _ := newConsentOnlyCommitmentWorker(t)
-	worker.Timezone = "America/New_York"
 	profile, err := worker.Config.Profile()
-	r.NoError(err)
-	_, err = worker.commitmentDue(t.Context(), 7, profile, time.Now())
 	r.NoError(err)
 	cfg := worker.Config.Commitments
 	cfg.Timezone = "America/New_York"

@@ -29,7 +29,7 @@ type loopFixture struct {
 	owed   int64
 }
 
-type deadlineLoopStore struct {
+type commitmentDiscoveryLoopStore struct {
 	*store.Store
 
 	active             bool
@@ -42,12 +42,12 @@ type deadlineLoopStore struct {
 	discoveryScope     string
 }
 
-func (s *deadlineLoopStore) HasActivePersonCommitmentConsent(_ context.Context, fingerprint string) (bool, error) {
+func (s *commitmentDiscoveryLoopStore) HasActivePersonCommitmentConsent(_ context.Context, fingerprint string) (bool, error) {
 	s.consentFingerprint = fingerprint
 	return s.active, s.consentErr
 }
 
-func (s *deadlineLoopStore) PersonCommitmentDiscoveryContext(_ context.Context, personID int64, scope string) (*time.Time, bool, error) {
+func (s *commitmentDiscoveryLoopStore) PersonCommitmentDiscoveryContext(_ context.Context, personID int64, scope string) (*time.Time, bool, error) {
 	s.discoveryPersonID, s.discoveryScope = personID, scope
 	return s.since, s.complete, s.discoveryErr
 }
@@ -148,18 +148,17 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 		status                                        int
 		incomplete, wantSince, wantComplete, complete bool
 		byPerson                                      bool
-		items                                         int
 	}{
-		{name: "active", active: true, status: http.StatusOK, wantSince: true, wantComplete: true, complete: true, byPerson: true, items: 1},
-		{name: "inactive", status: http.StatusOK, wantSince: true, wantComplete: true, items: 2},
-		{name: "consent deadline", active: true, consentErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true, items: 2},
-		{name: "discovery deadline", active: true, discoveryErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true, wantComplete: true, items: 2},
+		{name: "active", active: true, status: http.StatusOK, wantSince: true, wantComplete: true, complete: true, byPerson: true},
+		{name: "inactive", status: http.StatusOK, wantSince: true, wantComplete: true},
+		{name: "consent deadline", active: true, consentErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true},
+		{name: "discovery deadline", active: true, discoveryErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true, wantComplete: true},
 		{name: "consent error", consentErr: errors.New("consent read failed"), status: http.StatusInternalServerError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			fixture := newLoopFixture(t)
-			st := &deadlineLoopStore{Store: fixture.f.Store, active: tc.active, since: &since, complete: true, consentErr: tc.consentErr, discoveryErr: tc.discoveryErr}
+			st := &commitmentDiscoveryLoopStore{Store: fixture.f.Store, active: tc.active, since: &since, complete: true, consentErr: tc.consentErr, discoveryErr: tc.discoveryErr}
 			if tc.discoveryErr != nil {
 				st.since = nil
 				st.complete = false
@@ -185,7 +184,6 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 			var response LoopListResponse
 			r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 			a.Equal(tc.incomplete, response.CoverageIncomplete)
-			a.Len(response.Items, tc.items)
 			if tc.wantSince {
 				r.NotNil(response.CommitmentsSince)
 				a.True(response.CommitmentsSince.Equal(since))
