@@ -35,6 +35,8 @@ another pass.
 
 With [Kata enabled](../configuration.md#integrationskata), the daemon files open promises and replies you owe in the configured project each hour. Each issue quotes its source message and links to it. A promise's due date becomes its Kata deadline. A later obligation for the same person in the same conversation becomes a child of an earlier open issue. Obligations from the same message stay separate.
 
+Enabling Kata or `auto_agenda` takes effect after a daemon restart.
+
 Each issue carries these metadata keys:
 
 - `msgvault.person`: the person’s vCard UID.
@@ -51,6 +53,7 @@ msgvault loops agenda c12 --json
 ```
 
 Filing the same obligation again returns its existing issue, including when that issue is closed. Complete issues in Kata.
+If you file a later item by hand before an earlier one, the earlier item stays at the top level.
 
 ## What counts as a loop
 

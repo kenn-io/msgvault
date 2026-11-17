@@ -225,6 +225,10 @@ func (s *Server) registerLoopAgenda(api huma.API) {
 }
 
 func (s *Server) handleLoopAgenda(w http.ResponseWriter, r *http.Request) {
+	if s.loopAgenda == nil {
+		writeError(w, http.StatusServiceUnavailable, "kata_unavailable", "Kata issues are unavailable")
+		return
+	}
 	ref := r.PathValue("message_id")
 	commitment := ref == ""
 	if commitment {

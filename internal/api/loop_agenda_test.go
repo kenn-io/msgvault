@@ -24,6 +24,20 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func TestLoopAgendaUnavailableWithoutAgenda(t *testing.T) {
+	f := storetest.New(t)
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Logger: testLogger()})
+	for _, path := range []string{"/api/v1/loops/1/agenda", "/api/v1/loops/commitments/c1/agenda"} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, nil)
+			response := httptest.NewRecorder()
+			server.Router().ServeHTTP(response, request)
+			assert.Equal(t, http.StatusServiceUnavailable, response.Code)
+			assert.JSONEq(t, `{"error":"kata_unavailable","message":"Kata issues are unavailable"}`, response.Body.String())
+		})
+	}
+}
+
 func TestLoopAgendaFilesReplyAndReplays(t *testing.T) {
 	f := storetest.New(t)
 	now := time.Now().UTC()
