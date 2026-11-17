@@ -30,7 +30,7 @@ func TestMeetingSuggestionsCLI(t *testing.T) {
 		want    string
 		failure bool
 	}{
-		{"5.6.0", false, "Planning", false}, {"5.6.0", true, `"title":"Planning"`, false}, {"5.5.0", false, "5.6.0", true},
+		{"5.11.0", false, "Planning", false}, {"5.11.0", true, `"title":"Planning"`, false}, {"5.10.0", false, "5.11.0", true},
 	} {
 		t.Run(tc.version+tc.want, func(t *testing.T) {
 			r := require.New(t)
