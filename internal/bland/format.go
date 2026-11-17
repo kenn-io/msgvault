@@ -33,12 +33,12 @@ type Evidence struct {
 func marshalEvidence(e *Evidence) ([]byte, error) { return json.Marshal(e, json.Deterministic(true)) }
 
 // fallbackCall stands the listed row, when there is one, in for a details
-// response Bland refused, laid over the details archived before so the stored
-// response keeps them.
+// response Bland refused, laid over the call metadata archived before. It
+// carries no transcripts, so archived speech can't replace newer speech.
 func fallbackCall(id string, listed *Call, previous *Evidence) (*Call, error) {
 	fields := map[string]jsontext.Value{}
-	if previous != nil && len(previous.Call) > 0 {
-		if err := json.Unmarshal(previous.Call, &fields); err != nil {
+	if previous != nil && len(previous.EffectiveCall) > 0 {
+		if err := json.Unmarshal(previous.EffectiveCall, &fields); err != nil {
 			return nil, malformed("archived call", err)
 		}
 	}
@@ -269,19 +269,18 @@ func buildEvidence(detail *Call, hook *PostCall, previous *Evidence, unread stri
 	if previous != nil {
 		*e = *previous
 	}
-	e.Call, e.EffectiveCall = c.Raw, merged
+	if !fallback || len(e.Call) == 0 {
+		// A stand-in for refused details doesn't replace the archived response.
+		e.Call = c.Raw
+	}
+	e.EffectiveCall = merged
 	if hook != nil {
 		e.PostCall = hook.Raw
 	}
 	// The details' transcripts win, then the payload's, then either
 	// concatenated text; an enhanced rendition in the payload wins over the
-	// details'. The details' live translation wins over the payload's. Details
-	// that stand in for a refused read rank below the payload.
-	current, other := detail, payload
-	if fallback {
-		current, other = payload, detail
-	}
-	original := pick(current.transcripts, other.transcripts, current.concatenated, other.concatenated)
+	// details'. The details' live translation wins over the payload's.
+	original := pick(detail.transcripts, payload.transcripts, detail.concatenated, payload.concatenated)
 	corrected := pick(payload.corrected, detail.corrected)
 	transfer := pick(payload.postTransfer, detail.postTransfer)
 	if original != nil {
@@ -297,7 +296,7 @@ func buildEvidence(detail *Call, hook *PostCall, previous *Evidence, unread stri
 			e.TransferOffset = transfer.offset
 		}
 	}
-	if translation := cmp.Or(string(current.translation), string(other.translation)); translation != "" {
+	if translation := cmp.Or(string(detail.translation), string(payload.translation)); translation != "" {
 		e.Translation = jsontext.Value(translation)
 	}
 	content := meetingcontent.Content{Actions: []meetingcontent.Action{}, ActionCoverage: meetingcontent.CoverageUnsupported, ActionReason: "no_structured_actions", Notes: meetingcontent.Section{State: meetingcontent.StateUnsupported}, Summary: meetingcontent.Section{State: meetingcontent.StateUnavailable, Reason: "missing_field"}, Transcript: meetingcontent.Transcript{State: meetingcontent.StateUnavailable, Reason: "not_retained"}}

@@ -640,3 +640,47 @@ func TestRetriedRefusalCountsCallOnce(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal([]string{"postcall data refused (HTTP 403) for 1 call(s)"}, sum.Diagnostics)
 }
+
+// Content that reached a call while its details were refused survives a later
+// refused-details sync without postcall data, and fresh concatenated postcall
+// text wins over transcripts archived from the details.
+func TestRefusedDetailsKeepNewerContent(t *testing.T) {
+	const details = `{"call_id":"call-1","completed":true,"created_at":"2026-10-01T11:00:00Z","summary":"archived summary","transcripts":[{"user":"user","text":"archived speech"}]}`
+	for _, tc := range []struct {
+		name, hook, nextHook, summary, transcript string
+	}{
+		{
+			name:       "later sync without postcall",
+			hook:       `{"data":{"payload":{"call_id":"call-1","summary":"updated summary","transcripts":[{"user":"user","text":"updated speech"}]}}}`,
+			summary:    "updated summary",
+			transcript: "user: updated speech",
+		},
+		{
+			name:       "concatenated postcall text",
+			hook:       `{"data":{"payload":{"call_id":"call-1","concatenated_transcript":"updated concatenated speech"}}}`,
+			nextHook:   `{"data":{"payload":{"call_id":"call-1","concatenated_transcript":"updated concatenated speech"}}}`,
+			summary:    "archived summary",
+			transcript: "updated concatenated speech",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := &fixture{calls: map[string]string{"call-1": details}, ids: []string{"call-1"}}
+			st, imp, o := setupImport(t, f)
+			_, err := imp.Import(t.Context(), o)
+			requirements.NoError(err)
+
+			f.detailStatus, f.hook = http.StatusForbidden, tc.hook
+			_, err = imp.Import(t.Context(), o)
+			requirements.NoError(err)
+			f.hook = tc.nextHook
+			_, err = imp.Import(t.Context(), o)
+			requirements.NoError(err)
+
+			ev := loadEvidence(t, st, "call-1")
+			assertions.Equal(tc.summary, ev.Content.Summary.Text)
+			assertions.Equal(tc.transcript, ev.Content.Transcript.Text)
+			assertions.Contains(string(ev.Call), "archived summary", "the archived details response is kept")
+		})
+	}
+}
