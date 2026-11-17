@@ -24,7 +24,7 @@ func TestArchiveCommandRefusesOldDaemon(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
 			w.Header().Set("Content-Type", "application/json")
-			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.8.0"}`))
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.11.0"}`))
 			assert.NoError(t, err)
 			return
 		}
