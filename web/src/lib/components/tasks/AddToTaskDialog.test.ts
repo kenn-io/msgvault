@@ -37,11 +37,11 @@ describe('Add to task', () => {
       if (email) {
         await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
       }
-      expect(screen.getByRole('dialog', { name: email ? 'Add to task' : 'Kata issue' })).toBeTruthy();
+      expect(screen.getByRole('dialog', { name: 'Add to Kata issue' })).toBeTruthy();
       expect(screen.getByRole('radiogroup', { name: 'Issue' })).toBeTruthy();
       expect(screen.queryByText('Issue')).toEqual(email ? expect.anything() : null);
       expect(await screen.findByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Follow up');
-      expect(screen.getByLabelText('Brief')).toHaveProperty('value', `${location.origin}/messages/42`);
+      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', `${location.origin}/messages/42`);
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
@@ -69,7 +69,7 @@ describe('Add to task', () => {
       expect(onclose).not.toHaveBeenCalled();
       finish(Response.json({ issue: { uid: 'one', ref: 'abcd', qualified_ref: 'example#abcd', project: 'example', title: 'Follow up', status: 'open', revision: '1' }, replayed: false }));
       await screen.findByRole('button', { name: 'Done' });
-      expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeTruthy();
+      expect(screen.getByRole('dialog', { name: 'Add to Kata issue' })).toBeTruthy();
       expect(screen.queryByRole('radio', { name: 'Tasks' })).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
       expect(onclose).toHaveBeenCalledOnce();
@@ -91,18 +91,18 @@ describe('Add to task', () => {
         context: new Map([[kataReadinessKey, readiness]])
       });
       await fireEvent.input(await screen.findByRole('textbox', { name: 'Task title' }), { target: { value: 'Revised follow up' } });
-      await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Draft notes' } });
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
       await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
-      await fireEvent.input(screen.getByLabelText('Brief'), { target: { value: 'Brief draft' } });
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Brief draft' } });
       await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
-      expect(screen.getByLabelText('Brief')).toHaveProperty('value', 'Brief draft');
+      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', 'Brief draft');
       await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
       expect(await screen.findByRole('textbox', { name: 'Task title' })).toHaveProperty('value', 'Revised follow up');
-      expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
+      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', 'Draft notes');
     } finally { view?.unmount(); readiness.dispose(); }
   });
 

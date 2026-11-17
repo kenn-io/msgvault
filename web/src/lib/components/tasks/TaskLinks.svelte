@@ -25,6 +25,8 @@
     client,
     mode = 'list',
     showSetup = true,
+    embedded = false,
+    present = $bindable(false),
     busy = $bindable(false),
     oncomplete = undefined,
     oncancel = undefined,
@@ -35,6 +37,8 @@
     client: APIClient;
     mode?: 'list' | 'add';
     showSetup?: boolean;
+    embedded?: boolean;
+    present?: boolean;
     busy?: boolean;
     oncomplete?: () => void;
     oncancel?: () => void;
@@ -216,6 +220,9 @@
   $effect(() => {
     if (mode === 'add' && mutationReady && outboundMetadata) creationInitialized = true;
   });
+  $effect(() => {
+    present = loading || (integrationState !== 'authentication_required' && indexState !== 'authentication_required' && tasks.length > 0) || (!complete && (integrationState !== 'disabled' || showSetup)) || !!error;
+  });
   const degraded = $derived(!mutationReady);
   const partialIndex = $derived(mutationReady && indexState === 'partial');
   const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
@@ -249,7 +256,7 @@
 
 {#if showSetup || integrationState === 'ready' || integrationState === 'loading' || (tasks.length > 0 && integrationState !== 'authentication_required') || error}
 <section class="task-links" class:add={mode === 'add'} aria-label="Linked tasks">
-  {#if mode !== 'add' && integrationState !== 'disabled'}<header>
+  {#if mode !== 'add' && !embedded && integrationState !== 'disabled'}<header>
     <h2>Tasks</h2>
   </header>{/if}
   {#if loading}<p role="status">Loading linked tasks…</p>
@@ -262,11 +269,11 @@
     {#if sessionOnlyIndex}<p role="status">
         Linked-task index updates are available for this session but are not persisted to disk on this platform.
       </p>{/if}
-    {#if mode !== 'add' && integrationState !== 'authentication_required'}
+    {#if mode !== 'add' && integrationState !== 'authentication_required' && indexState !== 'authentication_required'}
     {#if tasks.length > 0}
       <ul>
         {#each tasks as task (task.id)}<li>
-            <span>{task.title}</span><Button
+            <span><span>{task.title}</span><small>Tasks · {project}</small></span><Button
               size="sm"
               surface="outline"
               label={`Unlink ${task.title}`}
@@ -275,7 +282,7 @@
             />
           </li>{/each}
       </ul>
-    {:else if complete}<p>No linked tasks.</p>{/if}
+    {/if}
     {/if}
     {#if mutationReady && mode === 'add'}
       <SegmentedControl variant="borderless" disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />
@@ -343,6 +350,7 @@
   h2 {
     font-size: var(--font-size-sm);
   }
+  li small { display: block; color: var(--text-muted); }
   .degraded {
     display: flex;
     align-items: center;

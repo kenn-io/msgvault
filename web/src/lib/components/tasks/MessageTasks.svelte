@@ -13,6 +13,7 @@
   let loading = $state(false);
   let error = $state('');
   let truncated = $state(false);
+  let tasksPresent = $state(false);
   $effect(() => {
     const id = messageId;
     void refresh;
@@ -31,22 +32,29 @@
   });
 </script>
 
-{#if email}
-  {#key refresh}<TaskLinks {client} {messageId} {title} {onsettings} {showSetup} mode="list" />{/key}
-{/if}
-{#if kata?.ready}
-  <section class="kata-links" aria-label="Linked Kata issues">
-    <h2>Kata issues</h2>
-    {#if loading}<p role="status">Loading linked Kata issues…</p>{/if}
-    {#if error}<p role="alert">{error}</p>{/if}
-    {#if truncated}<p role="status">Linked Kata issues are incomplete.</p>{/if}
-    {#each issues as issue (issue.uid)}
-      <p>{#if issue.web_url}<a href={issue.web_url} target="_blank" rel="noreferrer">{issue.qualified_ref}: {issue.title}</a>{:else}{issue.qualified_ref}: {issue.title}{/if} · {issue.status}</p>
-    {:else}{#if !loading && !error && !truncated}<p>No linked Kata issues.</p>{/if}{/each}
-  </section>
-{/if}
+<section class="task-group" aria-label="Tasks" hidden={!tasksPresent && !loading && !error && !truncated && issues.length === 0}>
+  <h2>Tasks</h2>
+  {#if email}
+    {#key refresh}<TaskLinks {client} {messageId} {title} {onsettings} {showSetup} mode="list" embedded bind:present={tasksPresent} />{/key}
+  {/if}
+  {#if kata?.ready}
+    <div class="kata-links">
+      {#if loading}<p role="status">Loading linked Kata issues…</p>{/if}
+      {#if error}<p role="alert">{error}</p>{/if}
+      {#if truncated}<p role="status">Linked Kata issues are incomplete.</p>{/if}
+      {#each issues as issue (issue.uid)}
+        <div class="row"><span>{issue.title}<small>Kata · {issue.qualified_ref}</small></span>{#if issue.web_url}<a href={issue.web_url} target="_blank" rel="noreferrer">Open in Kata</a>{/if}</div>
+      {/each}
+    </div>
+  {/if}
+</section>
 
 <style>
-  .kata-links { display: grid; gap: var(--space-2); padding: 0 var(--pane-pad-x) var(--space-4); }
+  .task-group { display: grid; gap: var(--space-2); padding: 0 var(--pane-pad-x) var(--space-4); }
+  .task-group[hidden] { display: none; }
+  .kata-links { display: grid; gap: var(--space-2); }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+  small { display: block; color: var(--text-muted); }
+  .task-group :global(.task-links) { padding: 0; }
   h2, p { margin: 0; font-size: var(--font-size-sm); }
 </style>

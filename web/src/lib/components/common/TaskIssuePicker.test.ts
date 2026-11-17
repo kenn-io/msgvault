@@ -6,6 +6,14 @@ import TaskIssuePicker from './TaskIssuePicker.svelte';
 const item = { id: 'one', label: 'Send the budget' };
 
 describe('TaskIssuePicker', () => {
+  it('offers a typed project reference when lookup fails', async () => {
+    render(TaskIssuePicker, { load: async () => { throw new Error('Unavailable'); }, noun: 'open issues', empty: 'No open issues.', project: 'garden' });
+    await screen.findByRole('alert');
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'garden#w3fa' } });
+    const choice = await screen.findByRole('radio', { name: 'garden#w3fa · Not checked yet' });
+    await fireEvent.click(choice);
+    expect(choice).toHaveProperty('checked', true);
+  });
   it('keeps issue search guidance visible while filtering', async () => {
     let respond!: (result: { items: typeof item[]; truncated: boolean }) => void;
     const load = (query: string) => query ? new Promise<{ items: typeof item[]; truncated: boolean }>(resolve => { respond = resolve; }) : Promise.resolve({ items: [item], truncated: true });
@@ -55,7 +63,7 @@ describe('TaskIssuePicker', () => {
     await fireEvent.input(filter, { target: { value: 'broken' } });
     await waitFor(() => expect(fail).toBeTypeOf('function'));
     fail(new Error('Task service unavailable'));
-    expect((await screen.findByRole('alert')).textContent).toBe('Task service unavailable');
+    expect((await screen.findByRole('alert')).textContent).toContain('Task service unavailable');
     expect(screen.queryByText('More tasks available.')).toBeNull();
     view.unmount();
     render(TaskIssuePicker, { load: async () => ({ items: [], truncated: false }), noun: 'open issues', empty: 'No open issues yet.' });

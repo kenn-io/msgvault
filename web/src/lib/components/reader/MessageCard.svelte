@@ -4,6 +4,7 @@
   import MessageMenu from './MessageMenu.svelte';
   import PersonLink from './PersonLink.svelte';
   import MessageTasks from '../tasks/MessageTasks.svelte';
+  import { formatShortDateTime } from '../../util/format';
   import MeetingActions from '../meetings/MeetingActions.svelte';
   import type { MeetingRef } from '../../api/generated/models';
 
@@ -62,13 +63,6 @@
     typeof message.bodyHtml === 'string' && message.bodyHtml.trim() !== '' && !sanitizationFailed
   );
   const renderAsHTML = $derived(hasRenderableHTML && viewMode === 'html');
-
-  function formatDate(value: string): string {
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.valueOf())) return value;
-    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(parsed);
-  }
-
 </script>
 
 {#if expanded}
@@ -83,7 +77,7 @@
       <div class="header-content">
         <span class="header-line">
           <strong class="sender"><PersonLink name={message.sender || 'Unknown sender'} participantID={message.senderParticipantID} {onOpenPerson} /></strong>
-          <time datetime={message.sentAt} data-mono>{formatDate(message.sentAt)}</time>
+          <time datetime={message.sentAt} data-mono>{formatShortDateTime(message.sentAt)}</time>
         </span>
         {#if message.recipients.length > 0}
           <span class="recipients">to {#if message.recipientParticipants}{#each message.recipientParticipants as recipient, index}{#if index > 0}, {/if}<PersonLink name={recipient.display} participantID={recipient.participantID} {onOpenPerson} />{/each}{:else}{message.recipients.join(', ')}{/if}</span>
@@ -161,7 +155,7 @@
     <IdentityAvatar label={message.sender || '?'} size={24} />
     <span class="collapsed-sender">{message.sender || 'Unknown sender'}</span>
     <span class="collapsed-snippet">{message.snippet || message.subject}</span>
-    <time datetime={message.sentAt} data-mono>{formatDate(message.sentAt)}</time>
+    <time datetime={message.sentAt} data-mono>{formatShortDateTime(message.sentAt)}</time>
   </button>
 {/if}
 

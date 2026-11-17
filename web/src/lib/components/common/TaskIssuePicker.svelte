@@ -1,11 +1,13 @@
 <script lang="ts">
   import { debounce, RadioGroup, SearchInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
+  import InlineNotice from './InlineNotice.svelte';
 
-  let { load, noun, empty, disabled = false, moreNote = '', hint = '', selected = $bindable('') }: {
+  let { load, noun, empty, disabled = false, moreNote = '', hint = '', project = '', selected = $bindable('') }: {
     load: (query: string, signal: AbortSignal) => Promise<{ items: { id: string; label: string; detail?: string }[]; truncated: boolean }>;
     moreNote?: string;
     hint?: string;
+    project?: string;
     noun: string;
     empty: string;
     disabled?: boolean;
@@ -31,6 +33,8 @@
       if (!current.signal.aborted) loading = false;
     }
   }
+  const fallback = $derived(error && project && listedQuery.startsWith(`${project}#`) && /^[^#\s]+#[^#\s]+$/.test(listedQuery) ? { id: listedQuery, label: listedQuery, detail: 'Not checked yet' } : undefined);
+  const choices = $derived(fallback ? [fallback] : items);
   const schedule = debounce(() => void reload(), 250);
   onMount(() => {
     void reload();
@@ -43,8 +47,8 @@
   <div class="results">
     {#if loading || query.trim() !== listedQuery}<p role="status">Loading…</p>
     {:else}
-      {#if error}<p role="alert">{error}</p>{/if}
-      {#if items.length}<RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
+      {#if error}<InlineNotice message={error} />{/if}
+      {#if choices.length}<RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={choices.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
       {:else if !error}<p>{listedQuery ? `No ${noun} match "${listedQuery}".` : empty}</p>{/if}
     {/if}
   </div>

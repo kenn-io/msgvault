@@ -5,6 +5,29 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
+  it('groups task and Kata links under one Tasks heading', async () => {
+    const client = createAPIClient(async input => {
+      const url = (input as Request).url;
+      if (url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (url.includes('/kata/')) return Response.json({ issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Kata work', status: 'open', web_url: 'https://example.org/issue' }], truncated: false });
+      return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Task work' }], outbound_metadata: {} });
+    });
+    const readiness = new KataReadiness(client);
+    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
+    try {
+      await screen.findByText('Task work');
+      await screen.findByText('Kata work');
+      expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
+      expect(screen.getByText('Tasks · example')).toBeDefined();
+      expect(screen.getByText('Kata · example#abcd')).toBeDefined();
+    } finally { view.unmount(); readiness.dispose(); }
+  });
+  it('offers setup when the task integration is disabled', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status') ? { state: 'disabled' } : { state: 'disabled', complete: false, tasks: [], outbound_metadata: {} }));
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
+    expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
+  });
+
   it('reloads persisted email links and skips task lookup for non-email messages', async () => {
     const requests: Request[] = [];
     let title = 'Review notes';
@@ -30,15 +53,15 @@ describe('Message task list', () => {
     const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/status') ? { state: 'ready' } : { truncated, issues: empty ? [] : [{ uid: 'issue-1', qualified_ref: 'example#abcd', title, status: 'open', web_url: 'https://example.org/tasks/abcd' }] }));
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
-    const link = await screen.findByRole('link', { name: 'example#abcd: Send notes' });
+    const link = await screen.findByRole('link', { name: 'Open in Kata' });
     expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
     title = 'Send revised notes';
     await view.rerender({ refresh: 1 });
-    await waitFor(() => expect(screen.getByRole('link', { name: 'example#abcd: Send revised notes' })).toBeDefined());
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Open in Kata' })).toBeDefined());
     truncated = true;
     await view.rerender({ refresh: 2 });
     expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
-    expect(screen.getByRole('link', { name: 'example#abcd: Send revised notes' })).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Open in Kata' })).toBeDefined();
     empty = true;
     await view.rerender({ refresh: 3 });
     await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
@@ -46,7 +69,7 @@ describe('Message task list', () => {
     expect(screen.queryByText('No linked Kata issues.')).toBeNull();
     truncated = false;
     await view.rerender({ refresh: 4 });
-    expect(await screen.findByText('No linked Kata issues.')).toBeDefined();
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull());
     expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();
     view.unmount(); readiness.dispose();
   });

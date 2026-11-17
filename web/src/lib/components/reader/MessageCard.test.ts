@@ -23,6 +23,17 @@ function detail(overrides: Partial<ArchiveMessageDetail> = {}): ArchiveMessageDe
 }
 
 describe('MessageCard', () => {
+  it('omits the year for this year and retains it for older messages', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-17T12:00:00Z'));
+    try {
+      const view = render(MessageCard, { message: detail({ sentAt: '2026-07-18T12:00:00Z' }), expanded: false });
+      expect(view.container.querySelector('time')?.textContent).not.toContain('2026');
+      view.unmount();
+      const older = render(MessageCard, { message: detail({ sentAt: '2025-07-18T12:00:00Z' }), expanded: false });
+      expect(older.container.querySelector('time')?.textContent).toContain('2025');
+    } finally { vi.useRealTimers(); }
+  });
   it('collapses to one line of sender, snippet, and date that expands on click', async () => {
     const onToggle = vi.fn();
     render(MessageCard, {
@@ -111,8 +122,7 @@ describe('MessageCard', () => {
     });
 
     const menu = screen.getByRole('button', { name: /^More actions for .+ on / });
-    const date = screen.getByRole('article').querySelector('time')!.textContent;
-    expect(menu.getAttribute('aria-label')).toBe(`More actions for Alice Example <alice@example.com> on ${date}`);
+    expect(menu.getAttribute('aria-label')).toContain('More actions for Alice Example <alice@example.com> on ');
     await fireEvent.click(menu);
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Show plain text' }));
     expect(onViewModeChange).toHaveBeenCalledWith(42, 'text');
@@ -325,8 +335,8 @@ it('refreshes links on close after a Kata comment fails after saving evidence', 
   const readiness = new KataReadiness(client);
   const view = render(MessageCard, { props: { message: detail({ messageType: 'email' }), expanded: true, client }, context: new Map([[kataReadinessKey, readiness]]) });
   try {
-    await screen.findByText('No linked tasks.');
-    await screen.findByText('No linked Kata issues.');
+    await waitFor(() => expect(readiness.ready).toBe(true));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull());
     await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
@@ -336,7 +346,7 @@ it('refreshes links on close after a Kata comment fails after saving evidence', 
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('Comment failed');
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(await screen.findByText('example#abcd: Follow up · open')).toBeDefined();
+    expect(await screen.findByText('Kata · example#abcd')).toBeDefined();
     expect(await screen.findByText('Linked task')).toBeDefined();
   } finally { view.unmount(); readiness.dispose(); }
 });

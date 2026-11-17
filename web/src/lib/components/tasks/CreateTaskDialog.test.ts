@@ -24,7 +24,9 @@ describe('CreateTaskDialog', () => {
     for (const value of ['archive-a', '42', '7', 'gmail', 'archive@example.com', 'source-42', 'Synthetic subject', 'sender@example.com', '2026-07-18T12:00:00Z']) {
       expect(screen.getByText(value)).toBeDefined();
     }
-    expect(screen.getByLabelText('Description')).toHaveProperty('value', `${location.origin}/messages/42`);
+    expect(screen.getByLabelText('Description')).toHaveProperty('value', '');
+    expect(screen.getByText("What's sent")).toBeDefined();
+    expect(screen.getByText('No priority')).toBeDefined();
     expect(screen.getByText(/Bodies and attachments are never sent/i).closest('details')).toBeNull();
     await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Edited' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Notes' } });
@@ -33,7 +35,7 @@ describe('CreateTaskDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
     await waitFor(() => expect(oncreated).toHaveBeenCalledOnce());
     await expect(requests[0]!.clone().json()).resolves.toMatchObject({
-      title: 'Edited', description: 'Notes', priority: 'high', labels: ['mail', 'follow-up']
+      title: 'Edited', description: `Notes\n\n${location.origin}/messages/42`, priority: 'high', labels: ['mail', 'follow-up']
     });
     const body = await requests[0]!.clone().json() as { added_at?: string };
     expect(body.added_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);

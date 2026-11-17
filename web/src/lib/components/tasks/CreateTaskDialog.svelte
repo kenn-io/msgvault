@@ -1,8 +1,9 @@
 <script lang="ts">
   import { createBrowserRequestID } from '../../api/request-id';
   import { createOrLinkMessageTask as generatedCreateOrLinkMessageTask } from '../../api/generated/api/api';
-  import { Disclosure, Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Chip, Disclosure, Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
+  import { formatShortDate } from '../../util/format';
   import type { APIClient } from '../../api/client';
   let {
     client,
@@ -40,7 +41,7 @@
     onclose?: () => void;
   } = $props();
   let title = $state(untrack(() => defaultTitle));
-  let description = $state(untrack(() => `${location.origin}/messages/${messageId}`));
+  let description = $state('');
   let priority = $state('');
   let labels = $state('');
   let error = $state('');
@@ -48,7 +49,7 @@
   let addedAt = $state(new Date().toISOString());
   let lastAttemptFingerprint = $state<string>();
   const priorityOptions = [
-    { value: '', label: 'Default' },
+    { value: '', label: 'No priority' },
     { value: 'low', label: 'Low' },
     { value: 'normal', label: 'Normal' },
     { value: 'high', label: 'High' },
@@ -108,7 +109,7 @@
     const normalizedLabels = parsedLabels();
     return {
       title: title.trim(),
-      ...(description.trim() ? { description: description.trim() } : {}),
+      description: [description.trim(), `${location.origin}/messages/${messageId}`].filter(Boolean).join('\n\n'),
       ...(priority ? { priority } : {}),
       ...(normalizedLabels.length ? { labels: normalizedLabels } : {}),
     };
@@ -132,6 +133,7 @@
     }}
   >
     <p class="project"><span>Project</span><strong>{project}</strong></p>
+    <Chip uppercase={false}>{subject} · {from} · {formatShortDate(sentAt)}</Chip>
     <label>Task title<TextInput ariaLabel="Task title" bind:value={title} autocomplete="off" block /></label>
     <label>Description<textarea aria-label="Description" bind:value={description}></textarea></label>
     <label
@@ -153,7 +155,7 @@
         block
       /></label
     >
-    <Disclosure variant="plain">{#snippet summary()}Metadata leaving the archive{/snippet}
+    <Disclosure variant="plain">{#snippet summary()}What's sent{/snippet}
       <dl>
         <div>
           <dt>Archive UID</dt>
