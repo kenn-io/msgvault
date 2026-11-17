@@ -543,14 +543,25 @@ func TestWithFolderFilter_NoConfigNoCLIIncludesAll(t *testing.T) {
 }
 
 func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
+	addr, _ := testutil.StartIMAPMemServerWithSpecialUse(t,
+		map[string]int{"INBOX": 1, "Trash": 1, "Junk": 1, "Archive/Newsletters": 1},
+		map[string][]imapv2.MailboxAttr{
+			"Trash": {imapv2.MailboxAttrTrash},
+			"Junk":  {imapv2.MailboxAttrJunk},
+		})
+	host, portStr, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+
 	after := time.Date(2026, time.January, 2, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2026, time.February, 3, 0, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name         string
-		cfg          *Config
-		opts         []Option
-		wantComplete bool
-		wantFiltered bool
+		name           string
+		cfg            *Config
+		opts           []Option
+		wantComplete   bool
+		wantReconciles bool
 	}{
 		{
 			name:         "unfiltered",
@@ -558,33 +569,40 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 			wantComplete: true,
 		},
 		{
-			name:         "config include",
-			cfg:          &Config{Folders: []string{"INBOX"}},
-			wantFiltered: true,
+			name: "config include",
+			cfg:  &Config{Folders: []string{"INBOX"}},
+			opts: []Option{WithSavedFolderExclusions([]string{"Trash"})},
 		},
 		{
-			name:         "runtime include",
-			cfg:          &Config{},
-			opts:         []Option{WithFolderFilter([]string{"INBOX"}, nil)},
-			wantFiltered: true,
+			name: "runtime include",
+			cfg:  &Config{},
+			opts: []Option{WithFolderFilter([]string{"INBOX"}, nil)},
 		},
 		{
-			name:         "runtime exclude",
-			cfg:          &Config{},
-			opts:         []Option{WithFolderFilter(nil, []string{"Trash"})},
-			wantFiltered: true,
+			name: "runtime exclude",
+			cfg:  &Config{},
+			opts: []Option{WithFolderFilter(nil, []string{"Trash"})},
 		},
 		{
-			name:         "after filter",
-			cfg:          &Config{},
-			opts:         []Option{WithDateFilter(after, time.Time{})},
-			wantFiltered: true,
+			name:           "Trash and Junk exclusions with reconciliation",
+			cfg:            &Config{},
+			opts:           []Option{WithSavedFolderExclusions([]string{"Trash", "Junk"})},
+			wantReconciles: true,
 		},
 		{
-			name:         "before filter",
-			cfg:          &Config{},
-			opts:         []Option{WithDateFilter(time.Time{}, before)},
-			wantFiltered: true,
+			name: "newsletters skipped",
+			cfg:  &Config{},
+			opts: []Option{WithSavedFolderExclusions([]string{"Trash", "Junk", "Archive/Newsletters"})},
+		},
+		{
+			name: "after filter",
+			cfg:  &Config{},
+			opts: []Option{WithSavedFolderExclusions([]string{"Trash", "Junk"}), WithDateFilter(after, time.Time{})},
+		},
+		{
+			name: "before filter",
+			cfg:  &Config{},
+			opts: []Option{WithSavedFolderExclusions([]string{"Trash", "Junk"}), WithDateFilter(time.Time{}, before)},
 		},
 	}
 
@@ -592,18 +610,18 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			client := NewClient(tt.cfg, "", tt.opts...)
+			tt.cfg.Host = host
+			tt.cfg.Port = port
+			tt.cfg.Username = testutil.IMAPTestUsername
+			client := NewClient(tt.cfg, testutil.IMAPTestPassword, tt.opts...)
+			t.Cleanup(func() { _ = client.Close() })
+			listAllMessages(t, client)
+			assert.Equal(tt.wantReconciles, client.ReconcilesFilteredDeletions())
 			completeness, ok := any(client).(interface {
 				LabelsSnapshotComplete() bool
 			})
 			require.True(ok, "IMAP client must report label snapshot completeness")
 			assert.Equal(tt.wantComplete, completeness.LabelsSnapshotComplete())
-
-			filtering, ok := any(client).(interface {
-				LabelsSnapshotFiltered() bool
-			})
-			require.True(ok, "IMAP client must report explicit snapshot filters")
-			assert.Equal(tt.wantFiltered, filtering.LabelsSnapshotFiltered())
 		})
 	}
 }
@@ -959,6 +977,31 @@ func TestGmailAllMailFullScanPublishesDeltaForLabelOnlyMailbox(t *testing.T) {
 			assert.NotZero(delta.State.HighestModSeq)
 		}
 	}
+}
+
+func TestGmailAllMailEnumeratesSelectedTrashRoleMailbox(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, user := testutil.StartIMAPMemServerWithSpecialUse(t,
+		map[string]int{"[Gmail]/All Mail": 0, "Trash A": 0, "Trash B": 0},
+		map[string][]imapv2.MailboxAttr{
+			"[Gmail]/All Mail": {imapv2.MailboxAttrAll},
+			"Trash A":          {imapv2.MailboxAttrTrash},
+			"Trash B":          {imapv2.MailboxAttrTrash},
+		},
+	)
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Trash B", "selected-trash@example.com")
+	client := newTestClient(t, addr, WithFolderFilter(nil, []string{"Trash A"}))
+
+	ids := listAllMessages(t, client)
+	require.Equal("Trash A", client.trashMailbox)
+	require.Equal([]string{"Trash B|1"}, ids)
+	results, err := client.GetMessagesRawBatchWithErrors(t.Context(), ids)
+	require.NoError(err)
+	require.Len(results, 1)
+	require.NoError(results[0].Err)
+	require.NotNil(results[0].Message)
+	assert.NotEmpty(results[0].Message.Raw)
 }
 
 func TestGmailAllMailStatusFailureSuppressesIncrementalPublication(t *testing.T) {

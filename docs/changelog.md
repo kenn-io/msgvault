@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- IMAP accounts whose saved `imap_skip_folders` skip only Trash or Junk now track deletions in the folders they scan, so mail moved into a skipped Trash is marked deleted and `gc` can purge it. See [`imap_skip_folders`](configuration.md#sync).
+
 - Start bounded Gmail or IMAP historical imports through MCP with `--allow-import-writes`, and follow their durable job status.
 
 - Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose.

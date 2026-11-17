@@ -290,6 +290,53 @@ func TestApplyIMAPMailboxDeltas_VanishedMembershipReconcilesLabelsAndTombstone(t
 	assert.Empty(messageLabels(t, f.store, messageID))
 }
 
+func TestApplyIMAPScannedMailboxDeltas_PreservesUnscannedLabels(t *testing.T) {
+	f := newIMAPMembershipFixture(t)
+	kept := f.createMessage(t, "kept", "")
+	removed := f.createMessage(t, "removed", "")
+	unchanged := f.createMessage(t, "unchanged", "")
+	missing := f.createMessage(t, "missing", "")
+	trash, err := f.store.EnsureLabel(t.Context(), f.source.ID, "Trash", "Trash", "user")
+	require.NoError(t, err)
+	inbox := store.IMAPMailboxDelta{
+		Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1},
+		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "kept"}, {UID: 2, SourceMessageID: "removed"}, {UID: 3, SourceMessageID: "unchanged"}, {UID: 4, SourceMessageID: "missing"}},
+	}
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{inbox}))
+	legacy := f.createMessage(t, "legacy", "")
+	inboxLabel, err := f.store.EnsureLabel(t.Context(), f.source.ID, "INBOX", "INBOX", "user")
+	require.NoError(t, err)
+	require.NoError(t, f.store.ReplaceMessageLabels(kept, []int64{inboxLabel, trash}))
+	require.NoError(t, f.store.ReplaceMessageLabels(unchanged, []int64{inboxLabel, trash}))
+	require.NoError(t, f.store.ReplaceMessageLabels(missing, []int64{trash}))
+	require.NoError(t, f.store.ReplaceMessageLabels(legacy, []int64{inboxLabel, trash}))
+
+	runID, err := f.store.StartSync(f.source.ID, "incremental")
+	require.NoError(t, err)
+	require.NoError(t, f.store.CompleteSync(runID, "cursor"))
+	inbox.Memberships = []store.IMAPMembershipObservation{{UID: 3, SourceMessageID: "unchanged"}}
+	inbox.VanishedUIDs = []uint32{1, 2}
+	require.NoError(t, f.store.ApplyIMAPScannedMailboxDeltasForSyncContext(t.Context(), f.source.ID, runID, []store.IMAPMailboxDelta{inbox}))
+	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, kept))
+	assert.False(t, messageTombstoned(t, f.store, kept))
+	assert.Empty(t, messageLabels(t, f.store, removed))
+	assert.True(t, messageTombstoned(t, f.store, removed))
+	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, legacy))
+	assert.False(t, messageTombstoned(t, f.store, legacy))
+	assert.Equal(t, []string{"INBOX", "Trash"}, messageLabels(t, f.store, missing))
+
+	// A subsequent full scan has authority to remove the remaining label.
+	inbox.VanishedUIDs = nil
+	inbox.Reset = true
+	inbox.Memberships = []store.IMAPMembershipObservation{{UID: 3, SourceMessageID: "unchanged"}, {UID: 4, SourceMessageID: "missing"}}
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{inbox}))
+	assert.Empty(t, messageLabels(t, f.store, kept))
+	assert.True(t, messageTombstoned(t, f.store, kept))
+	assert.Empty(t, messageLabels(t, f.store, legacy))
+	assert.True(t, messageTombstoned(t, f.store, legacy))
+	assert.Equal(t, []string{"INBOX"}, messageLabels(t, f.store, unchanged))
+}
+
 func TestApplyIMAPMailboxDeltas_ReappearanceClearsTombstone(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -516,6 +563,37 @@ func TestApplyIMAPMailboxDeltas_RetiresMailboxesAbsentFromAuthoritativeTopology(
 		assert.Equal([]string{"Preserved"}, messageLabels(t, f.store, messageID))
 		assert.False(messageTombstoned(t, f.store, messageID))
 	})
+}
+
+func TestApplyIMAPMailboxDeltas_PreservesMergedLabels(t *testing.T) {
+	f := newIMAPMembershipFixture(t)
+	destination, err := f.store.GetOrCreateSource("imap", "destination@example.test")
+	require.NoError(t, err)
+	recipients := []string{"recipient@example.test"}
+	historyID := emailMergeFixtureMessage(t, f.store, f.source.ID, "history", recipients, true)
+	liveID := emailMergeFixtureMessage(t, f.store, destination.ID, "live", recipients, true)
+	historyLabel, err := f.store.EnsureLabel(t.Context(), f.source.ID, "Old folder", "Old folder", "user")
+	require.NoError(t, err)
+	require.NoError(t, f.store.ReplaceMessageLabels(historyID, []int64{historyLabel}))
+	delta := store.IMAPMailboxDelta{
+		Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 2}, Reset: true,
+		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "live"}},
+	}
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(destination.ID, []store.IMAPMailboxDelta{delta}))
+	result, err := f.store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: f.source.ID, IntoSourceID: destination.ID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), result.DuplicatesHidden)
+	assert.Equal(t, []string{"INBOX", "Old folder"}, messageLabels(t, f.store, liveID))
+
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(destination.ID, []store.IMAPMailboxDelta{delta}))
+	assert.Equal(t, []string{"INBOX", "Old folder"}, messageLabels(t, f.store, liveID))
+
+	// A changed membership also rebuilds the labels.
+	delta.Memberships[0].Flags = []string{"\\Seen"}
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(destination.ID, []store.IMAPMailboxDelta{delta}))
+	assert.Equal(t, []string{"INBOX", "Old folder"}, messageLabels(t, f.store, liveID))
 }
 
 func TestMergeSourcesIMAPArchiveHistorySurvivesDestinationMembershipReconciliation(t *testing.T) {

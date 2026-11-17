@@ -12,6 +12,7 @@ import (
 	"time"
 
 	imapapi "github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
@@ -19,30 +20,33 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
 
 func TestIMAPSyncFolderFilter(t *testing.T) {
-	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1, "Archive": 1})
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1, "Archive": 1, "Junk": 1})
 	const identifier = "imap://user@example.com"
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
 	require.NoError(t, err)
 	cfg := &config.Config{Sync: config.SyncConfig{IMAPSkipFolders: map[string][]string{identifier: {" trash "}}}}
 	for _, tc := range []struct {
-		name, account string
-		folders, skip []string
-		want          []string
+		name, account  string
+		folders, skip  []string
+		want           []string
+		wantReconciles bool
 	}{
-		{"saved", identifier, nil, nil, []string{"INBOX|1", "Archive|1"}},
-		{"blank include keeps saved", identifier, []string{" \t "}, nil, []string{"INBOX|1", "Archive|1"}},
-		{"blank exclude keeps saved", identifier, nil, []string{" \t "}, []string{"INBOX|1", "Archive|1"}},
-		{"include overrides saved", identifier, []string{"Trash"}, nil, []string{"Trash|1"}},
-		{"exclude overrides saved", identifier, nil, []string{"Archive"}, []string{"INBOX|1", "Trash|1"}},
-		{"other account", "imap://other@example.com", nil, nil, []string{"INBOX|1", "Trash|1", "Archive|1"}},
+		{"saved", identifier, nil, nil, []string{"INBOX|1", "Archive|1", "Junk|1"}, true},
+		{"blank include keeps saved", identifier, []string{" \t "}, nil, []string{"INBOX|1", "Archive|1", "Junk|1"}, true},
+		{"blank exclude keeps saved", identifier, nil, []string{" \t "}, []string{"INBOX|1", "Archive|1", "Junk|1"}, true},
+		{"folder flag", identifier, []string{"Trash"}, nil, []string{"Trash|1"}, false},
+		{"skip-folder flag", identifier, nil, []string{"Trash"}, []string{"INBOX|1", "Archive|1", "Junk|1"}, false},
+		{"other account", "imap://other@example.com", nil, nil, []string{"INBOX|1", "Trash|1", "Archive|1", "Junk|1"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			filter := imapSyncFolderFilter(t.Context(), st, tc.account, testInvocationWithConfig(cfg), tc.folders, tc.skip)
 			client := listedIMAPClient(t, addr, filter)
+			assert.Equal(t, tc.wantReconciles, client.ReconcilesFilteredDeletions())
 			resp, err := client.ListMessages(t.Context(), "", "")
 			require.NoError(t, err)
 			var ids []string
@@ -673,7 +677,7 @@ func TestApplyIMAPMailboxDeltas_ConvertsObservationsAndVanishedUIDs(t *testing.T
 		Mailbox: "INBOX", UIDValidity: 17, UID: 3,
 		SourceMessageID: "INBOX|3", RFC822MessageID: "added@example.com",
 		Flags: []string{"\\Flagged"},
-	}})
+	}}, false)
 	require.NoError(err)
 
 	known, err := st.GetIMAPKnownUIDs(src.ID)
@@ -857,4 +861,207 @@ func TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount(t *testing.
 		"the next run must read the mailbox again and restore the membership")
 	assert.Zero(imapTombstonedMessageCount(t, st, src.ID),
 		"a message that regains a mailbox must lose its tombstone")
+}
+
+func TestRunScheduledIMAPSync_FilteredDeletionReconciliation(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Trash": 0, "Archive": 0})
+	st, src, cfg, ctx := scheduledIMAPTestSetup(t, addr)
+	sync := func(skip ...string) {
+		t.Helper()
+		cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: skip}
+		summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+		require.NoError(err)
+		require.Zero(summary.Errors)
+	}
+	// Skipping a folder other than Trash or Junk pauses deletion tracking,
+	// so these syncs archive mail without memberships.
+	sync("Trash", "Archive")
+	require.Zero(imapMembershipRowCount(t, st, src.ID))
+	mover, err := imapclient.DialInsecure(addr, nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = mover.Close() })
+	require.NoError(mover.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+	_, err = mover.Select("INBOX", nil).Wait()
+	require.NoError(err)
+	_, err = mover.Move(imapapi.UIDSetNum(1), "Trash").Wait()
+	require.NoError(err)
+	require.NoError(mover.Close())
+
+	// Skipping only Trash reconciles deletions in the scanned folders.
+	sync("Trash")
+	assert.Equal(1, imapTombstonedMessageCount(t, st, src.ID))
+	assert.Equal(1, imapMembershipRowCount(t, st, src.ID))
+
+	// An incremental reconciling sync catches an expunged import that never got a membership.
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", "late@example.com")
+	sync("Trash", "Archive")
+	testutil.ExpungeIMAPMessage(t, addr, "INBOX", 3)
+	sync("Trash")
+	assert.Equal(2, imapTombstonedMessageCount(t, st, src.ID))
+	assert.Equal(1, imapMembershipRowCount(t, st, src.ID))
+}
+
+func TestRunScheduledIMAPSync_FilteredSentRefreshesRetainedDraft(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	addr, user := testutil.StartIMAPMemServerWithSpecialUse(t,
+		map[string]int{"INBOX": 0, "Drafts": 0, "Sent": 0, "Trash": 0},
+		map[string][]imapapi.MailboxAttr{
+			"Drafts": {imapapi.MailboxAttrDrafts},
+			"Sent":   {imapapi.MailboxAttrSent},
+		})
+	st, src, cfg, ctx := scheduledIMAPTestSetup(t, addr)
+	cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
+	sync := func() *gmail.SyncSummary {
+		t.Helper()
+		summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+		require.NoError(err)
+		require.Zero(summary.Errors)
+		return summary
+	}
+	const messageID = "<filtered-sent-refresh@example.com>"
+	draft := testemail.NewMessage().Subject("Draft subject").
+		Header("Message-ID", messageID).Body("draftobsoleteword").CRLF().Bytes()
+	testutil.AppendIMAPRawMessage(t, user, "Drafts", draft)
+	assert.Equal(int64(1), sync().MessagesAdded)
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), src.ID, messageID)
+	require.NoError(err)
+	require.Positive(id)
+
+	sent := testemail.NewMessage().Subject("Sent subject").
+		Header("Message-ID", messageID).
+		Body("sentfinalword").CRLF().Bytes()
+	testutil.AppendIMAPRawMessage(t, user, "Sent", sent)
+	assert.Equal(int64(1), sync().MessagesUpdated)
+	message, err := st.GetMessage(id)
+	require.NoError(err)
+	assert.Equal("Sent subject", message.Subject)
+	assert.Contains(message.BodyText, "sentfinalword")
+	assert.NotContains(message.BodyText, "draftobsoleteword")
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(err)
+	assert.Equal(sent, raw)
+	states, err := st.GetIMAPFolderStates(src.ID)
+	require.NoError(err)
+
+	summary := sync()
+	assert.Zero(summary.MessagesAdded)
+	assert.Zero(summary.MessagesUpdated)
+	after, err := st.GetMessage(id)
+	require.NoError(err)
+	assert.Equal(message, after)
+	afterStates, err := st.GetIMAPFolderStates(src.ID)
+	require.NoError(err)
+	assert.Equal(states, afterStates)
+}
+
+// When saved exclusions skip Trash, sync cannot see Trash. It marks a message
+// that left every scanned folder and clears a mark only for a message it finds
+// in a scanned folder, never on the strength of a saved Trash membership.
+func TestRunScheduledIMAPSync_SkippedTrashDeletionMarks(t *testing.T) {
+	const messageID = "skipped-trash@example.com"
+	setup := func(t *testing.T, specialUse map[string][]imapapi.MailboxAttr, skip ...string) (
+		string, *store.Store, *store.Source, func(skip ...string),
+	) {
+		t.Helper()
+		addr, user := testutil.StartIMAPMemServerWithSpecialUse(t, map[string]int{"INBOX": 0, "Trash": 0}, specialUse)
+		testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", messageID)
+		st, src, cfg, ctx := scheduledIMAPTestSetup(t, addr)
+		invocationFromContext(ctx).logger = testDiscardLogger()
+		sync := func(skip ...string) {
+			t.Helper()
+			cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: skip}
+			summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+			require.NoError(t, err)
+			require.Zero(t, summary.Errors)
+		}
+		sync(skip...)
+		return addr, st, src, sync
+	}
+	// mailboxCommand runs one MOVE or COPY of uid from one mailbox to another.
+	mailboxCommand := func(t *testing.T, addr, from string, uid imapapi.UID, to string, move bool) {
+		t.Helper()
+		c, err := imapclient.DialInsecure(addr, nil)
+		require.NoError(t, err)
+		defer func() { _ = c.Close() }()
+		require.NoError(t, c.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+		_, err = c.Select(from, nil).Wait()
+		require.NoError(t, err)
+		if move {
+			_, err = c.Move(imapapi.UIDSetNum(uid), to).Wait()
+		} else {
+			_, err = c.Copy(imapapi.UIDSetNum(uid), to).Wait()
+		}
+		require.NoError(t, err)
+	}
+	// markTrashed records the mark msgvault sets when it trashes a message.
+	markTrashed := func(t *testing.T, st *store.Store, src *store.Source) {
+		t.Helper()
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(
+			`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE source_id = ?`), src.ID)
+		require.NoError(t, err)
+	}
+	messageCount := func(t *testing.T, st *store.Store, src *store.Source) int {
+		t.Helper()
+		var count int
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
+			`SELECT COUNT(*) FROM messages WHERE source_id = ?`), src.ID).Scan(&count))
+		return count
+	}
+
+	t.Run("msgvault trashed then restored to INBOX", func(t *testing.T) {
+		addr, st, src, sync := setup(t, nil, "Trash")
+		mailboxCommand(t, addr, "INBOX", 1, "Trash", true)
+		markTrashed(t, st, src)
+		sync("Trash")
+		assert.Equal(t, 1, imapTombstonedMessageCount(t, st, src.ID), "a message in skipped Trash stays marked")
+		mailboxCommand(t, addr, "Trash", 1, "INBOX", true)
+		sync("Trash")
+		assert.Zero(t, imapTombstonedMessageCount(t, st, src.ID), "the restored copy is seen in INBOX")
+		assert.Equal(t, 1, messageCount(t, st, src))
+	})
+
+	t.Run("present in INBOX and skipped Trash", func(t *testing.T) {
+		addr, st, src, sync := setup(t, nil, "Trash")
+		mailboxCommand(t, addr, "INBOX", 1, "Trash", false)
+		sync("Trash")
+		assert.Zero(t, imapTombstonedMessageCount(t, st, src.ID))
+		markTrashed(t, st, src)
+		sync("Trash")
+		assert.Zero(t, imapTombstonedMessageCount(t, st, src.ID), "a message in a scanned folder is not marked")
+	})
+
+	t.Run("deleted outright", func(t *testing.T) {
+		addr, st, src, sync := setup(t, nil, "Trash")
+		testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
+		sync("Trash")
+		assert.Equal(t, 1, imapTombstonedMessageCount(t, st, src.ID))
+	})
+
+	t.Run("saved Trash membership does not clear the mark", func(t *testing.T) {
+		// A complete sync records the message in both INBOX and Trash.
+		addr, st, src, sync := setup(t, nil)
+		mailboxCommand(t, addr, "INBOX", 1, "Trash", false)
+		sync()
+		require.Equal(t, 2, imapMembershipRowCount(t, st, src.ID))
+		// msgvault trashes the INBOX copy; the Trash copy remains.
+		testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
+		markTrashed(t, st, src)
+		sync("Trash")
+		assert.Equal(t, 1, imapTombstonedMessageCount(t, st, src.ID))
+		assert.Equal(t, 1, imapMembershipRowCount(t, st, src.ID), "the skipped Trash membership stays as saved")
+	})
+
+	t.Run("Trash also advertises All Mail", func(t *testing.T) {
+		addr, st, src, sync := setup(t, map[string][]imapapi.MailboxAttr{
+			"Trash": {imapapi.MailboxAttrTrash, imapapi.MailboxAttrAll},
+		}, "Trash")
+		mailboxCommand(t, addr, "INBOX", 1, "Trash", true)
+		sync("Trash")
+		assert.Equal(t, 1, imapTombstonedMessageCount(t, st, src.ID), "a message moved to skipped Trash is marked")
+		mailboxCommand(t, addr, "Trash", 1, "INBOX", true)
+		sync("Trash")
+		assert.Zero(t, imapTombstonedMessageCount(t, st, src.ID), "the restored copy is seen in INBOX")
+		assert.Equal(t, 1, messageCount(t, st, src))
+	})
 }

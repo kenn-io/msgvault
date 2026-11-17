@@ -370,3 +370,28 @@ func (c *Client) statusFolder(ctx context.Context, mailbox string) (FolderState,
 		NumMessages:   data.NumMessages,
 	}, nil
 }
+
+// ReconcilesFilteredDeletions reports whether this session reconciles the
+// scanned mailboxes of a sync whose only filter is saved Trash or Junk
+// exclusions.
+func (c *Client) ReconcilesFilteredDeletions() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.scannedMailboxSnapshotLocked()
+}
+
+func (c *Client) scannedMailboxSnapshotLocked() bool {
+	if !c.savedFolderExclusions || !c.since.IsZero() || !c.before.IsZero() ||
+		c.config == nil || c.mailboxCache == nil ||
+		len(c.effectiveFolderIncludeLocked()) > 0 || len(c.folderFilterExclude) == 0 {
+		return false
+	}
+	for _, mailbox := range filterMailboxes(c.mailboxCache, c.folderFilterExclude, nil) {
+		attrs := c.mailboxAttrs[mailbox]
+		if mailbox != c.trashMailbox && mailbox != c.junkMailbox &&
+			!hasAttr(attrs, imap.MailboxAttrTrash) && !hasAttr(attrs, imap.MailboxAttrJunk) {
+			return false
+		}
+	}
+	return true
+}

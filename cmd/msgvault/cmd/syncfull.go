@@ -479,6 +479,7 @@ func applyIMAPMailboxDeltas(
 	syncRunID int64,
 	deltas []imaplib.MailboxDelta,
 	observations []imaplib.MembershipObservation,
+	scannedOnly bool,
 ) error {
 	type membershipKey struct {
 		mailbox     string
@@ -546,12 +547,16 @@ func applyIMAPMailboxDeltas(
 			},
 			Memberships:  byMailbox[delta.Mailbox],
 			VanishedUIDs: vanished,
+			KnownUIDs:    delta.State.KnownUIDs,
 			Reset:        delta.Reset,
 		})
 		delete(byMailbox, delta.Mailbox)
 	}
 	for mailbox := range byMailbox {
 		return fmt.Errorf("IMAP membership observation for mailbox %q has no mailbox delta", mailbox)
+	}
+	if scannedOnly {
+		return s.ApplyIMAPScannedMailboxDeltasForSyncContext(ctx, src.ID, syncRunID, storeDeltas)
 	}
 	return s.ApplyIMAPMailboxDeltasForSyncContext(ctx, src.ID, syncRunID, storeDeltas)
 }
@@ -565,7 +570,7 @@ func imapSyncCanCommit(ctx context.Context, summary *gmail.SyncSummary, limit in
 }
 
 // saveIMAPFolderStates atomically persists mailbox membership and cursor
-// observations only after a clean, unlimited, unfiltered sync.
+// observations only after a clean, unlimited sync with complete mailbox evidence.
 func saveIMAPFolderStates(
 	ctx context.Context,
 	s *store.Store,
@@ -578,7 +583,8 @@ func saveIMAPFolderStates(
 	if !ok || !imapSyncCanCommit(ctx, summary, limit) {
 		return nil
 	}
-	if imapClient.LabelsSnapshotFiltered() || !imapClient.LabelsSnapshotComplete() {
+	scannedOnly := imapClient.ReconcilesFilteredDeletions()
+	if !scannedOnly && !imapClient.LabelsSnapshotComplete() {
 		return nil
 	}
 	deltas := imapClient.ObservedMailboxDeltas()
@@ -586,7 +592,7 @@ func saveIMAPFolderStates(
 		return nil
 	}
 	if err := applyIMAPMailboxDeltas(
-		ctx, s, src, summary.SyncRunID, deltas, imapClient.ObservedMemberships(),
+		ctx, s, src, summary.SyncRunID, deltas, imapClient.ObservedMemberships(), scannedOnly,
 	); err != nil {
 		return fmt.Errorf("apply IMAP mailbox deltas: %w", err)
 	}
@@ -746,25 +752,25 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 func imapSyncFolderFilter(ctx context.Context, s *store.Store, identifier string, state *invocation, folders, skipFolders []string) imaplib.Option {
 	folders = parseFolderFilter(folders)
 	skipFolders = parseFolderFilter(skipFolders)
-	cfg := state.cfg
-	if len(folders) == 0 && len(skipFolders) == 0 {
-		if len(cfg.Sync.IMAPSkipFolders) > 0 {
-			state.imapFolderAccounts.Do(func() {
-				sources, err := s.ListSourcesContext(ctx, sourceTypeIMAP)
-				if err != nil {
-					state.logger.Warn("could not check IMAP folder exclusion accounts", "error", err)
-					return
-				}
-				for account := range cfg.Sync.IMAPSkipFolders {
-					if !slices.ContainsFunc(sources, func(src *store.Source) bool { return src.Identifier == account }) {
-						state.logger.Warn("IMAP folder exclusions match no stored account; copy the ACCOUNT identifier from msgvault list-accounts", "account", account)
-					}
-				}
-			})
-		}
-		skipFolders = parseFolderFilter(cfg.Sync.IMAPSkipFolders[identifier])
+	if len(folders) > 0 || len(skipFolders) > 0 {
+		return imaplib.WithFolderFilter(folders, skipFolders)
 	}
-	return imaplib.WithFolderFilter(folders, skipFolders)
+	cfg := state.cfg
+	if len(cfg.Sync.IMAPSkipFolders) > 0 {
+		state.imapFolderAccounts.Do(func() {
+			sources, err := s.ListSourcesContext(ctx, sourceTypeIMAP)
+			if err != nil {
+				state.logger.Warn("could not check IMAP folder exclusion accounts", "error", err)
+				return
+			}
+			for account := range cfg.Sync.IMAPSkipFolders {
+				if !slices.ContainsFunc(sources, func(src *store.Source) bool { return src.Identifier == account }) {
+					state.logger.Warn("IMAP folder exclusions match no stored account; copy the ACCOUNT identifier from msgvault list-accounts", "account", account)
+				}
+			}
+		})
+	}
+	return imaplib.WithSavedFolderExclusions(parseFolderFilter(cfg.Sync.IMAPSkipFolders[identifier]))
 }
 
 // parseFolderFilter trims whitespace from folder names and removes empty

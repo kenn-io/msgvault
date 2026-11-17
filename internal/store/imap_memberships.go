@@ -39,6 +39,7 @@ type IMAPMailboxDelta struct {
 	State        IMAPFolderState
 	Memberships  []IMAPMembershipObservation
 	VanishedUIDs []uint32
+	KnownUIDs    []uint32 // complete resulting UID set; read by scoped applies
 	Reset        bool
 }
 
@@ -255,11 +256,11 @@ func (s *Store) readIMAPStoredMemberships(
 // An observed live source-key holder survives a generation change unless
 // independent identity evidence resolves the observation to another message.
 func (s *Store) ApplyIMAPMailboxDeltas(sourceID int64, deltas []IMAPMailboxDelta) error {
-	return s.applyIMAPMailboxDeltas(context.Background(), sourceID, 0, deltas)
+	return s.applyIMAPMailboxDeltas(context.Background(), sourceID, 0, deltas, true)
 }
 
 // ApplyIMAPMailboxDeltasForSyncContext applies an authoritative topology only
-// if syncRunID is still the latest completed generation for sourceID. The
+// if syncRunID is still the latest generation for sourceID and is completed. The
 // generation check and topology replacement share one transaction and source
 // lock, so a newer StartSync cannot interleave between them.
 func (s *Store) ApplyIMAPMailboxDeltasForSyncContext(
@@ -271,7 +272,23 @@ func (s *Store) ApplyIMAPMailboxDeltasForSyncContext(
 	if syncRunID <= 0 {
 		return fmt.Errorf("apply IMAP mailbox deltas: invalid sync generation %d", syncRunID)
 	}
-	return s.applyIMAPMailboxDeltas(ctx, sourceID, syncRunID, deltas)
+	return s.applyIMAPMailboxDeltas(ctx, sourceID, syncRunID, deltas, true)
+}
+
+// ApplyIMAPScannedMailboxDeltasForSyncContext reconciles only the mailboxes
+// named by deltas. Other mailboxes retain their saved topology.
+// Callers must supply complete observations and KnownUIDs for each scanned
+// mailbox and the latest source generation, whose status must be completed.
+func (s *Store) ApplyIMAPScannedMailboxDeltasForSyncContext(
+	ctx context.Context,
+	sourceID int64,
+	syncRunID int64,
+	deltas []IMAPMailboxDelta,
+) error {
+	if syncRunID <= 0 {
+		return errors.New("apply scanned IMAP mailbox deltas: sync run ID is required")
+	}
+	return s.applyIMAPMailboxDeltas(ctx, sourceID, syncRunID, deltas, false)
 }
 
 func (s *Store) applyIMAPMailboxDeltas(
@@ -279,6 +296,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 	sourceID int64,
 	syncRunID int64,
 	deltas []IMAPMailboxDelta,
+	fullTopology bool,
 ) error {
 	if deltas == nil {
 		return errors.New("apply IMAP mailbox deltas: nil authoritative topology")
@@ -303,31 +321,67 @@ func (s *Store) applyIMAPMailboxDeltas(
 		if err != nil {
 			return err
 		}
-		if err := resolver.retireObsoleteKeys(ctx, normalizedDeltas, generations); err != nil {
+		affected := make(map[int64]struct{})
+		if err := resolver.retireObsoleteKeys(ctx, normalizedDeltas, generations, fullTopology, affected); err != nil {
 			return err
 		}
 
-		affected := make(map[int64]struct{})
-		if err := s.captureUntrackedIMAPMessageIDs(ctx, tx, sourceID, len(generations) != 0, affected); err != nil {
-			return err
-		}
-		currentMailboxes := make(map[string]struct{}, len(normalizedDeltas))
-		var trashArgs []any
-		for _, normalized := range normalizedDeltas {
-			currentMailboxes[normalized.mailbox] = struct{}{}
-			if normalized.delta.Trash {
-				trashArgs = append(trashArgs, normalized.mailbox)
+		if fullTopology {
+			// A previous scoped sync may have kept labels without memberships.
+			// A full scan can resolve those labels even when memberships are unchanged.
+			// Labels without provider IDs include archived labels, not live mailboxes.
+			if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
+				SELECT m.message_id FROM imap_message_memberships m
+				WHERE m.source_id = ? AND (
+					EXISTS (
+						SELECT 1 FROM message_labels ml
+						JOIN labels l ON l.id = ml.label_id
+						WHERE ml.message_id = m.message_id AND l.source_id = m.source_id
+						AND l.source_label_id IS NOT NULL AND NOT EXISTS (
+							SELECT 1 FROM imap_message_memberships present
+							WHERE present.source_id = m.source_id AND present.message_id = m.message_id
+							AND l.source_id = present.source_id AND l.source_label_id = present.mailbox
+						)
+					) OR NOT EXISTS (
+						SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+						WHERE ml.message_id = m.message_id AND l.source_id = m.source_id
+						AND l.source_label_id = m.mailbox
+					)
+				)
+				GROUP BY m.message_id
+			`, sourceID); err != nil {
+				return fmt.Errorf("capture IMAP messages for full reconciliation: %w", err)
 			}
-		}
-		trashRole := `1=0`
-		if len(trashArgs) > 0 {
-			placeholders := `?` + strings.Repeat(",?", len(trashArgs)-1)
-			trashRole = `l.source_label_id IN (` + placeholders + `)`
-		}
-		if err := retireAbsentIMAPMailboxes(
-			ctx, tx, sourceID, currentMailboxes, generations, affected,
-		); err != nil {
-			return err
+			if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
+				SELECT messages.id FROM labels l
+				JOIN message_labels ml ON ml.label_id = l.id
+				JOIN messages ON messages.id = ml.message_id
+				WHERE l.source_id = ? AND l.source_label_id IS NOT NULL
+				AND (messages.source_id <> l.source_id OR messages.deleted_from_source_at IS NULL)
+				AND NOT EXISTS (
+					SELECT 1 FROM source_merge_archive_only_messages marker
+					WHERE marker.message_id = messages.id
+				)
+				AND NOT EXISTS (
+					SELECT 1 FROM imap_message_memberships m
+					WHERE m.source_id = l.source_id AND m.message_id = messages.id
+				)
+				GROUP BY messages.id
+			`, sourceID); err != nil {
+				return fmt.Errorf("capture untracked IMAP labels for full reconciliation: %w", err)
+			}
+			if err := s.captureUntrackedIMAPMessageIDs(ctx, tx, sourceID, len(generations) != 0, affected); err != nil {
+				return err
+			}
+			currentMailboxes := make(map[string]struct{}, len(normalizedDeltas))
+			for _, normalized := range normalizedDeltas {
+				currentMailboxes[normalized.mailbox] = struct{}{}
+			}
+			if err := retireAbsentIMAPMailboxes(
+				ctx, tx, sourceID, currentMailboxes, generations, affected,
+			); err != nil {
+				return err
+			}
 		}
 		for _, normalized := range normalizedDeltas {
 			delta := normalized.delta
@@ -398,8 +452,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 					if saved && prior.flagsDecoded &&
 						prior.messageID == messageID &&
 						slices.Equal(slices.Sorted(slices.Values(prior.flags)), slices.Sorted(slices.Values(flags))) {
-						// Identical membership: writing it would only move
-						// updated_at and rebuild labels that cannot have changed.
+						// Identical membership: writing it would only move updated_at.
 						continue
 					}
 				}
@@ -446,54 +499,141 @@ func (s *Store) applyIMAPMailboxDeltas(
 			}
 		}
 
-		// Mailbox roles can change without a membership delta. Recheck marked
-		// messages whose saved memberships no longer include any Trash mailbox.
-		trashMembership := ""
-		if len(trashArgs) > 0 {
-			trashMembership = ` AND NOT EXISTS (
-				SELECT 1 FROM imap_message_memberships tm
-				WHERE tm.source_id = m.source_id AND tm.message_id = m.id
-				AND tm.mailbox IN (?` + strings.Repeat(",?", len(trashArgs)-1) + `))`
+		if !fullTopology {
+			for _, delta := range normalizedDeltas {
+				if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
+					SELECT ml.message_id FROM message_labels ml
+					JOIN labels l ON l.id = ml.label_id
+					WHERE l.source_id = ? AND l.source_label_id = ?
+					AND NOT EXISTS (
+						SELECT 1 FROM imap_message_memberships m
+						WHERE m.source_id = l.source_id AND m.mailbox = l.source_label_id
+						AND m.message_id = ml.message_id
+					) AND NOT EXISTS (
+						SELECT 1 FROM source_merge_archive_only_messages marker
+						WHERE marker.message_id = ml.message_id
+					)
+				`, sourceID, delta.mailbox); err != nil {
+					return fmt.Errorf("capture untracked labels for IMAP mailbox %q: %w", delta.mailbox, err)
+				}
+				if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
+					SELECT m.message_id FROM imap_message_memberships m
+					WHERE m.source_id = ? AND m.mailbox = ? AND NOT EXISTS (
+						SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+						WHERE ml.message_id = m.message_id AND l.source_id = m.source_id
+						AND l.source_label_id = m.mailbox
+					)
+				`, sourceID, delta.mailbox); err != nil {
+					return fmt.Errorf("capture missing labels for IMAP mailbox %q: %w", delta.mailbox, err)
+				}
+			}
 		}
-		if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
-			SELECT m.id FROM messages m
-			WHERE m.source_id = ? AND m.deleted_from_source_at IS NOT NULL
-			AND EXISTS (SELECT 1 FROM imap_message_memberships mm
-				WHERE mm.source_id = m.source_id AND mm.message_id = m.id)`+trashMembership,
-			append([]any{sourceID}, trashArgs...)...); err != nil {
-			return fmt.Errorf("capture IMAP messages outside Trash: %w", err)
+		scanned := make(map[string]struct{}, len(normalizedDeltas))
+		var liveArgs, trashArgs []any
+		for _, delta := range normalizedDeltas {
+			scanned[delta.mailbox] = struct{}{}
+			if delta.delta.Trash {
+				trashArgs = append(trashArgs, delta.mailbox)
+			} else {
+				liveArgs = append(liveArgs, delta.mailbox)
+			}
 		}
-
+		// A marked message counts as restored only when this apply saw it in
+		// a mailbox outside Trash and in no Trash mailbox it scanned. A scoped
+		// apply cannot see the mailboxes it skips, so their saved memberships
+		// and labels never clear a mark.
+		restoredCondition := `1=0`
+		restoredArgs := []any{}
+		if len(liveArgs) > 0 {
+			restoredCondition = `EXISTS (
+				SELECT 1 FROM imap_message_memberships live
+				WHERE live.source_id = messages.source_id AND live.message_id = messages.id
+				AND live.mailbox IN (?` + strings.Repeat(",?", len(liveArgs)-1) + `))`
+			restoredArgs = append(restoredArgs, liveArgs...)
+			if len(trashArgs) > 0 {
+				restoredCondition += ` AND NOT EXISTS (
+					SELECT 1 FROM imap_message_memberships trash
+					WHERE trash.source_id = messages.source_id AND trash.message_id = messages.id
+					AND trash.mailbox IN (?` + strings.Repeat(",?", len(trashArgs)-1) + `))`
+				restoredArgs = append(restoredArgs, trashArgs...)
+			}
+			// Mailbox roles can change without a membership delta. Recheck
+			// marked messages that now meet the restore condition.
+			if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
+				SELECT messages.id FROM messages
+				WHERE messages.source_id = ? AND messages.deleted_from_source_at IS NOT NULL
+				AND `+restoredCondition,
+				append([]any{sourceID}, restoredArgs...)...); err != nil {
+				return fmt.Errorf("capture IMAP messages outside Trash: %w", err)
+			}
+		}
 		for _, messageID := range sortedIMAPMessageIDs(affected) {
 			mailboxes, err := s.imapMembershipMailboxes(ctx, tx, sourceID, messageID)
 			if err != nil {
 				return err
 			}
 			labelIDs := make([]int64, 0, len(mailboxes))
+			hasFolder := len(mailboxes) > 0
+			rows, err := tx.QueryContext(ctx, `
+				SELECT l.id, l.source_id, l.source_label_id
+				FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+				WHERE ml.message_id = ?
+			`, messageID)
+			if err != nil {
+				return fmt.Errorf("query labels for IMAP message %d: %w", messageID, err)
+			}
+			for rows.Next() {
+				var id int64
+				var labelSource sql.NullInt64
+				var mailbox sql.NullString
+				if err := rows.Scan(&id, &labelSource, &mailbox); err != nil {
+					_ = rows.Close()
+					return fmt.Errorf("scan labels for IMAP message %d: %w", messageID, err)
+				}
+				if labelSource.Valid && labelSource.Int64 == sourceID && mailbox.Valid {
+					if _, ok := scanned[mailbox.String]; fullTopology || ok {
+						continue
+					}
+					hasFolder = true
+				}
+				labelIDs = append(labelIDs, id)
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("iterate labels for IMAP message %d: %w", messageID, err)
+			}
+			if err := rows.Close(); err != nil {
+				return fmt.Errorf("close labels for IMAP message %d: %w", messageID, err)
+			}
 			for _, mailbox := range mailboxes {
+				if _, ok := scanned[mailbox]; !fullTopology && !ok {
+					continue
+				}
 				labelID, err := ensureIMAPMailboxLabel(ctx, tx, sourceID, mailbox)
 				if err != nil {
 					return err
 				}
 				labelIDs = append(labelIDs, labelID)
 			}
-			if err := s.refreshAccountAttributionIfOutboundChangedTx(ctx, tx, messageID, func() error {
-				return replaceMessageLabelsTx(boundQuerier{ctx: ctx, q: tx}, messageID, labelIDs)
-			}); err != nil {
+			changed, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, labelIDs, true)
+			if err != nil {
 				return fmt.Errorf("replace labels for IMAP message %d: %w", messageID, err)
 			}
-			if len(mailboxes) == 0 {
+			if !changed {
+				if err := s.refreshAccountAttributionIfOutboundChangedTx(ctx, tx, messageID, func() error { return nil }); err != nil {
+					return fmt.Errorf("refresh attribution for IMAP message %d: %w", messageID, err)
+				}
+			}
+			if !hasFolder {
 				if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 					UPDATE messages SET deleted_from_source_at = %s
 					WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NULL
 				`, s.dialect.Now()), messageID, sourceID); err != nil {
 					return fmt.Errorf("tombstone IMAP message %d: %w", messageID, err)
 				}
-			} else if err := s.clearMessageDeletedFromSourceTx(ctx, tx, `
-				id = ? AND source_id = ?
-				AND NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
-					WHERE ml.message_id = messages.id AND (`+trashRole+`))
-			`, append([]any{messageID, sourceID}, trashArgs...)...); err != nil {
+			} else if err := s.clearMessageDeletedFromSourceTx(ctx, tx,
+				`id = ? AND source_id = ? AND `+restoredCondition,
+				append([]any{messageID, sourceID}, restoredArgs...)...); err != nil {
 				return fmt.Errorf("clear IMAP tombstone for message %d: %w", messageID, err)
 			}
 		}
@@ -623,18 +763,7 @@ func deleteUnobservedIMAPMemberships(
 	return nil
 }
 
-func untrackedIMAPMessagesQuery(sqlite, incremental bool) string {
-	index, changed := "", ""
-	if incremental {
-		changed = " AND messages.content_changed_at >= ?"
-		if sqlite {
-			index = " INDEXED BY idx_messages_source_content_changed"
-		}
-	}
-	return `
-		SELECT messages.id
-		FROM messages` + index + `
-		WHERE messages.source_id = ?` + changed + `
+const untrackedIMAPMessagePredicates = `
 		  AND messages.deleted_from_source_at IS NULL
 		  AND NOT EXISTS (
 			SELECT 1 FROM source_merge_archive_only_messages marker
@@ -646,6 +775,19 @@ func untrackedIMAPMessagesQuery(sqlite, incremental bool) string {
 			  AND membership.message_id = messages.id
 		  )
 	`
+
+func untrackedIMAPMessagesQuery(sqlite, incremental bool) string {
+	index, changed := "", ""
+	if incremental {
+		changed = " AND messages.content_changed_at >= ?"
+		if sqlite {
+			index = " INDEXED BY idx_messages_source_content_changed"
+		}
+	}
+	return `
+		SELECT messages.id
+		FROM messages` + index + `
+		WHERE messages.source_id = ?` + changed + untrackedIMAPMessagePredicates
 }
 
 func (s *Store) captureUntrackedIMAPMessageIDs(
@@ -908,7 +1050,9 @@ type imapMembershipResolver struct {
 	legacyMessages    map[string]int64
 }
 
-func (r *imapMembershipResolver) retireObsoleteKeys(ctx context.Context, deltas []normalizedIMAPMailboxDelta, generations []imapMembershipUIDGeneration) error {
+func (r *imapMembershipResolver) retireObsoleteKeys(
+	ctx context.Context, deltas []normalizedIMAPMailboxDelta, generations []imapMembershipUIDGeneration, fullTopology bool, affected map[int64]struct{},
+) error {
 	current := make(map[string]normalizedIMAPMailboxDelta, len(deltas))
 	for _, delta := range deltas {
 		current[delta.mailbox] = delta
@@ -949,8 +1093,18 @@ func (r *imapMembershipResolver) retireObsoleteKeys(ctx context.Context, deltas 
 			previous[delta.mailbox] = 0
 		}
 	}
+	// Capture once per source before retirement rewrites keys. UIDs from a
+	// replaced generation are judged by the identity rules that retire its key.
+	if !fullTopology {
+		if err := r.captureScannedUntracked(current, previous, affected); err != nil {
+			return err
+		}
+	}
 	for mailbox, generation := range previous {
 		delta, present := current[mailbox]
+		if !fullTopology && !present {
+			continue
+		}
 		if present && generation == delta.uidValidity && !staleMemberships[mailbox] {
 			continue
 		}
@@ -1003,15 +1157,11 @@ func (r *imapMembershipResolver) retireMailboxKeys(ctx context.Context, mailbox 
 			_ = rows.Close()
 			return err
 		}
-		separator := strings.LastIndexByte(c.key, '|')
-		if separator < 0 || c.key[:separator] != mailbox {
+		keyMailbox, uid, ok := decodeIMAPSourceKey(c.key)
+		if !ok || keyMailbox != mailbox {
 			continue
 		}
-		uid, err := strconv.ParseUint(c.key[separator+1:], 10, 32)
-		if err != nil || uid == 0 || c.key[separator+1:] != strconv.FormatUint(uid, 10) {
-			continue
-		}
-		c.uid = uint32(uid)
+		c.uid = uid
 		_, observed := observations[c.uid]
 		if protected {
 			continue
@@ -1050,6 +1200,59 @@ func (r *imapMembershipResolver) retireMailboxKeys(ctx context.Context, mailbox 
 		}
 	}
 	return nil
+}
+
+func decodeIMAPSourceKey(key string) (mailbox string, uid uint32, ok bool) {
+	mailbox, text, found := strings.CutLast(key, "|")
+	if !found {
+		return "", 0, false
+	}
+	value, err := strconv.ParseUint(text, 10, 32)
+	if err != nil || value == 0 || text != strconv.FormatUint(value, 10) {
+		return "", 0, false
+	}
+	return mailbox, uint32(value), true
+}
+
+// captureScannedUntracked marks live rows without memberships whose source key
+// names a scanned mailbox at a UID missing from its complete resulting UID set,
+// or at any UID when the mailbox has a new generation.
+func (r *imapMembershipResolver) captureScannedUntracked(
+	deltas map[string]normalizedIMAPMailboxDelta, previous map[string]uint32, affected map[int64]struct{},
+) error {
+	rows, err := r.tx.QueryContext(r.ctx, `SELECT id, source_message_id FROM messages WHERE messages.source_id = ? `+untrackedIMAPMessagePredicates, r.sourceID)
+	if err != nil {
+		return fmt.Errorf("read untracked IMAP messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	present := make(map[string]map[uint32]struct{}, len(deltas))
+	for mailbox, delta := range deltas {
+		uids := make(map[uint32]struct{}, len(delta.delta.KnownUIDs))
+		for _, uid := range delta.delta.KnownUIDs {
+			uids[uid] = struct{}{}
+		}
+		present[mailbox] = uids
+	}
+	for rows.Next() {
+		var id int64
+		var key string
+		if err := rows.Scan(&id, &key); err != nil {
+			return fmt.Errorf("scan untracked IMAP message: %w", err)
+		}
+		mailbox, uid, ok := decodeIMAPSourceKey(key)
+		if !ok {
+			continue
+		}
+		delta, scanned := deltas[mailbox]
+		if !scanned {
+			continue
+		}
+		newGeneration := previous[mailbox] != 0 && previous[mailbox] != delta.uidValidity
+		if _, ok := present[mailbox][uid]; newGeneration || !ok {
+			affected[id] = struct{}{}
+		}
+	}
+	return rows.Err()
 }
 
 // Snapshot identity evidence before key retirement and membership changes can invalidate it.

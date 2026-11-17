@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-12"
+last_edited: "2026-11-17"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -899,8 +899,50 @@ Either `--folder` or `--skip-folder` replaces the saved filter for one run.
 Sync warns when an account key matches no stored IMAP source or a folder name
 matches no selectable mailbox. Unmatched folders stay configured and will be
 excluded if created later. Blank saved folder names prevent daemon startup.
-See [IMAP folder filtering](usage/imap.md#what-filtering-changes) for the effects
-on archive membership, deletion tracking, cursor advancement, and `gc`.
+
+Saved exclusions that skip only Trash or Junk keep deletion tracking on for the
+folders msgvault still scans. A message moved from INBOX into a skipped Trash is
+marked deleted, and `gc` can purge it. A marked message stays marked until sync
+finds it in a scanned folder other than Trash and in no scanned Trash folder.
+msgvault counts every mailbox the server advertises with a Trash or Junk LIST
+special-use role, and falls back to common folder names only when no role is
+advertised.
+
+Deletion tracking pauses for the whole run, and msgvault keeps stored
+memberships and deletion markers as they are, when any of these apply:
+
+- A saved exclusion names any other folder.
+- The account has a `folders` allow list.
+- The command uses `--folder`, `--skip-folder`, `--after`, `--before`, or a
+  message limit.
+
+The run must also finish cleanly. Failed, interrupted, or resumed runs do not
+commit deletions.
+
+When deletion tracking runs with saved Trash or Junk exclusions:
+
+- msgvault advances cursors and replaces memberships only for the folders it
+  scanned, and skips QRESYNC. Unchanged folders reuse their saved state.
+- Sync marks a message deleted only when no stored folder membership remains.
+  Memberships already recorded in a skipped folder stay unchanged, so sync
+  does not mark a message recorded in Trash by an earlier unfiltered sync. A
+  message msgvault moved to Trash keeps its mark, and stays eligible for
+  `gc`, until sync finds it in a scanned folder other than Trash and in no
+  scanned Trash folder. A saved membership in a skipped folder never clears a
+  mark.
+- Messages archived by earlier filtered syncs are checked too. A message whose
+  folder was scanned but no longer holds it is marked deleted.
+- An archived draft is replaced by its sent copy, as in a complete sync, while
+  labels from skipped folders are kept.
+- A deleted or renamed folder keeps its messages live until a sync without
+  folder exclusions.
+- When the server recreates a scanned folder with a new UIDVALIDITY, sync
+  checks its earlier messages against the new contents. A message it cannot
+  match there, and that no other stored folder holds, is marked deleted.
+
+A later sync without folder filters reconciles the whole account, including
+older imports. See [IMAP folder filtering](usage/imap.md#what-filtering-changes)
+for how filters affect archive membership and labels.
 
 Remote image archiving is **off by default**. Enabling it contacts
 sender-controlled servers and can activate tracking pixels or disclose the
