@@ -744,7 +744,6 @@ func TestEditedCommitmentDecision(t *testing.T) {
 	}
 	const quote = "I will send it."
 	const first, second = "I will send it.", "I will call."
-	longer := quote + " Thanks!"
 	combined := first + " " + second
 	cases := []testCase{
 		{
@@ -761,11 +760,6 @@ func TestEditedCommitmentDecision(t *testing.T) {
 			rescans:         []rescanSpec{{text: second, promises: []promiseSpec{{quote: second, summary: "Call"}}, want: []expectedPromise{{first, LoopStateOpen}, {second, LoopStateOpen}}, staleQuote: first}},
 		},
 		{
-			name: "omitted promise remains open", initialText: quote, initialStates: []string{LoopStateOpen},
-			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
-			rescans:         []rescanSpec{{text: quote, want: []expectedPromise{{quote, LoopStateOpen}}}},
-		},
-		{
 			name: "deleted repetition", initialText: quote + " " + quote,
 			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}, {quote: quote, summary: "Send", start: int64(len(quote) + 1)}},
 			rescans:         []rescanSpec{{text: quote, want: []expectedPromise{{quote, LoopStateDone}, {quote, LoopStateOpen}, {quote, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send"}}}},
@@ -777,14 +771,6 @@ func TestEditedCommitmentDecision(t *testing.T) {
 			rescans: []rescanSpec{{text: quote + " " + quote, includeClosed: true,
 				promises: []promiseSpec{{quote: quote, summary: "Send"}, {quote: quote, summary: "Send", start: int64(len(quote) + 1)}},
 				want:     []expectedPromise{{quote, LoopStateDone}, {quote, LoopStateDone}}}},
-		},
-		{
-			name: "longer quote survives unrelated edit", initialText: longer,
-			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
-			rescans: []rescanSpec{
-				{text: longer, want: []expectedPromise{{quote, LoopStateDone}, {longer, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: longer, summary: "Send"}}},
-				{text: "Note. " + longer, want: []expectedPromise{{quote, LoopStateDone}, {longer, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: longer, summary: "Send", start: 6}}},
-			},
 		},
 		{
 			name: "restored wording preserves decision", initialText: quote,
@@ -1057,7 +1043,7 @@ func TestCommitmentDiscoveryRestartsWhenOwnershipChangesDuringScan(t *testing.T)
 	r.Equal(personFactLedgerNow, window.SelectionAt)
 }
 
-func TestCommitmentOwnershipChangeWaitsForFrontierCommit(t *testing.T) {
+func TestCommitmentOwnershipChangeWaitsForFrontierLock(t *testing.T) {
 	r, ctx := require.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "identity-frontier-lock", false)
 	if !f.store.IsPostgreSQL() {

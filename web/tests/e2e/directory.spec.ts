@@ -86,7 +86,7 @@ test('Person tabs stay on one line at phone width', async ({ page }) => {
   expect(new Set(offsets).size).toBe(1);
 });
 
-test('People Details scrolls independently at desktop width', async ({ page }) => {
+test('People Details aligns sections and scrolls independently at desktop width', async ({ page }) => {
   await installMixedArchive(page);
   await page.setViewportSize({ width: 1280, height: 600 });
   await page.goto(directoryURL(42));
