@@ -1370,6 +1370,35 @@ func (s *Store) MessageMetadataWithRawBatch(
 	return result, nil
 }
 
+// MarkedSourceMessageIDsBatchContext returns marked source message IDs from a
+// provider listing page, including rows whose raw MIME is missing.
+func (s *Store) MarkedSourceMessageIDsBatchContext(
+	ctx context.Context, sourceID int64, sourceMessageIDs []string,
+) (map[string]struct{}, error) {
+	result := make(map[string]struct{})
+	if len(sourceMessageIDs) == 0 {
+		return result, nil
+	}
+
+	err := queryInChunksContext(ctx, s.db, sourceMessageIDs, []any{sourceID}, `
+		SELECT source_message_id
+		FROM messages
+		WHERE source_id = ? AND deleted_from_source_at IS NOT NULL
+		  AND source_message_id IN (%s)`,
+		func(rows *loggedRows) error {
+			var sourceMessageID string
+			if err := rows.Scan(&sourceMessageID); err != nil {
+				return err
+			}
+			result[sourceMessageID] = struct{}{}
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // EnsureConversation gets or creates a conversation (thread) for a message.
 // Concurrent first-inserts converge via INSERT ... ON CONFLICT DO NOTHING
 // RETURNING id followed by a lookup. The conflict path deliberately issues no
@@ -3704,18 +3733,23 @@ func (s *Store) ClearMessageDeletedFromSourceContext(ctx context.Context, source
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	write := func(q querier) error {
-		_, err := q.Exec(`
-			UPDATE messages
-			SET deleted_from_source_at = NULL
-			WHERE source_id = ? AND source_message_id = ?
-		`, sourceID, sourceMessageID)
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return s.clearMessageDeletedFromSourceTx(ctx, tx, `source_id = ? AND source_message_id = ?`, sourceID, sourceMessageID)
+	})
+}
+
+// clearMessageDeletedFromSourceTx clears one matching mark and invalidates cached facts.
+func (s *Store) clearMessageDeletedFromSourceTx(ctx context.Context, tx *loggedTx, condition string, args ...any) error {
+	var messageID int64
+	err := tx.QueryRowContext(ctx, `UPDATE messages SET deleted_from_source_at = NULL WHERE deleted_from_source_at IS NOT NULL AND `+condition+` RETURNING id`, args...).Scan(&messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil || s.IsPostgreSQL() {
 		return err
 	}
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
+	_, err = tx.ExecContext(ctx, `INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('message_facts', ?)`, messageID)
+	return err
 }
 
 // MarkMessagesDeletedBatch marks multiple messages as deleted from the source in a single transaction.
