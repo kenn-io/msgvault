@@ -585,8 +585,8 @@ func TestListLoopsMapsCommitmentsAndForwardsIncludeClosed(t *testing.T) {
 		name, timezone, query, day string
 		overdue, includeClosed     bool
 	}{
-		{"default", "", "?include_closed=true", "2026-01-16", true, true},
-		{"activity timezone", "America/New_York", "", "2026-01-15", false, false},
+		{"include closed and UTC day", "", "?include_closed=true", "2026-01-16", true, true},
+		{"activity timezone day", "America/New_York", "", "2026-01-15", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)

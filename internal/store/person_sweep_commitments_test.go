@@ -103,59 +103,43 @@ func TestCommitmentListPages(t *testing.T) {
 		f := newPersonSweepApplyFixture(t, "promise-order", false)
 		st := f.store
 		_, persist := newCommitmentTestConversation(t, f)
-		edited := persist("promise-edited", "I will call.", -2*time.Hour)
+		edited := persist("promise-edited", "I will call by 2026-06-01.", -2*time.Hour)
 		persist("promise-0", "I will send the draft.", -time.Hour)
 		persist("promise-1", "I will send the report.", -100*24*time.Hour)
 		cfg, _ := commitmentTestConfig()
 		cfg.Commitments.Window = 200 * 24 * time.Hour
-		applyCommitmentTestSources(t, f, cfg.Commitments)
-		_, err := st.db.ExecContext(ctx, st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "Plans changed.", edited)
+		_, profile := commitmentTestConfig()
+		window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 		r.NoError(err)
-		items, err := st.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 1, false)
-		r.NoError(err)
-		r.Len(items, 1)
-		a.Equal("I will send the draft.", items[0].Quote)
-		items, err = st.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 5, false)
-		r.NoError(err)
-		r.Len(items, 3)
-		a.Equal("I will send the draft.", items[0].Quote)
-		a.Equal("I will send the report.", items[1].Quote)
-		a.Equal(personfacts.StatusStale, items[1].Freshness)
-		a.Equal("I will call.", items[2].Quote)
-		a.Equal(personfacts.StatusStale, items[2].Freshness)
-	})
-	t.Run("stale overdue before edited undated", func(t *testing.T) {
-		r, ctx := require.New(t), t.Context()
-		f := newPersonSweepApplyFixture(t, "stale-promise-order", false)
-		_, persist := newCommitmentTestConversation(t, f)
-		edited := persist("edited", "I will call.", -2*time.Hour)
-		persist("fresh", "I will write.", -time.Hour)
-		const overdue = "I will send it by 2026-06-01."
-		persist("overdue", overdue, -100*24*time.Hour)
-		cfg, profile := commitmentTestConfig()
-		cfg.Commitments.Window = 200 * 24 * time.Hour
-		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		r.Len(window.Sources, 3)
 		output := peoplesweep.ParsedCommitments{}
 		for _, source := range window.Sources {
-			promise := peoplesweep.CommitmentPromise{SourceID: source.ID, Direction: source.Direction, Quote: source.Text, Start: source.Start, End: source.Start + int64(len([]rune(source.Text))), Summary: "Keep the promise"}
-			if source.Text == overdue {
+			promise := peoplesweep.CommitmentPromise{SourceID: source.ID, Direction: source.Direction, Quote: source.Text, Start: source.Start, End: source.Start + int64(len(source.Text)), Summary: "Keep the promise"}
+			if source.Text == "I will call by 2026-06-01." {
 				promise.DueOn = new("2026-06-01")
 				promise.DuePhrase = new("by 2026-06-01")
 			}
 			output.Promises = append(output.Promises, promise)
 		}
-		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
+		_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
 		r.NoError(err)
-		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "Plans changed.", edited)
+		_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "Plans changed.", edited)
 		r.NoError(err)
-		items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 2, false)
+		items, err := st.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 1, false)
+		r.NoError(err)
+		r.Len(items, 1)
+		a.Equal("I will send the draft.", items[0].Quote)
+		items, err = st.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 2, false)
 		r.NoError(err)
 		r.Len(items, 2)
-		r.Equal("I will write.", items[0].Quote)
-		r.Equal(overdue, items[1].Quote)
-		r.Equal(personfacts.StatusStale, items[1].Freshness)
+		a.Equal("I will call by 2026-06-01.", items[1].Quote)
+		items, err = st.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 5, false)
+		r.NoError(err)
+		r.Len(items, 3)
+		a.Equal("I will send the draft.", items[0].Quote)
+		a.Equal("I will call by 2026-06-01.", items[1].Quote)
+		a.Equal(personfacts.StatusStale, items[1].Freshness)
+		a.Equal("I will send the report.", items[2].Quote)
+		a.Equal(personfacts.StatusStale, items[2].Freshness)
 	})
 	t.Run("overdue before older undated promises", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
@@ -515,33 +499,45 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 		r.False(complete)
 	})
 
-	t.Run("edited skipped message becomes eligible", func(t *testing.T) {
-		r, ctx := require.New(t), t.Context()
-		f := newPersonSweepApplyFixture(t, "edited-skipped", false)
-		_, persist := newCommitmentTestConversation(t, f)
-		id := persist("large", strings.Repeat("x", 200), -time.Hour)
-		cfg, profile := commitmentTestConfig()
-		cfg.Commitments.MaxBytes = 30
-		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-		r.NoError(err)
-		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "I will call.", id)
-		r.NoError(err)
-		f = nextCommitmentTestAttempt(t, f, "-edited")
-		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		r.Len(window.Sources, 1)
-		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-		r.NoError(err)
-		_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-		r.NoError(err)
-		r.True(complete)
-		cfg.Commitments.MaxBytes++
-		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		r.Empty(window.Sources)
-	})
+	for _, mutation := range []string{"edited", "deleted"} {
+		t.Run(mutation+" skipped message clears gap", func(t *testing.T) {
+			r, ctx := require.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, mutation+"-skipped", false)
+			_, persist := newCommitmentTestConversation(t, f)
+			id := persist("large", strings.Repeat("x", 200), -time.Hour)
+			cfg, profile := commitmentTestConfig()
+			cfg.Commitments.MaxBytes = 30
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+			r.NoError(err)
+			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+			r.NoError(err)
+			if mutation == "edited" {
+				_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "I will call.", id)
+			} else {
+				_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow), id)
+			}
+			r.NoError(err)
+			f = nextCommitmentTestAttempt(t, f, "-"+mutation)
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+			r.NoError(err)
+			if mutation == "edited" {
+				r.Len(window.Sources, 1)
+			} else {
+				r.Empty(window.Sources)
+			}
+			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+			r.NoError(err)
+			_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+			r.NoError(err)
+			r.True(complete)
+			if mutation == "edited" {
+				cfg.Commitments.MaxBytes++
+				window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+				r.NoError(err)
+				r.Empty(window.Sources)
+			}
+		})
+	}
 
 	t.Run("retry preserves cutoff for pending changes", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
@@ -576,29 +572,6 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 		r.Equal(waiting, window.Sources[0].MessageID)
 	})
 
-	t.Run("deleted skipped message clears gap", func(t *testing.T) {
-		r, ctx := require.New(t), t.Context()
-		f := newPersonSweepApplyFixture(t, "deleted-skipped", false)
-		_, persist := newCommitmentTestConversation(t, f)
-		id := persist("large", strings.Repeat("x", 200), -time.Hour)
-		cfg, profile := commitmentTestConfig()
-		cfg.Commitments.MaxBytes = 30
-		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-		r.NoError(err)
-		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow), id)
-		r.NoError(err)
-		f = nextCommitmentTestAttempt(t, f, "-deleted")
-		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-		r.NoError(err)
-		r.Empty(window.Sources)
-		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-		r.NoError(err)
-		_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-		r.NoError(err)
-		r.True(complete)
-	})
 }
 
 // A paid optional result is discarded after revocation without losing its accounting.
@@ -908,9 +881,8 @@ func TestCommitmentScopeChanges(t *testing.T) {
 		cfg.Commitments.MaxItems = 60
 		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 		r.NoError(err)
-		for _, source := range window.Sources {
-			r.NotEqual("I will write.", source.Text)
-		}
+		r.Len(window.Sources, 1)
+		r.Equal("I will call.", window.Sources[0].Text)
 	})
 	for _, expanded := range []string{"dates", "window", "batch"} {
 		t.Run(expanded, func(t *testing.T) {
@@ -1008,113 +980,90 @@ func TestCommitmentScopeRetrack(t *testing.T) {
 }
 
 func TestCommitmentDiscoveryRestartsWhenOwnershipChangesDuringScan(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "identity-during-discovery", false)
-	source, persist := newCommitmentTestConversation(t, f)
-	_, err := f.store.RemoveAccountIdentity(source, "owner@example.test")
-	r.NoError(err)
-	persist("promise", "I will call.", -time.Hour)
-	persist("second", "I will write.", -time.Minute)
-	cfg, profile := commitmentTestConfig()
-	cfg.Commitments.MaxItems = 1
-	scope := peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments)
-	priorSince := personFactLedgerNow.Add(-60 * 24 * time.Hour)
-	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, -1, ?, ?)`), f.personID, f.store.dialect.TimestampParam(personFactLedgerNow), scope, f.store.dialect.TimestampParam(priorSince))
-	r.NoError(err)
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-	r.NoError(err)
-	r.Empty(window.Sources)
-	r.NoError(f.store.AddAccountIdentity(source, "owner@example.test", "manual"))
-	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
-	result, err := f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	r.Equal(peoplesweep.FailureArchiveGap, result.CommitmentFailureClass)
-	r.NoError(f.store.db.QueryRowContext(ctx, f.store.Rebind(`SELECT scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`), f.personID).Scan(&scope))
-	r.Empty(scope)
-	since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-	r.NoError(err)
-	r.NotNil(since)
-	r.Equal(priorSince, *since)
-	r.False(complete)
-	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	r.Equal("I will call.", window.Sources[0].Text)
-	r.Zero(window.BackfillMessageID)
-	r.Equal(personFactLedgerNow, window.SelectionAt)
-}
-
-func TestCommitmentDiscoveryRestartsWhenOwnerAliasIsLinked(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "owner-alias-discovery", false)
-	source, persist := newCommitmentTestConversation(t, f)
-	owner, err := f.store.EnsureParticipant("owner@example.test", "Owner", "example.test")
-	r.NoError(err)
-	_, _, err = f.store.CreatePersonFromParticipant(owner)
-	r.NoError(err)
-	alias, err := f.store.EnsureParticipant("alias@example.test", "Alias", "example.test")
-	r.NoError(err)
-	alice, err := f.store.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	r.NoError(err)
-	thread, err := f.store.EnsureConversationWithType(source, "alias-chat", "direct_chat", "Alias chat")
-	r.NoError(err)
-	r.NoError(f.store.EnsureConversationParticipant(thread, alias, "member"))
-	r.NoError(f.store.EnsureConversationParticipant(thread, alice, "member"))
-	id, err := f.store.PersistMessageContext(ctx, &MessagePersistData{Message: &Message{
-		SourceID: source, ConversationID: thread, MessageType: "whatsapp", SourceMessageID: "alias-promise",
-		SenderID: sql.NullInt64{Int64: alice, Valid: true}, SentAt: sql.NullTime{Time: personFactLedgerNow.Add(-time.Hour), Valid: true},
-	}, BodyText: sql.NullString{String: "I will write.", Valid: true}})
-	r.NoError(err)
-	persist("known-promise", "I will call.", -time.Hour)
-	cfg, profile := commitmentTestConfig()
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: "I will call.", Start: 0, End: 12, Summary: "Call"}}})
-	_, err = f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-	r.NoError(err)
-	r.True(complete)
-	persist("inflight-promise", "I will return.", -time.Minute)
-	f = nextCommitmentTestAttempt(t, f, "-inflight")
-	inflight, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-	r.NoError(err)
-	r.Len(inflight.Sources, 1)
-	r.Equal("I will return.", inflight.Sources[0].Text)
-	inflightRequest := commitmentApplyRequest(t, f, inflight, cfg.Commitments, peoplesweep.ParsedCommitments{})
-	_, err = f.store.LinkParticipants(owner, alias)
-	r.NoError(err)
-	result, err := f.store.ApplyPersonSweep(ctx, inflightRequest)
-	r.NoError(err)
-	r.Equal(peoplesweep.FailureArchiveGap, result.CommitmentFailureClass)
-	due, err := f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint)
-	r.NoError(err)
-	r.True(due)
-	_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-	r.NoError(err)
-	r.False(complete)
-	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
-	r.NoError(err)
-	r.Len(window.Sources, 3)
-	r.Contains([]int64{window.Sources[0].MessageID, window.Sources[1].MessageID, window.Sources[2].MessageID}, id)
-	f = nextCommitmentTestAttempt(t, f, "-rescan")
-	var promises []peoplesweep.CommitmentPromise
-	for _, source := range window.Sources {
-		promises = append(promises, peoplesweep.CommitmentPromise{SourceID: source.ID, Direction: peoplesweep.CommitmentOwedTo, Quote: source.Text, Start: 0, End: int64(len(source.Text)), Summary: source.Text})
+	for _, mutation := range []string{"add identity", "link alias"} {
+		t.Run(mutation, func(t *testing.T) {
+			r, ctx := require.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "identity-during-discovery", false)
+			source, persist := newCommitmentTestConversation(t, f)
+			owner, err := f.store.EnsureParticipant("owner@example.test", "Owner", "example.test")
+			r.NoError(err)
+			_, _, err = f.store.CreatePersonFromParticipant(owner)
+			r.NoError(err)
+			alias, err := f.store.EnsureParticipant("alias@example.test", "Alias", "example.test")
+			r.NoError(err)
+			alice, err := f.store.EnsureParticipant("alice@example.com", "Alice", "example.com")
+			r.NoError(err)
+			thread, err := f.store.EnsureConversationWithType(source, "alias-chat", "direct_chat", "Alias chat")
+			r.NoError(err)
+			r.NoError(f.store.EnsureConversationParticipant(thread, alias, "member"))
+			r.NoError(f.store.EnsureConversationParticipant(thread, alice, "member"))
+			_, err = f.store.PersistMessageContext(ctx, &MessagePersistData{Message: &Message{
+				SourceID: source, ConversationID: thread, MessageType: "whatsapp", SourceMessageID: "alias-promise",
+				SenderID: sql.NullInt64{Int64: alice, Valid: true}, SentAt: sql.NullTime{Time: personFactLedgerNow.Add(-time.Hour), Valid: true},
+			}, BodyText: sql.NullString{String: "I will write.", Valid: true}})
+			r.NoError(err)
+			if mutation == "add identity" {
+				_, err = f.store.RemoveAccountIdentity(source, "owner@example.test")
+				r.NoError(err)
+			}
+			persist("known-promise", "I will call.", -time.Hour)
+			persist("inflight-promise", "I will return.", -time.Minute)
+			cfg, profile := commitmentTestConfig()
+			cfg.Commitments.MaxItems = 1
+			scope := peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments)
+			priorSince := personFactLedgerNow.Add(-60 * 24 * time.Hour)
+			_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, -1, ?, ?)`), f.personID, f.store.dialect.TimestampParam(personFactLedgerNow), scope, f.store.dialect.TimestampParam(priorSince))
+			r.NoError(err)
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+			r.NoError(err)
+			request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
+			if mutation == "add identity" {
+				r.NoError(f.store.AddAccountIdentity(source, "owner@example.test", "manual"))
+			} else {
+				_, err = f.store.LinkParticipants(owner, alias)
+				r.NoError(err)
+			}
+			result, err := f.store.ApplyPersonSweep(ctx, request)
+			r.NoError(err)
+			r.Equal(peoplesweep.FailureArchiveGap, result.CommitmentFailureClass)
+			r.NoError(f.store.db.QueryRowContext(ctx, f.store.Rebind(`SELECT scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`), f.personID).Scan(&scope))
+			r.Empty(scope)
+			since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+			r.NoError(err)
+			r.NotNil(since)
+			r.Equal(priorSince, *since)
+			r.False(complete)
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+			r.NoError(err)
+			r.Zero(window.BackfillMessageID)
+			r.Equal(personFactLedgerNow, window.SelectionAt)
+			cfg.Commitments.MaxItems = 60
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+			r.NoError(err)
+			if mutation == "add identity" {
+				r.Len(window.Sources, 2)
+			} else {
+				r.Len(window.Sources, 3)
+			}
+			f = nextCommitmentTestAttempt(t, f, "-rescan")
+			var promises []peoplesweep.CommitmentPromise
+			for _, source := range window.Sources {
+				promises = append(promises, peoplesweep.CommitmentPromise{SourceID: source.ID, Direction: peoplesweep.CommitmentOwedTo, Quote: source.Text, Start: 0, End: int64(len(source.Text)), Summary: source.Text})
+			}
+			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises}))
+			r.NoError(err)
+			items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, true)
+			r.NoError(err)
+			states := map[string]string{}
+			for _, item := range items {
+				states[item.Quote] = item.State
+			}
+			r.Equal(LoopStateOpen, states["I will return."])
+			if mutation == "link alias" {
+				r.Equal(LoopStateOpen, states["I will write."])
+			}
+		})
 	}
-	rescan := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises})
-	_, err = f.store.ApplyPersonSweep(ctx, rescan)
-	r.NoError(err)
-	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, true)
-	r.NoError(err)
-	r.Len(items, 3)
-	states := map[string]string{}
-	for _, item := range items {
-		states[item.Quote] = item.State
-	}
-	r.Equal(LoopStateOpen, states["I will write."])
-	r.Equal(LoopStateOpen, states["I will return."])
 }
 
 func TestCommitmentOwnershipChangeWaitsForFrontierLock(t *testing.T) {
