@@ -3682,7 +3682,7 @@ grant consent to a provider or enroll a person in briefs.
 | `person facts pin <person-id> <kind> <key>` | Protect a field's current or empty value |
 | `person facts unpin <person-id> <kind> <key>` | Allow automatic resolution for the field again |
 
-With daemon API schema 5.9.0 or newer, claim reads include `kind` (`fact`, `event`, `preference`)
+With daemon API schema 5.12.0 or newer, claim reads include `kind` (`fact`, `event`, `preference`)
 and `status` (`fresh`, `stale`, or `expired`). Kind comes from the claim's saved
 identity. The shipped primary channel, contact frequency, “ask me about,” interest, and favorites
 categories are preferences even if renamed. Custom attributes without an end
