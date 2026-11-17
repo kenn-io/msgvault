@@ -125,6 +125,11 @@ func TestLocalDaemonRecoveryFailureIsBoundedAndLaterCallsCanRecover(t *testing.T
 		t.Run(strconv.FormatBool(resolverFailure), func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
+			// Bind the replacement before releasing the dead port. Otherwise the OS
+			// can give the replacement that port, and the client reaches it without
+			// discovery.
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"status":"ok"}`) }))
+			t.Cleanup(server.Close)
 			dead := closedLocalDaemonURL(t)
 			target := dead
 			var resolutions int
@@ -141,8 +146,6 @@ func TestLocalDaemonRecoveryFailureIsBoundedAndLaterCallsCanRecover(t *testing.T
 			var unavailable *LocalDaemonUnavailableError
 			requirements.ErrorAs(err, &unavailable)
 			assertions.Equal(1, resolutions, "no retry loop when recovery fails")
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"status":"ok"}`) }))
-			t.Cleanup(server.Close)
 			target = server.URL
 			health, err := client.GetHealth(t.Context())
 			requirements.NoError(err)
