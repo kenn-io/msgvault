@@ -164,6 +164,7 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 				st.complete = false
 			}
 			cfg := commitmentDiscoveryAPIConfig(t)
+			cfg.Activity.Timezone = "America/New_York"
 			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
 			w := httptest.NewRecorder()
 			path := "/api/v1/loops"
@@ -202,7 +203,9 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 				r.NoError(err)
 				a.Equal(profile.Fingerprint, st.consentFingerprint)
 				a.Equal(int64(987), st.discoveryPersonID)
-				a.Equal(peoplesweep.CommitmentScopeFingerprint(profile, cfg.People.Sweep.Commitments), st.discoveryScope)
+				commitments := cfg.People.Sweep.Commitments
+				commitments.Timezone = cfg.Activity.Timezone
+				a.Equal(peoplesweep.CommitmentScopeFingerprint(profile, commitments), st.discoveryScope)
 			}
 		})
 	}

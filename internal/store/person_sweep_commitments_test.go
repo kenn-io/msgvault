@@ -1159,3 +1159,64 @@ func TestCommitmentOwnershipChangeWaitsForFrontierLock(t *testing.T) {
 	r.NoError(f.store.db.QueryRowContext(ctx, f.store.Rebind(`SELECT scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`), f.personID).Scan(&scope))
 	r.Empty(scope)
 }
+
+func TestCommitmentApplyAndSourceRemovalLockOrder(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-removal-lock-order", false)
+	if !f.store.IsPostgreSQL() {
+		t.Skip("PostgreSQL row locks")
+	}
+	source, _ := newCommitmentTestConversation(t, f)
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
+	tx, err := f.store.db.BeginTx(ctx, nil)
+	r.NoError(err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	var blocker int
+	r.NoError(tx.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blocker))
+	_, err = tx.ExecContext(ctx, `UPDATE archive_metadata SET value = value WHERE key = 'identity_revision'`)
+	r.NoError(err)
+	applyDone := make(chan error, 1)
+	go func() { _, err := f.store.ApplyPersonSweep(ctx, request); applyDone <- err }()
+	var pid int
+	r.Eventually(func() bool {
+		return f.store.db.QueryRowContext(ctx, `SELECT COALESCE(MIN(pid), 0) FROM pg_stat_activity WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid))`, blocker).Scan(&pid) == nil && pid != 0
+	}, 5*time.Second, 10*time.Millisecond)
+	var holdsPerson bool
+	r.NoError(f.store.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = $1 AND relation = 'persons'::regclass AND granted)`, pid).Scan(&holdsPerson))
+	removeDone := make(chan error, 1)
+	go func() { _, _, err := f.store.RemoveSourceSerialized(ctx, source); removeDone <- err }()
+	r.Eventually(func() bool {
+		var waiting int
+		return f.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid))`, blocker).Scan(&waiting) == nil && waiting >= 2
+	}, 5*time.Second, 10*time.Millisecond)
+	r.NoError(tx.Commit())
+	r.NoError(<-applyDone)
+	r.NoError(<-removeDone)
+	r.False(holdsPerson, "apply must wait for identity before locking people")
+}
+
+func TestCommitmentTimezoneChangeRestartsDiscovery(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-timezone", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	id := persist("tomorrow", "I will call tomorrow.", -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	cfg.Commitments.Timezone = "UTC"
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	cfg.Commitments.Timezone = "America/New_York"
+	due, err := f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
+	r.NoError(err)
+	r.True(due)
+	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	r.Equal(id, window.Sources[0].MessageID)
+}

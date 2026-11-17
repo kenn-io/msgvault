@@ -33,7 +33,9 @@ func (w *Worker) commitmentDue(ctx context.Context, personID int64, profile Prov
 	if err != nil || !active {
 		return false, err
 	}
-	return store.PersonCommitmentsDue(ctx, personID, now, w.Config.Commitments.MinInterval, w.Config.Commitments.Window, CommitmentScopeFingerprint(profile, w.Config.Commitments))
+	cfg := w.Config.Commitments
+	cfg.Timezone = w.Timezone
+	return store.PersonCommitmentsDue(ctx, personID, now, cfg.MinInterval, cfg.Window, CommitmentScopeFingerprint(profile, cfg))
 }
 
 func (w *Worker) runCommitmentCall(

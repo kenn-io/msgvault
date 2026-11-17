@@ -158,7 +158,7 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 	}
 	response := loopListResponse(result)
 	response.Commitments = loopCommitments(result.Commitments, now)
-	if !s.addCommitmentDiscovery(w, r, loopStore, opts.PersonID, &response) {
+	if !s.addCommitmentDiscovery(w, r, loopStore, opts.PersonID, now.Location().String(), &response) {
 		return
 	}
 	for _, l := range result.Loops {
@@ -253,7 +253,7 @@ func (s *Server) fillLoopEvidence(st loops.Store, personID int64) {
 
 // addCommitmentDiscovery reports the promise discovery window; a read that
 // times out leaves the reply loops in place and marks coverage incomplete.
-func (s *Server) addCommitmentDiscovery(w http.ResponseWriter, r *http.Request, loopStore loops.Store, personID int64, response *LoopListResponse) bool {
+func (s *Server) addCommitmentDiscovery(w http.ResponseWriter, r *http.Request, loopStore loops.Store, personID int64, timezone string, response *LoopListResponse) bool {
 	cfg, ok := s.currentPeopleSweepConfig()
 	if !ok || !cfg.Commitments.Enabled {
 		return true
@@ -271,6 +271,7 @@ func (s *Server) addCommitmentDiscovery(w http.ResponseWriter, r *http.Request, 
 		response.CoverageIncomplete = true
 		return true
 	}
+	cfg.Commitments.Timezone = timezone
 	since, complete, err := loopStore.PersonCommitmentDiscoveryContext(r.Context(), personID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 	if err != nil {
 		if !errors.Is(err, context.DeadlineExceeded) {

@@ -307,7 +307,11 @@ func (s *Store) applyPersonSweepWithAligner(
 	}
 
 	var result peoplesweep.ApplyResult
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	var preFence func(*loggedTx) error
+	if commitment != nil {
+		preFence = func(tx *loggedTx) error { return s.lockIdentityMutationTxContext(ctx, tx) }
+	}
+	err = s.withTxLockedContext(ctx, nil, preFence, func(tx *loggedTx) error {
 		attempt, err := s.lockPersonSweepBudgetAttempt(ctx, tx, request.AttemptID)
 		if err != nil {
 			return err

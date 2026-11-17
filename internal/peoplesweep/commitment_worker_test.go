@@ -16,6 +16,7 @@ type commitmentWorkerFixture struct {
 
 	window *CommitmentWindow
 	claims []ClaimRequest
+	scope  string
 }
 
 func (s *commitmentWorkerFixture) ClaimPersonSweep(_ context.Context, input ClaimRequest) (*Lease, error) {
@@ -28,7 +29,8 @@ func (s *commitmentWorkerFixture) ClaimPersonSweep(_ context.Context, input Clai
 func (*commitmentWorkerFixture) HasActivePersonCommitmentConsent(context.Context, string) (bool, error) {
 	return true, nil
 }
-func (*commitmentWorkerFixture) PersonCommitmentsDue(context.Context, int64, time.Time, time.Duration, time.Duration, string) (bool, error) {
+func (s *commitmentWorkerFixture) PersonCommitmentsDue(_ context.Context, _ int64, _ time.Time, _, _ time.Duration, scope string) (bool, error) {
+	s.scope = scope
 	return true, nil
 }
 func (s *commitmentWorkerFixture) LoadPersonCommitmentWindow(_ context.Context, id int64, _ ProviderProfile, cfg CommitmentConfig, now time.Time) (CommitmentWindow, error) {
@@ -70,6 +72,21 @@ func TestTargetedCommitmentOnlyRunSkipsOrdinaryWorkAndPassesTimezone(t *testing.
 	r.NotNil(sink.requests[0].Commitment)
 	a.Equal("America/New_York", sink.requests[0].Commitment.Window.Timezone)
 	a.Empty(sink.requests[0].Batches)
+}
+
+func TestCommitmentDueUsesTimezoneInDiscoveryScope(t *testing.T) {
+	r := require.New(t)
+	worker, st, _ := newConsentOnlyCommitmentWorker(t)
+	worker.Timezone = "America/New_York"
+	profile, err := worker.Config.Profile()
+	r.NoError(err)
+	_, err = worker.commitmentDue(t.Context(), 7, profile, time.Now())
+	r.NoError(err)
+	cfg := worker.Config.Commitments
+	cfg.Timezone = "America/New_York"
+	r.Equal(CommitmentScopeFingerprint(profile, cfg), st.scope)
+	cfg.Timezone = "UTC"
+	r.NotEqual(CommitmentScopeFingerprint(profile, cfg), st.scope)
 }
 
 type commitmentCallAuthority struct {
