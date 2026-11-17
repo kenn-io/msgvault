@@ -18,6 +18,8 @@
   } from '../../api/generated/models';
   import TaskIssuePicker from '../common/TaskIssuePicker.svelte';
   import CreateTaskDialog from './CreateTaskDialog.svelte';
+  import DetailRow from '../people/DetailRow.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
   type Lookup = GeneratedTaskLinkLookupResponse;
   type OutboundMetadata = GeneratedTaskLinkOutboundMetadata;
   type Task = GeneratedTaskSummary;
@@ -27,6 +29,9 @@
     showSetup = true,
     embedded = false,
     present = $bindable(false),
+    action = $bindable('create'),
+    actionReady = $bindable(false),
+    hideActionControl = false,
     busy = $bindable(false),
     oncomplete = undefined,
     oncancel = undefined,
@@ -39,6 +44,9 @@
     showSetup?: boolean;
     embedded?: boolean;
     present?: boolean;
+    action?: string;
+    actionReady?: boolean;
+    hideActionControl?: boolean;
     busy?: boolean;
     oncomplete?: () => void;
     oncancel?: () => void;
@@ -47,7 +55,6 @@
     onsettings?: () => void;
   } = $props();
   const conversationStatus = getContext<ConversationTaskStatus | undefined>(conversationTaskStatusKey);
-  let action = $state('create');
   let loading = $state(true);
   let localStatus = $state<{ state: string; project?: string; message?: string }>({ state: 'loading' });
   const status = $derived(conversationStatus?.latest ?? localStatus);
@@ -221,6 +228,7 @@
     if (mode === 'add' && mutationReady && outboundMetadata) creationInitialized = true;
   });
   $effect(() => {
+    actionReady = mutationReady;
     present = loading || (integrationState !== 'authentication_required' && indexState !== 'authentication_required' && tasks.length > 0) || (!complete && (integrationState !== 'disabled' || showSetup)) || !!error;
   });
   const degraded = $derived(!mutationReady);
@@ -261,34 +269,26 @@
   </header>{/if}
   {#if loading}<p role="status">Loading linked tasks…</p>
   {:else}
-    {#if degraded && (showSetup || integrationState === 'ready')}<div class="degraded" role={integrationState === 'disabled' ? 'status' : 'alert'}>
-        <p>{stateMessage}</p>
-        <Button size="sm" surface="soft" label={integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onclick={onsettings} />
-      </div>{/if}
-    {#if partialIndex}<p role="alert">{stateMessage}</p>{/if}
-    {#if sessionOnlyIndex}<p role="status">
-        Linked-task index updates are available for this session but are not persisted to disk on this platform.
-      </p>{/if}
+    {#if degraded && (showSetup || integrationState === 'ready')}
+      <InlineNotice tone={integrationState === 'disabled' ? 'info' : 'error'} message={stateMessage} actionLabel={integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onaction={onsettings} />
+    {/if}
+    {#if partialIndex}<InlineNotice message={stateMessage} />{/if}
+    {#if sessionOnlyIndex}<InlineNotice tone="info" message="Linked-task index updates are available for this session but are not persisted to disk on this platform." />{/if}
     {#if mode !== 'add' && integrationState !== 'authentication_required' && indexState !== 'authentication_required'}
     {#if tasks.length > 0}
-      <ul>
-        {#each tasks as task (task.id)}<li>
-            <span><span>{task.title}</span><small>Tasks · {project}</small></span><Button
-              size="sm"
-              surface="outline"
-              label={`Unlink ${task.title}`}
-              disabled={mutating || !mutationReady}
-              onclick={() => void unlink(task.id)}
-            />
-          </li>{/each}
-      </ul>
+      {#each tasks as task (task.id)}
+        <DetailRow description={`Tasks · ${project}`}>
+          {task.title}
+          {#snippet actions()}<Button size="sm" class="text-action" label="Unlink" ariaLabel={`Unlink ${task.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(task.id)} />{/snippet}
+        </DetailRow>
+      {/each}
     {/if}
     {/if}
     {#if mutationReady && mode === 'add'}
-      <SegmentedControl variant="borderless" disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />
+      {#if !hideActionControl}<SegmentedControl variant="borderless" disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />{/if}
       {#if action !== 'create'}
       <TaskIssuePicker load={loadTasks} noun="tasks" moreNote="Showing the first 25 tasks. Type to search the rest." empty={`No tasks in ${project} yet.`} disabled={busy} bind:selected />
-      {#if error}<p role="alert">{error}</p>{/if}
+      {#if error}<InlineNotice message={error} />{/if}
       <p class="disclosure">Bodies and attachments are never sent.</p>
       <div class="actions">
         <Button surface="soft" label="Cancel" disabled={busy} onclick={oncancel} />
@@ -296,7 +296,7 @@
       </div>
       {/if}
     {/if}
-    {#if error && (mode !== 'add' || action === 'create' || !mutationReady)}<p role="alert">{error}</p>{/if}
+    {#if error && (mode !== 'add' || action === 'create' || !mutationReady)}<InlineNotice message={error} />{/if}
   {/if}
 </section>
 {/if}
@@ -335,36 +335,6 @@
   .disclosure { color: var(--text-secondary); font-size: 12px; }
   .task-links.add > :global(.kit-segmented) { justify-self: start; }
   .actions { display: flex; justify-content: flex-end; gap: var(--space-4); }
-  header,
-  li {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  h2,
-  p,
-  ul {
-    margin: 0;
-  }
-  h2 {
-    font-size: var(--font-size-sm);
-  }
-  li small { display: block; color: var(--text-muted); }
-  .degraded {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  ul {
-    display: grid;
-    gap: var(--space-2);
-    padding: 0;
-    list-style: none;
-  }
-  [role='alert'] {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
+  h2, p { margin: 0; }
+  h2 { font-size: var(--font-size-sm); }
 </style>

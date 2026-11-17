@@ -4,6 +4,8 @@
   import type { KataIssueReceipt } from '../../api/generated/models';
   import { kataReadiness } from '../../kata/kata-ready.svelte';
   import TaskLinks from './TaskLinks.svelte';
+  import DetailRow from '../people/DetailRow.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
 
   let { client, messageId, title, email = false, refresh = 0, showSetup = true, onsettings }: {
     client: APIClient; messageId: number; title: string; email?: boolean; refresh?: number; showSetup?: boolean; onsettings?: () => void;
@@ -40,10 +42,13 @@
   {#if kata?.ready}
     <div class="kata-links">
       {#if loading}<p role="status">Loading linked Kata issues…</p>{/if}
-      {#if error}<p role="alert">{error}</p>{/if}
-      {#if truncated}<p role="status">Linked Kata issues are incomplete.</p>{/if}
+      {#if error}<InlineNotice message={error} />{/if}
+      {#if truncated}<InlineNotice tone="warning" message="Linked Kata issues are incomplete." />{/if}
       {#each issues as issue (issue.uid)}
-        <div class="row"><span>{issue.title}<small>Kata · {issue.qualified_ref}</small></span>{#if issue.web_url}<a href={issue.web_url} target="_blank" rel="noreferrer">Open in Kata</a>{/if}</div>
+        <DetailRow description={`Kata · ${issue.qualified_ref} · ${issue.status.replaceAll('_', ' ').replace(/^./, value => value.toUpperCase())}`}>
+          {issue.title}
+          {#snippet actions()}{#if issue.web_url}<a class="text-action" href={issue.web_url} target="_blank" rel="noreferrer">Open in Kata</a>{/if}{/snippet}
+        </DetailRow>
       {/each}
     </div>
   {/if}
@@ -53,8 +58,7 @@
   .task-group { display: grid; gap: var(--space-2); padding: 0 var(--pane-pad-x) var(--space-4); }
   .task-group[hidden] { display: none; }
   .kata-links { display: grid; gap: var(--space-2); }
-  .row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-  small { display: block; color: var(--text-muted); }
+  .text-action { display: inline-flex; min-height: var(--control-h); align-items: center; color: var(--link-ink); font-size: var(--type-meta-size); }
   .task-group :global(.task-links) { padding: 0; }
   h2, p { margin: 0; font-size: var(--font-size-sm); }
 </style>

@@ -346,7 +346,7 @@ it('refreshes links on close after a Kata comment fails after saving evidence', 
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('Comment failed');
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(await screen.findByText('Kata · example#abcd')).toBeDefined();
+    expect(await screen.findByText('Kata · example#abcd · Open')).toBeDefined();
     expect(await screen.findByText('Linked task')).toBeDefined();
   } finally { view.unmount(); readiness.dispose(); }
 });

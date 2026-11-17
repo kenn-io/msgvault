@@ -214,6 +214,7 @@
     gap: var(--space-6);
     min-width: 0;
   }
+  form :global(.kit-chip) { justify-self: start; max-width: 100%; }
   .disclosure { margin: 0; color: var(--text-secondary); font-size: 12px; }
   label {
     display: grid;

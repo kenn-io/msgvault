@@ -19,9 +19,25 @@ describe('Message task list', () => {
       await screen.findByText('Kata work');
       expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
       expect(screen.getByText('Tasks · example')).toBeDefined();
-      expect(screen.getByText('Kata · example#abcd')).toBeDefined();
+      expect(screen.getByText('Kata · example#abcd · Open')).toBeDefined();
     } finally { view.unmount(); readiness.dispose(); }
   });
+  it('shows a closed issue state beside its reference', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status') ? { state: 'ready' } : { issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Closed issue', status: 'closed' }], truncated: false }));
+    const readiness = new KataReadiness(client);
+    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
+    try { expect(await screen.findByText('Kata · example#abcd · Closed')).toBeDefined(); }
+    finally { view.unmount(); readiness.dispose(); }
+  });
+
+  it('reports a failed Kata lookup in the Tasks group', async () => {
+    const client = createAPIClient(async input => (input as Request).url.endsWith('/status') ? Response.json({ state: 'ready' }) : Response.json({ message: 'Kata lookup failed' }, { status: 503 }));
+    const readiness = new KataReadiness(client);
+    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
+    try { expect((await screen.findByRole('alert')).textContent).toContain('Kata lookup failed'); }
+    finally { view.unmount(); readiness.dispose(); }
+  });
+
   it('offers setup when the task integration is disabled', async () => {
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status') ? { state: 'disabled' } : { state: 'disabled', complete: false, tasks: [], outbound_metadata: {} }));
     render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
