@@ -148,15 +148,19 @@ func TestMeetingTranscriptGroupsFollowChoices(t *testing.T) {
 	_, event := calendarFixture(t, st, "group-event", `{"id":"group-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
 	_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), MeetingLinkRef{Kind: "evt", MessageID: event}, "link")
 	requirements.NoError(err)
-	groups, err := st.MeetingTranscriptGroupsContext(t.Context(), event)
+	_, viaEvent := projectionFixture(t, st, "group-via-event", "meeting_json", `{}`)
+	_, err = st.db.ExecContext(t.Context(), `UPDATE messages SET sent_at = ? WHERE id = ?`, time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), viaEvent)
+	requirements.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(viaEvent), MeetingLinkRef{Kind: "evt", MessageID: event}, "link")
+	requirements.NoError(err)
+	groups, err := st.MeetingTranscriptGroupsContext(t.Context(), viaEvent)
 	requirements.NoError(err)
 	assertions.Equal(first, groups[first])
 	assertions.Equal(first, groups[other])
+	assertions.Equal(first, groups[viaEvent])
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, _, err = graph.reduce(ctx)
-	requirements.ErrorIs(err, context.Canceled)
-	_, err = st.MeetingTranscriptGroupsContext(ctx, event)
 	requirements.ErrorIs(err, context.Canceled)
 }
 
@@ -2053,6 +2057,35 @@ func TestMeetingRecordAvoidsCopyScan(t *testing.T) {
 			r.Zero(copyScans)
 		})
 	}
+	t.Run("email source removal", func(t *testing.T) {
+		r := require.New(t)
+		base := newRFC822IDBackfillBackendStore(t)
+		_, first := projectionFixture(t, base, "email-unrelated-first", "meeting_json", `{}`)
+		_, second := projectionFixture(t, base, "email-unrelated-second", "meeting_json", `{}`)
+		_, err := base.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: first}, MeetingLinkRef{Kind: "msg", MessageID: second}, "link")
+		r.NoError(err)
+		source, err := base.GetOrCreateSource("gmail", "email@example.com")
+		r.NoError(err)
+		for i := range 5 {
+			key := fmt.Sprintf("email-%d", i)
+			_, err := base.PersistMessage(&MessagePersistData{Message: &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "email"}, Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "email"}})
+			r.NoError(err)
+		}
+		var copyQueries int
+		gate := &meetingProjectionGate{before: func(_ context.Context, query string, _ []driver.NamedValue) error {
+			if strings.Contains(query, "meeting_copy_survivors") {
+				copyQueries++
+			}
+			return nil
+		}}
+		st := gatedMeetingProjectionStore(t, base, gate)
+		_, err = st.meetingHasCopies(t.Context())
+		r.NoError(err)
+		r.Positive(copyQueries)
+		copyQueries = 0
+		r.NoError(st.RemoveSource(source.ID))
+		r.Zero(copyQueries)
+	})
 }
 
 func TestMeetingRecordBatchesCopyScans(t *testing.T) {

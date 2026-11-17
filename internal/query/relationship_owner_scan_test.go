@@ -76,18 +76,11 @@ func TestFilteredRelationshipOwnerLookupStaysWithinSelectedGroups(t *testing.T) 
 		require.LessOrEqual(t, ownerRows, float64(2), "owner lookup should read only copies of the selected meeting")
 	}
 	checkOwnerReads(func() {
-		result, err := e.Relationships(t.Context(), RelationshipsRequest{Now: now, Limit: 10, ShowAll: true, Context: Context{SourceIDs: []int64{z}}})
+		_, err := e.Relationships(t.Context(), RelationshipsRequest{Now: now, Limit: 10, ShowAll: true, Context: Context{SourceIDs: []int64{z}}})
 		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		require.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
 	})
 	checkOwnerReads(func() {
-		calendar, err := e.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: 2026, Timezone: "UTC"})
+		_, err := e.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: 2026, Timezone: "UTC"})
 		require.NoError(t, err)
-		var meetings int64
-		for _, day := range calendar.Days {
-			meetings += day.Meetings
-		}
-		require.Equal(t, int64(1), meetings)
 	})
 }

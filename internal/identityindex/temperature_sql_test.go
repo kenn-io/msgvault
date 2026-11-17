@@ -80,7 +80,7 @@ func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.ExecContext(t.Context(), `
 		CREATE TEMP TABLE synthetic_unsent_activity AS
-		SELECT *, entry_kind AS message_type, false AS email_invite FROM (VALUES
+		SELECT *, 'imessage' AS message_type, false AS email_invite FROM (VALUES
 			(8::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, true, true, true),
 			(8::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, true, true, false, false, true)
 		) AS t(message_id, canonical_id, occurred_at, is_chat, entry_kind,

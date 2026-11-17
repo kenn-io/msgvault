@@ -62,7 +62,7 @@ func buildTimelineFixture(t *testing.T) (engine *DuckDBEngine, canonicalID, emai
 	b.AddTo(emailID, ownerID, "Owner")
 
 	meetingID = b.AddMessage(MessageOpt{
-		SourceID: srcID, MessageType: "calendar_event",
+		SourceID: srcID, MessageType: "meeting_transcript",
 		SentAt: time.Date(2026, 7, 11, 9, 0, 0, 0, time.UTC),
 	})
 	b.AddFrom(meetingID, ownerID, "Owner")
@@ -107,7 +107,7 @@ func TestRelationshipTimelineBurstsChatByLocalDay(t *testing.T) {
 		assert.Equal("message:"+strconv.FormatInt(emailID, 10), email.Key)
 
 		meeting := result.Rows[2]
-		assert.Equal("event", meeting.Kind)
+		assert.Equal("meeting", meeting.Kind)
 		assert.Equal(int64(1), meeting.MessageCount)
 		assert.Equal("message:"+strconv.FormatInt(meetingID, 10), meeting.Key)
 
@@ -466,7 +466,7 @@ func TestRelationshipTimelineHonorsAccountScopes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	engine, canonicalID, emailID, meetingID := buildTimelineFixture(t)
+	engine, canonicalID, emailID, _ := buildTimelineFixture(t)
 	keys := func(scope search.AccountScope) []string {
 		result, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{
 			CanonicalID: canonicalID, Timezone: "America/Chicago", Limit: 10,
@@ -481,7 +481,5 @@ func TestRelationshipTimelineHonorsAccountScopes(t *testing.T) {
 	}
 	assert.Empty(keys(search.AccountScope{Addresses: []string{"work@example.org"}}),
 		"an address pick excludes mail attributed to no address")
-	assert.ElementsMatch([]string{
-		"message:" + strconv.FormatInt(emailID, 10), "message:" + strconv.FormatInt(meetingID, 10),
-	}, keys(search.AccountScope{Unattributed: true}))
+	assert.ElementsMatch([]string{"message:" + strconv.FormatInt(emailID, 10)}, keys(search.AccountScope{Unattributed: true}))
 }

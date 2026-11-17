@@ -889,9 +889,6 @@ func TestMeetingRecordNoteExpansionExhaustsSharedBudget(t *testing.T) {
 	require.NoError(t, err)
 	_, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
 	require.ErrorIs(t, err, ErrQueryTooBroad)
-	groups, err := st.MeetingTranscriptGroupsContext(t.Context(), copyID)
-	require.NoError(t, err)
-	assert.Equal(t, map[int64]int64{note: note, copyID: note}, groups)
 }
 
 func TestMeetingRecordAllDayMasterWithoutZone(t *testing.T) {

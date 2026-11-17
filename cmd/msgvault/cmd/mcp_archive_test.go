@@ -52,6 +52,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		noDrafts     bool
 	}{
 		{"mbox", "get_meeting_record", false}, {"ics", "get_meeting_record", false}, {"gcal", "get_meeting_record", false},
+		{"gmail", "get_meeting_record", false}, {"imap", "get_meeting_record", false}, {"eml", "get_meeting_record", false}, {"emlx", "get_meeting_record", false}, {"maildir", "get_meeting_record", false}, {"pst", "get_meeting_record", false}, {"o365", "get_meeting_record", false}, {"msmail", "get_meeting_record", false}, {"hey", "get_meeting_record", false}, {"apple-mail", "get_meeting_record", false}, {"google-groups", "get_meeting_record", false},
 		{"mbox", "link_meeting", false}, {"ics", "link_meeting", false}, {"gcal", "link_meeting", false},
 		{"granola", "get_meeting_context", false}, {"chatwoot", "get_meeting_context", false},
 		{"circleback", "get_meeting_context", false}, {"pocket", "get_meeting_context", false},
@@ -105,7 +106,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 				assert.NotContains(names, "list_meeting_action_items")
 				assert.NotContains(names, "get_meeting_metrics")
 			}
-			if tc.source == "ics" {
+			if tc.tool == "get_meeting_record" && tc.source != "gcal" {
 				assert.NotContains(names, "calendar_freebusy")
 			}
 			if tc.source == "mbox" {

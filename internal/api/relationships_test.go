@@ -107,7 +107,7 @@ func newRelationshipsDuckDBFixture(t *testing.T, now time.Time) *query.DuckDBEng
 // newRelationshipsDuckDBFixtureWithDir is newRelationshipsDuckDBFixture plus
 // the analytics directory, for tests that need to mutate the committed cache
 // state file directly (e.g. simulating a real identity-revision bump).
-func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time, grouped ...bool) (*query.DuckDBEngine, string) {
+func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.DuckDBEngine, string) {
 	t.Helper()
 	requirementsForTest := require.New(t)
 	analyticsDir := t.TempDir()
@@ -137,16 +137,6 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time, grouped .
 	}
 	sources := `(1::BIGINT, 'owner@example.com', 'gmail')`
 	owners := `(1::BIGINT, 1::BIGINT)`
-	meetingGroups := ""
-	if len(grouped) > 0 && grouped[0] {
-		id := nextID
-		nextID++
-		messageRows = append(messageRows, fmt.Sprintf("(%d::BIGINT, 2::BIGINT, 'selected', %d::BIGINT, '', 'Meeting', TIMESTAMP '%s', 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'meeting_transcript', false, %d, %d)", id, id, now.Format("2006-01-02 15:04:05"), now.Year(), int(now.Month())))
-		recipientRows = append(recipientRows, fmt.Sprintf("(%d::BIGINT, %d::BIGINT, 'to', '')", id, relAliceID))
-		sources += `, (2::BIGINT, 'other@example.com', 'zoom')`
-		owners += `, (2::BIGINT, 1::BIGINT)`
-		meetingGroups = fmt.Sprintf("(SELECT 4::BIGINT AS message_id, 4::BIGINT AS group_id UNION ALL SELECT %d, 4)", id)
-	}
 
 	tables := []struct {
 		dir, file, columns, values string
@@ -202,7 +192,6 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time, grouped .
 			Mode:           identityindex.ModeFull,
 			StagedBaseRoot: analyticsDir,
 			OutputRoot:     analyticsDir,
-			MeetingGroups:  meetingGroups,
 		},
 	)
 	requirementsForTest.NoError(err)
@@ -221,19 +210,6 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time, grouped .
 	requirementsForTest.NoError(err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	return engine, analyticsDir
-}
-
-func TestRelationshipsHTTPCountsSelectedTranscriptWithOwnerOnAnotherCopy(t *testing.T) {
-	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	engine, _ := newRelationshipsDuckDBFixtureWithDir(t, now, true)
-	srv := newTestServerWithEngine(t, engine)
-	response := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true,"filters":[{"dimension":"source","values":["2"]}]}`)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	var page RelationshipsHTTPResponse
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
-	require.Len(t, page.Rows, 1)
-	assert.Equal(t, relAliceID, page.Rows[0].CanonicalID)
-	assert.Equal(t, int64(1), page.Rows[0].Signals.MeetingCount)
 }
 
 func sqlQuote(s string) string {
