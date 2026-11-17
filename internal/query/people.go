@@ -595,7 +595,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob, meetingGr
 	JOIN sources s ON s.id = m.source_id
 	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(meetingGroupsGlob) + `') g ON g.message_id = m.id
 	WHERE m.message_type = 'meeting_transcript' AND m.sent_at IS NOT NULL
-		AND NOT EXISTS (SELECT 1 FROM relationship_unsent_messages u WHERE u.message_id = m.id)
+		AND NOT EXISTS (SELECT 1 FROM relationship_activity_exclusions u WHERE u.message_id = m.id)
 	QUALIFY row_number() OVER (PARTITION BY coalesce(g.group_id, m.id)
 		ORDER BY m.deleted_from_source_at IS NOT NULL, m.sent_at, m.id) = 1
 ), person_chat_conversation_ids AS (

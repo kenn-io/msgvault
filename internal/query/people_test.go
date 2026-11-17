@@ -333,6 +333,36 @@ func TestPeopleMeetingSourceUsesEarliestTime(t *testing.T) {
 	}
 }
 
+func TestPeopleMeetingCountsExcludeEmailInvitations(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	b := NewTestDataBuilder(t)
+	mailSource := b.AddSourceWithType("owner@example.test", "gmail")
+	meetingSource := b.AddSourceWithType("meeting@example.test", "zoom")
+	organizer := b.AddParticipant("owner@example.test", "example.test", "Owner")
+	attendee := b.AddParticipant("guest@example.test", "example.test", "Guest")
+	b.AddOwnerParticipant(mailSource, organizer)
+	start := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	invite := b.AddMessage(MessageOpt{SourceID: mailSource, MessageType: "calendar_event", ArchiveOnly: true, SentAt: start})
+	meeting := b.AddMessage(MessageOpt{SourceID: meetingSource, MessageType: "meeting_transcript", SentAt: start.Add(time.Hour)})
+	b.AddFrom(invite, organizer, "Owner")
+	b.AddTo(invite, attendee, "Guest")
+	b.AddTo(meeting, attendee, "Guest")
+	engine := b.BuildEngine()
+	explore, err := engine.Explore(t.Context(), ExploreRequest{Context: Context{ParticipantIDs: []int64{attendee}, MessageTypes: []string{"calendar_event"}}})
+	requirements.NoError(err)
+	assertions.Equal(int64(1), explore.TotalCount)
+	people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "guest@example.test"})
+	requirements.NoError(err)
+	requirements.Len(people.Rows, 1)
+	assertions.Equal(int64(1), people.Rows[0].ActivityCount)
+	assertions.Equal(int64(1), people.Rows[0].MeetingCount)
+	summary, err := engine.GetPersonSummary(t.Context(), attendee, ExploreRequest{}, nil)
+	requirements.NoError(err)
+	requirements.Len(summary.Rows, 1)
+	assertions.Equal(int64(1), summary.Rows[0].ActivityCount)
+	assertions.Equal(int64(1), summary.Rows[0].MeetingCount)
+}
+
 func TestPeopleMeetingSourceUsesFilteredDateWindow(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	firstSource := b.AddSourceWithType("first@example.test", "granola")
