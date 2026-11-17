@@ -323,11 +323,6 @@ func TestApplyIMAPMailboxDeltas_TrashAndAllReconcileDeletionMark(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newIMAPMembershipFixture(t)
 			id := f.createMessage(t, "message", "<trash@example.com>")
-			_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
-				"Trash":    {Name: "Trash", Type: "system"},
-				"All Mail": {Name: "All Mail", Type: "system"},
-			})
-			require.NoError(t, err)
 			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "message"))
 			var deltas []store.IMAPMailboxDelta
 			if tc.trash {
