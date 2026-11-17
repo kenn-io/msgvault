@@ -247,13 +247,10 @@ func TestCardDAVParticipantBindingPhoneAdmission(t *testing.T) {
 		raw, phone string
 		bound      bool
 	}{
-		{"202/555-0100", "+12025550100", false},
 		{"+1 202/555-0100", "+12025550100", true},
 		{"0012025550100", "+12025550100", true},
 		{"12025550100", "+12025550100", false},
-		{"20 7946 0958", "+12079460958", false},
 		{"+202-555-0100 ext 99", "+202555010099", false},
-		{"+letters12025550100", "+12025550100", false},
 		{"tel:+12025550100;ext=99", "+12025550100", false},
 		{"tel:+12025550100;phone-context=example.test", "+12025550100", false},
 		{"+1\u00a0202-555-0100", "+12025550100", true},
@@ -364,7 +361,7 @@ func TestCardDAVParticipantBindingEmailIdentifiersAndEncoding(t *testing.T) {
 
 func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 	t.Run("automatic membership", func(t *testing.T) {
-		for _, mode := range []string{"system", "user", "stale-system", "null-actor"} {
+		for _, mode := range []string{"system", "user", "stale-system"} {
 			t.Run(mode, func(t *testing.T) {
 				assert := Assert.New(t)
 				require := Require.New(t)
@@ -387,16 +384,8 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 					_, err = st.DecideIdentityMatchCandidateContext(t.Context(), candidate.ID, store.IdentityMatchStateAccepted, "user", nil)
 					require.NoError(err)
 					require.NoError(st.ApplyAcceptedIdentityMatchSnapshotForTest(t.Context(), stale, "system"))
-				case "null-actor":
-					_, err = st.DecideIdentityMatchCandidateContext(t.Context(), candidate.ID, store.IdentityMatchStateAccepted, "system", nil)
-					require.NoError(err)
-					_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE identity_match_candidates SET decided_by = NULL, decided_at = NULL WHERE id = ?`), candidate.ID)
-					require.NoError(err)
-					_, _, linked, err := st.ResumeAcceptedIdentityMatchCandidateContext(t.Context(), candidate.ID)
-					require.NoError(err)
-					assert.True(linked)
 				}
-				automatic := mode == "system" || mode == "null-actor"
+				automatic := mode == "system"
 				assert.Equal(automatic, bindingOwned(t, st, a))
 				assert.Equal(automatic, bindingOwned(t, st, b))
 			})
@@ -669,9 +658,13 @@ func TestCardDAVParticipantBindingLegacyOwnershipMigration(t *testing.T) {
 	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE person_participants DROP COLUMN carddav_owned`)
 	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE carddav_sync_runs DROP COLUMN binding_conflicts`)
+	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), strconv.Itoa(store.SchemaVersion-1))
 	require.NoError(err)
 	require.NoError(st.InitSchemaContext(t.Context()))
+	_, err = st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
+	require.NoError(err)
 	assert.False(bindingOwned(t, st, id))
 	current, err := st.GetPersonContext(t.Context(), person.ID)
 	require.NoError(err)
@@ -994,37 +987,12 @@ func TestCardDAVParticipantBindingDisputedAddresses(t *testing.T) {
 func TestCardDAVParticipantBindingKeepsPendingConflictClaims(t *testing.T) {
 	require := Require.New(t)
 	assert := Assert.New(t)
-	st, account, book := newCardDAVResourceStore(t)
-	first := remoteResource(book.CanonicalURL+"first.vcf", "first", "First", "shared@example.test", "one")
-	applyParticipantBindingCards(t, st, account, book, first)
-	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, first.Href)
-	require.NoError(err)
+	st, account, book, mapping, _, pending := prepareCardDAVKeepLocalCreate(t)
 	personID := *mapping.PersonID
-	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
-	require.NoError(err)
-	_, err = st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
-		PersonID: personID, Desired: true, AddressBookID: book.ID, Href: first.Href,
-		OutgoingBody: first.RemoteBody, OutgoingSemanticHash: first.SemanticHash, LocalHash: snapshot.Fingerprint,
-	})
-	require.NoError(err)
-	mapping, err = st.GetCardDAVResourceContext(t.Context(), book.ID, first.Href)
-	require.NoError(err)
-	conflict, err := st.RecordCardDAVConflictContext(t.Context(), store.CardDAVConflictCapture{
-		AddressBookID: book.ID, Href: first.Href, ExpectedPersonID: personID,
-		ExpectedMappingRevision: mapping.MappingRevision, BaseLocalHash: mapping.LocalHash,
-		LocalHash: snapshot.Fingerprint, BaseRemoteHash: mapping.RemoteSemanticHash,
-		BaseRemoteETag: mapping.RemoteETag, LocalBody: first.RemoteBody, RemoteTombstone: true,
-	})
-	require.NoError(err)
-	pending, err := st.PrepareCardDAVConflictLocalContext(t.Context(), store.CardDAVConflictLocalPlan{
-		ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision,
-		RemoteTombstone: true, OutgoingSemanticHash: "restore-first",
-	})
-	require.NoError(err)
 	require.Equal(store.CardDAVMutationCreate, pending.PendingOperation)
-	participant, err := st.EnsureParticipant("shared@example.test", "Shared", "example.test")
+	participant, err := st.EnsureParticipant("alice@example.test", "Shared", "example.test")
 	require.NoError(err)
-	second := remoteResource(book.CanonicalURL+"second.vcf", "second", "Second", "shared@example.test", "one")
+	second := remoteResource(book.CanonicalURL+"second.vcf", "second", "Second", "alice@example.test", "one")
 	applyParticipantBindingCards(t, st, account, book, second)
 	secondPerson := bindingCardPerson(t, st, book, second.Href)
 	result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})

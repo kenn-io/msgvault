@@ -55,7 +55,7 @@ func TestCardDAVSchedulerRequestsCacheRebuildAfterFailedSync(t *testing.T) {
 	}
 }
 
-func TestCardDAVIdentityRefreshSkipsCurrentCacheAndQueuesRepairOnFailure(t *testing.T) {
+func TestCardDAVIdentityRefreshRunsWithCurrentCacheAndQueuesRepairOnFailure(t *testing.T) {
 	req := require.New(t)
 	checks := assert.New(t)
 	dir := t.TempDir()
@@ -92,9 +92,8 @@ func TestCardDAVIdentityRefreshSkipsCurrentCacheAndQueuesRepairOnFailure(t *test
 	})
 
 	adapter := &storeAPIAdapter{store: st, config: cfg, analyticsDir: analyticsDir}
-	got, err := adapter.RefreshIdentityDatasets(t.Context())
-	req.NoError(err)
-	checks.Equal(before.IdentityRevision, got)
+	_, err = adapter.RefreshIdentityDatasets(t.Context())
+	req.ErrorIs(err, refreshErr)
 
 	_, err = st.LinkParticipants(first, second)
 	req.NoError(err)

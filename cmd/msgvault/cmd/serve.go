@@ -3992,20 +3992,6 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 // allocator exits with the process; the long-lived daemon does neither.
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
 	ctx = a.invocationContext(ctx)
-	if cfg := a.publishedConfig(ctx); cfg != nil && !store.IsPostgresURL(cfg.DatabaseDSN()) {
-		staleness, inspectErr := inspectCacheForQuery(ctx, cfg.DatabaseDSN(), a.analyticsDir, false, false)
-		if inspectErr == nil && !staleness.NeedsBuild {
-			state, stateErr := query.ReadCacheSyncState(a.analyticsDir)
-			if stateErr == nil {
-				if a.activateAnalyticsCache != nil {
-					if err := a.activateAnalyticsCache(ctx); err != nil {
-						return 0, err
-					}
-				}
-				return state.IdentityRevision, nil
-			}
-		}
-	}
 	if a.store.IsPostgreSQL() {
 		return 0, api.ErrIdentityCacheUnsupported
 	}

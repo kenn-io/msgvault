@@ -526,8 +526,7 @@ func TestSyncFollowsOutlookAddEditAndDelete(t *testing.T) {
 
 	lists := f.fake.lists
 	result := f.sync(t)
-	result.BindingConflicts = nil
-	assert.Equal(carddav.SyncResult{Books: 1}, result)
+	assert.Equal(carddav.SyncResult{Books: 1, BindingConflicts: new(0)}, result)
 	assert.Equal(lists, f.fake.lists, "an unchanged folder is not listed again")
 
 	f.fake.edit(bob, func(c *contact) { c.DisplayName = "Bob Edited" })
@@ -552,8 +551,7 @@ func TestExpiredDeltaTokenFallsBackToSnapshot(t *testing.T) {
 	lists := f.fake.lists
 
 	result := f.sync(t)
-	result.BindingConflicts = nil
-	assert.Equal(carddav.SyncResult{Books: 1}, result)
+	assert.Equal(carddav.SyncResult{Books: 1, BindingConflicts: new(0)}, result)
 	assert.Equal(lists+1, f.fake.lists, "an expired token lists the folder again")
 }
 

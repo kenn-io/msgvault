@@ -331,6 +331,7 @@ func prepareCardDAVKeepLocalCreate(t *testing.T) (
 	require.NoError(err)
 	capture := conflictCapture(mapping)
 	capture.LocalHash = snapshot.Fingerprint
+	capture.LocalBody = mapping.RemoteBody
 	capture.RemoteETag, capture.RemoteBody, capture.RemoteTombstone = "", nil, true
 	conflict, err := st.RecordCardDAVConflictContext(t.Context(), capture)
 	require.NoError(err)

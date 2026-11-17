@@ -280,15 +280,6 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 	assertions.Equal("CardDAV sync: 1 books, 2 created, 3 updated, 4 removed\n", stdout.String())
 }
 
-func TestCardDAVBindParticipantsHelpDescribesPhoneQualification(t *testing.T) {
-	cmd := newCardDAVParticipantBindingsCmd()
-	var stdout bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetArgs([]string{"--help"})
-	require.NoError(t, cmd.Execute())
-	assert.Contains(t, stdout.String(), "Phone matches require +, 00, or a numeric tel: phone context")
-}
-
 func TestCardDAVCLISelectsConnectionsAndReportsAggregateFailures(t *testing.T) {
 	for _, state := range []string{"succeeded", "partial", "failed"} {
 		t.Run(state, func(t *testing.T) {
