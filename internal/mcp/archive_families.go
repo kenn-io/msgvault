@@ -5,7 +5,7 @@ import "strings"
 // ArchiveFamilies describes source and integration families present in an archive.
 // A nil snapshot preserves the catalog for embedders without archive discovery.
 type ArchiveFamilies struct {
-	Calendar, Meetings, Chat, Slack, Drafts, CardDAV, Kata bool
+	Calendar, CalendarRecords, Meetings, Chat, Slack, Drafts, CardDAV, Kata bool
 }
 
 func (f *ArchiveFamilies) allows(name string) bool {
@@ -23,6 +23,8 @@ func (f *ArchiveFamilies) allows(name string) bool {
 		return f.Slack
 	}
 	switch name {
+	case ToolGetMeetingRecord:
+		return f.Meetings || f.Calendar || f.CalendarRecords
 	case ToolGetMeetingContext, ToolListMeetingActionItems, ToolGetMeetingMetrics:
 		return f.Meetings
 	case ToolFindChat:

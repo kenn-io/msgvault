@@ -33,7 +33,9 @@ func TestListCalendarOccurrences(t *testing.T) {
 	requirements.Len(page.Occurrences, 3)
 	assertions.Empty(page.Unexpandable)
 	assertions.Equal(master, page.Occurrences[0].MessageID)
+	assertions.Equal(fmt.Sprintf("evt:%d@20270302T170000Z", master), page.Occurrences[0].Ref)
 	assertions.Equal(single, page.Occurrences[1].MessageID)
+	assertions.Equal(fmt.Sprintf("evt:%d", single), page.Occurrences[1].Ref)
 	assertions.Equal("cancelled", page.Occurrences[2].Status)
 	assertions.Equal(master, page.Occurrences[2].SeriesMessageID)
 	assertions.Equal(cancelled, page.Occurrences[2].MessageID)
@@ -45,6 +47,7 @@ func TestListCalendarOccurrences(t *testing.T) {
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(master, page.Occurrences[0].SeriesMessageID)
 	assertions.Equal(moved, page.Occurrences[0].MessageID)
+	assertions.Equal(fmt.Sprintf("evt:%d@20270316T170000Z", master), page.Occurrences[0].Ref)
 	assertions.Equal("2027-04-02T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 }
 func TestListCalendarOccurrencesStandaloneMovedToRetainedOriginal(t *testing.T) {
@@ -609,6 +612,28 @@ func TestListCalendarOccurrencesCancelledSinglesWithoutBounds(t *testing.T) {
 	page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 	requirements.NoError(err)
 	assertions.Equal([]CalendarUnexpandable{{MessageID: unknown, Reason: "missing event bounds"}}, page.Unexpandable)
+	for _, tc := range []struct{ name, bound, recurrence string }{
+		{"end timed", `"end":{"dateTime":"2027-03-14T11:00:00Z"}`, ""},
+		{"supported-end", `"end":{"dateTime":"2027-03-15T11:00:00Z"}`, "RRULE:FREQ=WEEKLY;COUNT=2"},
+		{"unsupported-end", `"end":{"dateTime":"2027-03-15T11:00:00Z"}`, "RRULE:FREQ=YEARLY;BYWEEKNO=20"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			extra := ""
+			if tc.recurrence != "" {
+				calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":[%q]}`, tc.recurrence))
+				extra = `,"recurringEventId":"series"`
+			}
+			_, event := calendarFixture(t, st, "partial", fmt.Sprintf(`{"id":"partial","status":"cancelled",%s%s}`, tc.bound, extra))
+			window := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), window, window.AddDate(0, 0, 2))
+			require.NoError(err)
+			for _, occurrence := range page.Occurrences {
+				assert.NotEqual(event, occurrence.MessageID)
+			}
+		})
+	}
 }
 
 func TestListCalendarOccurrencesExceptionMessageIDZero(t *testing.T) {

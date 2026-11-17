@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -50,7 +51,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		source, tool string
 		noDrafts     bool
 	}{
-		{"mbox", "", false},
+		{"mbox", "get_meeting_record", false}, {"ics", "get_meeting_record", false}, {"gcal", "get_meeting_record", false},
 		{"granola", "get_meeting_context", false}, {"chatwoot", "get_meeting_context", false},
 		{"circleback", "get_meeting_context", false}, {"pocket", "get_meeting_context", false},
 		{"muesli", "get_meeting_context", false}, {"notion_meetings", "get_meeting_context", false},
@@ -97,12 +98,20 @@ func TestMCPArchiveFamilies(t *testing.T) {
 			if tc.noDrafts {
 				assert.NotContains(names, "draft_compose")
 			}
+			if tc.source == "gcal" {
+				assert.NotContains(names, "get_meeting_context")
+				assert.NotContains(names, "list_meeting_action_items")
+				assert.NotContains(names, "get_meeting_metrics")
+			}
+			if tc.source == "ics" {
+				assert.NotContains(names, "calendar_freebusy")
+			}
 			if tc.source == "mbox" {
 				assert.Contains(names, "get_stats")
 				assert.Contains(names, "list_saved_views")
 				assert.Contains(names, "get_person_merge_context")
 				for _, name := range names {
-					assert.False(strings.HasPrefix(name, "calendar_") || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || strings.Contains(name, "meeting") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
+					assert.False(strings.HasPrefix(name, "calendar_") || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || (strings.Contains(name, "meeting") && name != "get_meeting_record") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
 				}
 			}
 		})
@@ -225,6 +234,55 @@ func TestMCPArchiveDelegatedScope(t *testing.T) {
 			names := mcpDraftToolNames(t, session)
 			assert.Contains(names, "search_metadata")
 			assert.Equal(tc.calendar, slices.Contains(names, "calendar_freebusy"))
+		})
+	}
+}
+
+func TestMCPMeetingRecordDelegated(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("granola", "notes@example.test")
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		name, version string
+		permissions   []string
+		available     bool
+	}{
+		{"current", api.APISchemaVersion, []string{"message.read"}, true},
+		{"older daemon", "5.3.0", []string{"message.read"}, false},
+		{"schema 5.8", "5.8.0", []string{"message.read"}, false},
+		{"without message access", api.APISchemaVersion, []string{"search.read"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			server := mcpDraftTestDaemon(t, &storeAPIAdapter{store: st}, func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/api/v1/health" {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, tc.version)
+						return
+					}
+					next.ServeHTTP(w, r)
+				})
+			})
+			session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, tc.permissions), t)
+			names := mcpDraftToolNames(t, session)
+			assert.Equal(tc.available, slices.Contains(names, "get_meeting_record"))
+		})
+	}
+}
+
+func TestMCPMeetingRecordCalendarSources(t *testing.T) {
+	for _, kind := range []string{"ics", "mbox", "gmail", "imap", "eml", "emlx", "maildir", "pst", "o365", "msmail", "hey", "apple-mail", "google-groups"} {
+		t.Run(kind, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource(kind, "owner@example.com")
+			require.NoError(t, err)
+			server := mcpDraftTestDaemon(t, &storeAPIAdapter{store: st}, nil)
+			session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, []string{"message.read"}), t)
+			names := mcpDraftToolNames(t, session)
+			assert.Contains(t, names, "get_meeting_record")
+			assert.NotContains(t, names, "calendar_freebusy")
 		})
 	}
 }

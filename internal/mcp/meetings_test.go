@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -80,7 +82,7 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
 	serverSession, err := newMCPServer(ServeOptions{
-		Engine: &querytest.MockEngine{}, Meetings: backend,
+		Engine: &querytest.MockEngine{}, Meetings: backend, MeetingRecords: true,
 	}, false).Connect(ctx, serverTransport, nil)
 	must.NoError(err)
 	t.Cleanup(func() { checks.NoError(serverSession.Close()) })
@@ -102,6 +104,19 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 		must.Contains(tools, name)
 		checks.True(tools[name].Annotations.ReadOnlyHint)
 	}
+	recordResult, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{
+		Name:      ToolGetMeetingRecord,
+		Arguments: map[string]any{"ref": fmt.Sprintf("msg:%d", imported[0].MessageID)},
+	})
+	must.NoError(err)
+	must.False(recordResult.IsError)
+	missing, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingRecord, Arguments: map[string]any{"ref": "msg:999999"}})
+	must.NoError(err)
+	must.True(missing.IsError)
+	must.NotEmpty(missing.Content)
+	missingText, ok := missing.Content[0].(*sdkmcp.TextContent)
+	must.True(ok)
+	checks.Contains(missingText.Text, "meeting_not_found")
 
 	contextResult, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{
 		Name: ToolGetMeetingContext,
@@ -250,6 +265,10 @@ func TestMeetingCatalogUsesClosedTypedSchemasAndStablePointers(t *testing.T) {
 }
 
 type meetingBackendFixture struct{}
+
+func (meetingBackendFixture) MeetingRecord(context.Context, string) (store.MeetingRecord, error) {
+	return store.MeetingRecord{}, nil
+}
 
 func (meetingBackendFixture) GetMeetingContext(context.Context, generated.GetMeetingContextBody) (*meetingcontent.PacketResult, error) {
 	return &meetingcontent.PacketResult{}, nil
