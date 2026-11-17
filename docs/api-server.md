@@ -478,7 +478,7 @@ missing, the daemon reads current labels. A write modifies only `INBOX` when
 needed, reads it back, and saves the verified snapshot locally. Unrelated labels and read/unread
 state are preserved. Source ownership and the daemon work gate follow the
 [native tag write rules](#native-email-tags). For 409 `sync_active`, retry after
-the active sync finishes.
+the active sync finishes. The saved snapshot can be stale until the next sync.
 
 For Beeper, send `{"archived":true,"whole_chat":true}` (or `archived:false`
 to restore the chat). This affects the whole chat, including messages newer than

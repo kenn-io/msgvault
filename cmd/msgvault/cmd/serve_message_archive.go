@@ -60,7 +60,7 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 		}
 		labels, labelsErr := a.store.MessageLabelIDsContext(ctx, id)
 		inbox, inboxErr := a.store.LabelIDContext(ctx, target.SourceID, "INBOX")
-		if labelsErr == nil && len(labels) > 0 && (inboxErr == nil || errors.Is(inboxErr, sql.ErrNoRows)) && *change.Archived != slices.Contains(labels, inbox) {
+		if labelsErr == nil && (inboxErr == nil || (len(labels) > 0 && errors.Is(inboxErr, sql.ErrNoRows))) && *change.Archived != slices.Contains(labels, inbox) {
 			return &emailtags.ArchiveResult{MessageID: id, SourceID: target.SourceID, Archived: *change.Archived, DryRun: change.DryRun}, nil
 		}
 	}

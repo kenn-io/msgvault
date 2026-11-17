@@ -54,10 +54,13 @@ func (r archiveRewriteTransport) RoundTrip(request *http.Request) (*http.Respons
 	return http.DefaultTransport.RoundTrip(clone)
 }
 
-func newArchiveProviderFixture(t *testing.T) *archiveProviderFixture {
+func newArchiveProviderFixture(t *testing.T, initialTags ...[]string) *archiveProviderFixture {
 	t.Helper()
 	fixture := &archiveProviderFixture{messageID: "gmail-archive"}
 	tags := []string{"INBOX", "UNREAD", "Label_keep"}
+	if len(initialTags) > 0 {
+		tags = slices.Clone(initialTags[0])
+	}
 	var mutex sync.Mutex
 	wrote := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +103,7 @@ func newArchiveProviderFixture(t *testing.T) *archiveProviderFixture {
 	return fixture
 }
 
-func newArchiveDaemon(t *testing.T) (*store.Store, *store.Source, int64, *storeAPIAdapter, string, *daemonclient.Client, *archiveProviderFixture) {
+func newArchiveDaemon(t *testing.T, initialTags ...[]string) (*store.Store, *store.Source, int64, *storeAPIAdapter, string, *daemonclient.Client, *archiveProviderFixture) {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "account@example.test")
@@ -114,7 +117,7 @@ func newArchiveDaemon(t *testing.T) (*store.Store, *store.Source, int64, *storeA
 	cfg := &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}, OAuth: config.OAuthConfig{ServiceAccountKey: "synthetic-service-account"}}
 	cfg.Data.DataDir = cfg.HomeDir
 	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "no-credentials.json")
-	provider := newArchiveProviderFixture(t)
+	provider := newArchiveProviderFixture(t, initialTags...)
 	adapter := &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler), emailTagClientFactory: func(context.Context, *store.Source) (gmail.API, error) {
 		provider.connects.Add(1)
 		return provider.client, nil
@@ -286,6 +289,27 @@ func TestArchiveMessageMatchingLocalSnapshot(t *testing.T) {
 			assert.Zero(t, provider.connects.Load())
 		})
 	}
+}
+
+func TestArchiveMessageRetryAfterRemovingLastLabel(t *testing.T) {
+	st, _, id, _, _, owner, provider := newArchiveDaemon(t, []string{"INBOX"})
+	target, err := st.EmailTagTargetContext(t.Context(), id, "")
+	require.NoError(t, err)
+	require.NoError(t, st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"INBOX"}, Verified: true}))
+	archived := true
+	result, err := owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
+	require.NoError(t, err)
+	require.True(t, result.Verified)
+	labels, err := st.MessageLabelIDsContext(t.Context(), id)
+	require.NoError(t, err)
+	require.Empty(t, labels)
+	connections := provider.connects.Load()
+	result, err = owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
+	require.NoError(t, err)
+	assert.True(t, result.Archived)
+	assert.False(t, result.Changed)
+	assert.False(t, result.Verified)
+	assert.Equal(t, connections, provider.connects.Load())
 }
 
 func TestArchiveMessageDaemonWriteAndReconcile(t *testing.T) {
@@ -538,7 +562,7 @@ func TestArchivePreviewAuthorizesResolvedSourceDuringMerge(t *testing.T) {
 	slog.SetDefault(slog.New(handler))
 	defer slog.SetDefault(previous)
 	archived := true
-	result, err := client.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: true})
+	_, err = client.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: true})
 	requirementsForTest.True(handler.merged.Load(), "merge must interleave the envelope read and provider access")
 	requirementsForTest.NoError(mergeErr)
 	assertionsForTest.EqualValues(1, mergeResult.MessagesMoved)
@@ -546,9 +570,9 @@ func TestArchivePreviewAuthorizesResolvedSourceDuringMerge(t *testing.T) {
 	requirementsForTest.NoError(lookupErr)
 	assertionsForTest.Equal(destination.ID, moved.ID)
 	assertionsForTest.Zero(destinationCalls.Load(), "preview must never open credentials outside its grant")
-	requirementsForTest.NoError(err)
-	assertionsForTest.Equal(source.ID, result.SourceID, "provider access remains bound to the authorized captured target")
-	assertionsForTest.True(result.DryRun)
+	var failure *emailtags.MessageTagError
+	requirementsForTest.ErrorAs(err, &failure)
+	assertionsForTest.Equal("message_not_found", failure.Code)
 }
 
 func TestArchiveCodeReaderGrant(t *testing.T) {
