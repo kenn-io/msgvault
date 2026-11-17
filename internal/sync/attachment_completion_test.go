@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,37 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
+
+func TestAttachmentReplayPreservesDebtAfterRestoreLabelFailure(t *testing.T) {
+	e := attachmentPersistenceEnv(t)
+	dir := filepath.Join(e.TmpDir, "blocked")
+	require.NoError(t, os.WriteFile(dir, []byte("blocked"), 0600))
+	opts := &Options{AttachmentsDir: dir}
+	e.Mock.AddMessage("retained", testMIMEWithAttachment(), []string{"INBOX", "TRASH"})
+	_, err := New(e.Mock, e.Store, opts).Full(t.Context(), testEmail)
+	require.NoError(t, err)
+	source := e.CreateSource(t)
+	require.NoError(t, e.Store.MarkMessageDeleted(source.ID, "retained"))
+	e.Mock.Messages["retained"].LabelIDs = []string{"INBOX"}
+	api := &labelMetadataSnapshotAPI{MockAPI: e.Mock, complete: true, labelErrors: map[string]error{"retained": errors.New("temporary label failure")}}
+	_, err = New(api, e.Store, opts).Incremental(t.Context(), source)
+	require.ErrorContains(t, err, "temporary label failure")
+	debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
+	require.NoError(t, err)
+	require.Len(t, debt, 1)
+	assert.Equal(t, syncItemKindAttachmentError, debt[0].ErrorKind)
+	assertDeletedFromSource(t, e.Store, "retained", true)
+	require.NoError(t, os.Remove(dir))
+	delete(api.labelErrors, "retained")
+	source, err = e.Store.GetSourceByID(source.ID)
+	require.NoError(t, err)
+	_, err = New(api, e.Store, opts).Incremental(t.Context(), source)
+	require.NoError(t, err)
+	assertDeletedFromSource(t, e.Store, "retained", false)
+	debt, err = e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
+	require.NoError(t, err)
+	assert.Empty(t, debt)
+}
 
 func TestAttachmentFullReplaysLocalDebtOutsideListing(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)

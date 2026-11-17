@@ -451,6 +451,7 @@ func (s *Syncer) replayAcquisitionFailures(
 		return nil, fmt.Errorf("check replay messages: %w", err)
 	}
 	fetchIDs := make([]string, 0, len(messageIDs))
+	reconcileIDs := make([]string, 0, len(messageIDs))
 	for _, messageID := range messageIDs {
 		if _, ok := existing[messageID]; !ok {
 			fetchIDs = append(fetchIDs, messageID)
@@ -464,10 +465,8 @@ func (s *Syncer) replayAcquisitionFailures(
 				}
 				checkpoint.ErrorsCount++
 			}
+			reconcileIDs = append(reconcileIDs, messageID)
 		}
-	}
-	if len(fetchIDs) == 0 {
-		return nil, nil
 	}
 
 	batchSize := 10
@@ -533,13 +532,22 @@ func (s *Syncer) replayAcquisitionFailures(
 			checkpoint.MessagesAdded++
 			summary.BytesDownloaded += int64(len(result.Message.Raw))
 			successfulIDs = append(successfulIDs, messageID)
+			reconcileIDs = append(reconcileIDs, messageID)
 		}
 		if err := s.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
 			return nil, fmt.Errorf("checkpoint replay batch: %w", err)
 		}
 	}
 
-	if err := s.reconcileGmailTrashRemovals(ctx, sourceID, successfulIDs); err != nil {
+	if err := s.reconcileGmailTrashRemovals(ctx, sourceID, reconcileIDs); err != nil {
+		if errors.Is(err, store.ErrSyncRunSuperseded) {
+			return nil, err
+		}
+		for _, id := range reconcileIDs {
+			if recErr := s.recordAcquisitionFailure(syncID, id, syncItemPhaseFetch, syncItemKindFetchError, err); recErr != nil {
+				return nil, recErr
+			}
+		}
 		return nil, err
 	}
 	return successfulIDs, nil

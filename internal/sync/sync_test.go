@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/gmail"
 	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	testemail "go.kenn.io/msgvault/internal/testutil/email"
@@ -6063,6 +6064,66 @@ func TestIncrementalSyncReplaysMarkedMessageMissingRaw(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, env.Mock.GetMessageCalls, id)
 	assertDeletedFromSource(t, env.Store, id, false)
+}
+
+func TestIncrementalSyncRetriesRestoreAfterLabelFailure(t *testing.T) {
+	for _, stillInTrash := range []bool{false, true} {
+		name := "restored"
+		if stillInTrash {
+			name = "still in trash"
+		}
+		t.Run(name, func(t *testing.T) {
+			env := newTestEnv(t)
+			const id = "restore-replay"
+			env.Mock.AddMessage(id, testemail.NewMessage().Subject("restoremarker").Bytes(), []string{"INBOX", "TRASH"})
+			runFullSync(t, env)
+			source, err := env.Store.GetSourceByIdentifier(t.Context(), testEmail)
+			require.NoError(t, err)
+			require.NoError(t, env.Store.MarkMessageDeleted(source.ID, id))
+			_, err = env.Store.DB().ExecContext(t.Context(), env.Store.Rebind(`DELETE FROM message_raw WHERE message_id IN (SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?)`), source.ID, id)
+			require.NoError(t, err)
+			recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted, store.SyncRunItem{SourceMessageID: id, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindFetchError})
+			env.Mock.Messages[id].LabelIDs = []string{"INBOX"}
+			if stillInTrash {
+				env.Mock.Messages[id].LabelIDs = append(env.Mock.Messages[id].LabelIDs, "TRASH")
+			}
+			env.SetHistory(1000)
+			api := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true, labelErrors: map[string]error{id: errors.New("temporary label failure")}}
+			env.Syncer = New(api, env.Store, nil)
+			source, err = env.Store.GetSourceByID(source.ID)
+			require.NoError(t, err)
+			_, err = env.Syncer.Incremental(t.Context(), source)
+			require.ErrorContains(t, err, "temporary label failure")
+			assertDeletedFromSource(t, env.Store, id, true)
+			ids, err := env.Store.MessageExistsWithRawBatchContext(t.Context(), source.ID, []string{id})
+			require.NoError(t, err)
+			require.Contains(t, ids, id)
+			debt, err := env.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
+			require.NoError(t, err)
+			require.Len(t, debt, 1)
+			assert.Equal(t, id, debt[0].SourceMessageID)
+			delete(api.labelErrors, id)
+			env.Mock.GetMessageCalls = nil
+			api.labelCalls = nil
+			source, err = env.Store.GetSourceByID(source.ID)
+			require.NoError(t, err)
+			_, err = env.Syncer.Incremental(t.Context(), source)
+			require.NoError(t, err)
+			assert.Empty(t, env.Mock.GetMessageCalls)
+			assert.Equal(t, [][]string{{id}}, api.labelCalls)
+			assertDeletedFromSource(t, env.Store, id, stillInTrash)
+			_, total, err := env.Store.SearchMessagesQuery(&search.Query{TextTerms: []string{"restoremarker"}}, 0, 10)
+			require.NoError(t, err)
+			if stillInTrash {
+				assert.Zero(t, total)
+			} else {
+				assert.Equal(t, int64(1), total)
+			}
+			debt, err = env.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
+			require.NoError(t, err)
+			assert.Empty(t, debt)
+		})
+	}
 }
 
 func TestIncrementalSyncReplaysEarlierRunFailures(t *testing.T) {
