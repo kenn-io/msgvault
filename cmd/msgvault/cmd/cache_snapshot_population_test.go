@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
@@ -140,6 +141,12 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
+			// Relationship temperatures decay by whole UTC days from each
+			// build's watermark, so builds on either side of midnight differ.
+			// One instant for every build keeps the comparison to the data.
+			buildAt := time.Now()
+			cacheExportNow = func() time.Time { return buildAt }
+			t.Cleanup(func() { cacheExportNow = time.Now })
 			tmp := t.TempDir()
 			dbPath := filepath.Join(tmp, "msgvault.db")
 			incDir, fullDir := filepath.Join(tmp, "analytics-inc"), filepath.Join(tmp, "analytics-full")
