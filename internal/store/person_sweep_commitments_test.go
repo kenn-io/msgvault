@@ -158,7 +158,7 @@ func TestCommitmentListPages(t *testing.T) {
 		a.Equal("I will call by 2026-06-01.", items[1].Quote)
 		a.Equal("I will send the report.", items[2].Quote)
 	})
-	t.Run("overdue before older undated promises", func(t *testing.T) {
+	t.Run("walk all promises and sort overdue before older undated promises", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "promise-overdue-order", false)
 		_, persist := newCommitmentTestConversation(t, f)

@@ -125,13 +125,14 @@ func TestLoopsDaemonVersions(t *testing.T) {
 	for _, tc := range []struct {
 		name, version, minimum, path, method, response, output, state string
 		args                                                          []string
-		closed, warning                                               bool
+		closed, warning, conflict                                     bool
 	}{
 		{name: "old_reply_loop_daemon", version: "3.23.0", minimum: "3.44.0", args: []string{"list", "--json"}},
 		{name: "old_closed_commitment_daemon", version: "5.21.0", minimum: "5.22.0", args: []string{"list", "--json", "--include-closed"}},
 		{name: "older_commitment_daemon", version: "5.21.0", minimum: "5.22.0", args: []string{"done", "c12"}},
 		{name: "compatible_closed_commitment_daemon", version: "5.22.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"truncated":false,"coverage_incomplete":false,"skipped_unparseable":0}`, args: []string{"list", "--json", "--include-closed"}, closed: true},
 		{name: "agenda", version: "5.23.0", path: "/api/v1/loops/commitments/c12/agenda", method: http.MethodPost, response: `{"issue":{"uid":"u","ref":"a","qualified_ref":"example#a","project":"example","title":"Reply","status":"open","revision":"1","web_url":"https://kata.example/a"},"replayed":true,"parent_ref":"example#b"}`, output: "example#a https://kata.example/a (already filed) under example#b\n", args: []string{"agenda", "c12"}},
+		{name: "agenda_person_required", version: "5.23.0", path: "/api/v1/loops/42/agenda", method: http.MethodPost, response: `{"error":"person_required","message":"link the contact to a person first"}`, args: []string{"agenda", "42"}, conflict: true},
 		{name: "agenda_old_daemon", version: "5.22.0", minimum: "5.23.0", args: []string{"agenda", "c12"}},
 		{name: "commitment", version: "5.22.0", path: "/api/v1/loops/commitments/c12/decision", method: http.MethodPost, response: `{"id":"c12","state":"done"}`, output: "c12 is done.\n", args: []string{"done", "c12"}, state: "done"},
 		{name: "existing_reply_loop", version: "3.44.0", path: "/api/v1/loops/42/done", method: http.MethodPost, response: `{"anchor_message_id":42,"state":"done"}`, args: []string{"done", "42"}},
@@ -156,6 +157,9 @@ func TestLoopsDaemonVersions(t *testing.T) {
 					assert.NoError(t, json.NewDecoder(req.Body).Decode(&body))
 					assert.Equal(t, tc.state, body["state"])
 				}
+				if tc.conflict {
+					w.WriteHeader(http.StatusConflict)
+				}
 				_, err := w.Write([]byte(tc.response))
 				assert.NoError(t, err)
 			}))
@@ -172,6 +176,11 @@ func TestLoopsDaemonVersions(t *testing.T) {
 				require.ErrorContains(t, err, "require daemon API schema "+tc.minimum)
 				require.ErrorContains(t, err, fmt.Sprintf("daemon reports %q", tc.version))
 				assert.Zero(t, requests)
+				return
+			}
+			if tc.conflict {
+				require.ErrorContains(t, err, "link the contact to a person first")
+				assert.Equal(t, 1, requests)
 				return
 			}
 			require.NoError(t, err)
@@ -302,22 +311,4 @@ func TestLoopsReopenClearsDecision(t *testing.T) {
 		anchors = append(anchors, item.AnchorMessageID)
 	}
 	assert.Contains(anchors, anchor)
-}
-
-func TestLoopsAgendaPersonRequired(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if req.URL.Path == "/api/v1/health" {
-			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.14.0"}`))
-			assert.NoError(t, err)
-			return
-		}
-		w.WriteHeader(http.StatusConflict)
-		_, err := w.Write([]byte(`{"error":"person_required","message":"link the contact to a person first"}`))
-		assert.NoError(t, err)
-	}))
-	t.Cleanup(server.Close)
-	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	_, err := runLoops(ctx, t, "agenda", "42")
-	require.ErrorContains(t, err, "link the contact to a person first")
 }

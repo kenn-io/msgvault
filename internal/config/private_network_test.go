@@ -53,6 +53,8 @@ func TestPrivateNetworkConfigStrictness(t *testing.T) {
 		{"userinfo rejected", "kata", credentialURL, "trust_private_network = true", true},
 		{"query rejected", "kata", "http://kata?key=value", "trust_private_network = true", true},
 		{"fragment rejected", "kata", "http://kata#fragment", "trust_private_network = true", true},
+		{"auto agenda in kata", "kata", "http://localhost:7777", "auto_agenda = false", false},
+		{"auto agenda rejected in tasks", "tasks", "http://localhost:7777", "auto_agenda = false", true},
 		{"generic tasks stay strict", "tasks", "http://tasks:7777", "trust_private_network = true", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

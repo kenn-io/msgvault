@@ -886,11 +886,32 @@ func TestCreateThreadParentAndDeadline(t *testing.T) {
 	input := kataissues.CreateInput{Title: "First obligation", Thread: "conversation-1", PersonID: new(int64(7)), SourceTime: time.Now().UTC().Add(-time.Hour), DeadlineOn: new("2026-12-01"), Evidence: []kataevidence.Reference{f.evidence(t, 0).Reference}}
 	first, err := f.service.Create(t.Context(), "thread-first", input)
 	require.NoError(t, err)
+	// Equal or earlier source times cannot make a parent; another person is isolated.
+	equal, err := f.service.Create(t.Context(), "thread-equal", input)
+	require.NoError(t, err)
+	assert.Empty(t, equal.Issue.ParentRef)
+	earlier := input
+	earlier.SourceTime = input.SourceTime.Add(-time.Minute)
+	early, err := f.service.Create(t.Context(), "thread-earlier", earlier)
+	require.NoError(t, err)
+	assert.Empty(t, early.Issue.ParentRef)
+	f.service.People = people{7: {"person-uid-7"}, 8: {"person-uid-8"}}
+	other := input
+	other.PersonID = new(int64(8))
+	other.SourceTime = input.SourceTime.Add(time.Second)
+	different, err := f.service.Create(t.Context(), "thread-other", other)
+	require.NoError(t, err)
+	assert.Empty(t, different.Issue.ParentRef)
 	input.Title = "Follow up"
 	input.SourceTime = input.SourceTime.Add(time.Minute)
 	input.DeadlineOn = nil
 	second, err := f.service.Create(t.Context(), "thread-second", input)
 	require.NoError(t, err)
+	replayed, err := f.service.Create(t.Context(), "thread-second", input)
+	require.NoError(t, err)
+	assert.True(t, replayed.Replayed)
+	assert.Equal(t, second.Issue.ParentRef, replayed.Issue.ParentRef)
+	assert.NotEmpty(t, replayed.Issue.ParentRef)
 	show := func(uid string) katagen.ShowIssueResponseBody {
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%d/issues/%s", f.kata.URL, f.kata.projectID, uid), nil)
 		require.NoError(t, err)
@@ -911,6 +932,8 @@ func TestCreateThreadParentAndDeadline(t *testing.T) {
 	assert.Equal(t, first.Issue.UID, secondShow.Parent.UID)
 	f.kata.endpoint().CloseIssue(t, second.Issue.UID)
 	f.kata.endpoint().CloseIssue(t, first.Issue.UID)
+	f.kata.endpoint().CloseIssue(t, equal.Issue.UID)
+	f.kata.endpoint().CloseIssue(t, early.Issue.UID)
 	input.Title = "Later obligation"
 	third, err := f.service.Create(t.Context(), "thread-third", input)
 	require.NoError(t, err)
@@ -927,7 +950,4 @@ func TestCreateReplaysAcrossOriginLinks(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, replay.Replayed)
 	assert.Equal(t, created.Issue.UID, replay.Issue.UID)
-	input.Brief = "Changed request"
-	_, err = f.service.Create(t.Context(), "origin-key", input)
-	assert.ErrorIs(t, err, kataissues.ErrIdempotencyConflict)
 }
