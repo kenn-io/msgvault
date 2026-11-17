@@ -680,7 +680,7 @@ func (s *Syncer) reconcileGmailTrashRemovals(
 	if err != nil {
 		return fmt.Errorf("check marked Gmail messages: %w", err)
 	}
-	messageIDs = slices.DeleteFunc(messageIDs, func(id string) bool {
+	messageIDs = slices.DeleteFunc(slices.Clone(messageIDs), func(id string) bool {
 		_, ok := marked[id]
 		return !ok
 	})
