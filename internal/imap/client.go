@@ -116,26 +116,26 @@ type Client struct {
 	selectedNumMessages         uint32               // EXISTS count from the last SELECT
 	mailboxCache                []string             // cached list of selectable mailboxes
 	messageListCache            []gmailapi.MessageID // full message ID list, built once per session
-	trashMailboxes              map[string]bool
-	trashMailbox                string              // cached trash mailbox name
-	junkMailbox                 string              // cached junk/spam mailbox name
-	allMailFolder               string              // mailbox with \All attribute (empty if not detected)
-	allMailMailboxes            map[string]bool     // LIST-advertised \All mailboxes
-	advertisedOutgoingMailboxes map[string]bool     // unambiguous LIST-advertised \Sent or \Drafts placement
-	advertisedSentMailboxes     map[string]bool     // unambiguous LIST-advertised \Sent placement
-	advertisedDraftsMailboxes   map[string]bool     // unambiguous LIST-advertised \Drafts placement
-	conflictingRoleMailboxes    map[string]bool     // LIST-advertised \All/\Junk/\Trash roles, or INBOX
-	trustedOutgoingMailboxes    map[string]bool     // explicit user-configured outgoing mailboxes
-	configuredSentMailboxes     map[string]bool     // explicit per-source Sent-folder configuration (never cleared)
-	msgIDToLabels               map[string][]string // RFC822 Message-ID → mailbox memberships
-	seenRFC822IDs               map[string]bool     // dedup overlapping mailbox copies
-	seenTrustedRFC822IDs        map[string]bool     // identities already carried by a trusted full raw this run
-	preferredRawSourceIDs       map[[32]byte]string // raw digest → canonical \All source ID
-	sourceMessageAliases        map[string]string   // mailbox UID source ID → durable canonical source ID
-	activeSourceAliases         map[string]string   // aliases validated by this session's QRESYNC SELECTs
-	labelMapComplete            bool                // latest listing collected every mailbox membership
-	since                       time.Time           // IMAP SINCE date filter (zero = no filter)
-	before                      time.Time           // IMAP BEFORE date filter (zero = no filter)
+	trashMailboxes              map[string]bool      // LIST-advertised \Trash mailboxes, or the fallback Trash
+	trashMailbox                string               // cached trash mailbox name
+	junkMailbox                 string               // cached junk/spam mailbox name
+	allMailFolder               string               // mailbox with \All attribute (empty if not detected)
+	allMailMailboxes            map[string]bool      // LIST-advertised \All mailboxes
+	advertisedOutgoingMailboxes map[string]bool      // unambiguous LIST-advertised \Sent or \Drafts placement
+	advertisedSentMailboxes     map[string]bool      // unambiguous LIST-advertised \Sent placement
+	advertisedDraftsMailboxes   map[string]bool      // unambiguous LIST-advertised \Drafts placement
+	conflictingRoleMailboxes    map[string]bool      // LIST-advertised \All/\Junk/\Trash roles, or INBOX
+	trustedOutgoingMailboxes    map[string]bool      // explicit user-configured outgoing mailboxes
+	configuredSentMailboxes     map[string]bool      // explicit per-source Sent-folder configuration (never cleared)
+	msgIDToLabels               map[string][]string  // RFC822 Message-ID → mailbox memberships
+	seenRFC822IDs               map[string]bool      // dedup overlapping mailbox copies
+	seenTrustedRFC822IDs        map[string]bool      // identities already carried by a trusted full raw this run
+	preferredRawSourceIDs       map[[32]byte]string  // raw digest → canonical \All source ID
+	sourceMessageAliases        map[string]string    // mailbox UID source ID → durable canonical source ID
+	activeSourceAliases         map[string]string    // aliases validated by this session's QRESYNC SELECTs
+	labelMapComplete            bool                 // latest listing collected every mailbox membership
+	since                       time.Time            // IMAP SINCE date filter (zero = no filter)
+	before                      time.Time            // IMAP BEFORE date filter (zero = no filter)
 
 	relocationCandidateLoader func(context.Context, []string) ([]RelocationCandidate, error)
 	relocationTargets         map[string]gmailapi.MessageRelocationTarget
@@ -756,12 +756,13 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 		}
 	}
 
+	// Fallback: look for common trash folder names
 	if c.trashMailbox == "" {
 		for _, candidate := range []string{Trash, "[Gmail]/Trash", "Deleted Items", "Deleted Messages"} {
-			for _, mailbox := range names {
-				if strings.EqualFold(mailbox, candidate) {
-					c.trashMailbox = mailbox
-					c.trashMailboxes = map[string]bool{mailbox: true}
+			for _, mb := range names {
+				if strings.EqualFold(mb, candidate) {
+					c.trashMailbox = mb
+					c.trashMailboxes = map[string]bool{mb: true}
 					break
 				}
 			}
@@ -1823,12 +1824,11 @@ func (c *Client) ListLabels(ctx context.Context) ([]*gmailapi.Label, error) {
 		}
 		for _, item := range items {
 			labelType := classifyLabelType(item.Mailbox, item.Attrs)
-			role := systemRoleForMailbox(item.Attrs)
 			labels = append(labels, &gmailapi.Label{
 				ID:         item.Mailbox,
 				Name:       item.Mailbox,
 				Type:       labelType,
-				SystemRole: role,
+				SystemRole: systemRoleForMailbox(item.Attrs),
 			})
 		}
 		return nil
