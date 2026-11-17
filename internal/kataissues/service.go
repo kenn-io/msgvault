@@ -178,6 +178,21 @@ func (s *Service) Filed(ctx context.Context, key string) (bool, error) {
 	return found, err
 }
 
+// FindFiled returns the issue filed under a key, including closed issues.
+func (s *Service) FindFiled(ctx context.Context, key string) (taskclient.KataTask, bool, error) {
+	archive, err := s.archiveUID(ctx)
+	if err != nil {
+		return taskclient.KataTask{}, false, err
+	}
+	marker := kataevidence.Digest("msgvault.kata.create-marker.v1", archive, key)
+	issue, found, err := s.Kata.FindActionTask(ctx, s.Project, marker)
+	if err != nil || !found {
+		return issue, found, err
+	}
+	issue, err = s.Kata.GetTask(ctx, issue.Project, issue.UID)
+	return issue, true, err
+}
+
 // createConflict reads Kata's refusal of a create. A key Kata already holds
 // names the issue it filed, unless that issue was since deleted and no lookup
 // returns it; any other conflict is Kata rejecting the request itself.

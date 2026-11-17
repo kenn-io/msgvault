@@ -151,12 +151,14 @@ func TestLoopAgendaFilesPromise(t *testing.T) {
 	require.True(t, ok)
 	third := archive.promises[0]
 	third.ID, third.PersonID, third.PromisedAt = 3, other.ID, now
+	third.AnchorMessageID = f.PersistEmail(storetest.EmailSpec{Thread: "promise", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: quote, SentAt: now})
 	archive.promises = append(archive.promises, third)
 	different, err := agenda.File(t.Context(), "c3", now)
 	require.NoError(t, err)
 	assert.Empty(t, different.Issue.ParentRef)
 	fourth := third
 	fourth.ID, fourth.PersonID = 4, person.ID
+	fourth.AnchorMessageID = f.PersistEmail(storetest.EmailSpec{Thread: "promise", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: quote, SentAt: now})
 	archive.promises = append(archive.promises, fourth)
 	same, err := agenda.File(t.Context(), "c4", now)
 	require.NoError(t, err)
@@ -407,4 +409,85 @@ func TestLoopAgendaRunSkipsPersonWithoutStableIdentity(t *testing.T) {
 	issues, _, err := client.OpenIssues(t.Context(), katatest.Project, 100)
 	require.NoError(t, err)
 	assert.Empty(t, issues)
+}
+
+func TestLoopAgendaReplayBeforeCitationValidation(t *testing.T) {
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	body := "I will send it."
+	id := f.PersistEmail(storetest.EmailSpec{Thread: "retry", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: body, SentAt: now.Add(-time.Hour)})
+	p := f.EnsureParticipant("alex@example.test", "Alex", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(p)
+	require.NoError(t, err)
+	native := katatest.New(t)
+	server := httptest.NewServer(native.Service.Handler())
+	t.Cleanup(server.Close)
+	agenda := NewLoopAgenda(config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}, f.Store, "")
+	archive := &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{{ID: 1, PersonID: person.ID, AnchorMessageID: id, Quote: body, End: int64(len(body)), Summary: "Send it", Direction: "owed_by", PromisedAt: now.Add(-time.Hour)}}}
+	agenda.archive = archive
+	first, err := agenda.File(t.Context(), "c1", now)
+	require.NoError(t, err)
+	archive.promises[0].Quote = "outdated quote"
+	replay, err := agenda.File(t.Context(), "c1", now)
+	require.NoError(t, err)
+	assert.True(t, replay.Replayed)
+	assert.Equal(t, first.Issue.UID, replay.Issue.UID)
+}
+
+func TestLoopAgendaPromiseReplayAfterPersonMerge(t *testing.T) {
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	body := "I will send it."
+	id := f.PersistEmail(storetest.EmailSpec{Thread: "merge", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: body, SentAt: now.Add(-time.Hour)})
+	p := f.EnsureParticipant("alex@example.test", "Alex", "example.test")
+	absorbed, _, err := f.Store.CreatePersonFromParticipant(p)
+	require.NoError(t, err)
+	p2 := f.EnsureParticipant("sam@example.test", "Sam", "example.test")
+	survivor, _, err := f.Store.CreatePersonFromParticipant(p2)
+	require.NoError(t, err)
+	native := katatest.New(t)
+	server := httptest.NewServer(native.Service.Handler())
+	t.Cleanup(server.Close)
+	agenda := NewLoopAgenda(config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}, f.Store, "")
+	archive := &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{{ID: 1, PersonID: absorbed.ID, AnchorMessageID: id, Quote: body, End: int64(len(body)), Summary: "Send it", Direction: "owed_by", PromisedAt: now.Add(-time.Hour)}}}
+	agenda.archive = archive
+	first, err := agenda.File(t.Context(), "c1", now)
+	require.NoError(t, err)
+	_, err = f.Store.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: survivor.ID, AbsorbedID: absorbed.ID, ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision, IdempotencyKey: "agenda-merge", Actor: "test"})
+	require.NoError(t, err)
+	archive.promises[0].ID, archive.promises[0].PersonID = 2, survivor.ID
+	require.NoError(t, agenda.Run(t.Context(), now))
+	replay, err := agenda.File(t.Context(), "c2", now)
+	require.NoError(t, err)
+	assert.True(t, replay.Replayed)
+	assert.Equal(t, first.Issue.UID, replay.Issue.UID)
+}
+
+func TestLoopAgendaRunLimitsUncertainCreates(t *testing.T) {
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	for i := range 26 {
+		address := fmt.Sprintf("person%d@example.test", i)
+		f.PersistEmail(storetest.EmailSpec{Thread: fmt.Sprintf("uncertain-%d", i), From: address, To: []string{storetest.OwnerAddress}, Body: "Can you send it?", SentAt: now.Add(-48 * time.Hour)})
+		p := f.EnsureParticipant(address, "", "example.test")
+		_, _, err := f.Store.CreatePersonFromParticipant(p)
+		require.NoError(t, err)
+	}
+	native := katatest.New(t)
+	handler := native.Service.Handler()
+	creates := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues") {
+			creates++
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, r)
+			http.Error(w, "response lost", http.StatusInternalServerError)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	agenda := NewLoopAgenda(config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}, f.Store, "")
+	require.Error(t, agenda.Run(t.Context(), now))
+	assert.Equal(t, 25, creates)
 }

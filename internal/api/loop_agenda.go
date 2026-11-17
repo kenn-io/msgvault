@@ -44,10 +44,10 @@ func NewLoopAgenda(cfg config.TaskIntegrationConfig, archive *store.Store, origi
 }
 
 func (a *LoopAgenda) File(ctx context.Context, ref string, now time.Time) (kataissues.Result, error) {
-	return a.file(ctx, ref, now, nil)
+	return a.file(ctx, ref, now, nil, nil)
 }
 
-func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, service *kataissues.Service) (kataissues.Result, error) {
+func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, service *kataissues.Service, attempted *bool) (kataissues.Result, error) {
 	var input kataissues.CreateInput
 	var messageID, conversationID int64
 	var selectors []kataevidence.Selector
@@ -86,7 +86,7 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 			start, end := offset, min(offset+kataevidence.MaxChars, int(c.End))
 			selectors = append(selectors, kataevidence.Selector{Kind: "message", MessageID: messageID, StartRune: &start, EndRune: &end})
 		}
-		key = fmt.Sprintf("commitment:c%d", id)
+		key = commitmentAgendaKey(c)
 	} else {
 		id, err := strconv.ParseInt(ref, 10, 64)
 		if err != nil || id < 1 {
@@ -113,6 +113,20 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 		selectors = []kataevidence.Selector{{Kind: "message", MessageID: id, MaxChars: new(kataevidence.MaxChars)}}
 		key = fmt.Sprintf("loop:%d", id)
 	}
+	if service == nil {
+		var err error
+		service, err = a.backend.service(ctx)
+		if err != nil {
+			return kataissues.Result{}, err
+		}
+	}
+	issue, found, err := service.FindFiled(ctx, key)
+	if err != nil {
+		return kataissues.Result{}, err
+	}
+	if found {
+		return kataissues.Result{Issue: issue, Replayed: true}, nil
+	}
 	input.Title = textutil.TruncateRunes(input.Title, 512)
 	evidence, err := a.backend.Prepare(ctx, selectors)
 	if err != nil {
@@ -131,11 +145,8 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 	if origin != "" {
 		input.OriginLink = fmt.Sprintf("[Open the original message](%s/messages/%d)", strings.TrimRight(origin, "/"), messageID)
 	}
-	if service == nil {
-		service, err = a.backend.service(ctx)
-		if err != nil {
-			return kataissues.Result{}, err
-		}
+	if attempted != nil {
+		*attempted = true
 	}
 	result, err := service.Create(ctx, key, input)
 	if errors.Is(err, kataissues.ErrIdempotencyConflict) && result.Issue.UID != "" {
@@ -143,6 +154,10 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 		return result, nil
 	}
 	return result, err
+}
+
+func commitmentAgendaKey(c store.PersonCommitment) string {
+	return fmt.Sprintf("commitment:%d:%d-%d", c.AnchorMessageID, c.Start, c.End)
 }
 
 // Run files at most 25 new obligations in one pass.
@@ -160,9 +175,10 @@ func (a *LoopAgenda) Run(ctx context.Context, now time.Time) error {
 			return nil
 		}
 		if err == nil {
+			var attempted bool
 			var result kataissues.Result
-			result, err = a.file(ctx, ref, now, service)
-			if err == nil && !result.Replayed {
+			result, err = a.file(ctx, ref, now, service, &attempted)
+			if attempted && !result.Replayed {
 				created++
 			}
 		}
@@ -190,7 +206,7 @@ func (a *LoopAgenda) Run(ctx context.Context, now time.Time) error {
 	}
 	err = a.archive.WalkOpenPersonCommitments(ctx, now, func(c store.PersonCommitment) error {
 		ref := fmt.Sprintf("c%d", c.ID)
-		candidates = append(candidates, candidate{ref, "commitment:" + ref, c.PromisedAt})
+		candidates = append(candidates, candidate{ref, commitmentAgendaKey(c), c.PromisedAt})
 		return nil
 	})
 	if err != nil {
