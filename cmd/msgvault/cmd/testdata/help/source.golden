@@ -12,7 +12,7 @@ Available Commands:
   instagram-messages Archive a linked Instagram account's inbox
 
 Flags:
-  -h, --help   help for source
+  -h, --help[=true|false]   help for source
 
 Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')
 

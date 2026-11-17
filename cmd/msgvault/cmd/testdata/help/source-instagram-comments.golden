@@ -8,7 +8,7 @@ Available Commands:
   sync        Archive Instagram comments and replies
 
 Flags:
-  -h, --help   help for instagram-comments
+  -h, --help[=true|false]   help for instagram-comments
 
 Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')
 
