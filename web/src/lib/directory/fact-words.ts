@@ -15,16 +15,6 @@ export function evidenceSourceWords(sourceClass: string, directness: string): st
   return (sourceClass === 'archive' ? ARCHIVE_SOURCE[directness] : OTHER_SOURCE[sourceClass]) ?? '';
 }
 
-/** Evidence authority; ordinary says nothing. */
-const AUTHORITY_WORDS: Record<'authoritative' | 'ordinary' | 'aggregator', string | null> = {
-  authoritative: 'official record',
-  ordinary: null,
-  aggregator: 'aggregator',
-};
-export function authorityWords(authority: string): string | null {
-  return AUTHORITY_WORDS[authority as keyof typeof AUTHORITY_WORDS] ?? null;
-}
-
 /** Who proposed a claim. */
 const ORIGIN_WORDS: Record<'extraction' | 'enrichment' | 'brief' | 'system' | 'invalid', string> = {
   extraction: 'From a message',
@@ -58,14 +48,19 @@ const NOT_USED_REASONS: Record<string, string> = {
   'organization-ambiguous': 'the organization is unclear', 'applied-projection': 'another claim was saved',
   'evidence-unsupported': 'its source was removed', 'outside-validity': 'outside its valid dates',
 };
-export function decisionSentence(outcome: string | null, reason: string, value: string): string {
+export function decisionSentence(outcome: string | null, reason: string, value?: string): string {
   switch (outcome) {
-    case 'saved': return `Saved: ${value}`;
-    case 'value-retired': return `This value is no longer saved: ${value}`;
-    case 'current-value-kept': return reason === 'insufficient-margin' ? `Kept the current value; ${value} wasn't far enough ahead` : `${value}: Kept the current value`;
-    case 'pinned-value-kept': return `${value}: Kept your pinned value`;
-    case 'too-close-to-choose': return `The evidence was too close to choose: ${value}`;
-    case 'not-used': return NOT_USED_REASONS[reason] ? `Not used: ${value} · ${NOT_USED_REASONS[reason]}` : `Not used: ${value}`;
+    case 'saved': return value ? `Saved: ${value}` : 'Saved a value';
+    case 'value-retired': return value ? `This value is no longer saved: ${value}` : 'This value is no longer saved';
+    case 'current-value-kept':
+      if (reason === 'insufficient-margin') return `Kept the current value; ${value ?? 'the claim'} wasn't far enough ahead`;
+      return value ? `${value}: Kept the current value` : 'Kept the current value';
+    case 'pinned-value-kept': return value ? `${value}: Kept your pinned value` : 'Kept your pinned value';
+    case 'too-close-to-choose': return value ? `The evidence was too close to choose: ${value}` : 'The evidence was too close to choose';
+    case 'not-used': {
+      const reasonWords = NOT_USED_REASONS[reason];
+      return value ? reasonWords ? `Not used: ${value} · ${reasonWords}` : `Not used: ${value}` : reasonWords ? `Not used: ${reasonWords}` : 'Not used';
+    }
     default: return 'Result unavailable';
   }
 }
@@ -78,37 +73,6 @@ export const SCORE_PARTS = [
 export function projectionWords(kind: string | null): string | null {
   if (kind === 'employment') return 'Work';
   return null;
-}
-
-/**
- * Why a source's standing changed. A lost source is its own status ("Source deleted");
- * a source that came back is the row's change, capitalized ("Imported again").
- */
-const STATUS_REASON_WORDS: Record<string, string> = {
-  'source-deleted': 'Source deleted',
-  'source-edited': 'Source edited',
-  'scope-unlinked': 'Unlinked from this person',
-  'identity-reassigned': 'Moved to another person',
-  'source-reimported': 'imported again',
-  'scope-relinked': 'linked again',
-};
-function statusReasonWords(reason: string): string {
-  return STATUS_REASON_WORDS[reason] ?? 'changed';
-}
-/**
- * One source history row's words before its date: the change, "Imported again" or
- * "Source deleted". Every source starts in the archive, so "In the archive" shows
- * only when a row names no change.
- */
-export function statusEventWords(supported: boolean, reason: string): string {
-  if (!supported) return lostSupportWords(reason);
-  const words = statusReasonWords(reason);
-  return ['source-reimported', 'scope-relinked'].includes(reason) ? words[0]!.toUpperCase() + words.slice(1) : 'In the archive';
-}
-/** The one exception an evidence row shows when it lost its source: "Source deleted". */
-export function lostSupportWords(reason: string | undefined): string {
-  const words = reason && !['source-reimported', 'scope-relinked'].includes(reason) ? statusReasonWords(reason) : null;
-  return words && words !== 'changed' ? words : 'Source removed';
 }
 
 /** A recorded confidence or identity score. */

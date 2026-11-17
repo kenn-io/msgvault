@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authorityWords, decisionSentence, evidenceSourceWords, lostSupportWords, originWords, projectionWords, relationWords, scoreWords, statusEventWords } from './fact-words';
+import { decisionSentence, evidenceSourceWords, originWords, projectionWords, relationWords, scoreWords } from './fact-words';
 
 describe('fact words', () => {
   it('names evidence sources in words', () => {
@@ -11,8 +11,6 @@ describe('fact words', () => {
     expect(evidenceSourceWords('public', 'indirect')).toBe('From a public page');
     expect(evidenceSourceWords('provider_assertion', 'indirect')).toBe('From a lookup');
     expect(evidenceSourceWords('system', 'direct-self')).toBe('Recorded automatically');
-    expect(authorityWords('ordinary')).toBeNull();
-    expect(authorityWords('authoritative')).toBe('official record');
   });
 
   it('says only what departs from normal for claims', () => {
@@ -38,19 +36,9 @@ describe('fact words', () => {
     expect(decisionSentence('not-used', 'applied-projection', 'New York')).toBe('Not used: New York · another claim was saved');
     expect(decisionSentence('not-used', 'insufficient-margin', 'New York')).toBe('Not used: New York');
     expect(decisionSentence('not-used', 'identity-mismatch', 'New York')).toBe('Not used: New York · may be about someone else');
+    expect(decisionSentence('current-value-kept', 'insufficient-margin')).toBe("Kept the current value; the claim wasn't far enough ahead");
+    expect(decisionSentence('not-used', 'sensitive-policy')).toBe('Not used: this field is sensitive');
     expect(decisionSentence(null, '', 'New York')).toBe('Result unavailable');
-  });
-
-  it('words source status changes', () => {
-    expect(statusEventWords(true, 'source-reimported')).toBe('Imported again');
-    expect(statusEventWords(true, 'scope-relinked')).toBe('Linked again');
-    expect(statusEventWords(false, 'scope-unlinked')).toBe('Unlinked from this person');
-    expect(statusEventWords(false, 'source-deleted')).toBe('Source deleted');
-    expect(statusEventWords(false, 'source-edited')).toBe('Source edited');
-    expect(lostSupportWords('identity-reassigned')).toBe('Moved to another person');
-    expect(lostSupportWords(undefined)).toBe('Source removed');
-    expect(lostSupportWords('private-unknown-reason')).toBe('Source removed');
-    expect(statusEventWords(true, 'private-unknown-reason')).toBe('In the archive');
   });
 
   it('names where a saved decision put its value', () => {

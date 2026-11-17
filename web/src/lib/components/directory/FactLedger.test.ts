@@ -44,13 +44,13 @@ function controller(): FactLedgerController {
   value.personID = 42;
   value.targets = [{ optionID: 'target-0', name: 'Private note', targetKey: 'note', description: 'Private note', kind: 'attribute', valueType: 'string', cardinality: 'single', sensitive: true, canonical: `attribute:note:sha256:${'a'.repeat(64)}` }];
   value.evidence.rows = [{ rowToken: 'evidence-0', sourceClass: 'archive', directness: 'direct-self', authority: 'ordinary', identityScore: 950,
-    sourceURL: null, evidenceID: 1, eventTime: '2026-08-01', recordedTime: '2026-08-02', supported: true, lostSupport: null, createdAt: '2026-08-03',
+    evidenceID: 1, eventTime: '2026-08-01', recordedTime: '2026-08-02', supported: true, currentSupportLabel: 'Supported — Source reimported', createdAt: '2026-08-03',
     excerpt: 'allowed evidence excerpt', evidenceKey: 'forbidden-evidence-key' }];
   value.claims.rows = [{ rowToken: 'claim-0', targetKind: 'attribute', targetKey: 'note', displayValue: 'allowed sensitive value', claimKey: 'claim', evidenceIDs: [], submittedValue: 'allowed sensitive value', normalizedValue: 'allowed normalized value', relation: 'support', origin: 'extraction',
     validFrom: '2026-01-01', validUntil: null, reportedScore: 88, createdAt: '2026-08-03', targetCanonical: value.targets[0]!.canonical }];
-  value.decisions.rows = [{ rowToken: 'decision-0', claimKey: 'claim', displayValue: 'allowed sensitive value', parsedValue: 'allowed sensitive value', targetKind: 'attribute', outcome: 'saved', targetKey: 'note', targetCanonical: value.targets[0]!.canonical, scoreMaxima: { authority: 300, confidence: 100, corroboration: 150, directness: 400, freshness: 100, sourceClass: 500, total: 1550 }, action: 'applied', reason: 'applied-projection', score: { authority: 100, confidence: 8, corroboration: 0,
+  value.decisions.rows = [{ rowToken: 'decision-0', claimKey: 'claim', targetKind: 'attribute', outcome: 'saved', targetKey: 'note', targetCanonical: value.targets[0]!.canonical, scoreMaxima: { authority: 300, confidence: 100, corroboration: 150, directness: 400, freshness: 100, sourceClass: 500, total: 1550 }, action: 'applied', reason: 'applied-projection', score: { authority: 100, confidence: 8, corroboration: 0,
     directness: 400, freshness: 100, sourceClass: 300, total: 908 }, projectionKind: 'person_attribute', createdAt: '2026-08-03' }];
-  value.pins.rows = [{ kind: 'attribute', targetKey: 'note', pinned: true, targetCanonical: value.targets[0]!.canonical }];
+  value.pins.rows = [{ rowToken: 'pin-0', kind: 'attribute', description: 'Private note', pinned: true, targetCanonical: value.targets[0]!.canonical }];
   return value;
 }
 
@@ -58,8 +58,8 @@ describe('FactLedger', () => {
   it('reveals only the selected decision claim', async () => {
     const value = controller();
     value.selectedSection = 'decisions';
-    value.claims.rows = [];
-    value.decisions.rows.push({ ...value.decisions.rows[0]!, rowToken: 'decision-1', claimKey: 'another', displayValue: 'another private value' });
+    value.decisions.rows.push({ ...value.decisions.rows[0]!, rowToken: 'decision-1', claimKey: 'another' });
+    value.claims.rows.push({ ...value.claims.rows[0]!, rowToken: 'claim-1', claimKey: 'another', displayValue: 'another private value', parsedValue: 'another private value' });
     render(FactLedger, { controller: value });
     const rows = screen.getAllByLabelText('Historical fact decision');
     expect(rows[0]!.textContent).toContain('Saved: Hidden');
@@ -70,22 +70,6 @@ describe('FactLedger', () => {
     await fireEvent.click(within(rows[0]!).getByRole('button', { name: 'Hide sensitive fact value' }));
     expect(rows[0]!.textContent).not.toContain('allowed sensitive value');
   });
-  it.each([
-    { recorded: '2026-08-01T12:00:59Z', distinct: true },
-    { recorded: '2026-08-01T08:00:01-04:00', distinct: false },
-  ])('shows Recorded only when the instant differs: $recorded', async ({ recorded, distinct }) => {
-    const value = controller();
-    value.selectedSection = 'evidence';
-    value.evidence.rows[0]!.eventTime = '2026-08-01T12:00:01Z';
-    value.evidence.rows[0]!.recordedTime = recorded;
-    render(FactLedger, { controller: value });
-    await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-    expect(screen.getByText('Matches this person')).toBeDefined();
-    expect(screen.getByText('Said').nextElementSibling?.querySelector('time')?.getAttribute('datetime')).toBe('2026-08-01T12:00:01Z');
-    if (distinct) expect(screen.getByText('Recorded').nextElementSibling?.querySelector('time')?.getAttribute('datetime')).toBe(recorded);
-    else expect(screen.queryByText('Recorded')).toBeNull();
-  });
-
   it('shows submitted job details', () => {
     const value = controller();
     value.targets[0] = { ...value.targets[0]!, kind: 'employment', targetKey: 'system:employment', canonical: `employment:system:employment:${revision}`, sensitive: false };
@@ -96,13 +80,87 @@ describe('FactLedger', () => {
     expect(claim.textContent).toContain('Lead · Research · Boston · acme.example · Started Mar 2020 · Ended 2024');
   });
 
+  it('distinguishes saved past jobs with the same title and employer', () => {
+    const value = controller();
+    const canonical = `employment:system:employment:${revision}`;
+    value.targets = [{ optionID: 'work', name: 'Work', targetKey: 'system:employment', description: 'Work', kind: 'employment', valueType: 'object', cardinality: 'multi', sensitive: false, canonical }];
+    value.selectedTargetOption = 'work';
+    const entity = new DirectoryEntityController(createAPIClient(vi.fn()), 42);
+    entity.employments = [
+      employment(21, 1, { person_id: 42, title: 'Engineer', role: 'Engineer', is_current: false, department: 'Design', start_date: { year: 2018, month: 4 }, end_date: { year: 2020, month: 7 } }),
+      employment(22, 1, { person_id: 42, title: 'Engineer', role: 'Engineer', is_current: false, department: 'Research', start_date: { year: 2021, month: 1 }, end_date: { year: 2024, month: 2 } }),
+    ];
+    entity.organizations = [organization()];
+    render(FactLedger, { controller: value, entity });
+    const saved = screen.getByRole('region', { name: 'Selected saved value' });
+    expect(saved.textContent).toContain('Past · Design · Started Apr 2018 · Ended Jul 2020');
+    expect(saved.textContent).toContain('Past · Research · Started Jan 2021 · Ended Feb 2024');
+    entity.destroy();
+  });
+
   it('shows submitted job details in the saved decision label', () => {
     const value = controller();
     value.targets[0] = { ...value.targets[0]!, name: 'Work', description: 'Work', kind: 'employment', targetKey: 'system:employment', canonical: `employment:system:employment:${revision}`, sensitive: false };
     value.selectedSection = 'decisions';
-    Object.assign(value.decisions.rows[0]!, { targetKind: 'employment', targetKey: 'system:employment', targetCanonical: value.targets[0]!.canonical, projectionKind: 'employment', displayValue: 'Engineer at Acme', parsedValue: { title: 'Engineer', organization: { name: 'Acme' }, location: 'Boston' } });
+    Object.assign(value.claims.rows[0]!, { targetKind: 'employment', targetKey: 'system:employment', targetCanonical: value.targets[0]!.canonical, displayValue: 'Engineer at Acme', parsedValue: { title: 'Engineer', organization: { name: 'Acme' }, location: 'Boston' } });
+    Object.assign(value.decisions.rows[0]!, { targetKind: 'employment', targetKey: 'system:employment', targetCanonical: value.targets[0]!.canonical });
     render(FactLedger, { controller: value });
     expect(screen.getByLabelText('Historical fact decision').textContent).toContain('Saved: Engineer at Acme · Boston');
+  });
+
+  it('uses the loaded matching claim for its decision sentence', () => {
+    const value = controller();
+    value.selectedSection = 'decisions';
+    value.targets[0]!.sensitive = false;
+    value.decisions.rows[0] = { ...value.decisions.rows[0]!, outcome: 'current-value-kept', reason: 'insufficient-margin' };
+    value.claims.rows[0] = { ...value.claims.rows[0]!, displayValue: 'New York', parsedValue: 'New York' };
+    render(FactLedger, { controller: value });
+    expect(screen.getByLabelText('Historical fact decision').textContent).toContain("Kept the current value; New York wasn't far enough ahead");
+  });
+
+  it('uses a generic reason when the decision claim is not loaded', () => {
+    const value = controller();
+    value.selectedSection = 'decisions';
+    value.targets[0]!.sensitive = false;
+    value.decisions.rows[0] = { ...value.decisions.rows[0]!, outcome: 'current-value-kept', reason: 'insufficient-margin' };
+    value.claims.rows = [];
+    render(FactLedger, { controller: value });
+    const row = screen.getByLabelText('Historical fact decision');
+    expect(row.textContent).toContain("the claim wasn't far enough ahead");
+    expect(row.textContent).not.toContain('undefined');
+    expect(row.textContent).not.toContain('—');
+  });
+
+  it('does not offer to reveal a sensitive decision when its claim is not loaded', () => {
+    const value = controller();
+    value.selectedSection = 'decisions';
+    value.claims.rows = [];
+    render(FactLedger, { controller: value });
+    const row = screen.getByLabelText('Historical fact decision');
+    expect(row.textContent).toContain('Saved a value');
+    expect(within(row).queryByRole('button', { name: 'Reveal sensitive fact value' })).toBeNull();
+  });
+
+  it('shows a decision from the API contract with its matching claim value', async () => {
+    const target = { kind: 'attribute', key: 'location', revision };
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [{ ...target, description: 'Location', value_type: 'text', cardinality: 'single', sensitive: false, slug: 'location' }] });
+      if (path.endsWith('/fact-claims')) return Response.json({ claims: [{ id: 1, claim_key: 'claim-location', generation_id: 2, evidence_ids: [], target, submitted_value: '"New York"', relation: 'support', origin: 'extraction', confidence: { reported_score: 740 }, created_at: '2026-11-01T12:00:00Z' }] });
+      if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [{ id: 3, decision_key: 'decision-location', claim_key: 'claim-location', outcome: 'current-value-kept', target, resolver_version: 'person-fact-resolver-v1', action: 'retained', reason: 'insufficient-margin', score: { authority: 100, confidence: 74, corroboration: 0, directness: 300, freshness: 80, source_class: 200, total: 754 }, created_at: '2026-11-01T12:00:00Z' }] });
+      if (path.endsWith('/fact-evidence')) return Response.json({ evidence: [] });
+      if (path.endsWith('/fact-pins')) return Response.json({ pins: [] });
+      throw new Error(`unexpected ${path}`);
+    });
+    const value = new FactLedgerController(createAPIClient(fetchFn));
+    value.applyContext(true, 42);
+    await vi.waitFor(() => expect(value.targets).toHaveLength(1));
+    await vi.waitFor(() => expect(value.claims.rows).toHaveLength(1));
+    await vi.waitFor(() => expect(value.decisions.rows).toHaveLength(1));
+    value.selectedSection = 'decisions';
+    render(FactLedger, { controller: value });
+    expect(screen.getByLabelText('Historical fact decision').textContent).toContain("Kept the current value; New York wasn't far enough ahead");
+    value.destroy();
   });
 
   it('shows claim validity, confidence, and creation time in Details', async () => {
@@ -123,13 +181,13 @@ describe('FactLedger', () => {
     const value = controller();
     value.selectedSection = 'evidence';
     value.evidence.rows[0]!.supported = false;
-    value.evidence.rows[0]!.lostSupport = 'Source deleted';
+    value.evidence.rows[0]!.currentSupportLabel = 'Unsupported — Source deleted';
     const rendered = render(FactLedger, { controller: value });
-    expect(screen.getByText('Source deleted')).toBeDefined();
+    expect(screen.getByText('Unsupported — Source deleted')).toBeDefined();
     expect(rendered.container.innerHTML).not.toContain('allowed evidence excerpt');
     expect(rendered.container.innerHTML).not.toContain('forbidden-evidence-key');
     expect(rendered.container.innerHTML).not.toContain('attribute:note:sha256');
-    await fireEvent.click(screen.getByRole('button', { name: 'Reveal excerpt' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Reveal evidence excerpt' }));
     expect(screen.getByText(/allowed evidence excerpt/)).toBeDefined();
   });
 
@@ -158,40 +216,16 @@ describe('FactLedger', () => {
     expect(retry).toHaveBeenCalledOnce();
   });
 
-  it.each([{ state: 'loading', loading: true }, { state: 'error', loading: false }])('shows the $state pin status beside a saved value', ({ loading }) => {
-    const value = controller();
-    value.selectedTargetOption = 'target-0';
-    value.pins.loading = loading;
-    if (!loading) { value.pins.rows = []; value.pins.error = "Couldn't load pins."; }
-    const definition = fieldDefinition('note', 'Note');
-    const profile = new DirectoryProfileController(createAPIClient(vi.fn()), 42, { attributes: { person_id: 42, attributes: [{ definition, current: [{ id: 1, definition_id: 8, definition_slug: 'note', person_id: 42, ordinal: 0, active_from: '2026-08-01', value: { type: 'text', text: 'Boston' }, source: 'user', created_at: '2026-08-01' }], history: [] }] }, etags: {}, errors: {} });
-    render(FactLedger, { controller: value, profile });
-    const saved = screen.getByRole('region', { name: 'Selected saved value' });
-    expect(saved.textContent).toContain(loading ? 'Loading pins…' : "Couldn't load pins.");
-    expect(saved.textContent).not.toContain('Pinned');
-    expect(saved.textContent).not.toContain('Unpinned');
-    profile.destroy();
-  });
-
   it('does not repeat Work below a Work decision', () => {
     const value = controller();
     value.selectedSection = 'decisions';
     const canonical = `employment:system:employment:${revision}`;
     value.targets[0] = { ...value.targets[0]!, name: 'Work', description: 'Work', kind: 'employment', targetKey: 'system:employment', canonical, sensitive: false };
-    value.decisions.rows[0] = { ...value.decisions.rows[0]!, targetKind: 'employment', targetKey: 'system:employment', targetCanonical: canonical, projectionKind: 'employment', displayValue: 'Engineer at Acme', parsedValue: { title: 'Engineer', organization: { name: 'Acme' } } };
+    value.claims.rows[0] = { ...value.claims.rows[0]!, targetKind: 'employment', targetKey: 'system:employment', targetCanonical: canonical, displayValue: 'Engineer at Acme', parsedValue: { title: 'Engineer', organization: { name: 'Acme' } } };
+    value.decisions.rows[0] = { ...value.decisions.rows[0]!, targetKind: 'employment', targetKey: 'system:employment', targetCanonical: canonical };
     render(FactLedger, { controller: value });
     const row = screen.getByLabelText('Historical fact decision');
     expect(within(row).getAllByText('Work')).toHaveLength(1);
-  });
-
-  it('shows unpinned fields inside their fold', () => {
-    const value = controller();
-    value.pins.rows[0]!.pinned = false;
-    value.selectedSection = 'pins';
-    render(FactLedger, { controller: value });
-    const fold = screen.getByText('1 unpinned field').closest('details');
-    expect(fold?.open).toBe(false);
-    expect(fold?.textContent).toContain('Unpinned');
   });
 
   it('shows the choice label for a boolean claim', () => {
@@ -222,7 +256,7 @@ describe('FactLedger', () => {
 
     expect(rendered.container.innerHTML).not.toContain('private-sensitive-value');
     expect(rendered.container.innerHTML).not.toContain('private-normalized-value');
-    expect(screen.getByRole('status', { name: 'Hidden while field details are unavailable.' })).toBeDefined();
+    expect(screen.getByRole('status', { name: 'Fact value hidden until target sensitivity is verified.' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Reveal sensitive fact value' })).toBeNull();
 
     catalog.resolve(Response.json({ fingerprint: 'private', version: 'private', targets: [{
@@ -255,7 +289,7 @@ describe('FactLedger', () => {
     expect(rendered.container.innerHTML).not.toContain('private-normalized-value');
     expect(screen.getByText('Unknown field')).toBeDefined();
     expect(rendered.container.textContent).not.toContain('private-note');
-    expect(screen.getByRole('status', { name: 'Hidden while field details are unavailable.' })).toBeDefined();
+    expect(screen.getByRole('status', { name: 'Fact value hidden until target sensitivity is verified.' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Reveal sensitive fact value' })).toBeNull();
   });
 
@@ -283,67 +317,6 @@ describe('FactLedger', () => {
   });
 
 
-
-  it.each([
-    { pinned: false, section: 'claims' as const, label: 'Selected saved value', expected: 'Unpinned · From a message' },
-    { pinned: true, section: 'pins' as const, label: 'Home city', expected: 'Pinned · From a message' },
-  ])('shows saved attribute provenance with pinned=$pinned', async ({ pinned, section, label, expected }) => {
-    const value = controller();
-    value.targets[0]!.sensitive = false;
-    value.pins.rows[0]!.pinned = pinned;
-    value.selectedSection = section;
-    value.selectedTargetOption = 'target-0';
-    const definition = fieldDefinition('note', 'Home city');
-    const profile = new DirectoryProfileController(createAPIClient(vi.fn()), 42, { attributes: { person_id: 42, attributes: [{ definition, current: [{ id: 5, person_id: 42, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'New York' }, source: 'extraction', source_ref: 'person-fact-decision:123', created_at: '2026-11-01T12:00:00Z', active_from: '2026-11-01T12:00:00Z' }], history: [] }] }, etags: {}, errors: {} });
-    render(FactLedger, { controller: value, profile });
-    const saved = screen.getByRole('region', { name: label });
-    expect(within(saved).getByText('Home city', { selector: 'strong' })).toBeDefined();
-    expect(saved.textContent).toContain(expected);
-    if (!pinned) {
-      expect(within(saved).getByText('Saved value')).toBeDefined();
-      const claim = screen.getByLabelText('Fact claim');
-      expect(saved.compareDocumentPosition(claim) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      await fireEvent.click(within(saved).getByRole('button', { name: 'Details' }));
-      expect(within(saved).getByText('Reference')).toBeDefined();
-    }
-    profile.destroy();
-  });
-
-  it.each(['current', 'none'] as const)('shows saved employment with %s jobs in comparison and Pins', async (state) => {
-    const value = controller();
-    const canonical = `employment:system:employment:${revision}`;
-    value.targets = [{ optionID: 'work', name: 'Work', targetKey: 'system:employment', description: 'Work', kind: 'employment', valueType: 'object', cardinality: 'multi', sensitive: false, canonical }];
-    value.pins.rows = [{ kind: 'employment', pinned: true, targetKey: 'system:employment', targetCanonical: canonical }];
-    value.selectedTargetOption = 'work';
-    const entity = new DirectoryEntityController(createAPIClient(vi.fn()), 42);
-    const current = state === 'current';
-    entity.employments = state === 'none' ? [] : [employment(11, 1, { is_current: current, is_primary: current, source: 'carddav_import', source_ref: 'card-3', created_at: '2026-11-01T12:00:00Z', updated_at: '2026-11-01T12:00:00Z' })];
-    if (current) entity.employments.push(employment(12, 1, { title: 'Former role', is_current: false, source: 'extraction' }), employment(13, 1, { title: 'Imported former role', is_current: false, source: 'carddav_import' }));
-    entity.organizations = [organization()];
-    render(FactLedger, { controller: value, entity });
-    const comparison = screen.getByRole('region', { name: 'Selected saved value' });
-    expect(comparison.textContent?.includes('Engineer at Synthetic Org')).toBe(state !== 'none');
-    if (current) {
-      expect(comparison.textContent).toContain('Former role');
-      expect(comparison.textContent).toContain('Imported former role');
-    }
-    if (state === 'none') expect(comparison.textContent).toContain('Work: No saved value');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Pins' }));
-    const saved = screen.getByRole('region', { name: 'Saved employment' });
-    expect(saved.textContent?.includes('Engineer at Synthetic Org')).toBe(state !== 'none');
-    if (current) {
-      expect(saved.textContent).toContain('Former role');
-      expect(saved.textContent).toContain('Imported former role');
-    }
-    if (state === 'none') expect(saved.textContent).toContain('No saved value');
-    if (current) {
-      expect(saved.textContent).toContain('Pinned · From CardDAV contacts');
-      const currentJob = within(saved).getByText('Engineer at Synthetic Org').closest('.detail-item') as HTMLElement;
-      await fireEvent.click(within(currentJob).getByRole('button', { name: 'Details' }));
-      expect(within(saved).getByText('card-3')).toBeDefined();
-    }
-    entity.destroy();
-  });
 
   it('omits scores for a decision rejected before scoring', () => {
     const value = controller();
@@ -380,32 +353,10 @@ describe('FactLedger', () => {
     expect(row.querySelector('.meta')?.textContent).toContain(total);
   });
 
-  it('names All fields evidence and decisions', async () => {
-    const value = controller();
-    const claim = (index: number, claimKey: string, targetKey: string, evidenceIDs: number[]) => ({ ...value.claims.rows[0]!, rowToken: `claim-${index}`, claimKey, targetKey, evidenceIDs, targetCanonical: `attribute:${targetKey}:${revision}` });
-    value.targets = [];
-    value.claims.rows = [claim(0, 'a', 'city', [1, 2]), claim(1, 'b', 'employer', [2]), claim(2, 'c', 'city', [2])];
-    value.evidence.rows = [1, 2, 3].map(id => ({ ...value.evidence.rows[0]!, rowToken: `evidence-${id}`, evidenceID: id }));
-    value.decisions.rows = ['employer', 'missing'].map((targetKey, index) => ({ ...value.decisions.rows[0]!, rowToken: `decision-${index}`, targetKey, targetCanonical: `attribute:${targetKey}:${revision}` }));
-    const profile = new DirectoryProfileController(createAPIClient(vi.fn()), 42, { attributes: { person_id: 42, attributes: [
-      { definition: fieldDefinition('city', 'Home city'), current: [], history: [] }, { definition: fieldDefinition('employer', 'Employer'), current: [], history: [] }
-    ] }, etags: {}, errors: {} });
-    vi.spyOn(value, 'selectSection').mockImplementation(async (section) => { value.selectedSection = section; });
-    const view = render(FactLedger, { controller: value, profile });
-    const labels = () => Array.from(view.container.querySelectorAll('section[aria-label] .field-label'), node => node.textContent);
-
-    await fireEvent.click(screen.getByRole('radio', { name: 'Evidence' }));
-    expect(labels()).toEqual(['Home city', 'Home city, Employer']);
-    await fireEvent.click(screen.getByRole('radio', { name: 'Decisions' }));
-    expect(labels()).toEqual(['Employer', 'Unknown field']);
-
-    profile.destroy();
-  });
-
   it.each([
     { sensitivity: 'visible', sensitive: false, revisionMatches: true, loaded: true, expected: 'Saved: allowed sensitive value' },
     { sensitivity: 'unknown', sensitive: false, revisionMatches: false, loaded: true, expected: 'Saved: Hidden' },
-    { sensitivity: 'catalog sensitivity with claims unloaded', sensitive: false, revisionMatches: true, loaded: false, expected: 'Saved: allowed sensitive value' },
+    { sensitivity: 'catalog sensitivity with claims unloaded', sensitive: false, revisionMatches: true, loaded: false, expected: 'Saved a value' },
   ])('shows a $sensitivity saved decision value safely', ({ sensitive, revisionMatches, loaded, expected }) => {
     const value = controller();
     value.selectedSection = 'decisions';
@@ -431,6 +382,16 @@ describe('FactLedger', () => {
     if (evidenceIDs.length > 1) expect(screen.getByRole('button', { name: 'Show source 1: From a message they sent' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: button }));
     expect(navigate).toHaveBeenCalledWith(expectedID, value.claims.rows[0]!.targetCanonical);
+  });
+
+  it('numbers a source link without repeating its fallback label', async () => {
+    const value = controller();
+    value.targets[0]!.sensitive = false;
+    value.claims.rows[0] = { ...value.claims.rows[0]!, evidenceIDs: [1, 2] };
+    value.evidence.rows = [];
+    render(FactLedger, { controller: value });
+    await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+    expect(screen.getByRole('button', { name: 'Show source 2' })).toBeDefined();
   });
 
   it('focuses a related decision when requested', async () => {

@@ -18,7 +18,6 @@ import type {
 import { sentenceCase } from '../explore/labels';
 import { encodeFactTargetRef } from './fact-target-ref';
 import { displayClaimValue } from '../components/directory/attribute-value';
-import { lostSupportWords, statusEventWords } from './fact-words';
 export const FACT_LEDGER_PAGE_LIMIT = 50;
 export type FactLedgerSection = 'evidence' | 'claims' | 'decisions' | 'pins';
 type PagedSection = Exclude<FactLedgerSection, 'pins'>;
@@ -44,7 +43,6 @@ export interface FactTargetOption {
 }
 export interface FactEvidenceRow {
   rowToken: string;
-  sourceURL: string | null;
   sourceClass: string;
   directness: string;
   authority: string;
@@ -52,8 +50,7 @@ export interface FactEvidenceRow {
   eventTime: string;
   recordedTime: string;
   supported: boolean;
-  /** "Source deleted" when the evidence lost support; null while it holds. */
-  lostSupport: string | null;
+  currentSupportLabel: string;
   createdAt: string;
   excerpt: string | null;
   readonly evidenceKey: string;
@@ -79,8 +76,6 @@ export interface FactClaimRow {
 }
 export interface FactDecisionRow {
   rowToken: string;
-  displayValue: string;
-  parsedValue?: unknown;
   targetKind: string;
   action: string;
   reason: string;
@@ -102,9 +97,10 @@ export interface FactDecisionRow {
   readonly claimKey: string;
 }
 export interface FactPinRow {
+  rowToken: string;
   pinned: boolean;
   kind: string;
-  targetKey?: string;
+  description: string;
   readonly targetCanonical: string | undefined;
 }
 export interface FactEvidenceStatusRow {
@@ -133,6 +129,17 @@ interface Lane {
 }
 function pageState<T>(): PageState<T> {
   return { rows: [], offset: 0, loading: false, error: null, pageError: null, endReached: false };
+}
+const REASON_LABELS: Readonly<Record<string, string>> = {
+  'source-deleted': 'Source deleted',
+  'source-edited': 'Source edited',
+  'scope-unlinked': 'Scope unlinked',
+  'identity-reassigned': 'Identity reassigned',
+  'source-reimported': 'Source reimported',
+  'scope-relinked': 'Scope relinked',
+};
+export function evidenceStatusReasonLabel(reason: string): string {
+  return REASON_LABELS[reason] ?? 'Support status changed';
 }
 export class FactLedgerController {
   active = $state(false);
@@ -312,6 +319,10 @@ export class FactLedgerController {
     if (this.history.loading || !this.historyOpen || this.history.offset === 0) return;
     await this.loadHistory(Math.max(0, this.history.offset - FACT_LEDGER_PAGE_LIMIT), this.contextGeneration);
   }
+  async firstHistoryPage(): Promise<void> {
+    if (this.history.loading || !this.historyOpen || this.history.offset === 0) return;
+    await this.loadHistory(0, this.contextGeneration);
+  }
   async retryHistory(): Promise<void> {
     if (!this.historyOpen) return;
     await this.loadHistory(this.history.retryOffset ?? this.history.offset, this.contextGeneration);
@@ -438,6 +449,10 @@ export class FactLedgerController {
       }
       this.targets = targets;
       this.targetByOption = new Map(targets.map((target) => [target.optionID, target]));
+      this.pins.rows = this.pins.rows.map((pin) => ({
+        ...pin,
+        description: targets.find((target) => target.canonical === pin.targetCanonical)?.description ?? pin.description,
+      }));
     } catch {
       if (this.owns('catalog', abort, generation, context)) this.catalogError = "Couldn't load fields.";
     } finally {
@@ -464,12 +479,14 @@ export class FactLedgerController {
         this.pins.error = "Couldn't load pins.";
         return;
       }
-      this.pins.rows = (response.data.pins ?? []).map((pin) => {
+      this.pins.rows = (response.data.pins ?? []).map((pin, index) => {
         const canonical = encodeFactTargetRef(pin.target);
+        const descriptor = this.targets.find((target) => target.canonical === canonical);
         return {
+          rowToken: `pin-${index}`,
           pinned: pin.pinned,
           kind: pin.target.kind,
-          targetKey: pin.target.key,
+          description: descriptor?.description ?? 'Eligible fact target',
           targetCanonical: canonical,
         };
       });
@@ -590,7 +607,7 @@ export class FactLedgerController {
       }
       const rows = response.data.events.map((event) => ({
         supported: event.supported,
-        reasonLabel: statusEventWords(event.supported, event.reason),
+        reasonLabel: evidenceStatusReasonLabel(event.reason),
         createdAt: event.created_at,
       }));
       if (targetOffset > page.offset && rows.length === 0 && page.rows.length > 0) {
@@ -608,9 +625,9 @@ export class FactLedgerController {
   }
   private failHistory(targetOffset: number): void {
     if (this.history.rows.length === 0 && this.history.offset === 0 && targetOffset === 0)
-      this.history.error = "Couldn't load source history.";
+      this.history.error = 'Unable to load support history.';
     else {
-      this.history.pageError = "Couldn't load that page of source history.";
+      this.history.pageError = 'Unable to load the requested support-history page.';
       this.history.retryOffset = targetOffset;
     }
   }
@@ -618,7 +635,6 @@ export class FactLedgerController {
 function projectEvidence(row: RawEvidence, index: number): FactEvidenceRow {
   return {
     rowToken: `evidence-${index}`,
-    sourceURL: row.source_url,
     sourceClass: row.source_class,
     directness: row.directness,
     authority: row.authority,
@@ -626,7 +642,9 @@ function projectEvidence(row: RawEvidence, index: number): FactEvidenceRow {
     eventTime: row.event_time,
     recordedTime: row.recorded_time,
     supported: row.supported,
-    lostSupport: row.supported ? null : lostSupportWords(row.latest_status?.supported === false ? row.latest_status.reason : undefined),
+    currentSupportLabel: row.latest_status
+      ? `${row.latest_status.supported ? 'Supported' : 'Unsupported'} — ${evidenceStatusReasonLabel(row.latest_status.reason)}`
+      : 'No support status event',
     createdAt: row.created_at,
     excerpt: row.excerpt,
     evidenceKey: row.evidence_key,
@@ -657,7 +675,7 @@ function projectClaim(row: RawClaim, index: number): FactClaimRow {
 function projectDecision(row: RawDecision, index: number): FactDecisionRow {
   return {
     rowToken: `decision-${index}`,
-    ...claimValue(row.claim_value, row.target.kind), targetKind: row.target.kind,
+    targetKind: row.target.kind,
     action: row.action,
     reason: row.reason,
     outcome: row.outcome,
@@ -679,10 +697,13 @@ function projectDecision(row: RawDecision, index: number): FactDecisionRow {
   };
 }
 
-function claimValue(submitted: string, kind: string): { parsedValue: unknown; displayValue: string } {
-  let parsedValue: unknown;
-  try { parsedValue = JSON.parse(submitted); } catch { parsedValue = submitted; }
-  return { parsedValue, displayValue: /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(submitted.trim()) ? submitted.trim() : readableValue(parsedValue, kind) };
+export function claimValue(submitted: unknown, kind: string): { parsedValue: unknown; displayValue: string } {
+  let parsedValue = submitted;
+  if (typeof submitted === 'string') {
+    try { parsedValue = JSON.parse(submitted); } catch { parsedValue = submitted; }
+  }
+  const numericToken = typeof submitted === 'string' && /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(submitted.trim());
+  return { parsedValue, displayValue: numericToken ? (submitted as string).trim() : readableValue(parsedValue, kind) };
 }
 
 function readableValue(value: unknown, kind: string): string {

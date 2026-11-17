@@ -2,7 +2,7 @@ import { requestOf } from './entity-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
-import { FACT_LEDGER_PAGE_LIMIT, FactLedgerController } from './fact-ledger-controller.svelte';
+import { claimValue, FACT_LEDGER_PAGE_LIMIT, FactLedgerController } from './fact-ledger-controller.svelte';
 
 const revision = `sha256:${'a'.repeat(64)}`;
 
@@ -35,7 +35,7 @@ function payload(path: string, marker = 'safe') {
     value_fingerprint: 'private-value-fingerprint'
   }] };
   if (path.endsWith('/fact-decisions')) return { decisions: [{
-    id: 6, decision_key: 'private-decision-key', claim_key: 'private-claim-key', claim_value: '"example"', competing_claim_key: 'private-competing-key',
+    id: 6, decision_key: 'private-decision-key', claim_key: 'private-claim-key', competing_claim_key: 'private-competing-key',
     resolution_id: 7, target: { kind: 'attribute', key: 'work:email', revision }, outcome: 'saved', resolver_version: 'person-fact-resolver-v1', action: 'applied', reason: 'applied-projection', projection: { kind: 'person_attribute', row_id: 8 },
     score: { authority: 100, confidence: 8, corroboration: 0, directness: 400, freshness: 100, source_class: 300, total: 908 },
     created_at: '2026-08-03T00:00:00Z'
@@ -47,6 +47,12 @@ function payload(path: string, marker = 'safe') {
 }
 
 describe('FactLedgerController', () => {
+  it('decodes serialized claim values and keeps structured values intact', () => {
+    expect(claimValue('"New York"', 'attribute')).toEqual({ parsedValue: 'New York', displayValue: 'New York' });
+    const job = { title: 'Engineer', organization: { name: 'Acme' } };
+    expect(claimValue(job, 'employment')).toEqual({ parsedValue: job, displayValue: 'Engineer at Acme' });
+  });
+
   it('stays network silent without a durable person and issues only five exact initial reads for one', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -88,7 +94,7 @@ describe('FactLedgerController', () => {
     controller.destroy();
   });
 
-  it('maps lost support for evidence with a deleted source', async () => {
+  it('shows the current support status for evidence with a deleted source', async () => {
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const path = new URL(requestOf(input).url).pathname;
       if (!path.endsWith('/fact-evidence')) return Response.json(payload(path));
@@ -98,7 +104,7 @@ describe('FactLedgerController', () => {
     const controller = new FactLedgerController(createAPIClient(fetchFn));
     controller.applyContext(true, 42);
     await vi.waitFor(() => expect(controller.evidence.rows).toHaveLength(2));
-    expect(controller.evidence.rows.map(row => row.lostSupport)).toEqual([null, 'Source deleted']);
+    expect(controller.evidence.rows.map(row => row.currentSupportLabel)).toEqual(['Supported — Source reimported', 'Unsupported — Source deleted']);
     controller.destroy();
   });
 
@@ -277,7 +283,7 @@ describe('FactLedgerController', () => {
     await controller.nextHistoryPage();
     expect(controller.history.rows).toHaveLength(50);
     expect(controller.history.offset).toBe(0);
-    expect(controller.history.pageError).toBe("Couldn't load that page of source history.");
+    expect(controller.history.pageError).toBe('Unable to load the requested support-history page.');
     await controller.retryHistory();
     expect(historyOffsets).toEqual(['0', '50', '50']);
     expect(controller.history.offset).toBe(50);
