@@ -385,6 +385,19 @@ describe('FactLedger', () => {
     expect(row.textContent).toContain('allowed sensitive value');
   });
 
+  it('omits scores for a decision rejected before scoring', () => {
+    const value = controller();
+    value.selectedSection = 'decisions';
+    Object.assign(value.decisions.rows[0]!, {
+      action: 'policy-rejected', reason: 'sensitive-policy', outcome: 'not-used',
+      score: { authority: 0, confidence: 0, corroboration: 0, directness: 0, freshness: 0, sourceClass: 0, total: 0 },
+    });
+    render(FactLedger, { controller: value });
+    const row = screen.getByLabelText('Historical fact decision');
+    expect(row.textContent).not.toContain('Score:');
+    expect(within(row).queryByRole('button', { name: 'Details' })).toBeNull();
+  });
+
   it.each([
     {
       maxima: true,

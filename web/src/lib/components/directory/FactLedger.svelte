@@ -183,13 +183,14 @@
           {#each controller.decisions.rows as row (row.rowToken)}
             {@const sensitivity = controller.claimSensitivity(row)}
             {@const shown = sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(row.claimKey))}
-            <div aria-label="Historical fact decision" data-fact-focus={`decision:${row.claimKey}`}><DetailRow description={projectionWords(row.projectionKind) !== decisionLabel(row) ? projectionWords(row.projectionKind) ?? undefined : undefined}>
+            {@const hasScore = Object.values(row.score).some(value => value !== 0)}
+            {#snippet scoreDetails()}
+              <ul class="score-parts">{#each SCORE_PARTS as [key, label] (key)}<li>{label}: {row.score[key]}{#if row.scoreMaxima}{' of '}{row.scoreMaxima[key]}{/if}</li>{/each}</ul>
+            {/snippet}
+            <div aria-label="Historical fact decision" data-fact-focus={`decision:${row.claimKey}`}><DetailRow description={projectionWords(row.projectionKind) !== decisionLabel(row) ? projectionWords(row.projectionKind) ?? undefined : undefined} details={hasScore ? scoreDetails : undefined}>
               <div class="value"><strong class="field-label">{decisionLabel(row)}</strong><span>{decisionText(row)}</span></div>
               {#snippet actions()}{#if sensitivity === 'sensitive'}{#if shown}<Button label="Hide" ariaLabel="Hide sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealedClaims.delete(row.claimKey)} />{:else}<Button label="Reveal" ariaLabel="Reveal sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealClaim(row.claimKey)} />{/if}{/if}{/snippet}
-              {#snippet details()}
-                <ul class="score-parts">{#each SCORE_PARTS as [key, label] (key)}<li>{label}: {row.score[key]}{#if row.scoreMaxima}{' of '}{row.scoreMaxima[key]}{/if}</li>{/each}</ul>
-              {/snippet}
-              {#snippet meta()}<span class="meta"><time datetime={row.createdAt} title={formatDateTime(row.createdAt)}>{formatShortDate(row.createdAt)}</time>{' · Score: '}{row.score.total}{#if row.scoreMaxima}{' of '}{row.scoreMaxima.total}{/if}</span>{/snippet}
+              {#snippet meta()}<span class="meta"><time datetime={row.createdAt} title={formatDateTime(row.createdAt)}>{formatShortDate(row.createdAt)}</time>{#if hasScore}{' · Score: '}{row.score.total}{#if row.scoreMaxima}{' of '}{row.scoreMaxima.total}{/if}{/if}</span>{/snippet}
             </DetailRow></div>
           {:else}{#if !controller.decisions.error}<EmptyLine message={emptyTitle('decisions')} />{/if}{/each}
         </div>
