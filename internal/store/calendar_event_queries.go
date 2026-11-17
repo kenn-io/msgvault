@@ -46,17 +46,21 @@ var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.mess
 // Keep unique archived events. A live copy wins over archived copies; among
 // archived copies, the lowest message ID wins within the merged source.
 func calendarEventVisibility(event, message string) string {
+	return calendarEventVisibilityExcluding(event, message, "")
+}
+
+func calendarEventVisibilityExcluding(event, message, exclusion string) string {
 	return fmt.Sprintf(`NOT EXISTS (
  SELECT 1 FROM source_merge_archive_only_messages am
  WHERE am.message_id = %[2]s.id AND am.original_source_message_id <> '' AND EXISTS (
   SELECT 1 FROM calendar_events other JOIN messages om ON om.id = other.message_id
   WHERE other.provider_event_id = %[1]s.provider_event_id
-  AND om.source_id = %[2]s.source_id AND om.deleted_at IS NULL
+  AND om.source_id = %[2]s.source_id AND om.deleted_at IS NULL%[3]s
   AND (NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages oa WHERE oa.message_id = om.id AND oa.original_source_message_id <> '')
-   OR other.message_id < %[1]s.message_id)))`, event, message)
+   OR other.message_id < %[1]s.message_id)))`, event, message, exclusion)
 }
 
-func queryCalendarEventRowsWithinBudget(ctx context.Context, r *loggedDB, predicate string, args []any, budget int) ([]CalendarEventRow, error) {
+func queryCalendarEventRowsWithinBudget(ctx context.Context, r SQLReader, predicate string, args []any, budget int) ([]CalendarEventRow, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -78,7 +82,7 @@ func queryCalendarEventRowsWithinBudget(ctx context.Context, r *loggedDB, predic
 	return queryCalendarEventRows(ctx, r, predicate, args, budget+1)
 }
 
-func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, args []any, limit int) ([]CalendarEventRow, error) {
+func queryCalendarEventRows(ctx context.Context, r SQLReader, predicate string, args []any, limit int) ([]CalendarEventRow, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -139,7 +143,7 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 	return out, nil
 }
 
-func loadCalendarAttendees(ctx context.Context, r *loggedDB, events []CalendarEventRow) error {
+func loadCalendarAttendees(ctx context.Context, r SQLReader, events []CalendarEventRow) error {
 	byID := make(map[int64]int, len(events))
 	for i, event := range events {
 		byID[event.MessageID] = i
@@ -158,7 +162,7 @@ func loadCalendarAttendees(ctx context.Context, r *loggedDB, events []CalendarEv
 			var id int64
 			var attendee calevent.Attendee
 			if err := rows.Scan(&id, &attendee.Email, &attendee.DisplayName, &attendee.Role, &attendee.RSVP, &attendee.IsCopySelf); err != nil {
-				_ = rows.Close()
+				_ = rows.Close() //nolint:sqlclosecheck // Close this batch before returning.
 				return fmt.Errorf("scan calendar attendee: %w", err)
 			}
 			i := byID[id]
@@ -175,7 +179,7 @@ func loadCalendarAttendees(ctx context.Context, r *loggedDB, events []CalendarEv
 	return nil
 }
 
-func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect, from, to time.Time) ([]CalendarEventRow, error) {
+func calendarEventRowsInWindow(ctx context.Context, r SQLReader, dialect Dialect, from, to time.Time) ([]CalendarEventRow, error) {
 	lower, upper := from.UTC().Add(-calendarCandidateMargin), to.UTC().Add(calendarCandidateMargin)
 	// RDATE can precede DTSTART by any amount. Retain those masters for exact
 	// expansion rather than treating their stored start as the earliest instance.
@@ -251,7 +255,7 @@ func calendarSeriesLimitError() error {
 	return fmt.Errorf("%w: more than %d recurring series overlap the window; a narrower window will not reduce open-ended series", ErrQueryTooBroad, maxCalendarSeries)
 }
 
-func queryCalendarSeriesWithinBudget(ctx context.Context, r *loggedDB, predicate string, args []any) ([]CalendarEventRow, error) {
+func queryCalendarSeriesWithinBudget(ctx context.Context, r SQLReader, predicate string, args []any) ([]CalendarEventRow, error) {
 	rows, err := queryCalendarEventRowsWithinBudget(ctx, r, predicate, args, maxCalendarSeries)
 	if errors.Is(err, ErrQueryTooBroad) {
 		return nil, calendarSeriesLimitError()
@@ -259,7 +263,7 @@ func queryCalendarSeriesWithinBudget(ctx context.Context, r *loggedDB, predicate
 	return rows, err
 }
 
-func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect Dialect, lower, upper time.Time) ([]CalendarEventRow, error) {
+func queryCalendarExceptionsInWindow(ctx context.Context, r SQLReader, dialect Dialect, lower, upper time.Time) ([]CalendarEventRow, error) {
 	predicate, args := calendarExceptionWindow(dialect, lower, upper)
 	return queryCalendarEventRowsWithinBudget(ctx, r, predicate, args, maxCalendarExceptions)
 }

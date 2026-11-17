@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
-	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
@@ -86,21 +86,12 @@ func TestMeetingRecordInheritedVerificationSubject(t *testing.T) {
 
 func TestMeetingRecordPartialHTTP(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gcal", "calendar@example.test")
-	require.NoError(err)
-	id, err := st.PersistMessage(&store.MessagePersistData{
-		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "series", MessageType: "calendar_event"},
-		Conversation: &store.ConversationPersistData{SourceConversationID: "series", ConversationType: "calendar"},
-		RawMIME:      []byte(`{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`), RawFormat: "gcal_json",
-	})
-	require.NoError(err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger()})
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &partialMeetingRecordStore{mockStore: &mockStore{}}, Logger: testLogger()})
 	for _, tc := range []struct {
 		ref    string
 		status int
 	}{
-		{fmt.Sprintf("evt:%d", id), http.StatusBadRequest},
+		{"evt:42", http.StatusBadRequest},
 		{"evt:999999", http.StatusNotFound},
 	} {
 		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref="+tc.ref, nil)
@@ -115,27 +106,48 @@ func TestMeetingRecordPartialHTTP(t *testing.T) {
 			assert.Contains(response.Body.String(), "use msg:<id> for notes or copy REF from calendar events")
 		}
 	}
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref=msg:9007199254740992", nil)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	assert.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+	assert.Contains(response.Body.String(), "invalid meeting reference")
 }
 
-func TestParseMeetingLinkRef(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	for _, tc := range []struct {
-		input string
-		want  store.MeetingLinkRef
-	}{
-		{"msg:5", store.MeetingLinkRef{Kind: "msg", MessageID: 5}},
-		{"evt:9@20270314", store.MeetingLinkRef{Kind: "evt", MessageID: 9, Identity: calrecur.Identity{Date: "2027-03-14", AllDay: true}}},
-		{"evt:10@20270314T100000Z", store.MeetingLinkRef{Kind: "evt", MessageID: 10, Identity: calrecur.Identity{Instant: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)}}},
-	} {
-		ref, err := parseMeetingLinkRef(tc.input)
-		require.NoError(err)
-		assert.Equal(tc.want, ref)
+func TestMeetingRecordSeriesRequiresOccurrenceHTTP(t *testing.T) {
+	r := require.New(t)
+	st := testutil.NewTestStore(t)
+	calendar, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+	r.NoError(err)
+	r.NoError(st.UpdateSourceSyncConfig(t.Context(), calendar.ID, `{"calendar_id":"calendar@example.com","time_zone":"UTC"}`))
+	series, err := st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: calendar.ID, SourceMessageID: "series", MessageType: "calendar_event"},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "series", ConversationType: "calendar"},
+		RawMIME:      []byte(`{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`), RawFormat: "gcal_json",
+	})
+	r.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/record?ref=evt:%d", series), nil)
+	req.Header.Set("Authorization", "Bearer owner")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	r.Equal(http.StatusBadRequest, w.Code, w.Body.String())
+	r.Contains(w.Body.String(), "copy the full occurrence reference from calendar events")
+}
+
+type partialMeetingRecordStore struct {
+	*mockStore
+}
+
+func (s *partialMeetingRecordStore) MeetingRecordContext(_ context.Context, ref store.MeetingLinkRef) (store.MeetingRecord, error) {
+	if ref.MessageID == 999999 {
+		return store.MeetingRecord{}, sql.ErrNoRows
 	}
-	for _, input := range []string{"msg:5@20270314", "evt:9@", "evt:9@20270230", "evt:0", "other:5"} {
-		_, err := parseMeetingLinkRef(input)
-		require.Error(err, input)
+	if ref.MessageID == 9007199254740992 {
+		return store.MeetingRecord{}, nil
 	}
+	return store.MeetingRecord{}, store.ErrMeetingOccurrenceRequired
 }
 
 func TestMeetingRecordMessageReadSourceScope(t *testing.T) {
@@ -156,11 +168,44 @@ func TestMeetingRecordMessageReadSourceScope(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
 	notesScope := agentgrant.SourceRef{ID: notes.ID, Type: notes.SourceType, Identifier: notes.Identifier}
-	_, token, _, err := srv.agentGrants.Issue("event outside scope", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{notesScope}, time.Time{})
+	_, token, _, err := srv.agentGrants.Issue("event outside scope", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, []agentgrant.SourceRef{notesScope}, time.Time{})
 	requirements.NoError(err)
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/record?ref=evt:%d", event), nil)
 	req.Header.Set(apiprotocol.AgentTokenHeader, token)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 	requirements.Equal(http.StatusNotFound, w.Code, w.Body.String())
+}
+
+func TestMeetingRecordMessageOnlyAgentSeesOwnerChoices(t *testing.T) {
+	r := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("meeting_import", "notes@example.com")
+	r.NoError(err)
+	add := func(key string) int64 {
+		id, err := st.PersistMessage(&store.MessagePersistData{
+			Message:      &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: "meeting_transcript"},
+			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"},
+			RawMIME:      []byte(`{}`), RawFormat: "meeting_json",
+		})
+		r.NoError(err)
+		return id
+	}
+	first, second := add("first"), add("second")
+	_, err = st.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "msg", MessageID: first}, store.MeetingLinkRef{Kind: "msg", MessageID: second}, "link")
+	r.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	_, token, _, err := srv.agentGrants.Issue("notes-reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	r.NoError(err)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/record?ref=msg:%d", first), nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	r.Equal(http.StatusOK, w.Code, w.Body.String())
+	var record store.MeetingRecord
+	r.NoError(json.Unmarshal(w.Body.Bytes(), &record))
+	assert.Equal(t, []int64{first, second}, record.MessageIDs)
+	assert.Empty(t, record.Links)
 }

@@ -128,7 +128,7 @@ func decodeCalendarProjection(format string, stored []byte, compression sql.Null
 		event, ok, err = calevent.Decode(format, raw, metadata, zone)
 	}
 	if err != nil {
-		return calevent.Event{Kind: "single", Status: calendarEventDecodeFailureStatus}, true
+		return calevent.Event{Kind: calendarSingleKind, Status: calendarEventDecodeFailureStatus}, true
 	}
 	return event, ok
 }

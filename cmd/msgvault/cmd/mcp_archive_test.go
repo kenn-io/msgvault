@@ -52,6 +52,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		noDrafts     bool
 	}{
 		{"mbox", "get_meeting_record", false}, {"ics", "get_meeting_record", false}, {"gcal", "get_meeting_record", false},
+		{"mbox", "link_meeting", false}, {"ics", "link_meeting", false}, {"gcal", "link_meeting", false},
 		{"granola", "get_meeting_context", false}, {"chatwoot", "get_meeting_context", false},
 		{"circleback", "get_meeting_context", false}, {"pocket", "get_meeting_context", false},
 		{"muesli", "get_meeting_context", false}, {"notion_meetings", "get_meeting_context", false},
@@ -111,7 +112,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 				assert.Contains(names, "list_saved_views")
 				assert.Contains(names, "get_person_merge_context")
 				for _, name := range names {
-					assert.False(strings.HasPrefix(name, "calendar_") || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || (strings.Contains(name, "meeting") && name != "get_meeting_record") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
+					assert.False(strings.HasPrefix(name, "calendar_") || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || (strings.Contains(name, "meeting") && name != "get_meeting_record" && name != "link_meeting" && name != "unlink_meeting" && name != "reset_meeting_link") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
 				}
 			}
 		})
@@ -293,8 +294,8 @@ func TestMCPArchiveCatalogBudgets(t *testing.T) {
 		kinds  []string
 		budget int
 	}{
-		{"mail only", []string{"mbox"}, 210_000},
-		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 262_650},
+		{"mail only", []string{"mbox"}, 211_500},
+		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 264_100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)

@@ -185,6 +185,9 @@ func (s *Store) ExecuteGCContext(
 			return fmt.Errorf("clear retries for messages deleted at source: %w", err)
 		}
 
+		if err := s.preservePurgedMeetingDecisions(ctx, tx, `deleted_from_source_at IS NOT NULL AND NOT (`+managedDraftRetainedMessageSQL+`)`); err != nil {
+			return fmt.Errorf("preserve meeting decisions: %w", err)
+		}
 		result, err := q.Exec(`
 		DELETE FROM messages
 		WHERE deleted_from_source_at IS NOT NULL

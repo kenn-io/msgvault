@@ -8,7 +8,7 @@ import (
 
 const dateLayout = "2006-01-02"
 const keyDateLayout = "20060102"
-const keyInstantLayout = "20060102T150405Z"
+const keyInstantLayout = "20060102T150405.999999999Z"
 
 // Identity preserves a civil date for all-day events and a UTC instant otherwise.
 type Identity struct {
