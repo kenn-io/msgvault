@@ -138,7 +138,7 @@
             {@const shown = sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(row.claimKey))}
             <div aria-label="Fact claim"><DetailRow exception={relationWords(row.relation) ?? undefined}>
               <div class="value">
-                <strong class="field-label">{controller.fieldName(row, definitions)}</strong>
+                {#if controller.fieldName(row, definitions) !== selectedField}<strong class="field-label">{controller.fieldName(row, definitions)}</strong>{/if}
                 {#if sensitivity === 'unknown'}
                   <p role="status" aria-label="Fact value hidden until target sensitivity is verified.">Fact value hidden until target sensitivity is verified.</p>
                 {:else if !shown}<span class="hidden-value">Hidden</span>
@@ -183,7 +183,7 @@
               <ul class="score-parts">{#each SCORE_PARTS as [key, label] (key)}<li>{label}: {row.score[key]}{#if row.scoreMaxima}{' of '}{row.scoreMaxima[key]}{/if}</li>{/each}</ul>
             {/snippet}
             <div aria-label="Historical fact decision" data-fact-focus={`decision:${row.claimKey}`}><DetailRow description={projectionWords(row.projectionKind) !== decisionLabel(row) ? projectionWords(row.projectionKind) ?? undefined : undefined} details={hasScore ? scoreDetails : undefined}>
-              <div class="value"><strong class="field-label">{decisionLabel(row)}</strong><span>{decisionText(row)}</span></div>
+              <div class="value">{#if decisionLabel(row) !== selectedField}<strong class="field-label">{decisionLabel(row)}</strong>{/if}<span>{decisionText(row)}</span></div>
               {#snippet actions()}{#if sensitivity === 'sensitive'}{#if shown}<Button label="Hide" ariaLabel="Hide sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealedClaims.delete(row.claimKey)} />{:else}<Button label="Reveal" ariaLabel="Reveal sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealClaim(row.claimKey)} />{/if}{/if}{/snippet}
               {#snippet meta()}<span class="meta"><time datetime={row.createdAt} title={formatDateTime(row.createdAt)}>{formatShortDate(row.createdAt)}</time>{#if hasScore}{' · Claim score: '}{row.score.total}{#if row.scoreMaxima}{' of '}{row.scoreMaxima.total}{/if}{/if}</span>{/snippet}
             </DetailRow></div>
@@ -212,7 +212,7 @@
     <section aria-label="Selected saved value">
       {#if (selectedTarget?.kind === 'employment' && jobs.length) || (selectedTarget?.kind !== 'employment' && field?.current.length)}<strong class="saved-label">Saved value</strong>{/if}
       {#if selectedTarget?.kind === 'employment'}
-        {#each jobs as value (value.id)}{@render EmploymentRow(value, selectedField)}
+        {#each jobs as value (value.id)}{@render EmploymentRow(value)}
         {:else}{#if entity && !entity.employmentsLoading && !entity.errors.employments}<EmptyLine message={`${selectedField}: No saved value`} />{/if}{/each}
         {#if entity?.employmentsLoading}<p role="status">Loading employment…</p>{/if}
         {#if !entity || entity.errors.employments}<InlineNotice message="Couldn't load saved employment." actionLabel={entity ? 'Retry' : undefined} onaction={() => void entity?.refreshEmployments()} />{/if}
@@ -227,9 +227,9 @@
   {/key}
 {/snippet}
 
-{#snippet EmploymentRow(value: import('../../directory/models').Employment, label = '')}
+{#snippet EmploymentRow(value: import('../../directory/models').Employment)}
   <DetailRow description={employmentSummary(value)}>
-    {#if label}<strong class="field-label">{label}</strong>{/if}<span>{jobText(value)}</span>
+    <span>{jobText(value)}</span>
     {#snippet meta()}<span title={valueProvenance(value).title}>{valueProvenance(value).text}</span>{/snippet}
   </DetailRow>
 {/snippet}

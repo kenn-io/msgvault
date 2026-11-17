@@ -227,6 +227,19 @@ describe('FactLedger', () => {
     expect(within(row).getAllByText('Work')).toHaveLength(1);
   });
 
+  it('names the field on each row only while every field is shown', async () => {
+    const value = controller();
+    value.selectedSection = 'claims';
+    render(FactLedger, { controller: value });
+    expect(within(screen.getByLabelText('Fact claim')).queryByText('Private note')).not.toBeNull();
+    value.selectedTargetOption = 'target-0';
+    await tick();
+    expect(within(screen.getByLabelText('Fact claim')).queryByText('Private note')).toBeNull();
+    value.selectedSection = 'decisions';
+    await tick();
+    expect(within(screen.getByLabelText('Historical fact decision')).queryByText('Private note')).toBeNull();
+  });
+
   it('shows the choice label for a boolean claim', () => {
     const value = controller();
     value.targets[0]!.sensitive = false;
