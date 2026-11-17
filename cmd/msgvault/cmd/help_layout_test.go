@@ -294,7 +294,7 @@ func TestInheritedHelpFlagsPreserveVisibilityAndOverrides(t *testing.T) {
 	child.SetErr(&output)
 	requirements.NoError(child.Help())
 	assertions.Contains(output.String(), "--scope string")
-	assertions.Contains(output.String(), "Inherited Flags:\n      --json      structured output\n      --verbose   group verbosity\n")
+	assertions.Contains(output.String(), "Inherited Flags:\n      --json[=true|false]      structured output\n      --verbose[=true|false]   group verbosity\n")
 	assertions.Contains(output.String(), "Global Flags: --config (see 'msgvault --help')")
 	assertions.NotContains(output.String(), "hidden")
 }

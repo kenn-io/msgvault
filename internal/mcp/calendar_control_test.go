@@ -509,7 +509,7 @@ func TestCalendarToolsDelegatedBridgeExcludesArchiveAccess(t *testing.T) {
 		"calendar_freebusy":  {true, false},
 		"calendar_conflicts": {true, false},
 	}
-	wantNames := []string{ToolSearchTools}
+	wantNames := []string{ToolSearchTools, ToolSkills}
 	for name := range wantHints {
 		wantNames = append(wantNames, name)
 	}
