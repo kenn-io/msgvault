@@ -100,6 +100,7 @@ type PersonFactDecision struct {
 	ResolutionID      int64                        `json:"resolution_id"`
 	DecisionKey       string                       `json:"decision_key"`
 	ClaimKey          string                       `json:"claim_key"`
+	ClaimValue        string                       `json:"claim_value" doc:"Submitted JSON value of the claim this decision describes"`
 	Outcome           *personfacts.DecisionOutcome `json:"outcome" nullable:"true" enum:"saved,value-retired,current-value-kept,pinned-value-kept,too-close-to-choose,not-used"`
 	Target            personfacts.TargetRef        `json:"target"`
 	ResolverVersion   string                       `json:"resolver_version"`
@@ -657,7 +658,7 @@ func personFactDecisionDTO(decision personfacts.Decision) PersonFactDecision {
 	}
 	return PersonFactDecision{
 		ID: decision.ID, ResolutionID: decision.ResolutionID,
-		DecisionKey: decision.DecisionKey, ClaimKey: decision.ClaimKey,
+		DecisionKey: decision.DecisionKey, ClaimKey: decision.ClaimKey, ClaimValue: decision.ClaimValue,
 		Outcome: decision.Outcome, Target: decision.Target, ResolverVersion: decision.ResolverVersion, ScoreMaxima: maxima,
 		Action: decision.Action, Reason: decision.Reason, Score: PersonFactScoreBreakdown{
 			SourceClass: decision.Score.SourceClass, Directness: decision.Score.Directness,

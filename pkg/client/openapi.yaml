@@ -11939,6 +11939,9 @@ components:
           type: string
         claim_key:
           type: string
+        claim_value:
+          description: Submitted JSON value of the claim this decision describes
+          type: string
         competing_claim_key:
           type: string
         created_at:
@@ -11979,6 +11982,7 @@ components:
         - resolution_id
         - decision_key
         - claim_key
+        - claim_value
         - outcome
         - target
         - resolver_version
@@ -17161,7 +17165,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.13.0
+  version: 5.14.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

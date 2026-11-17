@@ -9,6 +9,8 @@ import type { TargetRef } from "./targetRef";
 export interface PersonFactDecision {
   action: string;
   claim_key: string;
+  /** Submitted JSON value of the claim this decision describes */
+  claim_value: string;
   competing_claim_key?: string;
   created_at: string;
   decision_key: string;

@@ -500,6 +500,14 @@ func TestPersonFactSummaryAndFilteredDecisionsHTTP(t *testing.T) {
 	assert.Equal(claimKey, decision.ClaimKey)
 	require.NotNil(decision.ScoreMaxima)
 	assert.Equal(PersonFactScoreBreakdown(*personfacts.ScoreMaxima(personfacts.ResolverVersionV1)), *decision.ScoreMaxima)
+	var decisionValues struct {
+		Decisions []struct {
+			ClaimValue string `json:"claim_value"`
+		} `json:"decisions"`
+	}
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &decisionValues))
+	require.Len(decisionValues.Decisions, 1)
+	assert.Equal(`"chat"`, decisionValues.Decisions[0].ClaimValue)
 
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_fact_decisions SET outcome = NULL WHERE id = ?`), decision.ID)
 	require.NoError(err)

@@ -464,6 +464,7 @@ type Decision struct {
 	ResolutionID      int64            `json:"resolution_id,omitzero"`
 	DecisionKey       string           `json:"decision_key,omitempty"`
 	ClaimKey          string           `json:"claim_key"`
+	ClaimValue        string           `json:"-"`
 	Outcome           *DecisionOutcome `json:"outcome" nullable:"true"`
 	Target            TargetRef        `json:"target"`
 	ResolverVersion   string           `json:"resolver_version"`
