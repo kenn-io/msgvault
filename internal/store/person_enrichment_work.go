@@ -182,6 +182,13 @@ func (s *Store) personEnrichmentTime() time.Time {
 	return time.Now().UTC()
 }
 
+// SetPersonEnrichmentClockForTest installs a deterministic clock on one Store.
+// Tests that drive a worker with a fixed clock install the same clock here so
+// the worker and the store agree on the time, including UTC day boundaries.
+func SetPersonEnrichmentClockForTest(s *Store, clock func() time.Time) {
+	s.personEnrichmentClock = clock
+}
+
 func (s *Store) PutPersonEnrichmentWorkContext(
 	ctx context.Context, input PersonEnrichmentWorkInput,
 ) error {
