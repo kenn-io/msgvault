@@ -70,8 +70,7 @@ func (c *KataClient) FindOpenMetadataTask(ctx context.Context, project, key, val
 			if err != nil || !at.Before(before) {
 				continue
 			}
-			task := taskFromKataIssue(project, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, issue.Labels, issue.WebURL)
-			task.QualifiedRef = issue.QualifiedID
+			task := taskFromListRow(project, issue.UID, issue.ShortID, issue.QualifiedID, issue.Title, issue.Body, issue.Revision, issue.Metadata, issue.Status, issue.Priority, issue.Owner, issue.Labels, issue.WebURL)
 			return task, true, nil
 		}
 		if response.NextCursor == nil || *response.NextCursor == "" {
@@ -119,9 +118,15 @@ func (c *KataClient) listAllIssues(ctx context.Context, query string) ([]KataTas
 		if issue.UID == "" || issue.ProjectName == "" {
 			return nil, ErrInvalidResponse
 		}
-		task := taskFromKataIssue(issue.ProjectName, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, issue.Labels, issue.WebURL)
-		task.QualifiedRef = issue.QualifiedID
+		task := taskFromListRow(issue.ProjectName, issue.UID, issue.ShortID, issue.QualifiedID, issue.Title, issue.Body, issue.Revision, issue.Metadata, issue.Status, issue.Priority, issue.Owner, issue.Labels, issue.WebURL)
 		tasks = append(tasks, task)
 	}
 	return tasks, nil
+}
+
+// taskFromListRow maps the fields shared by Kata's project and global list rows.
+func taskFromListRow(project, uid, shortID, qualifiedID, title, body string, revision int64, metadata map[string]any, status string, priority *int64, owner *string, labels []string, webURL *string) KataTask {
+	task := taskFromKataIssue(project, kata.ShowIssueOut{UID: uid, ShortID: shortID, Title: title, Body: body, Revision: revision, Metadata: metadata, Status: status, Priority: priority, Owner: owner}, labels, webURL)
+	task.QualifiedRef = qualifiedID
+	return task
 }

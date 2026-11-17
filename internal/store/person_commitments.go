@@ -170,13 +170,18 @@ func commitmentLatestClaimSQL(column string) string {
 				ORDER BY g.resolved_at DESC, c.id DESC, e.event_time DESC, e.id DESC LIMIT 1)`
 }
 
+// openCommitmentPredicate selects open commitments and those whose snooze has expired.
+func (s *Store) openCommitmentPredicate() string {
+	return `(owner_state = 'open' OR (owner_state = 'snoozed' AND ` + s.loopTimeKey("snoozed_until") + ` <= ` + s.loopTimeKey("?") + `))`
+}
+
 // commitmentCandidateQuery pages one freshness group, overdue promises first,
 // then oldest promised first, keyed by (overdue rank, promised time, id).
 func (s *Store) commitmentCandidateQuery(personID int64, now time.Time, after PersonCommitment, pageSize int, fresh, includeClosed bool) (string, []any) {
 	query := `SELECT ` + commitmentColumns + ` FROM person_commitments WHERE 1=1`
 	var args []any
 	if !includeClosed {
-		query += ` AND (owner_state = 'open' OR (owner_state = 'snoozed' AND ` + s.loopTimeKey("snoozed_until") + ` <= ` + s.loopTimeKey("?") + `))`
+		query += ` AND ` + s.openCommitmentPredicate()
 		args = append(args, s.dialect.TimestampParam(now))
 	}
 	if personID > 0 {
@@ -317,7 +322,7 @@ func commitmentCitationFreshness(source peoplesweep.CommitmentSource, input pers
 func (s *Store) GetPersonCommitmentContext(ctx context.Context, id int64, now time.Time) (PersonCommitment, error) {
 	var candidate commitmentCandidate
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		c, err := scanPersonCommitment(tx.QueryRowContext(ctx, `SELECT `+commitmentColumns+` FROM person_commitments WHERE id = ? AND (owner_state = 'open' OR (owner_state = 'snoozed' AND `+s.loopTimeKey("snoozed_until")+` <= `+s.loopTimeKey("?")+`))`, id, s.dialect.TimestampParam(now)))
+		c, err := scanPersonCommitment(tx.QueryRowContext(ctx, `SELECT `+commitmentColumns+` FROM person_commitments WHERE id = ? AND `+s.openCommitmentPredicate(), id, s.dialect.TimestampParam(now)))
 		if err != nil {
 			return err
 		}
