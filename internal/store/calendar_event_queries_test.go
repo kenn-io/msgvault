@@ -119,7 +119,7 @@ func TestCalendarEventRowsSourceScope(t *testing.T) {
 	ctx, release, err := st.BeginReadSnapshotContext(sourcescope.WithSourceIDs(t.Context(), []int64{first.Message.SourceID}))
 	requirements.NoError(err)
 	defer release()
-	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.db, "1 = 1", nil, 1)
+	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.meetingSQLReader(ctx), "1 = 1", nil, 1)
 	requirements.NoError(err)
 	requirements.Len(rows, 1)
 	assert.Equal(t, firstID, rows[0].MessageID)

@@ -86,9 +86,7 @@ func queryCalendarEventRows(ctx context.Context, r SQLReader, predicate string, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
-	args = append(slices.Clone(args), scopeArgs...)
-	query := calendarEventSelect + "(" + predicate + ")" + scope + " ORDER BY e.message_id"
+	query := calendarEventSelect + "(" + predicate + ") ORDER BY e.message_id"
 	if limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, limit)
