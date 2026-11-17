@@ -208,15 +208,16 @@ func TestMeetingGroupingFailurePreservesCache(t *testing.T) {
 	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(t, err)
 	before := snapshotCacheBytes(t, analyticsDir)
+	groupingError := errors.New("meeting grouping failed")
 	resolveCacheMeetingGroups = func(context.Context, store.SQLReader, int64) (map[int64]int64, error) {
-		return nil, store.ErrQueryTooBroad
+		return nil, groupingError
 	}
 	t.Cleanup(func() { resolveCacheMeetingGroups = store.MeetingTranscriptGroupsSQLiteSnapshotContext })
 	for _, build := range []func() error{
 		func() error { _, err := buildCache(t.Context(), dbPath, analyticsDir, true); return err },
 		func() error { _, err := buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir); return err },
 	} {
-		require.ErrorIs(t, build(), store.ErrQueryTooBroad)
+		require.ErrorIs(t, build(), groupingError)
 		assert.Equal(t, before, snapshotCacheBytes(t, analyticsDir))
 		assert.Equal(t, query.CacheReady, mustInspectCacheReadiness(t, analyticsDir))
 	}

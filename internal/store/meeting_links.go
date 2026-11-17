@@ -44,11 +44,10 @@ func ParseMeetingLinkRef(value string) (MeetingLinkRef, error) {
 }
 
 func (s *Store) meetingEventRows(ctx context.Context, predicate string, args []any, budget *int) ([]CalendarEventRow, error) {
-	rows, err := queryCalendarEventRowsWithinBudget(ctx, s.meetingSQLReader(ctx), predicate, args, *budget)
+	rows, err := s.meetingCalendarRows(ctx, predicate, args, budget)
 	if err != nil {
 		return nil, err
 	}
-	*budget -= len(rows)
 	owners := make(map[int64]string)
 	for i := range rows {
 		owner, ok := owners[rows[i].SourceID]
@@ -64,6 +63,18 @@ func (s *Store) meetingEventRows(ctx context.Context, predicate string, args []a
 		rows[i].CalendarID = owner
 	}
 	return rows, nil
+}
+
+func (s *Store) meetingCalendarRows(ctx context.Context, predicate string, args []any, budget *int) ([]CalendarEventRow, error) {
+	if budget == nil {
+		scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+		return queryCalendarEventRows(ctx, s.meetingSQLReader(ctx), "("+predicate+")"+scope, append(append([]any(nil), args...), scopeArgs...), 0)
+	}
+	rows, err := queryCalendarEventRowsWithinBudget(ctx, s.meetingSQLReader(ctx), predicate, args, *budget)
+	if err == nil {
+		*budget -= len(rows)
+	}
+	return rows, err
 }
 
 func formatMeetingOccurrence(ref OccurrenceRef) string {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -89,8 +90,11 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			}
 		}
 	}
-	remaining := *budget
-	if remaining < 0 {
+	remaining := math.MaxInt
+	if budget != nil {
+		remaining = *budget
+	}
+	if budget != nil && remaining < 0 {
 		return page, calendarRecurrenceBudgetError()
 	}
 	add := func(row CalendarEventRow, seriesID int64, o calrecur.Occurrence, originalStart time.Time) {
@@ -198,7 +202,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			fallthrough
 		case calendarSeriesKind:
 			calendarReportMismatchedExceptions(e, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], report)
-			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
+			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining, budget == nil)
 			remaining -= count
 			if err != nil {
 				return page, err
@@ -219,7 +223,9 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		}
 		return cmp.Compare(a.MessageID, b.MessageID)
 	})
-	*budget = remaining
+	if budget != nil {
+		*budget = remaining
+	}
 	return page, nil
 }
 
@@ -276,7 +282,7 @@ func calendarMissingBoundsReason(event calevent.Event) string {
 }
 
 // Resolve archived exceptions once, then suppress their original generated instances.
-func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, error) {
+func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int, unlimited bool) ([]calrecur.Occurrence, int, string, error) {
 	set, duration, days, prepareErr := prepareCalendarRecurrence(row.Event)
 	var prepared *calrecur.Set
 	if prepareErr == nil {
@@ -297,7 +303,11 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 	if remaining <= 0 {
 		return resolved, 0, requestLimit, nil
 	}
-	occurrences, count, err := calrecur.Expand(ctx, set, duration, days, from.Add(-calendarCandidateMargin), to.Add(calendarCandidateMargin), min(remaining, calrecur.SeriesReadBudget))
+	limit := min(remaining, calrecur.SeriesReadBudget)
+	if unlimited {
+		limit = math.MaxInt
+	}
+	occurrences, count, err := calrecur.Expand(ctx, set, duration, days, from.Add(-calendarCandidateMargin), to.Add(calendarCandidateMargin), limit)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, count, "", ctx.Err()

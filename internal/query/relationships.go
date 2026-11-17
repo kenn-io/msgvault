@@ -322,9 +322,22 @@ func (e *DuckDBEngine) buildFilteredRelationshipsSQL(
 		e.parquetPath(identityindex.DatasetPeople),
 	)
 	queryText := logicalSQL + `,
-meeting_owners AS (
+selected_meetings AS (
+	SELECT p.entry_num, coalesce(g.group_id, p.entry_num) AS meeting_group
+	FROM logical_people p
+	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = p.entry_num
+	WHERE p.message_type = 'meeting_transcript'
+	GROUP BY p.entry_num, meeting_group
+), meeting_copies AS (
+	SELECT g.message_id
+	FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g
+	WHERE EXISTS (SELECT 1 FROM selected_meetings s WHERE s.meeting_group = g.group_id)
+	UNION
+	SELECT entry_num AS message_id FROM selected_meetings
+), meeting_owners AS (
 	SELECT coalesce(g.group_id, a.message_id) AS meeting_group
 	FROM relationship_activity_expanded a
+	JOIN meeting_copies c ON c.message_id = a.message_id
 	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = a.message_id
 	WHERE a.is_owner AND a.message_type = 'meeting_transcript' AND NOT a.unsent AND NOT a.email_invite
 	GROUP BY meeting_group

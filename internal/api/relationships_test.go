@@ -107,7 +107,7 @@ func newRelationshipsDuckDBFixture(t *testing.T, now time.Time) *query.DuckDBEng
 // newRelationshipsDuckDBFixtureWithDir is newRelationshipsDuckDBFixture plus
 // the analytics directory, for tests that need to mutate the committed cache
 // state file directly (e.g. simulating a real identity-revision bump).
-func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.DuckDBEngine, string) {
+func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time, grouped ...bool) (*query.DuckDBEngine, string) {
 	t.Helper()
 	requirementsForTest := require.New(t)
 	analyticsDir := t.TempDir()
@@ -130,10 +130,22 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 	for i := range 3 {
 		addMessage(relOwnerID, relAliceID, true, "email", now.AddDate(0, 0, -(3-i)))
 	}
-	addMessage(relOwnerID, relAliceID, false, "calendar_event", now.AddDate(0, 0, -2))
+	addMessage(relOwnerID, relAliceID, false, "meeting_transcript", now.AddDate(0, 0, -2))
 	addMessage(relAlice2ID, relOwnerID, false, "imessage", now.AddDate(0, 0, -1))
 	for i := range 50 {
 		addMessage(relNewsletterID, relOwnerID, false, "email", now.AddDate(0, 0, -(10+i)))
+	}
+	sources := `(1::BIGINT, 'owner@example.com', 'gmail')`
+	owners := `(1::BIGINT, 1::BIGINT)`
+	meetingGroups := ""
+	if len(grouped) > 0 && grouped[0] {
+		id := nextID
+		nextID++
+		messageRows = append(messageRows, fmt.Sprintf("(%d::BIGINT, 2::BIGINT, 'selected', %d::BIGINT, '', 'Meeting', TIMESTAMP '%s', 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'meeting_transcript', false, %d, %d)", id, id, now.Format("2006-01-02 15:04:05"), now.Year(), int(now.Month())))
+		recipientRows = append(recipientRows, fmt.Sprintf("(%d::BIGINT, %d::BIGINT, 'to', '')", id, relAliceID))
+		sources += `, (2::BIGINT, 'other@example.com', 'zoom')`
+		owners += `, (2::BIGINT, 1::BIGINT)`
+		meetingGroups = fmt.Sprintf("(SELECT 4::BIGINT AS message_id, 4::BIGINT AS group_id UNION ALL SELECT %d, 4)", id)
 	}
 
 	tables := []struct {
@@ -145,7 +157,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month",
 			values:  strings.Join(messageRows, ",\n"),
 		},
-		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: `(1::BIGINT, 'owner@example.com', 'gmail')`},
+		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: sources},
 		{
 			dir: "participants", file: "participants.parquet", columns: "id, email_address, domain, display_name, phone_number",
 			values: `(1::BIGINT, 'owner@example.com', 'example.com', 'Owner', ''),
@@ -160,7 +172,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 		{dir: "attachments", file: "attachments.parquet", columns: "attachment_id, message_id, size, filename", values: `(0::BIGINT, 0::BIGINT, 0::BIGINT, '')`, empty: true},
 		{dir: "conversations", file: "conversations.parquet", columns: "id, source_conversation_id, title, conversation_type", values: `(0::BIGINT, '', '', 'email')`, empty: true},
 		{dir: "conversation_participants", file: "conversation_participants.parquet", columns: "conversation_id, participant_id", values: `(0::BIGINT, 0::BIGINT)`, empty: true},
-		{dir: "owner_participants", file: "owner_participants.parquet", columns: "source_id, participant_id", values: `(1::BIGINT, 1::BIGINT)`},
+		{dir: "owner_participants", file: "owner_participants.parquet", columns: "source_id, participant_id", values: owners},
 		{
 			dir: "participant_clusters", file: "participant_clusters.parquet", columns: "participant_id, canonical_id",
 			values: `(2::BIGINT, 2::BIGINT), (3::BIGINT, 2::BIGINT)`,
@@ -190,6 +202,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 			Mode:           identityindex.ModeFull,
 			StagedBaseRoot: analyticsDir,
 			OutputRoot:     analyticsDir,
+			MeetingGroups:  meetingGroups,
 		},
 	)
 	requirementsForTest.NoError(err)
@@ -208,6 +221,19 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 	requirementsForTest.NoError(err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	return engine, analyticsDir
+}
+
+func TestRelationshipsHTTPCountsSelectedTranscriptWithOwnerOnAnotherCopy(t *testing.T) {
+	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	engine, _ := newRelationshipsDuckDBFixtureWithDir(t, now, true)
+	srv := newTestServerWithEngine(t, engine)
+	response := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true,"filters":[{"dimension":"source","values":["2"]}]}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var page RelationshipsHTTPResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+	require.Len(t, page.Rows, 1)
+	assert.Equal(t, relAliceID, page.Rows[0].CanonicalID)
+	assert.Equal(t, int64(1), page.Rows[0].Signals.MeetingCount)
 }
 
 func sqlQuote(s string) string {

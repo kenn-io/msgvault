@@ -130,15 +130,34 @@ func TestMeetingTranscriptGroupsFollowChoices(t *testing.T) {
 		assertions.Equal(want, groups)
 	}
 	check(map[int64]int64{first: first, copyID: first, other: other})
-	groups, err := st.meetingTranscriptGroupsContext(t.Context(), other, 0)
+	seed := meetingDecisionEndpoint{ID: first, Kind: meetingRefMessage}
+	budget := 0
+	_, err = st.loadMeetingDecisionGraph(t.Context(), []meetingDecisionEndpoint{seed}, &budget, false)
 	requirements.ErrorIs(err, ErrQueryTooBroad)
-	assertions.Nil(groups)
+	graph, err := st.loadMeetingDecisionGraph(t.Context(), []meetingDecisionEndpoint{seed}, nil, false)
+	requirements.NoError(err)
+	root, _, err := graph.reduce(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(root(seed.ref()), root((meetingDecisionEndpoint{ID: copyID, Kind: meetingRefMessage}).ref()))
 	_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), ref(other), "link")
 	requirements.NoError(err)
 	check(map[int64]int64{first: first, copyID: first, other: first})
 	_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), ref(copyID), "unlink")
 	requirements.NoError(err)
 	check(map[int64]int64{first: first, copyID: copyID, other: first})
+	_, event := calendarFixture(t, st, "group-event", `{"id":"group-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), MeetingLinkRef{Kind: "evt", MessageID: event}, "link")
+	requirements.NoError(err)
+	groups, err := st.MeetingTranscriptGroupsContext(t.Context(), event)
+	requirements.NoError(err)
+	assertions.Equal(first, groups[first])
+	assertions.Equal(first, groups[other])
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, err = graph.reduce(ctx)
+	requirements.ErrorIs(err, context.Canceled)
+	_, err = st.MeetingTranscriptGroupsContext(ctx, event)
+	requirements.ErrorIs(err, context.Canceled)
 }
 
 func TestMeetingLinkDecisionConflictIdempotenceAndClear(t *testing.T) {
