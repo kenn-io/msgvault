@@ -316,7 +316,7 @@ func TestApplyIMAPMailboxDeltas_TrashAndAllReconcileDeletionMark(t *testing.T) {
 		trash, inbox, all, want bool
 	}{
 		{name: "marked in trash", trash: true, want: true},
-		{name: "marked in trash and inbox", trash: true, inbox: true, want: false},
+		{name: "marked in trash and inbox", trash: true, inbox: true, want: true},
 		{name: "marked in trash and all", trash: true, all: true, want: true},
 		{name: "marked in all only", all: true, want: false},
 	} {

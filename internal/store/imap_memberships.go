@@ -315,26 +315,17 @@ func (s *Store) applyIMAPMailboxDeltas(
 			return err
 		}
 		currentMailboxes := make(map[string]struct{}, len(normalizedDeltas))
-		restoringMailboxRole := `1=1`
-		var allMailArgs []any
 		var trashArgs []any
 		for _, normalized := range normalizedDeltas {
 			currentMailboxes[normalized.mailbox] = struct{}{}
-			if normalized.delta.AllMail {
-				allMailArgs = append(allMailArgs, normalized.mailbox)
-			}
 			if normalized.delta.Trash {
 				trashArgs = append(trashArgs, normalized.mailbox)
 			}
-		}
-		if len(allMailArgs) > 0 {
-			restoringMailboxRole += ` AND l.source_label_id NOT IN (?` + strings.Repeat(",?", len(allMailArgs)-1) + `)`
 		}
 		trashRole := `1=0`
 		if len(trashArgs) > 0 {
 			placeholders := `?` + strings.Repeat(",?", len(trashArgs)-1)
 			trashRole = `l.source_label_id IN (` + placeholders + `)`
-			restoringMailboxRole += ` AND l.source_label_id NOT IN (` + placeholders + `)`
 		}
 		if err := retireAbsentIMAPMailboxes(
 			ctx, tx, sourceID, currentMailboxes, generations, affected,
@@ -485,13 +476,9 @@ func (s *Store) applyIMAPMailboxDeltas(
 				}
 			} else if err := s.clearMessageDeletedFromSourceTx(ctx, tx, `
 				id = ? AND source_id = ?
-				AND (
-					NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
-						WHERE ml.message_id = messages.id AND (`+trashRole+`))
-					OR EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
-						WHERE ml.message_id = messages.id AND `+restoringMailboxRole+`)
-				)
-			`, append(append(append([]any{messageID, sourceID}, trashArgs...), allMailArgs...), trashArgs...)...); err != nil {
+				AND NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+					WHERE ml.message_id = messages.id AND (`+trashRole+`))
+			`, append([]any{messageID, sourceID}, trashArgs...)...); err != nil {
 				return fmt.Errorf("clear IMAP tombstone for message %d: %w", messageID, err)
 			}
 		}
