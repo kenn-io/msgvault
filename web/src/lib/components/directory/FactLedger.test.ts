@@ -356,19 +356,19 @@ describe('FactLedger', () => {
     });
     render(FactLedger, { controller: value });
     const row = screen.getByLabelText('Historical fact decision');
-    expect(row.textContent).not.toContain('Score:');
+    expect(row.textContent).not.toContain('Claim score:');
     expect(within(row).queryByRole('button', { name: 'Details' })).toBeNull();
   });
 
   it.each([
     {
       maxima: true,
-      total: 'Score: 908 of 1550',
+      total: 'Claim score: 908 of 1550',
       parts: ['Source: 300 of 500', 'Directness: 400 of 400', 'Authority: 100 of 250', 'Corroboration: 0 of 150', 'Freshness: 100 of 100', 'Confidence: 8 of 100'],
     },
     {
       maxima: false,
-      total: 'Score: 908',
+      total: 'Claim score: 908',
       parts: ['Source: 300', 'Directness: 400', 'Authority: 100', 'Corroboration: 0', 'Freshness: 100', 'Confidence: 8'],
     },
   ])('shows recorded scores with maxima=$maxima', async ({ maxima, total, parts }) => {
