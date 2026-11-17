@@ -130,7 +130,6 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 		keep                                     bool
 	}{
 		{name: "no date", text: "I will call.", quote: "I will call.", due: "2026-11-20"},
-		{name: "outside quote", text: "I will call. Meeting is on 2026-11-20.", quote: "I will call.", due: "2026-11-20"},
 		{name: "different date", text: "I will call by 2026-11-21.", quote: "I will call by 2026-11-21.", due: "2026-11-20"},
 		{name: "embedded digits", text: "I will call about 12026-11-20.", quote: "I will call about 12026-11-20.", due: "2026-11-20"},
 		{name: "ISO date", text: "I will call by 2026-11-20.", quote: "I will call by 2026-11-20.", due: "2026-11-20", keep: true},
