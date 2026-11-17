@@ -315,7 +315,6 @@ func TestParseSetRejectsUnsupportedSelectors(t *testing.T) {
 		"FREQ=WEEKLY;BYDAY=1TU",
 		"FREQ=MONTHLY;BYMONTH=3",
 		"FREQ=MONTHLY;BYMONTHDAY=2;BYDAY=TU",
-		"FREQ=MONTHLY;BYMONTHDAY=2;BYSETPOS=1",
 		"FREQ=MONTHLY;BYSETPOS=1",
 		"FREQ=MONTHLY;WKST=MO",
 		"FREQ=YEARLY;BYMONTHDAY=2",
@@ -375,6 +374,7 @@ func TestParseSetSupportedSubset(t *testing.T) {
 		"FREQ=MONTHLY;BYMONTHDAY=-31,31",
 		"FREQ=MONTHLY;BYDAY=1MO,-1FR",
 		"FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1",
+		"FREQ=MONTHLY;BYMONTHDAY=28,29,30,31;BYSETPOS=-1",
 		"FREQ=YEARLY;BYMONTH=2,3;BYMONTHDAY=30",
 		"FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-29",
 		"FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=-30",
@@ -456,6 +456,31 @@ func TestParseSetRejectsUnreachableOrdinalWeekdayPosition(t *testing.T) {
 	rule := "RRULE:FREQ=MONTHLY;BYDAY=1MO;BYSETPOS=2"
 	_, err := ParseSet(instant(t, "2027-03-01T17:00:00Z"), false, "", time.UTC, []string{rule})
 	requirements.ErrorIs(err, ErrUnsupportedRecurrence)
+}
+
+func TestParseSetRejectsUnreachableMonthDayPosition(t *testing.T) {
+	rule := "RRULE:FREQ=MONTHLY;BYMONTHDAY=30,31;BYSETPOS=3"
+	_, err := ParseSet(instant(t, "2027-01-30T17:00:00Z"), false, "", time.UTC, []string{rule})
+	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
+}
+
+func TestExpandMonthDayPositionFallsBackToLastDay(t *testing.T) {
+	requirements := require.New(t)
+	rule := "RRULE:FREQ=MONTHLY;BYMONTHDAY=28,29,30,31;BYSETPOS=-1;COUNT=4"
+	set, err := ParseSet(instant(t, "2027-01-31T17:00:00Z"), false, "", time.UTC, []string{rule})
+	requirements.NoError(err)
+	got, _, err := Expand(t.Context(), set, time.Hour, 0, instant(t, "2027-01-01T00:00:00Z"), instant(t, "2028-01-01T00:00:00Z"), 100)
+	requirements.NoError(err)
+	starts := make([]time.Time, 0, len(got))
+	for _, occurrence := range got {
+		starts = append(starts, occurrence.Start)
+	}
+	assert.Equal(t, []time.Time{
+		instant(t, "2027-01-31T17:00:00Z"),
+		instant(t, "2027-02-28T17:00:00Z"),
+		instant(t, "2027-03-31T17:00:00Z"),
+		instant(t, "2027-04-30T17:00:00Z"),
+	}, starts)
 }
 
 func TestIterMonthlyOrdinalWeekday(t *testing.T) {

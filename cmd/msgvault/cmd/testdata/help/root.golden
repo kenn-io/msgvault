@@ -59,7 +59,7 @@ People, organizations, and identity:
 Add and sync sources:
   add-account            Add a Gmail account via OAuth
   add-beeper             Add Beeper Desktop as an archive source
-  add-calendar           Authorize Google Calendar and register its calendars
+  add-calendar           Authorize and register Google or Microsoft calendars
   add-carddav            Discover and configure a CardDAV account
   add-chatwoot           Register Chatwoot inboxes
   add-circleback         Authorize a Circleback account (browser OAuth)
@@ -93,7 +93,7 @@ Add and sync sources:
   source                 Add and sync provider sources
   sync                   Sync new mail from Gmail, IMAP, and Microsoft accounts
   sync-beeper            Sync chats from Beeper Desktop (all connected networks)
-  sync-calendar          Sync Google Calendar events for an account
+  sync-calendar          Sync Google or Microsoft calendar events
   sync-carddav           Synchronize enabled CardDAV connections
   sync-chatwoot          Sync Chatwoot inboxes
   sync-circleback        Sync Circleback meetings, notes, and transcripts

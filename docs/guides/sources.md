@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-17"
 title: Choose a Source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
@@ -63,6 +63,7 @@ through normal sync; use `--full` after raising a size cap or to retry older qui
 | Omi, Granola, Plaud, Pocket, Circleback, Notion AI Meeting Notes, Muesli, Twilio calls, or Twenty call recordings | [Meeting notes and transcripts](../usage/meetings.md) | Searchable notes, context exports, recorded actions, and meeting-time coverage |
 | Another meeting capture tool | [Meeting import workflow](../usage/meetings.md#import-from-any-meeting-source) | Provider-neutral ingestion keyed by source and external meeting ID |
 | Google Calendar | [Calendar sync](../usage/calendar.md) | Events, organizers, attendees, recurrence, and cancellation state |
+| Microsoft 365 or Outlook.com calendar (unreleased) | [Microsoft calendars](../usage/calendar.md#microsoft-365-and-outlookcom-unreleased) | Events, organizers, attendees, recurrence, and deleted-in-Outlook state |
 | Calendar `.ics` file | [Calendar import](../cli-reference.md#import-ics) | Events, organizers, attendees, recurrence, and cancellation state |
 | CardDAV address book | [CardDAV contacts](../usage/people-carddav.md) | Imported contacts and explicit publication of curated profiles |
 

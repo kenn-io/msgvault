@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-14"
+last_edited: "2026-11-17"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -2281,12 +2281,13 @@ msgvault add-calendar <email> [flags]
 | `--all-calendars` | Include reader/freeBusyReader (subscribed, holiday) calendars |
 | `--min-access-role` | Minimum access role: `owner`, `writer`, or `reader` |
 | `--calendars` | Comma-separated calendar IDs to register |
+| `--microsoft` | Archive the calendars a Microsoft 365 or Outlook.com mailbox owns through Microsoft Graph, read-only (unreleased). Uses the default `[microsoft]` app; `--headless` signs in with a device code. See [Microsoft calendars](usage/calendar.md#microsoft-365-and-outlookcom-unreleased) |
 
 ---
 
 ## sync-calendar
 
-Sync Google Calendar events for an account. The account is resolved from a `[[gcal]]` config entry (by name or email) or used directly as an email. The first run (or `--full`) does a full sync that registers calendars; later runs are incremental via the Calendar `syncToken`. Events are stored as searchable records (`message_type = calendar_event`) and become eligible for semantic search when the embedding worker runs. Cancelled events are retained and marked cancelled, never deleted. Sync is read-only.
+Sync Google Calendar events for an account. The account is resolved from a `[[gcal]]` config entry (by name or email) or used directly as an email. The first run (or `--full`) does a full sync that registers calendars; later runs are incremental via the Calendar `syncToken`. Events are stored as searchable records (`message_type = calendar_event`) and become eligible for semantic search when the embedding worker runs. Cancelled events are retained and marked cancelled, never deleted. Sync is read-only. For an account added with `add-calendar --microsoft`, each run reads every event of its registered Microsoft calendars (unreleased); see [Microsoft calendars](usage/calendar.md#microsoft-365-and-outlookcom-unreleased).
 
 ```bash
 msgvault sync-calendar <name|email> [flags]
@@ -2294,7 +2295,7 @@ msgvault sync-calendar <name|email> [flags]
 
 | Flag | Description |
 |---|---|
-| `--full` | Force a full sync (ignore stored sync tokens) |
+| `--full` | Force a full sync (ignore stored sync tokens). For a Microsoft account, also register calendars the mailbox owns |
 | `--limit` | Max events per calendar (0 = unlimited) |
 | `--after` / `--before` | Bound a full sync to a date range (`YYYY-MM-DD`); full sync only |
 | `--calendar` | Restrict to specific calendar IDs |
@@ -2302,6 +2303,8 @@ msgvault sync-calendar <name|email> [flags]
 | `--min-access-role` | Minimum access role: `owner`, `writer`, or `reader` |
 | `--oauth-app` | Named OAuth app to use |
 | `--noresume` | Do not resume an interrupted full sync |
+
+Only `--full` applies to an account with only Microsoft calendars; the other flags are refused.
 
 ---
 
