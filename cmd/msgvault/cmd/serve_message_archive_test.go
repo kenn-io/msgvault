@@ -292,7 +292,7 @@ func TestArchiveMessageMatchingLocalSnapshot(t *testing.T) {
 }
 
 func TestArchiveMessageRetryAfterRemovingLastLabel(t *testing.T) {
-	st, _, id, _, _, owner, provider := newArchiveDaemon(t, []string{"INBOX"})
+	st, _, id, _, _, owner, provider := newArchiveDaemon(t, []string{"INBOX"}) //nolint:dogsled // This case checks stored labels and provider calls.
 	target, err := st.EmailTagTargetContext(t.Context(), id, "")
 	require.NoError(t, err)
 	require.NoError(t, st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"INBOX"}, Verified: true}))
@@ -339,7 +339,7 @@ func TestArchiveMessageDaemonWriteAndReconcile(t *testing.T) {
 }
 
 func TestArchiveWholeChatProviderErrors(t *testing.T) {
-	st, _, gmailID, _, _, owner, _ := newArchiveDaemon(t)
+	st, _, gmailID, _, _, owner, _ := newArchiveDaemon(t) //nolint:dogsled // This case checks provider errors through the daemon.
 	source, err := st.GetOrCreateSource("imap", "imap@example.test")
 	require.NoError(t, err)
 	conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Archive")
