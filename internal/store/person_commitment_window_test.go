@@ -77,7 +77,7 @@ func TestCommitmentWindowScopesBothSidesOfDirectConversations(t *testing.T) {
 	a.Empty(window.Sources)
 }
 
-func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
+func TestCommitmentWindowFitBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		encoded  bool

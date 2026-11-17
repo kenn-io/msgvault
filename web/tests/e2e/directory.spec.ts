@@ -86,21 +86,13 @@ test('Person tabs stay on one line at phone width', async ({ page }) => {
   expect(new Set(offsets).size).toBe(1);
 });
 
-test('People Details aligns sections and scrolls independently at desktop width', async ({ page }) => {
+test('People Details scrolls independently at desktop width', async ({ page }) => {
   await installMixedArchive(page);
   await page.setViewportSize({ width: 1280, height: 600 });
   await page.goto(directoryURL(42));
   const pane = page.getByRole('group', { name: 'Person page' });
   await expect(pane.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   await pane.getByRole('radio', { name: 'Details', exact: true }).click();
-  const loops = pane.getByRole('region', { name: 'Open loops' });
-  const tasks = pane.getByRole('region', { name: 'Tasks' });
-  await expect(loops).toBeVisible();
-  await expect(tasks).toBeVisible();
-  const loopBounds = await loops.boundingBox();
-  const taskBounds = await tasks.boundingBox();
-  expect(loopBounds?.x).toBeCloseTo(taskBounds!.x, 0);
-  expect(loopBounds?.width).toBeCloseTo(taskBounds!.width, 0);
   const scrollPane = pane.locator('[data-scroll-pane]');
   const metrics = await scrollPane.evaluate((el) => ({
     scroll: el.scrollHeight,

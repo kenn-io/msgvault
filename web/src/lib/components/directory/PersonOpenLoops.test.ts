@@ -59,7 +59,7 @@ describe("PersonOpenLoops", () => {
     ).toBe("/messages/43");
     expect(screen.getByText("Waiting on you")).toBeDefined();
     expect(screen.getByText("Waiting on them")).toBeDefined();
-    expect(screen.getAllByText("2d ago")).toHaveLength(2);
+    expect(screen.getAllByText("2d")).toHaveLength(2);
     expect(screen.getByText("2 open")).toBeDefined();
     expect(screen.queryByText(/could not be read/)).toBeNull();
     const request = fetcher.mock.calls[0]?.[0];

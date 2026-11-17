@@ -123,7 +123,7 @@
             {#each group.items as loop (loop.anchor_message_id)}
               <li>
                 <a href={`/messages/${loop.anchor_message_id}`} title={loop.summary || '(no subject)'}>{loop.summary || '(no subject)'}</a>
-                <span class="muted" title={`Since ${formatContactDate(loop.owed_since_at)}`}>{ageLabel(loop.owed_since_at)} ago</span>
+                <span class="muted" title={`Since ${formatContactDate(loop.owed_since_at)}`}>{ageLabel(loop.owed_since_at)}</span>
               </li>
             {/each}
           </ul>
