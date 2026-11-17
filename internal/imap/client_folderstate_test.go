@@ -1339,7 +1339,7 @@ func TestListLabelsUsesDiscoveredFallbackTrash(t *testing.T) {
 		name, role string
 		attrs      []imapv2.MailboxAttr
 	}{
-		{"trash", "trash", nil}, {"sent", "sent", []imapv2.MailboxAttr{imapv2.MailboxAttrSent}},
+		{"trash", "", nil}, {"sent", "sent", []imapv2.MailboxAttr{imapv2.MailboxAttrSent}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			addr, _ := testutil.StartIMAPMemServerWithSpecialUse(t, map[string]int{"INBOX": 0, "Deleted Items": 0}, map[string][]imapv2.MailboxAttr{"Deleted Items": tc.attrs})

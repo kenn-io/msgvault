@@ -315,7 +315,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 			return err
 		}
 		currentMailboxes := make(map[string]struct{}, len(normalizedDeltas))
-		restoringMailboxRole := imapRestoringMailboxRole
+		restoringMailboxRole := `1=1`
 		var allMailArgs []any
 		var trashArgs []any
 		for _, normalized := range normalizedDeltas {
@@ -330,10 +330,10 @@ func (s *Store) applyIMAPMailboxDeltas(
 		if len(allMailArgs) > 0 {
 			restoringMailboxRole += ` AND l.source_label_id NOT IN (?` + strings.Repeat(",?", len(allMailArgs)-1) + `)`
 		}
-		trashRole := `l.system_role = 'trash'`
+		trashRole := `1=0`
 		if len(trashArgs) > 0 {
 			placeholders := `?` + strings.Repeat(",?", len(trashArgs)-1)
-			trashRole += ` OR l.source_label_id IN (` + placeholders + `)`
+			trashRole = `l.source_label_id IN (` + placeholders + `)`
 			restoringMailboxRole += ` AND l.source_label_id NOT IN (` + placeholders + `)`
 		}
 		if err := retireAbsentIMAPMailboxes(
@@ -518,11 +518,6 @@ func (s *Store) applyIMAPMailboxDeltas(
 	})
 }
 
-// imapRestoringMailboxRole identifies a specific mailbox outside Trash and All.
-// Filtered sync needs that observation; a complete snapshot can also confirm
-// a restore when Trash membership is absent.
-const imapRestoringMailboxRole = `COALESCE(l.system_role, '') NOT IN ('trash', 'all')`
-
 // ClearRestoredIMAPDeletionMarksForSyncContext reconciles marked messages seen
 // by a filtered sync without changing the saved mailbox memberships.
 func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
@@ -541,27 +536,9 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 		if err := s.validateCurrentSyncGeneration(ctx, tx, sourceID, syncRunID, SyncStatusCompleted); err != nil {
 			return err
 		}
-		eligible := make(map[string]bool)
-		rows, err := tx.QueryContext(ctx, `SELECT l.source_label_id FROM labels l WHERE l.source_id = ? AND l.source_label_id IS NOT NULL AND `+imapRestoringMailboxRole, sourceID)
-		if err != nil {
-			return fmt.Errorf("read IMAP mailbox roles: %w", err)
-		}
-		for rows.Next() {
-			var mailbox string
-			if err := rows.Scan(&mailbox); err != nil {
-				_ = rows.Close()
-				return err
-			}
-			eligible[mailbox] = true
-		}
-		err = rows.Err()
-		_ = rows.Close()
-		if err != nil {
-			return err
-		}
 		var candidates []IMAPMembershipObservation
 		for _, observation := range observations {
-			if eligible[observation.Mailbox] && !observation.AllMail && !observation.Trash {
+			if !observation.AllMail && !observation.Trash {
 				candidates = append(candidates, observation)
 			}
 		}

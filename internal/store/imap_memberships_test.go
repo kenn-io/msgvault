@@ -316,7 +316,7 @@ func TestApplyIMAPMailboxDeltas_TrashAndAllReconcileDeletionMark(t *testing.T) {
 		trash            string
 		inbox, all, want bool
 	}{
-		{name: "marked in trash", trash: "role", want: true},
+		{name: "marked in trash", trash: "flag", want: true},
 		{name: "marked in trash and inbox", trash: "flag", inbox: true, want: false},
 		{name: "marked in trash and all", trash: "flag", all: true, want: true},
 		{name: "marked in all only", all: true, want: false},
@@ -326,9 +326,6 @@ func TestApplyIMAPMailboxDeltas_TrashAndAllReconcileDeletionMark(t *testing.T) {
 			id := f.createMessage(t, "message", "<trash@example.com>")
 			// A combined Trash and Sent mailbox retains its Trash flag with the Sent role.
 			trashRole := "sent"
-			if tc.trash == "role" {
-				trashRole = store.LabelSystemRoleTrash
-			}
 			_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 				"Trash":    {Name: "Trash", Type: "system", SystemRole: trashRole},
 				"All Mail": {Name: "All Mail", Type: "system", SystemRole: "sent"},
@@ -1470,16 +1467,12 @@ func TestApplyIMAPMailboxDeltas_EmptyBaselineCleansLegacyLabelsOnce(t *testing.T
 }
 
 func TestFilteredIMAPRestoreClearsOnlyOnDistinctEvidence(t *testing.T) {
-	for _, scenario := range []string{"restored", "all only", "all role only", "shared RFC822", "no Message-ID"} {
+	for _, scenario := range []string{"restored", "all only", "shared RFC822", "no Message-ID"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newIMAPIdentityFixture(t)
-			allRole := "sent"
-			if scenario == "all role only" {
-				allRole = store.LabelSystemRoleAll
-			}
 			_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
-				"Trash":    {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
-				"All Mail": {Name: "All Mail", Type: "system", SystemRole: allRole},
+				"Trash":    {Name: "Trash", Type: "system", SystemRole: ""},
+				"All Mail": {Name: "All Mail", Type: "system", SystemRole: "sent"},
 				"INBOX":    {Name: "INBOX", Type: "system"},
 			})
 			require.NoError(t, err)
@@ -1507,8 +1500,6 @@ func TestFilteredIMAPRestoreClearsOnlyOnDistinctEvidence(t *testing.T) {
 			switch scenario {
 			case "restored", "shared RFC822":
 				observations = []store.IMAPMembershipObservation{{Mailbox: "INBOX", UIDValidity: 1, UID: 1, SourceMessageID: "INBOX|1", RFC822MessageID: "<restored@example.test>"}}
-			case "all role only":
-				observations = []store.IMAPMembershipObservation{{Mailbox: "All Mail", UIDValidity: 1, UID: 1, ArchivedMessageID: id}}
 			case "all only":
 				observations = []store.IMAPMembershipObservation{{Mailbox: "All Mail", AllMail: true, UIDValidity: 1, UID: 1, ArchivedMessageID: id}}
 			}

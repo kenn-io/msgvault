@@ -105,18 +105,25 @@ func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
 
 func TestRunScheduledIMAPSync_CombinedMailboxRoles(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		allMail  bool
-		filtered bool
+		name       string
+		allMail    bool
+		filtered   bool
+		extraTrash bool
 	}{
-		{"all and sent/filtered=false", true, false},
-		{"all and sent/filtered=true", true, true},
-		{"trash and sent/filtered=false", false, false},
-		{"trash and sent/filtered=true", false, true},
+		{"all and sent/filtered=false", true, false, false},
+		{"all and sent/filtered=true", true, true, false},
+		{"trash and sent/filtered=false", false, false, false},
+		{"trash and sent/filtered=true", false, true, false},
+		{"second trash and sent/filtered=false", false, false, true},
+		{"second trash and sent/filtered=true", false, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mailboxes := map[string]int{"INBOX": 0, "Combined": 0}
 			roles := map[string][]imapapi.MailboxAttr{"Combined": {imapapi.MailboxAttrTrash, imapapi.MailboxAttrSent}}
+			if tc.extraTrash {
+				mailboxes["A-Trash"] = 0
+				roles["A-Trash"] = []imapapi.MailboxAttr{imapapi.MailboxAttrTrash}
+			}
 			if tc.allMail {
 				mailboxes["A-All"] = 0
 				roles["A-All"] = []imapapi.MailboxAttr{imapapi.MailboxAttrAll}

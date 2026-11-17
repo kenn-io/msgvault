@@ -446,7 +446,7 @@ func (s *Syncer) replayAcquisitionFailures(
 		return nil, nil
 	}
 
-	existing, err := s.store.MessageExistsBatchContext(ctx, sourceID, messageIDs)
+	existing, err := s.store.MessageExistsWithRawBatchContext(ctx, sourceID, messageIDs)
 	if err != nil {
 		return nil, fmt.Errorf("check replay messages: %w", err)
 	}
@@ -539,6 +539,9 @@ func (s *Syncer) replayAcquisitionFailures(
 		}
 	}
 
+	if err := s.reconcileGmailTrashRemovals(ctx, sourceID, successfulIDs); err != nil {
+		return nil, err
+	}
 	return successfulIDs, nil
 }
 

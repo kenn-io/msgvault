@@ -9,12 +9,11 @@ import (
 )
 
 // SchemaVersion identifies a completed InitSchemaContext. Increment it for any
-// archive schema or stored-data meaning change, including indexes and required
-// data migrations.
+// main archive schema change, including indexes, or required data migration.
 // Runtime-only consumers require an exact match and never run migrations.
 // TestSchemaVersionContract catches most missed bumps. API, cache and optional
 // vector backend versions are independent.
-const SchemaVersion = 46
+const SchemaVersion = 45
 
 // SchemaVersionContext reads the stored completion marker without migrating.
 // A missing marker identifies a legacy archive and returns zero.

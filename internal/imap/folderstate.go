@@ -41,7 +41,7 @@ func (c *Client) ObservedMemberships() []MembershipObservation {
 	observations := make([]MembershipObservation, len(c.observedMemberships))
 	for i, observation := range c.observedMemberships {
 		observation.AllMail = c.allMailMailboxes[observation.Mailbox]
-		observation.Trash = observation.Mailbox == c.trashMailbox
+		observation.Trash = c.trashMailboxes[observation.Mailbox]
 		if observation.Flags != nil {
 			observation.Flags = append([]string{}, observation.Flags...)
 		}

@@ -52,10 +52,6 @@ func systemRoleForMailbox(attrs []imap.MailboxAttr) string {
 		return store.LabelSystemRoleDrafts
 	case slices.Contains(attrs, imap.MailboxAttrSent):
 		return store.LabelSystemRoleSent
-	case slices.Contains(attrs, imap.MailboxAttrTrash):
-		return store.LabelSystemRoleTrash
-	case slices.Contains(attrs, imap.MailboxAttrAll):
-		return store.LabelSystemRoleAll
 	}
 	return ""
 }

@@ -38,7 +38,7 @@ func (c *Client) ObservedMailboxDeltas() []MailboxDelta {
 	deltas := make([]MailboxDelta, len(c.observedMailboxDeltas))
 	for i, delta := range c.observedMailboxDeltas {
 		delta.AllMail = c.allMailMailboxes[delta.Mailbox]
-		delta.Trash = delta.Mailbox == c.trashMailbox
+		delta.Trash = c.trashMailboxes[delta.Mailbox]
 		delta.State.KnownUIDs = cloneKnownUIDs(delta.State.KnownUIDs)
 		delta.ChangedUIDs = append([]imap.UID(nil), delta.ChangedUIDs...)
 		delta.VanishedUIDs = append([]imap.UID(nil), delta.VanishedUIDs...)
