@@ -278,6 +278,7 @@
 
   .header-line {
     display: flex;
+    min-width: 0;
     align-items: baseline;
     justify-content: space-between;
     gap: var(--space-4);
