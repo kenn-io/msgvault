@@ -582,7 +582,7 @@ type SearchMediaQuery struct {
 	// Q Words to find in recordings and attachments
 	Q string `json:"q" validate:"required"`
 
-	// Mode Attachment mode: lexical (default), semantic, or hybrid; recordings support lexical only
+	// Mode Search mode for recordings and attachments: lexical (default), semantic, or hybrid
 	Mode *string `json:"mode,omitempty"`
 
 	// PersonID Durable person ID

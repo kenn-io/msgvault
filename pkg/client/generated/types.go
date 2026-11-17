@@ -7518,11 +7518,16 @@ func (m MediaAttachmentSearch) Validate() error {
 }
 
 type MediaSearchResponse struct {
+	// ActualMode Recording mode Docbank ran: lexical, semantic, hybrid, or unavailable when no recording search ran
+	ActualMode  string                 `json:"actual_mode" validate:"required"`
 	Attachments *MediaAttachmentSearch `json:"attachments,omitempty"`
 
 	// AttributionUnavailable Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits
 	AttributionUnavailable int64          `json:"attribution_unavailable"`
 	Coverage               SearchCoverage `json:"coverage"`
+
+	// Degradations Why recording search ran below the requested mode, such as semantic_unconfigured or semantic_unavailable
+	Degradations []string `json:"degradations" validate:"required"`
 
 	// Partial Coverage or occurrence attribution is incomplete, even with no matching excerpts
 	Partial                bool                `json:"partial"`
@@ -7535,6 +7540,9 @@ type MediaSearchResponse struct {
 
 func (m MediaSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.ActualMode, "required"); err != nil {
+		errors = errors.Append("ActualMode", err)
+	}
 	if m.Attachments != nil {
 		if v, ok := any(m.Attachments).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -7546,6 +7554,9 @@ func (m MediaSearchResponse) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Coverage", err)
 		}
+	}
+	if err := typesValidator.Var(m.Degradations, "required"); err != nil {
+		errors = errors.Append("Degradations", err)
 	}
 	if m.RecordingsError != nil {
 		if v, ok := any(m.RecordingsError).(runtime.Validator); ok {

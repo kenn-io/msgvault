@@ -2062,9 +2062,9 @@ Successful responses set:
 
 `GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, optional `filename`, `containing_title` and `occurred_at`, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` selects durable person bindings; `participant_id` selects the current identity cluster used by Explore's Person filter. They can't be combined. Repeated `direction` values select `from_person`, `to_person` or `group` relations and require either ID.
 
-The recording search covers the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` or `participant_id` to narrow the scope. A recording with more than 64 distinct current supplied transcript input IDs is left out of the search. Its message occurrences count in `unavailable_occurrences`, and `partial=true`. Repeated occurrences of the same input count once. Recordings support lexical mode only; semantic and hybrid return `recordings_error=media_search_mode_unavailable` when attachment search succeeds. An unconfigured or unreachable integration returns `media_search_unavailable`.
+The recording search covers the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` or `participant_id` to narrow the scope. A recording with more than 64 distinct current supplied transcript input IDs is left out of the search. Its message occurrences count in `unavailable_occurrences`, and `partial=true`. Repeated occurrences of the same input count once. An unconfigured or unreachable integration returns `media_search_unavailable`.
 
-The response has Docbank `coverage`, local `pending_occurrences` and `unavailable_occurrences`, `attribution_unavailable`, `partial`, and `truncated`. Pending counts require durable worker work; unmapped audio counts as unavailable. Coverage state `unknown` stays unknown. `partial` also reports local gaps and withheld excerpts. An empty result with complete coverage and `partial=false` means the query found no transcript match. The output limit applies after shared recordings expand into messages; `truncated` reports remaining occurrences or Docbank's retrieval limit.
+The response has the recording `actual_mode` and `degradations`, Docbank `coverage`, local `pending_occurrences` and `unavailable_occurrences`, `attribution_unavailable`, `partial`, and `truncated`. Pending counts require durable worker work; unmapped audio counts as unavailable. Coverage state `unknown` stays unknown. `partial` also reports local gaps and withheld excerpts. An empty result with complete coverage and `partial=false` means the query found no transcript match. The output limit applies after shared recordings expand into messages; `truncated` reports remaining occurrences or Docbank's retrieval limit.
 
 Selected transcript completeness must be `complete`, `partial`, or `degraded_provenance`. The latter two set `partial=true`; unsupported values report `media_search_unavailable` for recordings.
 
@@ -2085,7 +2085,20 @@ report configuration, consent and runtime failures. Empty scopes contact no serv
 Docbank-reported hybrid downgrade is preserved. Downgrade, degradations,
 or nonlexical coverage other than `complete` set attachment `partial=true`.
 Lexical `unknown` coverage alone does not. Each list reports its own partial
-status; `truncated` remains separate. Nonlexical requests skip recording retrieval. Files are searched in batches of 4,096.
+status; `truncated` remains separate. Files are searched in batches of 4,096.
+
+Schema 5.15.0 applies `mode` to recordings too. Semantic and hybrid recording
+search use `integrations.docbank.recording_search_profile`, which names the
+Docbank profile that embedded the transcripts. Docbank keys embeddings by
+processing profile, and transcripts are processed under `supplied-transcript`
+or the ASR profile rather than the attachment profile. Without a recording
+profile, hybrid uses lexical with `semantic_unconfigured`, and semantic sets
+`recordings_error=media_search_mode_unavailable`. When the selected
+transcripts have no embeddings, Docbank answers with lexical matches and
+`semantic_unavailable`. Recording `actual_mode` is `unavailable` when no
+recording search ran, such as an empty scope. Downgrades and degradations set
+`partial=true`. An empty recording scope validates the query lexically, so the
+query text reaches no encoder.
 
 The attachment field is omitted when attachment mirroring is off. Attachment failures leave recording results intact and set `attachments.error`. Docbank-rejected recording queries return HTTP 400 with `invalid_media_search`. Other recording failures, including oversized scopes and remote timeouts, leave attachment results intact and set `recordings_error` with `error` and `message`. The request fails when both searches fail or its context ends. Recording-only responses retain their existing error behavior.
 

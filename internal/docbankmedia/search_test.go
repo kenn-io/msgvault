@@ -81,7 +81,7 @@ func TestSearchFenceAndContract(t *testing.T) {
 		mutate func(*SearchRequest)
 	}{
 		{"blank query", func(r *SearchRequest) { r.Query = " \t\n" }},
-		{"non-lexical mode", func(r *SearchRequest) { r.Mode = "semantic" }},
+		{"unsupported mode", func(r *SearchRequest) { r.Mode = "auto" }},
 		{"empty profile", func(r *SearchRequest) { r.Profile = "" }},
 		{"content first disabled", func(r *SearchRequest) { r.ContentFirst = false }},
 		{"zero limit", func(r *SearchRequest) { r.Limit = 0 }},
@@ -187,6 +187,66 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 			} else {
 				require.ErrorIs(err, ErrInvalidReceipt)
 			}
+		})
+	}
+}
+
+func TestSearchSelectedModes(t *testing.T) {
+	t.Parallel()
+	source := SearchMediaSource{SourceID: "source", SourceVersionID: "version", ContentVersionID: "123e4567-e89b-42d3-a456-426614174000"}
+	lexical := SearchEvidence{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment", TimeSpan: &MediaTimeSpan{StartMS: 1200, EndMS: 2800}, MediaSources: []SearchMediaSource{source}}
+	embedding := SearchEvidence{Kind: "embedding", BuildID: "build", MediaSources: []SearchMediaSource{source}}
+	for _, tc := range []struct {
+		name, mode, actual string
+		degradations       []string
+		evidence           func() []SearchEvidence
+		valid              bool
+	}{
+		{name: "semantic", mode: "semantic", actual: "semantic", evidence: func() []SearchEvidence { return []SearchEvidence{embedding} }, valid: true},
+		{name: "hybrid both kinds", mode: "hybrid", actual: "hybrid", evidence: func() []SearchEvidence { return []SearchEvidence{lexical, embedding} }, valid: true},
+		{name: "hybrid downgrade", mode: "hybrid", actual: "lexical", evidence: func() []SearchEvidence { return []SearchEvidence{lexical} }, valid: true},
+		{name: "semantic unavailable", mode: "semantic", actual: "lexical", degradations: []string{"semantic_unavailable"}, evidence: func() []SearchEvidence { return []SearchEvidence{lexical} }, valid: true},
+		{name: "silent semantic downgrade", mode: "semantic", actual: "lexical", evidence: func() []SearchEvidence { return []SearchEvidence{lexical} }},
+		{name: "lexical embedding", mode: "lexical", actual: "lexical", evidence: func() []SearchEvidence { return []SearchEvidence{embedding} }},
+		{name: "duplicate kind", mode: "hybrid", actual: "hybrid", evidence: func() []SearchEvidence { return []SearchEvidence{embedding, embedding} }},
+		{name: "second build", mode: "hybrid", actual: "hybrid", evidence: func() []SearchEvidence {
+			other := embedding
+			other.BuildID = "other"
+			return []SearchEvidence{lexical, other}
+		}},
+		{name: "second foreign source", mode: "hybrid", actual: "hybrid", evidence: func() []SearchEvidence {
+			other := embedding
+			other.MediaSources = []SearchMediaSource{{SourceID: "foreign", SourceVersionID: "version", ContentVersionID: source.ContentVersionID}}
+			return []SearchEvidence{lexical, other}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			report := SearchReport{MediaSourceSelection: true, MediaSelections: []SearchMediaSelection{{SearchMediaSource: source, Origin: "generated", Completeness: "complete"}},
+				RequestedMode: tc.mode, ActualMode: tc.actual, Degradations: tc.degradations, Coverage: SearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1},
+				Results: []SearchHit{{VaultUID: "vault", NodeID: 1, ContentVersionID: source.ContentVersionID, Rank: 1, Excerpt: "\x01telescope\x02 arrives", Evidence: tc.evidence()}}}
+			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request SearchRequest
+				if assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
+					assert.Equal(tc.mode, request.Mode)
+					assert.Equal("transcript-vectors", request.Profile)
+				}
+				_ = json.NewEncoder(w).Encode(report)
+			}))
+			t.Cleanup(remote.Close)
+			client, err := NewClient(remote.URL, nil)
+			require.NoError(err)
+			got, err := client.Search(t.Context(), SearchRequest{Query: "when does it arrive", Mode: tc.mode, Profile: "transcript-vectors", ContentFirst: true, Limit: 100,
+				Fence: &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{source.ContentVersionID}}, MediaSources: []SearchMediaSelector{{SearchMediaSource: source}}})
+			if !tc.valid {
+				require.ErrorIs(err, ErrInvalidReceipt)
+				return
+			}
+			require.NoError(err)
+			assert.Equal(tc.actual, got.ActualMode)
+			require.Len(got.Results, 1)
+			assert.Equal("telescope arrives", got.Results[0].Excerpt)
 		})
 	}
 }
