@@ -533,11 +533,10 @@ func TestRunnerExecutionConsentFailureOccursBeforeStartedMarker(t *testing.T) {
 			} else {
 				consent.active = false
 			}
-			beforeCalls := transport.calls
 			_, err = call.Execute(t.Context(), func(context.Context) error { started++; return nil })
 			r.ErrorIs(err, peoplesweep.ErrPersonSweepConsentRevoked)
 			a.Zero(started)
-			a.Equal(beforeCalls, transport.calls)
+			a.Zero(transport.calls)
 			_, err = call.Execute(t.Context(), func(context.Context) error { started++; return nil })
 			r.ErrorContains(err, "already claimed")
 			a.Zero(started)

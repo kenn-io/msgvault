@@ -189,11 +189,7 @@ func (s *Server) listLoops(ctx context.Context, loopStore loops.Store, opts loop
 		if err != nil {
 			return loops.Result{}, now, err
 		}
-		zone := cfg.Activity.Timezone
-		if zone == "" {
-			zone = "UTC"
-		}
-		location, err := time.LoadLocation(zone)
+		location, err := time.LoadLocation(cfg.Activity.Timezone)
 		if err != nil {
 			return loops.Result{}, now, err
 		}

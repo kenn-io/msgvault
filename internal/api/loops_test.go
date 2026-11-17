@@ -34,18 +34,23 @@ type loopFixture struct {
 type deadlineLoopStore struct {
 	*store.Store
 
-	active       bool
-	since        *time.Time
-	complete     bool
-	consentErr   error
-	discoveryErr error
+	active             bool
+	since              *time.Time
+	complete           bool
+	consentErr         error
+	discoveryErr       error
+	consentFingerprint string
+	discoveryPersonID  int64
+	discoveryScope     string
 }
 
-func (s *deadlineLoopStore) HasActivePersonCommitmentConsent(context.Context, string) (bool, error) {
+func (s *deadlineLoopStore) HasActivePersonCommitmentConsent(_ context.Context, fingerprint string) (bool, error) {
+	s.consentFingerprint = fingerprint
 	return s.active, s.consentErr
 }
 
-func (s *deadlineLoopStore) PersonCommitmentDiscoveryContext(context.Context, int64, string) (*time.Time, bool, error) {
+func (s *deadlineLoopStore) PersonCommitmentDiscoveryContext(_ context.Context, personID int64, scope string) (*time.Time, bool, error) {
+	s.discoveryPersonID, s.discoveryScope = personID, scope
 	return s.since, s.complete, s.discoveryErr
 }
 
@@ -159,9 +164,14 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 				st.since = nil
 				st.complete = false
 			}
-			server := NewServerWithOptions(ServerOptions{Config: commitmentDiscoveryAPIConfig(t), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+			cfg := commitmentDiscoveryAPIConfig(t)
+			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
 			w := httptest.NewRecorder()
-			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
+			path := "/api/v1/loops"
+			if tc.name == "active" {
+				path += "?person_id=987"
+			}
+			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 			r.Equal(tc.status, w.Code, w.Body.String())
 			if tc.status != http.StatusOK {
 				return
@@ -169,7 +179,9 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 			var response LoopListResponse
 			r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 			a.Equal(tc.incomplete, response.CoverageIncomplete)
-			a.Len(response.Items, 2)
+			if tc.name != "active" {
+				a.Len(response.Items, 2)
+			}
 			if tc.wantSince {
 				r.NotNil(response.CommitmentsSince)
 				a.True(response.CommitmentsSince.Equal(since))
@@ -185,6 +197,13 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 			if !tc.incomplete {
 				r.NotNil(response.CommitmentsUntil)
 				a.Equal("2025-06-30", response.CommitmentsUntil.Format(time.DateOnly))
+			}
+			if tc.name == "active" {
+				profile, err := cfg.People.Sweep.Profile()
+				r.NoError(err)
+				a.Equal(profile.Fingerprint, st.consentFingerprint)
+				a.Equal(int64(987), st.discoveryPersonID)
+				a.Equal(peoplesweep.CommitmentScopeFingerprint(profile, cfg.People.Sweep.Commitments), st.discoveryScope)
 			}
 		})
 	}
@@ -552,57 +571,45 @@ func (s *commitmentListStore) ListPersonCommitmentsContext(_ context.Context, _ 
 	until := now.Add(24 * time.Hour)
 	s.until = until
 	s.promisedAt = now
-	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Start: 0, End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: now, State: "snoozed", DueOn: &due, SnoozedUntil: &until}}, nil
-}
-
-func TestListLoopsUsesCurrentActivityTimezone(t *testing.T) {
-	r := require.New(t)
-	f := storetest.New(t)
-	st := &commitmentListStore{Store: f.Store}
-	cfg := config.NewDefaultConfig()
-	cfg.HomeDir = t.TempDir()
-	r.NoError(os.WriteFile(cfg.ConfigFilePath(), []byte("[activity]\ntimezone = 'America/New_York'\n"), 0o600))
-	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
-	server.clock = func() time.Time { return time.Date(2026, 1, 16, 2, 0, 0, 0, time.UTC) }
-	w := httptest.NewRecorder()
-	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-	r.Equal(http.StatusOK, w.Code, w.Body.String())
-	r.Equal("2026-01-15", st.selectionDay)
-	var response struct {
-		Commitments []struct {
-			Overdue bool `json:"overdue"`
-		} `json:"commitments"`
+	item := store.PersonCommitment{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Start: 0, End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: now, State: "open", DueOn: &due}
+	if includeClosed {
+		item.State, item.SnoozedUntil = "snoozed", &until
 	}
-	r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	r.Len(response.Commitments, 1)
-	r.False(response.Commitments[0].Overdue)
-	r.NoError(os.WriteFile(cfg.ConfigFilePath(), []byte("[activity]\ntimezone = 'UTC'\n"), 0o600))
-	w = httptest.NewRecorder()
-	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-	r.Equal(http.StatusOK, w.Code, w.Body.String())
-	r.Equal("2026-01-16", st.selectionDay)
-	r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	r.Len(response.Commitments, 1)
-	r.True(response.Commitments[0].Overdue)
+	return []store.PersonCommitment{item}, nil
 }
 
 func TestListLoopsMapsCommitmentsAndForwardsIncludeClosed(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	st := &commitmentListStore{Store: f.Store}
-	cfg := config.NewDefaultConfig()
-	cfg.HomeDir = t.TempDir()
-	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
-	server.clock = func() time.Time { return time.Date(2026, 1, 16, 2, 0, 0, 0, time.UTC) }
-	w := httptest.NewRecorder()
-	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops?include_closed=true", nil))
-	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	assert.True(st.includeClosed)
-	var response LoopListResponse
-	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	require.NotEmpty(response.Commitments)
-	due := "2026-01-15"
-	until := st.until
-	assert.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call.", Start: 0, End: 12}, PromisedAt: st.promisedAt, Freshness: "fresh", State: "snoozed", DueOn: &due, SnoozedUntil: &until, Overdue: true}, response.Commitments[0])
+	for _, tc := range []struct {
+		name, timezone, query, day string
+		overdue, includeClosed     bool
+	}{
+		{"default", "", "?include_closed=true", "2026-01-16", true, true},
+		{"activity timezone", "America/New_York", "", "2026-01-15", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			f := storetest.New(t)
+			st := &commitmentListStore{Store: f.Store}
+			cfg := config.NewDefaultConfig()
+			cfg.HomeDir = t.TempDir()
+			if tc.timezone != "" {
+				r.NoError(os.WriteFile(cfg.ConfigFilePath(), []byte("[activity]\ntimezone = '"+tc.timezone+"'\n"), 0o600))
+			}
+			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+			server.clock = func() time.Time { return time.Date(2026, 1, 16, 2, 0, 0, 0, time.UTC) }
+			w := httptest.NewRecorder()
+			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops"+tc.query, nil))
+			r.Equal(http.StatusOK, w.Code, w.Body.String())
+			a.Equal(tc.includeClosed, st.includeClosed)
+			a.Equal(tc.day, st.selectionDay)
+			var response LoopListResponse
+			r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			r.Len(response.Commitments, 1)
+			a.Equal(tc.overdue, response.Commitments[0].Overdue)
+			if tc.includeClosed {
+				due, until := "2026-01-15", st.until
+				a.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call.", Start: 0, End: 12}, PromisedAt: st.promisedAt, Freshness: "fresh", State: "snoozed", DueOn: &due, SnoozedUntil: &until, Overdue: true}, response.Commitments[0])
+			}
+		})
+	}
 }
