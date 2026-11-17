@@ -43,15 +43,8 @@ func (s *Store) migrateCommitmentClaimOrigin(ctx context.Context) error {
 	return s.migrateCommitmentClaimOriginSQLite(ctx)
 }
 
-// migrateCommitmentClaimOriginSQLite follows SQLite's documented procedure
-// for an arbitrary schema change: rebuild the table inside a transaction on a
-// connection whose foreign keys are disabled. Foreign keys must be off because
-// person_fact_claim_evidence, person_fact_resolutions, and
-// person_fact_decisions reference person_fact_claims with ON DELETE CASCADE and
-// ON DELETE SET NULL, and DROP TABLE performs an implicit delete that would
-// otherwise fire those actions and destroy the ledger. The pragma is
-// connection-scoped and cannot change inside a transaction, so this runs on a
-// dedicated pooled connection rather than through runMaintenance.
+// migrateCommitmentClaimOriginSQLite rebuilds the table the way
+// migratePersonFactClaimOriginBriefSQLite does, for the same reasons.
 func (s *Store) migrateCommitmentClaimOriginSQLite(ctx context.Context) (err error) {
 	var definition string
 	if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master
@@ -70,10 +63,6 @@ func (s *Store) migrateCommitmentClaimOriginSQLite(ctx context.Context) (err err
 	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
 		return fmt.Errorf("suspend foreign keys to widen person fact claim origins: %w", err)
 	}
-	// Restore enforcement before the connection returns to the pool, whatever
-	// happens below. A pooled connection is reused, so a leaked pragma would
-	// silently disable foreign keys for unrelated later work; failing to
-	// restore it is reported rather than swallowed.
 	defer func() {
 		if _, restoreErr := conn.ExecContext(context.WithoutCancel(ctx),
 			`PRAGMA foreign_keys = ON`); restoreErr != nil {
