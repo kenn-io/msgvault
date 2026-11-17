@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	Version      = "seg-v2"
+	Version      = "seg-v3"
 	MaxBodyBytes = 1 << 20
 )
 
@@ -68,7 +68,9 @@ var outlookDivider = regexp.MustCompile(`^_{10,}$`)
 
 // outlookHistory requires consecutive From and Sent lines and a Subject
 // within the first 64 lines, before any blank line. Date can replace Sent
-// when an underscore divider precedes the block.
+// when an underscore divider precedes the block. Header names may be bold,
+// as in "*From:*", which is how stored text renders Outlook's HTML-only
+// replies.
 func outlookHistory(lines []string) bool {
 	divider := outlookDivider.MatchString(strings.TrimSpace(lines[0]))
 	if divider {
@@ -82,11 +84,10 @@ func outlookHistory(lines []string) bool {
 		return false
 	}
 	for _, line := range lines[2:min(64, len(lines))] {
-		line = strings.ToLower(strings.TrimSpace(line))
-		if line == "" {
+		if strings.TrimSpace(line) == "" {
 			return false
 		}
-		if strings.HasPrefix(line, "subject:") {
+		if _, ok := headerField(line, "subject:"); ok {
 			return true
 		}
 	}
@@ -94,8 +95,18 @@ func outlookHistory(lines []string) bool {
 }
 
 func headerValue(line, key string) bool {
+	value, ok := headerField(line, key)
+	return ok && value != ""
+}
+
+// headerField returns the trimmed text after a "key" or "*key*" prefix.
+func headerField(line, key string) (string, bool) {
 	line = strings.ToLower(strings.TrimSpace(line))
-	return strings.HasPrefix(line, key) && strings.TrimSpace(line[len(key):]) != ""
+	value, ok := strings.CutPrefix(line, "*"+key+"*")
+	if !ok {
+		value, ok = strings.CutPrefix(line, key)
+	}
+	return strings.TrimSpace(value), ok
 }
 
 // IsDatedAttribution reports whether a line is a complete dated reply header.

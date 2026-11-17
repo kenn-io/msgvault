@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/msgsegment"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/personscope"
@@ -44,6 +45,7 @@ const (
 	bodyFormatAuto       = "auto"
 	bodyFormatText       = "text"
 	bodyFormatHTML       = "html"
+	bodyFormatHTMLText   = "html_text" // text converted from an HTML body with no stored text
 	toolArgQuery         = "query"
 	toolArgLimit         = "limit"
 	toolArgCursor        = "cursor"
@@ -1579,11 +1581,16 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		requestedBodyFormat = bodyFormatAuto
 	}
 
+	includeSegments, _ := args["include_segments"].(bool)
 	fullBody := msg.BodyText
 	bodyFormat := bodyFormatText
 	switch requestedBodyFormat {
 	case bodyFormatAuto:
 		fullBody, bodyFormat = automaticMessageBody(msg)
+		if includeSegments && bodyFormat == bodyFormatHTML {
+			// Ranges index text, so page the text ingest stores for HTML-only mail.
+			fullBody, bodyFormat = mime.HTMLBodyText(fullBody), bodyFormatHTMLText
+		}
 	case bodyFormatText:
 	case bodyFormatHTML:
 		fullBody = msg.BodyHTML
@@ -1646,7 +1653,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		Labels:               msg.Labels,
 		Attachments:          msg.Attachments,
 	}
-	if includeSegments, _ := args["include_segments"].(bool); includeSegments {
+	if includeSegments {
 		if bodyFormat == bodyFormatHTML {
 			response.SegmentsUnavailable = "unsupported_format"
 		} else {

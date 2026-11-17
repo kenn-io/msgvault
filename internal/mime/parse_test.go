@@ -587,6 +587,20 @@ func TestParseDate(t *testing.T) {
 	}
 }
 
+func TestHTMLBodyTextMatchesParse(t *testing.T) {
+	for name, html := range map[string]string{
+		"Gmail reply":   `<div dir="ltr">Sounds good.</div><div class="gmail_quote"><div class="gmail_attr">On Mon, Jan 5, 2026 at 9:00 AM Alice &lt;alice@example.com&gt; wrote:<br></div><blockquote class="gmail_quote"><div>Lunch at noon?</div></blockquote></div>`,
+		"Outlook reply": `<div>Sounds good.</div><hr><div id="divRplyFwdMsg"><b>From:</b> Alice &lt;alice@example.com&gt;<br><b>Sent:</b> Monday, January 5, 2026 9:00 AM<br><b>Subject:</b> Lunch</div><div>Lunch at noon?</div>`,
+		"no text":       `<img src="cid:logo@example.com">`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			parsed, err := Parse([]byte("Content-Type: text/html; charset=utf-8\r\n\r\n" + html))
+			require.NoError(t, err)
+			assert.Equal(t, parsed.GetBodyText(), HTMLBodyText(html))
+		})
+	}
+}
+
 func TestStripHTML(t *testing.T) {
 	tests := []struct {
 		name  string

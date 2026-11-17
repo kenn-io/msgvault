@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/inbucket/html2text"
 	"github.com/jhillyerd/enmime/v2"
 	"github.com/jhillyerd/enmime/v2/mediatype"
 )
@@ -852,6 +853,16 @@ func StripHTML(rawHTML string) string {
 	}
 
 	return strings.TrimSpace(text)
+}
+
+// HTMLBodyText returns the text Parse and GetBodyText produce for a message
+// whose only body is rawHTML: enmime's html2text conversion, or StripHTML
+// when that conversion fails or yields nothing.
+func HTMLBodyText(rawHTML string) string {
+	if text, err := html2text.FromString(rawHTML); err == nil && text != "" {
+		return text
+	}
+	return StripHTML(rawHTML)
 }
 
 // GetBodyText returns the best available body text.

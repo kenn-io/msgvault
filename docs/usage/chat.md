@@ -591,14 +591,15 @@ slice of the body plus `body_length`, `body_returned`, `offset`, and
 being returned in a single response.
 
 `get_message` with `include_segments: true` returns
-`segments_version: "seg-v2"` and `segments` with `kind`, `start`, and `end`.
+`segments_version: "seg-v3"` and `segments` with `kind`, `start`, and `end`.
 For plain-text email, kinds are `authored`, `quoted`, `forwarded`, and
 `signature`. Quoted ranges carry `depth`, the count of leading `>` markers,
 or 1 for an attribution line or unprefixed history block.
 
 Outlook history blocks are quoted for both replies and forwards. They require
 consecutive `From:` and `Sent:` lines, then a `Subject:` within the first 64
-lines, before any blank line. `Date:` can replace `Sent:` only when an
+lines, before any blank line. Header names may be bold, as in `*From:*`, which
+is how Outlook's HTML-only replies read as text. `Date:` can replace `Sent:` only when an
 underscore divider of at least ten characters precedes the block. Recognized
 separators are English `Original Message`, `Forwarded message`, and
 `Begin forwarded message:`, plus Thunderbird's German `Original-Nachricht`
@@ -620,8 +621,17 @@ Their byte offsets refer to the whole selected body, with an exclusive `end`,
 and stay unclipped across pages. Classification examines at most 1 MiB,
 stopping at the last complete line; remaining bytes keep the last label.
 `segments_truncated: true` reports the scan limit. Non-email messages get one
-authored range. HTML returns `segments_unavailable: "unsupported_format"` with
-no ranges.
+authored range.
+
+HTML-only email is segmented through its stored text, which msgvault
+converts from the HTML at import; quoted `blockquote` lines become `>` lines.
+When a message has HTML but no stored text, the default `body_format: "auto"`
+with `include_segments: true` pages the same conversion in `body_text` and
+reports `body_format: "html_text"`. Offsets, `body_length`, and ranges refer to
+that text, so `char_offset` values from `search_in_message`, which searches the
+raw HTML for such messages, don't apply to it. Requesting
+`body_format: "html"` returns `segments_unavailable: "unsupported_format"`
+with no ranges.
 
 For a calendar event, `get_message` also returns `calendar` with `status`,
 `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`, so an

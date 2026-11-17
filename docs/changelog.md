@@ -9,6 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Start bounded Gmail or IMAP historical imports through MCP with `--allow-import-writes`, and follow their durable job status.
+- MCP `get_message` with `include_segments: true` labels Outlook history in HTML-only replies as quoted, and returns ranges for messages that have HTML but no stored text instead of `unsupported_format`. See [Available Tools](usage/chat.md#available-tools).
 
 - Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose.
 

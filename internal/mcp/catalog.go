@@ -691,6 +691,7 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 			"sender_auth.verified covers only the sender domain; empty results mean the pinned receiver reported nothing. "+
 			"Returns plain text when available; HTML-only messages return a body_html slice with body_format=html. "+
 			"Set include_segments to return authored, quoted, forwarded, and signature byte ranges overlapping the body window, with absolute offsets and depth on quoted ranges. "+
+			"With include_segments, auto pages HTML lacking stored text as converted text (body_format=html_text); offsets refer to it, not raw HTML. "+
 			"Authored means no relay marker was recognized; markers are recognized in English, plus Thunderbird's German, French, Spanish (Spain), Italian, and Portuguese (Brazil and Portugal) separators and single-line dated reply headers, so other languages' history can appear authored. "+
 			"Non-email messages get one authored range. "+
 			hiddenTextFlagDoc+
@@ -705,7 +706,7 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 			toolArgMaxChars:    signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
 			"body_format":      bodyFormat,
 			"full_body":        booleanSchema("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),
-			"include_segments": booleanSchema("Include plain-text body ranges; HTML returns segments_unavailable=unsupported_format."),
+			"include_segments": booleanSchema("Include body ranges; body_format=html returns segments_unavailable=unsupported_format."),
 		}, "id"),
 		outputSchemaFor[getMessageResponse](),
 		(*handlers).getMessage,
