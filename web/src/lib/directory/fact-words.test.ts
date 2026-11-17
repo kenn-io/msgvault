@@ -5,7 +5,7 @@ describe('fact words', () => {
   it('names evidence sources in words', () => {
     expect(evidenceSourceWords('unknown', 'direct-self')).toBe('');
     expect(evidenceSourceWords('archive', 'direct-self')).toBe('From a message they sent');
-    expect(evidenceSourceWords('archive', 'direct-other')).toBe('From a message about them');
+    expect(evidenceSourceWords('archive', 'direct-other')).toBe('From a message');
     expect(evidenceSourceWords('archive', 'indirect')).toBe('Inferred from your messages');
     expect(evidenceSourceWords('public', 'indirect')).toBe('From a public page');
     expect(evidenceSourceWords('provider_assertion', 'indirect')).toBe('From a lookup');
@@ -53,11 +53,8 @@ describe('fact words', () => {
     expect(projectionWords('person_attribute')).toBeNull();
   });
 
-  it('names confidence strength at the 600 and 800 boundaries', () => {
-    expect(scoreWords(599)).toBe('Weak · 599 of 1000');
-    expect(scoreWords(600)).toBe('Moderate · 600 of 1000');
-    expect(scoreWords(799)).toBe('Moderate · 799 of 1000');
-    expect(scoreWords(800)).toBe('Strong · 800 of 1000');
+  it('shows recorded scores without assigning strength', () => {
+    expect(scoreWords(850)).toBe('850 of 1000');
   });
 
 });

@@ -1,7 +1,7 @@
 /** Archive evidence by how directly it speaks about the person. */
 const ARCHIVE_SOURCE: Record<string, string> = {
   'direct-self': 'From a message they sent',
-  'direct-other': 'From a message about them',
+  'direct-other': 'From a message',
   indirect: 'Inferred from your messages',
 };
 const OTHER_SOURCE: Record<string, string> = {
@@ -111,10 +111,7 @@ export function lostSupportWords(reason: string | undefined): string {
   return words && words !== 'changed' ? words : 'Source removed';
 }
 
-function strengthWords(score: number): string {
-  return score >= 800 ? 'Strong' : score >= 600 ? 'Moderate' : 'Weak';
-}
-/** A recorded confidence or identity score: "Strong · 870 of 1000". */
+/** A recorded confidence or identity score. */
 export function scoreWords(score: number): string {
-  return `${strengthWords(score)} · ${score} of 1000`;
+  return `${score} of 1000`;
 }

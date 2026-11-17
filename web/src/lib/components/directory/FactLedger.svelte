@@ -59,7 +59,7 @@
     return displayClaimValue({ title: value.title, role: value.role, organization: entity?.organizationName(value.organization_id) }, 'employment');
   }
   function sameInstant(a: string, b: string): boolean { return Date.parse(a) === Date.parse(b); }
-  function savedJob(value: import('../../directory/models').Employment): boolean { return value.is_current || !!value.source_ref?.startsWith('person-fact-decision:'); }
+  function savedJob(value: import('../../directory/models').Employment): boolean { return value.is_current || ['user', 'carddav_import', 'vcard_import'].includes(value.source) || !!value.source_ref?.startsWith('person-fact-decision:'); }
   onDestroy(() => { destroyed = true; });
 
   const sectionOptions = [

@@ -123,7 +123,7 @@ describe('FactLedger', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(screen.getByText('Valid').nextElementSibling?.textContent).toContain('No end');
-    expect(screen.getByText('Reported confidence').nextElementSibling?.textContent).toBe('Weak · 88 of 1000');
+    expect(screen.getByText('Reported confidence').nextElementSibling?.textContent).toBe('88 of 1000');
     const timestamp = screen.getByText('Created').nextElementSibling!.querySelector('time')!;
     expect(timestamp.textContent).toBe(formatShortDateTime(created.toISOString()));
     expect(timestamp.title).toBe(formatDateTime(created.toISOString(), 'long'));
@@ -131,6 +131,8 @@ describe('FactLedger', () => {
 
   it('reveals private facts, shows Details labels, and marks sensitive fields in the picker', async () => {
     const value = controller();
+    value.evidence.rows[0]!.directness = 'direct-other';
+    value.evidence.rows[0]!.identityScore = 850;
     value.evidence.rows[0]!.supported = false;
     value.evidence.rows[0]!.lostSupport = 'Source deleted';
     vi.spyOn(value, 'selectSection').mockImplementation(async (section) => { value.selectedSection = section; });
@@ -138,6 +140,7 @@ describe('FactLedger', () => {
 
     await fireEvent.click(screen.getByRole('radio', { name: 'Evidence' }));
     expect(screen.getByLabelText('Fact evidence')).toBeDefined();
+    expect(screen.getByText('From a message')).toBeDefined();
     expect(screen.getByText('Source deleted')).toBeDefined();
     expect(rendered.container.innerHTML).not.toContain('allowed evidence excerpt');
     expect(rendered.container.innerHTML).not.toContain('forbidden-evidence-key');
@@ -145,7 +148,7 @@ describe('FactLedger', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Reveal excerpt' }));
     expect(screen.getByText(/allowed evidence excerpt/)).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-    expect(screen.getByText('Matches this person')).toBeDefined();
+    expect(screen.getByText('Matches this person').nextElementSibling?.textContent).toBe('850 of 1000');
 
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
     expect(screen.getByLabelText('Fact claim')).toBeDefined();
@@ -329,18 +332,18 @@ describe('FactLedger', () => {
     const entity = new DirectoryEntityController(createAPIClient(vi.fn()), 42);
     const current = state === 'current';
     entity.employments = state === 'none' ? [] : [employment(11, 1, { is_current: current, is_primary: current, source: 'carddav_import', source_ref: 'card-3', created_at: '2026-11-01T12:00:00Z', updated_at: '2026-11-01T12:00:00Z' })];
-    if (current) entity.employments.push(employment(12, 1, { title: 'Former role', is_current: false }));
+    if (current) entity.employments.push(employment(12, 1, { title: 'Former role', is_current: false, source: 'extraction' }));
     entity.organizations = [organization()];
     render(FactLedger, { controller: value, entity });
     const comparison = screen.getByRole('region', { name: 'Selected saved value' });
-    expect(comparison.textContent?.includes('Engineer at Synthetic Org')).toBe(current);
+    expect(comparison.textContent?.includes('Engineer at Synthetic Org')).toBe(state !== 'none');
     expect(comparison.textContent).not.toContain('Former role');
-    if (!current) expect(comparison.textContent).toContain(`Work: ${state === 'past' ? 'No current job' : 'No saved value'}`);
+    if (state === 'none') expect(comparison.textContent).toContain('Work: No saved value');
     await fireEvent.click(screen.getByRole('radio', { name: 'Pins' }));
     const saved = screen.getByRole('region', { name: 'Saved employment' });
-    expect(saved.textContent?.includes('Engineer at Synthetic Org')).toBe(current);
+    expect(saved.textContent?.includes('Engineer at Synthetic Org')).toBe(state !== 'none');
     expect(saved.textContent).not.toContain('Former role');
-    if (!current) expect(saved.textContent).toContain(state === 'past' ? 'No current job' : 'No saved value');
+    if (state === 'none') expect(saved.textContent).toContain('No saved value');
     if (current) {
       expect(saved.textContent).toContain('Pinned · From CardDAV contacts');
       await fireEvent.click(within(saved).getByRole('button', { name: 'Details' }));
@@ -349,14 +352,17 @@ describe('FactLedger', () => {
     entity.destroy();
   });
 
-  it('shows a fact-saved past job in Work and Pins', async () => {
+  it.each([
+    { source: 'user', source_ref: undefined },
+    { source: 'extraction', source_ref: 'person-fact-decision:123' },
+  ])('shows a saved past job from $source in Work and Pins', async ({ source, source_ref }) => {
     const value = controller();
     const canonical = `employment:system:employment:${revision}`;
     value.targets = [{ optionID: 'work', name: 'Work', targetKey: 'system:employment', description: 'Work', kind: 'employment', valueType: 'object', cardinality: 'multi', sensitive: false, canonical }];
     value.pins.rows = [{ kind: 'employment', pinned: true, targetKey: 'system:employment', targetCanonical: canonical }];
     value.selectedTargetOption = 'work';
     const entity = new DirectoryEntityController(createAPIClient(vi.fn()), 42);
-    entity.employments = [employment(11, 1, { is_current: false, source: 'extraction', source_ref: 'person-fact-decision:123' })];
+    entity.employments = [employment(11, 1, { is_current: false, source, source_ref })];
     entity.organizations = [organization()];
     render(FactLedger, { controller: value, entity });
     expect(screen.getByRole('region', { name: 'Selected saved value' }).textContent).toContain('Engineer at Synthetic Org');
