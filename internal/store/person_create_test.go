@@ -48,6 +48,8 @@ func TestStandalonePersonDuplicateRefusal(t *testing.T) {
 		{"observation-only phone", phone, "+12025550126", "+1 (202) 555-0126", observedContact},
 		{"telegram curated phone", phone, "+1 (202) 555-0127", "+12025550127", telegramCuratedPhone},
 		{"telegram observed phone", phone, "+1 (202) 555-0128", "+12025550128", telegramObservedPhone},
+		{"matrix curated email", email, "Alex@Example.com", "alex@example.com", matrixCuratedContact},
+		{"matrix observed email", email, "Alex@Example.com", "alex@example.com", matrixObservedContact},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -291,6 +293,32 @@ func telegramObservedPhone(f *storetest.Fixture, kind store.ContactAddressKind, 
 
 // observedContact records value only as a contact observation on a
 // participant whose primary address is something else, as Beeper does.
+// matrixCuratedContact stores value as typed: Matrix keeps identifier case.
+func matrixCuratedContact(f *storetest.Fixture, kind store.ContactAddressKind, value string) int64 {
+	existing, err := f.Store.CreateStandalonePersonContext(f.T.Context(),
+		store.PersonCreateInput{Name: "Existing Example"})
+	require.NoError(f.T, err)
+	_, err = f.Store.AddPersonContactPointContext(f.T.Context(), existing.ID, store.PersonContactPointInput{
+		AddressKind: kind, ServiceSlug: new("matrix"), ScopeKind: new("server"),
+		ScopeValue: new("matrix.example.com"), OriginalValue: value,
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(f.T, err)
+	return existing.ID
+}
+
+func matrixObservedContact(f *storetest.Fixture, kind store.ContactAddressKind, value string) int64 {
+	participantID := f.EnsureParticipant("primary@example.org", "Existing Example", "example.org")
+	_, err := f.Store.RecordContactObservationContext(f.T.Context(), participantID,
+		store.ParticipantContactObservationInput{
+			AddressKind: kind, ServiceSlug: new("matrix"), ScopeKind: new("server"),
+			ScopeValue: new("matrix.example.com"), OriginalValue: value,
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+		})
+	require.NoError(f.T, err)
+	return 0
+}
+
 func observedContact(f *storetest.Fixture, kind store.ContactAddressKind, value string) int64 {
 	participantID := f.EnsureParticipant("primary@example.org", "Existing Example", "example.org")
 	_, err := f.Store.RecordContactObservationContext(f.T.Context(), participantID,
