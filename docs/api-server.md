@@ -27,6 +27,12 @@ browser login, secure remote deployment, search states, and keyboard controls.
 
 Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
 
+### Person fact decisions
+
+`GET /api/v1/people/{id}/fact-decisions` returns decisions in newest-first order. Use `claim_key` to select one claim before applying `limit` and `offset`. Each decision includes its target, resolver version, score, and score maxima for that version. The outcome is `saved`, `value-retired`, `current-value-kept`, `pinned-value-kept`, `too-close-to-choose`, or `not-used`; the reason explains the decision. Older decisions have a null outcome when their history cannot establish the result. An unknown resolver version has no score maxima.
+
+`GET /api/v1/people/{id}/fact-summary` returns `claimed_fields`, `latest_claim_at`, `has_values`, and `has_fact_history`. The count groups claims by target kind and key. The last claim time is null when there are no claims. Values include attribute values and employments; fact history includes claims, evidence, and pin events. Filter `GET /api/v1/people/{id}/fact-evidence` by `evidence_id` to retrieve one evidence row.
+
 ### Filename suggestions
 
 API schema 3.15 adds
@@ -166,7 +172,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.12.0**.
+it is separate from the binary release version. The current schema is **5.13.0**.
+
+Schema 5.13.0 adds fact decision outcomes, evidence filtering, and a person fact summary.
 
 Schema 5.12.0 adds owner-only [related copies](#get-apiv1messagesidfamily).
 
