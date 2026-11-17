@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -146,53 +145,6 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			_, err := tx.ExecContext(ctx, `INSERT INTO person_commitments (person_id, target_key) VALUES (?, ?) ON CONFLICT (person_id, target_key) DO NOTHING`, request.Lease.PersonID, p.TargetKey)
 			if err != nil {
 				return fmt.Errorf("persist commitment decision: %w", err)
-			}
-		}
-	}
-	sources := request.Commitment.Window.Sources
-	if len(sources) > 0 {
-		byRef := make(map[string]peoplesweep.CommitmentSource, len(sources))
-		args := []any{request.Lease.PersonID}
-		for _, source := range sources {
-			byRef[source.SourceRef] = source
-			args = append(args, source.SourceRef)
-		}
-		// A formerly unique citation cannot retain its decision after it repeats.
-		rows, err := tx.QueryContext(ctx, `SELECT d.id, d.target_key, e.source_ref, e.excerpt,
-			(SELECT e0.excerpt FROM person_fact_claims c0
-			 JOIN person_fact_claim_evidence ce0 ON ce0.claim_id = c0.id
-			 JOIN person_fact_evidence e0 ON e0.id = ce0.evidence_id
-			 WHERE c0.person_id = d.person_id AND c0.target_kind = 'commitment' AND c0.target_key = d.target_key
-			 AND c0.origin = 'commitment' AND e0.source_ref = e.source_ref ORDER BY c0.id, e0.id LIMIT 1)
-			FROM person_commitments d
-			JOIN person_fact_claims c ON c.person_id = d.person_id AND c.target_kind = 'commitment' AND c.target_key = d.target_key AND c.origin = 'commitment'
-			JOIN person_fact_claim_evidence ce ON ce.claim_id = c.id
-			JOIN person_fact_evidence e ON e.id = ce.evidence_id
-			WHERE d.person_id = ? AND d.owner_state <> 'open' AND e.source_ref IN (`+strings.Repeat("?,", len(sources)-1)+`?)`, args...)
-		if err != nil {
-			return err
-		}
-		ids := make(map[int64]bool)
-		for rows.Next() {
-			var id int64
-			var key, ref, quote, originalQuote string
-			if err := rows.Scan(&id, &key, &ref, &quote, &originalQuote); err != nil {
-				_ = rows.Close()
-				return err
-			}
-			source := byRef[ref]
-			if peoplesweep.CommitmentQuoteRepeated(source.Text, quote) && key == peoplesweep.UniqueCommitmentTargetKey(request.Lease.PersonID, source, originalQuote) {
-				ids[id] = true
-			}
-		}
-		err = rows.Err()
-		_ = rows.Close()
-		if err != nil {
-			return err
-		}
-		for id := range ids {
-			if _, err := tx.ExecContext(ctx, `UPDATE person_commitments SET owner_state = 'open', snoozed_until = NULL WHERE id = ?`, id); err != nil {
-				return fmt.Errorf("clear ambiguous commitment decision: %w", err)
 			}
 		}
 	}

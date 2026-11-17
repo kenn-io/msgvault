@@ -138,11 +138,6 @@ func CommitmentQuoteRepeated(text, quote string) bool {
 	return first >= 0 && strings.Contains(text[first+1:], quote)
 }
 
-// UniqueCommitmentTargetKey identifies a quote that occurred once in a source.
-func UniqueCommitmentTargetKey(personID int64, source CommitmentSource, quote string) string {
-	return commitmentTargetKey(personID, source, quote, "", 0, 0)
-}
-
 func commitmentTargetKey(personID int64, source CommitmentSource, quote, hash string, start, end int64) string {
 	identity := fmt.Sprintf("%d/%s/%d/%d/%q/%s/%s/%d/%d/%s", personID, source.Direction, source.MessageID, source.SourceID, source.SourceMessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), hash, start, end, quote)
 	digest := sha256.Sum256([]byte(identity))
