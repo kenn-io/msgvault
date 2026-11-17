@@ -991,12 +991,6 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					result.acknowledged = append(result.acknowledged, sourceMessageID)
 					continue
 				}
-				if _, marked := markedGmailMessageIDs[sourceMessageID]; marked {
-					if fetch.Err == nil {
-						fetch.Err = errRawBatchMissing
-					}
-					return nil, fmt.Errorf("fetch marked Gmail message %s: %w", sourceMessageID, fetch.Err)
-				}
 				errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
 				s.logger.Warn("failed to fetch message", "id", sourceMessageID, "error", errMsg)
 				if !alreadyExists {
