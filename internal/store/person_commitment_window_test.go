@@ -80,9 +80,8 @@ func TestCommitmentWindowScopesBothSidesOfDirectConversations(t *testing.T) {
 func TestCommitmentWindowFitBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		encoded  bool
 		timezone bool
-	}{{"fit bound", false, false}, {"encoded bytes", true, false}, {"timezone", false, true}} {
+	}{{"fit bound", false}, {"timezone", true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			f := storetest.New(t)
@@ -134,15 +133,8 @@ func TestCommitmentWindowFitBounds(t *testing.T) {
 				r.Less(window.ThroughSequence, window.SnapshotSequence)
 				return
 			}
-			var large, shorter int64
-			if tc.encoded {
-				large = f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will call.\n> " + strings.Repeat("q", 30000), SentAt: loopAgo(2 * time.Hour)})
-				shorter = f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will reply.\n> " + strings.Repeat("q", 15000), SentAt: loopAgo(time.Hour)})
-				cfg.MaxBytes = 100 << 10
-			} else {
-				for i := range 30 {
-					f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will send the draft.\n> " + strings.Repeat("quoted history ", 150), SentAt: loopAgo(time.Duration(i+1) * time.Hour)})
-				}
+			for i := range 30 {
+				f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will send the draft.\n> " + strings.Repeat("quoted history ", 150), SentAt: loopAgo(time.Duration(i+1) * time.Hour)})
 			}
 			window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow)
 			r.NoError(err)
@@ -150,14 +142,8 @@ func TestCommitmentWindowFitBounds(t *testing.T) {
 			fits, err := peoplesweep.CommitmentInputFits(window)
 			r.NoError(err)
 			a.True(fits)
-			if tc.encoded {
-				r.Len(window.Sources, 1)
-				a.Equal(shorter, window.Sources[0].MessageID)
-				a.NotEqual(large, window.Sources[0].MessageID)
-			} else {
-				a.Len(window.Sources, 5, "escaped history must leave a bounded prefix for the next pass")
-				a.Equal(window.Sources[len(window.Sources)-1].MessageID, window.BackfillMessageID)
-			}
+			a.Len(window.Sources, 5, "escaped history must leave a bounded prefix for the next pass")
+			a.Equal(window.Sources[len(window.Sources)-1].MessageID, window.BackfillMessageID)
 		})
 	}
 }

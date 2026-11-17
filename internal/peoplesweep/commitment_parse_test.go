@@ -54,9 +54,10 @@ func TestParseCommitmentsBindsEachPromiseToItsExactLocator(t *testing.T) {
 
 func TestParseCommitmentsRejectsWholeUnsupportedOutput(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 	source := CommitmentSource{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo,
-		Text: "I will send it.", EventTime: time.Now().Add(-time.Hour)}
-	window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: time.Now()}
+		Text: "I will send it.", EventTime: now.Add(-time.Hour)}
+	window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: now}
 	cases := []struct{ name, output string }{
 		{"unknown source", `{"promises":[{"source_id":"unknown","direction":"owed_to","quote":"I will send it.","start":0,"end":15,"summary":"Send","due_on":null,"due_phrase":null}]}`},
 		{"wrong direction", `{"promises":[{"source_id":"m1","direction":"owed_by","quote":"I will send it.","start":0,"end":15,"summary":"Send","due_on":null,"due_phrase":null}]}`},

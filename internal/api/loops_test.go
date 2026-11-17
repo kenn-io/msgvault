@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -148,11 +147,13 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 		consentErr, discoveryErr                      error
 		status                                        int
 		incomplete, wantSince, wantComplete, complete bool
+		byPerson                                      bool
+		items                                         int
 	}{
-		{name: "active", active: true, status: http.StatusOK, wantSince: true, wantComplete: true, complete: true},
-		{name: "inactive", status: http.StatusOK, wantSince: true, wantComplete: true},
-		{name: "consent deadline", active: true, consentErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true},
-		{name: "discovery deadline", active: true, discoveryErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true, wantComplete: true},
+		{name: "active", active: true, status: http.StatusOK, wantSince: true, wantComplete: true, complete: true, byPerson: true, items: 1},
+		{name: "inactive", status: http.StatusOK, wantSince: true, wantComplete: true, items: 2},
+		{name: "consent deadline", active: true, consentErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true, items: 2},
+		{name: "discovery deadline", active: true, discoveryErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true, wantComplete: true, items: 2},
 		{name: "consent error", consentErr: errors.New("consent read failed"), status: http.StatusInternalServerError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -168,8 +169,13 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
 			w := httptest.NewRecorder()
 			path := "/api/v1/loops"
-			if tc.name == "active" {
-				path += "?person_id=987"
+			var personID int64
+			if tc.byPerson {
+				participant := fixture.f.EnsureParticipant("alex@example.test", "", "example.test")
+				person, _, err := fixture.f.Store.CreatePersonFromParticipant(participant)
+				r.NoError(err)
+				personID = person.ID
+				path += fmt.Sprintf("?person_id=%d", personID)
 			}
 			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 			r.Equal(tc.status, w.Code, w.Body.String())
@@ -179,9 +185,7 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 			var response LoopListResponse
 			r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 			a.Equal(tc.incomplete, response.CoverageIncomplete)
-			if tc.name != "active" {
-				a.Len(response.Items, 2)
-			}
+			a.Len(response.Items, tc.items)
 			if tc.wantSince {
 				r.NotNil(response.CommitmentsSince)
 				a.True(response.CommitmentsSince.Equal(since))
@@ -198,11 +202,11 @@ func TestListLoopsCommitmentDiscovery(t *testing.T) {
 				r.NotNil(response.CommitmentsUntil)
 				a.Equal("2025-06-30", response.CommitmentsUntil.Format(time.DateOnly))
 			}
-			if tc.name == "active" {
+			if tc.byPerson {
 				profile, err := cfg.People.Sweep.Profile()
 				r.NoError(err)
 				a.Equal(profile.Fingerprint, st.consentFingerprint)
-				a.Equal(int64(987), st.discoveryPersonID)
+				a.Equal(personID, st.discoveryPersonID)
 				commitments := cfg.People.Sweep.Commitments
 				commitments.Timezone = cfg.Activity.Timezone
 				a.Equal(peoplesweep.CommitmentScopeFingerprint(profile, commitments), st.discoveryScope)
@@ -595,7 +599,7 @@ func TestListLoopsMapsCommitmentsAndForwardsIncludeClosed(t *testing.T) {
 			cfg := config.NewDefaultConfig()
 			cfg.HomeDir = t.TempDir()
 			if tc.timezone != "" {
-				r.NoError(os.WriteFile(cfg.ConfigFilePath(), []byte("[activity]\ntimezone = '"+tc.timezone+"'\n"), 0o600))
+				cfg.Activity.Timezone = tc.timezone
 			}
 			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
 			server.clock = func() time.Time { return time.Date(2026, 1, 16, 2, 0, 0, 0, time.UTC) }
