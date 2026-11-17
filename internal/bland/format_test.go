@@ -207,6 +207,25 @@ func TestRefreshKeepsPriorEvidence(t *testing.T) {
 	}
 }
 
+// A refreshed transfer rendition without an offset keeps the archived
+// offset, so transferred speech keeps its timing.
+func TestRefreshKeepsTransferOffset(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	call, err := decodeCall([]byte(`{"call_id":"call-1","completed":true}`), "", false)
+	requirements.NoError(err)
+	previous, err := evidenceFor(call, jsontext.Value(`{"data":{"payload":{"post_transfer_transcript":[{"text":"Transferred speech","speaker_label":"representative","start":1,"end":2}],"transfer_offset_seconds":12}}}`), nil)
+	requirements.NoError(err)
+	refreshed, err := decodeCall([]byte(`{"call_id":"call-1","completed":true,"post_transfer_transcript":[{"text":"Transferred speech","speaker_label":"representative","start":1,"end":2}]}`), "", false)
+	requirements.NoError(err)
+	current, err := evidenceFor(refreshed, nil, previous)
+	requirements.NoError(err)
+	requirements.NotNil(current.TransferOffset)
+	assertions.InDelta(12.0, *current.TransferOffset, 0)
+	requirements.Len(current.Content.Transcript.Segments, 1)
+	requirements.NotNil(current.Content.Transcript.Segments[0].OffsetSeconds)
+	assertions.InDelta(13.0, *current.Content.Transcript.Segments[0].OffsetSeconds, 0)
+}
+
 // evidenceFor builds c's evidence the way archiveCall does.
 func evidenceFor(c *Call, hook jsontext.Value, previous *Evidence) (*Evidence, error) {
 	var parsed *PostCall
@@ -216,6 +235,6 @@ func evidenceFor(c *Call, hook jsontext.Value, previous *Evidence) (*Evidence, e
 			return nil, err
 		}
 	}
-	ev, _, err := buildEvidence(c, parsed, previous, "")
+	ev, _, err := buildEvidence(c, parsed, previous, "", false)
 	return ev, err
 }

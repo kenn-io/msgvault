@@ -47,8 +47,11 @@ type importRun struct {
 }
 
 // refusalNote is where a refusal's note sits in the summary diagnostics and
-// how many calls it covers.
-type refusalNote struct{ index, calls int }
+// which calls it covers; a call retried and relisted in one run counts once.
+type refusalNote struct {
+	index int
+	calls map[string]bool
+}
 
 func (imp *Importer) Import(ctx context.Context, o ImportOptions) (*ImportSummary, error) {
 	if imp == nil || imp.store == nil || imp.client == nil {
@@ -121,7 +124,7 @@ func (r *importRun) archiveCall(ctx context.Context, id string, listed *Call) (c
 	case errors.Is(callErr, ErrNotFound):
 		return nil, nil
 	case detailsRefusal != nil:
-		r.noteRefused("call details", detailsRefusal)
+		r.noteRefused("call details", id, detailsRefusal)
 	case callErr != nil:
 		return callErr, nil
 	}
@@ -138,7 +141,7 @@ func (r *importRun) archiveCall(ctx context.Context, id string, listed *Call) (c
 	case errors.Is(hookErr, ErrNotFound):
 		hook, hookErr = nil, nil
 	case hookRefusal != nil:
-		r.noteRefused("postcall data", hookRefusal)
+		r.noteRefused("postcall data", id, hookRefusal)
 		hook, hookErr, unread = nil, nil, cmp.Or(unread, "provider_refused")
 	case hookErr != nil:
 		hook, unread = nil, "fetch_failed"
@@ -164,7 +167,7 @@ func (r *importRun) archiveCall(ctx context.Context, id string, listed *Call) (c
 			return err, nil
 		}
 	}
-	ev, c, err := buildEvidence(c, hook, previous, unread)
+	ev, c, err := buildEvidence(c, hook, previous, unread, detailsRefusal != nil)
 	if err != nil {
 		return err, nil
 	}
@@ -231,16 +234,16 @@ func refusal(err error) *HTTPError {
 
 // noteRefused counts a refused read in one summary note per read kind and
 // status, so a refusal repeated across the relist window reads as one line.
-func (r *importRun) noteRefused(what string, refused *HTTPError) {
+func (r *importRun) noteRefused(what, id string, refused *HTTPError) {
 	key := fmt.Sprintf("%s refused (HTTP %d)", what, refused.StatusCode)
 	note, ok := r.refusals[key]
 	if !ok {
-		note = &refusalNote{index: len(r.Sum.Diagnostics)}
+		note = &refusalNote{index: len(r.Sum.Diagnostics), calls: map[string]bool{}}
 		r.refusals[key] = note
 		r.Sum.Diagnostics = append(r.Sum.Diagnostics, "")
 	}
-	note.calls++
-	r.Sum.Diagnostics[note.index] = fmt.Sprintf("%s for %d call(s)", key, note.calls)
+	note.calls[id] = true
+	r.Sum.Diagnostics[note.index] = fmt.Sprintf("%s for %d call(s)", key, len(note.calls))
 }
 
 func snippet(c meetingcontent.Content) string {

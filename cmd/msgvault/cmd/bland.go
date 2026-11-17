@@ -37,47 +37,13 @@ const blandConfigHint = `Add to config.toml:
   # schedule = "0 */6 * * *"
   # max_media_mb = 1024`
 
-func resolveBlandSource(args []string, cfg *config.Config) (*config.BlandSource, error) {
-	if cfg == nil {
-		return nil, errors.New("configuration is unavailable")
+func blandSources(cfg *config.Config) meetingSources[config.BlandSource] {
+	sources := meetingSources[config.BlandSource]{table: "bland", hint: blandConfigHint}
+	if cfg != nil {
+		sources.configured, sources.lookup = cfg.Bland, cfg.GetBlandSource
+		sources.identifier = func(s config.BlandSource) string { return s.Identifier }
 	}
-	if len(cfg.Bland) == 0 {
-		return nil, errors.New("no [[bland]] sources configured\n\n" + blandConfigHint)
-	}
-	if len(args) > 0 {
-		source := cfg.GetBlandSource(args[0])
-		if source == nil {
-			identifiers := make([]string, 0, len(cfg.Bland))
-			for _, candidate := range cfg.Bland {
-				identifiers = append(identifiers, candidate.Identifier)
-			}
-			return nil, fmt.Errorf("no [[bland]] entry with identifier %q (configured: %s)",
-				args[0], strings.Join(identifiers, ", "))
-		}
-		return source, nil
-	}
-	if len(cfg.Bland) > 1 {
-		return nil, errors.New("multiple [[bland]] sources configured; pass an identifier")
-	}
-	source := cfg.Bland[0]
-	return &source, nil
-}
-
-func resolveBlandSources(args []string, probe bool, cfg *config.Config) ([]config.BlandSource, error) {
-	if cfg == nil {
-		return nil, errors.New("configuration is unavailable")
-	}
-	if probe || len(args) > 0 || len(cfg.Bland) == 1 {
-		source, err := resolveBlandSource(args, cfg)
-		if err != nil {
-			return nil, err
-		}
-		return []config.BlandSource{*source}, nil
-	}
-	if len(cfg.Bland) == 0 {
-		return nil, errors.New("no [[bland]] sources configured\n\n" + blandConfigHint)
-	}
-	return cfg.Bland, nil
+	return sources
 }
 
 func runBlandProbe(ctx context.Context, out io.Writer, client *bland.Client) error {
@@ -144,7 +110,7 @@ var addBlandCmd = &cobra.Command{
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		source, err := resolveBlandSource(args, cfg)
+		source, err := blandSources(cfg).one(args)
 		if err != nil {
 			return err
 		}
@@ -195,7 +161,17 @@ raise the cap and run --full to retry them.`,
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		sources, err := resolveBlandSources(args, syncBlandProbe, cfg)
+		var sources []config.BlandSource
+		var err error
+		if syncBlandProbe {
+			// The probe reads one source, so it needs one named or configured.
+			var source *config.BlandSource
+			if source, err = blandSources(cfg).one(args); err == nil {
+				sources = []config.BlandSource{*source}
+			}
+		} else {
+			sources, err = blandSources(cfg).selected(args)
+		}
 		if err != nil {
 			return err
 		}

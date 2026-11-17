@@ -82,13 +82,16 @@ func retainedCallMetadata(previous *Evidence) map[string]jsontext.Value {
 // effectiveCall fills metadata the detail response omits from the current
 // postcall payload, then from what was archived before. Raw stays the exact
 // detail response; the merged fields are kept so a later sparse refresh keeps them.
-// GetPostCall already checked that the payload belongs to c.
-func effectiveCall(c, payload *Call, previous *Evidence) (*Call, jsontext.Value, error) {
+// GetPostCall already checked that the payload belongs to c. A fallback c
+// stands in for refused details, so the fresh payload wins over it.
+func effectiveCall(c, payload *Call, previous *Evidence, fallback bool) (*Call, jsontext.Value, error) {
 	fields := retainedCallMetadata(previous)
-	if payload != nil {
-		maps.Copy(fields, payload.meta)
+	first, last := payload, c
+	if fallback {
+		first, last = c, payload
 	}
-	maps.Copy(fields, c.meta)
+	maps.Copy(fields, first.meta)
+	maps.Copy(fields, last.meta)
 	merged, err := json.Marshal(fields, json.Deterministic(true))
 	if err != nil {
 		return nil, nil, err
@@ -252,13 +255,13 @@ func pick(renditions ...*rendition) *rendition {
 // buildEvidence normalizes the call once from its detail response, postcall
 // payload and earlier archive, and returns the evidence and effective call.
 // unread, when set, is the transcript reason for a details or postcall read
-// that failed this run.
-func buildEvidence(detail *Call, hook *PostCall, previous *Evidence, unread string) (*Evidence, *Call, error) {
+// that failed this run. fallback means detail stands in for refused details.
+func buildEvidence(detail *Call, hook *PostCall, previous *Evidence, unread string, fallback bool) (*Evidence, *Call, error) {
 	payload := &Call{}
 	if hook != nil {
 		payload = hook.Call
 	}
-	c, merged, err := effectiveCall(detail, payload, previous)
+	c, merged, err := effectiveCall(detail, payload, previous, fallback)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -272,8 +275,13 @@ func buildEvidence(detail *Call, hook *PostCall, previous *Evidence, unread stri
 	}
 	// The details' transcripts win, then the payload's, then either
 	// concatenated text; an enhanced rendition in the payload wins over the
-	// details'. The details' live translation wins over the payload's.
-	original := pick(detail.transcripts, payload.transcripts, detail.concatenated, payload.concatenated)
+	// details'. The details' live translation wins over the payload's. Details
+	// that stand in for a refused read rank below the payload.
+	current, other := detail, payload
+	if fallback {
+		current, other = payload, detail
+	}
+	original := pick(current.transcripts, other.transcripts, current.concatenated, other.concatenated)
 	corrected := pick(payload.corrected, detail.corrected)
 	transfer := pick(payload.postTransfer, detail.postTransfer)
 	if original != nil {
@@ -283,9 +291,13 @@ func buildEvidence(detail *Call, hook *PostCall, previous *Evidence, unread stri
 		e.Corrected = corrected.raw
 	}
 	if transfer != nil {
-		e.PostTransfer, e.TransferOffset = transfer.raw, transfer.offset
+		// A rendition without an offset keeps the one archived before.
+		e.PostTransfer = transfer.raw
+		if transfer.offset != nil {
+			e.TransferOffset = transfer.offset
+		}
 	}
-	if translation := cmp.Or(string(detail.translation), string(payload.translation)); translation != "" {
+	if translation := cmp.Or(string(current.translation), string(other.translation)); translation != "" {
 		e.Translation = jsontext.Value(translation)
 	}
 	content := meetingcontent.Content{Actions: []meetingcontent.Action{}, ActionCoverage: meetingcontent.CoverageUnsupported, ActionReason: "no_structured_actions", Notes: meetingcontent.Section{State: meetingcontent.StateUnsupported}, Summary: meetingcontent.Section{State: meetingcontent.StateUnavailable, Reason: "missing_field"}, Transcript: meetingcontent.Transcript{State: meetingcontent.StateUnavailable, Reason: "not_retained"}}

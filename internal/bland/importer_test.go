@@ -599,3 +599,44 @@ func TestSavedRetryWithRefusedDetailsKeepsArchive(t *testing.T) {
 	assertions.Equal("archived summary", ev.Content.Summary.Text)
 	assertions.Contains(string(ev.Call), "archived summary", "the archived details stand in for the refused read")
 }
+
+// When Bland refuses a call's details, the archived details stand in only
+// where the fresh postcall payload is silent: a newer postcall summary wins.
+func TestRefusedDetailsYieldToFreshPostcall(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := &fixture{
+		calls: map[string]string{"call-1": `{"call_id":"call-1","completed":true,"created_at":"2026-10-01T11:00:00Z","summary":"archived summary","transcripts":[{"user":"user","text":"archived speech"}]}`},
+		ids:   []string{"call-1"},
+	}
+	st, imp, o := setupImport(t, f)
+	_, err := imp.Import(t.Context(), o)
+	requirements.NoError(err)
+
+	f.detailStatus = http.StatusForbidden
+	f.hook = `{"data":{"payload":{"call_id":"call-1","summary":"updated summary","transcripts":[{"user":"user","text":"updated speech"}]}}}`
+	_, err = imp.Import(t.Context(), o)
+	requirements.NoError(err)
+	ev := loadEvidence(t, st, "call-1")
+	assertions.Equal("updated summary", ev.Content.Summary.Text)
+	assertions.Equal("user: updated speech", ev.Content.Transcript.Text)
+	assertions.Contains(string(ev.Call), "archived summary", "the stored details response is kept")
+}
+
+// A call both retried and relisted in one run is counted once in its
+// refusal note.
+func TestRetriedRefusalCountsCallOnce(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := &fixture{
+		calls:      map[string]string{"call-1": `{"call_id":"call-1","completed":true,"created_at":"2026-10-01T11:00:00Z"}`},
+		ids:        []string{"call-1"},
+		hookStatus: http.StatusServiceUnavailable,
+	}
+	_, imp, o := setupImport(t, f)
+	_, err := imp.Import(t.Context(), o)
+	requirements.ErrorContains(err, "bland call call-1")
+
+	f.hookStatus = http.StatusForbidden
+	sum, err := imp.Import(t.Context(), o)
+	requirements.NoError(err)
+	assertions.Equal([]string{"postcall data refused (HTTP 403) for 1 call(s)"}, sum.Diagnostics)
+}
