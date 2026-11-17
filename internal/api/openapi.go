@@ -436,7 +436,8 @@ import (
 // 5.20.0 adds message_type to file details.
 // 5.21.0 adds person fact kinds and evidence freshness.
 // 5.22.0 adds cited commitments and their decisions.
-const APISchemaVersion = "5.22.0"
+// 5.23.0 adds agenda filing for open obligations.
+const APISchemaVersion = "5.23.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

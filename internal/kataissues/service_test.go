@@ -879,3 +879,38 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 	_, _, err = service.Citing(t.Context(), kataevidence.SourceKeys(message), 10)
 	require.ErrorIs(err, taskclient.ErrUnreachable)
 }
+
+func TestCreateThreadParentAndDeadline(t *testing.T) {
+	f := newFixture(t)
+	input := kataissues.CreateInput{Title: "First obligation", Thread: "conversation-1", DeadlineOn: new("2026-12-01"), Evidence: []kataevidence.Reference{f.evidence(t, 0).Reference}}
+	first, err := f.service.Create(t.Context(), "thread-first", input)
+	require.NoError(t, err)
+	input.Title = "Follow up"
+	input.DeadlineOn = nil
+	second, err := f.service.Create(t.Context(), "thread-second", input)
+	require.NoError(t, err)
+	show := func(uid string) katagen.ShowIssueResponseBody {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%d/issues/%s", f.kata.URL, f.kata.projectID, uid), nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+katatest.Token)
+		resp, err := f.kata.Client().Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var body katagen.ShowIssueResponseBody
+		require.NoError(t, json.UnmarshalRead(resp.Body, &body))
+		return body
+	}
+	firstShow := show(first.Issue.UID)
+	require.NotNil(t, firstShow.Issue.DeadlineOnDate)
+	assert.Equal(t, "2026-12-01", *firstShow.Issue.DeadlineOnDate)
+	secondShow := show(second.Issue.UID)
+	require.NotNil(t, secondShow.Parent)
+	assert.Equal(t, first.Issue.UID, secondShow.Parent.UID)
+	f.kata.endpoint().CloseIssue(t, second.Issue.UID)
+	f.kata.endpoint().CloseIssue(t, first.Issue.UID)
+	input.Title = "Later obligation"
+	third, err := f.service.Create(t.Context(), "thread-third", input)
+	require.NoError(t, err)
+	assert.Nil(t, show(third.Issue.UID).Parent)
+}

@@ -5811,6 +5811,50 @@ func (o *ListLoopsRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// FileCommitmentAgendaRequestOptions is the options needed to make a request to FileCommitmentAgenda.
+type FileCommitmentAgendaRequestOptions struct {
+	PathParams *FileCommitmentAgendaPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *FileCommitmentAgendaRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FileCommitmentAgendaRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *FileCommitmentAgendaRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FileCommitmentAgendaRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *FileCommitmentAgendaRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // SetCommitmentDecisionRequestOptions is the options needed to make a request to SetCommitmentDecision.
 type SetCommitmentDecisionRequestOptions struct {
 	PathParams *SetCommitmentDecisionPath
@@ -5861,6 +5905,50 @@ func (o *SetCommitmentDecisionRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *SetCommitmentDecisionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// FileLoopAgendaRequestOptions is the options needed to make a request to FileLoopAgenda.
+type FileLoopAgendaRequestOptions struct {
+	PathParams *FileLoopAgendaPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *FileLoopAgendaRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FileLoopAgendaRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *FileLoopAgendaRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FileLoopAgendaRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *FileLoopAgendaRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 

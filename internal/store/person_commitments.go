@@ -283,6 +283,30 @@ func commitmentCitationFreshness(source peoplesweep.CommitmentSource, input pers
 	return describePersonFactFreshness(personfacts.TargetRef{Kind: personfacts.TargetCommitment}, nil, &c.PromisedAt, now).Status
 }
 
+// GetPersonCommitmentContext returns one currently visible open promise.
+func (s *Store) GetPersonCommitmentContext(ctx context.Context, id int64, now time.Time) (PersonCommitment, error) {
+	var candidate commitmentCandidate
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		c, err := scanPersonCommitment(tx.QueryRowContext(ctx, `SELECT `+commitmentColumns+` FROM person_commitments WHERE id = ? AND (owner_state = 'open' OR (owner_state = 'snoozed' AND `+s.loopTimeKey("snoozed_until")+` <= `+s.loopTimeKey("?")+`))`, id, s.dialect.TimestampParam(now)))
+		if err != nil {
+			return err
+		}
+		candidate.commitment = c
+		return s.loadCommitmentCandidateEvidenceTx(ctx, tx, &candidate)
+	})
+	if err != nil {
+		return PersonCommitment{}, err
+	}
+	commitment, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now)
+	if err != nil {
+		return PersonCommitment{}, err
+	}
+	if !visible {
+		return PersonCommitment{}, sql.ErrNoRows
+	}
+	return commitment, nil
+}
+
 func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (PersonCommitment, error) {
 	if id <= 0 || (state != LoopStateDone && state != LoopStateSnoozed && state != LoopStateOpen) || (state == LoopStateSnoozed && (until == nil || !until.After(now))) || (state != LoopStateSnoozed && until != nil) {
 		return PersonCommitment{}, ErrInvalidActivityRequest

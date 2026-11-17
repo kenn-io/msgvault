@@ -42,6 +42,7 @@ msgvault loops list
 msgvault loops list --limit 10 --json
 msgvault loops list --person 42
 msgvault loops list --include-closed
+msgvault loops agenda c12
 msgvault loops done 4521
 msgvault loops done 4521 --questions 4521,4530
 msgvault loops snooze 4521 --until 48h
@@ -51,6 +52,7 @@ msgvault loops reopen 4521
 | Command | What it does |
 |---|---|
 | `list` | Lists loops and cited promises. `--limit` applies separately to each collection (1 to 200, default 50), `--person <id>` for one saved person, `--json` for machine-readable output. |
+| `agenda <message-id|cN>` | Files an open reply or promise in Kata; `--json` returns the issue details. |
 | `done <message-id>` | Marks the loop done. `--questions <ids>` marks only those questions: the item's `question_message_ids` from `list --json`. |
 | `snooze <message-id> --until <when>` | Hides the loop until a duration such as `48h`, a date (`YYYY-MM-DD`, midnight local time), or an RFC3339 time. Takes `--questions` like `done`. |
 | `reopen <message-id>` | Clears the done or snooze decision on one question. |

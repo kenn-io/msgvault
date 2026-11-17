@@ -3,6 +3,7 @@ package daemonclient
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	apiclient "go.kenn.io/msgvault/pkg/client"
@@ -114,6 +115,32 @@ func (c *Client) SetCommitmentDecision(ctx context.Context, id, state string, un
 	}
 	if resp.JSON200 == nil {
 		return generated.CommitmentDecisionResponse{}, errors.New("empty commitment decision response")
+	}
+	return *resp.JSON200, nil
+}
+
+// FileLoopAgenda files one open loop or commitment in Kata.
+func (c *Client) FileLoopAgenda(ctx context.Context, ref string) (generated.LoopAgendaResponse, error) {
+	if strings.HasPrefix(ref, "c") {
+		resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.FileCommitmentAgendaResp, error) {
+			return client.FileCommitmentAgendaWithResponse(ctx, &generated.FileCommitmentAgendaRequestOptions{PathParams: &generated.FileCommitmentAgendaPath{CommitmentID: ref}})
+		})
+		if err != nil {
+			return generated.LoopAgendaResponse{}, err
+		}
+		if resp.JSON200 == nil {
+			return generated.LoopAgendaResponse{}, errors.New("empty agenda response")
+		}
+		return *resp.JSON200, nil
+	}
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.FileLoopAgendaResp, error) {
+		return client.FileLoopAgendaWithResponse(ctx, &generated.FileLoopAgendaRequestOptions{PathParams: &generated.FileLoopAgendaPath{MessageID: ref}})
+	})
+	if err != nil {
+		return generated.LoopAgendaResponse{}, err
+	}
+	if resp.JSON200 == nil {
+		return generated.LoopAgendaResponse{}, errors.New("empty agenda response")
 	}
 	return *resp.JSON200, nil
 }

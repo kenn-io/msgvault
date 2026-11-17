@@ -643,9 +643,17 @@ type ClientInterface interface {
 	ListLoops(ctx context.Context, options *ListLoopsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListLoopsResponse, error)
 	ListLoopsWithResponse(ctx context.Context, options *ListLoopsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListLoopsResp, error)
 
+	// FileCommitmentAgenda File an open obligation in Kata
+	FileCommitmentAgenda(ctx context.Context, options *FileCommitmentAgendaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FileCommitmentAgendaResponse, error)
+	FileCommitmentAgendaWithResponse(ctx context.Context, options *FileCommitmentAgendaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FileCommitmentAgendaResp, error)
+
 	// SetCommitmentDecision Set an owner decision on a cited promise
 	SetCommitmentDecision(ctx context.Context, options *SetCommitmentDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetCommitmentDecisionResponse, error)
 	SetCommitmentDecisionWithResponse(ctx context.Context, options *SetCommitmentDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetCommitmentDecisionResp, error)
+
+	// FileLoopAgenda File an open obligation in Kata
+	FileLoopAgenda(ctx context.Context, options *FileLoopAgendaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FileLoopAgendaResponse, error)
+	FileLoopAgendaWithResponse(ctx context.Context, options *FileLoopAgendaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FileLoopAgendaResp, error)
 
 	// MarkLoopDone Mark a loop done
 	MarkLoopDone(ctx context.Context, options *MarkLoopDoneRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MarkLoopDoneResponse, error)
@@ -10686,6 +10694,69 @@ func (c *Client) ListLoops(ctx context.Context, options *ListLoopsRequestOptions
 	return responseParser(ctx, resp)
 }
 
+// FileCommitmentAgenda File an open obligation in Kata
+func (c *Client) FileCommitmentAgenda(ctx context.Context, options *FileCommitmentAgendaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FileCommitmentAgendaResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/loops/commitments/{commitment_id}/agenda",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*FileCommitmentAgendaResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(FileCommitmentAgendaErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "FileCommitmentAgendaErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(FileCommitmentAgendaResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "FileCommitmentAgendaResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/loops/commitments/{commitment_id}/agenda")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // SetCommitmentDecision Set an owner decision on a cited promise
 func (c *Client) SetCommitmentDecision(ctx context.Context, options *SetCommitmentDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetCommitmentDecisionResponse, error) {
 	var err error
@@ -10744,6 +10815,69 @@ func (c *Client) SetCommitmentDecision(ctx context.Context, options *SetCommitme
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/loops/commitments/{commitment_id}/decision")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// FileLoopAgenda File an open obligation in Kata
+func (c *Client) FileLoopAgenda(ctx context.Context, options *FileLoopAgendaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FileLoopAgendaResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/loops/{message_id}/agenda",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*FileLoopAgendaResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(FileLoopAgendaErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "FileLoopAgendaErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(FileLoopAgendaResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "FileLoopAgendaResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/loops/{message_id}/agenda")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

@@ -33,6 +33,7 @@ type KataTask struct {
 	UID           string
 	Ref           string
 	QualifiedRef  string
+	ParentRef     string
 	Project       string
 	Title         string
 	Body          string
@@ -48,6 +49,7 @@ type KataTask struct {
 
 type KataCreate struct {
 	Title, Body   string
+	ParentRef     string
 	PriorityValue *int64
 	Labels        []string
 	Metadata      map[string]any
@@ -259,6 +261,9 @@ func (c *KataClient) CreateTaskReused(ctx context.Context, project, idempotencyK
 	// Different people can need identical todos. The retry key still prevents
 	// duplicate creation when the same request is sent again.
 	request := kata.CreateIssueRequestBody{Actor: new(writeActor), Title: create.Title, Body: &create.Body, Labels: create.Labels, Metadata: create.Metadata, Priority: create.PriorityValue, ForceNew: new(true)}
+	if create.ParentRef != "" {
+		request.Links = []kata.CreateInitialLinkBody{{Type: kata.Parent, ToRef: create.ParentRef}}
+	}
 	var response kata.MutationResponseBody
 	if err := c.transport.doJSON(ctx, http.MethodPost, path, request, http.Header{"Idempotency-Key": {idempotencyKey}}, &response, http.StatusOK); err != nil {
 		return KataTask{}, false, err
@@ -284,6 +289,9 @@ func (c *KataClient) GetTask(ctx context.Context, project, taskID string) (KataT
 		labels = append(labels, label.Label)
 	}
 	task := taskFromKataIssue(project, response.Issue, labels, response.WebURL)
+	if response.Parent != nil {
+		task.ParentRef = response.Parent.QualifiedID
+	}
 	for _, comment := range response.Comments {
 		task.CommentBodies = append(task.CommentBodies, comment.Body)
 	}

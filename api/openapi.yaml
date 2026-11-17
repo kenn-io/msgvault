@@ -7476,6 +7476,19 @@ components:
         - done_bytes
         - total_bytes
       type: object
+    LoopAgendaResponse:
+      additionalProperties: true
+      properties:
+        issue:
+          $ref: "#/components/schemas/KataIssueReceipt"
+        parent_ref:
+          type: string
+        replayed:
+          type: boolean
+      required:
+        - issue
+        - replayed
+      type: object
     LoopCommitment:
       additionalProperties: true
       properties:
@@ -25063,6 +25076,70 @@ paths:
       summary: List conversations waiting on a reply
       tags:
         - API
+  /api/v1/loops/commitments/{commitment_id}/agenda:
+    post:
+      operationId: fileCommitmentAgenda
+      parameters:
+        - description: The obligation ID
+          in: path
+          name: commitment_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopAgendaResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: File an open obligation in Kata
+      tags:
+        - API
   /api/v1/loops/commitments/{commitment_id}/decision:
     post:
       operationId: setCommitmentDecision
@@ -25143,6 +25220,70 @@ paths:
       security:
         - apiKey: []
       summary: Set an owner decision on a cited promise
+      tags:
+        - API
+  /api/v1/loops/{message_id}/agenda:
+    post:
+      operationId: fileLoopAgenda
+      parameters:
+        - description: The obligation ID
+          in: path
+          name: message_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopAgendaResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: File an open obligation in Kata
       tags:
         - API
   /api/v1/loops/{message_id}/done:

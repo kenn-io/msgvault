@@ -46,6 +46,18 @@ func (c *KataClient) FindActionTask(ctx context.Context, project, action string)
 	return tasks[0], true, nil
 }
 
+// FindOpenMetadataTask returns the oldest open matching issue in the configured project.
+func (c *KataClient) FindOpenMetadataTask(ctx context.Context, project, key, value string) (KataTask, bool, error) {
+	if key == "" || value == "" {
+		return KataTask{}, false, ErrRequestRejected
+	}
+	tasks, _, err := c.listProjectIssues(ctx, project, url.Values{"meta": {key + "=" + value}, "status": {"open"}, "sort": {"oldest"}, "limit": {"1"}})
+	if err != nil || len(tasks) == 0 {
+		return KataTask{}, false, err
+	}
+	return tasks[0], true, nil
+}
+
 // FindMetadataTasks returns up to limit open or closed issues carrying the
 // metadata key in any project, newest first.
 func (c *KataClient) FindMetadataTasks(ctx context.Context, project, key string, limit int) ([]KataTask, error) {

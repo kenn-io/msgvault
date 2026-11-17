@@ -31,6 +31,19 @@ in the background. Later requests reuse completed work. If the daemon stops or
 the background pass reaches its time limit, a later incomplete request starts
 another pass.
 
+## File obligations in Kata
+
+With [Kata enabled](../configuration.md#integrationskata), the daemon files open promises and replies you owe in the configured project each hour. Each issue quotes and links to its source message. A promise's due date becomes its Kata deadline. A later obligation in the same conversation becomes a child of the oldest open issue filed for that conversation.
+
+Set `auto_agenda = false` in `[integrations.kata]` to turn off automatic filing. You can still file an open obligation yourself with its message ID or promise ID:
+
+```bash
+msgvault loops agenda 4521
+msgvault loops agenda c12 --json
+```
+
+Filing the same obligation again returns its existing issue, including when that issue is closed. Complete issues in Kata.
+
 ## What counts as a loop
 
 A loop starts with a message that asks something and has no answer yet:

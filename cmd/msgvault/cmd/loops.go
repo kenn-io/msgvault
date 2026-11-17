@@ -18,7 +18,8 @@ import (
 )
 
 const (
-	loopsMinAPISchemaVersion      = "3.44.0"
+	loopsMinAPISchemaVersion = "3.44.0"
+	// commitmentMinAPISchemaVersion covers commitments, decisions, and agenda filing.
 	commitmentMinAPISchemaVersion = "5.22.0"
 )
 
@@ -35,7 +36,7 @@ request. A reply you owe lists after 24 hours, and a reply you are waiting on
 lists after 72 hours. Quiet conversations stay eligible at any age.
 The wording rules read English only.`,
 	}
-	group.AddCommand(newLoopsListCommand(), newLoopsDoneCommand(), newLoopsSnoozeCommand(), newLoopsReopenCommand())
+	group.AddCommand(newLoopsAgendaCommand(), newLoopsListCommand(), newLoopsDoneCommand(), newLoopsSnoozeCommand(), newLoopsReopenCommand())
 	return group
 }
 
@@ -423,4 +424,43 @@ func loopSubject(item generated.LoopItem) string {
 		return "(no subject)"
 	}
 	return subject
+}
+
+func newLoopsAgendaCommand() *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{Use: "agenda <message-id|cN>", Short: "File an open obligation in Kata", Args: cobra.ExactArgs(1)}
+	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
+	command.RunE = func(cmd *cobra.Command, args []string) error {
+		ref := args[0]
+		if strings.HasPrefix(ref, "c") {
+			if _, err := loops.ParseCommitmentID(ref); err != nil {
+				return usageErr(cmd, err)
+			}
+		} else if _, err := positivePersonCLIArg(cmd, ref, "message"); err != nil {
+			return err
+		}
+		return withLoopsClientVersion(cmd, commitmentMinAPISchemaVersion, func(client *daemonclient.Client, _ string) error {
+			result, err := client.FileLoopAgenda(cmd.Context(), ref)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return writeJSONOutput(cmd, result)
+			}
+			suffix := ""
+			if result.Replayed {
+				suffix += " (already filed)"
+			}
+			if result.ParentRef != nil {
+				suffix += " under " + *result.ParentRef
+			}
+			url := ""
+			if result.Issue.WebURL != nil {
+				url = *result.Issue.WebURL
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s%s\n", result.Issue.QualifiedRef, url, suffix)
+			return err
+		})
+	}
+	return command
 }

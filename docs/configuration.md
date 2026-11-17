@@ -1112,6 +1112,7 @@ against Kata v0.18.0 and requires Kata API schema version 0.21.0 or later.
 | Key | Default | Description |
 |---|---|---|
 | `enabled` | `false` | Enable Kata person agendas and evidence issues |
+| `auto_agenda` | `true` | File open promises and replies you owe in Kata each hour |
 | `endpoint` | — | Required when enabled: an explicit HTTPS URL, loopback HTTP URL, or Unix socket URL |
 | `trust_private_network` | `false` | Also allow HTTP to DNS names and private, link-local, unspecified or CGNAT addresses on a network you trust; public literal IPs stay refused |
 | `api_key` | — | Bearer credential sent by the daemon to Kata; Settings returns only its configured state and a masked hint |

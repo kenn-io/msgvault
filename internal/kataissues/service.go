@@ -38,6 +38,7 @@ type Kata interface {
 	CreateTaskReused(ctx context.Context, project, idempotencyKey string, create taskclient.KataCreate) (taskclient.KataTask, bool, error)
 	GetTask(ctx context.Context, project, taskID string) (taskclient.KataTask, error)
 	FindActionTask(ctx context.Context, project, action string) (taskclient.KataTask, bool, error)
+	FindOpenMetadataTask(ctx context.Context, project, key, value string) (taskclient.KataTask, bool, error)
 	FindMetadataTasks(ctx context.Context, project, key string, limit int) ([]taskclient.KataTask, error)
 	MutateMetadataKey(ctx context.Context, project, taskID, key string, previous, value any) (taskclient.KataTask, error)
 	AddComment(ctx context.Context, project, taskID, idempotencyKey, body string) error
@@ -56,11 +57,13 @@ type Service struct {
 }
 
 type CreateInput struct {
-	Title    string                   `json:"title"`
-	Brief    string                   `json:"brief"`
-	List     string                   `json:"list"`
-	PersonID *int64                   `json:"person_id,omitzero"`
-	Evidence []kataevidence.Reference `json:"evidence"`
+	Thread     string                   `json:"-"`
+	DeadlineOn *string                  `json:"-"`
+	Title      string                   `json:"title"`
+	Brief      string                   `json:"brief"`
+	List       string                   `json:"list"`
+	PersonID   *int64                   `json:"person_id,omitzero"`
+	Evidence   []kataevidence.Reference `json:"evidence"`
 }
 
 // Result reports whether this call created the issue or found the one an
@@ -102,9 +105,30 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 		return Result{}, err
 	}
 	if found {
+		if input.Thread != "" {
+			existing, err = s.Kata.GetTask(ctx, existing.Project, existing.UID)
+			if err != nil {
+				return Result{}, err
+			}
+		}
 		return s.replay(existing, hash)
 	}
 	metadata := map[string]any{taskclient.ActionMetadataKey: marker, RequestMetadataKey: hash}
+	var parentRef string
+	if input.Thread != "" {
+		thread := kataevidence.Digest("msgvault.kata.thread.v1", archive, input.Thread)
+		metadata["msgvault.thread"] = thread
+		parent, found, err := s.Kata.FindOpenMetadataTask(ctx, s.Project, "msgvault.thread", thread)
+		if err != nil {
+			return Result{}, err
+		}
+		if found {
+			parentRef = parent.QualifiedRef
+		}
+	}
+	if input.DeadlineOn != nil {
+		metadata["deadline_on"] = *input.DeadlineOn
+	}
 	if input.PersonID != nil {
 		uids, err := personagenda.PersonUIDs(ctx, s.People, *input.PersonID)
 		if err != nil {
@@ -117,9 +141,17 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 		return Result{}, err
 	}
 	metadata[EvidenceMetadataKey] = Envelope{Version: 1, Entries: entriesOf(quotes)}
-	issue, reused, err := s.Kata.CreateTaskReused(ctx, s.Project, marker, taskclient.KataCreate{Title: input.Title, Body: renderBody(input.Brief, firstOfEachPassage(quotes)), Metadata: metadata})
+	issue, reused, err := s.Kata.CreateTaskReused(ctx, s.Project, marker, taskclient.KataCreate{Title: input.Title, Body: renderBody(input.Brief, firstOfEachPassage(quotes)), Metadata: metadata, ParentRef: parentRef})
 	if errors.Is(err, taskclient.ErrConflict) {
-		return s.createConflict(ctx, marker, hash, taskclient.ErrorCode(err))
+		result, conflictErr := s.createConflict(ctx, marker, hash, taskclient.ErrorCode(err))
+		if input.Thread != "" && result.Issue.UID != "" {
+			issue, readErr := s.Kata.GetTask(ctx, result.Issue.Project, result.Issue.UID)
+			if readErr != nil {
+				return Result{}, readErr
+			}
+			result.Issue = issue
+		}
+		return result, conflictErr
 	}
 	if err != nil {
 		return Result{}, err

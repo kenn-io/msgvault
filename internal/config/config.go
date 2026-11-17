@@ -177,6 +177,7 @@ func (d DocbankIntegrationConfig) validate() error {
 
 // TaskIntegrationConfig configures a task service connection.
 type TaskIntegrationConfig struct {
+	AutoAgenda          *bool  `toml:"auto_agenda"`
 	TrustPrivateNetwork bool   `toml:"trust_private_network"`
 	Enabled             bool   `toml:"enabled"`
 	Endpoint            string `toml:"endpoint"`
@@ -196,6 +197,9 @@ func (t *TaskIntegrationConfig) ApplyDefaults() {
 // (authentication, socket existence and ownership) still happen when the
 // client connects.
 func (t *TaskIntegrationConfig) Validate(section string) error {
+	if section != "kata" && t.AutoAgenda != nil {
+		return fmt.Errorf("auto_agenda is only supported in [integrations.kata], not [integrations.%s]", section)
+	}
 	if section != "kata" && t.TrustPrivateNetwork {
 		return fmt.Errorf("trust_private_network is only supported in [integrations.kata], not [integrations.%s]", section)
 	}

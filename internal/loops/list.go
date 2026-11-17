@@ -260,6 +260,11 @@ func openQuestions(loop Loop, marks map[int64]store.LoopMark, now time.Time) (Lo
 // ErrNotOpen reports a message that does not anchor an open loop.
 var ErrNotOpen = errors.New("message does not anchor an open loop")
 
+// Open returns the loop currently anchored at messageID.
+func Open(ctx context.Context, st Store, messageID int64, now time.Time) (Loop, error) {
+	return requireAnchor(ctx, st, messageID, nil, now)
+}
+
 // Done marks the loop anchored at messageID done. A caller that listed the
 // loop passes the questions the list showed, and only those are marked, so a
 // question that appeared since stays open. No questions covers every

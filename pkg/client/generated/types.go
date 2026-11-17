@@ -7330,6 +7330,25 @@ func (l LocalEmbeddingsStatus) Validate() error {
 	return errors
 }
 
+type LoopAgendaResponse struct {
+	Issue     KataIssueReceipt `json:"issue"`
+	ParentRef *string          `json:"parent_ref,omitzero"`
+	Replayed  bool             `json:"replayed"`
+}
+
+func (l LoopAgendaResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(l.Issue).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Issue", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type LoopCommitment struct {
 	Direction    LoopCommitmentDirection `json:"direction" validate:"required"`
 	DueOn        *string                 `json:"due_on,omitzero"`

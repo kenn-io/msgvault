@@ -355,6 +355,15 @@ func (l LinkKataEvidencePath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
+type FileCommitmentAgendaPath struct {
+	// CommitmentID The obligation ID
+	CommitmentID string `json:"commitment_id" validate:"required"`
+}
+
+func (f FileCommitmentAgendaPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
 type SetCommitmentDecisionPath struct {
 	// CommitmentID The commitment ID, for example c12
 	CommitmentID string `json:"commitment_id" validate:"required"`
@@ -362,6 +371,15 @@ type SetCommitmentDecisionPath struct {
 
 func (s SetCommitmentDecisionPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type FileLoopAgendaPath struct {
+	// MessageID The obligation ID
+	MessageID string `json:"message_id" validate:"required"`
+}
+
+func (f FileLoopAgendaPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
 }
 
 type MarkLoopDonePath struct {
