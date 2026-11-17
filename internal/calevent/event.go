@@ -29,6 +29,10 @@ type Attendee struct {
 	RSVP        string `json:"rsvp"`
 	IsCopySelf  bool   `json:"is_self"`
 }
+
+// kindException marks an event that overrides one occurrence of a series.
+const kindException = "exception"
+
 type Event struct {
 	ProviderEventID, SeriesProviderID, Kind string
 	ICalUID                                 string
@@ -49,6 +53,8 @@ func Decode(rawFormat string, raw, metadata []byte, calendarZone string) (Event,
 		return DecodeICS(raw, metadata, calendarZone)
 	case gcalmodel.RawFormat:
 		return decodeGoogleEvent(raw, metadata, calendarZone)
+	case MSGraphRawFormat:
+		return decodeGraphEvent(raw, metadata, calendarZone)
 	default:
 		return Event{}, false, nil
 	}

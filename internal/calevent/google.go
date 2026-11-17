@@ -76,7 +76,7 @@ func decodeGoogleEvent(raw, metadata []byte, calendarZone string) (Event, bool, 
 		return Event{}, false, err
 	}
 	if g.RecurringEventID != "" {
-		e.Kind, e.SeriesProviderID = "exception", g.RecurringEventID
+		e.Kind, e.SeriesProviderID = kindException, g.RecurringEventID
 		original := g.OriginalStartTime
 		if original.Date != "" {
 			if _, err := time.Parse(time.DateOnly, original.Date); err != nil {

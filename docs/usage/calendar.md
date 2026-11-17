@@ -1,11 +1,12 @@
 ---
-last_edited: "2026-10-27"
-title: Google Calendar
-description: Archive Google Calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
+last_edited: "2026-11-17"
+title: Calendars
+description: Archive Google Calendar and Microsoft 365 calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
 ---
 
-msgvault can archive your Google Calendar events into the same local database as
-your email. Events become searchable by keyword (and semantically, when vector
+msgvault can archive your Google Calendar events, and the calendars of a
+[Microsoft 365 or Outlook.com mailbox](#microsoft-365-and-outlookcom-unreleased),
+into the same local database as your email. Events become searchable by keyword (and semantically, when vector
 search is enabled), and their organizers and attendees join the same contact
 graph as the people you email — so a meeting with `alice@example.com` dedupes
 against the messages you exchanged with her.
@@ -72,6 +73,64 @@ only read).
 | `--oauth-app` | Named OAuth app to use |
 | `--headless` | Print headless-server setup instructions instead of opening a browser |
 | `--write` | Also request `calendar.events` for event control; source write permissions are still required |
+
+## Microsoft 365 and Outlook.com (unreleased)
+
+msgvault can also archive the calendars of a Microsoft 365 or Outlook.com
+mailbox through Microsoft Graph. Sync is read-only.
+
+1. Configure the default `[microsoft]` app (see
+   [OAuth Setup](../guides/oauth-setup.md#microsoft-graph-calendars)). Named
+   `[microsoft.apps.<name>]` apps are not supported for calendars.
+2. Add the delegated Microsoft Graph permissions `Calendars.Read` and
+   `MailboxSettings.Read` to that app registration.
+3. Authorize and sync:
+
+```bash
+msgvault add-calendar you@example.com --microsoft
+msgvault sync-calendar you@example.com
+```
+
+`add-calendar --microsoft` opens a browser to sign in; add `--headless` to sign
+in with a device code instead. The token is saved under
+`tokens/mscalendar_<email>.json`.
+
+**Which calendars.** `add-calendar --microsoft` registers the calendars the
+mailbox owns. Calendars that other people share with it are left out. Run
+`add-calendar --microsoft` again, or `sync-calendar --full`, to register
+calendars created later. Other syncs read only registered calendars, so a
+calendar removed with `remove-account` stays removed until one of those commands
+runs.
+
+**What each sync does.** Graph has no change feed for a whole calendar, so each
+sync reads every event of the registered calendars. An event that a complete
+sync no longer returns was deleted in Outlook: the archive keeps it and marks it
+deleted. A registered calendar that the mailbox no longer owns has all its
+events marked deleted.
+
+**How events appear.** Events land in the same tables as Google events, so
+`calendar events` lists both together.
+
+- Repeating events expand into occurrences, and edited occurrences appear at
+  their new times.
+- A monthly series on a day that a month lacks falls on the last day of that
+  month, as in Outlook.
+- Cancelled occurrences of a series do not appear, because Graph reports only
+  their dates.
+- Meeting rooms keep the `room` attendee role and do not become contacts.
+
+**Options.**
+
+- `add-calendar --microsoft` refuses `--calendars`, `--all-calendars`,
+  `--min-access-role`, `--write`, and `--oauth-app`.
+- For an account with only Microsoft calendars, `sync-calendar` refuses
+  `--calendar`, `--limit`, `--after`, `--before`, `--all-calendars`,
+  `--min-access-role`, `--noresume`, and `--oauth-app`.
+- When the same email also has Google calendars, `sync-calendar` syncs both, and
+  a Microsoft failure does not stop the Google sync.
+- To sync on a schedule, add a `[[gcal]]` entry with the mailbox address as
+  `email`, `enabled = true`, and a `schedule`. See
+  [Scheduled sync](#scheduled-sync-daemon).
 
 ## Sync events
 

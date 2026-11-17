@@ -49,7 +49,7 @@ Run `msgvault agent setup` to connect Claude Code and Codex.
 - [Local Email](https://msgvault.io/docs/usage/importing.md)
 - [Remote Email Images](https://msgvault.io/docs/usage/remote-images.md): opt-in downloads and offline display
 - [Text Messages](https://msgvault.io/docs/usage/text-messages.md)
-- [Google Calendar](https://msgvault.io/docs/usage/calendar.md)
+- [Calendars](https://msgvault.io/docs/usage/calendar.md): Google Calendar, and Microsoft 365 or Outlook.com calendars (Microsoft unreleased)
 - [Microsoft Teams](https://msgvault.io/docs/usage/teams.md)
 - [Discord](https://msgvault.io/docs/usage/discord.md)
 - [Beeper](https://msgvault.io/docs/usage/beeper.md)

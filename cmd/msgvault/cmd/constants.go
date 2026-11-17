@@ -1,6 +1,9 @@
 package cmd
 
-import "go.kenn.io/msgvault/internal/msmail"
+import (
+	"go.kenn.io/msgvault/internal/mscalendar"
+	"go.kenn.io/msgvault/internal/msmail"
+)
 
 // Source-type identifiers stored in sources.source_type and matched against
 // when dispatching sync/import logic per account kind.
@@ -12,6 +15,7 @@ const (
 	sourceTypeMSMail         = msmail.SourceType
 	sourceTypeCalendar       = "gcal"
 	sourceTypeICS            = "ics"
+	sourceTypeMSCalendar     = mscalendar.SourceType
 	sourceTypeBeeper         = "beeper"
 	sourceTypeMatrix         = "matrix"
 	sourceTypeSlack          = "slack"

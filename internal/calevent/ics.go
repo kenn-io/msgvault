@@ -25,7 +25,7 @@ import (
 
 // EmailInviteSQL identifies email-derived events; source merges preserve source types.
 func EmailInviteSQL(messageType, sourceType, archiveOnly string) string {
-	return fmt.Sprintf("(COALESCE(%s, '') = 'calendar_event' AND COALESCE(%s, '') NOT IN ('gcal', 'ics', 'message_import') AND %s)", messageType, sourceType, archiveOnly)
+	return fmt.Sprintf("(COALESCE(%s, '') = 'calendar_event' AND COALESCE(%s, '') NOT IN ('gcal', 'mscalendar', 'ics', 'message_import') AND %s)", messageType, sourceType, archiveOnly)
 }
 
 // ICSMetadata records the accepted revision independently of the retained raw.
@@ -74,7 +74,7 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 	e.ICalUID = components[0].UID
 	if meta.Status != "" {
 		e.Status = meta.Status
-		if e.Status == "cancelled" && e.Kind == "exception" {
+		if e.Status == "cancelled" && e.Kind == kindException {
 			e.Start, e.End = nil, nil
 			e.StartDate, e.EndDate = "", ""
 			e.AllDay = e.Original.AllDay
@@ -403,7 +403,7 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location, reta
 		if err != nil {
 			return ICSComponent{}, fmt.Errorf("RECURRENCE-ID: %w", err)
 		}
-		e.Kind = "exception"
+		e.Kind = kindException
 		e.Original = &calrecur.Identity{Instant: original.UTC(), AllDay: date}
 		if date {
 			e.Original.Date = original.Format(time.DateOnly)
@@ -419,7 +419,7 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location, reta
 		recurrenceID = e.Original.Key()
 	}
 	e.ProviderEventID = ICSMessageID(c.OrganizerEmail, c.UID, recurrenceID)
-	if e.Kind == "exception" {
+	if e.Kind == kindException {
 		e.SeriesProviderID = ICSMessageID(c.OrganizerEmail, c.UID, "")
 	}
 	for _, name := range []string{"RRULE", "RDATE", "EXDATE", "EXRULE"} {
@@ -453,7 +453,7 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location, reta
 			e.Recurrence = append(e.Recurrence, line.String())
 		}
 	}
-	if len(e.Recurrence) > 0 && e.Kind != "exception" && !allDay {
+	if len(e.Recurrence) > 0 && e.Kind != kindException && !allDay {
 		if dur := p.Get("DURATION"); dur != nil {
 			parts := icsDurationPattern.FindStringSubmatch(dur.Value)
 			if parts[1] != "" || parts[2] != "" {
@@ -464,7 +464,7 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location, reta
 			e.Recurrence = append(e.Recurrence, "DTSTART;TZID="+start.Location().String()+":"+prop.Value)
 		}
 	}
-	if len(e.Recurrence) > 0 && e.Kind != "exception" {
+	if len(e.Recurrence) > 0 && e.Kind != kindException {
 		e.Kind = "series"
 		e.SeriesProviderID = e.ProviderEventID
 	}

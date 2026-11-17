@@ -29,6 +29,9 @@ const (
 	scopeGraphMailRead          = "https://graph.microsoft.com/Mail.Read"
 	scopeGraphMailReadWrite     = "https://graph.microsoft.com/Mail.ReadWrite"
 	scopeGraphContactsReadWrite = "https://graph.microsoft.com/Contacts.ReadWrite"
+	scopeGraphCalendarsRead     = "https://graph.microsoft.com/Calendars.Read"
+	// The mailbox time zone anchors all-day events and series without a zone.
+	scopeGraphMailboxSettingsRead = "https://graph.microsoft.com/MailboxSettings.Read"
 )
 
 // GraphScopes returns the OAuth scopes requested for Microsoft Teams ingestion
@@ -61,6 +64,12 @@ func GraphMailWriteScopes() []string {
 // scope is requested at sign-in.
 func GraphContactsScopes() []string {
 	return []string{scopeGraphContactsReadWrite, scopeGraphUserRead, scopeOfflineAccess, "openid", scopeEmail, scopeProfile}
+}
+
+// GraphCalendarScopes returns the OAuth scopes requested for read-only
+// calendar archiving via the Graph API.
+func GraphCalendarScopes() []string {
+	return []string{scopeGraphCalendarsRead, scopeGraphMailboxSettingsRead, scopeGraphUserRead, scopeOfflineAccess, "openid", scopeEmail, scopeProfile}
 }
 
 // GraphManager is a sibling of Manager that runs the same interactive browser
@@ -116,6 +125,14 @@ func NewGraphMailManager(clientID, tenantID, redirectURI, tokensDir string, logg
 func NewGraphContactsManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
 	m := newGraphManager(clientID, tenantID, redirectURI, tokensDir, logger)
 	m.scopes, m.tokenPrefix, m.reauthCmd = GraphContactsScopes(), "mscontacts_", "msgvault carddav authorize-microsoft %s"
+	return m
+}
+
+// NewGraphCalendarManager constructs a GraphManager for calendar archiving.
+// Its tokens are saved under an "mscalendar_" prefix.
+func NewGraphCalendarManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
+	m := newGraphManager(clientID, tenantID, redirectURI, tokensDir, logger)
+	m.scopes, m.tokenPrefix, m.reauthCmd = GraphCalendarScopes(), "mscalendar_", "msgvault add-calendar %s --microsoft"
 	return m
 }
 

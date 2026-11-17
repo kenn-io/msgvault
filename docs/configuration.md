@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-12"
+last_edited: "2026-11-17"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -672,7 +672,8 @@ for browser and terminal authorization.
 ### `[microsoft]`
 
 Configuration for Microsoft 365 / Outlook.com OAuth and Microsoft Teams Graph
-sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
+sync. Required only if you use `add-o365`, `add-teams`, `sync-teams`, or
+`add-calendar --microsoft`.
 
 | Key | Default | Description |
 |---|---|---|
@@ -680,9 +681,9 @@ sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
 | `redirect_uri` | `http://localhost:8089/callback/microsoft` | OAuth redirect URI registered in the Azure AD app |
 | `tenant_id` | `common` | Azure AD tenant ID; `common` allows both personal and org accounts |
 
-For a mailbox in another organization, configure a separate app under `[microsoft.apps.<name>]` with its own `client_id`, `tenant_id`, and `redirect_uri`. Omitted tenant and redirect values use the defaults in the table, independently of `[microsoft]`. Restart the daemon after changing Microsoft app settings so scheduled syncs use the updated configuration. Bind a mail source with `msgvault add-o365 user@org-b.example --oauth-app orgb`. Teams, contacts, and the Web add-source template use `[microsoft]`.
+For a mailbox in another organization, configure a separate app under `[microsoft.apps.<name>]` with its own `client_id`, `tenant_id`, and `redirect_uri`. Omitted tenant and redirect values use the defaults in the table, independently of `[microsoft]`. Restart the daemon after changing Microsoft app settings so scheduled syncs use the updated configuration. Bind a mail source with `msgvault add-o365 user@org-b.example --oauth-app orgb`. Teams, contacts, calendars, and the Web add-source template use `[microsoft]`.
 
-See [OAuth Setup: Microsoft 365](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the default `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth with the default app uses `tokens/microsoft_<email>.json`.
+See [OAuth Setup: Microsoft 365](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the default `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth with the default app uses `tokens/microsoft_<email>.json`. Microsoft calendars use `tokens/mscalendar_<email>.json`.
 
 ### `[[fastmail]]`
 
@@ -1323,6 +1324,8 @@ Scheduled SMS Backup & Restore sources are configured with `[[synctech_sms.sourc
 ### Google Calendar Sources
 
 Scheduled Google Calendar sync is configured with top-level `[[gcal]]` entries. Each entry is one OAuth account; `msgvault serve` runs it on the given cron schedule (first run full-syncs and registers calendars, later runs are incremental). Authorize the account first with `msgvault add-calendar`.
+
+An entry whose `email` was added with `add-calendar --microsoft` also syncs that mailbox's registered Microsoft calendars on the same schedule (unreleased). The other keys, such as `calendars` and `oauth_app`, apply only to Google calendars. See [Microsoft calendars](usage/calendar.md#microsoft-365-and-outlookcom-unreleased).
 
 ```toml
 [[gcal]]

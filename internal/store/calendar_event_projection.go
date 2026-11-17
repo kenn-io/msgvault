@@ -59,7 +59,7 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("read calendar projection raw: %w", err)
 	}
-	if format.String != gcalmodel.RawFormat && format.String != rawFormatICS {
+	if format.String != gcalmodel.RawFormat && format.String != calevent.MSGraphRawFormat && format.String != rawFormatICS {
 		return clearProjection()
 	}
 	var config sql.NullString
@@ -205,4 +205,32 @@ func calendarConfigZone(config sql.NullString) string {
 		return ""
 	}
 	return value.Zone
+}
+
+// CalendarSeriesEditsContext returns the live archived edits of a source:
+// source message ID to series provider ID. Calendar writers store an edit in
+// the conversation "event:<series ID>", so an edit is found even after its
+// typed row was dropped.
+func (s *Store) CalendarSeriesEditsContext(ctx context.Context, sourceID int64) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT m.source_message_id, c.source_conversation_id
+		FROM messages m JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.source_id = ? AND m.message_type = 'calendar_event'
+		  AND m.deleted_at IS NULL
+		  AND c.source_conversation_id LIKE 'event:%'`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("list calendar series edits: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, conversation string
+		if err := rows.Scan(&id, &conversation); err != nil {
+			return nil, fmt.Errorf("scan calendar series edit: %w", err)
+		}
+		if series := strings.TrimPrefix(conversation, "event:"); series != id {
+			out[id] = series
+		}
+	}
+	return out, rows.Err()
 }

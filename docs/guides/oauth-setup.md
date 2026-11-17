@@ -691,6 +691,14 @@ A Graph account is a new account. If the same mailbox is also synced over
 IMAP, the vault holds two copies. Run `msgvault dedup --collection` to hide the
 extra copies, and `--undo` to reverse it.
 
+### Microsoft Graph Calendars
+
+To archive the mailbox's calendars (unreleased), add the delegated permissions
+`Calendars.Read` and `MailboxSettings.Read` to the default `[microsoft]` app,
+then run `msgvault add-calendar you@example.com --microsoft`. The token is saved
+under `tokens/mscalendar_<email>.json`. See
+[Microsoft calendars](/docs/usage/calendar/#microsoft-365-and-outlookcom-unreleased).
+
 ### Sync Your Email
 
 After adding the account, sync it the same way as any other account:

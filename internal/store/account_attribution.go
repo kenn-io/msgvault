@@ -666,7 +666,7 @@ func calendarMailbox(syncConfig sql.NullString) string {
 // calendarEventMailbox returns the mailbox a source's calendar events belong
 // to, or "". Email invitations inherit the mailbox of their mail source.
 func calendarEventMailbox(sourceType, identifier string, syncConfig sql.NullString) string {
-	if sourceType != "gcal" && sourceType != rawFormatICS {
+	if sourceType != "gcal" && sourceType != "mscalendar" && sourceType != rawFormatICS {
 		return accountSink(sourceType, identifier)
 	}
 	return calendarMailbox(syncConfig)
