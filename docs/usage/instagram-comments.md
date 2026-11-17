@@ -1,13 +1,13 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-12"
 title: Instagram Comments
 description: Archive a linked professional Instagram account's media comments and replies.
 ---
 
 Search returned Instagram media captions, comments, and replies beside your
 other communications, and link commenters with existing person tools. This
-integration reads comments; it does not publish replies or send
-messages.
+integration reads comments; it does not send messages. Hiding, deleting, and
+publicly replying to comments you choose are not released yet.
 
 ## Connect a professional account
 
@@ -61,6 +61,78 @@ Missing authors stay unknown; later omissions preserve stronger stored evidence.
 Comment self attribution is unproven when Meta returns only a non-comparable
 commenter identity; equal digits do not establish account ownership.
 
-Only media returned by the verified account's media edge is discovered here.
-Missing media owners remain unknown; explicit foreign owners are refused.
-Ad-only discovery, media downloads, and public replies are separate work.
+## Include ad media
+
+The account's media list can leave out media made only for ads, so comments on
+those ads are missed. To archive them, add the ad account that runs the ads and
+the environment variable holding a token that can read it:
+
+```toml
+[[instagram_comments]]
+identifier = "example-account"
+# ...the settings above...
+ad_account_id = "700"
+ad_token_env = "EXAMPLE_META_AD_TOKEN"
+```
+
+Use the decimal ad account ID without the `act_` prefix. The ad token needs the
+`ads_read` permission for that ad account. Restart the daemon so it sees the
+new variable.
+
+Each sync then also reads the ad account's ads with the ad token and looks up
+the Instagram media each one uses with the Page token. msgvault archives that
+media and its comments only when the media's owner is the configured
+`instagram_account_id`. Media that is also in the account's media list stays
+one conversation, and its comments are marked as ad comments in their metadata.
+
+msgvault skips ad media that another account owns, that has no owner, or that
+the Page token cannot read. The sync summary line ends with the number skipped,
+and the daemon log names each one. Any other failed lookup, such as a rate
+limit, fails the sync with Meta's error code or HTTP status; the next sync
+tries again.
+
+Ad account reads and media lookups count toward the same request budget. Adding,
+changing, or removing `ad_account_id` restarts that profile's sync cycle from
+the beginning; archived rows are kept.
+
+## Hide, delete, or reply to comments
+
+Add `actions = ["hide", "delete", "reply"]` to the `[[instagram_comments]]`
+profile, then use `msgvault comment moderate` or `msgvault comment reply`. The
+steps are the same as for Facebook comments: see
+[Hide or delete comments](facebook-comments.md#hide-or-delete-comments) and
+[Reply to comments](facebook-comments.md#reply-to-comments). Instagram accepts
+replies to top-level comments only.
+
+## Limits
+
+Only media returned by the verified account's media edge is discovered here,
+unless you [include ad media](#include-ad-media). Missing media owners remain
+unknown; explicit foreign owners are refused. Media downloads are separate work.
+To archive new comments as they arrive, set up [Meta webhooks](meta-webhooks.md).
+
+## Archive media that tags the account
+
+To archive media in which other accounts tag the linked account, set
+`mentions = true` on the profile, restart the daemon, then register and sync
+the separate mentions source:
+
+```bash
+msgvault source instagram-mentions add example-account
+msgvault source instagram-mentions sync example-account
+```
+
+The source is `instagram_mentions`, so this media stays apart from the
+account's own comments. The author's `@username` is the subject, so you can
+search for it; Meta returns no author ID for this media, so the author is not
+linked to a person. Media the account owns is skipped here.
+
+Captions and comments by other accounts that @-mention the account are not on
+any edge that sync can read. With [Meta webhooks](meta-webhooks.md), subscribe
+the Instagram object to the `mentions` field and msgvault archives each
+mentioned caption or comment into the same source. A mentioned comment is
+stored as a reply to its media.
+
+An unfinished run resumes from its saved position; a finished run starts again
+from the newest tagged media. The profile's `schedule` also schedules this
+source.

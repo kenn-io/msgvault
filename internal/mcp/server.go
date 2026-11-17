@@ -67,6 +67,7 @@ const (
 	ToolPreviewPersonTiers        = "preview_person_tiers"
 	ToolExplainPersonTier         = "explain_person_tier"
 	ToolFindContactCandidates     = "find_contact_candidates"
+	ToolGetEmailFamily            = "get_email_family"
 	ToolGetPersonMessagingRoutes  = "get_person_messaging_routes"
 	ToolPromotePerson             = "promote_person"
 	ToolUpdatePersonNotes         = "update_person_notes"
@@ -76,9 +77,14 @@ const (
 	ToolCreateSavedView           = "create_saved_view"
 	ToolUpdateSavedView           = "update_saved_view"
 	ToolDeleteSavedView           = "delete_saved_view"
+	ToolGetMeetingRecord          = "get_meeting_record"
+	ToolSuggestMeetingLinks       = "suggest_meeting_links"
 	ToolGetMeetingContext         = "get_meeting_context"
 	ToolListMeetingActionItems    = "list_meeting_action_items"
 	ToolGetMeetingMetrics         = "get_meeting_metrics"
+	ToolLinkMeeting               = "link_meeting"
+	ToolUnlinkMeeting             = "unlink_meeting"
+	ToolResetMeetingLink          = "reset_meeting_link"
 	ToolListIdentityMatches       = "list_identity_matches"
 	ToolGetIdentityMatch          = "get_identity_match"
 	ToolAcceptIdentityMatch       = "accept_identity_match"
@@ -137,6 +143,7 @@ type ServeOptions struct {
 	PersonTierBackend      PersonTierBackend
 	Kata                   KataBackend
 	ContactRoutesBackend   ContactRoutesBackend
+	EmailFamilyBackend     EmailFamilyBackend
 	// KataLookup enables issue lookup and context reads.
 	KataLookup  bool
 	KataDocbank bool
@@ -178,8 +185,11 @@ type ServeOptions struct {
 	SavedViews savedview.Service
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
-	Meetings MeetingBackend
-	Calendar CalendarBackend
+	Meetings           MeetingBackend
+	MeetingRecords     bool
+	MeetingSuggestions bool
+	MeetingDecisions   bool
+	Calendar           CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
 	// ConfirmSensitiveDrafts requires client approval before writing flagged draft content.
@@ -422,6 +432,7 @@ func newMCPServerWithPolicy(
 		drafts:               opts.Drafts,
 		contactRoutesBackend: opts.ContactRoutesBackend,
 		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
+		emailFamilyBackend:   opts.EmailFamilyBackend,
 	}
 
 	definitions := authorizedOperationCatalog(opts, allowWrites)
@@ -639,7 +650,7 @@ func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
 	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
 		return agentgrant.PermissionSearchRead, true
-	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
+	case ToolGetMessage, ToolListThread, ToolSearchInMessage, ToolGetMeetingRecord, ToolSuggestMeetingLinks:
 		return agentgrant.PermissionMessageRead, true
 	case ToolGetAttachment:
 		return agentgrant.PermissionAttachmentRead, true

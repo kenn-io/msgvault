@@ -602,6 +602,23 @@ func (s SearchMediaQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type GetMeetingRecordQuery struct {
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (g GetMeetingRecordQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type SuggestMeetingLinksQuery struct {
+	Ref   string `json:"ref" validate:"required"`
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+}
+
+func (s SuggestMeetingLinksQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type ListMessagesQuery struct {
 	// Page One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
 	Page *int64 `json:"page,omitempty"`
@@ -1097,6 +1114,9 @@ type ListPersonFactDecisionsQuery struct {
 
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
+
+	// ClaimKey Restrict to one claim key
+	ClaimKey *string `json:"claim_key,omitempty"`
 }
 
 type ListPersonFactEvidenceQuery struct {
@@ -1108,6 +1128,9 @@ type ListPersonFactEvidenceQuery struct {
 
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
+
+	// EvidenceID Restrict to one evidence row
+	EvidenceID *int64 `json:"evidence_id,omitempty"`
 }
 
 type ListPersonFactEvidenceStatusEventsQuery struct {

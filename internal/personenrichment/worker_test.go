@@ -967,6 +967,10 @@ func TestWorkerRetriesSameRevisionInLaterRunAfterBudgetExhaustion(t *testing.T) 
 	}
 	options := f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config})
 	options.Clock = func() time.Time { return f.now }
+	// The deferral targets the next UTC midnight on the worker clock, and the
+	// store requires it to be after the store clock. Share one clock so a run
+	// near midnight does not see the store's wall clock pass that target.
+	store.SetPersonEnrichmentClockForTest(f.store, options.Clock)
 	worker, err := personenrichment.NewWorker(
 		work, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
 		map[string]personenrichment.ProviderFactory{f.config.Name: func(

@@ -422,7 +422,13 @@ import (
 // 5.6.0 adds a refresh-only identity cache operation.
 // 5.7.0 adds first archived appearance to person contact state.
 // 5.8.0 advertises structured person-profile routes to MCP.
-const APISchemaVersion = "5.8.0"
+// 5.9.0 adds meeting records.
+// 5.10.0 adds owner meeting link decisions.
+// 5.11.0 adds meeting link suggestions.
+// 5.12.0 adds owner-only email family lookup.
+// 5.13.0 adds fact decision outcomes, evidence filtering, and a person fact summary.
+// 5.14.0 adds each decision's submitted claim value to its history row.
+const APISchemaVersion = "5.14.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1179,6 +1185,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
+	nullableSchemaProperty(schemas["FactSummary"], "latest_claim_at")
 	for schemaName, property := range map[string]string{
 		"MeetingPerson":       emailProperty,
 		"Source":              "account_email",

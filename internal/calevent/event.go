@@ -31,6 +31,7 @@ type Attendee struct {
 }
 type Event struct {
 	ProviderEventID, SeriesProviderID, Kind string
+	ICalUID                                 string
 	Original                                *calrecur.Identity
 	Status                                  string
 	AllDay                                  bool

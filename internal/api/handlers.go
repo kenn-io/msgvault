@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/meta"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -1720,7 +1721,9 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 		status.CanSync = true
 	}
 
-	latest, err := statusStore.GetLatestSyncContext(ctx, source.ID, 0)
+	// Webhook runs record single changes between polling syncs. Leave them out
+	// so a recent webhook run cannot hide a failing polling sync.
+	latest, err := statusStore.GetLatestSyncExcludingTypeContext(ctx, source.ID, meta.WebhookSyncType)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return SourceStatus{}, fmt.Errorf("get latest sync: %w", err)
 	}
@@ -1729,7 +1732,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 		return SourceStatus{}, err
 	}
 
-	lastSuccessful, err := statusStore.GetLastSuccessfulSyncContext(ctx, source.ID)
+	lastSuccessful, err := statusStore.GetLastSuccessfulSyncExcludingTypeContext(ctx, source.ID, meta.WebhookSyncType)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return SourceStatus{}, fmt.Errorf("get last successful sync: %w", err)
 	}

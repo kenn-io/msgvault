@@ -54,28 +54,33 @@ func TestIMAPSyncFolderFilter(t *testing.T) {
 	}
 }
 
-func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1, "Junk": 1})
+func scheduledIMAPTestSetup(t *testing.T, addr string) (*store.Store, *store.Source, *config.Config, context.Context) {
+	t.Helper()
 	host, portText, err := net.SplitHostPort(addr)
-	require.NoError(err)
+	require.NoError(t, err)
 	port, err := strconv.Atoi(portText)
-	require.NoError(err)
+	require.NoError(t, err)
 	imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
-	require.NoError(err)
+	require.NoError(t, err)
 	configJSON, err := imapCfg.ToJSON()
-	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID, configJSON))
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, configJSON))
 	src, err = st.GetSourceByID(src.ID)
-	require.NoError(err)
+	require.NoError(t, err)
 	home := t.TempDir()
-	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Sync: config.SyncConfig{
-		IMAPSkipFolders: map[string][]string{src.Identifier: {"Trash", "Junk"}, "user@example.com": {"Trash"}},
-	}}
-	require.NoError(imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
+	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
+	require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	return st, src, cfg, ctx
+}
+
+func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1, "Junk": 1})
+	st, src, cfg, ctx := scheduledIMAPTestSetup(t, addr)
+	cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash", "Junk"}, "user@example.com": {"Trash"}}
 	var logs bytes.Buffer
 	invocationFromContext(ctx).logger = slog.New(slog.NewTextHandler(&logs, nil))
 	summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
@@ -96,6 +101,25 @@ func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
 	assert.Equal([]string{"INBOX|1"}, ids)
 	assert.Equal(1, strings.Count(logs.String(), "IMAP folder exclusions match no stored account"))
 	assert.Contains(logs.String(), "account=user@example.com")
+}
+
+func TestRunScheduledIMAPSync_KeepsMarkWhileInTrash(t *testing.T) {
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Trash": 0})
+	raw := []byte("Message-ID: <overlap@example.test>\r\nFrom: sender@example.test\r\nTo: recipient@example.test\r\nSubject: overlap\r\n\r\nbody\r\n")
+	testutil.AppendIMAPRawMessage(t, user, "Trash", raw)
+	st, src, _, ctx := scheduledIMAPTestSetup(t, addr)
+	invocationFromContext(ctx).logger = testDiscardLogger()
+	syncMailbox := func() {
+		summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+		require.NoError(t, err)
+		require.Zero(t, summary.Errors)
+	}
+	syncMailbox()
+	_, err := st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE source_id = ?`), src.ID)
+	require.NoError(t, err)
+	testutil.SetIMAPFlags(t, addr, "Trash", 1, imapapi.FlagSeen)
+	syncMailbox()
+	assert.Equal(t, 1, imapTombstonedMessageCount(t, st, src.ID))
 }
 
 func TestSaveIMAPFolderStates_ExclusionPreservesPriorState(t *testing.T) {

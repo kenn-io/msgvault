@@ -6058,6 +6058,50 @@ func (o *GetMeetingContextRequestOptions) GetHeader() (map[string]string, error)
 	return nil, nil
 }
 
+// DecideMeetingLinkRequestOptions is the options needed to make a request to DecideMeetingLink.
+type DecideMeetingLinkRequestOptions struct {
+	Body *DecideMeetingLinkBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *DecideMeetingLinkRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DecideMeetingLinkRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *DecideMeetingLinkRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DecideMeetingLinkRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DecideMeetingLinkRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetMeetingMetricsRequestOptions is the options needed to make a request to GetMeetingMetrics.
 type GetMeetingMetricsRequestOptions struct {
 	Body *GetMeetingMetricsBody
@@ -6099,6 +6143,94 @@ func (o *GetMeetingMetricsRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetMeetingMetricsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetMeetingRecordRequestOptions is the options needed to make a request to GetMeetingRecord.
+type GetMeetingRecordRequestOptions struct {
+	Query *GetMeetingRecordQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetMeetingRecordRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetMeetingRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetMeetingRecordRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetMeetingRecordRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetMeetingRecordRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SuggestMeetingLinksRequestOptions is the options needed to make a request to SuggestMeetingLinks.
+type SuggestMeetingLinksRequestOptions struct {
+	Query *SuggestMeetingLinksQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *SuggestMeetingLinksRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SuggestMeetingLinksRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SuggestMeetingLinksRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SuggestMeetingLinksRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *SuggestMeetingLinksRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -6319,6 +6451,50 @@ func (o *GetMessageRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetMessageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetEmailFamilyRequestOptions is the options needed to make a request to GetEmailFamily.
+type GetEmailFamilyRequestOptions struct {
+	PathParams *GetEmailFamilyPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetEmailFamilyRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetEmailFamilyRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetEmailFamilyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetEmailFamilyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetEmailFamilyRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -9548,6 +9724,50 @@ func (o *SetPersonFactPinRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *SetPersonFactPinRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPersonFactSummaryRequestOptions is the options needed to make a request to GetPersonFactSummary.
+type GetPersonFactSummaryRequestOptions struct {
+	PathParams *GetPersonFactSummaryPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetPersonFactSummaryRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPersonFactSummaryRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPersonFactSummaryRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPersonFactSummaryRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPersonFactSummaryRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
