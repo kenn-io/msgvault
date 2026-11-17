@@ -119,9 +119,43 @@ func TestCommitmentListPages(t *testing.T) {
 		r.NoError(err)
 		r.Len(items, 3)
 		a.Equal("I will send the draft.", items[0].Quote)
-		a.Equal("I will call.", items[1].Quote)
+		a.Equal("I will send the report.", items[1].Quote)
 		a.Equal(personfacts.StatusStale, items[1].Freshness)
+		a.Equal("I will call.", items[2].Quote)
 		a.Equal(personfacts.StatusStale, items[2].Freshness)
+	})
+	t.Run("stale overdue before edited undated", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "stale-promise-order", false)
+		_, persist := newCommitmentTestConversation(t, f)
+		edited := persist("edited", "I will call.", -2*time.Hour)
+		persist("fresh", "I will write.", -time.Hour)
+		const overdue = "I will send it by 2026-06-01."
+		persist("overdue", overdue, -100*24*time.Hour)
+		cfg, profile := commitmentTestConfig()
+		cfg.Commitments.Window = 200 * 24 * time.Hour
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Len(window.Sources, 3)
+		output := peoplesweep.ParsedCommitments{}
+		for _, source := range window.Sources {
+			promise := peoplesweep.CommitmentPromise{SourceID: source.ID, Direction: source.Direction, Quote: source.Text, Start: source.Start, End: source.Start + int64(len([]rune(source.Text))), Summary: "Keep the promise"}
+			if source.Text == overdue {
+				promise.DueOn = new("2026-06-01")
+				promise.DuePhrase = new("by 2026-06-01")
+			}
+			output.Promises = append(output.Promises, promise)
+		}
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
+		r.NoError(err)
+		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "Plans changed.", edited)
+		r.NoError(err)
+		items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 2, false)
+		r.NoError(err)
+		r.Len(items, 2)
+		r.Equal("I will write.", items[0].Quote)
+		r.Equal(overdue, items[1].Quote)
+		r.Equal(personfacts.StatusStale, items[1].Freshness)
 	})
 	t.Run("overdue before older undated promises", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()

@@ -68,13 +68,9 @@ func (s *Store) listCommitmentsByFreshness(ctx context.Context, personID int64, 
 	stale := make([]PersonCommitment, 0, limit)
 	pageSize := min(32, max(8, limit))
 	for _, fresh := range []bool{true, false} {
-		if !fresh {
-			result = append(result, stale[:min(len(stale), limit-len(result))]...)
-			if len(result) == limit {
-				return result, nil
-			}
-		}
 		var after PersonCommitment
+		stalePageCount := 0
+	pages:
 		for {
 			candidates, err := s.loadCommitmentCandidates(ctx, personID, now, after, pageSize, fresh, includeClosed)
 			if err != nil {
@@ -88,9 +84,15 @@ func (s *Store) listCommitmentsByFreshness(ctx context.Context, personID int64, 
 				if !visible {
 					continue
 				}
-				if fresh && c.Freshness == personfacts.StatusStale {
-					if len(stale) < limit {
+				if !fresh || c.Freshness == personfacts.StatusStale {
+					if !fresh || len(stale) < limit {
 						stale = append(stale, c)
+					}
+					if !fresh {
+						stalePageCount++
+						if stalePageCount == limit-len(result) {
+							break pages
+						}
 					}
 					continue
 				}
@@ -105,6 +107,22 @@ func (s *Store) listCommitmentsByFreshness(ctx context.Context, personID int64, 
 			after = candidates[len(candidates)-1].commitment
 		}
 	}
+	today := now.Format(time.DateOnly)
+	slices.SortFunc(stale, func(a, b PersonCommitment) int {
+		aOverdue := a.DueOn != nil && *a.DueOn < today
+		bOverdue := b.DueOn != nil && *b.DueOn < today
+		if aOverdue != bOverdue {
+			if aOverdue {
+				return -1
+			}
+			return 1
+		}
+		if order := a.PromisedAt.Compare(b.PromisedAt); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	result = append(result, stale[:min(len(stale), limit-len(result))]...)
 	return result, nil
 }
 
