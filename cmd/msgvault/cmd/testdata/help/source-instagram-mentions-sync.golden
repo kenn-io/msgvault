@@ -1,0 +1,13 @@
+Archive media in which other accounts tag the linked Instagram account, for registered profiles that set mentions = true. Progress resumes on the next sync. Tokens come from the daemon environment. Media that is no longer returned stays archived.
+
+Usage:
+  msgvault source instagram-mentions sync [identifier] [flags]
+
+Flags:
+      --build-cache        refresh analytics cache after this sync
+      --full               restart from the newest tagged media; preserve and update archived rows
+  -h, --help               help for sync
+      --max-requests int   maximum API reads per account (default 1000)
+      --no-build-cache     skip analytics cache refresh after this sync
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')

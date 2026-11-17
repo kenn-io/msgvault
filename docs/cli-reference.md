@@ -1690,6 +1690,109 @@ msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--fu
 See [Instagram comments](usage/instagram-comments.md) for setup, identity,
 resuming, and coverage limits. These commands do not send replies.
 
+## source facebook-messages add
+
+Register the Messenger inbox of the Page in a `[[facebook_messages]]` profile
+(unreleased). No identifier selects every profile.
+
+```bash
+msgvault source facebook-messages add [identifier]
+```
+
+## source facebook-messages sync
+
+Archive the Page's Messenger conversations as chats, with up to the 20 most
+recent messages of each (unreleased). `--full` restarts from the most recent
+conversations.
+
+```bash
+msgvault source facebook-messages sync [identifier] [--max-requests 1000] [--full]
+```
+
+## source instagram-messages add
+
+Register the inbox of the Instagram account in an `[[instagram_messages]]`
+profile (unreleased). No identifier selects every profile.
+
+```bash
+msgvault source instagram-messages add [identifier]
+```
+
+## source instagram-messages sync
+
+Archive the account's Instagram conversations as chats, with up to the 20 most
+recent messages of each (unreleased). Flags match `source facebook-messages sync`.
+
+```bash
+msgvault source instagram-messages sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Facebook and Instagram messages](usage/meta-messages.md) for setup and limits.
+
+## source instagram-mentions add
+
+Register the mentions source for `[[instagram_comments]]` profiles that set
+`mentions = true` (unreleased). No identifier selects every such profile.
+
+```bash
+msgvault source instagram-mentions add [identifier]
+```
+
+## source instagram-mentions sync
+
+Archive media in which other accounts tag the linked account (unreleased). An
+unfinished run resumes next time; `--full` restarts from the newest tagged
+media without deleting rows.
+
+```bash
+msgvault source instagram-mentions sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Archive media that tags the account](usage/instagram-comments.md#archive-media-that-tags-the-account).
+## comment moderate
+
+Hide, unhide, or delete an archived Facebook Page or Instagram comment on Meta,
+then record the change in the archive (unreleased). The comment's profile must
+allow the action in [`actions`](configuration.md#facebook-comments).
+
+```bash
+msgvault comment moderate <message-id> --hide|--unhide|--delete [--dry-run] [--yes]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--hide` | `false` | Hide the comment from public view |
+| `--unhide` | `false` | Make a hidden comment visible again |
+| `--delete` | `false` | Delete the comment from Meta; the archive keeps it and its replies, marked deleted |
+| `--dry-run` | `false` | Show the comment without calling Meta |
+| `--yes` | `false` | Confirm `--delete` |
+
+Choose exactly one of `--hide`, `--unhide`, or `--delete`. See
+[Hide or delete comments](usage/facebook-comments.md#hide-or-delete-comments).
+
+## comment reply
+
+Post a public reply to an archived Facebook Page or Instagram comment, then
+archive the reply (unreleased). The comment's profile must list `"reply"` in
+[`actions`](configuration.md#facebook-comments). msgvault refuses to send the
+same text to the same comment twice.
+
+```bash
+msgvault comment reply <message-id> --body <text> [--dry-run | --clear-unknown]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--body` | required | Reply text |
+| `--dry-run` | `false` | Show the comment and reply without calling Meta |
+| `--clear-unknown` | `false` | After checking the comment on Meta, allow a reply whose outcome is unknown to be sent again; sends nothing |
+
+The command exits with code 1 when the same text was already posted, or when
+an earlier send of it has an unknown outcome. If Meta accepts the reply but
+msgvault cannot archive it yet, the command still succeeds and says so; the
+next sync archives the reply. See
+[Reply to comments](usage/facebook-comments.md#reply-to-comments).
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
