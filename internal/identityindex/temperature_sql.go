@@ -13,6 +13,28 @@ const temperatureBuildRelation = "relationship_build_temperature_daily"
 // stays in the daily datasets.
 const relationshipTemperatureFirstYear = 1970
 
+// MeetingOwnerGroupsSQL finds owner evidence for the selected transcript groups.
+// selected must project message_id; all inputs are trusted DuckDB relations.
+func MeetingOwnerGroupsSQL(selected, ownerActivity, groups string) string {
+	return fmt.Sprintf(`
+WITH selected_meetings AS (
+	SELECT s.message_id, coalesce(g.group_id, s.message_id) AS meeting_group
+	FROM %s s
+	LEFT JOIN %s g ON g.message_id = s.message_id
+), meeting_copies AS (
+	SELECT g.message_id FROM %s g
+	WHERE EXISTS (SELECT 1 FROM selected_meetings s WHERE s.meeting_group = g.group_id)
+	UNION
+	SELECT message_id FROM selected_meetings
+)
+SELECT coalesce(g.group_id, a.message_id) AS meeting_group
+FROM %s a
+JOIN meeting_copies c ON c.message_id = a.message_id
+LEFT JOIN %s g ON g.message_id = a.message_id
+WHERE a.is_owner AND a.message_type = 'meeting_transcript' AND NOT a.unsent AND NOT a.email_invite
+GROUP BY meeting_group`, selected, groups, groups, ownerActivity, groups)
+}
+
 // RelationshipTemperatureFactsSQL selects one qualifying row per stored
 // message and canonical person. The relations are trusted DuckDB SQL rendered
 // by the cache/query packages. ownerActivity includes meeting copies outside
@@ -20,13 +42,7 @@ const relationshipTemperatureFirstYear = 1970
 func RelationshipTemperatureFactsSQL(activity, ownerActivity, groups string, effectiveAt time.Time) string {
 	cutoff := effectiveAt.UTC().Format("2006-01-02 15:04:05.999999999")
 	return fmt.Sprintf(`
-WITH meeting_owners AS (
-	SELECT coalesce(g.group_id, a.message_id) AS meeting_group
-	FROM %[7]s a
-	LEFT JOIN %[6]s g ON g.message_id = a.message_id
-	WHERE a.is_owner AND a.message_type = 'meeting_transcript' AND NOT a.unsent AND NOT a.email_invite
-	GROUP BY meeting_group
-), message_owner AS (
+WITH message_owner AS (
 	SELECT message_id, bool_or(is_owner) AS owner_present
 	FROM %[1]s
 	GROUP BY message_id
@@ -62,6 +78,8 @@ WITH meeting_owners AS (
 	          AND f.is_direct AND (f.is_from_me OR f.is_author))
 	  )
 	GROUP BY f.message_id, f.canonical_id
+), meeting_owners AS (
+	%[7]s
 ), classified AS (
 	SELECT *,
 	       entry_kind IN ('event', 'meeting') AS is_meeting,
@@ -116,7 +134,7 @@ WHERE NOT is_meeting OR meeting_rank = 1
 		ModalityChat,
 		ModalityEmail,
 		groups,
-		ownerActivity,
+		MeetingOwnerGroupsSQL("(SELECT message_id FROM person_messages WHERE message_type = 'meeting_transcript')", ownerActivity, groups),
 	)
 }
 
