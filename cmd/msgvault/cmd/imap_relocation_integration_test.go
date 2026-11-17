@@ -236,7 +236,7 @@ func TestIMAPScopedRelocationRecoversSent(t *testing.T) {
 		UIDValidity: 99, UIDNext: 1, HighestModSeq: 1,
 	})
 	f.server.setSnapshot(f.final)
-	client, err := f.sync(t, imap.WithFolderFilter(nil, []string{"Trash"}), imap.WithFilteredDeletionReconciliation(true))
+	client, err := f.sync(t, imap.WithSavedFolderExclusions([]string{"Trash"}))
 	require.NoError(err)
 	require.NoError(client.Close())
 	f.assertSent(t)

@@ -371,14 +371,9 @@ func (c *Client) statusFolder(ctx context.Context, mailbox string) (FolderState,
 	}, nil
 }
 
-// WithFilteredDeletionReconciliation opts sessions into complete membership
-// observations when only Trash or Junk are excluded and no allow list is set.
-func WithFilteredDeletionReconciliation(enabled bool) Option {
-	return func(c *Client) { c.reconcileFilteredDeletions = enabled }
-}
-
-// ReconcilesFilteredDeletions reports whether this session opts into reconciling
-// the selected mailboxes of a folder-filtered sync.
+// ReconcilesFilteredDeletions reports whether this session reconciles the
+// scanned mailboxes of a sync whose only filter is saved Trash or Junk
+// exclusions.
 func (c *Client) ReconcilesFilteredDeletions() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -386,7 +381,7 @@ func (c *Client) ReconcilesFilteredDeletions() bool {
 }
 
 func (c *Client) scannedMailboxSnapshotLocked() bool {
-	if !c.reconcileFilteredDeletions || !c.since.IsZero() || !c.before.IsZero() ||
+	if !c.savedFolderExclusions || !c.since.IsZero() || !c.before.IsZero() ||
 		c.config == nil || c.mailboxCache == nil ||
 		len(c.effectiveFolderIncludeLocked()) > 0 || len(c.folderFilterExclude) == 0 {
 		return false

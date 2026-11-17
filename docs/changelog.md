@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Opt in to [IMAP deletion tracking](configuration.md#sync) with `imap_reconcile_filtered_deletions` when saved folder exclusions skip only Trash or Junk.
+- IMAP accounts whose saved `imap_skip_folders` skip only Trash or Junk now track deletions in the folders they scan, so mail moved into a skipped Trash is marked deleted and `gc` can purge it. See [`imap_skip_folders`](configuration.md#sync).
 
 - Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.
   With `--allow-curated-writes` and explicit client confirmation, it can apply

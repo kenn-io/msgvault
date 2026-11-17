@@ -81,6 +81,18 @@ func WithFolderFilter(include, exclude []string) Option {
 	return func(c *Client) {
 		c.folderFilterInclude = include
 		c.folderFilterExclude = exclude
+		c.savedFolderExclusions = false
+	}
+}
+
+// WithSavedFolderExclusions excludes the account's saved imap_skip_folders.
+// Unlike a --skip-folder override, saved exclusions that skip only Trash or
+// Junk still let the sync reconcile deletions in the folders it scans.
+func WithSavedFolderExclusions(exclude []string) Option {
+	return func(c *Client) {
+		c.folderFilterInclude = nil
+		c.folderFilterExclude = exclude
+		c.savedFolderExclusions = true
 	}
 }
 
@@ -154,7 +166,9 @@ type Client struct {
 	// Zero-valued (empty include and exclude) means "all mailboxes".
 	folderFilterInclude, folderFilterExclude []string
 
-	reconcileFilteredDeletions bool
+	// savedFolderExclusions marks folderFilterExclude as the account's saved
+	// imap_skip_folders list rather than a one-run --skip-folder override.
+	savedFolderExclusions bool
 
 	forceFullEnumeration  bool
 	priorFolderStates     map[string]FolderState // saved states from the last completed sync
@@ -213,14 +227,6 @@ func (c *Client) LabelsSnapshotComplete() bool {
 	return c.labelMapComplete &&
 		c.config != nil &&
 		!c.labelsSnapshotFilteredLocked()
-}
-
-// LabelsSnapshotFiltered reports whether folder or date filters explicitly
-// constrain the mailbox membership view.
-func (c *Client) LabelsSnapshotFiltered() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.labelsSnapshotFilteredLocked()
 }
 
 func (c *Client) labelsSnapshotFilteredLocked() bool {

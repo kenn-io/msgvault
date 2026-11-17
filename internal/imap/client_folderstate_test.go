@@ -561,7 +561,6 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 		cfg            *Config
 		opts           []Option
 		wantComplete   bool
-		wantFiltered   bool
 		wantReconciles bool
 	}{
 		{
@@ -570,47 +569,40 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 			wantComplete: true,
 		},
 		{
-			name:         "config include",
-			cfg:          &Config{Folders: []string{"INBOX"}},
-			opts:         []Option{WithFolderFilter(nil, []string{"Trash"}), WithFilteredDeletionReconciliation(true)},
-			wantFiltered: true,
+			name: "config include",
+			cfg:  &Config{Folders: []string{"INBOX"}},
+			opts: []Option{WithSavedFolderExclusions([]string{"Trash"})},
 		},
 		{
-			name:         "runtime include",
-			cfg:          &Config{},
-			opts:         []Option{WithFolderFilter([]string{"INBOX"}, nil)},
-			wantFiltered: true,
+			name: "runtime include",
+			cfg:  &Config{},
+			opts: []Option{WithFolderFilter([]string{"INBOX"}, nil)},
 		},
 		{
-			name:         "runtime exclude",
-			cfg:          &Config{},
-			opts:         []Option{WithFolderFilter(nil, []string{"Trash"})},
-			wantFiltered: true,
+			name: "runtime exclude",
+			cfg:  &Config{},
+			opts: []Option{WithFolderFilter(nil, []string{"Trash"})},
 		},
 		{
 			name:           "Trash and Junk exclusions with reconciliation",
 			cfg:            &Config{},
-			opts:           []Option{WithFolderFilter(nil, []string{"Trash", "Junk"}), WithFilteredDeletionReconciliation(true)},
-			wantFiltered:   true,
+			opts:           []Option{WithSavedFolderExclusions([]string{"Trash", "Junk"})},
 			wantReconciles: true,
 		},
 		{
-			name:         "newsletters skipped",
-			cfg:          &Config{},
-			opts:         []Option{WithFolderFilter(nil, []string{"Trash", "Junk", "Archive/Newsletters"}), WithFilteredDeletionReconciliation(true)},
-			wantFiltered: true,
+			name: "newsletters skipped",
+			cfg:  &Config{},
+			opts: []Option{WithSavedFolderExclusions([]string{"Trash", "Junk", "Archive/Newsletters"})},
 		},
 		{
-			name:         "after filter",
-			cfg:          &Config{},
-			opts:         []Option{WithFolderFilter(nil, []string{"Trash", "Junk"}), WithDateFilter(after, time.Time{}), WithFilteredDeletionReconciliation(true)},
-			wantFiltered: true,
+			name: "after filter",
+			cfg:  &Config{},
+			opts: []Option{WithSavedFolderExclusions([]string{"Trash", "Junk"}), WithDateFilter(after, time.Time{})},
 		},
 		{
-			name:         "before filter",
-			cfg:          &Config{},
-			opts:         []Option{WithFolderFilter(nil, []string{"Trash", "Junk"}), WithDateFilter(time.Time{}, before), WithFilteredDeletionReconciliation(true)},
-			wantFiltered: true,
+			name: "before filter",
+			cfg:  &Config{},
+			opts: []Option{WithSavedFolderExclusions([]string{"Trash", "Junk"}), WithDateFilter(time.Time{}, before)},
 		},
 	}
 
@@ -630,12 +622,6 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 			})
 			require.True(ok, "IMAP client must report label snapshot completeness")
 			assert.Equal(tt.wantComplete, completeness.LabelsSnapshotComplete())
-
-			filtering, ok := any(client).(interface {
-				LabelsSnapshotFiltered() bool
-			})
-			require.True(ok, "IMAP client must report explicit snapshot filters")
-			assert.Equal(tt.wantFiltered, filtering.LabelsSnapshotFiltered())
 		})
 	}
 }

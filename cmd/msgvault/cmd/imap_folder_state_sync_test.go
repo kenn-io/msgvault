@@ -29,26 +29,21 @@ func TestIMAPSyncFolderFilter(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
 	require.NoError(t, err)
+	cfg := &config.Config{Sync: config.SyncConfig{IMAPSkipFolders: map[string][]string{identifier: {" trash "}}}}
 	for _, tc := range []struct {
-		name, account    string
-		folders, skip    []string
-		want             []string
-		wantReconciles   bool
-		reconcileAccount string
+		name, account  string
+		folders, skip  []string
+		want           []string
+		wantReconciles bool
 	}{
-		{"saved", identifier, nil, nil, []string{"INBOX|1", "Archive|1", "Junk|1"}, true, identifier},
-		{"blank include keeps saved", identifier, []string{" \t "}, nil, []string{"INBOX|1", "Archive|1", "Junk|1"}, true, identifier},
-		{"blank exclude keeps saved", identifier, nil, []string{" \t "}, []string{"INBOX|1", "Archive|1", "Junk|1"}, true, identifier},
-		{"folder flag", identifier, []string{"Trash"}, nil, []string{"Trash|1"}, false, identifier},
-		{"skip-folder flag", identifier, nil, []string{"Junk"}, []string{"INBOX|1", "Trash|1", "Archive|1"}, false, identifier},
-		{"other account", "imap://other@example.com", nil, nil, []string{"INBOX|1", "Trash|1", "Archive|1", "Junk|1"}, false, identifier},
-		{"other account opt-in", identifier, nil, nil, []string{"INBOX|1", "Archive|1", "Junk|1"}, false, "user@example.com"},
+		{"saved", identifier, nil, nil, []string{"INBOX|1", "Archive|1", "Junk|1"}, true},
+		{"blank include keeps saved", identifier, []string{" \t "}, nil, []string{"INBOX|1", "Archive|1", "Junk|1"}, true},
+		{"blank exclude keeps saved", identifier, nil, []string{" \t "}, []string{"INBOX|1", "Archive|1", "Junk|1"}, true},
+		{"folder flag", identifier, []string{"Trash"}, nil, []string{"Trash|1"}, false},
+		{"skip-folder flag", identifier, nil, []string{"Trash"}, []string{"INBOX|1", "Archive|1", "Junk|1"}, false},
+		{"other account", "imap://other@example.com", nil, nil, []string{"INBOX|1", "Trash|1", "Archive|1", "Junk|1"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{Sync: config.SyncConfig{
-				IMAPSkipFolders:                map[string][]string{identifier: {" trash "}},
-				IMAPReconcileFilteredDeletions: map[string]bool{tc.reconcileAccount: true},
-			}}
 			filter := imapSyncFolderFilter(t.Context(), st, tc.account, testInvocationWithConfig(cfg), tc.folders, tc.skip)
 			client := listedIMAPClient(t, addr, filter)
 			assert.Equal(t, tc.wantReconciles, client.ReconcilesFilteredDeletions())
@@ -829,18 +824,18 @@ func TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount(t *testing.
 
 func TestRunScheduledIMAPSync_FilteredDeletionReconciliation(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Trash": 0})
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Trash": 0, "Archive": 0})
 	st, src, cfg, ctx := scheduledIMAPSyncFixture(t, addr)
-	cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
-	sync := func(reconcile bool) {
+	sync := func(skip ...string) {
 		t.Helper()
-		cfg.Sync.IMAPReconcileFilteredDeletions = map[string]bool{src.Identifier: reconcile}
+		cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: skip}
 		summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
 		require.NoError(err)
 		require.Zero(summary.Errors)
 	}
-	// Filtered syncs before opting in archive mail without memberships.
-	sync(false)
+	// Skipping a folder other than Trash or Junk pauses deletion tracking,
+	// so these syncs archive mail without memberships.
+	sync("Trash", "Archive")
 	require.Zero(imapMembershipRowCount(t, st, src.ID))
 	mover, err := imapclient.DialInsecure(addr, nil)
 	require.NoError(err)
@@ -852,15 +847,16 @@ func TestRunScheduledIMAPSync_FilteredDeletionReconciliation(t *testing.T) {
 	require.NoError(err)
 	require.NoError(mover.Close())
 
-	sync(true)
+	// Skipping only Trash reconciles deletions in the scanned folders.
+	sync("Trash")
 	assert.Equal(1, imapTombstonedMessageCount(t, st, src.ID))
 	assert.Equal(1, imapMembershipRowCount(t, st, src.ID))
 
-	// An incremental opted-in sync catches an expunged import that never got a membership.
+	// An incremental reconciling sync catches an expunged import that never got a membership.
 	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", "late@example.com")
-	sync(false)
+	sync("Trash", "Archive")
 	testutil.ExpungeIMAPMessage(t, addr, "INBOX", 3)
-	sync(true)
+	sync("Trash")
 	assert.Equal(2, imapTombstonedMessageCount(t, st, src.ID))
 	assert.Equal(1, imapMembershipRowCount(t, st, src.ID))
 }
@@ -875,7 +871,6 @@ func TestRunScheduledIMAPSync_FilteredSentRefreshesRetainedDraft(t *testing.T) {
 		})
 	st, src, cfg, ctx := scheduledIMAPSyncFixture(t, addr)
 	cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
-	cfg.Sync.IMAPReconcileFilteredDeletions = map[string]bool{src.Identifier: true}
 	sync := func() *gmail.SyncSummary {
 		t.Helper()
 		summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))

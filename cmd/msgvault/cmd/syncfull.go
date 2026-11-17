@@ -756,30 +756,25 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 func imapSyncFolderFilter(ctx context.Context, s *store.Store, identifier string, state *invocation, folders, skipFolders []string) imaplib.Option {
 	folders = parseFolderFilter(folders)
 	skipFolders = parseFolderFilter(skipFolders)
+	if len(folders) > 0 || len(skipFolders) > 0 {
+		return imaplib.WithFolderFilter(folders, skipFolders)
+	}
 	cfg := state.cfg
-	reconcileFilteredDeletions := false
-	if len(folders) == 0 && len(skipFolders) == 0 {
-		reconcileFilteredDeletions = cfg.Sync.IMAPReconcileFilteredDeletions[identifier]
-		if len(cfg.Sync.IMAPSkipFolders) > 0 {
-			state.imapFolderAccounts.Do(func() {
-				sources, err := s.ListSourcesContext(ctx, sourceTypeIMAP)
-				if err != nil {
-					state.logger.Warn("could not check IMAP folder exclusion accounts", "error", err)
-					return
+	if len(cfg.Sync.IMAPSkipFolders) > 0 {
+		state.imapFolderAccounts.Do(func() {
+			sources, err := s.ListSourcesContext(ctx, sourceTypeIMAP)
+			if err != nil {
+				state.logger.Warn("could not check IMAP folder exclusion accounts", "error", err)
+				return
+			}
+			for account := range cfg.Sync.IMAPSkipFolders {
+				if !slices.ContainsFunc(sources, func(src *store.Source) bool { return src.Identifier == account }) {
+					state.logger.Warn("IMAP folder exclusions match no stored account; copy the ACCOUNT identifier from msgvault list-accounts", "account", account)
 				}
-				for account := range cfg.Sync.IMAPSkipFolders {
-					if !slices.ContainsFunc(sources, func(src *store.Source) bool { return src.Identifier == account }) {
-						state.logger.Warn("IMAP folder exclusions match no stored account; copy the ACCOUNT identifier from msgvault list-accounts", "account", account)
-					}
-				}
-			})
-		}
-		skipFolders = parseFolderFilter(cfg.Sync.IMAPSkipFolders[identifier])
+			}
+		})
 	}
-	return func(c *imaplib.Client) {
-		imaplib.WithFolderFilter(folders, skipFolders)(c)
-		imaplib.WithFilteredDeletionReconciliation(reconcileFilteredDeletions)(c)
-	}
+	return imaplib.WithSavedFolderExclusions(parseFolderFilter(cfg.Sync.IMAPSkipFolders[identifier]))
 }
 
 // parseFolderFilter trims whitespace from folder names and removes empty

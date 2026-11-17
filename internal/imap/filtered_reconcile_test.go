@@ -17,7 +17,7 @@ func TestFilteredReconciliation_MultipleAdvertisedTrashMailboxes(t *testing.T) {
 				map[string]int{"INBOX": 1, "Discarded A": 0, "Discarded B": 0},
 				map[string][]imapv2.MailboxAttr{"Discarded A": {role}, "Discarded B": {role}},
 			)
-			opts := []Option{WithFolderFilter(nil, []string{"Discarded A", "Discarded B"}), WithFilteredDeletionReconciliation(true)}
+			opts := []Option{WithSavedFolderExclusions([]string{"Discarded A", "Discarded B"})}
 			testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
 			client := newTestClient(t, addr, opts...)
 			require.Empty(listAllMessages(t, client))
@@ -53,7 +53,7 @@ func TestFilteredReconciliation_CompleteSelectedMailboxes(t *testing.T) {
 				if all != "" {
 					testutil.AppendIMAPMessageWithMessageID(t, user, all, "overlap@example.com")
 				}
-				first := newTestClient(t, addr, WithFolderFilter(nil, skipped), WithFilteredDeletionReconciliation(true))
+				first := newTestClient(t, addr, WithSavedFolderExclusions(skipped))
 				ids := listAllMessages(t, first)
 				require.NotEmpty(ids)
 				if all != "" && excludeAll {
@@ -90,7 +90,7 @@ func TestFilteredReconciliation_IncompleteMailboxSuppressesSnapshot(t *testing.T
 			case "fetch":
 				addr, _ = testutil.StartIMAPMemServerOmittingUIDFromEveryFetch(t, counts, "Archive", 1)
 			}
-			client := newTestClient(t, addr, WithFolderFilter(nil, []string{"Trash"}), WithFilteredDeletionReconciliation(true))
+			client := newTestClient(t, addr, WithSavedFolderExclusions([]string{"Trash"}))
 			listAllMessages(t, client)
 			assert.Nil(t, client.ObservedMailboxDeltas())
 			assert.Nil(t, client.ObservedFolderStates())

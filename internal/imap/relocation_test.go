@@ -115,10 +115,10 @@ func TestRelocationScopedPlanPreservesSkippedCanonical(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	loaded := false
 	c := &Client{config: &Config{}, labelMapComplete: true,
-		reconcileFilteredDeletions: true,
-		folderFilterExclude:        []string{"Trash"},
-		mailboxCache:               []string{"INBOX", "Sent", "Trash"},
-		trashMailbox:               "Trash",
+		savedFolderExclusions: true,
+		folderFilterExclude:   []string{"Trash"},
+		mailboxCache:          []string{"INBOX", "Sent", "Trash"},
+		trashMailbox:          "Trash",
 		priorFolderStates: map[string]FolderState{
 			"Trash": {UIDValidity: 77, KnownUIDs: []uint32{1}},
 			"INBOX": {UIDValidity: 78, KnownUIDs: []uint32{2}},

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-05"
+last_edited: "2026-11-17"
 title: IMAP Sync and Repair
 description: Archive IMAP mail efficiently, choose folders, and repair stored labels.
 ---
@@ -190,19 +190,21 @@ A folder filter limits which remote IMAP folders msgvault scans during that
 run. It does not delete messages from the server or remove messages already in
 the local archive.
 
-An email can appear in more than one IMAP folder. By default, a filtered scan
-keeps the stable identity and folder labels learned by earlier, broader scans
-while adding information from selected folders. It preserves saved membership,
-source-deletion markers and folder cursors. Saved exclusions therefore pause
-deletion tracking even in folders still being scanned. Messages previously
-marked present remain ineligible for `gc` until a complete sync resumes tracking
-or you opt in below.
+An email can appear in more than one IMAP folder. A filtered scan keeps the
+stable identity and folder labels learned by earlier, broader scans while adding
+information from the selected folders.
 
-To track deletions in scanned folders, saved exclusions must skip only the
-account's Trash or Junk mailboxes, and no `folders` allow list can be set. Other
-exclusions or an allow list keep the default behavior. See
-[`imap_reconcile_filtered_deletions`](../configuration.md#sync) for
-setup, membership rules, and the effects on `gc`.
+When the account's saved exclusions skip only Trash or Junk, msgvault still
+tracks deletions in the folders it scans. A message moved into a skipped Trash
+is marked deleted once no stored folder membership remains, and `gc` can purge
+it.
+
+Any other filter pauses deletion tracking for that run: saved exclusions of
+other folders, a `folders` allow list, `--folder`, `--skip-folder`, or a date
+filter. These runs keep saved memberships, source-deletion markers, and folder
+cursors. Messages previously marked present stay ineligible for `gc` until a
+run that tracks deletions. See [`imap_skip_folders`](../configuration.md#sync)
+for the exact rules.
 
 Folder filtering works the same whether the CLI uses a local daemon or a
 configured remote msgvault server.

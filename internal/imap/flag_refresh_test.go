@@ -112,7 +112,7 @@ func TestListMessages_RefreshesFlagChangeWithoutModSeq(t *testing.T) {
 func TestListMessages_RefreshesFlagsWithFilteredDeletionReconciliation(t *testing.T) {
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1})
 	testutil.SetIMAPFlags(t, addr, "INBOX", 1, imapv2.FlagDraft)
-	opts := []Option{WithFolderFilter(nil, []string{"Trash"}), WithFilteredDeletionReconciliation(true)}
+	opts := []Option{WithSavedFolderExclusions([]string{"Trash"})}
 	first := newTestClient(t, addr, opts...)
 	listAllMessages(t, first)
 	require.True(t, first.ReconcilesFilteredDeletions())
