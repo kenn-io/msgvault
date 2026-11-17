@@ -279,7 +279,7 @@ func (f *replayedLabelHistoryTransport) RoundTrip(r *http.Request) (*http.Respon
 		if event.id <= start {
 			continue
 		}
-		record := map[string]any{"id": fmt.Sprint(event.id)}
+		record := map[string]any{"id": strconv.FormatUint(event.id, 10)}
 		for field, labels := range map[string][]string{"labelsAdded": event.add, "labelsRemoved": event.remove} {
 			if len(labels) > 0 {
 				record[field] = []any{map[string]any{"message": map[string]string{"id": "normal1"}, "labelIds": labels}}
@@ -287,7 +287,7 @@ func (f *replayedLabelHistoryTransport) RoundTrip(r *http.Request) (*http.Respon
 		}
 		events = append(events, record)
 	}
-	return gmailJSONResponse(r, http.StatusOK, map[string]any{"historyId": fmt.Sprint(f.history), "history": events})
+	return gmailJSONResponse(r, http.StatusOK, map[string]any{"historyId": strconv.FormatUint(f.history, 10), "history": events})
 }
 
 func TestGmailLabelSnapshotConvergesAfterOlderHistoryReplay(t *testing.T) {
