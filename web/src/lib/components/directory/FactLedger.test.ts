@@ -140,7 +140,7 @@ describe('FactLedger', () => {
 
     await fireEvent.click(screen.getByRole('radio', { name: 'Evidence' }));
     expect(screen.getByLabelText('Fact evidence')).toBeDefined();
-    expect(screen.getByText('From a message')).toBeDefined();
+    expect(screen.getByText('From a message or meeting')).toBeDefined();
     expect(screen.getByText('Source deleted')).toBeDefined();
     expect(rendered.container.innerHTML).not.toContain('allowed evidence excerpt');
     expect(rendered.container.innerHTML).not.toContain('forbidden-evidence-key');
@@ -337,16 +337,17 @@ describe('FactLedger', () => {
     render(FactLedger, { controller: value, entity });
     const comparison = screen.getByRole('region', { name: 'Selected saved value' });
     expect(comparison.textContent?.includes('Engineer at Synthetic Org')).toBe(state !== 'none');
-    expect(comparison.textContent).not.toContain('Former role');
+    if (current) expect(comparison.textContent).toContain('Former role');
     if (state === 'none') expect(comparison.textContent).toContain('Work: No saved value');
     await fireEvent.click(screen.getByRole('radio', { name: 'Pins' }));
     const saved = screen.getByRole('region', { name: 'Saved employment' });
     expect(saved.textContent?.includes('Engineer at Synthetic Org')).toBe(state !== 'none');
-    expect(saved.textContent).not.toContain('Former role');
+    if (current) expect(saved.textContent).toContain('Former role');
     if (state === 'none') expect(saved.textContent).toContain('No saved value');
     if (current) {
       expect(saved.textContent).toContain('Pinned · From CardDAV contacts');
-      await fireEvent.click(within(saved).getByRole('button', { name: 'Details' }));
+      const currentJob = within(saved).getByText('Engineer at Synthetic Org').closest('.detail-item') as HTMLElement;
+      await fireEvent.click(within(currentJob).getByRole('button', { name: 'Details' }));
       expect(within(saved).getByText('card-3')).toBeDefined();
     }
     entity.destroy();

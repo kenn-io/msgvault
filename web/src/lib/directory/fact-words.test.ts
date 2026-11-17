@@ -5,7 +5,7 @@ describe('fact words', () => {
   it('names evidence sources in words', () => {
     expect(evidenceSourceWords('unknown', 'direct-self')).toBe('');
     expect(evidenceSourceWords('archive', 'direct-self')).toBe('From a message they sent');
-    expect(evidenceSourceWords('archive', 'direct-other')).toBe('From a message');
+    expect(evidenceSourceWords('archive', 'direct-other')).toBe('From a message or meeting');
     expect(evidenceSourceWords('archive', 'indirect')).toBe('Inferred from your messages');
     expect(evidenceSourceWords('public', 'indirect')).toBe('From a public page');
     expect(evidenceSourceWords('provider_assertion', 'indirect')).toBe('From a lookup');

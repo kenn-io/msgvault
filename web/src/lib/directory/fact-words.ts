@@ -1,7 +1,7 @@
 /** Archive evidence by how directly it speaks about the person. */
 const ARCHIVE_SOURCE: Record<string, string> = {
   'direct-self': 'From a message they sent',
-  'direct-other': 'From a message',
+  'direct-other': 'From a message or meeting',
   indirect: 'Inferred from your messages',
 };
 const OTHER_SOURCE: Record<string, string> = {
