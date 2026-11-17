@@ -485,7 +485,6 @@ type OutcomeFacts struct {
 	HasCurrent       bool
 	MatchesCurrent   bool
 	CloseCompetition bool
-	Duplicate        bool
 	BlockedRemoval   bool
 }
 
@@ -516,7 +515,7 @@ func DecisionOutcomeFor(f OutcomeFacts) (DecisionOutcome, bool) {
 	if f.CloseCompetition {
 		return OutcomeTooCloseToChoose, true
 	}
-	if f.HasCurrent && !f.Duplicate && d.CompetingClaimKey == "" && (d.Action == DecisionRetained || d.Action == DecisionConflictRejected) && ((!f.MatchesCurrent && d.Reason == ReasonInsufficientMargin) || f.BlockedRemoval) {
+	if f.HasCurrent && d.CompetingClaimKey == "" && (d.Action == DecisionRetained || d.Action == DecisionConflictRejected) && ((!f.MatchesCurrent && d.Reason == ReasonInsufficientMargin) || f.BlockedRemoval) {
 		return OutcomeCurrentValueKept, true
 	}
 	return OutcomeNotUsed, true
