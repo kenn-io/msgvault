@@ -23,6 +23,7 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"filterMessages": agentgrant.PermissionSearchRead, "listMessages": agentgrant.PermissionSearchRead,
 	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
 	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
+	"listCalendarEvents":  agentgrant.PermissionCalendarEventRead,
 	"getCLIMessageThread": agentgrant.PermissionMessageRead,
 	"getMeetingRecord":    agentgrant.PermissionMessageRead,
 	"suggestMeetingLinks": agentgrant.PermissionMessageRead,

@@ -14,6 +14,7 @@ All notable changes to msgvault, grouped by release.
 - MCP clients can list and read msgvault's bundled guides with `msgvault.skills`: the MCP quickstart as `workflow` and every [agent skill](guides/agent-skills.md#skills-and-the-mcp-server). Delegated sessions can use it too.
 
 - Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose.
+- MCP assistants and agent API clients can list archived calendar occurrences from sources granted `calendar.event.read`.
 
 - Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.
   With `--allow-curated-writes` and explicit client confirmation, it can apply

@@ -113,7 +113,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 				assert.Contains(names, "list_saved_views")
 				assert.Contains(names, "get_person_merge_context")
 				for _, name := range names {
-					assert.False(strings.HasPrefix(name, "calendar_") || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || (strings.Contains(name, "meeting") && name != "get_meeting_record" && name != "suggest_meeting_links" && name != "link_meeting" && name != "unlink_meeting" && name != "reset_meeting_link") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
+					assert.False(strings.HasPrefix(name, "calendar_") || name == "list_calendar_events" || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || (strings.Contains(name, "meeting") && name != "get_meeting_record" && name != "suggest_meeting_links" && name != "link_meeting" && name != "unlink_meeting" && name != "reset_meeting_link") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
 				}
 			}
 		})
@@ -296,7 +296,7 @@ func TestMCPArchiveCatalogBudgets(t *testing.T) {
 		budget int
 	}{
 		{"mail only", []string{"mbox"}, 217_706},
-		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 270_356},
+		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 272_409},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -380,6 +380,33 @@ func TestMCPArchiveLocalChatDrafts(t *testing.T) {
 			require.True(ok)
 			assert.Equal("local chat draft", result["body"])
 			assert.Equal(output["draft_id"], result["draft_id"])
+		})
+	}
+}
+
+func TestMCPDaemonArchivedCalendarVersionGate(t *testing.T) {
+	for _, tc := range []struct {
+		version   string
+		available bool
+	}{{"3.34.0", false}, {"4.1.0", true}} {
+		t.Run(tc.version, func(t *testing.T) {
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_, _ = io.WriteString(w, `{"status":"ok","api_schema_version":"`+tc.version+`"}`)
+				case "/api/v1/sources/status":
+					_, _ = io.WriteString(w, `{"sources":[{"source_type":"gcal"}]}`)
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			listed := archiveMCPCatalog(t, daemonMCPServeOptions(t.Context(), client, nil))
+			names := make([]string, 0, len(listed.Tools))
+			for _, tool := range listed.Tools {
+				names = append(names, tool.Name)
+			}
+			assert.Equal(t, tc.available, slices.Contains(names, "list_calendar_events"))
 		})
 	}
 }

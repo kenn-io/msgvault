@@ -130,8 +130,8 @@ The daemon requires an enabled source, explicit `write_calendars`, event-write
 OAuth consent, and a live `owner` or `writer` accessRole. Guest changes also need
 `invite_calendars`. Delegated grants match the exact `gcal` source identifier
 `account-email/calendar-id`: `calendar.read` for availability,
-`calendar.event.read` for provider-derived event details in delegated plans and
-write receipts, `calendar.write` for changes, and additional `calendar.invite`
+`calendar.event.read` for archived event listing and provider-derived event details in
+delegated plans and write receipts, `calendar.write` for changes, and additional `calendar.invite`
 for guest changes. The authenticated account is never substituted for a requested
 non-primary calendar. Availability with `calendar_ids` authorizes each listed
 calendar and ignores `calendar_id`.
@@ -172,7 +172,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.14.0**.
+it is separate from the binary release version. The current schema is **5.15.0**.
+
+Schema 5.15.0 lets agents with `calendar.event.read` list archived calendar occurrences from their granted sources through the API and MCP. Event subjects containing verification codes are masked without `verification.read`.
 
 Schema 5.14.0 adds each fact decision's submitted claim value.
 

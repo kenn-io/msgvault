@@ -13,6 +13,8 @@ func (f *ArchiveFamilies) allows(name string) bool {
 		return true
 	}
 	switch {
+	case name == ToolListCalendarEvents:
+		return f.Calendar
 	case strings.HasPrefix(name, "calendar_"):
 		return f.Calendar
 	case strings.HasPrefix(name, "draft_"):

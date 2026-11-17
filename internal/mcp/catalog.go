@@ -65,6 +65,7 @@ type catalogCapabilities struct {
 	identityReview     bool
 	personCardDAV      bool
 	messageTags        bool
+	calEvents          bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -159,6 +160,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		identityReview:     opts.IdentityReview != nil,
 		personCardDAV:      opts.PersonCardDAV != nil,
 		messageTags:        opts.MessageTags != nil,
+		calEvents:          opts.CalEvents != nil,
 	}
 }
 
@@ -241,6 +243,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 
 func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 	definitions := []toolDefinition{
+		listCalendarEventsDefinition(),
 		aggregateDefinition(nil),
 		createSavedViewDefinition(nil),
 		deleteSavedViewDefinition(nil),
