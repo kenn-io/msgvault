@@ -41,6 +41,9 @@ describe('Add to task', () => {
       expect(screen.getByRole('radiogroup', { name: 'Issue' })).toBeTruthy();
       expect(screen.queryByText('Issue')).toEqual(email ? expect.anything() : null);
       expect(await screen.findByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Follow up');
+      const quote = await screen.findByRole('region', { name: 'Quoted passage' });
+      const issueMode = screen.getByRole('radiogroup', { name: 'Issue' });
+      expect(quote.compareDocumentPosition(issueMode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', `${location.origin}/messages/42`);
     } finally { view?.unmount(); readiness.dispose(); }
   });

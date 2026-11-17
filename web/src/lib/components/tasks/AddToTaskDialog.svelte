@@ -20,7 +20,6 @@
   let busy = $state(false);
   let taskAction = $state('create');
   let taskReady = $state(false);
-  let kataMode = $state<'create' | 'link'>('create');
   const options = $derived([
     ...(email ? [{ value: 'tasks', label: 'Tasks' }] : []),
     ...(kata?.ready ? [{ value: 'kata', label: 'Kata' }] : []),
@@ -36,8 +35,6 @@
         {/if}
         {#if provider === 'tasks' && taskReady}
           <SegmentedControl variant="borderless" disabled={busy} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={taskAction} onchange={(value) => taskAction = value} />
-        {:else if provider === 'kata'}
-          <div class="issue-mode">{#if email}<span>Issue</span>{/if}<SegmentedControl variant="borderless" ariaLabel="Issue" options={[{ value: 'create', label: 'New' }, { value: 'link', label: 'Existing' }]} value={kataMode} disabled={kataBusy} onchange={(value) => kataMode = value === 'link' ? 'link' : 'create'} /></div>
         {/if}
       </div>
     {/if}
@@ -45,7 +42,7 @@
       <TaskLinks {client} {messageId} {title} {onsettings} mode="add" hideActionControl bind:action={taskAction} bind:actionReady={taskReady} bind:busy oncancel={onclose} oncomplete={onclose} />
     </div>{/if}
     {#if kataInitialized && (email || kata?.ready)}<div hidden={provider !== 'kata'}>
-      <KataEvidenceDialog {client} selector={{ kind: 'message', message_id: messageId, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={title} defaultBrief={`${location.origin}/messages/${messageId}`} modeLabel={email} hideModeControl bind:mode={kataMode} bind:busy={kataBusy} bind:receipt={kataReceipt} {onclose} />
+      <KataEvidenceDialog {client} selector={{ kind: 'message', message_id: messageId, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={title} defaultBrief={`${location.origin}/messages/${messageId}`} modeLabel={email} bind:busy={kataBusy} bind:receipt={kataReceipt} {onclose} />
     </div>{/if}
   </div>
 </Dialog>
@@ -53,6 +50,5 @@
 <style>
   .task-dialog { display: grid; min-width: 0; gap: var(--space-6); }
   .toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-4); }
-  .provider, .issue-mode { display: flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
-  @media (max-width: 640px) { .toolbar > .issue-mode { flex-basis: 100%; } }
+  .provider { display: flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
 </style>

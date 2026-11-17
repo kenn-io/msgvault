@@ -10,7 +10,7 @@
   import { errorMessage } from '../../api/session.svelte';
   import { EVIDENCE_STEP, EVIDENCE_WINDOW, retryKey, type EvidenceSelector, type PreparedEvidence } from '../../kata/evidence';
 
-  let { client, selector, defaultTitle = '', defaultBrief = '', modeLabel = true, hideModeControl = false, mode = $bindable('create'), onclose = () => undefined, busy = $bindable(false), receipt = $bindable(undefined) }: {
+  let { client, selector, defaultTitle = '', defaultBrief = '', modeLabel = true, onclose = () => undefined, busy = $bindable(false), receipt = $bindable(undefined) }: {
     client: APIClient;
     busy?: boolean;
     receipt?: KataIssueReceipt;
@@ -18,12 +18,11 @@
     defaultTitle?: string;
     defaultBrief?: string;
     modeLabel?: boolean;
-    hideModeControl?: boolean;
-    mode?: 'create' | 'link';
     onclose?: () => void;
   } = $props();
 
   const kata = kataReadiness();
+  let mode = $state<'create' | 'link'>('create');
   // The dialog is mounted per source, so props seed its editable state once.
   let title = $state(untrack(() => defaultTitle));
   let brief = $state(untrack(() => defaultBrief));
@@ -171,7 +170,7 @@
           {/if}
         </section>
         {#snippet issueMode()}<SegmentedControl variant="borderless" ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} />{/snippet}
-        {#if !hideModeControl}{#if modeLabel}<div class="issue-mode"><span>Issue</span>{@render issueMode()}</div>{:else}{@render issueMode()}{/if}{/if}
+        {#if modeLabel}<div class="issue-mode"><span>Issue</span>{@render issueMode()}</div>{:else}{@render issueMode()}{/if}
         {#if mode === 'create'}
           <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>
           <label>Description<textarea aria-label="Description" bind:value={brief} disabled={busy} rows="3" maxlength="2000"></textarea></label>
