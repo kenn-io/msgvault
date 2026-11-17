@@ -314,6 +314,13 @@ func CopySubsetWithOptions(
 			return nil, fmt.Errorf("initialize copied subset inference review: %w", err)
 		}
 	}
+	if options.IncludeProfiles {
+		if err := normalized.backfillCardDAVInferenceExportStateV2(ctx); err != nil {
+			_ = normalized.Close()
+			cleanup()
+			return nil, fmt.Errorf("initialize copied subset contact inference review: %w", err)
+		}
+	}
 	if err := normalized.Close(); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("close reconciled subset database: %w", err)

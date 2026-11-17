@@ -14,6 +14,7 @@ func TestCopySubsetPreservesInferenceDebtWithoutApproval(t *testing.T) {
 		options     CopySubsetOptions
 		legacy      string
 		employment  bool
+		contact     bool
 		historical  bool
 		manual      bool
 		nonportable bool
@@ -26,6 +27,8 @@ func TestCopySubsetPreservesInferenceDebtWithoutApproval(t *testing.T) {
 		{name: "legacy attributes without state", options: CopySubsetOptions{IncludeAttributes: true}, legacy: "row", want: 1},
 		{name: "approved employment", options: CopySubsetOptions{IncludeProfiles: true}, employment: true, revision: 6, want: 6},
 		{name: "legacy employment", options: CopySubsetOptions{IncludeProfiles: true}, employment: true, legacy: "table", want: 1},
+		{name: "approved contact", options: CopySubsetOptions{IncludeProfiles: true}, contact: true, revision: 9, want: 10},
+		{name: "legacy contact without state", options: CopySubsetOptions{IncludeProfiles: true}, contact: true, legacy: "row", want: 1},
 		{name: "manual profiles", options: CopySubsetOptions{IncludeProfiles: true, IncludeAttributes: true}, employment: true, manual: true},
 		{name: "nonportable inferred attribute", options: CopySubsetOptions{IncludeAttributes: true}, nonportable: true},
 		{name: "identity only", revision: 9},
@@ -60,6 +63,13 @@ func TestCopySubsetPreservesInferenceDebtWithoutApproval(t *testing.T) {
 				org, err := source.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Example Org"})
 				require.NoError(err)
 				_, err = source.AddEmploymentContext(t.Context(), EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Title: new("Engineer"), Source: provenance})
+				require.NoError(err)
+			}
+			if test.contact {
+				_, err := source.AddPersonContactPointContext(t.Context(), person.ID, PersonContactPointInput{
+					AddressKind: ContactAddressEmail, OriginalValue: "contact@example.test",
+					Envelope: ValueEnvelopeInput{Source: ProvenanceExtraction},
+				})
 				require.NoError(err)
 			}
 			if test.revision > 0 {

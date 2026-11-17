@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 type PersonNameKind string
@@ -50,6 +52,76 @@ type PersonName struct {
 	OriginalValue     string         `json:"original_value"`
 }
 
+// PersonNameVCardProjection contains the name values and parameters rendered
+// from a stored name. CardDAV inference review uses the same projection.
+type PersonNameVCardProjection struct {
+	Property       string   `json:"property"`
+	Value          string   `json:"value"`
+	Language       *string  `json:"language"`
+	Script         *string  `json:"script"`
+	PhoneticSystem *string  `json:"phonetic_system"`
+	SortAs         []string `json:"sort_as"`
+}
+
+// VCardValue returns the property name and escaped value, or empty strings when
+// the name cannot render. Projection and inference review use the same rules.
+func (n PersonName) VCardValue() (propertyName, rawValue string) {
+	switch n.NameKind {
+	case PersonNameFormatted:
+		if n.Formatted != nil && strings.TrimSpace(*n.Formatted) != "" {
+			return "FN", vcard.EscapeText(*n.Formatted)
+		}
+	case PersonNameStructured, PersonNamePhonetic:
+		components := []string{
+			derefString(n.FamilyName), derefString(n.GivenName), derefString(n.AdditionalNames),
+			derefString(n.HonorificPrefixes), derefString(n.HonorificSuffixes),
+			derefString(n.SecondarySurname), derefString(n.Generation),
+		}
+		for _, component := range components {
+			if strings.TrimSpace(component) != "" {
+				return "N", vcard.JoinStructuredText(components)
+			}
+		}
+	case PersonNameNickname:
+		value := n.OriginalValue
+		if n.Formatted != nil && strings.TrimSpace(*n.Formatted) != "" {
+			value = *n.Formatted
+		}
+		if strings.TrimSpace(value) != "" {
+			// Each row is one nickname, including any literal commas.
+			return "NICKNAME", vcard.EscapeText(value)
+		}
+	case PersonNameSort:
+		return "", ""
+	}
+	return "", ""
+}
+
+func (n PersonName) VCardProjection() (PersonNameVCardProjection, bool) {
+	property, value := n.VCardValue()
+	if property == "" {
+		return PersonNameVCardProjection{}, false
+	}
+	script := n.Script
+	if n.NameKind == PersonNamePhonetic && vcardProjectionParameterValue(n.PhoneticScript) != nil {
+		script = n.PhoneticScript
+	}
+	var sortAs []string
+	if value := vcardProjectionParameterValue(n.SortAs); value != nil {
+		sortAs = strings.Split(*value, ",")
+		for index := range sortAs {
+			sortAs[index] = strings.TrimSpace(sortAs[index])
+		}
+	}
+	return PersonNameVCardProjection{
+		Property: property, Value: value,
+		Language:       vcardProjectionParameterValue(n.Language),
+		Script:         vcardProjectionParameterValue(script),
+		PhoneticSystem: vcardProjectionParameterValue(n.PhoneticSystem),
+		SortAs:         sortAs,
+	}, true
+}
+
 type PersonNameInput struct {
 	NameKind          PersonNameKind     `json:"name_kind"`
 	Formatted         *string            `json:"formatted,omitzero" nullable:"false"`
@@ -72,6 +144,7 @@ type PersonNameInput struct {
 
 var (
 	ErrInvalidPersonNameKind  = errors.New("invalid person name kind")
+	ErrInvalidPersonNameText  = errors.New("person name contains invalid vCard text")
 	ErrPersonNameValueMissing = errors.New("person name requires at least one non-empty component")
 )
 
@@ -84,9 +157,11 @@ func (s *Store) AddPersonNameContext(ctx context.Context, personID int64, input 
 		if err := ensureProfilePersonTx(ctx, tx, personID); err != nil {
 			return err
 		}
-		var err error
-		result, err = s.addPersonNameTx(ctx, tx, personID, input)
-		if err != nil {
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {
+			var err error
+			result, err = s.addPersonNameTx(ctx, tx, personID, input)
+			return err
+		}); err != nil {
 			return err
 		}
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
@@ -112,7 +187,9 @@ func (s *Store) SupersedePersonNameContext(ctx context.Context, personID, nameID
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		if err := s.supersedePersonNameTx(ctx, tx, personID, nameID, activeUntil); err != nil {
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {
+			return s.supersedePersonNameTx(ctx, tx, personID, nameID, activeUntil)
+		}); err != nil {
 			return err
 		}
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
@@ -127,6 +204,9 @@ func (s *Store) addPersonNameTx(
 ) (*PersonName, error) {
 	if !input.NameKind.Valid() {
 		return nil, ErrInvalidPersonNameKind
+	}
+	if err := validatePersonNameInput(input); err != nil {
+		return nil, err
 	}
 	original := strings.TrimSpace(input.OriginalValue)
 	if original == "" {
@@ -167,6 +247,53 @@ func (s *Store) addPersonNameTx(
 		return nil, fmt.Errorf("add person name: %w", err)
 	}
 	return getPersonNameTx(ctx, tx, personID, id)
+}
+
+func validatePersonNameText(field, value string) error {
+	if strings.ContainsAny(value, "\r\x00") {
+		return fmt.Errorf("%w: %s contains CR or NUL", ErrInvalidPersonNameText, field)
+	}
+	return nil
+}
+
+func validatePersonNameInput(input PersonNameInput) error {
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{
+		{name: "formatted", value: input.Formatted},
+		{name: "family_name", value: input.FamilyName},
+		{name: "given_name", value: input.GivenName},
+		{name: "additional_names", value: input.AdditionalNames},
+		{name: "honorific_prefixes", value: input.HonorificPrefixes},
+		{name: "honorific_suffixes", value: input.HonorificSuffixes},
+		{name: "secondary_surname", value: input.SecondarySurname},
+		{name: "generation", value: input.Generation},
+	} {
+		if field.value != nil {
+			if err := validatePersonNameText(field.name, *field.value); err != nil {
+				return err
+			}
+		}
+	}
+	if err := validatePersonNameText("original_value", input.OriginalValue); err != nil {
+		return err
+	}
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{
+		{name: "language", value: input.Language},
+		{name: "script", value: input.Script},
+		{name: "phonetic_system", value: input.PhoneticSystem},
+		{name: "phonetic_script", value: input.PhoneticScript},
+		{name: "sort_as", value: input.SortAs},
+	} {
+		if field.value != nil && strings.ContainsAny(*field.value, "\r\n\x00") {
+			return fmt.Errorf("%w: %s contains CR, LF, or NUL", ErrInvalidPersonNameText, field.name)
+		}
+	}
+	return nil
 }
 
 func (s *Store) listPersonNamesTx(

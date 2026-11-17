@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-29"
+last_edited: "2026-11-08"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -344,6 +344,12 @@ inferred facts against the last approved export. When they differ, sync skips
 that person, the publication response reports
 `inference_review_required: true`, and a plain publish fails with HTTP 409
 `carddav_inference_review_required`.
+
+Inferred facts include attributes such as Notes, the current employment,
+names, contact points, and postal addresses. Adding, replacing, or removing one,
+including through profile edits, requires a new review. A merge or split that
+moves an inferred fact to another person requires review of that person's card
+too.
 
 To review and approve, preview the card and then publish with its token:
 
