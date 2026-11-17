@@ -131,13 +131,16 @@ func TestMCPRecoveryLeavesConfiguredRemoteFixed(t *testing.T) {
 	cfg := lifecycleTestConfig(t.TempDir())
 	cfg.Server.DaemonAutoStart = new(false)
 	initial := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(initial.Close)
 	cfg.Remote = config.RemoteConfig{URL: initial.URL, AllowInsecure: true}
 	client, info, err := openMCPHTTPStore(withStoreResolverConfig(t, cfg))
 	requirements.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 	assertions.Equal(HTTPStoreConfiguredRemote, info.Kind)
-	initial.Close()
+	// Bind the local daemon while the remote still owns its port. Otherwise the
+	// local fixture can reuse that port and answer the fixed remote URL.
 	publishMCPRecoveryDaemon(t, cfg, 8)
+	initial.Close()
 	_, err = client.GetStats()
 	requirements.Error(err)
 	var unavailable *daemonclient.LocalDaemonUnavailableError
