@@ -34,7 +34,7 @@
   });
 </script>
 
-<section class="task-group" aria-label="Tasks" hidden={!tasksPresent && !loading && !error && !truncated && issues.length === 0}>
+<section class="task-group" aria-label="Tasks" hidden={!tasksPresent && !error && !truncated && issues.length === 0}>
   <h2>Tasks</h2>
   {#if email}
     {#key refresh}<TaskLinks {client} {messageId} {title} {onsettings} {showSetup} mode="list" embedded bind:present={tasksPresent} />{/key}

@@ -9,7 +9,7 @@
     searchIntegrationTasks as generatedSearchIntegrationTasks,
     unlinkMessageTask as generatedUnlinkMessageTask,
   } from '../../api/generated/api/api';
-  import { Button, SegmentedControl } from '@kenn-io/kit-ui';
+  import { Button } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type {
     TaskLinkLookupResponse as GeneratedTaskLinkLookupResponse,
@@ -31,7 +31,6 @@
     present = $bindable(false),
     action = $bindable('create'),
     actionReady = $bindable(false),
-    hideActionControl = false,
     busy = $bindable(false),
     oncomplete = undefined,
     oncancel = undefined,
@@ -46,7 +45,6 @@
     present?: boolean;
     action?: string;
     actionReady?: boolean;
-    hideActionControl?: boolean;
     busy?: boolean;
     oncomplete?: () => void;
     oncancel?: () => void;
@@ -224,16 +222,16 @@
   // Mutations go through the live task service, so a partial reverse index
   // only limits lookup completeness — it does not block create/link/unlink.
   const mutationReady = $derived(integrationState === 'ready' && (indexState === 'ready' || indexState === 'partial'));
+  const degraded = $derived(!mutationReady);
+  const partialIndex = $derived(mutationReady && indexState === 'partial');
+  const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
   $effect(() => {
     if (mode === 'add' && mutationReady && outboundMetadata) creationInitialized = true;
   });
   $effect(() => {
     actionReady = mutationReady;
-    present = loading || (integrationState !== 'authentication_required' && indexState !== 'authentication_required' && tasks.length > 0) || (!complete && (integrationState !== 'disabled' || showSetup)) || !!error;
+    present = !loading && ((integrationState !== 'authentication_required' && indexState !== 'authentication_required' && tasks.length > 0) || (!complete && (integrationState !== 'disabled' || showSetup)) || sessionOnlyIndex || !!error);
   });
-  const degraded = $derived(!mutationReady);
-  const partialIndex = $derived(mutationReady && indexState === 'partial');
-  const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
   const stateMessage = $derived(
     integrationState === 'disabled' ? integrationMessage || 'Task integration is disabled.'
       : integrationState !== 'ready' && integrationState !== 'loading'
@@ -285,7 +283,6 @@
     {/if}
     {/if}
     {#if mutationReady && mode === 'add'}
-      {#if !hideActionControl}<SegmentedControl variant="borderless" disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />{/if}
       {#if action !== 'create'}
       <TaskIssuePicker load={loadTasks} noun="tasks" moreNote="Showing the first 25 tasks. Type to search the rest." empty={`No tasks in ${project} yet.`} disabled={busy} bind:selected />
       {#if error}<InlineNotice message={error} />{/if}
@@ -333,7 +330,6 @@
   .task-links.add { padding: 0; gap: var(--space-6); }
   .create-task:not([hidden]) { margin-top: var(--space-6); }
   .disclosure { color: var(--text-secondary); font-size: 12px; }
-  .task-links.add > :global(.kit-segmented) { justify-self: start; }
   .actions { display: flex; justify-content: flex-end; gap: var(--space-4); }
   h2, p { margin: 0; }
   h2 { font-size: var(--font-size-sm); }

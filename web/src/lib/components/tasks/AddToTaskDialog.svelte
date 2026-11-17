@@ -39,7 +39,7 @@
       </div>
     {/if}
     {#if email}<div hidden={provider !== 'tasks'}>
-      <TaskLinks {client} {messageId} {title} {onsettings} mode="add" hideActionControl bind:action={taskAction} bind:actionReady={taskReady} bind:busy oncancel={onclose} oncomplete={onclose} />
+      <TaskLinks {client} {messageId} {title} {onsettings} mode="add" bind:action={taskAction} bind:actionReady={taskReady} bind:busy oncancel={onclose} oncomplete={onclose} />
     </div>{/if}
     {#if kataInitialized && (email || kata?.ready)}<div hidden={provider !== 'kata'}>
       <KataEvidenceDialog {client} selector={{ kind: 'message', message_id: messageId, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={title} defaultBrief={`${location.origin}/messages/${messageId}`} modeLabel={email} bind:busy={kataBusy} bind:receipt={kataReceipt} {onclose} />

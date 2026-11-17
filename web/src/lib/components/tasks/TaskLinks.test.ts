@@ -73,24 +73,6 @@ describe('TaskLinks', () => {
     await expect(requests[1]!.clone().text()).resolves.toBe(await requests[0]!.clone().text());
   });
 
-  it('preserves a creation draft when switching between New and Existing', async () => {
-    const client = createAPIClient(async input => {
-      const url = (input as Request).url;
-      return Response.json(url.endsWith('/status') ? { state: 'ready', project: 'example' }
-        : url.includes('/tasks/search') ? { tasks: [], truncated: false }
-        : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
-    });
-    render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Follow up' });
-    await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Draft title' } });
-    expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
-    expect(screen.queryByText('Task')).toBeNull();
-    await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
-    expect(screen.getByLabelText('Task title')).toHaveProperty('value', 'Draft title');
-    expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
-  });
-
   it('completes creation without refreshing the closing add surface', async () => {
     const reads: Request[] = [];
     const oncomplete = vi.fn();
@@ -247,7 +229,7 @@ describe('TaskLinks', () => {
     }
   );
 
-  it('shows create and existing-task controls and enables unlink on a partial index', async () => {
+  it('enables create and unlink on a partial index', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
@@ -264,7 +246,6 @@ describe('TaskLinks', () => {
     expect((screen.getByRole('button', { name: 'Unlink Partial task' }) as HTMLButtonElement).disabled).toBe(false);
     await view.rerender({ mode: 'add' });
     expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
-    expect(screen.getByRole('radio', { name: 'Existing' })).toBeDefined();
   });
 
   it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project', 'authentication_required'])(
@@ -360,8 +341,7 @@ describe('TaskLinks', () => {
         archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z'
       } });
     });
-    render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic', oncomplete });
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic', oncomplete });
     expect(await screen.findByRole('radio', { name: 'Synthetic result · task-1' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic result · task-2' }));
     const search = requests.find(request => new URL(request.url).pathname.endsWith('/integrations/tasks/search'))!;
@@ -391,10 +371,9 @@ describe('TaskLinks', () => {
       return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: {} });
     });
     render(TaskLinks, {
-      client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic',
+      client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic',
     });
 
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic result · task-1' }));
     const link = screen.getByRole('button', { name: 'Link task' });
     await fireEvent.click(link);

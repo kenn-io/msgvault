@@ -628,7 +628,7 @@ test('shows the full message time beside a long sender on a phone', async ({ pag
     id: 42, conversation_id: 7, subject: 'Garden plans',
     body: 'Please send the revised budget by Friday.',
     from: 'Mira Example <mira@example.com>', to: ['team@example.com'],
-    sent_at: '2026-07-18T12:00:00Z', message_type: 'email', attachments: []
+    sent_at: `${new Date().getUTCFullYear()}-07-18T12:00:00Z`, message_type: 'email', attachments: []
   };
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: {

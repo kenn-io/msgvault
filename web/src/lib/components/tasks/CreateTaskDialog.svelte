@@ -17,9 +17,9 @@
     sourceType,
     sourceIdentifier,
     sourceMessageId,
-    subject,
-    from,
-    sentAt,
+    subject = '',
+    from = '',
+    sentAt = '',
     oncreated = () => undefined,
     onclose = () => undefined,
   }: {
@@ -48,6 +48,8 @@
   let browserRequestID = createBrowserRequestID();
   let addedAt = $state(new Date().toISOString());
   let lastAttemptFingerprint = $state<string>();
+  const messageURL = $derived(`${location.origin}/messages/${messageId}`);
+  const contextParts = $derived([subject.trim(), from.trim(), sentAt.trim() ? formatShortDate(sentAt) : ''].filter(Boolean));
   const priorityOptions = [
     { value: '', label: 'No priority' },
     { value: 'low', label: 'Low' },
@@ -109,7 +111,7 @@
     const normalizedLabels = parsedLabels();
     return {
       title: title.trim(),
-      description: [description.trim(), `${location.origin}/messages/${messageId}`].filter(Boolean).join('\n\n'),
+      description: [description.trim(), messageURL].filter(Boolean).join('\n\n'),
       ...(priority ? { priority } : {}),
       ...(normalizedLabels.length ? { labels: normalizedLabels } : {}),
     };
@@ -133,7 +135,7 @@
     }}
   >
     <p class="project"><span>Project</span><strong>{project}</strong></p>
-    <Chip uppercase={false}>{subject} · {from} · {formatShortDate(sentAt)}</Chip>
+    <Chip uppercase={false}>{contextParts.join(' · ') || defaultTitle}</Chip>
     <label>Task title<TextInput ariaLabel="Task title" bind:value={title} autocomplete="off" block /></label>
     <label>Description<textarea aria-label="Description" bind:value={description}></textarea></label>
     <label
@@ -157,6 +159,10 @@
     >
     <Disclosure variant="plain">{#snippet summary()}What's sent{/snippet}
       <dl>
+        <div>
+          <dt>Message URL</dt>
+          <dd>{messageURL}</dd>
+        </div>
         <div>
           <dt>Archive UID</dt>
           <dd>{archiveUID}</dd>

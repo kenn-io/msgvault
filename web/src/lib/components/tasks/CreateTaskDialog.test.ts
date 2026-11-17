@@ -26,6 +26,8 @@ describe('CreateTaskDialog', () => {
     }
     expect(screen.getByLabelText('Description')).toHaveProperty('value', '');
     expect(screen.getByText("What's sent")).toBeDefined();
+    await fireEvent.click(screen.getByText("What's sent"));
+    expect(screen.getByText(`${location.origin}/messages/42`).closest('details')).toHaveProperty('open', true);
     expect(screen.getByText('No priority')).toBeDefined();
     expect(screen.getByText(/Bodies and attachments are never sent/i).closest('details')).toBeNull();
     await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Edited' } });
@@ -40,6 +42,24 @@ describe('CreateTaskDialog', () => {
     const body = await requests[0]!.clone().json() as { added_at?: string };
     expect(body.added_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(requests[0]!.headers.get('X-Request-Id')).toBeTruthy();
+  });
+
+  it('omits missing subject and sender from the message chip', () => {
+    render(CreateTaskDialog, {
+      client: createAPIClient(vi.fn()), messageId: 42, project: 'project', defaultTitle: 'Task',
+      archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
+      sourceMessageId: 'source-42', subject: '', from: '', sentAt: '2026-07-18T12:00:00Z'
+    });
+    expect(screen.getByText(/^Jul 18(?:, 2026)?$/)).toBeDefined();
+  });
+
+  it('uses the default title when all message context fields are empty', () => {
+    render(CreateTaskDialog, {
+      client: createAPIClient(vi.fn()), messageId: 42, project: 'project', defaultTitle: 'Fallback title',
+      archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
+      sourceMessageId: 'source-42', subject: '', from: '', sentAt: ''
+    });
+    expect(screen.getByText('Fallback title')).toBeDefined();
   });
 
   it('keeps the request ID and added_at stable across a failed browser retry', async () => {

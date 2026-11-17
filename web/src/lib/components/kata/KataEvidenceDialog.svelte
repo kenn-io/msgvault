@@ -50,9 +50,10 @@
   const actionOptions = [{ value: 'create', label: 'New' }, { value: 'link', label: 'Existing' }];
 
   async function loadIssues(query: string, signal: AbortSignal) {
+    issueTitles = {};
     const response = await listOpenKataIssues(query ? { q: query } : undefined, { ...client, signal });
     if (!response.data) throw new Error(errorMessage(response.error, 'Unable to load issues.'));
-    if (!signal.aborted) issueTitles = { ...issueTitles, ...Object.fromEntries(response.data.issues.map(issue => [issue.qualified_ref, issue.title])) };
+    if (!signal.aborted) issueTitles = Object.fromEntries(response.data.issues.map(issue => [issue.qualified_ref, issue.title]));
     return {
       items: response.data.issues.map(issue => ({ id: issue.qualified_ref, label: issue.title, detail: issue.qualified_ref })),
       truncated: response.data.truncated,

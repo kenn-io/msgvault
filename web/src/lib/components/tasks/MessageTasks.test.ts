@@ -5,6 +5,39 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
+  it('shows the session-only cache notice when no tasks are linked', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'ready', project: 'example' }
+      : { state: 'ready', complete: true, reason: 'cache_persistence_unsupported', tasks: [], outbound_metadata: {} }));
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
+    expect((await screen.findByText('Linked-task index updates are available for this session but are not persisted to disk on this platform.')).closest('section[hidden]')).toBeNull();
+  });
+
+  it('keeps an empty group hidden while task and issue lookups are pending', async () => {
+    let resolveTasks!: (response: Response) => void;
+    let resolveIssues!: (response: Response) => void;
+    const tasks = new Promise<Response>(resolve => { resolveTasks = resolve; });
+    const issues = new Promise<Response>(resolve => { resolveIssues = resolve; });
+    let tasksStarted = false;
+    let issuesStarted = false;
+    const client = createAPIClient(async input => {
+      const url = (input as Request).url;
+      if (url.endsWith('/status')) return Response.json({ state: 'ready' });
+      if (url.includes('/kata/')) { issuesStarted = true; return issues; }
+      tasksStarted = true; return tasks;
+    });
+    const readiness = new KataReadiness(client);
+    await waitFor(() => expect(readiness.ready).toBe(true));
+    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
+    try {
+      await waitFor(() => expect(tasksStarted && issuesStarted).toBe(true));
+      expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
+      resolveTasks(Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: {} }));
+      resolveIssues(Response.json({ issues: [], truncated: false }));
+      await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
+      expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
+    } finally { view.unmount(); readiness.dispose(); }
+  });
   it('groups task and Kata links under one Tasks heading', async () => {
     const client = createAPIClient(async input => {
       const url = (input as Request).url;

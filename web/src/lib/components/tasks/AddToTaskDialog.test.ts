@@ -95,6 +95,10 @@ describe('Add to task', () => {
       });
       await fireEvent.input(await screen.findByRole('textbox', { name: 'Task title' }), { target: { value: 'Revised follow up' } });
       await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Draft notes' } });
+      await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+      await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
+      expect(screen.getByRole('textbox', { name: 'Task title' })).toHaveProperty('value', 'Revised follow up');
+      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', 'Draft notes');
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
       await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
