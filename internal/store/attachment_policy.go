@@ -60,7 +60,7 @@ func (s *Store) ListAttachmentPolicyCandidates(ctx context.Context) ([]Attachmen
 		JOIN messages m ON m.id = a.message_id
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE src.source_type IN ('beeper', 'matrix', 'slack', 'slackdump', 'discord', 'teams', 'twilio', 'chatwoot', 'inline', 'apple_messages')
+		WHERE src.source_type IN ('beeper', 'matrix', 'slack', 'slackdump', 'discord', 'teams', 'twilio', 'bland', 'chatwoot', 'inline', 'apple_messages')
 		  AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
 		  AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = a.id)
 		  AND (COALESCE(a.attachment_state, '') IN (?, '')

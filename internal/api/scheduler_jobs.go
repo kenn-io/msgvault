@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/bland"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/feeds"
@@ -169,6 +170,8 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return "notion-meetings:" + identifier, true
 	case twilio.SourceType:
 		return "twilio:" + identifier, true
+	case bland.SourceType:
+		return "bland:" + identifier, true
 	case twenty.SourceType:
 		return "twenty:" + identifier, true
 	case muesli.SourceType:
