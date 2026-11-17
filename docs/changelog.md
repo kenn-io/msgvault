@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose.
+
 - Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.
   With `--allow-curated-writes` and explicit client confirmation, it can apply
   atomic profile patches. The client is responsible for obtaining user approval.

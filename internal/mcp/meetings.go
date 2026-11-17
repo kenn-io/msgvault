@@ -388,3 +388,40 @@ func meetingDecisionDefinition(name, description string, handler catalogToolHand
 	definition.availability = meetingDecisionsAvailable
 	return definition
 }
+
+type meetingSuggestionBackend interface {
+	SuggestMeetingLinks(ctx context.Context, ref string, limit int) (store.MeetingSuggestionPage, error)
+}
+
+func (h *handlers) suggestMeetingLinks(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ref, _ := req.GetArguments()["ref"].(string)
+	if ref == "" {
+		return toolErrorResult("ref is required"), nil
+	}
+	limit := 0
+	if raw, found := req.GetArguments()["limit"]; found {
+		value, ok := raw.(float64)
+		if !ok || value != math.Trunc(value) || value < 1 || value > 100 {
+			return toolErrorResult("limit must be an integer between 1 and 100"), nil
+		}
+		limit = int(value)
+	}
+	backend, ok := h.meetings.(meetingSuggestionBackend)
+	if !ok {
+		return toolErrorResult("meeting suggestions are unavailable"), nil
+	}
+	page, err := backend.SuggestMeetingLinks(ctx, ref, limit)
+	if err != nil {
+		if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Status >= 400 && apiErr.Status < 500 {
+			return toolErrorResult(apiErr.Code + ": " + apiErr.Message), nil
+		}
+		return nil, newInternalError("suggest meeting links", err)
+	}
+	return jsonResult(page)
+}
+
+func suggestMeetingLinksDefinition() toolDefinition {
+	definition := readDefinition(ToolSuggestMeetingLinks, "Suggest links between meeting notes and calendar events. Each row's ref identifies the event, and member_message_id identifies the note; title and start describe the suggestion.", closedObject(map[string]*jsonschema.Schema{"ref": stringSchema("msg:<id> or evt:<id>[@occurrence key]"), "limit": boundedIntegerWithDefault("Maximum suggestions", 1, 100, 10)}, "ref"), outputSchemaFor[store.MeetingSuggestionPage](), (*handlers).suggestMeetingLinks)
+	definition.availability = meetingSuggestionsAvailable
+	return definition
+}

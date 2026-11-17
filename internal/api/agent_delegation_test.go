@@ -276,7 +276,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	t.Cleanup(srv.agentGrants.Close)
-	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
+	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead, agentgrant.PermissionCalendarEventRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 	requirements.NoError(err)
 	// These expectations stay independent of the production permission map.
 	reads := map[string]struct{ path, want string }{
@@ -299,6 +299,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 		"getAttachmentContent":    {"/api/v1/attachments/" + hash + "/content", "permitted bytes"},
 		"getCLIAttachment":        {"/api/v1/cli/attachment?content_hash=" + hash, "permitted bytes"},
 		"getMeetingRecord":        {fmt.Sprintf("/api/v1/meetings/record?ref=msg:%d", note), fmt.Sprintf(`"message_ids":[%d]`, note)},
+		"suggestMeetingLinks":     {fmt.Sprintf("/api/v1/meetings/suggestions?ref=msg:%d", note), `"suggestions":[]`},
 		"listCLIAccounts":         {"/api/v1/cli/accounts", src.Identifier},
 		"listCLICollections":      {"/api/v1/cli/collections", `"name":"Selected"`},
 	}
@@ -362,7 +363,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	for op := range allowed {
 		assertions.True(seen[op], "missing preexisting delegated operation: "+op)
 	}
-	assertions.Len(reads, 21)
+	assertions.Len(reads, 22)
 	assertions.Equal(len(reads), testedReads)
 	assertions.Greater(denied, 10)
 }

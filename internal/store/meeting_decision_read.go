@@ -410,6 +410,19 @@ func (s *Store) meetingResolveOccurrenceLinks(ctx context.Context, record Meetin
 	return record, nil
 }
 
+func meetingDecisionConflict(graph *meetingDecisionGraph, a, b meetingDecisionEndpoint, linked bool, active []meetingDecisionEdge) (meetingDecisionEdge, bool) {
+	root, _ := graph.reduce()
+	if (root(a.ref()) == root(b.ref())) != linked {
+		return meetingDecisionEdge{a: a, b: b}, true
+	}
+	for _, link := range active {
+		if root(link.a.ref()) != root(link.b.ref()) {
+			return link, true
+		}
+	}
+	return meetingDecisionEdge{}, false
+}
+
 func (g *meetingDecisionGraph) reduce() (func(string) string, []meetingDecisionEdge) {
 	var explicit, splits []meetingDecisionEdge
 	// Choose one effective contribution per pair.

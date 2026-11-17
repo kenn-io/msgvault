@@ -10,8 +10,10 @@ import type {
   MeetingLinkDecisionResult,
   MeetingMetricsRequest,
   MeetingRecord,
+  MeetingSuggestionPage,
   Metrics,
   PacketResult,
+  SuggestMeetingLinksParams,
 } from "../models";
 
 import { orvalFetch } from "../../runtime";
@@ -95,6 +97,18 @@ export const getMeetingRecord = (
 ) => {
   return orvalFetch<MeetingRecord>(
     { url: `/api/v1/meetings/record`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Suggest links between meeting notes and calendar events
+ */
+export const suggestMeetingLinks = (
+  params: SuggestMeetingLinksParams,
+  options?: SecondParameter<typeof orvalFetch<MeetingSuggestionPage>>,
+) => {
+  return orvalFetch<MeetingSuggestionPage>(
+    { url: `/api/v1/meetings/suggestions`, method: "GET", params },
     options,
   );
 };

@@ -424,7 +424,8 @@ import (
 // 5.8.0 advertises structured person-profile routes to MCP.
 // 5.9.0 adds meeting records.
 // 5.10.0 adds owner meeting link decisions.
-const APISchemaVersion = "5.10.0"
+// 5.11.0 adds meeting link suggestions.
+const APISchemaVersion = "5.11.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
