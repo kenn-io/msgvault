@@ -855,7 +855,7 @@ func TestEditedCommitmentDecision(t *testing.T) {
 					_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-2*time.Hour)), id)
 					r.NoError(err)
 				case "new arrival", "reuse ID":
-					if rescan.mutation == "reuse ID" && !f.store.IsPostgreSQL() {
+					if rescan.mutation == "reuse ID" {
 						_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM messages WHERE id = ?`), id)
 						r.NoError(err)
 						r.Equal(id, persist("replacement", currentText, -time.Hour))
@@ -1080,9 +1080,12 @@ func TestCommitmentDiscoveryRestartsWhenOwnerAliasIsLinked(t *testing.T) {
 	_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
 	r.NoError(err)
 	r.True(complete)
+	persist("inflight-promise", "I will return.", -time.Minute)
 	f = nextCommitmentTestAttempt(t, f, "-inflight")
 	inflight, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 	r.NoError(err)
+	r.Len(inflight.Sources, 1)
+	r.Equal("I will return.", inflight.Sources[0].Text)
 	inflightRequest := commitmentApplyRequest(t, f, inflight, cfg.Commitments, peoplesweep.ParsedCommitments{})
 	_, err = f.store.LinkParticipants(owner, alias)
 	r.NoError(err)
@@ -1097,8 +1100,8 @@ func TestCommitmentDiscoveryRestartsWhenOwnerAliasIsLinked(t *testing.T) {
 	r.False(complete)
 	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 	r.NoError(err)
-	r.Len(window.Sources, 2)
-	r.Contains([]int64{window.Sources[0].MessageID, window.Sources[1].MessageID}, id)
+	r.Len(window.Sources, 3)
+	r.Contains([]int64{window.Sources[0].MessageID, window.Sources[1].MessageID, window.Sources[2].MessageID}, id)
 	f = nextCommitmentTestAttempt(t, f, "-rescan")
 	var promises []peoplesweep.CommitmentPromise
 	for _, source := range window.Sources {
@@ -1109,13 +1112,14 @@ func TestCommitmentDiscoveryRestartsWhenOwnerAliasIsLinked(t *testing.T) {
 	r.NoError(err)
 	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, true)
 	r.NoError(err)
-	r.Len(items, 2)
+	r.Len(items, 3)
 	states := map[string]string{}
 	for _, item := range items {
 		states[item.Quote] = item.State
 	}
 	r.Equal(LoopStateDone, states["I will call."])
 	r.Equal(LoopStateOpen, states["I will write."])
+	r.Equal(LoopStateOpen, states["I will return."])
 }
 
 func TestCommitmentOwnershipChangeWaitsForFrontierLock(t *testing.T) {
