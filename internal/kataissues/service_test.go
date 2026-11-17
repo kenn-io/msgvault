@@ -918,7 +918,7 @@ func TestCreateThreadParentAndDeadline(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+katatest.Token)
 		resp, err := f.kata.Client().Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { assert.NoError(t, resp.Body.Close()) }()
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		var body katagen.ShowIssueResponseBody
 		require.NoError(t, json.UnmarshalRead(resp.Body, &body))

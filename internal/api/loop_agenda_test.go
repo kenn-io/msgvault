@@ -101,7 +101,7 @@ func TestLoopAgendaRunLimitsCreatesAndSkipsAwaiting(t *testing.T) {
 	cfg := config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}
 	agenda := NewLoopAgenda(cfg, f.Store, "https://vault.example.test")
 	_, err = agenda.File(t.Context(), strconv.FormatInt(waitingID, 10), now)
-	assert.ErrorIs(t, err, loops.ErrNotOpen)
+	require.ErrorIs(t, err, loops.ErrNotOpen)
 	require.NoError(t, agenda.Run(t.Context(), now))
 	client, err := connectKata(t.Context(), cfg)
 	require.NoError(t, err)
@@ -147,7 +147,8 @@ func TestLoopAgendaFilesPromise(t *testing.T) {
 	otherParticipant := f.EnsureParticipant("sam@example.test", "", "example.test")
 	other, _, err := f.Store.CreatePersonFromParticipant(otherParticipant)
 	require.NoError(t, err)
-	archive := agenda.archive.(*agendaTestArchive)
+	archive, ok := agenda.archive.(*agendaTestArchive)
+	require.True(t, ok)
 	third := archive.promises[0]
 	third.ID, third.PersonID, third.PromisedAt = 3, other.ID, now
 	archive.promises = append(archive.promises, third)
@@ -239,6 +240,7 @@ func TestLoopAgendaRouteValidation(t *testing.T) {
 
 type agendaTestArchive struct {
 	*store.Store
+
 	promises   []store.PersonCommitment
 	incomplete bool
 }
@@ -305,7 +307,8 @@ func TestLoopAgendaPromiseScopeAndOrder(t *testing.T) {
 	third.ID = 3
 	third.PersonID = other.ID
 	third.PromisedAt = now.Add(-time.Hour)
-	archive := agenda.archive.(*agendaTestArchive)
+	archive, ok := agenda.archive.(*agendaTestArchive)
+	require.True(t, ok)
 	archive.promises = append(archive.promises, third)
 	different, err := agenda.File(t.Context(), "c3", now)
 	require.NoError(t, err)

@@ -460,7 +460,10 @@ func newLoopsAgendaCommand() *cobra.Command {
 				url = *result.Issue.WebURL
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s%s\n", result.Issue.QualifiedRef, url, suffix)
-			return err
+			if err != nil {
+				return fmt.Errorf("write filed loop: %w", err)
+			}
+			return nil
 		})
 	}
 	return command

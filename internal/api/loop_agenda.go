@@ -24,9 +24,9 @@ import (
 
 type loopAgendaArchive interface {
 	loops.Store
-	GetPersonCommitmentContext(context.Context, int64, time.Time) (store.PersonCommitment, error)
-	GetPersonContext(context.Context, int64) (*store.Person, error)
-	WalkOpenPersonCommitments(context.Context, time.Time, func(store.PersonCommitment) error) error
+	GetPersonCommitmentContext(ctx context.Context, id int64, now time.Time) (store.PersonCommitment, error)
+	GetPersonContext(ctx context.Context, id int64) (*store.Person, error)
+	WalkOpenPersonCommitments(ctx context.Context, now time.Time, visit func(store.PersonCommitment) error) error
 }
 
 var errAgendaPersonRequired = errors.New("link the contact to a person first")
@@ -53,8 +53,8 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 	var selectors []kataevidence.Selector
 	var expected string
 	var key string
-	if strings.HasPrefix(ref, "c") {
-		id, err := strconv.ParseInt(strings.TrimPrefix(ref, "c"), 10, 64)
+	if commitmentRef, ok := strings.CutPrefix(ref, "c"); ok {
+		id, err := strconv.ParseInt(commitmentRef, 10, 64)
 		if err != nil || id < 1 {
 			return kataissues.Result{}, sql.ErrNoRows
 		}
