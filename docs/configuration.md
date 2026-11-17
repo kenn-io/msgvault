@@ -903,9 +903,10 @@ excluded if created later. Blank saved folder names prevent daemon startup.
 Saved exclusions that skip only Trash or Junk keep deletion tracking on for the
 folders msgvault still scans. A message moved from INBOX into a skipped Trash is
 marked deleted, and `gc` can purge it. A marked message stays marked until sync
-finds it again in a folder it scans. msgvault counts every mailbox the server
-advertises with a Trash or Junk LIST special-use role, and falls back to common
-folder names only when no role is advertised.
+finds it in a scanned folder other than Trash and in no scanned Trash folder.
+msgvault counts every mailbox the server advertises with a Trash or Junk LIST
+special-use role, and falls back to common folder names only when no role is
+advertised.
 
 Deletion tracking pauses for the whole run, and msgvault keeps stored
 memberships and deletion markers as they are, when any of these apply:
@@ -926,7 +927,9 @@ When deletion tracking runs with saved Trash or Junk exclusions:
   Memberships already recorded in a skipped folder stay unchanged, so sync
   does not mark a message recorded in Trash by an earlier unfiltered sync. A
   message msgvault moved to Trash keeps its mark, and stays eligible for
-  `gc`, until sync finds it in a scanned folder.
+  `gc`, until sync finds it in a scanned folder other than Trash and in no
+  scanned Trash folder. A saved membership in a skipped folder never clears a
+  mark.
 - Messages archived by earlier filtered syncs are checked too. A message whose
   folder was scanned but no longer holds it is marked deleted.
 - An archived draft is replaced by its sent copy, as in a complete sync, while
