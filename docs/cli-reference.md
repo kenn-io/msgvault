@@ -68,7 +68,7 @@ fails with `<id> isn't an open loop.`
 For cited commitments, use the displayed `c<ID>` with `done`, `snooze`, or
 `reopen`. Add `--include-closed` to find done or snoozed promises. `--questions` selects
 reply-loop question IDs.
-Commitment extraction and decisions require API schema 5.10.0 or newer.
+Commitment extraction and decisions require API schema 5.13.0 or newer.
 See [cited commitments](usage/open-loops.md#see-cited-commitments).
 
 ## cli search

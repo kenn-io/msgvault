@@ -128,12 +128,12 @@ func TestLoopsDaemonVersions(t *testing.T) {
 		closed, warning                                               bool
 	}{
 		{name: "old_reply_loop_daemon", version: "3.23.0", minimum: "3.44.0", args: []string{"list", "--json"}},
-		{name: "old_closed_commitment_daemon", version: "5.9.0", minimum: "5.10.0", args: []string{"list", "--json", "--include-closed"}},
-		{name: "older_commitment_daemon", version: "5.9.0", minimum: "5.10.0", args: []string{"done", "c12"}},
-		{name: "compatible_closed_commitment_daemon", version: "5.10.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"truncated":false}`, args: []string{"list", "--json", "--include-closed"}, closed: true},
-		{name: "commitment", version: "5.10.0", path: "/api/v1/loops/commitments/c12/decision", method: http.MethodPost, response: `{"id":"c12","state":"done"}`, output: "c12 is done.\n", args: []string{"done", "c12"}, state: "done"},
+		{name: "old_closed_commitment_daemon", version: "5.12.0", minimum: "5.13.0", args: []string{"list", "--json", "--include-closed"}},
+		{name: "older_commitment_daemon", version: "5.12.0", minimum: "5.13.0", args: []string{"done", "c12"}},
+		{name: "compatible_closed_commitment_daemon", version: "5.13.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"truncated":false}`, args: []string{"list", "--json", "--include-closed"}, closed: true},
+		{name: "commitment", version: "5.13.0", path: "/api/v1/loops/commitments/c12/decision", method: http.MethodPost, response: `{"id":"c12","state":"done"}`, output: "c12 is done.\n", args: []string{"done", "c12"}, state: "done"},
 		{name: "existing_reply_loop", version: "3.44.0", path: "/api/v1/loops/42/done", method: http.MethodPost, response: `{"anchor_message_id":42,"state":"done"}`, args: []string{"done", "42"}},
-		{name: "old_daemon_warning", version: "5.5.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"truncated":false}`, args: []string{"list", "--json"}, warning: true},
+		{name: "old_daemon_warning", version: "5.12.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[{"summary":"Reply needed"}],"truncated":false}`, args: []string{"list", "--json"}, warning: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requests := 0
@@ -180,6 +180,7 @@ func TestLoopsDaemonVersions(t *testing.T) {
 			if tc.warning {
 				var result map[string]any
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
+				assert.Contains(t, stdout.String(), "Reply needed")
 				assert.Contains(t, stderr.String(), "does not report promises; upgrade and restart it")
 			} else {
 				assert.Empty(t, stderr.String())

@@ -571,7 +571,6 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 		r.Len(window.Sources, 1)
 		r.Equal(waiting, window.Sources[0].MessageID)
 	})
-
 }
 
 // A paid optional result is discarded after revocation without losing its accounting.
