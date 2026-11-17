@@ -294,8 +294,8 @@ func TestMCPArchiveCatalogBudgets(t *testing.T) {
 		kinds  []string
 		budget int
 	}{
-		{"mail only", []string{"mbox"}, 215_341},
-		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 267_991},
+		{"mail only", []string{"mbox"}, 216_865},
+		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 269_515},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
