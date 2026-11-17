@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -191,7 +192,7 @@ func (s *Server) listLoops(ctx context.Context, loopStore loops.Store, opts loop
 		}
 		location, err := time.LoadLocation(cfg.Activity.Timezone)
 		if err != nil {
-			return loops.Result{}, now, err
+			return loops.Result{}, now, fmt.Errorf("load activity timezone: %w", err)
 		}
 		now = now.In(location)
 	}

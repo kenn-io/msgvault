@@ -91,12 +91,8 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	generation.ProgramFingerprint = peoplesweep.CommitmentProgramFingerprint()
 	generation.SourceCursors = []personfacts.SourceCursor{{Lane: "commitments", Start: strconv.FormatInt(window.BackfillMessageID, 10), End: fmt.Sprintf("%d:%d", window.ThroughSequence, window.SnapshotSequence)}}
 	generation.Claims, generation.EvidenceStatusChanges = nil, nil
-	promises, err := s.matchCommitmentCitations(ctx, personID, sources, result.Output.Promises)
-	if err != nil {
-		return nil, err
-	}
 	aligner := make(commitmentEvidenceAligner)
-	for _, promise := range promises {
+	for _, promise := range result.Output.Promises {
 		source, ok := sources[promise.SourceID]
 		if !ok {
 			return nil, errCommitmentWindowChanged
@@ -126,6 +122,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		prepared.promises = append(prepared.promises, promise)
 	}
 	if len(generation.Claims) != 0 {
+		var err error
 		prepared.generation, err = personfacts.PreparePersonFactGeneration(ctx, generation, aligner)
 		if err != nil {
 			return nil, err
@@ -137,92 +134,6 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		}
 	}
 	return prepared, nil
-}
-
-func (s *Store) matchCommitmentCitations(ctx context.Context, personID int64, sources map[string]peoplesweep.CommitmentSource, promises []peoplesweep.CommitmentPromise) ([]peoplesweep.CommitmentPromise, error) {
-	if len(promises) == 0 {
-		return promises, nil
-	}
-	args := []any{personID}
-	for _, source := range sources {
-		args = append(args, source.SourceRef)
-	}
-	if len(args) == 1 {
-		return nil, errCommitmentWindowChanged
-	}
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT d.target_key, e.source_ref, e.source_version, e.subject_ref, e.span_start, e.span_end, e.excerpt, e.recorded_time
-		FROM person_commitments d JOIN person_fact_claims c ON c.person_id = d.person_id AND c.target_kind = 'commitment' AND c.target_key = d.target_key AND c.origin = 'commitment'
-		JOIN person_fact_claim_evidence ce ON ce.claim_id = c.id JOIN person_fact_evidence e ON e.id = ce.evidence_id
-		WHERE d.person_id = ? AND c.relation = 'support' AND c.rejection_action IS NULL AND c.normalized_value_json IS NOT NULL
-		AND e.source_ref IN (`+strings.Repeat("?,", len(args)-2)+`?)`), args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	matches := make([]map[string]bool, len(promises))
-	oldMatches := make([]map[string]bool, len(promises))
-	for rows.Next() {
-		var key, ref, version, subject, quote string
-		var start, end sql.NullInt64
-		var recorded requiredTimestamp
-		if err := rows.Scan(&key, &ref, &version, &subject, &start, &end, &quote, &recorded); err != nil {
-			return nil, err
-		}
-		for i, promise := range promises {
-			source := sources[promise.SourceID]
-			role := "commitment-promise"
-			if source.Direction == peoplesweep.CommitmentOwedBy {
-				role = personfacts.CommitmentOwnerSubjectRef
-			}
-			identity := fmt.Sprintf("commitment-body/v1:%d:%q:", source.SourceID, source.SourceMessageID)
-			if source.SourceRef != ref || !strings.HasPrefix(version, identity) || !personFactPortableTime(source.RecordedTime).Equal(recorded.Time) || subject != role || !start.Valid || !end.Valid ||
-				(source.SourceVersion != version && promise.Quote != quote) || (source.SourceVersion == version && (promise.Start >= end.Int64 || start.Int64 >= promise.End)) || peoplesweep.CommitmentQuoteRepeated(source.Text, quote) || peoplesweep.CommitmentQuoteRepeated(source.Text, promise.Quote) {
-				continue
-			}
-			target := &matches[i]
-			if source.SourceVersion != version {
-				target = &oldMatches[i]
-			}
-			if *target == nil {
-				*target = make(map[string]bool)
-			}
-			(*target)[key] = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for i := range matches {
-		if len(matches[i]) == 0 && len(oldMatches[i]) == 1 {
-			matches[i] = oldMatches[i]
-		}
-	}
-	return reconcileCommitmentCitations(promises, matches), nil
-}
-
-func reconcileCommitmentCitations(promises []peoplesweep.CommitmentPromise, matches []map[string]bool) []peoplesweep.CommitmentPromise {
-	uses := make(map[string]int)
-	for _, match := range matches {
-		for key := range match {
-			uses[key]++
-		}
-	}
-	result := make([]peoplesweep.CommitmentPromise, 0, len(promises))
-	for i, match := range matches {
-		if len(match) > 1 {
-			continue
-		}
-		promise := promises[i]
-		if len(match) == 1 {
-			for key := range match {
-				if uses[key] == 1 {
-					promise.TargetKey = key
-				}
-			}
-		}
-		result = append(result, promise)
-	}
-	return result
 }
 
 func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {

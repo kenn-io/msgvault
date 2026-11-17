@@ -60,9 +60,20 @@ func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64
 	if personID < 0 || limit < 1 || limit > 201 {
 		return nil, ErrInvalidActivityRequest
 	}
+	return s.listCommitmentsByFreshness(ctx, personID, now, limit, includeClosed)
+}
+
+func (s *Store) listCommitmentsByFreshness(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]PersonCommitment, error) {
 	result := make([]PersonCommitment, 0, limit)
+	stale := make([]PersonCommitment, 0, limit)
 	pageSize := min(32, max(8, limit))
 	for _, fresh := range []bool{true, false} {
+		if !fresh {
+			result = append(result, stale[:min(len(stale), limit-len(result))]...)
+			if len(result) == limit {
+				return result, nil
+			}
+		}
 		var after PersonCommitment
 		for {
 			candidates, err := s.loadCommitmentCandidates(ctx, personID, now, after, pageSize, fresh, includeClosed)
@@ -75,6 +86,12 @@ func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64
 					return nil, err
 				}
 				if !visible {
+					continue
+				}
+				if fresh && c.Freshness == personfacts.StatusStale {
+					if len(stale) < limit {
+						stale = append(stale, c)
+					}
 					continue
 				}
 				result = append(result, c)
@@ -224,17 +241,21 @@ func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commit
 		return c, false, nil
 	}
 	source, live, err := s.currentCommitmentSource(ctx, c.PersonID, c.AnchorMessageID)
-	if err != nil || !live || source.Direction != c.Direction || source.SourceVersion != input.SourceVersion ||
-		!personFactPortableTime(source.EventTime).Equal(input.EventTime) ||
-		!personFactPortableTime(source.RecordedTime).Equal(input.RecordedTime) ||
-		!source.MatchesQuote(c.Quote, c.Start, c.End) {
+	if err != nil || !live || source.Direction != c.Direction || !personFactPortableTime(source.RecordedTime).Equal(input.RecordedTime) || !strings.HasPrefix(input.SourceVersion, fmt.Sprintf("commitment-body/v1:%d:%q:", source.SourceID, source.SourceMessageID)) {
 		return c, false, err
 	}
-	c.Freshness = describePersonFactFreshness(personfacts.TargetRef{Kind: personfacts.TargetCommitment}, nil, &c.PromisedAt, now).Status
+	c.Freshness = commitmentCitationFreshness(source, input, c, now)
 	if c.State == LoopStateSnoozed && c.SnoozedUntil != nil && !c.SnoozedUntil.After(now) {
 		c.State, c.SnoozedUntil = LoopStateOpen, nil
 	}
 	return c, true, nil
+}
+
+func commitmentCitationFreshness(source peoplesweep.CommitmentSource, input personfacts.EvidenceInput, c PersonCommitment, now time.Time) personfacts.FreshnessStatus {
+	if source.SourceVersion != input.SourceVersion || !personFactPortableTime(source.EventTime).Equal(input.EventTime) || !source.MatchesQuote(c.Quote, c.Start, c.End) {
+		return personfacts.StatusStale
+	}
+	return describePersonFactFreshness(personfacts.TargetRef{Kind: personfacts.TargetCommitment}, nil, &c.PromisedAt, now).Status
 }
 
 func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (PersonCommitment, error) {

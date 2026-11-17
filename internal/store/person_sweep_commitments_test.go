@@ -103,19 +103,25 @@ func TestCommitmentListPages(t *testing.T) {
 		f := newPersonSweepApplyFixture(t, "promise-order", false)
 		st := f.store
 		_, persist := newCommitmentTestConversation(t, f)
+		edited := persist("promise-edited", "I will call.", -2*time.Hour)
 		persist("promise-0", "I will send the draft.", -time.Hour)
 		persist("promise-1", "I will send the report.", -100*24*time.Hour)
 		cfg, _ := commitmentTestConfig()
 		cfg.Commitments.Window = 200 * 24 * time.Hour
 		applyCommitmentTestSources(t, f, cfg.Commitments)
+		_, err := st.db.ExecContext(ctx, st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "Plans changed.", edited)
+		r.NoError(err)
 		items, err := st.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 1, false)
 		r.NoError(err)
 		r.Len(items, 1)
 		a.Equal("I will send the draft.", items[0].Quote)
 		items, err = st.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 5, false)
 		r.NoError(err)
-		r.Len(items, 2)
+		r.Len(items, 3)
+		a.Equal("I will send the draft.", items[0].Quote)
+		a.Equal("I will call.", items[1].Quote)
 		a.Equal(personfacts.StatusStale, items[1].Freshness)
+		a.Equal(personfacts.StatusStale, items[2].Freshness)
 	})
 	t.Run("overdue before older undated promises", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
@@ -658,6 +664,7 @@ func TestEditedCommitmentDecision(t *testing.T) {
 		want          []expectedPromise
 		includeClosed bool
 		mutation      string
+		staleQuote    string
 	}
 	type testCase struct {
 		name, initialText string
@@ -672,6 +679,19 @@ func TestEditedCommitmentDecision(t *testing.T) {
 	combined := first + " " + second
 	cases := []testCase{
 		{
+			name: "overlap must not transfer a decision", initialText: combined,
+			initialPromises: []promiseSpec{{quote: first, summary: "Send"}},
+			rescans: []rescanSpec{
+				{text: combined, promises: []promiseSpec{{quote: combined, summary: "Send and call"}}, want: []expectedPromise{{first, LoopStateDone}, {combined, LoopStateOpen}}, includeClosed: true},
+				{text: combined, promises: []promiseSpec{{quote: second, summary: "Call", start: int64(len(first) + 1)}}, want: []expectedPromise{{first, LoopStateDone}, {combined, LoopStateOpen}, {second, LoopStateOpen}}, includeClosed: true},
+			},
+		},
+		{
+			name: "edited source retains stale open promise", initialText: first, initialStates: []string{LoopStateOpen},
+			initialPromises: []promiseSpec{{quote: first, summary: "Send"}},
+			rescans:         []rescanSpec{{text: second, promises: []promiseSpec{{quote: second, summary: "Call"}}, want: []expectedPromise{{first, LoopStateOpen}, {second, LoopStateOpen}}, staleQuote: first}},
+		},
+		{
 			name: "omitted promise remains open", initialText: quote, initialStates: []string{LoopStateOpen},
 			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
 			rescans:         []rescanSpec{{text: quote, want: []expectedPromise{{quote, LoopStateOpen}}}},
@@ -679,7 +699,7 @@ func TestEditedCommitmentDecision(t *testing.T) {
 		{
 			name: "deleted repetition", initialText: quote + " " + quote,
 			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}, {quote: quote, summary: "Send", start: int64(len(quote) + 1)}},
-			rescans:         []rescanSpec{{text: quote, want: []expectedPromise{{quote, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send"}}}},
+			rescans:         []rescanSpec{{text: quote, want: []expectedPromise{{quote, LoopStateDone}, {quote, LoopStateOpen}, {quote, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send"}}}},
 		},
 		{
 			name: "originally separate identical quotes keep decisions", initialText: quote + " " + quote,
@@ -690,20 +710,11 @@ func TestEditedCommitmentDecision(t *testing.T) {
 				want:     []expectedPromise{{quote, LoopStateDone}, {quote, LoopStateDone}}}},
 		},
 		{
-			name: "shortened citation duplicated then unique clears decision", initialText: longer,
-			initialPromises: []promiseSpec{{quote: longer, summary: "Send"}},
-			rescans: []rescanSpec{
-				{text: longer, promises: []promiseSpec{{quote: quote, summary: "Send"}}, want: []expectedPromise{{quote, LoopStateDone}}, includeClosed: true},
-				{text: quote + " " + quote},
-				{text: quote, promises: []promiseSpec{{quote: quote, summary: "Send"}}, want: []expectedPromise{{quote, LoopStateOpen}}, includeClosed: true},
-			},
-		},
-		{
 			name: "longer quote survives unrelated edit", initialText: longer,
 			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
 			rescans: []rescanSpec{
-				{text: longer, want: []expectedPromise{{longer, LoopStateDone}}, includeClosed: true, promises: []promiseSpec{{quote: longer, summary: "Send"}}},
-				{text: "Note. " + longer, want: []expectedPromise{{longer, LoopStateDone}}, includeClosed: true, promises: []promiseSpec{{quote: longer, summary: "Send", start: 6}}},
+				{text: longer, want: []expectedPromise{{quote, LoopStateDone}, {longer, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: longer, summary: "Send"}}},
+				{text: "Note. " + longer, want: []expectedPromise{{quote, LoopStateDone}, {longer, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: longer, summary: "Send", start: 6}}},
 			},
 		},
 		{
@@ -717,7 +728,7 @@ func TestEditedCommitmentDecision(t *testing.T) {
 		{
 			name: "ambiguous overlap retains decisions", initialText: combined, initialStates: []string{LoopStateDone, LoopStateSnoozed},
 			initialPromises: []promiseSpec{{quote: first, summary: "Send"}, {quote: second, summary: "Call", start: int64(len(first) + 1)}},
-			rescans:         []rescanSpec{{text: combined, want: []expectedPromise{{first, LoopStateDone}, {second, LoopStateSnoozed}}, includeClosed: true, promises: []promiseSpec{{quote: combined, summary: "Send and call"}}}},
+			rescans:         []rescanSpec{{text: combined, want: []expectedPromise{{first, LoopStateDone}, {second, LoopStateSnoozed}, {combined, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: combined, summary: "Send and call"}}}},
 		},
 		{
 			name: "new archive arrival", initialText: combined, initialStates: []string{LoopStateDone, LoopStateSnoozed},
@@ -829,9 +840,11 @@ func TestEditedCommitmentDecision(t *testing.T) {
 				for _, expected := range rescan.want {
 					var found bool
 					for _, item := range items {
-						if item.Quote == expected.quote {
+						if item.Quote == expected.quote && item.State == expected.state {
 							found = true
-							r.Equal(expected.state, item.State)
+							if expected.quote == rescan.staleQuote {
+								r.Equal(personfacts.StatusStale, item.Freshness)
+							}
 						}
 					}
 					r.True(found, "missing quote %q", expected.quote)
