@@ -217,7 +217,7 @@ func TestArchiveMessageDaemonGrantEnforcement(t *testing.T) {
 
 func TestArchiveMessageDaemonAgentCLI(t *testing.T) {
 	assertionsForTest, requirementsForTest := assert.New(t), require.New(t)
-	_, source, id, _, serverURL, owner, _ := newArchiveDaemon(t)
+	_, source, id, _, serverURL, owner, _ := newArchiveDaemon(t) //nolint:dogsled // This case checks the CLI through the daemon.
 	cliGrant, err := owner.IssueAgentToken(t.Context(), "code reader", []string{"message.read", "verification.read", "message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
 	requirementsForTest.NoError(err)
 
