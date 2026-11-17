@@ -47,7 +47,11 @@ func newSkillsCatalog() (*mcpskills.Catalog, error) {
 		}
 		guides = append(guides, guide)
 	}
-	return mcpskills.New(mcpskills.Config{ToolName: ToolSkills, Guides: guides})
+	catalog, err := mcpskills.New(mcpskills.Config{ToolName: ToolSkills, Guides: guides})
+	if err != nil {
+		return nil, fmt.Errorf("validate guides: %w", err)
+	}
+	return catalog, nil
 }
 
 func skillGuide(skill skills.Skill) (mcpskills.Guide, error) {
