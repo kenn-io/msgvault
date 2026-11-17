@@ -257,6 +257,16 @@ func TestPeopleCodexLoginsBlockSecondLoginWhileCompletedSessionUnconsumed(t *tes
 	require.NoError(manager.Cancel("browser-a", draft.ID))
 	second, err := manager.Start("browser-b", "codex-other", nil)
 	require.NoError(err)
+	// The fake client completes at once. Cancelling before that completion is
+	// recorded would race it, and Cancel correctly reports a login that
+	// completed while still marked pending as errPeopleCodexLoginCompleted.
+	status, err = manager.Get("browser-b", second.ID)
+	require.NoError(err)
+	select {
+	case <-status.done:
+	case <-time.After(5 * time.Second):
+		require.FailNow("second device login did not complete")
+	}
 	require.NoError(manager.Cancel("browser-b", second.ID))
 }
 
