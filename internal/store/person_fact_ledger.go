@@ -972,9 +972,9 @@ func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 	if err != nil {
 		return personfacts.Decision{}, err
 	}
-	if outcome.Valid {
-		value := personfacts.DecisionOutcome(outcome.String)
-		decision.Outcome = &value
+	decision.Outcome, err = personFactStoredOutcome(outcome)
+	if err != nil {
+		return personfacts.Decision{}, err
 	}
 	decision.ScoreMaxima = personfacts.ScoreMaxima(decision.ResolverVersion)
 	if err := json.Unmarshal([]byte(scoreJSON), &decision.Score); err != nil {
@@ -985,6 +985,20 @@ func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 	}
 	decision.CreatedAt = createdAt.Time
 	return decision, nil
+}
+
+func personFactStoredOutcome(outcome sql.NullString) (*personfacts.DecisionOutcome, error) {
+	if !outcome.Valid {
+		return nil, nil
+	}
+	value := personfacts.DecisionOutcome(outcome.String)
+	switch value {
+	case personfacts.OutcomeSaved, personfacts.OutcomeValueRetired, personfacts.OutcomeCurrentValueKept,
+		personfacts.OutcomePinnedValueKept, personfacts.OutcomeTooCloseToChoose, personfacts.OutcomeNotUsed:
+		return &value, nil
+	default:
+		return nil, fmt.Errorf("unknown fact decision outcome %q", outcome.String)
+	}
 }
 
 func (s *Store) loadPersonFactGenerationRowTx(

@@ -788,6 +788,7 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 		}
 	}
 	pinnedEmployment := remaining
+	currentEmployment := make(map[string]bool)
 	if descriptor.Kind == personfacts.TargetEmployment && slices.ContainsFunc(resolution.Decisions, func(decision personfacts.Decision) bool {
 		return decision.Reason == personfacts.ReasonPinRetained
 	}) {
@@ -797,14 +798,11 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 		}
 		pinnedEmployment = make([]personfacts.CurrentProjection, 0, len(jobs))
 		for _, job := range jobs {
-			organization, loadErr := getOrganizationTx(ctx, tx, job.OrganizationID)
-			if loadErr != nil {
-				return false, loadErr
-			}
-			normalized, normalizeErr := normalizedPersonFactEmploymentValue(descriptor, job, *organization)
+			normalized, normalizeErr := normalizedPinnedPersonFactEmployment(ctx, tx, descriptor, job)
 			if normalizeErr != nil {
 				return false, normalizeErr
 			}
+			currentEmployment[normalized.Fingerprint] = currentEmployment[normalized.Fingerprint] || job.IsCurrent
 			pinnedEmployment = append(pinnedEmployment, personfacts.CurrentProjection{Normalized: *normalized})
 		}
 	}
@@ -832,7 +830,7 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 					continue
 				}
 				if decision.Reason == personfacts.ReasonPinRetained {
-					match, matchErr := samePinnedEmployment(*claim.Normalized, value.Normalized)
+					match, matchErr := samePinnedEmployment(*claim.Normalized, value.Normalized, currentEmployment[value.Normalized.Fingerprint])
 					if matchErr != nil {
 						return false, matchErr
 					}
@@ -1830,7 +1828,15 @@ func loadProjectedPersonFactEmploymentClaimsTx(
 	return projected, nil
 }
 
-func samePinnedEmployment(left, right personfacts.NormalizedValue) (bool, error) {
+func normalizedPinnedPersonFactEmployment(ctx context.Context, tx *loggedTx, descriptor personfacts.TargetDescriptor, job Employment) (*personfacts.NormalizedValue, error) {
+	organization, err := getOrganizationTx(ctx, tx, job.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	return normalizedPersonFactEmploymentValue(descriptor, job, *organization)
+}
+
+func samePinnedEmployment(left, right personfacts.NormalizedValue, current bool) (bool, error) {
 	var a, b personfacts.EmploymentValue
 	if err := json.Unmarshal(left.JSON, &a); err != nil {
 		return false, err
@@ -1838,7 +1844,7 @@ func samePinnedEmployment(left, right personfacts.NormalizedValue) (bool, error)
 	if err := json.Unmarshal(right.JSON, &b); err != nil {
 		return false, err
 	}
-	startMatches := (a.StartDate == nil && b.StartDate == nil) || samePersonFactEmploymentDate(storeEmploymentPartialDate(a.StartDate), storeEmploymentPartialDate(b.StartDate))
+	startMatches := (current && a.EndDate == nil) || (a.StartDate == nil && b.StartDate == nil) || samePersonFactEmploymentDate(storeEmploymentPartialDate(a.StartDate), storeEmploymentPartialDate(b.StartDate))
 	endMatches := (a.EndDate == nil && b.EndDate == nil) || samePersonFactEmploymentDate(storeEmploymentPartialDate(a.EndDate), storeEmploymentPartialDate(b.EndDate))
 	return startMatches && endMatches, nil
 }

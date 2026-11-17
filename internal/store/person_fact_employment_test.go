@@ -1608,6 +1608,8 @@ func TestPersonFactEmploymentPinnedOutcomeMatchesIdentity(t *testing.T) {
 		{"title case", "", `{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"engineer","start_date":{"year":2018},"end_date":{"year":2020}}`, personfacts.OutcomePinnedValueKept},
 		{"date precision", "", `{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"Engineer","start_date":{"year":2018,"month":2},"end_date":{"year":2020,"month":3}}`, personfacts.OutcomePinnedValueKept},
 		{"historical", `{"organization":{"name":"Example Company"},"title":"Engineer","end_date":{"year":2020}}`, `{"organization":{"name":"Example Company"},"title":"Engineer","role":"Developer","end_date":{"year":2020}}`, personfacts.OutcomePinnedValueKept},
+		{"current role change without start date", `{"organization":{"name":"Example Company"},"title":"Engineer","start_date":{"year":2018}}`, `{"organization":{"name":"Example Company"},"title":"Engineer","role":"Developer"}`, personfacts.OutcomePinnedValueKept},
+		{"undated ended job", "", `{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"Engineer","start_date":{"year":2023}}`, personfacts.OutcomeNotUsed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, personID, _ := newPersonFactProjectionStore(t)
@@ -1615,9 +1617,13 @@ func TestPersonFactEmploymentPinnedOutcomeMatchesIdentity(t *testing.T) {
 			var err error
 			if tc.seed == "" {
 				organization := createPersonFactOrganization(t, st, "Example Company", "example.org")
+				end := &PartialDate{Year: new(2020)}
+				if tc.name == "undated ended job" {
+					end = nil
+				}
 				_, err = st.AddEmploymentContext(t.Context(), EmploymentInput{
 					PersonID: personID, OrganizationID: organization.ID, Title: new("Engineer"),
-					StartDate: &PartialDate{Year: new(2018)}, EndDate: &PartialDate{Year: new(2020)},
+					StartDate: &PartialDate{Year: new(2018)}, EndDate: end,
 					IsCurrent: new(false), Source: ProvenanceUser,
 				})
 				require.NoError(t, err)

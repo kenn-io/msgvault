@@ -16,6 +16,18 @@ import (
 
 var personFactLedgerNow = time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
 
+func TestPersonFactDecisionRejectsUnknownStoredOutcome(t *testing.T) {
+	st, personID, targets := newPersonFactProjectionStore(t)
+	target := targets[AttributeSlugPrimaryChannel]
+	claim := personFactProjectionClaim(personID, target, `"chat"`, "unknown-outcome")
+	_, err := st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, "unknown-outcome", []personfacts.ProposedClaim{claim}, nil), nil)
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(t.Context(), `UPDATE person_fact_decisions SET outcome = 'unexpected' WHERE person_id = ?`, personID)
+	require.NoError(t, err)
+	_, err = st.ListPersonFactDecisionsContext(t.Context(), personID, personfacts.DecisionFilter{})
+	require.ErrorContains(t, err, "unexpected")
+}
+
 func TestPersonFactGenerationEnvelopeOwnsMultipleClaims(t *testing.T) {
 	st, personID := newPersonFactLedgerStore(t)
 	prepared := preparePersonFactLedgerGeneration(t, personID, "multi", []personfacts.ProposedClaim{
