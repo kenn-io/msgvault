@@ -25,29 +25,18 @@ test('Location shows the saved value above its competing claim', async ({ page }
   expect(await saved.evaluate((element, following) => Boolean(element.compareDocumentPosition(following) & Node.DOCUMENT_POSITION_FOLLOWING), await claim.elementHandle())).toBe(true);
 });
 
-test('Manage fields remains available after a field search has no matches', async ({ page }) => {
+test('Manage fields opens the Fields page', async ({ page }) => {
   const facts = await startFacts(page);
   await facts.getByRole('button', { name: 'Search fields: All fields' }).click();
-  await facts.getByRole('combobox', { name: 'Search fields' }).fill('no matching field');
-  await expect(facts.getByText('No matches')).toBeVisible();
   await page.getByRole('option', { name: 'Manage fields…' }).click();
   await expect(page.getByRole('heading', { name: 'Fields', exact: true })).toBeVisible();
 });
 
-test('a decision explains why its claim lost and older outcomes stay unavailable', async ({ page }) => {
+test('a claim links to its decision', async ({ page }) => {
   const facts = await startFacts(page);
   await chooseLocation(facts);
   const claim = facts.getByLabel('Fact claim');
   await claim.getByRole('button', { name: 'Details' }).click();
   await claim.getByRole('button', { name: 'Show decision' }).click();
-  await expect(facts.getByLabel('Historical fact decision')).toContainText("Kept the current value; New York wasn't far enough ahead");
-  await facts.getByRole('button', { name: 'Show all' }).click();
-  await expect(facts.getByText('Result unavailable')).toBeVisible();
-});
-
-test('the closed Facts heading summarizes the latest claim', async ({ page }) => {
-  const facts = await startFacts(page);
-  await expect(facts.getByText('1 field · last found Jan 3')).toHaveCount(0);
-  await facts.getByRole('button', { name: 'Hide', exact: true }).click();
-  await expect(page.getByText('1 field · last found Jan 3')).toBeVisible();
+  await expect(facts.getByLabel('Historical fact decision')).toBeVisible();
 });

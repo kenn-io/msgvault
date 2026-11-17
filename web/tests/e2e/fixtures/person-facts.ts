@@ -44,7 +44,7 @@ export async function installPersonFacts(page: Page): Promise<void> {
     }],
   } }));
   await page.route('**/api/v1/person-fact-targets*', route => route.fulfill({ json: { targets: [{
-    ...target, description: 'Location', slug: 'location', universal_id: 'location', value_type: 'string',
+    ...target, description: 'Location', slug: 'location', universal_id: 'location', value_type: 'text',
     cardinality: 'single', sensitive: false, choices: null, fields: null,
   }] } }));
   await page.route(/\/api\/v1\/people\/42\/fact-summary(?:\?.*)?$/, route => route.fulfill({ json: {

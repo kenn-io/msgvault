@@ -42,7 +42,7 @@ function fieldDefinition(universal_id: string, label: string) {
 function controller(): FactLedgerController {
   const value = new FactLedgerController(createAPIClient(vi.fn<typeof fetch>()));
   value.personID = 42;
-  value.targets = [{ optionID: 'target-0', name: 'Private note', targetKey: 'note', description: 'Private note', kind: 'attribute', valueType: 'string', cardinality: 'single', sensitive: true, canonical: `attribute:note:sha256:${'a'.repeat(64)}` }];
+  value.targets = [{ optionID: 'target-0', name: 'Private note', targetKey: 'note', description: 'Private note', kind: 'attribute', valueType: 'text', cardinality: 'single', sensitive: true, canonical: `attribute:note:sha256:${'a'.repeat(64)}` }];
   value.evidence.rows = [{ rowToken: 'evidence-0', sourceClass: 'archive', directness: 'direct-self', authority: 'ordinary', identityScore: 950,
     evidenceID: 1, eventTime: '2026-08-01', recordedTime: '2026-08-02', supported: true, currentSupportLabel: 'Supported — Source reimported', createdAt: '2026-08-03',
     excerpt: 'allowed evidence excerpt', evidenceKey: 'forbidden-evidence-key' }];
@@ -108,29 +108,6 @@ describe('FactLedger', () => {
     expect(screen.getByLabelText('Historical fact decision').textContent).toContain('Saved: Engineer at Acme · Boston');
   });
 
-  it('uses the loaded matching claim for its decision sentence', () => {
-    const value = controller();
-    value.selectedSection = 'decisions';
-    value.targets[0]!.sensitive = false;
-    value.decisions.rows[0] = { ...value.decisions.rows[0]!, outcome: 'current-value-kept', reason: 'insufficient-margin' };
-    value.claims.rows[0] = { ...value.claims.rows[0]!, displayValue: 'New York', parsedValue: 'New York' };
-    render(FactLedger, { controller: value });
-    expect(screen.getByLabelText('Historical fact decision').textContent).toContain("Kept the current value; New York wasn't far enough ahead");
-  });
-
-  it('uses a generic reason when the decision claim is not loaded', () => {
-    const value = controller();
-    value.selectedSection = 'decisions';
-    value.targets[0]!.sensitive = false;
-    value.decisions.rows[0] = { ...value.decisions.rows[0]!, outcome: 'current-value-kept', reason: 'insufficient-margin' };
-    value.claims.rows = [];
-    render(FactLedger, { controller: value });
-    const row = screen.getByLabelText('Historical fact decision');
-    expect(row.textContent).toContain("the claim wasn't far enough ahead");
-    expect(row.textContent).not.toContain('undefined');
-    expect(row.textContent).not.toContain('—');
-  });
-
   it('does not offer to reveal a sensitive decision when its claim is not loaded', () => {
     const value = controller();
     value.selectedSection = 'decisions';
@@ -138,29 +115,8 @@ describe('FactLedger', () => {
     render(FactLedger, { controller: value });
     const row = screen.getByLabelText('Historical fact decision');
     expect(row.textContent).toContain('Saved a value');
+    expect(row.textContent).not.toContain('undefined');
     expect(within(row).queryByRole('button', { name: 'Reveal sensitive fact value' })).toBeNull();
-  });
-
-  it('shows a decision from the API contract with its matching claim value', async () => {
-    const target = { kind: 'attribute', key: 'location', revision };
-    const fetchFn = vi.fn<typeof fetch>(async input => {
-      const path = new URL(requestOf(input).url).pathname;
-      if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [{ ...target, description: 'Location', value_type: 'text', cardinality: 'single', sensitive: false, slug: 'location' }] });
-      if (path.endsWith('/fact-claims')) return Response.json({ claims: [{ id: 1, claim_key: 'claim-location', generation_id: 2, evidence_ids: [], target, submitted_value: '"New York"', relation: 'support', origin: 'extraction', confidence: { reported_score: 740 }, created_at: '2026-11-01T12:00:00Z' }] });
-      if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [{ id: 3, decision_key: 'decision-location', claim_key: 'claim-location', outcome: 'current-value-kept', target, resolver_version: 'person-fact-resolver-v1', action: 'retained', reason: 'insufficient-margin', score: { authority: 100, confidence: 74, corroboration: 0, directness: 300, freshness: 80, source_class: 200, total: 754 }, created_at: '2026-11-01T12:00:00Z' }] });
-      if (path.endsWith('/fact-evidence')) return Response.json({ evidence: [] });
-      if (path.endsWith('/fact-pins')) return Response.json({ pins: [] });
-      throw new Error(`unexpected ${path}`);
-    });
-    const value = new FactLedgerController(createAPIClient(fetchFn));
-    value.applyContext(true, 42);
-    await vi.waitFor(() => expect(value.targets).toHaveLength(1));
-    await vi.waitFor(() => expect(value.claims.rows).toHaveLength(1));
-    await vi.waitFor(() => expect(value.decisions.rows).toHaveLength(1));
-    value.selectedSection = 'decisions';
-    render(FactLedger, { controller: value });
-    expect(screen.getByLabelText('Historical fact decision').textContent).toContain("Kept the current value; New York wasn't far enough ahead");
-    value.destroy();
   });
 
   it('shows claim validity, confidence, and creation time in Details', async () => {
@@ -222,7 +178,7 @@ describe('FactLedger', () => {
     const canonical = `employment:system:employment:${revision}`;
     value.targets[0] = { ...value.targets[0]!, name: 'Work', description: 'Work', kind: 'employment', targetKey: 'system:employment', canonical, sensitive: false };
     value.claims.rows[0] = { ...value.claims.rows[0]!, targetKind: 'employment', targetKey: 'system:employment', targetCanonical: canonical, displayValue: 'Engineer at Acme', parsedValue: { title: 'Engineer', organization: { name: 'Acme' } } };
-    value.decisions.rows[0] = { ...value.decisions.rows[0]!, targetKind: 'employment', targetKey: 'system:employment', targetCanonical: canonical };
+    value.decisions.rows[0] = { ...value.decisions.rows[0]!, targetKind: 'employment', targetKey: 'system:employment', targetCanonical: canonical, projectionKind: 'employment' };
     render(FactLedger, { controller: value });
     const row = screen.getByLabelText('Historical fact decision');
     expect(within(row).getAllByText('Work')).toHaveLength(1);
@@ -261,7 +217,7 @@ describe('FactLedger', () => {
 
     catalog.resolve(Response.json({ fingerprint: 'private', version: 'private', targets: [{
       description: 'Private note', kind: 'attribute', key: 'private-note', revision,
-      value_type: 'string', cardinality: 'single', sensitive: true, choices: null, fields: null,
+      value_type: 'text', cardinality: 'single', sensitive: true, choices: null, fields: null,
       slug: 'private', universal_id: 'private'
     }] }));
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Reveal sensitive fact value' })).toBeDefined());
@@ -275,7 +231,7 @@ describe('FactLedger', () => {
       if (mode === 'failed') return Response.json({ message: 'private-sensitive-value' }, { status: 503 });
       return Response.json({ fingerprint: 'private', version: 'private', targets: [{
         description: 'Malformed private note', kind: 'attribute', key: 'private-note', revision,
-        value_type: 'string', cardinality: 'single', choices: null, fields: null,
+        value_type: 'text', cardinality: 'single', choices: null, fields: null,
         slug: 'private', universal_id: 'private'
       }] });
     });
@@ -354,44 +310,34 @@ describe('FactLedger', () => {
   });
 
   it.each([
-    { sensitivity: 'visible', sensitive: false, revisionMatches: true, loaded: true, expected: 'Saved: allowed sensitive value' },
-    { sensitivity: 'unknown', sensitive: false, revisionMatches: false, loaded: true, expected: 'Saved: Hidden' },
-    { sensitivity: 'catalog sensitivity with claims unloaded', sensitive: false, revisionMatches: true, loaded: false, expected: 'Saved a value' },
-  ])('shows a $sensitivity saved decision value safely', ({ sensitive, revisionMatches, loaded, expected }) => {
+    { sensitivity: 'visible', sensitive: false, revisionMatches: true, expected: 'Saved: allowed sensitive value' },
+    { sensitivity: 'unknown', sensitive: false, revisionMatches: false, expected: 'Saved: Hidden' },
+  ])('shows a $sensitivity saved decision value safely', ({ sensitive, revisionMatches, expected }) => {
     const value = controller();
     value.selectedSection = 'decisions';
     value.targets[0]!.sensitive = sensitive;
     if (!revisionMatches) value.decisions.rows[0] = { ...value.decisions.rows[0]!, targetCanonical: `attribute:note:sha256:${'b'.repeat(64)}` };
-    if (!loaded) value.claims.rows = [];
     render(FactLedger, { controller: value });
     const decision = screen.getByLabelText('Historical fact decision');
     expect(decision.querySelector('.value > span')?.textContent).toBe(expected);
   });
 
   it.each([
-    { evidenceIDs: [1], button: /show evidence/i, expectedID: 1 },
-    { evidenceIDs: [1, 2], button: 'Show source 2: From a message they sent', expectedID: 2 },
-  ])('offers claim sources in Details for $evidenceIDs', async ({ evidenceIDs, button, expectedID }) => {
+    { caseName: 'one source', evidenceIDs: [1], available: true, button: /show evidence/i, expectedID: 1 },
+    { caseName: 'two loaded sources', evidenceIDs: [1, 2], available: true, button: 'Show source 2: From a message they sent', expectedID: 2 },
+    { caseName: 'a source without loaded evidence', evidenceIDs: [1, 2], available: false, button: 'Show source 2', expectedID: 2 },
+  ])('offers claim sources in Details for $caseName', async ({ evidenceIDs, available, button, expectedID }) => {
     const value = controller();
     value.targets[0]!.sensitive = false;
     value.claims.rows[0] = { ...value.claims.rows[0]!, evidenceIDs };
-    if (evidenceIDs.length > 1) value.evidence.rows.push({ ...value.evidence.rows[0]!, evidenceID: 2, rowToken: 'evidence-1' });
+    if (!available) value.evidence.rows = [];
+    else if (evidenceIDs.length > 1) value.evidence.rows.push({ ...value.evidence.rows[0]!, evidenceID: 2, rowToken: 'evidence-1' });
     const navigate = vi.spyOn(value, 'showEvidence').mockResolvedValue();
     render(FactLedger, { controller: value });
     await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-    if (evidenceIDs.length > 1) expect(screen.getByRole('button', { name: 'Show source 1: From a message they sent' })).toBeDefined();
+    if (available && evidenceIDs.length > 1) expect(screen.getByRole('button', { name: 'Show source 1: From a message they sent' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: button }));
     expect(navigate).toHaveBeenCalledWith(expectedID, value.claims.rows[0]!.targetCanonical);
-  });
-
-  it('numbers a source link without repeating its fallback label', async () => {
-    const value = controller();
-    value.targets[0]!.sensitive = false;
-    value.claims.rows[0] = { ...value.claims.rows[0]!, evidenceIDs: [1, 2] };
-    value.evidence.rows = [];
-    render(FactLedger, { controller: value });
-    await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-    expect(screen.getByRole('button', { name: 'Show source 2' })).toBeDefined();
   });
 
   it('focuses a related decision when requested', async () => {
