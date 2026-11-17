@@ -163,7 +163,7 @@
 </div>
 
 <style>
-  .open-loops-section { min-width: 0; padding: 0 var(--space-4); }
+  .open-loops-section { min-width: 0; }
   .open-loops { display: grid; gap: var(--space-2); min-width: 0; padding-bottom: var(--space-4); }
   h4, p, ul { margin: 0; }
   h4 { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; }

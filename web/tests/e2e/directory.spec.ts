@@ -93,6 +93,14 @@ test('People Details scrolls independently at desktop width', async ({ page }) =
   const pane = page.getByRole('group', { name: 'Person page' });
   await expect(pane.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   await pane.getByRole('radio', { name: 'Details', exact: true }).click();
+  const loops = pane.getByRole('region', { name: 'Open loops' });
+  const tasks = pane.getByRole('region', { name: 'Tasks' });
+  await expect(loops).toBeVisible();
+  await expect(tasks).toBeVisible();
+  const loopBounds = await loops.boundingBox();
+  const taskBounds = await tasks.boundingBox();
+  expect(loopBounds?.x).toBeCloseTo(taskBounds!.x, 0);
+  expect(loopBounds?.width).toBeCloseTo(taskBounds!.width, 0);
   const scrollPane = pane.locator('[data-scroll-pane]');
   const metrics = await scrollPane.evaluate((el) => ({
     scroll: el.scrollHeight,
