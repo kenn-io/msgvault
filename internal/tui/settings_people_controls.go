@@ -54,7 +54,7 @@ func (m Model) peopleInferenceControlBackend() PeopleInferenceControlBackend {
 
 func (m Model) openPeopleInferenceControls() (tea.Model, tea.Cmd) {
 	if m.settings.dirty() {
-		m.settings.status = "Save or discard settings drafts before changing people inference."
+		m.settings.status, m.settings.scrollOffset = "Save or discard settings drafts before changing people inference.", 0
 		return m, nil
 	}
 	backend := m.peopleInferenceControlBackend()
@@ -66,6 +66,7 @@ func (m Model) openPeopleInferenceControls() (tea.Model, tea.Cmd) {
 	m.settings.peopleControls = peopleInferenceControlState{
 		active: true, loading: true, requestID: m.settingsRequestID, ctx: ctx, cancel: cancel,
 	}
+	m.settings.scrollOffset = 0
 	return m, m.loadPeopleInferenceControls(backend)
 }
 
@@ -82,6 +83,7 @@ func (m Model) closePeopleInferenceControls() Model {
 		m.settings.peopleControls.cancel()
 	}
 	m.settings.peopleControls = peopleInferenceControlState{}
+	m.settings.scrollOffset = 0
 	return m
 }
 
@@ -159,6 +161,9 @@ func (m Model) handlePeopleInferenceControlKey(msg tea.KeyPressMsg) (tea.Model, 
 			s.confirmProfile = s.status.Configured
 		}
 	}
+	if s.confirm != "" {
+		m.revealSettingsFocus()
+	}
 	return m, nil
 }
 
@@ -169,7 +174,7 @@ func (m Model) handlePeopleInferenceControlMsg(msg tea.Msg) (tea.Model, tea.Cmd)
 		if !s.active || v.requestID != s.requestID {
 			return m, nil
 		}
-		s.loading = false
+		s.loading, m.settings.scrollOffset = false, 0
 		s.resolvingMutation = false
 		s.exitBlocked = false
 		if v.err != nil {
@@ -188,7 +193,7 @@ func (m Model) handlePeopleInferenceControlMsg(msg tea.Msg) (tea.Model, tea.Cmd)
 		if !s.active || v.requestID != s.requestID {
 			return m, nil
 		}
-		s.pending = false
+		s.pending, m.settings.scrollOffset = false, 0
 		s.exitBlocked = false
 		if v.err != nil {
 			var conflict *SettingsConflictError
@@ -217,9 +222,18 @@ func (m Model) handlePeopleInferenceControlMsg(msg tea.Msg) (tea.Model, tea.Cmd)
 	return m, nil
 }
 
-func (m Model) renderPeopleInferenceControls() string {
+func (m Model) peopleControlsParts() (string, string, string, int) {
 	s := m.settings.peopleControls
-	lines := []string{m.styles.titleBar.Render("People inference controls"), ""}
+	var lines []string
+	if s.message != "" {
+		lines = append(lines, textutil.SanitizeTerminalMultiline(s.message))
+	}
+	if s.exitBlocked {
+		lines = append(lines, "Change in progress; wait for the result before leaving.")
+	}
+	if s.status != nil && s.status.PendingRestart {
+		lines = append(lines, settingsRestartNotice)
+	}
 	if s.loading {
 		lines = append(lines, "Loading people inference status…")
 	}
@@ -228,18 +242,18 @@ func (m Model) renderPeopleInferenceControls() string {
 		if configured == "" {
 			configured = "none"
 		}
-		lines = append(lines, "Configured: "+configured, "Fingerprint: "+textutil.SanitizeTerminal(status.ConfiguredFingerprint))
+		lines = append(lines, "Configured: "+configured, strings.Join(wrapText("Fingerprint: "+textutil.SanitizeTerminal(status.ConfiguredFingerprint), max(m.width, 20)), "\n"))
 		if status.ConfiguredEnabled {
 			lines = append(lines, "People inference: enabled")
 		} else {
 			lines = append(lines, "People inference: disabled")
 		}
 		lines = append(lines, "Running: "+textutil.SanitizeTerminal(status.Running))
-		if status.PendingRestart {
-			lines = append(lines, "Restart the daemon to apply the change.")
-		}
 	}
+	var actions string
+	focus := 0
 	if s.confirm != "" {
+		focus = settingsWrappedRows(lines, max(m.width, 20))
 		switch s.confirm {
 		case "disable":
 			lines = append(lines, "Disable people inference and revoke active consent?")
@@ -248,30 +262,20 @@ func (m Model) renderPeopleInferenceControls() string {
 		default:
 			lines = append(lines, "Revoke consent for "+textutil.SanitizeTerminal(s.confirmProfile)+"?")
 		}
-		lines = append(lines, "Fingerprint: "+textutil.SanitizeTerminal(s.confirmFingerprint), "[y] Confirm  [n/Esc] Cancel")
+		lines = append(lines, strings.Join(wrapText("Fingerprint: "+textutil.SanitizeTerminal(s.confirmFingerprint), max(m.width, 20)), "\n"))
+		actions = "[y] Confirm  [n/Esc] Cancel"
 	} else if s.pending {
-		lines = append(lines, "Applying people inference change…")
+		actions = "Applying people inference change…"
 	} else {
-		actions := "[d] Disable  [v] Revoke consent"
+		actions = "[d] Disable  [v] Revoke consent"
 		if s.status != nil && !s.status.ConfiguredEnabled && s.status.ConfiguredFingerprint != "" {
 			if s.status.ProfileCount > 1 {
 				actions += "  [x] Remove profile"
 			} else {
-				lines = append(lines, "Add another profile before removing this one.")
+				actions += "\nAdd another profile before removing this one."
 			}
 		}
-		lines = append(lines, actions+"  [r] Refresh  [Esc] Back")
+		actions += "\n[r] Refresh  [Esc] Back"
 	}
-	if s.message != "" {
-		lines = append(lines, textutil.SanitizeTerminalMultiline(s.message))
-	}
-	if s.exitBlocked {
-		lines = append(lines, "Change in progress; wait for the result before leaving.")
-	}
-	width := max(m.width, 20)
-	wrapped := []string{lines[0]}
-	for _, line := range lines[1:] {
-		wrapped = append(wrapped, wrapText(line, width)...)
-	}
-	return strings.Join(wrapped, "\n")
+	return m.styles.titleBar.Render("People inference controls"), strings.Join(lines, "\n"), actions, focus
 }

@@ -641,7 +641,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			conditions = append(conditions, "FALSE")
 			ftsEnabled = false
 		} else {
-			join, where, orderBy, orderArgCount := s.dialect.FTSSearchClause(rowIDs)
+			join, where, orderBy, orderArgCount := s.dialect.FTSSearchClause(rowIDs, q.TextTerms)
 			ftsJoin = join
 			ftsOrder = orderBy
 			ftsOrderArgCount = orderArgCount

@@ -18,6 +18,8 @@ import (
 // chatDraftOutput reports a local chat draft. Location is always msgvault:
 // the text never reaches the provider's composer.
 type chatDraftOutput struct {
+	draftRecipientAdvisory
+
 	Status                 string `json:"status"`
 	Location               string `json:"location"`
 	DraftID                string `json:"draft_id"`
@@ -162,6 +164,9 @@ func emitChatDrafts(emit func(api.CLIRunEvent) error, asJSON, list bool, status 
 			SourceID: d.SourceID, SourceType: d.SourceType, Source: d.SourceIdentifier,
 			ConversationID: d.ConversationID, SourceConversationID: d.SourceConversationID,
 			ConversationType: d.ConversationType, ReplyToSourceMessageID: d.ReplyToSourceMessageID,
+		}
+		if status == "created" {
+			output.RecipientProvenanceStatus = "not_applicable"
 		}
 		outputs = append(outputs, output)
 		fmt.Fprintf(&text, "location=msgvault draft=%s revision=%d status=%s source=%s source_type=%s conversation=%d conversation_type=%s source_conversation=%s",

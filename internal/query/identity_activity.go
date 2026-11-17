@@ -37,11 +37,10 @@ func identityRequestIsSourceOnly(request ExploreRequest) bool {
 	return identityRequestIsUnfiltered(request)
 }
 
-// sentIdentityConditions filters before logical grouping so drafts cannot
-// become chat anchors or change identity counts. Explore keeps the full set.
+// sentIdentityConditions excludes drafts and email invitations before grouping.
 func sentIdentityConditions(conditions string) string {
 	return conditions + ` AND NOT EXISTS (
-		SELECT 1 FROM relationship_unsent_messages a
+		SELECT 1 FROM relationship_activity_exclusions a
 		WHERE a.message_id = analytical_entries.message_id
 	)`
 }
@@ -460,13 +459,8 @@ func (e *DuckDBEngine) searchPeople(
 	if identityRequestIsUnfiltered(request.Explore) {
 		queryText = e.unfilteredPeopleSQL(candidates, order)
 		args = append(args, candidateArgs...)
-	} else if identityRequestIsSourceOnly(request.Explore) &&
-		!e.sourceRollupFastPathDisabled {
-		queryText = e.sourceFilteredPeopleSQL(
-			candidates,
-			order,
-			len(request.Explore.Context.SourceIDs),
-		)
+	} else if identityRequestIsSourceOnly(request.Explore) && !e.sourceRollupFastPathDisabled {
+		queryText = e.sourceFilteredPeopleSQL(candidates, order, len(request.Explore.Context.SourceIDs))
 		args = append(args, candidateArgs...)
 		for _, sourceID := range request.Explore.Context.SourceIDs {
 			args = append(args, sourceID)
@@ -582,9 +576,7 @@ func (e *DuckDBEngine) unfilteredPeopleSQL(
 ` + e.peoplePageSelectSQL()
 }
 
-func (e *DuckDBEngine) filteredPeopleSQL(
-	logicalSQL, order string,
-) string {
+func (e *DuckDBEngine) filteredPeopleSQL(logicalSQL, order string) string {
 	// person_stats is the ONLY reference to the per-(entry, person) rows,
 	// and it reads person_flags rather than logical_people: a second
 	// reference would make DuckDB materialize the full row set — hundreds
@@ -599,7 +591,7 @@ func (e *DuckDBEngine) filteredPeopleSQL(
 person_stats AS (
 	SELECT p.canonical_id, p.source_type,
 	       count(*)::BIGINT AS source_count,
-	       count(*) FILTER (WHERE p.message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       count(*) FILTER (WHERE p.message_type = 'meeting_transcript' AND (p.canonical_id, p.entry_num) IN (SELECT canonical_id, message_id FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingOwners)) + `')))::BIGINT AS meeting_count,
 	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
 	       min(p.occurred_at)::TIMESTAMP AS first_at,
 	       max(p.occurred_at)::TIMESTAMP AS last_at

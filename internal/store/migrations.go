@@ -786,8 +786,9 @@ func (s *Store) MarkMigrationAppliedContext(
 // of colons, the same guard source merges use for rederive ledger keys.
 const colonFreeSuffixSQL = `SUBSTR(name, 1, LENGTH(?)) = ? AND SUBSTR(name, LENGTH(?) + 1) NOT LIKE '%:%'`
 
-// NextMigrationKeyContext returns the first ledger name after `after` that
-// extends prefix with a colon-free remainder, or "" when none remains.
+// NextMigrationKeyContext returns the first recorded ledger name after `after`
+// that extends prefix with a colon-free remainder, or "" when none remains.
+// A name whose version was lowered to 0 counts as not recorded.
 func (s *Store) NextMigrationKeyContext(ctx context.Context, prefix, after string) (string, error) {
 	var name string
 	err := s.db.QueryRowContext(ctx, `SELECT name FROM applied_migrations

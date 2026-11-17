@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"go.kenn.io/kit/consolewindow"
+	"go.kenn.io/msgvault/internal/api"
+	"golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 )
 
 const daemonCLISubprocessEnv = "MSGVAULT_DAEMON_CLI_PARENT_PID"
@@ -21,8 +24,14 @@ const daemonCLISubprocessEnv = "MSGVAULT_DAEMON_CLI_PARENT_PID"
 // ErrSyncPaused signals a sync that paused until a later run.
 var ErrSyncPaused = errors.New("sync paused")
 
+// ErrSyncInterrupted identifies a child sync interrupted while its client is connected.
+var ErrSyncInterrupted = errors.New("sync interrupted")
+
 // ExitCodeSyncPaused carries a paused outcome from the CLI child to the daemon.
 const ExitCodeSyncPaused = 75
+
+// ExitCodeInterrupted follows the shell convention for an interrupted command.
+const ExitCodeInterrupted = 130
 
 var daemonCLIExecutableResolver = os.Executable
 
@@ -94,8 +103,9 @@ func runDaemonCLISubprocessStreamWithEnv(
 const cliSubprocessExitSentinel = "msgvault: cli subprocess exited non-zero"
 
 // classifyDaemonCLIWaitErr maps a subprocess Wait() error to what the proxy
-// should report. A paused exit emits its outcome and succeeds. Other non-zero exits become the
-// sentinel: its real error was already streamed to the caller's stderr, so the
+// should report. A paused exit emits its outcome and succeeds; an interrupted
+// full sync emits its outcome and fails. Other non-zero exits become the
+// sentinel: their real error was already streamed to the caller's stderr, so the
 // client must not print a second, redundant "CLI subprocess ...: exit status
 // 1" wrapper. Any other failure (couldn't start, signal, etc.) is wrapped with
 // context because nothing else surfaced it.
@@ -105,6 +115,14 @@ func classifyDaemonCLIWaitErr(waitErr error, args []string, emit func(string, st
 	}
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) && exitErr.Exited() {
+		if exitErr.ExitCode() == ExitCodeInterrupted && len(args) > 0 && args[0] == "sync-full" {
+			if emit != nil {
+				if err := emit("outcome", "interrupted"); err != nil {
+					return err
+				}
+			}
+			return errors.New(cliSubprocessExitSentinel)
+		}
 		if exitErr.ExitCode() == ExitCodeSyncPaused {
 			if emit != nil {
 				return emit("outcome", "paused")
@@ -117,7 +135,7 @@ func classifyDaemonCLIWaitErr(waitErr error, args []string, emit func(string, st
 		// wrapped with context below.
 		return errors.New(cliSubprocessExitSentinel)
 	}
-	return fmt.Errorf("CLI subprocess %s: %w", strings.Join(args, " "), waitErr)
+	return fmt.Errorf("CLI subprocess %s: %w", strings.Join(api.RedactedCLIRunArgs(args), " "), waitErr)
 }
 
 func newDaemonCLISubprocessCommand(ctx context.Context, commandArgs []string, env map[string]string, cwd string) (*exec.Cmd, error) {
@@ -209,6 +227,10 @@ func streamDaemonCLIPipe(
 	stream string,
 	emit func(stream, data string) error,
 ) error {
+	// The decoder holds a rune split across reads until the rest arrives, so
+	// every emitted chunk is valid UTF-8. Invalid bytes become U+FFFD, which
+	// the NDJSON event encoder would produce anyway.
+	r = transform.NewReader(r, unicode.UTF8.NewDecoder())
 	buf := make([]byte, 32*1024)
 	var firstErr error
 	for {

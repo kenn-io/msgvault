@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
@@ -40,7 +41,17 @@ func manualSyncCLICommand(args []string) bool {
 		return false
 	}
 	if args[0] == "source" {
-		return len(args) >= 3 && (args[1] == "facebook-comments" || args[1] == "instagram-comments") && args[2] == "sync"
+		if len(args) < 3 {
+			return false
+		}
+		switch args[1] {
+		case "facebook-comments", "instagram-comments", "instagram-mentions", "facebook-messages", "instagram-messages":
+			return args[2] == "sync"
+		case "feeds":
+			// add archives the items a new feed lists now.
+			return args[2] == "sync" || args[2] == "add"
+		}
+		return false
 	}
 	switch args[0] {
 	case "sync-slack", "sync-teams", "sync-beeper", "sync-chatwoot", "sync-discord", "sync-matrix", "sync-inline", "backfill-inline-media", "sync-circleback", "sync-plaud",
@@ -56,6 +67,20 @@ func manualSyncCLICommand(args []string) bool {
 	default:
 		return false
 	}
+}
+
+// commentWriteCLICommand reports a comment command that can change messages
+// in the analytics cache. A dry run and --clear-unknown change none.
+func commentWriteCLICommand(args []string) bool {
+	if len(args) < 2 || args[0] != "comment" || (args[1] != "moderate" && args[1] != "reply") {
+		return false
+	}
+	for _, flag := range []string{"--dry-run", "--dry-run=true", "--clear-unknown", "--clear-unknown=true"} {
+		if slices.Contains(args, flag) {
+			return false
+		}
+	}
+	return true
 }
 
 func manualSyncCacheFlagValues(args []string) (force, skip bool) {

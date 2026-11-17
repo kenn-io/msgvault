@@ -129,14 +129,14 @@ describe('RelationshipReviewController', () => {
 
     expect(attempts).toBe(1);
     expect(controller.rows).toEqual([]);
-    expect(controller.error).toBe('Unable to load imported relationship reviews.');
+    expect(controller.error).toBe("Couldn't load imported connections.");
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(attempts).toBe(1);
 
     await controller.retry();
     expect(attempts).toBe(2);
     expect(controller.rows).toEqual([]);
-    expect(controller.error).toBe('Unable to load imported relationship reviews.');
+    expect(controller.error).toBe("Couldn't load imported connections.");
     await controller.retry();
     expect(attempts).toBe(3);
     expect(controller.rows).toEqual([]);

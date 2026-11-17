@@ -51,8 +51,8 @@ type fetchedFlags struct {
 // response without a FLAGS item says nothing about the message's flags, and
 // treating it as empty would clear flags the server still holds.
 func (c *Client) fetchFlagsCommand(ctx context.Context, uids imap.UIDSet) ([]fetchedFlags, error) {
-	return runCommand(ctx, c, func() ([]fetchedFlags, error) {
-		cmd := c.conn.Fetch(uids, &imap.FetchOptions{UID: true, Flags: true})
+	return connCommand(ctx, c, func(conn *imapclient.Client) ([]fetchedFlags, error) {
+		cmd := conn.Fetch(uids, &imap.FetchOptions{UID: true, Flags: true})
 		var results []fetchedFlags
 		for msg := cmd.Next(); msg != nil; msg = cmd.Next() {
 			var result fetchedFlags

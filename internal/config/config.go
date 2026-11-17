@@ -140,6 +140,7 @@ type DocbankIntegrationConfig struct {
 	APIKeyFile              string   `toml:"api_key_file"`
 	AllSourcesUploadConsent bool     `toml:"all_sources_upload_consent"`
 	DocumentProfile         string   `toml:"document_profile"`
+	VoiceTranscriptSearch   bool     `toml:"voice_transcript_search"`
 	ASRProfile              string   `toml:"asr_profile"`
 	ReferenceConsent        bool     `toml:"reference_consent"`
 	ReferenceOrigins        []string `toml:"reference_origins"`
@@ -629,11 +630,15 @@ type Config struct {
 	GCal               []GCalSource              `toml:"gcal"`
 	Beeper             BeeperConfig              `toml:"beeper"`
 	Chatwoot           []ChatwootSource          `toml:"chatwoot"`
+	MetaWebhooks       MetaWebhooksConfig        `toml:"meta_webhooks"`
 	FacebookComments   []FacebookCommentsSource  `toml:"facebook_comments"`
 	InstagramComments  []InstagramCommentsSource `toml:"instagram_comments"`
+	FacebookMessages   []FacebookCommentsSource  `toml:"facebook_messages"`
+	InstagramMessages  []InstagramCommentsSource `toml:"instagram_messages"`
 	Matrix             MatrixConfig              `toml:"matrix"`
 	Slack              SlackConfig               `toml:"slack"`
 	Inline             InlineConfig              `toml:"inline"`
+	Feeds              FeedsConfig               `toml:"feeds"`
 	Omi                []OmiSource               `toml:"omi"`
 	Granola            []GranolaSource           `toml:"granola"`
 	Plaud              []PlaudSource             `toml:"plaud"`
@@ -875,9 +880,29 @@ func (o *OAuthConfig) HasAnyConfig() bool {
 
 // MicrosoftConfig holds Microsoft 365 / Azure AD OAuth configuration.
 type MicrosoftConfig struct {
+	ClientID    string                  `toml:"client_id"`
+	TenantID    string                  `toml:"tenant_id"`
+	RedirectURI string                  `toml:"redirect_uri"`
+	Apps        map[string]MicrosoftApp `toml:"apps"`
+}
+
+// MicrosoftApp holds credentials for one Microsoft app.
+type MicrosoftApp struct {
 	ClientID    string `toml:"client_id"`
 	TenantID    string `toml:"tenant_id"`
 	RedirectURI string `toml:"redirect_uri"`
+}
+
+// App resolves a named app or the default Microsoft configuration.
+func (c *MicrosoftConfig) App(name string) (MicrosoftConfig, error) {
+	if name == "" {
+		return *c, nil
+	}
+	app, ok := c.Apps[name]
+	if !ok || app.ClientID == "" {
+		return MicrosoftConfig{}, fmt.Errorf("[microsoft.apps.%s] must specify client_id", name)
+	}
+	return MicrosoftConfig{ClientID: app.ClientID, TenantID: app.TenantID, RedirectURI: app.RedirectURI}, nil
 }
 
 // EffectiveRedirectURI returns the redirect URI, defaulting to the
@@ -1148,6 +1173,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// the pre-filled section so changing endpoint cannot silently carry the
 	// default Voyage key environment name to another origin.
 	cfg.Vector.Multimodal = vector.MultimodalConfig{}
+	// Embedding transport defaults depend on the decoded endpoint selection.
+	cfg.Vector.Embeddings.BatchSize = 0
+	cfg.Vector.Embeddings.Timeout = 0
 	// People-sweep provider defaults include a generated profile. Decode into
 	// an empty section so ApplyDefaults only fills it when the file defines
 	// no profiles of its own.
@@ -1177,6 +1205,12 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		slog.Warn("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md; for Mistral run docbank processing probe --profile <name> --seeds <dir> (Docbank v0.17.0 or later)")
 	}
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && (key[0] == "facebook_messages" || key[0] == "instagram_messages") {
+			return nil, fmt.Errorf("unknown Meta inbox config key %q", key.String())
+		}
+		if len(key) > 0 && key[0] == "meta_webhooks" {
+			return nil, fmt.Errorf("unknown Meta webhooks config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "instagram_comments" {
 			return nil, fmt.Errorf("unknown Instagram comments config key %q", key.String())
 		}
@@ -1351,6 +1385,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
 	if err := cfg.validateChatwootSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateMetaWebhooks(); err != nil {
 		return nil, err
 	}
 	if err := cfg.validateFacebookCommentsSources(); err != nil {

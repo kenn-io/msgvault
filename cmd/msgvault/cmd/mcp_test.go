@@ -107,7 +107,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	savedAllowPersonMerges := mcpAllowPersonMerges
 	savedAllowCardDAVWrites := mcpAllowCardDAVWrites
 	savedAllowCalendarWrites := mcpAllowCalendarWrites
-	savedAllowLoops, savedAllowSources := mcpAllowLoopWrites, mcpAllowSourceWrites
+	savedAllowLoops, savedAllowSources, savedAllowCurated := mcpAllowLoopWrites, mcpAllowSourceWrites, mcpAllowCuratedWrites
 	savedConfirmSensitiveDrafts := mcpConfirmSensitiveDrafts
 	savedServeHTTP := serveMCPHTTPWithOptions
 	allowWritesFlag := mcpCmd.Flags().Lookup("http-allow-writes")
@@ -122,6 +122,9 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	loopWritesFlag := mcpCmd.Flags().Lookup("allow-loop-writes")
 	require.NotNil(loopWritesFlag)
 	require.NoError(loopWritesFlag.Value.Set("true"))
+	curatedWritesFlag := mcpCmd.Flags().Lookup("allow-curated-writes")
+	require.NotNil(curatedWritesFlag)
+	require.NoError(curatedWritesFlag.Value.Set("true"))
 	mcpAllowSourceWrites = false
 	mcpAllowProfileWrites = true
 	mcpAllowIdentityDecisions = true
@@ -140,6 +143,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 		mcpAllowCardDAVWrites = savedAllowCardDAVWrites
 		mcpAllowCalendarWrites = savedAllowCalendarWrites
 		mcpAllowLoopWrites, mcpAllowSourceWrites = savedAllowLoops, savedAllowSources
+		mcpAllowCuratedWrites = savedAllowCurated
 		mcpConfirmSensitiveDrafts = savedConfirmSensitiveDrafts
 		serveMCPHTTPWithOptions = savedServeHTTP
 	})
@@ -157,7 +161,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	err := mcpCmd.RunE(mcpCmd, nil)
 
 	require.ErrorIs(err, wantErr)
-	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops}, gotServeOpts.OperationWriteFamilies)
+	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops, mcpserver.OperationFamilyCurated}, gotServeOpts.OperationWriteFamilies)
 	assert.True(gotServeOpts.AllowProfileWrites)
 	assert.True(gotServeOpts.AllowIdentityDecisions)
 	assert.True(gotServeOpts.AllowIdentityScoring)
@@ -323,20 +327,23 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 	})
 	_ = testCtx
 	tests := []struct {
-		name              string
-		schemaVersion     string
-		wantPeople        bool
-		wantDirectory     bool
-		wantChatDiscovery bool
-		wantSavedViews    bool
-		wantMeetings      bool
-		wantAgenda        bool
-		wantArchiveSQL    bool
-		wantReview        bool
-		wantScoring       bool
-		wantCardDAV       bool
-		wantMessageTags   bool
-		wantContacts      bool
+		name                   string
+		schemaVersion          string
+		wantPeople             bool
+		wantDirectory          bool
+		wantChatDiscovery      bool
+		wantSavedViews         bool
+		wantMeetings           bool
+		wantMeetingRecords     bool
+		wantMeetingDecisions   bool
+		wantMeetingSuggestions bool
+		wantAgenda             bool
+		wantArchiveSQL         bool
+		wantReview             bool
+		wantScoring            bool
+		wantCardDAV            bool
+		wantMessageTags        bool
+		wantContacts           bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -355,7 +362,10 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "native message tags schema", schemaVersion: "3.15.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
-		{name: "current schema", schemaVersion: api.APISchemaVersion, wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "meeting record predecessor", schemaVersion: "5.3.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "meeting decisions predecessor", schemaVersion: "5.9.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "suggestion predecessor", schemaVersion: "5.10.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantMeetingDecisions: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "current schema", schemaVersion: api.APISchemaVersion, wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantMeetingDecisions: true, wantMeetingSuggestions: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "tags predecessor 3.14.0", schemaVersion: "3.14.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "before contact schema", schemaVersion: "3.19.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
 		{name: "contact schema", schemaVersion: "3.20.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantContacts: true, wantMessageTags: true},
@@ -394,6 +404,9 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			assert.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
 			assert.Equal(tt.wantChatDiscovery, opts.ChatDiscoveryBackend != nil)
 			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
+			assert.Equal(tt.wantMeetingRecords, opts.MeetingRecords)
+			assert.Equal(tt.wantMeetingDecisions, opts.MeetingDecisions)
+			assert.Equal(tt.wantMeetingSuggestions, opts.MeetingSuggestions)
 			assert.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
 			assert.Equal(tt.wantContacts, opts.ContactRoutesBackend != nil)
 			assert.Equal(tt.wantArchiveSQL, opts.ArchiveSQLQuerier != nil)

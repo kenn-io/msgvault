@@ -76,9 +76,14 @@ const (
 	ToolCreateSavedView           = "create_saved_view"
 	ToolUpdateSavedView           = "update_saved_view"
 	ToolDeleteSavedView           = "delete_saved_view"
+	ToolGetMeetingRecord          = "get_meeting_record"
+	ToolSuggestMeetingLinks       = "suggest_meeting_links"
 	ToolGetMeetingContext         = "get_meeting_context"
 	ToolListMeetingActionItems    = "list_meeting_action_items"
 	ToolGetMeetingMetrics         = "get_meeting_metrics"
+	ToolLinkMeeting               = "link_meeting"
+	ToolUnlinkMeeting             = "unlink_meeting"
+	ToolResetMeetingLink          = "reset_meeting_link"
 	ToolListIdentityMatches       = "list_identity_matches"
 	ToolGetIdentityMatch          = "get_identity_match"
 	ToolAcceptIdentityMatch       = "accept_identity_match"
@@ -178,8 +183,11 @@ type ServeOptions struct {
 	SavedViews savedview.Service
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
-	Meetings MeetingBackend
-	Calendar CalendarBackend
+	Meetings           MeetingBackend
+	MeetingRecords     bool
+	MeetingSuggestions bool
+	MeetingDecisions   bool
+	Calendar           CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
 	// ConfirmSensitiveDrafts requires client approval before writing flagged draft content.
@@ -348,6 +356,7 @@ var mcpSchemaCache = sdkmcp.NewSchemaCache()
 
 // newMCPServer builds an official MCP server from the operation catalog.
 func newMCPServer(opts ServeOptions, allowWrites bool) *sdkmcp.Server {
+	opts.DiscoverFamilies = nil
 	return newMCPServerWithPolicy(opts, allowWrites, newStdioInvocationPolicy())
 }
 
@@ -423,18 +432,21 @@ func newMCPServerWithPolicy(
 		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
 	}
 
-	for _, definition := range operationCatalog(opts, h) {
-		if !toolClassAllowed(definition.security, opts, allowWrites) {
-			continue
-		}
+	definitions := authorizedOperationCatalog(opts, allowWrites)
+	operations := operationalCatalog(opts, allowWrites)
+	h.toolDiscovery = toolDiscovery{definitions: definitions, discoverFamilies: opts.DiscoverFamilies}
+	for _, operation := range operations {
+		h.toolDiscovery.definitions = append(h.toolDiscovery.definitions, operation.definition)
+	}
+	for _, definition := range definitions {
 		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h), confirmation))
 	}
 	if !opts.DelegatedOnly {
 		registerAttachmentResources(s, h)
 	}
 
-	for _, definition := range operationalCatalog(opts, allowWrites) {
-		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
+	for _, definition := range operations {
+		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations, opts.downloads), confirmation))
 	}
 
 	return s
@@ -464,7 +476,7 @@ func ServeTransport(ctx context.Context, opts ServeOptions, transport sdkmcp.Tra
 	if opts.DiscoverFamilies != nil {
 		opts.Families = opts.DiscoverFamilies(ctx)
 	}
-	return newMCPServerWithPolicy(opts, true, newStdioInvocationPolicy()).Run(ctx, transport) //nolint:wrapcheck // ServeWithOptions adds transport-specific context.
+	return newMCPServer(opts, true).Run(ctx, transport) //nolint:wrapcheck // ServeWithOptions adds transport-specific context.
 }
 
 // ServeHTTPWithOptions creates an MCP server from opts and serves over
@@ -635,7 +647,7 @@ func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
 	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
 		return agentgrant.PermissionSearchRead, true
-	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
+	case ToolGetMessage, ToolListThread, ToolSearchInMessage, ToolGetMeetingRecord, ToolSuggestMeetingLinks:
 		return agentgrant.PermissionMessageRead, true
 	case ToolGetAttachment:
 		return agentgrant.PermissionAttachmentRead, true

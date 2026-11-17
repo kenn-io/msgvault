@@ -46,6 +46,9 @@ func facebookHTTPFixture(t *testing.T, wrongIdentity bool) {
 			_, _ = fmt.Fprint(w, `{"data":[{"id":"100_201","message":"Example comment","from":{"id":"300","name":"Example Customer"}}]}`)
 		case "/v26.0/100_201/comments":
 			_, _ = fmt.Fprint(w, `{"data":[]}`)
+		case "/v26.0/100_201":
+			assert.Contains(t, []string{http.MethodPost, http.MethodDelete}, r.Method)
+			_, _ = fmt.Fprint(w, `{"success":true}`)
 		case "/v26.0/100/visitor_posts":
 			_, _ = fmt.Fprint(w, `{"data":[]}`)
 		case "/v26.0/100/ads_posts":
@@ -136,7 +139,7 @@ func TestFacebookManualPartialWritesContinueAcrossProfiles(t *testing.T) {
 	require.Error(err)
 	assert.Contains(err.Error(), "facebook profile first")
 	assert.Contains(err.Error(), "facebook profile second")
-	assert.Contains(output.String(), "Partial coverage")
+	assert.Contains(output.String(), "Some comments weren't synced")
 	for _, profile := range cfg.FacebookComments {
 		source, err := st.GetSourceByTypeAndIdentifier(t.Context(), meta.SourceType, meta.SourceIdentifier(profile.AppID, profile.PageID))
 		require.NoError(err)

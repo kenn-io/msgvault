@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-12"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -676,11 +676,13 @@ sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
 
 | Key | Default | Description |
 |---|---|---|
-| `client_id` | — | Azure AD Application (client) ID (required) |
+| `client_id` | — | Default Azure AD Application (client) ID |
 | `redirect_uri` | `http://localhost:8089/callback/microsoft` | OAuth redirect URI registered in the Azure AD app |
 | `tenant_id` | `common` | Azure AD tenant ID; `common` allows both personal and org accounts |
 
-See [OAuth Setup: Microsoft 365](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the same `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth uses `tokens/microsoft_<email>.json`.
+For a mailbox in another organization, configure a separate app under `[microsoft.apps.<name>]` with its own `client_id`, `tenant_id`, and `redirect_uri`. Omitted tenant and redirect values use the defaults in the table, independently of `[microsoft]`. Restart the daemon after changing Microsoft app settings so scheduled syncs use the updated configuration. Bind a mail source with `msgvault add-o365 user@org-b.example --oauth-app orgb`. Teams, contacts, and the Web add-source template use `[microsoft]`.
+
+See [OAuth Setup: Microsoft 365](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the default `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth with the default app uses `tokens/microsoft_<email>.json`.
 
 ### `[[fastmail]]`
 
@@ -973,7 +975,7 @@ Each `[[server.remote_clients]]` entry gives one remote CLI its own read-only ke
 
 `msgvault serve` reads these files after it settles the server key, whether that key comes from `api_key`, a file, an environment variable, or is created at startup. It fails to start if a file is missing or empty or a key repeats another. CLI commands that start a local daemon also trigger these checks. Restart to add, remove, or rotate a key.
 
-`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
+`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. An automatically started daemon does not idle out while a [Meta webhook receiver](#meta-webhooks) is listening. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
 
 Flags and environment variables can configure the server
 without `config.toml`. `serve --bind` and `serve --port` take priority over
@@ -1452,7 +1454,7 @@ document_profile = "documents"
 | `attachment_upload_consent` | `false` | Allow attachment bytes from all sources, including future imports, to leave msgvault. Without consent, status reports mirroring as disabled |
 | `document_profile` | Empty | Docbank profile used to process mirrored attachments and search their text |
 | `attachment_folder` | `/msgvault` | Clean absolute virtual directory path; missing directories are created in Docbank |
-| `attachment_search_profile` | `""` | On newer `main` builds, name an existing Docbank processing profile for semantic/hybrid attachment retrieval. Does not queue processing or embeddings |
+| `attachment_search_profile` | `""` | Name an existing Docbank processing profile for semantic/hybrid attachment retrieval. Does not queue processing or embeddings |
 
 Set `document_profile` to a Docbank profile with a rendition stage that extracts text. Processing covers mirrored files except declared images, audio, and video, while a live message holds them. Attachment search also includes images with text already processed in Docbank. In Docbank, run `docbank processing plan <path-or-id> --profile <name>` on one mirrored file, review the plan, then run `docbank processing build <path-or-id> --profile <name> --plan-fingerprint <fp> --consent`. This grants consent for that profile across documents. msgvault always sends `consent:false`; consent stays in Docbank.
 
@@ -1493,7 +1495,7 @@ HTTP API, and MCP expose `docbank` receipts containing `endpoint`, `folder`,
 `node_id`, `version_id`, and `blob_hash`, so callers can open the corresponding
 Docbank file. List and search views omit these receipts. URL-only attachments are excluded from discovery. Details recover a hashless Slack or Discord attachment's hash from its trusted CAS storage path. The mirror reads these aliases from loose files or retained pack entries and verifies their SHA-256. It sends attachment content and excludes thumbnails from `thumbnail_hash`. Missing or corrupt archive bytes fail only that file. Docbank processes mirrored documents and supplies their searchable text.
 
-#### Search document text through Docbank (unreleased)
+#### Search document text through Docbank
 
 Configure a Docbank rendition profile, such as a Docling profile, and set its name in `[integrations.docbank] document_profile`. Docbank's daemon must support the chosen processor. A Mistral profile needs Docbank v0.17.0 or later. Create the five seed files and run `docbank processing probe --profile <name> --seeds <dir>` to write its capability manifest, as [Docbank's Mistral OCR configuration](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#document-ocr-with-mistral) describes. It replaces `msgvault documents probe-mistral`.
 
@@ -1517,6 +1519,7 @@ enabled = true
 url = "http://127.0.0.1:8080"     # your Docbank daemon; the port is an example
 api_key_env = "DOCBANK_API_KEY"   # daemon environment variable with the key
 all_sources_upload_consent = true # allow audio from every captured source to leave msgvault
+# voice_transcript_search = true  # include generated Beeper voice transcripts in keyword search
 # asr_profile = "asr"             # optional Docbank profile for audio without source text
 ```
 
@@ -1528,7 +1531,8 @@ all_sources_upload_consent = true # allow audio from every captured source to le
 | `api_key_env` | — | Name of the daemon environment variable that holds the Docbank API key. It is read for each request and sent as `X-Api-Key` |
 | `api_key` | — | Inline Docbank API key; takes priority over file and environment sources |
 | `api_key_file` | — | Owner-only Docbank key file, read for each request; takes priority over `api_key_env` |
-| `all_sources_upload_consent` | `false` | Allow stored audio and explicit source transcripts from every captured source, including future providers, to be sent to `url`. Without it the job only records local state |
+| `all_sources_upload_consent` | `false` | Allow stored audio and explicit source transcripts from every captured source, including future providers, to be sent to `url`. Without it, uploads stop. If `voice_transcript_search` remains enabled, the job can still read transcripts for previously retained recordings. |
+| `voice_transcript_search` | `false` | Include generated Beeper voice memo transcripts in keyword search. Restart the daemon after changing this setting. Disabling it removes saved transcripts from search. |
 | `asr_profile` | — | Optional Docbank processing profile for stored audio without usable source text. An empty value retains audio without requesting processing. Msgvault rejects `supplied-transcript`, which Docbank reserves for supplied transcript input. |
 | `reference_consent` | `false` | Send Loom/Cap links from every message source and native Teams recording pointers to `url` as references. This consent is separate from audio upload consent. |
 | `reference_origins` | `[]` | Exact origins for self-hosted Cap, such as `https://cap.example.test`. Include only scheme, host and optional port. Register each origin in Docbank too. |
@@ -1644,7 +1648,7 @@ before choosing media caps or configuring a remote daemon.
 
 ### `[[facebook_comments]]` {#facebook-comments}
 
-Select one Facebook Page for comment ingestion (unreleased). See
+Select one Facebook Page for comment ingestion. See
 [Facebook Page comments](usage/facebook-comments.md) for token setup, coverage,
 and recovery. Tokens are read only from the named daemon environment variable.
 
@@ -1666,21 +1670,46 @@ schedule = "*/30 * * * *"
 | `token_env` | required | Explicit environment variable name on the daemon host; no token values or fallback variables |
 | `enabled` | `false` | Enable scheduled sync; manual commands remain available |
 | `schedule` | empty | Five-field cron expression; empty means manual sync only |
+| `actions` | empty | Comment changes allowed on Meta: `"hide"` (also allows unhide), `"delete"`, and `"reply"`. Empty means read only. See [Hide or delete comments](usage/facebook-comments.md#hide-or-delete-comments) and [Reply to comments](usage/facebook-comments.md#reply-to-comments) |
 
 `identifier` is trimmed and must be nonempty and unique ignoring case.
 `app_id` and `page_id` must be positive decimal IDs without leading zeros.
 Duplicate app/Page pairs, invalid environment variable names, unknown profile
-keys, and invalid schedules are rejected. The source identifier is
+keys, unknown actions, and invalid schedules are rejected. The source identifier is
 `app:<app_id>:page:<page_id>`; scheduled jobs use
 `facebook_comments:<source-identifier>`, independently of email account dispatch.
 
+### `[[facebook_messages]]` and `[[instagram_messages]]` {#meta-inboxes}
+
+Select a Page's Messenger inbox or a linked Instagram account's inbox
+(unreleased). See [Facebook and Instagram messages](usage/meta-messages.md).
+`[[facebook_messages]]` takes the keys and rules of
+[`[[facebook_comments]]`](#facebook-comments), and `[[instagram_messages]]`
+those of [`[[instagram_comments]]`](#instagram-comments), except `actions`
+and `mentions`. Scheduled jobs are
+`facebook_messages:<source-identifier>` and
+`instagram_messages:<source-identifier>`.
+
+### `[meta_webhooks]` {#meta-webhooks}
+
+Start a listener for signed Meta webhook deliveries (unreleased). See
+[Meta webhooks](usage/meta-webhooks.md) for setup. `listen_addr` is a
+`host:port` address; leave it empty to keep the receiver off. Each
+`[[meta_webhooks.apps]]` entry needs a decimal `app_id` and the names of the
+daemon environment variables that hold the app secret (`app_secret_env`) and
+the verify token (`verify_token_env`). App IDs must be unique, and a
+`listen_addr` needs at least one app. Unknown keys are rejected.
+
 ### `[[instagram_comments]]` {#instagram-comments}
 
-Select a professional Instagram account linked to an explicitly selected Page
-(unreleased). See [Instagram comments](usage/instagram-comments.md) for setup
+Select a professional Instagram account linked to an explicitly selected Page.
+See [Instagram comments](usage/instagram-comments.md) for setup
 and coverage. Each profile requires `identifier`, `app_id`, `page_id`,
 `instagram_account_id`, and `token_env`; `enabled` defaults to `false`, and
-an empty `schedule` means manual sync only.
+an empty `schedule` means manual sync only. `actions` works as in
+`[[facebook_comments]]`. Set `ad_account_id` (decimal, without `act_`) and
+`ad_token_env` together to also archive comments on the account's ads; see
+[Include ad media](usage/instagram-comments.md#include-ad-media).
 
 The label is trimmed, nonempty, and unique ignoring case. All three IDs must
 be positive decimal IDs without leading zeros. Duplicate app/Page/Instagram
@@ -1690,6 +1719,28 @@ environment variable. Renaming the label preserves archive identity.
 The canonical source identifier is
 `app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
 scheduler job is `instagram_comments:<source-identifier>`.
+
+Set `mentions = true` to also archive media in which other accounts tag the
+account, as a separate `instagram_mentions` source with the same identifier.
+It defaults to `false`. When the profile has a schedule, the scheduler job is
+`instagram_mentions:<source-identifier>`. See
+[Archive media that tags the account](usage/instagram-comments.md#archive-media-that-tags-the-account).
+
+### `[feeds]` {#feeds}
+
+Fetch the RSS, Atom, and JSON feeds followed with `msgvault source feeds add`. The
+feeds themselves are kept in the archive, not here; see [Feeds](usage/feeds.md).
+
+```toml
+[feeds]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules feed sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
 
 ### `[[chatwoot]]` {#chatwoot}
 
@@ -2185,8 +2236,8 @@ Text embeddings use a configured endpoint or the shared local `kennembed` server
 | `document_prefix` | `""` | Model-specific instruction prepended to every document chunk after chunking (for example, `"search_document: "` for `nomic-embed-text`). The prefix does not reduce `max_input_chars`; maximum 4096 UTF-8 bytes. |
 | `query_prefix` | `""` | Model-specific instruction prepended to every vector-search query (for example, `"search_query: "` for `nomic-embed-text`); maximum 4096 UTF-8 bytes. |
 | `api_key_env` | — | Name of an environment variable containing the API key. Omit for anonymous endpoints. |
-| `batch_size` | `32` | Embedding inputs per HTTP call. Long messages can contribute multiple chunk inputs. |
-| `timeout` | `30s` | Per-request timeout. |
+| `batch_size` | `32`, or `8` for `local_only` | Embedding inputs per HTTP call. Long messages can contribute multiple chunk inputs. |
+| `timeout` | `30s`, or `5m` for `local_only` | Per-request timeout. |
 | `max_retries` | `3` | Retries per batch on transient failures. |
 | `max_input_chars` | `32768` | Character cap per embedding chunk, counted in characters rather than tokens. Too high and chunks are rejected or silently truncated; too low and long messages split into more chunks, adding embedding overhead. For example, start around `6000` for a 2k-token model such as Ollama's `nomic-embed-text`, then check representative content. See [Matching `max_input_chars` to your embedder's context window](usage/vector-search.md#matching-max_input_chars-to-your-embedders-context-window). |
 | `eta_window` | `10` | Number of completed batches used for foreground throughput and ETA smoothing; daemon status retains at most 20. Zero or negative values use 10. |

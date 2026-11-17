@@ -366,7 +366,7 @@
    * A one-line row has no reserved second line, so its name centers on the avatar. */
   .row [role='gridcell'] {
     display: flex;
-    min-height: 52px;
+    min-height: var(--person-list-item-h);
     box-sizing: border-box;
     align-items: center;
     gap: var(--space-box);

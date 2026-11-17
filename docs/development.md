@@ -5,7 +5,7 @@ description: Build, test, lint, and code conventions.
 
 ## Build
 
-The macOS and Linux builds require Go 1.27.3+, Bun 1.4.4+, Node.js (22.23.4+ on
+The macOS and Linux builds require Go 1.27.4+, Bun 1.4.4+, Node.js (22.23.4+ on
 22.x, 24.22.1+ on 24.x, or 26.12.1+), and a C/C++ compiler. The Make targets install
 the pinned browser dependencies when `web/package.json` or `web/bun.lock`
 changes, then embed the production UI in the Go binary; Node runs the embed
@@ -132,6 +132,42 @@ scripts have been removed. Pushing a tag no longer invokes those publishers. The
 Docker inputs, local build commands, installers, and ordinary CI remain
 available.
 
+### Check a standalone executable
+
+Run the standalone contract against an already built or extracted executable
+on macOS or Linux:
+
+```bash
+make smoke-standalone BINARY=/absolute/path/to/msgvault
+```
+
+The check copies only the executable to a temporary directory with spaces,
+clears its environment, and uses a new temporary home. It imports one
+synthetic email into SQLite, builds the Parquet cache, and requires the exact
+result of a DuckDB-specific query. It stops its daemon and removes the home
+on exit. It never reads a personal archive or rebuilds/installs the binary.
+
+A developer host can still supply shared libraries even with a cleared
+environment. For a clean Linux check, run the same script in a stock runtime
+with networking disabled; use an executable built for the container's native
+architecture:
+
+```bash
+docker run --rm --network none --read-only --tmpfs /tmp:rw,exec \
+  --mount type=bind,src=/absolute/path/to/msgvault,dst=/artifact/msgvault,readonly \
+  --mount type=bind,src="$PWD/scripts/smoke-standalone.sh",dst=/smoke.sh,readonly \
+  debian:bookworm-slim sh /smoke.sh /artifact/msgvault
+```
+
+The Linux CI build uses Debian bookworm as its compiler baseline and transfers
+its AMD64 and ARM64 executables to separate stock bookworm runtime jobs. Those
+jobs install no build tools or DuckDB. They complement the Docker-image smoke
+above, which checks a different build and its packaged runtime. They do not
+publish release assets.
+See [runtime requirements](setup.md#runtime-requirements) for the inspected
+v0.23.0 requirements; a passing check on one host does not certify other OS
+versions or architectures.
+
 ## Test
 
 ```bash
@@ -155,6 +191,31 @@ All Go test runs need `-tags "fts5 sqlite_vec"`; the Make targets supply these
 automatically. Use `assert` and `require` from testify, with expected values
 first. See [AGENTS.md](https://github.com/kenn-io/msgvault/blob/main/AGENTS.md)
 for repository testing rules.
+
+### Property tests (rapid)
+
+Use properties for contracts over synthetic inputs, such as parsers and rollups.
+Write them with [rapid](https://pkg.go.dev/pgregory.net/rapid), the only
+property library in the repository: exercise production entry points and use
+testify directly with `*rapid.T`.
+
+`*rapid.T` is not a `*testing.T`. Fixture helpers that need `TempDir` or
+`Cleanup` take the enclosing test's `t`, so their cleanup runs when the whole
+test ends. Helpers that only assert and read a context can accept a small
+interface that both types satisfy.
+
+Each run uses a fresh random seed and 100 cases per property. rapid has no
+per-test case count, so keep each case cheap enough to run 100 times. Add
+`-rapid.checks=N` for a larger budget. When a property fails, rapid shrinks the
+input, prints the seed, and writes a fail file under the package's
+`testdata/rapid/` directory (ignored by Git). To replay it, rerun the same test
+with the printed `-rapid.failfile=...` or `-rapid.seed=...` flag. Turn useful
+shrunk inputs into ordinary regression cases.
+
+A weekly or manually dispatched property-discovery workflow runs
+`TestPropertyAnnualTemperatureRollups` and `TestPropertyMessageIDContract`
+with 10,000 cases each and keeps the seed, commit, test log, and fail files for 14 days
+when it fails.
 
 ### Timing waits
 
@@ -289,6 +350,26 @@ under `web/test-results/vitest/` and `web/test-results/playwright/`. CI uploads
 each report as a `vitest-<suite>-attempt-<n>` or
 `playwright-<suite>-attempt-<n>` artifact. `MSGVAULT_PLAYWRIGHT_SUITE` names a
 Playwright run's report.
+
+### CI and the merge queue
+
+Pull requests and `main` run the full CI suite. A pull request must pass it
+before it can join the merge queue. The merge queue runs a smaller suite that
+looks for breakage between separately green pull requests:
+
+- `checks`: Linux lint, API contract, generated artifact, and vulnerability checks.
+- The Linux SQLite test suite: `test` and the three `test-sharded` jobs.
+- `frontend` and `web-e2e`.
+- `release-linux-smoke` and `standalone-linux-runtime` for amd64 only.
+- `test-postgres-sharded (store)`, which runs the PostgreSQL schema, migration,
+  and upgrade tests. The SQLite suite covers the same tests on SQLite, including
+  `TestSchemaVersionContract`.
+
+Windows, arm64, pgvector, and the other PostgreSQL jobs skip merge groups. The
+PostgreSQL CLI and API shards, the follow-up checks for the PostgreSQL library
+without CGO, and the store concurrency repetitions skip them too. The skipped
+jobs still run on every push to `main`. Only `CI gate` is a required check, so
+this split needs no branch protection change.
 
 ## Lint & Format
 
@@ -504,6 +585,23 @@ unknown extensions, and raw values. Keep new registry elements covered by an
 explicit handling declaration so an upstream addition cannot be silently
 ignored.
 
+## API schema version maintenance
+
+When the HTTP API contract changes, bump `APISchemaVersion` in `internal/api/openapi.go`.
+Handler changes absent from the generated documents also need a bump.
+Add the marker path the test prints under `internal/api/testdata/api-version-contracts/`, with a
+one-line summary. Replace `<summary-sha256>` with `printf '%s' 'Your summary' | sha256sum | cut -d ' ' -f 1`.
+The suffix identifies the marker; the test does not check it against the summary.
+Keep every base marker. Replace a branch-only marker after changing its contract; if the version
+is used on the base, take the next minor and move feature minimums introduced by your change.
+The contract test skips locally when the base is unavailable and fails in CI.
+If the main branch is on `upstream`, fetch it and set the base before testing:
+
+```bash
+git fetch upstream main
+export MSGVAULT_API_CONTRACT_BASE="$(git merge-base HEAD upstream/main)"
+```
+
 ## Archive schema version maintenance
 
 `internal/store/schema_version.go` owns `store.SchemaVersion`, the monotonic
@@ -513,8 +611,8 @@ Embedded readers require an exact version match. Once an archive is migrated to
 a higher version, applications using an older `pkg/archive` must upgrade too,
 even if the schema change only added an index.
 
-Filename suggestions require archive schema version 6 and API schema 3.15,
-newer than the latest release. Version 6 creates empty projection tables;
+Filename suggestions require archive schema version 6 and API schema 3.15.
+Version 6 creates empty projection tables;
 background maintenance establishes readiness separately. Schema migration does
 not scan attachments or populate the index, and suggestion requests never
 perform setup or backfill. Embedded readers require completed version-6 setup.
@@ -588,6 +686,7 @@ WHERE EXISTS (
 | `charmbracelet/lipgloss` | TUI styling |
 | `mattn/go-sqlite3` | SQLite with CGO (FTS5) |
 | `duckdb/duckdb-go/v2` | DuckDB driver for Parquet |
+| `pgregory.net/rapid` | Property generation and shrinking for Go tests |
 | `gogs/chardet` | Character set detection |
 | `golang.org/x/text` | Text encoding conversion |
 

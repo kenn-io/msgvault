@@ -1,15 +1,19 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +29,8 @@ func TestHelperProcess(t *testing.T) {
 	switch os.Getenv("GO_HELPER_MODE") {
 	case "paused":
 		os.Exit(ExitCodeSyncPaused)
+	case "interrupted":
+		os.Exit(130)
 	case "exit3":
 		os.Exit(3)
 	case "stdout-stderr-ok":
@@ -57,23 +63,38 @@ func helperProcessCommand(ctx context.Context, mode string) *exec.Cmd {
 }
 
 func TestClassifyDaemonCLIWaitErrExitStatus(t *testing.T) {
-	for _, mode := range []string{"exit3", "paused"} {
-		t.Run(mode, func(t *testing.T) {
-			require, assert := require.New(t), assert.New(t)
-			waitErr := helperProcessCommand(t.Context(), mode).Run()
-			require.Error(waitErr)
+	emitErr := errors.New("stream closed")
+	for _, tc := range []struct {
+		name, mode, command, wantError string
+		emitErr                        error
+		wantEvents                     []string
+	}{
+		{name: "other exit", mode: "exit3", command: "sync-omi", wantError: cliSubprocessExitSentinel},
+		{name: "paused", mode: "paused", command: "sync-omi", wantEvents: []string{"outcome=paused"}},
+		{name: "interrupted", mode: "interrupted", command: "sync-full", wantError: cliSubprocessExitSentinel, wantEvents: []string{"outcome=interrupted"}},
+		{name: "interrupted other command", mode: "interrupted", command: "sync-omi", wantError: cliSubprocessExitSentinel},
+		{name: "interrupted emit failure", mode: "interrupted", command: "sync-full", emitErr: emitErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			waitErr := helperProcessCommand(t.Context(), tc.mode).Run()
+			require.Error(t, waitErr)
 			var events []string
-			got := classifyDaemonCLIWaitErr(waitErr, []string{"sync-omi"}, func(stream, data string) error {
+			got := classifyDaemonCLIWaitErr(waitErr, []string{tc.command}, func(stream, data string) error {
+				if tc.emitErr != nil {
+					return tc.emitErr
+				}
 				events = append(events, stream+"="+data)
 				return nil
 			})
-			if mode == "paused" {
-				require.NoError(got)
-				assert.Equal([]string{"outcome=paused"}, events)
-			} else {
-				require.EqualError(got, cliSubprocessExitSentinel)
-				assert.Empty(events)
+			switch {
+			case tc.emitErr != nil:
+				require.ErrorIs(t, got, tc.emitErr)
+			case tc.wantError != "":
+				require.EqualError(t, got, tc.wantError)
+			default:
+				require.NoError(t, got)
 			}
+			assert.Equal(t, tc.wantEvents, events)
 		})
 	}
 }
@@ -173,4 +194,72 @@ func TestNewDaemonCLISubprocessCommandAppliesWorkingDirectory(t *testing.T) {
 
 	require.NoError(t, err, "newDaemonCLISubprocessCommand")
 	assert.Equal(t, cwd, cmd.Dir, "working directory")
+}
+
+func TestStreamDaemonCLIPipeValidUTF8Chunks(t *testing.T) {
+	for _, tc := range []struct {
+		value   string
+		oneByte bool
+	}{
+		{"é", true}, {"界", true}, {"😀", true},
+		{strings.Repeat("x", 32767) + "😀" + strings.Repeat("y", 32768) + "é界😀", false},
+	} {
+		t.Run(fmt.Sprintf("%q", tc.value[:min(len(tc.value), 8)]), func(t *testing.T) {
+			var got strings.Builder
+			reader := io.Reader(strings.NewReader(tc.value))
+			if tc.oneByte {
+				reader = iotest.OneByteReader(reader)
+			}
+			err := streamDaemonCLIPipe(reader, cliStreamStdout, func(label, data string) error {
+				assert.Equal(t, cliStreamStdout, label)
+				assert.NotEmpty(t, data)
+				assert.True(t, utf8.ValidString(data), "chunk must be valid UTF-8: %q", data)
+				assert.LessOrEqual(t, len(data), 32*1024)
+				got.WriteString(data)
+				return nil
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.value, got.String())
+		})
+	}
+}
+
+func TestStreamDaemonCLIPipeTerminalAndMalformedBytes(t *testing.T) {
+	readErr := errors.New("synthetic read failure")
+	for _, tc := range []struct {
+		name   string
+		reader io.Reader
+		want   string
+		err    error
+	}{
+		{"data with EOF", iotest.DataErrReader(strings.NewReader("é")), "é", nil},
+		{"data with error", iotest.DataErrReader(io.MultiReader(strings.NewReader("界"), iotest.ErrReader(readErr))), "界", readErr},
+		{"held suffix then EOF", bytes.NewReader([]byte("prefix\xe2\x82")), "prefix\uFFFD", nil},
+		{"held suffix then error", io.MultiReader(bytes.NewReader([]byte("prefix\xf0\x9f")), iotest.ErrReader(readErr)), "prefix", readErr},
+		{"malformed bytes", io.MultiReader(bytes.NewReader([]byte("\xe0\x80")), bytes.NewReader([]byte("\x80\xe2")), bytes.NewReader([]byte("a\xff"))), "\uFFFD\uFFFD\uFFFD\uFFFDa\uFFFD", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got bytes.Buffer
+			err := streamDaemonCLIPipe(tc.reader, cliStreamStdout, func(_ string, data string) error { _, _ = got.WriteString(data); return nil })
+			require.ErrorIs(t, err, tc.err)
+			assert.Equal(t, tc.want, got.String())
+		})
+	}
+}
+
+func TestStreamDaemonCLIPipeDrainsAfterEmitFailure(t *testing.T) {
+	emitErr, readErr := errors.New("emit failure"), errors.New("read failure")
+	r1, r2, r3 := bytes.NewReader([]byte("first")), bytes.NewReader([]byte("second")), bytes.NewReader([]byte("third"))
+	reader := io.MultiReader(r1, r2, r3, iotest.ErrReader(readErr))
+	calls := 0
+	err := streamDaemonCLIPipe(reader, cliStreamStderr, func(label, _ string) error {
+		assert.Equal(t, cliStreamStderr, label)
+		calls++
+		return emitErr
+	})
+	require.ErrorIs(t, err, emitErr)
+	assert.Equal(t, 1, calls)
+	assert.Zero(t, r1.Len())
+	assert.Zero(t, r2.Len())
+	assert.Zero(t, r3.Len())
 }

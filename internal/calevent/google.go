@@ -64,7 +64,7 @@ func decodeGoogleEvent(raw, metadata []byte, calendarZone string) (Event, bool, 
 		status = "confirmed"
 	}
 	e := Event{
-		ProviderEventID: g.ID, Status: status, Kind: "single", AllDay: g.Start.Date != "", StartDate: g.Start.Date, EndDate: g.End.Date,
+		ProviderEventID: g.ID, ICalUID: g.ICalUID, Status: status, Kind: "single", AllDay: g.Start.Date != "", StartDate: g.Start.Date, EndDate: g.End.Date,
 		EventTimeZone: g.Start.TimeZone, CalendarTimeZone: calendarZone, Recurrence: g.Recurrence,
 	}
 	e.Start, err = googleInstant(g.Start, calendarZone)

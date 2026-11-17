@@ -6,7 +6,6 @@ import { RelationshipsController } from '../../relationships/controller.svelte';
 import { openTypeahead } from '../../../test/kit-ui';
 import MergePeopleDialog from './MergePeopleDialog.svelte';
 import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
-import { dismissFlash, FlashBanner } from '@kenn-io/kit-ui';
 
 vi.mock('../directory/PersonBindingConflictModal.svelte', { spy: true });
 
@@ -39,7 +38,6 @@ it.each([
   const onReconcile = vi.fn(async () => undefined);
   const onOpenPerson = vi.fn(), onClose = vi.fn(() => { if (outcome === 'stale merge') view.unmount(); });
   const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, participantID: savedAnchor ? null : 1, name: 'Synthetic One', onReconcile, onOpenPerson, onClose });
-  const banner = outcome === 'stale merge' ? render(FlashBanner) : null;
   try {
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: savedAnchor ? /Synthetic Two/ : /Synthetic One/ }));
@@ -66,12 +64,13 @@ it.each([
     }
     controller.query = 'Another person';
     if (outcome === 'stale merge') {
-      await modal.onSuccess({ result: mergeResult(profile(7), 'stale'), survivor: profile(7), responseETag: '"person-7-r5"' });
+      const result = mergeResult(profile(7), 'stale');
+      await modal.onSuccess({ result, survivor: profile(7), responseETag: '"person-7-r5"' });
       await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-      expect(await screen.findByText("People merged. Couldn't refresh the people list.")).toBeDefined();
+      expect(controller.pendingIdentityCacheRevision).toBe(result.identity_revision);
       expect(onOpenPerson).toHaveBeenCalledWith(7);
-      expect(onReconcile).toHaveBeenLastCalledWith(context, false, expect.objectContaining({ survivor: expect.objectContaining({ id: 7 }) }));
       expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST')).toHaveLength(0);
+      expect(onReconcile).toHaveBeenLastCalledWith(context, false, expect.objectContaining({ survivor: expect.objectContaining({ id: 7 }) }));
       return;
     }
     await modal.onSuccess({ result: mergeResult(profile(7)), survivor: profile(7), responseETag: '"person-7-r5"' });
@@ -80,7 +79,7 @@ it.each([
     const promotions = requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST');
     expect(promotions).toHaveLength(promote ? outcome === 'retry and merge' ? 2 : 1 : 0);
     if (promote) expect(await promotions[0]!.json()).toEqual({ participant_id: 2 });
-  } finally { view.unmount(); banner?.unmount(); dismissFlash(); controller.destroy(); }
+  } finally { view.unmount(); controller.destroy(); }
 });
 
 function renderRepresentativeLink(savedAnchor: boolean) {
@@ -102,14 +101,14 @@ function renderRepresentativeLink(savedAnchor: boolean) {
     throw new Error(`Unexpected ${path}`);
   });
   const controller = new RelationshipsController(client, () => 'UTC');
-  const onReconcile = vi.fn(async () => undefined), onClose = vi.fn(), onLinked = vi.fn();
+  const onReconcile = vi.fn(async () => undefined), onClose = vi.fn();
   // A live caller input stays unread in the saved-only search until the deferred link resumes.
-  const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, get participantID() { return participantID; }, name: 'Synthetic', onReconcile, onClose, onLinked });
-  return { view, controller, links, onClose, onLinked, onReconcile, profileRequested, finishProfile: () => finishProfile(), changeOrigin: () => participantID = 99 };
+  const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, get participantID() { return participantID; }, name: 'Synthetic', onReconcile, onClose });
+  return { view, controller, links, onClose, onReconcile, profileRequested, finishProfile: () => finishProfile(), changeOrigin: () => participantID = 99 };
 }
 
 async function checkRepresentativeLink(savedAnchor: boolean) {
-  const { view, controller, links, onClose, onLinked, onReconcile, profileRequested, finishProfile, changeOrigin } = renderRepresentativeLink(savedAnchor);
+  const { view, controller, links, onClose, onReconcile, profileRequested, finishProfile, changeOrigin } = renderRepresentativeLink(savedAnchor);
   try {
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: savedAnchor ? /Synthetic Observed/ : /Synthetic Saved/ }));
@@ -121,8 +120,8 @@ async function checkRepresentativeLink(savedAnchor: boolean) {
       finishProfile();
     }
     await waitFor(() => expect(onReconcile).toHaveBeenCalledOnce());
-    if (savedAnchor) { expect(onClose).toHaveBeenCalledOnce(); expect(onLinked).toHaveBeenCalledOnce(); }
-    else { expect(onClose).not.toHaveBeenCalled(); expect(onLinked).not.toHaveBeenCalled(); }
+    if (savedAnchor) { expect(onClose).toHaveBeenCalledOnce(); }
+    else { expect(onClose).not.toHaveBeenCalled(); }
     expect(links).toEqual([{ participant_a: savedAnchor ? 2 : 1, participant_b: savedAnchor ? 1 : 2 }]);
     expect(onReconcile).toHaveBeenCalledWith(expect.anything(), true);
   } finally { view.unmount(); controller.destroy(); }

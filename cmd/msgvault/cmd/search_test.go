@@ -317,8 +317,9 @@ func TestSearchCmd_MessageTypeFlagAcceptsImportedTypes(t *testing.T) {
 		return root.Execute()
 	}
 
-	require.NoError(run("feed_item"), "an imported type should be forwarded")
-	assert.Equal("feed_item", gotType, "message_type query")
+	// A type no list in msgvault knows: imports choose their own.
+	require.NoError(run("bookmark"), "an imported type should be forwarded")
+	assert.Equal("bookmark", gotType, "message_type query")
 
 	gotType = ""
 	err := run("Feed-Item")
@@ -569,7 +570,7 @@ func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
 		{
 			name:       "unverified check warns",
 			indexState: "unverified",
-			wantNote:   "could not be verified for this request; results may be incomplete. Search again to retry the check, or run rebuild-fts.",
+			wantNote:   "couldn't check the text-search index, so results may miss messages. Search again or run msgvault rebuild-fts.",
 		},
 		{
 			name:       "building warns about rebuilding or awaiting rebuild",

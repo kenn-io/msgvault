@@ -1353,6 +1353,8 @@ components:
         message_id:
           format: int64
           type: integer
+        ref:
+          type: string
         series_message_id:
           format: int64
           type: integer
@@ -2528,6 +2530,8 @@ components:
         alias:
           nullable: true
           type: string
+        auth_method:
+          type: string
         display_name:
           type: string
         email:
@@ -3200,13 +3204,22 @@ components:
         first_contact_at:
           format: date-time
           type: string
+        first_contact_kind:
+          type: string
         first_contact_ref:
+          type: string
+        first_seen_at:
+          format: date-time
+          type: string
+        first_seen_ref:
           type: string
         inferred_channel:
           type: string
         interaction_count:
           format: int64
           type: integer
+        introducer:
+          $ref: "#/components/schemas/FirstContactIntroducer"
         last_contact_at:
           format: date-time
           type: string
@@ -5006,6 +5019,31 @@ components:
         - dimension
         - values
       type: object
+    ExploreGroupActivity:
+      properties:
+        bucket:
+          type: string
+        count:
+          format: int64
+          type: integer
+      required:
+        - bucket
+        - count
+      type: object
+    ExploreGroupCoParticipant:
+      properties:
+        count:
+          format: int64
+          type: integer
+        key:
+          type: string
+        label:
+          type: string
+      required:
+        - key
+        - label
+        - count
+      type: object
     ExploreGroupDimension:
       enum:
         - source
@@ -5028,6 +5066,24 @@ components:
         - ExploreGroupDimensionYear
         - ExploreGroupDimensionMonth
         - ExploreGroupDimensionDay
+    ExploreGroupOverview:
+      properties:
+        activity:
+          items:
+            $ref: "#/components/schemas/ExploreGroupActivity"
+          type: array
+        co_participants:
+          items:
+            $ref: "#/components/schemas/ExploreGroupCoParticipant"
+          type: array
+        first_at:
+          format: date-time
+          type: string
+      required:
+        - first_at
+        - activity
+        - co_participants
+      type: object
     ExploreGroupRow:
       properties:
         count:
@@ -5057,6 +5113,9 @@ components:
             - ExploreGroupRowLevelSecondQuartile
             - ExploreGroupRowLevelThirdQuartile
             - ExploreGroupRowLevelFourthQuartile
+        total_items:
+          format: int64
+          type: integer
       required:
         - key
         - label
@@ -5145,7 +5204,7 @@ components:
           maxItems: 1
           type: array
         timezone:
-          description: IANA timezone for day grouping; defaults to UTC
+          description: IANA timezone for day, month, and year grouping; defaults to UTC
           type: string
       required:
         - grouping
@@ -5158,6 +5217,8 @@ components:
           type: string
         next_cursor:
           type: string
+        overview:
+          $ref: "#/components/schemas/ExploreGroupOverview"
         rows:
           items:
             $ref: "#/components/schemas/ExploreGroupRow"
@@ -5494,6 +5555,7 @@ components:
         content_hash:
           type: string
         content_state:
+          description: File details check whether content can be opened; read or integrity errors can still occur.
           enum:
             - metadata_only
             - url_only
@@ -5607,13 +5669,21 @@ components:
         containing_title:
           type: string
         content_available:
+          description: Null means availability has not been checked.
+          nullable: true
           type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         content_state:
+          description: List availability is based on metadata; file details check whether storage can be opened.
           enum:
             - metadata_only
             - url_only
             - missing_blob
             - local_content
+            - unverified
           type: string
         conversation_id:
           format: int64
@@ -5766,19 +5836,28 @@ components:
     FileSuggestionRow:
       properties:
         content_available:
+          description: Null means availability has not been checked.
+          nullable: true
           type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         content_state:
+          description: Suggestion availability is based on metadata; file details check whether storage can be opened.
           enum:
             - metadata_only
             - url_only
             - missing_blob
             - local_content
+            - unverified
           type: string
           x-enum-names:
             - FileSuggestionRowContentStateMetadataOnly
             - FileSuggestionRowContentStateUrlOnly
             - FileSuggestionRowContentStateMissingBlob
             - FileSuggestionRowContentStateLocalContent
+            - FileSuggestionRowContentStateUnverified
         conversation_id:
           format: int64
           type: integer
@@ -5910,6 +5989,20 @@ components:
           items:
             type: string
           type: array
+      type: object
+    FirstContactIntroducer:
+      properties:
+        display_name:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - display_name
       type: object
     FormatCoverage:
       properties:
@@ -7061,7 +7154,7 @@ components:
             $ref: "#/components/schemas/KataIssueReceipt"
           type: array
         truncated:
-          description: "The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked"
+          description: "The list may omit matching issues: more matched than were returned, or some citations could not be checked"
           type: boolean
       required:
         - issues
@@ -7647,6 +7740,24 @@ components:
         selection:
           $ref: "#/components/schemas/ExploreSelection"
       type: object
+    MeetingDecisionRequest:
+      additionalProperties: false
+      properties:
+        decision:
+          enum:
+            - link
+            - unlink
+            - clear
+          type: string
+        left:
+          type: string
+        right:
+          type: string
+      required:
+        - left
+        - right
+        - decision
+      type: object
     MeetingExploreScope:
       additionalProperties: false
       properties:
@@ -7698,6 +7809,44 @@ components:
         - message_id
         - source_message_id
       type: object
+    MeetingLink:
+      properties:
+        deleted_from_source:
+          type: boolean
+        end:
+          format: date-time
+          nullable: true
+          type: string
+        ref:
+          type: string
+        start:
+          format: date-time
+          nullable: true
+          type: string
+        status:
+          type: string
+        subject:
+          type: string
+      required:
+        - ref
+        - start
+        - end
+        - status
+        - deleted_from_source
+      type: object
+    MeetingLinkDecisionResult:
+      properties:
+        left:
+          type: string
+        right:
+          type: string
+        state:
+          type: string
+      required:
+        - left
+        - right
+        - state
+      type: object
     MeetingMetricsRequest:
       additionalProperties: false
       not:
@@ -7732,6 +7881,26 @@ components:
           description: International phone number starting with + or 00; normalized to E.164
           maxLength: 64
           type: string
+      type: object
+    MeetingRecord:
+      properties:
+        links:
+          items:
+            $ref: "#/components/schemas/MeetingLink"
+          type: array
+        message_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        unexpandable:
+          items:
+            $ref: "#/components/schemas/CalendarUnexpandable"
+          type: array
+      required:
+        - links
+        - message_ids
+        - unexpandable
       type: object
     MeetingRef:
       properties:
@@ -7845,6 +8014,54 @@ components:
           maxItems: 100
           minItems: 1
           type: array
+      type: object
+    MeetingSuggestion:
+      properties:
+        member_message_id:
+          description: Meeting note ID; the suggestion when the seed is an event
+          format: int64
+          type: integer
+        overlap_minutes:
+          format: int64
+          type: integer
+        ref:
+          description: Calendar event reference; the suggestion when the seed is a note
+          type: string
+        shared_attendees:
+          format: int64
+          type: integer
+        start:
+          description: Start of the suggested event or note
+          format: date-time
+          type: string
+        title:
+          description: Title of the suggested event or note
+          type: string
+        title_tokens:
+          format: int64
+          type: integer
+      required:
+        - ref
+        - member_message_id
+        - title
+        - start
+        - overlap_minutes
+        - shared_attendees
+        - title_tokens
+      type: object
+    MeetingSuggestionPage:
+      properties:
+        suggestions:
+          items:
+            $ref: "#/components/schemas/MeetingSuggestion"
+          type: array
+        unexpandable:
+          items:
+            $ref: "#/components/schemas/CalendarUnexpandable"
+          type: array
+      required:
+        - suggestions
+        - unexpandable
       type: object
     MergeOrganizationBody:
       additionalProperties: false
@@ -11990,13 +12207,21 @@ components:
         containing_title:
           type: string
         content_available:
+          description: Null means availability has not been checked.
+          nullable: true
           type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         content_state:
+          description: List availability is based on metadata; file details check whether storage can be opened.
           enum:
             - metadata_only
             - url_only
             - missing_blob
             - local_content
+            - unverified
           type: string
         conversation_id:
           format: int64
@@ -12153,19 +12378,28 @@ components:
     PersonFileSuggestionRow:
       properties:
         content_available:
+          description: Null means availability has not been checked.
+          nullable: true
           type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         content_state:
+          description: Suggestion availability is based on metadata; file details check whether storage can be opened.
           enum:
             - metadata_only
             - url_only
             - missing_blob
             - local_content
+            - unverified
           type: string
           x-enum-names:
             - PersonFileSuggestionRowContentStateMetadataOnly
             - PersonFileSuggestionRowContentStateUrlOnly
             - PersonFileSuggestionRowContentStateMissingBlob
             - PersonFileSuggestionRowContentStateLocalContent
+            - PersonFileSuggestionRowContentStateUnverified
         conversation_id:
           format: int64
           type: integer
@@ -14355,6 +14589,9 @@ components:
           maximum: 100
           minimum: 0
           type: integer
+        timezone:
+          description: IANA timezone for calendar grouping; defaults to UTC
+          type: string
       type: object
     RunSavedViewResponse:
       properties:
@@ -16096,7 +16333,11 @@ components:
           items:
             $ref: "#/components/schemas/TaskSummary"
           type: array
+        truncated:
+          description: More tasks matched than were returned
+          type: boolean
       required:
+        - truncated
         - tasks
       type: object
     TaskSummary:
@@ -16824,7 +17065,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 4.2.0
+  version: 5.11.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -22628,6 +22869,33 @@ paths:
       summary: Get authenticated health details
       tags:
         - API
+  /api/v1/identity/cache-refresh:
+    post:
+      operationId: refreshIdentityCache
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityLinkResponse"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Refresh identity datasets
+      tags:
+        - API
   /api/v1/identity/links:
     post:
       operationId: linkIdentityParticipants
@@ -23827,6 +24095,63 @@ paths:
       summary: Add exact archive evidence to an existing Kata issue
       tags:
         - API
+  /api/v1/integrations/kata/open-issues:
+    get:
+      operationId: listOpenKataIssues
+      parameters:
+        - description: Search open issue text by whole word or enter an exact qualified ref, including closed issues, up to 256 bytes
+          in: query
+          name: q
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssueListResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List or search Kata issues in the configured project
+      tags:
+        - API
   /api/v1/integrations/kata/status:
     get:
       operationId: getKataIntegrationStatus
@@ -23852,10 +24177,9 @@ paths:
     get:
       operationId: searchIntegrationTasks
       parameters:
-        - description: Task title search within the configured project
+        - description: Task title search within the configured project; omit to list tasks
           in: query
           name: q
-          required: true
           schema:
             type: string
       responses:
@@ -24554,6 +24878,81 @@ paths:
       summary: Render bounded archived meeting context
       tags:
         - Meetings
+  /api/v1/meetings/links/decisions:
+    post:
+      operationId: decideMeetingLink
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingDecisionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingLinkDecisionResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Link or split archived meeting copies
+      tags:
+        - Meetings
   /api/v1/meetings/metrics:
     post:
       operationId: getMeetingMetrics
@@ -24627,6 +25026,140 @@ paths:
       security:
         - apiKey: []
       summary: Get archived meeting duration metrics
+      tags:
+        - Meetings
+  /api/v1/meetings/record:
+    get:
+      operationId: getMeetingRecord
+      parameters:
+        - in: query
+          name: ref
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingRecord"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read an archived meeting from a note or event
+      tags:
+        - Meetings
+  /api/v1/meetings/suggestions:
+    get:
+      operationId: suggestMeetingLinks
+      parameters:
+        - in: query
+          name: ref
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            default: 10
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingSuggestionPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Suggest links between meeting notes and calendar events
       tags:
         - Meetings
   /api/v1/messages:
@@ -31342,7 +31875,7 @@ paths:
       tags:
         - API
     patch:
-      description: Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR.
+      description: Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR, or 3 for local date offsets.
       operationId: patchSavedView
       parameters:
         - description: Saved View ID
@@ -33641,6 +34174,27 @@ paths:
       security:
         - apiKey: []
       summary: List source sync status
+      tags:
+        - API
+  /api/v1/sources/{source_id}/account-attribution/repair:
+    post:
+      operationId: repairAccountAttribution
+      parameters:
+        - description: Source ID
+          in: path
+          name: source_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "202":
+          description: Accepted
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Retry account matching for one source
       tags:
         - API
   /api/v1/sources/{source_id}/identities:

@@ -83,6 +83,11 @@ func mcpRequestPropertiesPresent(capabilities *apiprotocol.MCPCapabilities, id s
 	return false
 }
 
+type slackSettingsResponse struct {
+	PendingRestart *bool               `json:"pending_restart"`
+	Settings       []generated.Setting `json:"settings"`
+}
+
 type sourceStatusArguments struct {
 	SourceType *string `json:"source_type,omitempty"`
 }
@@ -125,7 +130,7 @@ func decodeMCPOperationArguments[T any](args map[string]any) (T, error) {
 
 func (b *daemonMCPOperations) executeSourceOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
-		return operationFailure("invalid_arguments", false), true, nil
+		return operationFailure(invalidArguments, false), true, nil
 	}
 	var result *mcpserver.OperationResult
 	var err error
@@ -173,7 +178,7 @@ func (b *daemonMCPOperations) executeSourceOperation(ctx context.Context, name s
 		if _, decodeErr := decodeMCPOperationArguments[struct{}](args); decodeErr != nil {
 			return invalid()
 		}
-		result, err = readMCPOperationJSON[generated.SettingsResponse](ctx, b.client, http.MethodGet, "/api/v1/settings", nil, http.StatusOK)
+		result, err = readMCPOperationJSON[slackSettingsResponse](ctx, b.client, http.MethodGet, "/api/v1/settings", nil, http.StatusOK)
 		result = slackPolicyProjection(result, false)
 	case "update_slack_sync_policy":
 		input, decodeErr := decodeMCPOperationArguments[slackPolicyArguments](args)
@@ -184,7 +189,7 @@ func (b *daemonMCPOperations) executeSourceOperation(ctx context.Context, name s
 		if updateErr != nil || len(updates) == 0 {
 			return invalid()
 		}
-		result, err = readMCPOperationJSON[generated.SettingsResponse](ctx, b.client, http.MethodPatch, "/api/v1/settings", &generated.PatchSettingsRequestOptions{Header: &generated.PatchSettingsHeaders{IfMatch: input.ETag}, Body: &generated.PatchSettingsBody{Updates: updates}}, http.StatusOK)
+		result, err = readMCPOperationJSON[slackSettingsResponse](ctx, b.client, http.MethodPatch, "/api/v1/settings", &generated.PatchSettingsRequestOptions{Header: &generated.PatchSettingsHeaders{IfMatch: input.ETag}, Body: &generated.PatchSettingsBody{Updates: updates}}, http.StatusOK)
 		result = slackPolicyProjection(result, true)
 	default:
 		return nil, false, nil
@@ -197,33 +202,71 @@ func personEditProjection(result *mcpserver.OperationResult, writes bool) *mcpse
 		return result
 	}
 	person, ok := result.Output.(generated.Person)
-	if !ok || result.ETag == "" {
-		return operationFailure("invalid_operation_response", writes)
+	if !ok {
+		return invalidOperationResponse(writes)
+	}
+	if result.ETag == "" {
+		return invalidOperationResponse(writes)
 	}
 	result.Output = mcpserver.PersonEditContext{ETag: result.ETag, Person: person}
 	return result
 }
 
-var slackSelectionKeys = []string{"slack.dms", "slack.group_dms", "slack.channels", "slack.exclude_channels"}
+var slackSelectionKinds = map[string]generated.SettingKind{
+	"slack.dms":              generated.Boolean,
+	"slack.group_dms":        generated.Boolean,
+	"slack.channels":         generated.StringArray,
+	"slack.exclude_channels": generated.StringArray,
+}
 
 func slackPolicyProjection(result *mcpserver.OperationResult, writes bool) *mcpserver.OperationResult {
 	if result == nil || result.IsError {
 		return result
 	}
-	settings, ok := result.Output.(generated.SettingsResponse)
-	if !ok || result.ETag == "" {
-		return operationFailure("invalid_operation_response", writes)
+	settings, ok := result.Output.(slackSettingsResponse)
+	if !ok || result.ETag == "" || settings.PendingRestart == nil {
+		return invalidOperationResponse(writes)
 	}
-	policy := mcpserver.SlackSyncPolicy{ETag: result.ETag, PendingRestart: settings.PendingRestart, Settings: []generated.Setting{}}
+	policy := mcpserver.SlackSyncPolicy{ETag: result.ETag, PendingRestart: *settings.PendingRestart, Settings: []generated.Setting{}}
+	found := make(map[string]struct{}, len(slackSelectionKinds))
 	for _, setting := range settings.Settings {
-		if slices.Contains(slackSelectionKeys, setting.Key) {
-			setting.Secret = nil
-			setting.CredentialID = nil
-			policy.Settings = append(policy.Settings, setting)
+		expectedKind, selected := slackSelectionKinds[setting.Key]
+		if !selected {
+			continue
 		}
+		if _, duplicate := found[setting.Key]; writes && (duplicate || !usableSlackSetting(setting, expectedKind)) {
+			return invalidOperationResponse(writes)
+		}
+		found[setting.Key] = struct{}{}
+		setting.Secret = nil
+		setting.CredentialID = nil
+		policy.Settings = append(policy.Settings, setting)
+	}
+	if writes && len(found) != len(slackSelectionKinds) {
+		return invalidOperationResponse(writes)
 	}
 	result.Output = policy
 	return result
+}
+
+func usableSlackSetting(setting generated.Setting, expectedKind generated.SettingKind) bool {
+	if setting.Kind != expectedKind || setting.Value == nil || setting.Value.SettingValue_OneOf == nil {
+		return false
+	}
+	switch expectedKind {
+	case generated.Boolean:
+		var value struct {
+			Boolean *bool `json:"boolean"`
+		}
+		return json.Unmarshal(setting.Value.SettingValue_OneOf.Raw(), &value) == nil && value.Boolean != nil
+	case generated.StringArray:
+		var value struct {
+			Strings *[]string `json:"strings"`
+		}
+		return json.Unmarshal(setting.Value.SettingValue_OneOf.Raw(), &value) == nil && value.Strings != nil
+	default:
+		return false
+	}
 }
 
 func slackSettingUpdates(input slackPolicyArguments) ([]generated.SettingUpdate, error) {
@@ -272,18 +315,18 @@ func (b *daemonMCPOperations) sourceOperationDisclosure(ctx context.Context, nam
 	case "update_slack_sync_policy":
 		input, err := decodeMCPOperationArguments[slackPolicyArguments](args)
 		if err != nil || input.ETag == "" {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 		}
 		updates, err := slackSettingUpdates(input)
 		if err != nil || len(updates) == 0 {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 		}
 		readName, expected, conflictCode = "get_slack_sync_policy", input.ETag, "settings_conflict"
 	case "set_person_display_name":
 		input, err := decodeMCPOperationArguments[personNameArguments](args)
 		_, present := args["display_name"]
 		if err != nil || input.PersonID <= 0 || input.ETag == "" || !present {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 		}
 		readName, readArgs, expected, conflictCode = "get_person_edit_context", map[string]any{"person_id": input.PersonID}, input.ETag, "person_revision_conflict"
 	default:

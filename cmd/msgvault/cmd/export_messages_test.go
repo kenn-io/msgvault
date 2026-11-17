@@ -7,17 +7,21 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -502,4 +506,65 @@ func TestExportMessagesCommandConcurrentParticipantMerge(t *testing.T) {
 	require.Len(records, 5)
 	assert.Equal("message", records[3]["id"])
 	assert.Equal("complete", records[4]["record_type"])
+}
+
+// exportPipeRunner connects real export bytes to the API's event writer.
+type exportPipeRunner struct {
+	*storeAPIAdapter
+
+	reader io.Reader
+}
+
+func (s *exportPipeRunner) RunCLICommand(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
+	return s.runCLICommandWithRunner(ctx, req, emit, func(_ context.Context, _ []string, _ map[string]string, _ string, emitPipe func(string, string) error) error {
+		return streamDaemonCLIPipe(s.reader, cliStreamStdout, emitPipe)
+	})
+}
+
+func TestExportMessagesUnicodeThroughDaemonCLI(t *testing.T) {
+	cfg := testConfigValue()
+	cfg.Data.DataDir = t.TempDir()
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	source, err := st.GetOrCreateSource("text", "archive")
+	require.NoError(t, err)
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	conversation := insertExportMessagesConversation(t, st, source.ID, "conversation", "Example")
+	body := strings.Repeat("x", 33000) + "é界😀"
+	insertExportMessagesMessage(t, st, source.ID, conversation, "message", start, body)
+	command := newExportMessagesLocalCmd(exportMessagesDeps{openStore: func(context.Context) (*store.Store, func(), error) { return st, func() {}, nil }})
+	var native bytes.Buffer
+	command.SetOut(&native)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"--start", start.Format(time.RFC3339), "--end", start.Add(time.Hour).Format(time.RFC3339)})
+	require.NoError(t, command.ExecuteContext(t.Context()))
+
+	// Split inside each Unicode character in the native JSONL, deterministically.
+	raw := native.Bytes()
+	var fragments []io.Reader
+	offset := 0
+	for _, char := range []string{"é", "界", "😀"} {
+		index := bytes.Index(raw[offset:], []byte(char))
+		require.GreaterOrEqual(t, index, 0)
+		end := offset + index + 1
+		fragments = append(fragments, bytes.NewReader(raw[offset:end]))
+		offset = end
+	}
+	fragments = append(fragments, bytes.NewReader(raw[offset:]))
+	runner := &exportPipeRunner{storeAPIAdapter: &storeAPIAdapter{store: st}, reader: io.MultiReader(fragments...)}
+	daemon := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: runner, Logger: slog.New(slog.DiscardHandler)})
+	server := httptest.NewServer(daemon.Router())
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+	require.NoError(t, err)
+	var received bytes.Buffer
+	err = client.RunCLICommand(t.Context(), daemonclient.CLIRunRequest{Args: []string{"export-messages"}}, func(stream, data string) error {
+		assert.Equal(t, cliStreamStdout, stream)
+		_, _ = received.WriteString(data)
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, native.String(), received.String())
+	records := decodeExportMessageRecords(t, received.Bytes())
+	require.GreaterOrEqual(t, len(records), 4)
+	assert.Equal(t, body, records[3]["text"])
 }

@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // sourceConfig is the JSON persisted in sources.sync_config for a calendar.
@@ -371,14 +371,5 @@ func whenLine(ev gcal.Event) string {
 // Snippet returns a trimmed calendar-event preview of at most 200 bytes without splitting valid UTF-8.
 func Snippet(body string) string {
 	const maxSnippetBytes = 200
-	body = strings.TrimSpace(body)
-	if len(body) <= maxSnippetBytes {
-		return body
-	}
-
-	end := maxSnippetBytes
-	for end > 0 && !utf8.RuneStart(body[end]) {
-		end--
-	}
-	return body[:end]
+	return textutil.PrefixBytes(strings.TrimSpace(body), maxSnippetBytes)
 }

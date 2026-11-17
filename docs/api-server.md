@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-14"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -29,7 +29,7 @@ Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-da
 
 ### Filename suggestions
 
-Newer than the latest release, API schema 3.15 adds
+API schema 3.15 adds
 `POST /api/v1/files/suggest` and `POST /api/v1/people/{id}/files/suggest`.
 They suggest attachment filenames without changing existing file or message
 search. Both are read-only operations under existing owner authentication;
@@ -65,8 +65,13 @@ The response contains `suggestions`, `candidate_limit_reached`, and
 `occurred_at` (always present, possibly `null`), the current `filename`,
 `mime_type` (possibly empty), `mime_family`, `filename_match`
 (`exact`, `prefix`, `typo`), `size_bytes`, `content_state`, and
-`content_available`. Content states are `metadata_only`, `url_only`,
-`missing_blob`, and `local_content`. Rows contain no storage paths, download
+`content_available`. File search and suggestion rows derive their content
+states from metadata: `metadata_only`, `url_only`, or `unverified`. An
+`unverified` row records a hash without checking storage and has a null
+`content_available`; the other two states have a false value. File details
+check whether storage can be opened and can return `local_content`,
+`missing_blob`, or an error. Opening storage does not verify the bytes; a read
+or integrity check can still fail. Rows contain no storage paths, download
 URLs or content hashes. Person rows also contain `person_provenance` with the
 matching participant IDs, roles and directions.
 
@@ -161,7 +166,39 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **4.2.0**.
+it is separate from the binary release version. The current schema is **5.11.0**.
+
+Schema 5.11.0 adds meeting link suggestions.
+
+Schema 5.10.0 adds owner meeting link decisions.
+
+Schema 5.9.0 adds meeting records.
+
+Schema 5.8.0 advertises the existing structured person profile routes to MCP:
+`GET` and `PATCH /api/v1/people/{id}/profile`,
+`GET /api/v1/people/{id}/profile/history`, and
+`GET /api/v1/people/{id}/profile/media/{media_id}/content`.
+
+Schema 5.7.0 adds first-appearance evidence to person contact state.
+
+Schema 5.6.0 adds `POST /api/v1/identity/cache-refresh` to rebuild
+identity-derived datasets without changing links or profiles.
+
+Schema 5.5.0 adds `POST /api/v1/sources/{source_id}/account-attribution/repair`
+to retry account matching for one source.
+
+Schema 5.4.0 allows native tag reads for messages from deleted sources.
+
+Schema 5.3.0 adds `auth_method` to IMAP accounts in `GET /api/v1/cli/accounts`:
+`password` or `xoauth2`, present when the source's settings are readable.
+
+Schema 5.2.0 adds open Kata issue search and optional task search queries.
+
+Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
+
+Schema 5.0.0 changes `content_available` in file lists and suggestions from a
+boolean to a nullable boolean. A null value means storage has not been checked;
+older clients can interpret it as false. Upgrade clients and the daemon together.
 
 Schema 4.1.0 adds `labels` on merge-list and merge-detail responses: recorded names and saved contact points from the merge snapshot, reconciled current participant addresses, known participant IDs, and the count of distinct addresses added to the surviving profile. Addresses and current or recorded contact points carry an opaque `identity_key` for comparison across representations, services, and scopes. Current contact points include `service_label`, the registered name of their `service_slug`. History and Split use those labels. Summary labels are decoded from the stored snapshot during list and detail reads; opening the disclosure makes a separate request for its raw snapshot.
 
@@ -429,6 +466,12 @@ syncs. If the sync ends while the write waits, the write can proceed.
 | `GET /api/v1/messages/{id}/tags` | Read current native tags; optional `mailbox` query selects an exact recorded IMAP copy |
 | `POST /api/v1/messages/{id}/tags` | Apply `add` and `remove` arrays, optional `mailbox`, and optional `dry_run` |
 
+With API schema 5.4.0 or newer, GET can read tags for a message marked deleted
+from its source, such as a message still in Trash. The provider must still
+resolve the stored identity. The read returns the provider's observation and
+leaves the archive unchanged. POST, including `dry_run`, still rejects
+source-deleted messages. Both methods reject locally hidden messages.
+
 `id` is the positive archived message ID. Without `mailbox`, IMAP selects the
 current original copy, then the sole current membership. Multiple surviving
 copies require an explicit mailbox when the original copy is absent.
@@ -482,6 +525,15 @@ Unsupported providers or persistent keyword support return
 501. See the generated OpenAPI contract for response schemas.
 
 ### Identity match review and scoring
+
+`POST /api/v1/identity/cache-refresh` rebuilds identity-derived datasets without
+changing links or profiles. It returns `identity_revision` and
+`cache_state: "ready"` on success. It requires API authentication and the
+mutation gate. When a SQLite cache is absent, it returns HTTP 503 with
+`identity_cache_build_required`; run `msgvault build-cache` before retrying.
+PostgreSQL returns HTTP 503 with `identity_cache_unsupported` because it has
+no Parquet cache. Other build failures return HTTP 500; a missing refresh
+capability returns HTTP 503.
 
 Review identity suggestions through `GET /api/v1/identity/match-candidates`
 and `GET /api/v1/identity/match-candidates/{id}`. Responses include the
@@ -1952,7 +2004,7 @@ Recording search requires Docbank's source-selected search contract: `media_sour
 
 Schema 3.27.0 adds optional `attachments` with `results`, `truncated`, and optional `error` containing `error` and `message`. Each result has `message_id`, `conversation_id`, `attachment_id`, `filename`, `containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches delivered mirror versions using text Docbank has extracted. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. A Docbank result limit or occurrence limit sets `truncated`, meaning more may match. Docbank may include filename-only candidates in its limit even when all extracted-text matches fit. Visibility and Person scope apply to both lists. The limit applies independently to each list. An empty attachment list without an error means no match in extracted text and says nothing about files whose text Docbank hasn't extracted.
 
-Schema 4.2.0 (newer `main`, after v0.23.0) accepts `mode=semantic` and
+Schema 4.2.0 accepts `mode=semantic` and
 `mode=hybrid` for attachment text. `attachments` adds `requested_mode`,
 `actual_mode`, `coverage`, `partial`, and `degradations`. `actual_mode` is
 `unavailable` when no search ran or remote retrieval failed. Coverage describes
@@ -2432,6 +2484,18 @@ for the user workflow and coverage meanings.
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
 
+`GET /api/v1/meetings/suggestions?ref=...` ranks overlapping meeting notes and calendar events; use `POST /api/v1/meetings/links/decisions` to link a suggested pair. It requires API schema 5.11.0. Without `verification.read`, withheld titles add no title words and withheld partner titles are masked.
+
+`GET /api/v1/meetings/record?ref=...` returns the notes and calendar copies
+for a `msg:<id>` or `evt:<id>[@occurrence key]` reference. It requires API
+schema 5.9.0. A `message.read` grant returns notes and calendar copies from its authorized sources.
+
+`POST /api/v1/meetings/links/decisions` accepts owner requests with `left`,
+`right`, and `decision` (`link`, `unlink`, or `clear`). It returns the canonical refs and
+`state` (`link`, `split`, or `automatic`). Link and unlink replace the saved
+choice; clear restores automatic matching. A conflicting choice returns 409. This
+operation requires API schema 5.10.0.
+
 Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
 `include_transcript` (default false), and `max_bytes` (default 131072, range
 4096–1048576). The budget applies to the UTF-8 bytes of `content`, not the HTTP
@@ -2798,11 +2862,13 @@ Grouping, person filters, semantic and hybrid search, per-row exact-match counts
 `message_type`, `mailing_list`, `kind`, `year`, `month`, or `day`.
 `day` returns `YYYY-MM-DD` keys and counts individual messages; other
 dimensions count entries, with chats collapsed into conversations.
-`timezone` sets the IANA time zone for day grouping and defaults to `UTC`.
+`timezone` sets the IANA time zone for day, month, and year grouping and defaults to `UTC`. It also sets the calendar dates in a keyed group's activity overview.
 Day rows include `level` for calendar shading only when the page contains every day row. It ranks each count across that complete day set; partial pages and keyed lookups omit `level`.
 `sent_only: true` excludes drafts and unsent items from the counts.
 Day grouping is request-only and cannot be stored in a saved view.
 Files grouping (`POST /api/v1/files/groups`) uses UTC days and has no `timezone` parameter.
+
+Month and year rows include `total_items`, the number of entries across all matching time groups before pagination. A `group_key` lookup for a matching non-day group adds `overview` with its `first_at` timestamp, an `activity` series, and up to three `co_participants`. Activity buckets are days for month groups and months for other groups.
 
 ### Preflight an analytical selection {#post-apiv1explorepreflight}
 
@@ -2910,7 +2976,7 @@ by an agent without rebuilding its query.
 | `DELETE` | `/api/v1/saved-views/{id}` | Delete a view definition. Requires `If-Match`. Never touches archive messages. |
 | `POST` | `/api/v1/saved-views/{id}/run` | Execute a view through its canonical Explore definition. |
 
-New definitions use `schema_version: 2`. The daemon reads schema 1 with pipes as literal text in full-text queries. `canonical_state` is a closed object. The daemon rejects a
+Definitions with local-calendar date bounds use `schema_version: 3`; UTC-only definitions use version 2. Numeric offsets in schema 3 preserve local calendar dates; offsets in older definitions retain their UTC meaning. The daemon reads schema 1 with pipes as literal text in full-text queries. `canonical_state` is a closed object. The daemon rejects a
 definition it could not execute, so every stored view can be opened by the
 Web UI and run by the API:
 
@@ -2968,16 +3034,19 @@ that endpoint applies:
 - Every other view runs `POST /api/v1/explore` as a table. Timeline is a
   client-side rendering of the same entry rows.
 
+Grouped runs use UTC by default. Month and Year groups sort newest first; other groups sort by descending count. The saved sort applies to entry results.
+
 ```json
 {
   "limit": 20,
-  "cursor": "eyJvZmZzZXQiOjIwLC..."
+  "cursor": "eyJvZmZzZXQiOjIwLC...",
+  "timezone": "America/New_York"
 }
 ```
 
 `limit` is `1` to `100` and defaults to `100`. `cursor` is the opaque
 `next_cursor` from the previous page and is omitted for the first page. An
-empty object `{}` is a valid body.
+empty object `{}` is a valid body. `timezone` is an optional IANA time zone for calendar groups; use the same zone for each page.
 
 ```json
 {

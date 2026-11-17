@@ -20,6 +20,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -634,4 +635,146 @@ func TestLocalEmbeddingsFirstOllamaActivationRetriesAfterCredentialRepair(t *tes
 	results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
+}
+
+func startupTestFingerprint(t *testing.T, f *localActivationFixture) string {
+	t.Helper()
+	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(t, err)
+	keys, err := toml.Decode(string(snapshot.Content), &map[string]any{})
+	require.NoError(t, err)
+	lane := planTextSearch(f.cfg, setupDetection{backend: "sqlite-vec", localEmbeddings: true, configKeys: keys})
+	candidate, err := config.PreviewConfigTableEdits(snapshot, lane.edits)
+	require.NoError(t, err)
+	next, err := f.cfg.ReloadConfigFile(candidate)
+	require.NoError(t, err)
+	return next.Vector.GenerationFingerprint()
+}
+
+func TestLocalEmbeddingsStart(t *testing.T) {
+	for _, tc := range []struct {
+		name                                                        string
+		choice, missing, configured, wantBuild                      bool
+		active, building, activeMismatch, buildingMismatch, resumes bool
+		detail                                                      string
+	}{
+		{name: "installed and chosen", choice: true, wantBuild: true},
+		{name: "no choice"},
+		{name: "missing files", choice: true, missing: true},
+		{name: "configured provider", choice: true, configured: true},
+		{name: "matching unfinished", choice: true, building: true, resumes: true},
+		{name: "matching active and incompatible unfinished", choice: true, active: true, building: true, buildingMismatch: true},
+		{name: "incompatible active and matching unfinished", choice: true, active: true, building: true, activeMismatch: true},
+		{name: "matching active", choice: true, active: true},
+		{name: "initialization", choice: true, detail: "archive initialization failed"},
+		{name: "transport", choice: true, detail: "local server failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLocalActivationFixture(t, "")
+			if tc.configured || tc.active || tc.building {
+				file, err := os.OpenFile(f.cfg.ConfigFilePath(), os.O_APPEND|os.O_WRONLY, 0)
+				require.NoError(t, err)
+				if tc.configured {
+					_, err = file.WriteString("\n[vector.embeddings]\nmodel = \"other\"\n")
+				} else {
+					_, err = file.WriteString("\n[vector.embed.schedule]\ncron = \"\"\nrun_after_sync = false\n")
+				}
+				require.NoError(t, err)
+				require.NoError(t, file.Close())
+			}
+			f.start(t)
+			var backend *sqlitevec.Backend
+			var activeID, buildingID vector.GenerationID
+			if tc.active || tc.building {
+				fingerprint := startupTestFingerprint(t, f)
+				require.NoError(t, sqlitevec.RegisterExtension())
+				var err error
+				backend, err = sqlitevec.Open(f.ctx, sqlitevec.Options{Path: filepath.Join(f.cfg.Data.DataDir, "vectors.db"), MainPath: f.cfg.DatabaseDSN(), MainDB: f.store.DB(), Dimension: 768})
+				require.NoError(t, err)
+				defer func() { assert.NoError(t, backend.Close()) }()
+				if tc.active {
+					fp := fingerprint
+					if tc.activeMismatch {
+						fp = "different"
+					}
+					activeID, err = backend.CreateGeneration(f.ctx, "model", 768, fp)
+					require.NoError(t, err)
+					require.NoError(t, backend.ActivateGeneration(f.ctx, activeID, true))
+				}
+				if tc.building {
+					fp := fingerprint
+					if tc.buildingMismatch {
+						fp = "different"
+					}
+					buildingID, err = backend.CreateGeneration(f.ctx, "model", 768, fp)
+					require.NoError(t, err)
+				}
+			}
+			f.controller.choice = func() (bool, error) { return tc.choice, nil }
+			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
+				if tc.missing {
+					return embedlocal.Status{DownloadBytes: 1}, nil
+				}
+				return embedlocal.Status{}, nil
+			}
+			f.controller.runner = &storeAPIAdapter{config: f.cfg, store: f.store, operationGate: f.controller.gate}
+			switch tc.name {
+			case "initialization":
+				f.server.SetVectorInitError(errors.New(tc.detail))
+			case "transport":
+				endpoint := localEmbeddingEndpoint
+				calls := 0
+				localEmbeddingEndpoint = func(ctx context.Context, opts embedlocal.Options) (string, error) {
+					calls++
+					if calls > 1 {
+						return "", errors.New(tc.detail)
+					}
+					return endpoint(ctx, opts)
+				}
+			}
+			before, err := os.ReadFile(f.cfg.ConfigFilePath())
+			require.NoError(t, err)
+			err = f.controller.Start(f.ctx, func(api.LocalEmbeddingsStatus) {})
+			if tc.detail != "" {
+				require.ErrorContains(t, err, tc.detail)
+				if tc.name == "transport" {
+					require.ErrorContains(t, err, "resolve local embeddings")
+				}
+			} else if tc.activeMismatch || tc.buildingMismatch {
+				require.ErrorContains(t, err, "different model")
+				assert.False(t, f.scheduler.IsJobScheduled(jobctx.ScheduledEmbeddingLabel))
+				active, err := backend.ActiveGeneration(f.ctx)
+				require.NoError(t, err)
+				assert.Equal(t, activeID, active.ID)
+				building, err := backend.BuildingGeneration(f.ctx)
+				require.NoError(t, err)
+				require.NotNil(t, building)
+				assert.Equal(t, buildingID, building.ID)
+			} else {
+				require.NoError(t, err)
+				if backend != nil {
+					active, err := backend.ActiveGeneration(f.ctx)
+					require.NoError(t, err)
+					if tc.resumes {
+						assert.Equal(t, buildingID, active.ID)
+					} else {
+						assert.Equal(t, activeID, active.ID)
+					}
+					assert.Positive(t, f.inputs.Load())
+				} else if tc.wantBuild {
+					require.NotNil(t, f.handle.vf)
+					active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+					require.NoError(t, err)
+					assert.Equal(t, f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
+					assert.Positive(t, f.inputs.Load())
+				} else {
+					assert.Nil(t, f.handle.vf)
+				}
+			}
+			after, err := os.ReadFile(f.cfg.ConfigFilePath())
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+			assert.Zero(t, f.installs)
+		})
+	}
 }

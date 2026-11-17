@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // RebindPostgreSQL converts `?` placeholders in query to PostgreSQL
@@ -40,6 +41,39 @@ func RebindPostgreSQL(query string) string {
 	return b.String()
 }
 
+// CanonicalFTSText prepares text for collation-independent phrase matching.
+func CanonicalFTSText(s string) string {
+	return strings.ToLower(strings.Join(EscapeTSQueryTerm(s), " "))
+}
+
+// PostgreSQLSearchPredicate narrows unordered candidates to ordered phrases.
+func PostgreSQLSearchPredicate(arg string, terms []string) string {
+	clauses := []string{"m.search_fts @@ to_tsquery('simple', " + arg + ")"}
+	for _, term := range terms {
+		if len(EscapeTSQueryTerm(term)) < 2 {
+			continue
+		}
+		phrase := TSQuery([]string{term}, "", " <-> ")
+		canonical := CanonicalFTSText(term)
+		clauses = append(clauses, "((m.search_fts_fields IS NULL AND m.search_fts @@ to_tsquery('simple', '"+phrase+"')) OR (m.search_fts_fields IS NOT NULL AND EXISTS (SELECT 1 FROM unnest(m.search_fts_fields) AS f(value) WHERE strpos(' ' || f.value, ' "+canonical+"') > 0)))")
+	}
+	return strings.Join(clauses, " AND ")
+}
+
+// PostgreSQLBodyPredicate confirms every term against the body field.
+func PostgreSQLBodyPredicate(arg string, terms []string) string {
+	checks := []string{}
+	for _, term := range terms {
+		canonical := CanonicalFTSText(term)
+		if canonical != "" {
+			checks = append(checks, "strpos(' ' || m.search_fts_fields[5], ' "+canonical+"') > 0")
+		}
+	}
+	return "(m.search_fts @@ to_tsquery('simple', " + arg + ") AND ((m.search_fts_fields IS NULL AND m.search_fts @@ to_tsquery('simple', '" + TSQuery(terms, "D", " <-> ") + "')) OR (m.search_fts_fields IS NOT NULL AND " + strings.Join(checks, " AND ") + ")))"
+}
+
+func ftsTokenRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+
 // EscapeTSQueryTerm tokenizes a single user-supplied search term into
 // PostgreSQL `to_tsquery`-safe lexemes. The input is split on every
 // rune that isn't a Unicode letter or digit, so inputs that previously
@@ -51,10 +85,6 @@ func RebindPostgreSQL(query string) string {
 // (whitespace-only, all punctuation, or all metacharacters). Each
 // returned lexeme is safe to suffix with `:*` for prefix matching and
 // join with ` & `.
-//
-// Both PG FTS code paths share this allowlist tokenizer:
-// query.PostgreSQLQueryDialect.BuildFTSTerm and SanitizeFTSQuery both
-// call it, so they produce the same lexeme set for the same input.
 func EscapeTSQueryTerm(s string) []string {
 	var lexemes []string
 	var cur strings.Builder
@@ -65,7 +95,7 @@ func EscapeTSQueryTerm(s string) []string {
 		}
 	}
 	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		if ftsTokenRune(r) {
 			cur.WriteRune(r)
 		} else {
 			flush()
@@ -73,4 +103,55 @@ func EscapeTSQueryTerm(s string) []string {
 	}
 	flush()
 	return lexemes
+}
+
+// FoldFTSText maps each output byte boundary back to the original text.
+func FoldFTSText(s string) (string, []int) {
+	var b strings.Builder
+	b.Grow(len(s))
+	offsets := make([]int, 1, len(s)+1)
+	for i, r := range s {
+		end := i + utf8.RuneLen(r)
+		length := end - i
+		if ftsTokenRune(r) {
+			length, _ = b.WriteRune(unicode.ToLower(r))
+		} else {
+			for range length {
+				b.WriteByte(' ')
+			}
+		}
+		for j := 1; j <= length; j++ {
+			if j == length {
+				offsets = append(offsets, end)
+			} else {
+				offsets = append(offsets, i)
+			}
+		}
+	}
+	return b.String(), offsets
+}
+
+// TSQuery builds token groups with a prefix on each final token.
+func TSQuery(terms []string, weight, separator string) string {
+	var groups []string
+	for _, term := range terms {
+		parts := EscapeTSQueryTerm(strings.ToLower(term))
+		for i := range parts {
+			if i == len(parts)-1 {
+				parts[i] += ":*" + weight
+			} else if weight != "" {
+				parts[i] += ":" + weight
+			}
+		}
+		if len(parts) == 1 {
+			groups = append(groups, parts[0])
+		} else if len(parts) > 1 {
+			group := strings.Join(parts, separator)
+			if separator != " & " {
+				group = "(" + group + ")"
+			}
+			groups = append(groups, group)
+		}
+	}
+	return strings.Join(groups, " & ")
 }

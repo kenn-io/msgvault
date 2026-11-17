@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -196,6 +198,7 @@ func (s *Syncer) incrementalWithRecovery(
 	}
 
 	if startHistoryID < profile.HistoryID {
+		trashRemovalIDs := make(map[string]struct{})
 		// Process history
 		pageToken := ""
 
@@ -253,6 +256,13 @@ func (s *Syncer) incrementalWithRecovery(
 				for _, msg := range record.MessagesDeleted {
 					deletedSet[msg.Message.ID] = true
 				}
+				for _, item := range record.LabelsRemoved {
+					if slices.Contains(item.LabelIDs, "TRASH") {
+						if _, exists := existingMap[item.Message.ID]; exists {
+							trashRemovalIDs[item.Message.ID] = struct{}{}
+						}
+					}
+				}
 			}
 			for _, record := range historyResp.History {
 				if err := s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, newMsgThreads, updatedExisting, identityDiscoverySet, checkpoint, summary); err != nil {
@@ -302,18 +312,19 @@ func (s *Syncer) incrementalWithRecovery(
 							continue
 						}
 						threadID := newMsgThreads[newMsgIDs[i]]
-						if _, err := s.ingestMessage(
+						_, err := s.ingestMessage(
 							ctx, source.ID, raw, threadID, labelMap,
-						); err != nil {
+						)
+						if err != nil {
 							s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
-							if recErr := s.recordAcquisitionFailure(syncID, newMsgIDs[i], syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
-								s.failStoppedSync(syncID, recErr)
-								return nil, recErr
-							}
-							checkpoint.ErrorsCount++
-							if _, committed := errors.AsType[*committedMessageError](err); !committed {
-								continue
-							}
+						}
+						_, acquired, recErr := s.recordIngestOutcome(syncID, newMsgIDs[i], err, checkpoint)
+						if recErr != nil {
+							s.failStoppedSync(syncID, recErr)
+							return nil, recErr
+						}
+						if !acquired {
+							continue
 						}
 						checkpoint.MessagesAdded++
 						summary.BytesDownloaded += int64(len(raw.Raw))
@@ -374,6 +385,13 @@ func (s *Syncer) incrementalWithRecovery(
 				break
 			}
 		}
+		if len(trashRemovalIDs) > 0 {
+			messageIDs := slices.Sorted(maps.Keys(trashRemovalIDs))
+			if err := s.reconcileGmailTrashRemovals(ctx, source.ID, messageIDs); err != nil {
+				s.failStoppedSync(syncID, err)
+				return nil, fmt.Errorf("reconcile Gmail Trash removals: %w", err)
+			}
+		}
 	}
 
 	// Debt parked by an earlier page of this run is settled now, provided the
@@ -428,11 +446,12 @@ func (s *Syncer) replayAcquisitionFailures(
 		return nil, nil
 	}
 
-	existing, err := s.store.MessageExistsBatchContext(ctx, sourceID, messageIDs)
+	existing, err := s.store.MessageExistsWithRawBatchContext(ctx, sourceID, messageIDs)
 	if err != nil {
 		return nil, fmt.Errorf("check replay messages: %w", err)
 	}
 	fetchIDs := make([]string, 0, len(messageIDs))
+	reconcileIDs := make([]string, 0, len(messageIDs))
 	for _, messageID := range messageIDs {
 		if _, ok := existing[messageID]; !ok {
 			fetchIDs = append(fetchIDs, messageID)
@@ -446,10 +465,8 @@ func (s *Syncer) replayAcquisitionFailures(
 				}
 				checkpoint.ErrorsCount++
 			}
+			reconcileIDs = append(reconcileIDs, messageID)
 		}
-	}
-	if len(fetchIDs) == 0 {
-		return nil, nil
 	}
 
 	batchSize := 10
@@ -501,27 +518,38 @@ func (s *Syncer) replayAcquisitionFailures(
 				continue
 			}
 
-			if _, err := s.ingestMessage(ctx, sourceID, result.Message, result.Message.ThreadID, labelMap); err != nil {
-				if errors.Is(err, store.ErrSyncRunSuperseded) || ctx.Err() != nil {
-					return nil, err
-				}
-				if recErr := s.recordAcquisitionFailure(syncID, messageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
-					return nil, recErr
-				}
-				checkpoint.ErrorsCount++
-				if _, committed := errors.AsType[*committedMessageError](err); !committed {
-					continue
-				}
+			_, err := s.ingestMessage(ctx, sourceID, result.Message, result.Message.ThreadID, labelMap)
+			if err != nil && (errors.Is(err, store.ErrSyncRunSuperseded) || ctx.Err() != nil) {
+				return nil, err
+			}
+			_, acquired, recErr := s.recordIngestOutcome(syncID, messageID, err, checkpoint)
+			if recErr != nil {
+				return nil, recErr
+			}
+			if !acquired {
+				continue
 			}
 			checkpoint.MessagesAdded++
 			summary.BytesDownloaded += int64(len(result.Message.Raw))
 			successfulIDs = append(successfulIDs, messageID)
+			reconcileIDs = append(reconcileIDs, messageID)
 		}
 		if err := s.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
 			return nil, fmt.Errorf("checkpoint replay batch: %w", err)
 		}
 	}
 
+	if err := s.reconcileGmailTrashRemovals(ctx, sourceID, reconcileIDs); err != nil {
+		if errors.Is(err, store.ErrSyncRunSuperseded) {
+			return nil, err
+		}
+		for _, id := range reconcileIDs {
+			if recErr := s.recordAcquisitionFailure(syncID, id, syncItemPhaseFetch, syncItemKindFetchError, err); recErr != nil {
+				return nil, recErr
+			}
+		}
+		return nil, err
+	}
 	return successfulIDs, nil
 }
 
@@ -590,33 +618,30 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 				checkpoint.ErrorsCount++
 				return false, false, err
 			}
-			if _, err := s.ingestMessage(
+			_, err = s.ingestMessage(
 				ctx, sourceID, raw, threadID, labelMap,
-			); err != nil {
-				committed, saved := errors.AsType[*committedMessageError](err)
-				if saved {
-					existingMap[messageID] = committed.messageID
-				}
-				if recErr := s.recordAcquisitionFailure(syncID, messageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
-					return false, false, recErr
-				}
-				checkpoint.ErrorsCount++
-				if saved {
-					checkpoint.MessagesAdded++
-					summary.BytesDownloaded += int64(len(raw.Raw))
-					return false, true, err
-				}
+			)
+			committedID, acquired, recErr := s.recordIngestOutcome(syncID, messageID, err, checkpoint)
+			if committedID != 0 {
+				existingMap[messageID] = committedID
+			}
+			if recErr != nil {
+				return false, false, recErr
+			}
+			if !acquired {
 				return false, false, err
 			}
 			// Later label events in this sync must take the existing-message
 			// path, or a transient refetch failure would leave retry debt for a
 			// message that is already archived.
-			ingested, err := s.store.MessageExistsBatch(sourceID, []string{messageID})
-			if err != nil {
-				return false, false, fmt.Errorf("look up ingested message: %w", err)
-			}
-			if id, ok := ingested[messageID]; ok {
-				existingMap[messageID] = id
+			if err == nil {
+				ingested, lookupErr := s.store.MessageExistsBatch(sourceID, []string{messageID})
+				if lookupErr != nil {
+					return false, false, fmt.Errorf("look up ingested message: %w", lookupErr)
+				}
+				if id, ok := ingested[messageID]; ok {
+					existingMap[messageID] = id
+				}
 			}
 			// The new message gets embed_gen = NULL by column default, so
 			// the scan-and-fill embed worker picks it up automatically — no
@@ -625,7 +650,7 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 			if raw != nil {
 				summary.BytesDownloaded += int64(len(raw.Raw))
 			}
-			return false, true, nil
+			return false, true, err
 		}
 		// Removing labels from non-existent message is a no-op
 		return false, false, nil
@@ -650,6 +675,60 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 		return false, false, err
 	}
 	return true, true, nil
+}
+
+// reconcileGmailTrashRemovals waits until History is consumed before checking
+// current labels, so an older removal cannot clear a mark on a re-trashed message.
+func (s *Syncer) reconcileGmailTrashRemovals(
+	ctx context.Context,
+	sourceID int64,
+	messageIDs []string,
+) error {
+	marked, err := s.store.MarkedSourceMessageIDsBatchContext(ctx, sourceID, messageIDs)
+	if err != nil {
+		return fmt.Errorf("check marked Gmail messages: %w", err)
+	}
+	messageIDs = slices.DeleteFunc(slices.Clone(messageIDs), func(id string) bool {
+		_, ok := marked[id]
+		return !ok
+	})
+	if len(messageIDs) == 0 {
+		return nil
+	}
+	reader, ok := s.client.(messageLabelBatchReader)
+	if !ok {
+		return errors.New("label reader unavailable after Trash removal")
+	}
+	results, err := reader.GetMessageLabelsBatch(ctx, messageIDs)
+	if err != nil {
+		return fmt.Errorf("fetch final Gmail labels: %w", err)
+	}
+	for i, messageID := range messageIDs {
+		if i >= len(results) {
+			return fmt.Errorf("fetch final Gmail labels for %s: missing batch result", messageID)
+		}
+		result := results[i]
+		if result.Err != nil {
+			if _, gone := messageGoneKind(result.Err); gone {
+				continue
+			}
+			return fmt.Errorf("fetch final Gmail labels for %s: %w", messageID, result.Err)
+		}
+		if _, err := s.clearRestoredGmailMessage(ctx, sourceID, messageID, result.LabelIDs); err != nil {
+			return fmt.Errorf("clear deletion mark for restored message %s: %w", messageID, err)
+		}
+	}
+	return nil
+}
+
+func (s *Syncer) clearRestoredGmailMessage(ctx context.Context, sourceID int64, messageID string, labels []string) (bool, error) {
+	if slices.Contains(labels, "TRASH") {
+		return false, nil
+	}
+	if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, messageID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // logLabelChangeError logs label change errors, downgrading "not found"

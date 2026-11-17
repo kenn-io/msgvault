@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/identityops"
+	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/provideridentity"
@@ -122,6 +123,7 @@ type ContextCLIStore interface {
 	CountSourceDeletedMessagesContext(ctx context.Context, sourceIDs ...int64) (int64, error)
 	NeedsFTSBackfillQuickContext(ctx context.Context) bool
 	NeedsFTSBackfillContext(ctx context.Context) (bool, error)
+	BackfillFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error)
 	RebuildFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error)
 }
 
@@ -268,6 +270,10 @@ func (s *requestCLIStore) CountSourceDeletedMessages(sourceIDs ...int64) (int64,
 
 func (s *requestCLIStore) NeedsFTSBackfillQuick() bool {
 	return s.contextStore.NeedsFTSBackfillQuickContext(s.ctx)
+}
+
+func (s *requestCLIStore) BackfillFTS(progress func(done, total int64)) (int64, error) {
+	return s.contextStore.BackfillFTSContext(s.ctx, progress)
 }
 
 func (s *requestCLIStore) RebuildFTS(
@@ -732,22 +738,23 @@ type sourceMessageCounter interface {
 
 // virtualAccountLister reads the virtual account catalog. Its freshness
 // depends on the confirmed identities, so a store that offers the catalog
-// also reports the revision that changes when one is added or removed.
+// also reports the revision that changes when one is added or removed or any
+// transaction rewrites a message's attribution.
 type virtualAccountLister interface {
 	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
-	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
+	AccountCatalogRevisionContext(ctx context.Context) (int64, error)
 }
 
 // virtualAccountCatalogFreshFor is how long a completed catalog read serves
 // as current. Confirming or removing an identity starts a new read at once.
 const virtualAccountCatalogFreshFor = 2 * time.Minute
 
-// virtualAccountCatalogVersion is the identity revision a catalog read
-// depends on, so a read from before an identity change is never fresh.
+// virtualAccountCatalogVersion is the catalog revision a read depends on, so a
+// read from before an identity or attribution change is never fresh.
 func (s *Server) virtualAccountCatalogVersion(ctx context.Context, lister virtualAccountLister) string {
-	revision, err := lister.AccountIdentityRevisionContext(ctx)
+	revision, err := lister.AccountCatalogRevisionContext(ctx)
 	if err != nil {
-		s.logger.Warn("reading account identity revision for the account catalog", "error", err)
+		s.logger.Warn("reading account catalog revision", "error", err)
 		return ""
 	}
 	return strconv.FormatInt(revision, 10)
@@ -872,6 +879,7 @@ type cliAccountResponse struct {
 	Type               string     `json:"type"`
 	DisplayName        string     `json:"display_name"`
 	OAuthApp           string     `json:"oauth_app,omitempty"`
+	AuthMethod         string     `json:"auth_method,omitempty"`
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
 	LastSync           *time.Time `json:"last_sync"`
@@ -1439,7 +1447,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
 		} else {
-			s.logger.Error("failed to run CLI command", "args", req.Args, "error", err)
+			s.logger.Error("failed to run CLI command", "args", RedactedCLIRunArgs(req.Args), "error", err)
 		}
 		if writeErr := writeEvent(CLIRunEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
 			s.logger.Error("failed to stream CLI run error event", "error", writeErr)
@@ -1534,6 +1542,25 @@ func cliRunArgsContainFlag(args []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// RedactedCLIRunArgs returns args for logging. For `comment reply` it
+// replaces the reply text given with --body by a placeholder; other commands'
+// args are returned as they are.
+func RedactedCLIRunArgs(args []string) []string {
+	if len(args) < 2 || args[0] != "comment" || args[1] != "reply" {
+		return args
+	}
+	redacted := slices.Clone(args)
+	for i, arg := range redacted {
+		switch {
+		case arg == "--body" && i+1 < len(redacted):
+			redacted[i+1] = "[redacted]"
+		case strings.HasPrefix(arg, "--body="):
+			redacted[i] = "--body=[redacted]"
+		}
+	}
+	return redacted
 }
 
 func (s *Server) handleCLIAddCalendarPlan(w http.ResponseWriter, r *http.Request) {
@@ -1679,7 +1706,22 @@ func cliRunCommandAllowed(args []string) bool {
 		return false
 	}
 	if args[0] == "source" {
-		return len(args) >= 3 && (args[1] == "facebook-comments" || args[1] == "instagram-comments") && (args[2] == "add" || args[2] == "sync")
+		if len(args) < 3 {
+			return false
+		}
+		switch args[1] {
+		case "facebook-comments", "instagram-comments", "instagram-mentions", "facebook-messages", "instagram-messages":
+			return args[2] == "add" || args[2] == "sync"
+		case "feeds":
+			switch args[2] {
+			case "add", "list", "remove", "sync":
+				return true
+			}
+		}
+		return false
+	}
+	if args[0] == "comment" {
+		return len(args) >= 2 && (args[1] == "moderate" || args[1] == "reply")
 	}
 	// Internal subprocess commands are callable only by their owning public
 	// command on the daemon host, never through the generic HTTP runner.
@@ -1761,6 +1803,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"gc",
 		"import",
 		"import-maildir",
+		"import-ics",
 		"import-eml",
 		"import-emlx",
 		"import-gvoice",
@@ -1771,6 +1814,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"import-pst",
 		"import-slackdump",
 		"import-telegram",
+		"import-discord-package",
 		"import-x",
 		"import-synctech-sms",
 		"import-whatsapp",
@@ -2473,10 +2517,26 @@ func (s *Server) ensureCLISearchIndexAsync(cliStore CLIStore, mayRepair bool) st
 	if bound, ok := cliStore.(*requestCLIStore); ok {
 		cliStore = bound.CLIStore
 	}
+	s.importMu.Lock()
+	if s.importsClosed {
+		s.importMu.Unlock()
+		return state
+	}
+	finishIdle, ok := s.idleTracker.BeginMaintenanceWorkContext(s.importContext)
+	if !ok {
+		s.importMu.Unlock()
+		return state
+	}
+	s.importWG.Add(1)
+	s.importMu.Unlock()
 	s.ftsEnsureMayRepair = mayRepair
 	s.ftsEnsureRunning.Store(true)
 	s.ftsIndexState.Store(state)
-	go s.runCLISearchIndexEnsure(cliStore, knownIncomplete, !mayRepair)
+	go func() {
+		defer s.importWG.Done()
+		defer finishIdle()
+		s.runCLISearchIndexEnsure(cliStore, knownIncomplete, !mayRepair)
+	}()
 	return state
 }
 
@@ -2803,6 +2863,11 @@ func newCLIAccountResponse(src *store.Source, count, sourceDeleted int64) cliAcc
 		Type:               src.SourceType,
 		MessageCount:       count,
 		SourceDeletedCount: sourceDeleted,
+	}
+	if src.SourceType == "imap" && src.SyncConfig.Valid {
+		if cfg, err := imapclient.ConfigFromJSON(src.SyncConfig.String); err == nil {
+			account.AuthMethod = string(cfg.EffectiveAuthMethod())
+		}
 	}
 	if src.DisplayName.Valid {
 		account.DisplayName = src.DisplayName.String

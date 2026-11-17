@@ -25,7 +25,7 @@ const (
 	// permits inline style attributes: the reader frame needs them for
 	// allowlist-sanitized author mail styling, and stylesheet elements stay
 	// restricted to 'self' via style-src.
-	shellCSP         = "default-src 'self'; img-src 'self' data: blob: https: http:; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+	shellCSP         = "default-src 'self'; img-src 'self' data: blob: https: http:; media-src 'self' blob:; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 	viteManifestPath = ".vite/manifest.json"
 )
 

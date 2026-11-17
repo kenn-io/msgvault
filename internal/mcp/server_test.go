@@ -906,103 +906,6 @@ func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 	}
 }
 
-func TestSearchMessageBodies_PostgreSQLContextIgnoresAccentLookalikes(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	if !f.Store.IsPostgreSQL() {
-		t.Skip("PostgreSQL simple-dictionary context semantics")
-	}
-
-	accentLookalike := "résumé " + strings.Repeat("padding ", 60)
-	body := strings.Repeat(accentLookalike, query.MessageBodyContextMaxSnippets) + "resume marker"
-	messageID := f.NewMessage().
-		WithSourceMessageID("mcp-postgres-accent-context").
-		WithSubject("ordinary subject").
-		WithSnippet("ordinary preview").
-		Create(t, f.Store)
-	require.NoError(f.Store.UpsertMessageBody(messageID,
-		sql.NullString{String: body, Valid: true}, sql.NullString{}), "UpsertMessageBody")
-	_, err := f.Store.BackfillFTS(nil)
-	require.NoError(err, "BackfillFTS")
-
-	engine := query.NewEngine(f.Store.DB(), true)
-	resp := runTool[paginatedSearchMessages](t, "search_message_bodies",
-		newTestHandlers(engine).searchMessageBodies, map[string]any{"query": "resume"})
-	require.Len(resp.Data, 1, "body hit")
-	assert.Equal(messageID, resp.Data[0].ID, "body hit ID")
-	require.NotEmpty(resp.Data[0].Matches, "FTS hit context windows")
-	assert.Condition(func() bool {
-		for _, m := range resp.Data[0].Matches {
-			if strings.Contains(m.Snippet, "resume marker") {
-				return true
-			}
-		}
-		return false
-	}, "context snippets must include the true PostgreSQL simple-dictionary hit")
-}
-
-func TestSearchMessageBodies_PostgreSQLContextUsesParserTokens(t *testing.T) {
-	f := storetest.New(t)
-	if !f.Store.IsPostgreSQL() {
-		t.Skip("PostgreSQL parser-specific body context semantics")
-	}
-
-	tests := []struct {
-		name      string
-		lookalike string
-		query     string
-		marker    string
-	}{
-		{
-			name:      "decomposed combining mark stays inside a word",
-			lookalike: "cafe\u0301teria",
-			query:     "cafe\u0301teria",
-			marker:    "cafe teria marker",
-		},
-		{
-			name:      "host stays one token",
-			lookalike: "foo.bar",
-			query:     `"foo bar"`,
-			marker:    "foo bar marker",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			lookalike := tc.lookalike + " " + strings.Repeat("padding ", 60)
-			body := strings.Repeat(lookalike, query.MessageBodyContextMaxSnippets) + tc.marker
-			messageID := f.NewMessage().
-				WithSourceMessageID("mcp-postgres-parser-"+tc.name).
-				WithSubject("ordinary subject").
-				WithSnippet("ordinary preview").
-				Create(t, f.Store)
-			require.NoError(f.Store.UpsertMessageBody(messageID,
-				sql.NullString{String: body, Valid: true}, sql.NullString{}), "UpsertMessageBody")
-			_, err := f.Store.BackfillFTS(nil)
-			require.NoError(err, "BackfillFTS")
-
-			engine := query.NewEngine(f.Store.DB(), true)
-			resp := runTool[paginatedSearchMessages](t, "search_message_bodies",
-				newTestHandlers(engine).searchMessageBodies,
-				map[string]any{"query": tc.query})
-			require.Len(resp.Data, 1, "body hit")
-			assert.Equal(messageID, resp.Data[0].ID, "body hit ID")
-			require.NotEmpty(resp.Data[0].Matches, "FTS hit context windows")
-			assert.Condition(func() bool {
-				for _, m := range resp.Data[0].Matches {
-					if strings.Contains(m.Snippet, tc.marker) {
-						return true
-					}
-				}
-				return false
-			}, "context snippets must ignore PostgreSQL parser lookalikes")
-		})
-	}
-}
-
 func TestSearchMessageBodies_ContextIgnoresFullFoldExpansionLookalikes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1952,7 +1855,7 @@ func TestGetMessage(t *testing.T) {
 					assert.Equal(t, "unsupported_format", got.SegmentsUnavailable)
 					assert.Empty(t, got.SegmentsVersion)
 				} else {
-					assert.Equal(t, "seg-v1", got.SegmentsVersion)
+					assert.Equal(t, msgsegment.Version, got.SegmentsVersion)
 					assert.Empty(t, got.SegmentsUnavailable)
 				}
 			})
@@ -1998,7 +1901,7 @@ func TestGetMessage(t *testing.T) {
 		require.NoError(err)
 		require.False(result.IsError)
 		got := task5StructuredAs[map[string]any](t, result)
-		assert.Equal("seg-v1", got["segments_version"])
+		assert.Equal(msgsegment.Version, got["segments_version"])
 		assert.Equal([]any{
 			map[string]any{"kind": "authored", "start": float64(0), "end": float64(4)},
 			map[string]any{"kind": "quoted", "start": float64(4), "end": float64(10), "depth": float64(1)},

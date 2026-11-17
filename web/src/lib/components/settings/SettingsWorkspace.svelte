@@ -81,6 +81,7 @@
     onAppearanceSaved = () => undefined,
     onStatusChange = () => undefined,
     onDirectoryChange,
+    onOpenPerson,
   }: {
     client: APIClient;
     operationsController: OperationsController;
@@ -95,6 +96,7 @@
     onAppearanceSaved?: (saved: SavedAppearance) => void;
     onStatusChange?: () => void;
     onDirectoryChange?: () => void | Promise<void>;
+    onOpenPerson?: (personID: number) => void;
   } = $props();
 
   let settings = $state<SettingState[]>([]);
@@ -508,7 +510,7 @@
   {:else}
     <span class="unsaved" role="status">
       {`${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : draftNeedsRestart ? '.' : ''}`}
-      {#if draftNeedsRestart}<span>Restart msgvault to apply these changes.</span>{/if}
+      {#if draftNeedsRestart}<span>Restart required after saving.</span>{/if}
     </span>
     <Button label="Discard" disabled={saving} onclick={discard} />
     <Button
@@ -641,8 +643,8 @@
           {/if}
           {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
           {#if buildError && activeId === 'overview'}<p class="notice notice--error" role="alert">{buildError}</p>{/if}
-          {#if pendingRestart}
-            <p class="notice notice--pending" role="status">Saved. Restart msgvault to apply these changes.</p>
+          {#if pendingRestart || inference.status?.pending_restart}
+            <div class="restart-notice"><InlineNotice tone="warning" message="Restart pending."><span>On the computer running msgvault, restart its service, or stop and rerun your foreground <code>msgvault serve</code> with the same flags. Otherwise, run <code>msgvault daemon restart</code> with the same custom <code>--home</code> and <code>--config</code> options.</span></InlineNotice></div>
           {/if}
         </div>
 
@@ -662,7 +664,7 @@
               onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
         {:else if activeId === 'people_catalog'}
-          <PeopleCatalogSettings {client} {onDirectoryChange} />
+          <PeopleCatalogSettings {client} {onDirectoryChange} {onOpenPerson} />
         {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace
             {onStatusChange}
@@ -821,6 +823,9 @@
   .notices :global(.kit-notice) {
     padding: var(--space-box);
     gap: var(--control-gap);
+  }
+  .restart-notice :global(.kit-notice.kit-notice) {
+    border-color: var(--status-warning-ink);
   }
   .notice {
     margin: 0;

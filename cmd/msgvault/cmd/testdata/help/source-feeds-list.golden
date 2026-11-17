@@ -1,0 +1,11 @@
+List followed feeds and their status
+
+Usage:
+  msgvault source feeds list [flags]
+
+Flags:
+      --all    include removed feeds
+  -h, --help   help for list
+      --json   output JSON
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')

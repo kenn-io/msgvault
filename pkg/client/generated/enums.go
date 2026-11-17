@@ -936,6 +936,7 @@ func (e ExploreSortField) Validate() error {
 	}
 }
 
+// FileMetadataResponseContentState File details check whether content can be opened; read or integrity errors can still occur.
 type FileMetadataResponseContentState string
 
 const (
@@ -955,6 +956,7 @@ func (f FileMetadataResponseContentState) Validate() error {
 	}
 }
 
+// FileSearchRowContentState List availability is based on metadata; file details check whether storage can be opened.
 type FileSearchRowContentState string
 
 const (
@@ -962,12 +964,13 @@ const (
 	FileSearchRowContentStateMetadataOnly FileSearchRowContentState = "metadata_only"
 	FileSearchRowContentStateMissingBlob  FileSearchRowContentState = "missing_blob"
 	FileSearchRowContentStateURLOnly      FileSearchRowContentState = "url_only"
+	Unverified                            FileSearchRowContentState = "unverified"
 )
 
 // Validate checks if the FileSearchRowContentState value is valid
 func (f FileSearchRowContentState) Validate() error {
 	switch f {
-	case FileSearchRowContentStateLocalContent, FileSearchRowContentStateMetadataOnly, FileSearchRowContentStateMissingBlob, FileSearchRowContentStateURLOnly:
+	case FileSearchRowContentStateLocalContent, FileSearchRowContentStateMetadataOnly, FileSearchRowContentStateMissingBlob, FileSearchRowContentStateURLOnly, Unverified:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid FileSearchRowContentState value, got: %v", f))
@@ -997,6 +1000,7 @@ func (f FileSuggestionHTTPRequestMimeFamilies) Validate() error {
 	}
 }
 
+// FileSuggestionRowContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 type FileSuggestionRowContentState string
 
 const (
@@ -1004,12 +1008,13 @@ const (
 	FileSuggestionRowContentStateMetadataOnly FileSuggestionRowContentState = "metadata_only"
 	FileSuggestionRowContentStateMissingBlob  FileSuggestionRowContentState = "missing_blob"
 	FileSuggestionRowContentStateURLOnly      FileSuggestionRowContentState = "url_only"
+	FileSuggestionRowContentStateUnverified   FileSuggestionRowContentState = "unverified"
 )
 
 // Validate checks if the FileSuggestionRowContentState value is valid
 func (f FileSuggestionRowContentState) Validate() error {
 	switch f {
-	case FileSuggestionRowContentStateLocalContent, FileSuggestionRowContentStateMetadataOnly, FileSuggestionRowContentStateMissingBlob, FileSuggestionRowContentStateURLOnly:
+	case FileSuggestionRowContentStateLocalContent, FileSuggestionRowContentStateMetadataOnly, FileSuggestionRowContentStateMissingBlob, FileSuggestionRowContentStateURLOnly, FileSuggestionRowContentStateUnverified:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid FileSuggestionRowContentState value, got: %v", f))
@@ -1283,6 +1288,24 @@ func (m MeetingContextRequestFormat) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingContextRequestFormat value, got: %v", m))
+	}
+}
+
+type MeetingDecisionRequestDecision string
+
+const (
+	Clear  MeetingDecisionRequestDecision = "clear"
+	Link   MeetingDecisionRequestDecision = "link"
+	Unlink MeetingDecisionRequestDecision = "unlink"
+)
+
+// Validate checks if the MeetingDecisionRequestDecision value is valid
+func (m MeetingDecisionRequestDecision) Validate() error {
+	switch m {
+	case Clear, Link, Unlink:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingDecisionRequestDecision value, got: %v", m))
 	}
 }
 
@@ -2328,6 +2351,7 @@ func (p PersonFileSearchHTTPRequestDirections) Validate() error {
 	}
 }
 
+// PersonFileSearchRowContentState List availability is based on metadata; file details check whether storage can be opened.
 type PersonFileSearchRowContentState string
 
 const (
@@ -2335,12 +2359,13 @@ const (
 	PersonFileSearchRowContentStateMetadataOnly PersonFileSearchRowContentState = "metadata_only"
 	PersonFileSearchRowContentStateMissingBlob  PersonFileSearchRowContentState = "missing_blob"
 	PersonFileSearchRowContentStateURLOnly      PersonFileSearchRowContentState = "url_only"
+	PersonFileSearchRowContentStateUnverified   PersonFileSearchRowContentState = "unverified"
 )
 
 // Validate checks if the PersonFileSearchRowContentState value is valid
 func (p PersonFileSearchRowContentState) Validate() error {
 	switch p {
-	case PersonFileSearchRowContentStateLocalContent, PersonFileSearchRowContentStateMetadataOnly, PersonFileSearchRowContentStateMissingBlob, PersonFileSearchRowContentStateURLOnly:
+	case PersonFileSearchRowContentStateLocalContent, PersonFileSearchRowContentStateMetadataOnly, PersonFileSearchRowContentStateMissingBlob, PersonFileSearchRowContentStateURLOnly, PersonFileSearchRowContentStateUnverified:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSearchRowContentState value, got: %v", p))
@@ -2388,6 +2413,7 @@ func (p PersonFileSuggestionHTTPRequestMimeFamilies) Validate() error {
 	}
 }
 
+// PersonFileSuggestionRowContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 type PersonFileSuggestionRowContentState string
 
 const (
@@ -2395,12 +2421,13 @@ const (
 	PersonFileSuggestionRowContentStateMetadataOnly PersonFileSuggestionRowContentState = "metadata_only"
 	PersonFileSuggestionRowContentStateMissingBlob  PersonFileSuggestionRowContentState = "missing_blob"
 	PersonFileSuggestionRowContentStateURLOnly      PersonFileSuggestionRowContentState = "url_only"
+	PersonFileSuggestionRowContentStateUnverified   PersonFileSuggestionRowContentState = "unverified"
 )
 
 // Validate checks if the PersonFileSuggestionRowContentState value is valid
 func (p PersonFileSuggestionRowContentState) Validate() error {
 	switch p {
-	case PersonFileSuggestionRowContentStateLocalContent, PersonFileSuggestionRowContentStateMetadataOnly, PersonFileSuggestionRowContentStateMissingBlob, PersonFileSuggestionRowContentStateURLOnly:
+	case PersonFileSuggestionRowContentStateLocalContent, PersonFileSuggestionRowContentStateMetadataOnly, PersonFileSuggestionRowContentStateMissingBlob, PersonFileSuggestionRowContentStateURLOnly, PersonFileSuggestionRowContentStateUnverified:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSuggestionRowContentState value, got: %v", p))
@@ -2810,14 +2837,14 @@ func (s SecretSettingStateSource) Validate() error {
 type SecretSettingUpdateAction string
 
 const (
-	Clear SecretSettingUpdateAction = "clear"
-	Set   SecretSettingUpdateAction = "set"
+	SecretSettingUpdateActionClear SecretSettingUpdateAction = "clear"
+	Set                            SecretSettingUpdateAction = "set"
 )
 
 // Validate checks if the SecretSettingUpdateAction value is valid
 func (s SecretSettingUpdateAction) Validate() error {
 	switch s {
-	case Clear, Set:
+	case SecretSettingUpdateActionClear, Set:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SecretSettingUpdateAction value, got: %v", s))
