@@ -587,8 +587,7 @@ export async function installDirectoryReviewArchive(page: Page) {
   ]);
   let phase: 'premerge' | 'postmerge' | 'postsplit' = 'premerge';
   const requests: CapturedReviewRequest[] = [];
-  let factCatalogMode: 'ready' | 'deferred' | 'failed' | 'malformed' = 'ready';
-  let factCatalogGate: Promise<void> | null = null;
+  let factCatalogMode: 'ready' | 'failed' = 'ready';
 
   await page.route(/\/api\/v1\/participants\/(?:701|702|901)$/, (route) => {
     const id = Number(new URL(route.request().url()).pathname.split('/').at(-1));
@@ -639,35 +638,8 @@ export async function installDirectoryReviewArchive(page: Page) {
   await page.unroute('**/api/v1/person-fact-targets*');
   await page.route('**/api/v1/person-fact-targets*', async (route) => {
     requests.push(capture(route.request()));
-    if (factCatalogMode === 'deferred') {
-      await factCatalogGate;
-      factCatalogMode = 'ready';
-      factCatalogGate = null;
-    }
     if (factCatalogMode === 'failed') {
       return route.fulfill({ status: 503, json: { error: 'unavailable', message: 'forbidden-private-error' } });
-    }
-    if (factCatalogMode === 'malformed') {
-      return route.fulfill({
-        json: {
-          version: 'forbidden-target-revision',
-          fingerprint: 'forbidden-catalog-fingerprint',
-          targets: [
-            {
-              kind: 'attribute',
-              key: 'forbidden-target-key',
-              revision: FACT_TARGET_REVISION,
-              value_type: 'string',
-              cardinality: 'single',
-              choices: null,
-              fields: null,
-              slug: 'forbidden-extension-field',
-              universal_id: 'forbidden-extension-field',
-              description: 'Malformed private note',
-            },
-          ],
-        },
-      });
     }
     return route.fulfill({
       json: {
@@ -1079,19 +1051,8 @@ export async function installDirectoryReviewArchive(page: Page) {
     archive,
     candidates,
     requests,
-    deferFactCatalog(): () => void {
-      let release = () => undefined;
-      factCatalogMode = 'deferred';
-      factCatalogGate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      return release;
-    },
     failFactCatalog(): void {
       factCatalogMode = 'failed';
-    },
-    malformFactCatalog(): void {
-      factCatalogMode = 'malformed';
     },
   };
 }

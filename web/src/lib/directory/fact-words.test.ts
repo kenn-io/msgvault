@@ -3,6 +3,7 @@ import { authorityWords, decisionSentence, evidenceSourceWords, lostSupportWords
 
 describe('fact words', () => {
   it('names evidence sources in words', () => {
+    // Unknown values preserve safe copy if a newer server adds an enum value.
     expect(evidenceSourceWords('unknown', 'direct-self')).toBe('');
     expect(evidenceSourceWords('archive', 'direct-self')).toBe('From a message they sent');
     expect(evidenceSourceWords('archive', 'direct-other')).toBe('From a message or meeting');
@@ -21,6 +22,7 @@ describe('fact words', () => {
     expect(relationWords('invalid')).toBe('Not usable');
     expect(originWords('system')).toBe('msgvault');
     expect(originWords('enrichment')).toBe('From a lookup');
+    // Unknown values preserve safe copy if a newer server adds an enum value.
     expect(originWords('unknown')).toBe('');
     expect(relationWords('unknown')).toBeNull();
   });
@@ -47,10 +49,13 @@ describe('fact words', () => {
     expect(statusEventWords(false, 'source-edited')).toBe('Source edited');
     expect(lostSupportWords('identity-reassigned')).toBe('Moved to another person');
     expect(lostSupportWords(undefined)).toBe('Source removed');
+    expect(lostSupportWords('private-unknown-reason')).toBe('Source removed');
+    expect(statusEventWords(true, 'private-unknown-reason')).toBe('In the archive');
   });
 
   it('names where a saved decision put its value', () => {
     expect(projectionWords('person_attribute')).toBeNull();
+    expect(projectionWords('employment')).toBe('Work');
   });
 
   it('shows recorded scores without assigning strength', () => {

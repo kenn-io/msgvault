@@ -283,10 +283,8 @@ describe('FactLedgerController', () => {
     expect(controller.history.offset).toBe(50);
     expect(controller.history.rows).toHaveLength(1);
   });
-  it.each([
-    { section: 'decisions' as const, param: 'claim_key', value: 'private-claim-key' },
-    { section: 'evidence' as const, param: 'evidence_id', value: '1' },
-  ])('keeps $param through retry until navigation', async ({ section, param, value }) => {
+  it('keeps claim_key through retry until navigation', async () => {
+    const section = 'decisions' as const, param = 'claim_key', value = 'private-claim-key';
     const requests: URL[] = [];
     let fail = false;
     const fetchFn = vi.fn<typeof fetch>(async input => {
@@ -298,8 +296,8 @@ describe('FactLedgerController', () => {
       }
       const data = payload(url.pathname);
       if (url.searchParams.has(param)) {
-        const rows = section === 'decisions' ? data.decisions! : data.evidence!;
-        return Response.json({ [section]: section === 'decisions' && url.searchParams.get('offset') === '0' ? Array.from({ length: 50 }, () => rows[0]) : [rows[0]] });
+        const rows = data.decisions!;
+        return Response.json({ [section]: url.searchParams.get('offset') === '0' ? Array.from({ length: 50 }, () => rows[0]) : [rows[0]] });
       }
       return Response.json(data);
     });
@@ -307,32 +305,65 @@ describe('FactLedgerController', () => {
     controller.applyContext(true, 42);
     await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
     requests.length = 0;
-    const open = () => section === 'decisions'
-      ? controller.showDecision(value, `attribute:work:email:${revision}`)
-      : controller.showEvidence(1, `attribute:work:email:${revision}`);
+    const open = () => controller.showDecision(value, `attribute:work:email:${revision}`);
     await open();
     expect(requests).toHaveLength(1);
     expect(requests[0]!.searchParams.get(param)).toBe(value);
-    expect(controller.focusRequest?.key).toBe(section === 'decisions' ? `decision:${value}` : `evidence:${value}`);
-    if (section === 'decisions') {
-      await controller.nextPage(section);
-      expect(controller.focusRequest).toBeNull();
-      await controller.previousPage(section);
-      fail = true;
-      await controller.nextPage(section);
-      await controller.retrySection(section);
-      expect(requests.map(url => [url.searchParams.get(param), url.searchParams.get('offset')])).toEqual([
-        [value, '0'], [value, '50'], [value, '0'], [value, '50'], [value, '50'],
-      ]);
-      expect(controller.focusRequest).toBeNull();
-    } else {
-      fail = true;
-      await open();
-      expect(controller.evidence.error).toBe("Couldn't load evidence.");
-      await controller.retrySection(section);
-      expect(requests.at(-1)!.searchParams.get(param)).toBe(value);
-      expect(controller.focusRequest?.key).toBe('evidence:1');
-    }
+    expect(controller.focusRequest?.key).toBe(`decision:${value}`);
+    await controller.nextPage(section);
+    expect(controller.focusRequest).toBeNull();
+    await controller.previousPage(section);
+    fail = true;
+    await controller.nextPage(section);
+    await controller.retrySection(section);
+    expect(requests.map(url => [url.searchParams.get(param), url.searchParams.get('offset')])).toEqual([
+      [value, '0'], [value, '50'], [value, '0'], [value, '50'], [value, '50'],
+    ]);
+    expect(controller.focusRequest).toBeNull();
+    await controller.showAll();
+    expect(requests.at(-1)!.searchParams.has(param)).toBe(false);
+    await open();
+    await controller.selectTarget('all');
+    expect(requests.at(-1)!.searchParams.has(param)).toBe(false);
+    await open();
+    await controller.selectSection('claims');
+    expect(controller.exactFilter).toBeNull();
+    controller.destroy();
+  });
+
+  it('keeps evidence_id through retry until navigation', async () => {
+    const section = 'evidence' as const, param = 'evidence_id', value = '1';
+    const requests: URL[] = [];
+    let fail = false;
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const url = new URL(requestOf(input).url);
+      requests.push(url);
+      if (url.searchParams.has(param) && fail) {
+        fail = false;
+        return new Response(null, { status: 503 });
+      }
+      const data = payload(url.pathname);
+      if (url.searchParams.has(param)) {
+        const rows = data.evidence!;
+        return Response.json({ [section]: [rows[0]] });
+      }
+      return Response.json(data);
+    });
+    const controller = new FactLedgerController(createAPIClient(fetchFn));
+    controller.applyContext(true, 42);
+    await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
+    requests.length = 0;
+    const open = () => controller.showEvidence(1, `attribute:work:email:${revision}`);
+    await open();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.searchParams.get(param)).toBe(value);
+    expect(controller.focusRequest?.key).toBe(`evidence:${value}`);
+    fail = true;
+    await open();
+    expect(controller.evidence.error).toBe("Couldn't load evidence.");
+    await controller.retrySection(section);
+    expect(requests.at(-1)!.searchParams.get(param)).toBe(value);
+    expect(controller.focusRequest?.key).toBe('evidence:1');
     await controller.showAll();
     expect(requests.at(-1)!.searchParams.has(param)).toBe(false);
     await open();

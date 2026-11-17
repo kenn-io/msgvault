@@ -34,30 +34,22 @@ it('cancels the old summary when the person changes', async () => {
   await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Facts' }).closest('summary')?.textContent).toContain('2 fields'));
 });
 
-it('opens Facts after the first saved job with lookups off', async () => {
-  let hasStored = false;
+it.each(['has_values', 'has_fact_history'] as const)('opens Facts with %s and lookups off', async (field) => {
+  let hasStored = field === 'has_fact_history';
   const fetchFn = vi.fn<typeof fetch>(async input => {
-    if (new URL(requestOf(input).url).pathname.endsWith('/fact-summary')) return Response.json({ claimed_fields: 0, latest_claim_at: null, has_values: hasStored, has_fact_history: false });
+    if (new URL(requestOf(input).url).pathname.endsWith('/fact-summary')) return Response.json({ claimed_fields: 0, latest_claim_at: null, has_values: field === 'has_values' && hasStored, has_fact_history: field === 'has_fact_history' && hasStored });
     throw new Error('unexpected request');
   });
   const client = createAPIClient(fetchFn), entity = new DirectoryEntityController(client, 42);
   render(PersonFacts, { client, personID: 42, entity, onSetUp: vi.fn() });
-  await screen.findByRole('button', { name: /Set up/ });
-  hasStored = true;
-  entity.employments = [employment(11, 1)];
+  if (field === 'has_values') {
+    await screen.findByRole('button', { name: /Set up/ });
+    hasStored = true;
+    entity.employments = [employment(11, 1)];
+  }
   await screen.findByText('No claims yet');
   expect(screen.getByRole('heading', { name: 'Facts' }).closest('summary')).not.toBeNull();
   entity.destroy();
-});
-
-it('opens Facts when only fact history exists and lookups are off', async () => {
-  const fetchFn = vi.fn<typeof fetch>(async input => {
-    if (new URL(requestOf(input).url).pathname.endsWith('/fact-summary')) return Response.json({ claimed_fields: 0, latest_claim_at: null, has_values: false, has_fact_history: true });
-    throw new Error('unexpected request');
-  });
-  render(PersonFacts, { client: createAPIClient(fetchFn), personID: 42, onSetUp: vi.fn() });
-  await screen.findByText('No claims yet');
-  expect(screen.getByRole('heading', { name: 'Facts' }).closest('summary')).not.toBeNull();
 });
 
 it('keeps Facts openable and retries a failed summary', async () => {
