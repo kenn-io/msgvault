@@ -199,25 +199,48 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 	return s.saveCommitmentFrontierTx(ctx, tx, request, prepared)
 }
 
-// Save discovery progress after the fenced apply.
-func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
+func (s *Store) saveSkippedCommitmentMessagesTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, backfill int64) (int64, error) {
 	window := request.Commitment.Window
+	personID := request.Lease.PersonID
 	if window.ResetSkipped {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_skipped WHERE person_id = ?`, request.Lease.PersonID); err != nil {
-			return err
+		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_skipped WHERE person_id = ?`, personID); err != nil {
+			return 0, err
 		}
 	}
 	for _, id := range window.RetriedMessageIDs {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_skipped WHERE person_id = ? AND message_id = ?`, request.Lease.PersonID, id); err != nil {
-			return err
+		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_skipped WHERE person_id = ? AND message_id = ?`, personID, id); err != nil {
+			return 0, err
 		}
 	}
 	for _, id := range window.SkippedMessageIDs {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_skipped (person_id, message_id, max_bytes) VALUES (?, ?, ?) ON CONFLICT (person_id, message_id) DO UPDATE SET max_bytes = excluded.max_bytes`, request.Lease.PersonID, id, request.Commitment.Config.MaxBytes); err != nil {
-			return err
+		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_skipped WHERE person_id = ? AND message_id = ? AND NOT EXISTS (SELECT 1 FROM messages WHERE id = ? AND deleted_at IS NULL)`, personID, id, id); err != nil {
+			return 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_skipped (person_id, message_id, max_bytes)
+			SELECT ?, id, ? FROM messages WHERE id = ? AND deleted_at IS NULL
+			ON CONFLICT (person_id, message_id) DO UPDATE SET max_bytes = excluded.max_bytes`, personID, request.Commitment.Config.MaxBytes, id); err != nil {
+			return 0, err
 		}
 	}
-	through, backfill := prepared.through, prepared.backfillMessageID
+	if backfill == -2 {
+		var pending bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_commitment_skipped WHERE person_id = ?)`, personID).Scan(&pending); err != nil {
+			return 0, err
+		}
+		if !pending {
+			backfill = -1
+		}
+	}
+	return backfill, nil
+}
+
+// Save discovery progress after the fenced apply.
+func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
+	backfill, err := s.saveSkippedCommitmentMessagesTx(ctx, tx, request, prepared.backfillMessageID)
+	if err != nil {
+		return err
+	}
+	through := prepared.through
 	var observed any
 	if prepared.observedOnly {
 		var previous int64
@@ -243,7 +266,7 @@ func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, requ
 	if profileStart, err := time.Parse(time.DateOnly, profileSince); err == nil && profileStart.After(since) {
 		since = profileStart
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_frontiers
+	_, err = tx.ExecContext(ctx, `INSERT INTO person_commitment_frontiers
  (person_id, through_sequence, processed_at, observed_sequence, backfill_message_id, scope_fingerprint, discovery_since)
  VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (person_id) DO UPDATE SET
  through_sequence = excluded.through_sequence, processed_at = excluded.processed_at,

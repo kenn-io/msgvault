@@ -365,15 +365,30 @@ func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now ti
 	if (scopeFingerprint != "" && scope != scopeFingerprint) || backfill >= 0 || backfill < -2 {
 		return true, nil
 	}
+	return s.commitmentRetryOrChangeDue(ctx, personID, now, interval, window, scopeFingerprint, processed.Time, through, observed)
+}
+
+func (s *Store) commitmentRetryOrChangeDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration, scopeFingerprint string, processed time.Time, through int64, observed sql.NullInt64) (bool, error) {
+	if len(scopeFingerprint) == 64 {
+		maxBytes, err := strconv.ParseUint(scopeFingerprint[56:], 16, 32)
+		if err != nil {
+			return false, fmt.Errorf("parse commitment byte limit: %w", err)
+		}
+		var retry bool
+		err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_commitment_skipped WHERE person_id = ? AND max_bytes < ?)`), personID, int64(maxBytes)).Scan(&retry)
+		if err != nil || retry {
+			return retry, err
+		}
+	}
 	if observed.Valid {
-		if !now.Before(processed.Time.Add(window)) {
+		if !now.Before(processed.Add(window)) {
 			return true, nil
 		}
 		through = max(through, observed.Int64)
 	}
-	if now.Before(processed.Time.Add(interval)) {
+	if now.Before(processed.Add(interval)) {
 		var pending bool
-		err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_sweep_changes WHERE person_id = ? AND sequence > ? AND `+s.loopTimeKey("recorded_at")+` <= `+s.loopTimeKey("?")+`)`), personID, through, s.dialect.TimestampParam(processed.Time)).Scan(&pending)
+		err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_sweep_changes WHERE person_id = ? AND sequence > ? AND `+s.loopTimeKey("recorded_at")+` <= `+s.loopTimeKey("?")+`)`), personID, through, s.dialect.TimestampParam(processed)).Scan(&pending)
 		return pending, err
 	}
 	return s.HasPersonSweepChangesAfter(ctx, personID, through)

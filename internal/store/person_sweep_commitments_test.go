@@ -303,6 +303,75 @@ func commitmentApplyRequest(t *testing.T, f personSweepApplyFixture, window peop
 }
 
 func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
+	t.Run("remaining retries stay scheduled", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "remaining-retries", false)
+		_, persist := newCommitmentTestConversation(t, f)
+		first := persist("first", strings.Repeat("a", 200), -time.Hour)
+		second := persist("second", strings.Repeat("b", 200), -time.Hour)
+		persist("still-large", strings.Repeat("c", 1000), -time.Hour)
+		cfg, profile := commitmentTestConfig()
+		cfg.Commitments.MaxBytes, cfg.Commitments.MaxItems = 30, 1
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Empty(window.Sources)
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+		r.NoError(err)
+		cfg.Commitments.MaxBytes = 300
+		f = nextCommitmentTestAttempt(t, f, "-first")
+		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Len(window.Sources, 1)
+		r.Equal(first, window.Sources[0].MessageID)
+		request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
+		_, err = f.store.ApplyPersonSweep(ctx, request)
+		r.NoError(err)
+		due, err := f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint)
+		r.NoError(err)
+		r.True(due)
+		f = nextCommitmentTestAttempt(t, f, "-second")
+		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Len(window.Sources, 1)
+		r.Equal(second, window.Sources[0].MessageID)
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+		r.NoError(err)
+		f = nextCommitmentTestAttempt(t, f, "-still-large")
+		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Empty(window.Sources)
+		request = commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
+		_, err = f.store.ApplyPersonSweep(ctx, request)
+		r.NoError(err)
+		due, err = f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint)
+		r.NoError(err)
+		r.False(due)
+	})
+	t.Run("removed skipped message preserves ordinary results", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "removed-selected-skip", true)
+		_, persist := newCommitmentTestConversation(t, f)
+		id := persist("large", strings.Repeat("x", 200), -time.Hour)
+		cfg, profile := commitmentTestConfig()
+		cfg.Commitments.MaxBytes = 30
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Empty(window.Sources)
+		r.Contains(window.SkippedMessageIDs, id)
+		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM messages WHERE id = ?`), id)
+		r.NoError(err)
+		request := f.request
+		request.Generation.Policy.AllowSensitive = true
+		request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+		result, err := f.store.ApplyPersonSweep(ctx, request)
+		r.NoError(err)
+		r.Equal(1, result.Mutations.ClaimRowsInserted)
+		var skipped, backfill int64
+		r.NoError(f.store.db.QueryRowContext(ctx, f.store.Rebind(`SELECT COUNT(*) FROM person_commitment_skipped WHERE person_id = ?`), f.personID).Scan(&skipped))
+		r.NoError(f.store.db.QueryRowContext(ctx, f.store.Rebind(`SELECT backfill_message_id FROM person_commitment_frontiers WHERE person_id = ?`), f.personID).Scan(&backfill))
+		r.Zero(skipped)
+		r.Equal(int64(-1), backfill)
+	})
 	for _, tc := range []struct {
 		name    string
 		journal bool
