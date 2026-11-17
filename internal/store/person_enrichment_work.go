@@ -497,7 +497,7 @@ func (s *Store) RenewLease(
 func (s *Store) ReleaseWork(
 	ctx context.Context, token personenrichment.LeaseToken, release personenrichment.WorkRelease,
 ) error {
-	if release.Outcome != "policy" && release.Outcome != "suppressed" && release.Outcome != "defer" &&
+	if release.Outcome != "policy" && release.Outcome != "suppressed" &&
 		release.Outcome != "retry" && release.Outcome != "complete" {
 		return fmt.Errorf("invalid person enrichment work release outcome %q", release.Outcome)
 	}
@@ -506,19 +506,6 @@ func (s *Store) ReleaseWork(
 			return err
 		}
 		switch release.Outcome {
-		case "defer":
-			if token.AttemptID != 0 || release.NextActionAt == nil ||
-				!release.NextActionAt.After(s.personEnrichmentTime()) {
-				return errors.New("person enrichment defer release requires no attempt and a future next action")
-			}
-			if release.Failure != nil {
-				if err := validateSafeFailure(*release.Failure); err != nil {
-					return err
-				}
-			}
-			return updateEnrichmentWorkLeaseTx(ctx, tx, token,
-				`due_at = ?, run_id = NULL, lease_owner = NULL, lease_until = NULL`,
-				release.NextActionAt.UTC())
 		case "retry":
 			if release.NextActionAt == nil || !release.NextActionAt.After(s.personEnrichmentTime()) {
 				return errors.New("person enrichment retry release requires a future next action")
@@ -642,6 +629,7 @@ func (s *Store) BeginAttempt(
 	var attempt *personenrichment.DurableAttempt
 	var created bool
 	var stalePublication bool
+	var budgetExhausted error
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if s.personEnrichmentTxBarrier != nil {
 			s.personEnrichmentTxBarrier("begin_before_authority_lock")
@@ -807,8 +795,19 @@ func (s *Store) BeginAttempt(
 			return errors.New("person enrichment hard-cost enforcement does not match the immutable profile")
 		}
 
-		if err := s.reservePersonEnrichmentBudgetTx(ctx, tx, policy, start); err != nil {
-			return err
+		// One clock reading picks the budget day and the deferral target, so the
+		// target is always after the time it is checked against.
+		now := s.personEnrichmentTime()
+		if err := s.reservePersonEnrichmentBudgetTx(ctx, tx, policy, start, now); err != nil {
+			if !errors.Is(err, ErrRequestBudgetExceeded) && !errors.Is(err, ErrCostBudgetExceeded) {
+				return err
+			}
+			budgetReset := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+			if deferErr := deferEnrichmentWorkTx(ctx, tx, token, budgetReset, now); deferErr != nil {
+				return deferErr
+			}
+			budgetExhausted = err
+			return nil
 		}
 		bound := start.GuaranteedMaxCost.AmountMicros
 		startMask, err := personEnrichmentTriggerMask(start.Trigger.Kind)
@@ -860,6 +859,9 @@ func (s *Store) BeginAttempt(
 	if err == nil && stalePublication {
 		return nil, false, ErrStaleLease
 	}
+	if err == nil && budgetExhausted != nil {
+		return nil, false, budgetExhausted
+	}
 	return attempt, created, err
 }
 
@@ -908,9 +910,9 @@ func bindPersonEnrichmentAttemptIdentifiersTx(
 
 func (s *Store) reservePersonEnrichmentBudgetTx(
 	ctx context.Context, tx *loggedTx, policy personEnrichmentBudgetPolicy,
-	start personenrichment.AttemptStart,
+	start personenrichment.AttemptStart, now time.Time,
 ) error {
-	utcDay := s.personEnrichmentTime().Format("2006-01-02")
+	utcDay := now.UTC().Format("2006-01-02")
 	if err := ensurePersonEnrichmentBudgetCountersTx(ctx, tx, start, utcDay); err != nil {
 		return err
 	}
@@ -1792,6 +1794,20 @@ func verifyEnrichmentLeaseTx(
 		return ErrStaleLease
 	}
 	return nil
+}
+
+var errDeferRelease = errors.New("person enrichment defer release requires no attempt and a future next action")
+
+// deferEnrichmentWorkTx releases a lease that has no attempt and makes the work
+// due again at next. The caller passes the store time that next must follow.
+func deferEnrichmentWorkTx(
+	ctx context.Context, tx *loggedTx, token personenrichment.LeaseToken, next, now time.Time,
+) error {
+	if token.AttemptID != 0 || !next.After(now) {
+		return errDeferRelease
+	}
+	return updateEnrichmentWorkLeaseTx(ctx, tx, token,
+		`due_at = ?, run_id = NULL, lease_owner = NULL, lease_until = NULL`, next.UTC())
 }
 
 func updateEnrichmentWorkLeaseTx(

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,7 @@ import (
 )
 
 type workerFixture struct {
+	db      *storetest.Fixture
 	store   *store.Store
 	person  *store.Person
 	config  personenrichment.ProviderConfig
@@ -34,20 +36,7 @@ type workerFixture struct {
 func newWorkerFixture(t *testing.T, name string, mutate func(*personenrichment.ProviderConfig)) *workerFixture {
 	t.Helper()
 	fixture := storetest.New(t)
-	participantID := fixture.EnsureParticipant("worker-person@example.test", "Worker Person", "example.test")
-	person, _, err := fixture.Store.CreatePersonFromParticipantContext(t.Context(), participantID)
-	require.NoError(t, err)
-	_, err = fixture.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
-	require.NoError(t, err)
-	person, err = fixture.Store.GetPersonContext(t.Context(), person.ID)
-	require.NoError(t, err)
-	_, err = fixture.Store.AddPersonContactPointContext(t.Context(), person.ID, store.PersonContactPointInput{
-		AddressKind: store.ContactAddressURL, OriginalValue: "https://profiles.example.test/worker-person",
-		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
-	})
-	require.NoError(t, err)
-	person, err = fixture.Store.GetPersonContext(t.Context(), person.ID)
-	require.NoError(t, err)
+	person := addTrackedWorkerPerson(t, fixture, "worker-person", "Worker Person")
 	catalog, err := fixture.Store.BuildPersonFactCatalogContext(t.Context(), true)
 	require.NoError(t, err)
 	var target personfacts.TargetDescriptor
@@ -88,17 +77,41 @@ func newWorkerFixture(t *testing.T, name string, mutate func(*personenrichment.P
 	hasher, err := personenrichment.NewSuppressionHasher([]byte("0123456789abcdef0123456789abcdef"))
 	require.NoError(t, err)
 	return &workerFixture{
-		store: fixture.Store, person: person, config: cfg, profile: profile,
+		db: fixture, store: fixture.Store, person: person, config: cfg, profile: profile,
 		target: target, hasher: hasher, run: run, now: now,
 	}
 }
 
+// addTrackedWorkerPerson creates a tracked person with one public profile URL,
+// the identifier the worker fixture's provider is allowed to send.
+func addTrackedWorkerPerson(t *testing.T, fixture *storetest.Fixture, name, displayName string) *store.Person {
+	t.Helper()
+	participantID := fixture.EnsureParticipant(name+"@example.test", displayName, "example.test")
+	person, _, err := fixture.Store.CreatePersonFromParticipantContext(t.Context(), participantID)
+	require.NoError(t, err)
+	_, err = fixture.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
+	require.NoError(t, err)
+	_, err = fixture.Store.AddPersonContactPointContext(t.Context(), person.ID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressURL, OriginalValue: "https://profiles.example.test/" + name,
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(t, err)
+	person, err = fixture.Store.GetPersonContext(t.Context(), person.ID)
+	require.NoError(t, err)
+	return person
+}
+
 func (f *workerFixture) enqueue(t *testing.T) {
 	t.Helper()
+	f.enqueuePerson(t, f.person.ID, f.now)
+}
+
+func (f *workerFixture) enqueuePerson(t *testing.T, personID int64, dueAt time.Time) {
+	t.Helper()
 	require.NoError(t, f.store.PutPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkInput{
-		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint,
+		PersonID: personID, ProfileFingerprint: f.profile.Fingerprint,
 		Trigger: personenrichment.Trigger{Kind: personenrichment.TriggerTracked, Generation: "revision:1"},
-		DueAt:   f.now,
+		DueAt:   dueAt,
 	}))
 }
 
@@ -946,14 +959,17 @@ func (s *beginAttemptErrorStore) ReleaseWork(
 func TestWorkerRetriesSameRevisionInLaterRunAfterBudgetExhaustion(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
-	f := newWorkerFixture(t, "budget-next-run", nil)
-	f.enqueue(t)
-	work := &beginAttemptErrorStore{WorkStore: f.store, err: personenrichment.ErrRequestBudgetExceeded}
+	f := newWorkerFixture(t, "budget-next-run", func(cfg *personenrichment.ProviderConfig) {
+		cfg.MaxRequestsPerRun = 1
+	})
+	second := addTrackedWorkerPerson(t, f.db, "budget-second-person", "Budget Second Person")
+	f.enqueuePerson(t, f.person.ID, f.now.Add(-time.Second))
+	f.enqueuePerson(t, second.ID, f.now)
 	var starts atomic.Int64
 	provider := &functionProvider{
 		start: func(_ context.Context, request personenrichment.Request) (personenrichment.Attempt, error) {
-			starts.Add(1)
-			result := workerResult(t, request, f.target, "budget-next-run-request", "", false, "", personenrichment.Cost{})
+			requestID := fmt.Sprintf("budget-next-run-request-%d", starts.Add(1))
+			result := workerResult(t, request, f.target, requestID, "", false, "", personenrichment.Cost{})
 			return personenrichment.Attempt{
 				State: personenrichment.AttemptComplete, RequestID: result.RequestID,
 				StartedAt: time.Now().UTC(), AdapterVersion: result.AdapterVersion,
@@ -965,14 +981,17 @@ func TestWorkerRetriesSameRevisionInLaterRunAfterBudgetExhaustion(t *testing.T) 
 			return personenrichment.Result{}, errors.New("unexpected poll")
 		},
 	}
+	// The worker reads its clock just before UTC midnight and the store reads
+	// its clock just after. The store decides the budget day, so the deferred
+	// work must wait for the day after the store's day.
+	midnight := f.now.Truncate(24*time.Hour).AddDate(0, 0, 2)
+	workerNow := midnight.Add(-time.Millisecond)
+	storeNow := midnight.Add(time.Millisecond)
 	options := f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config})
-	options.Clock = func() time.Time { return f.now }
-	// The deferral targets the next UTC midnight on the worker clock, and the
-	// store requires it to be after the store clock. Share one clock so a run
-	// near midnight does not see the store's wall clock pass that target.
-	store.SetPersonEnrichmentClockForTest(f.store, options.Clock)
+	options.Clock = func() time.Time { return workerNow }
+	store.SetPersonEnrichmentClockForTest(f.store, func() time.Time { return storeNow })
 	worker, err := personenrichment.NewWorker(
-		work, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
+		f.store, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
 		map[string]personenrichment.ProviderFactory{f.config.Name: func(
 			personenrichment.ProviderConfig, string,
 		) (personenrichment.Provider, error) {
@@ -981,107 +1000,88 @@ func TestWorkerRetriesSameRevisionInLaterRunAfterBudgetExhaustion(t *testing.T) 
 	)
 	requirements.NoError(err)
 
+	// The first person uses the run's only request; the second exhausts it.
 	processed, err := worker.RunOnce(t.Context(), f.run.ID)
 	requirements.NoError(err)
 	checks.True(processed)
-	checks.Zero(starts.Load())
+	requirements.Equal(int64(1), starts.Load())
+	processed, err = worker.RunOnce(t.Context(), f.run.ID)
+	requirements.NoError(err)
+	checks.True(processed)
+	checks.Equal(int64(1), starts.Load())
+	firstRunAttempts, err := f.store.ListPersonEnrichmentAttemptsContext(t.Context(), store.PersonEnrichmentAttemptFilter{
+		PersonID: second.ID, RunID: f.run.ID, Limit: 10,
+	})
+	requirements.NoError(err)
+	checks.Empty(firstRunAttempts)
 	requirements.NoError(f.store.CompleteRun(t.Context(), f.run.ID, personenrichment.RunCompletion{
-		State: "succeeded", CompletedAt: f.now,
+		State: "succeeded", CompletedAt: storeNow,
 	}))
 	workRows, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
-		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+		PersonID: second.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
 	})
 	requirements.NoError(err)
 	requirements.Len(workRows, 1)
 	requirements.Nil(workRows[0].RunID)
+	checks.Equal(midnight.AddDate(0, 0, 1), workRows[0].DueAt.UTC())
 
-	work.err = nil
-	f.now = workRows[0].DueAt.Add(time.Second)
+	workerNow = workRows[0].DueAt.Add(time.Second)
+	storeNow = workerNow
 	nextRun, created, err := f.store.StartRun(t.Context(), personenrichment.RunStart{
-		Kind: "scheduled", RequestedBy: "worker:budget-next-run:retry", RequestedAt: f.now,
+		Kind: "scheduled", RequestedBy: "worker:budget-next-run:retry", RequestedAt: workerNow,
 	})
 	requirements.NoError(err)
 	requirements.True(created)
 	processed, err = worker.RunOnce(t.Context(), nextRun.ID)
 	requirements.NoError(err)
 	checks.True(processed)
-	checks.Equal(int64(1), starts.Load())
+	checks.Equal(int64(2), starts.Load())
 	attempts, err := f.store.ListPersonEnrichmentAttemptsContext(t.Context(), store.PersonEnrichmentAttemptFilter{
-		PersonID: f.person.ID, RunID: nextRun.ID, Limit: 10,
+		PersonID: second.ID, RunID: nextRun.ID, Limit: 10,
 	})
 	requirements.NoError(err)
 	requirements.Len(attempts, 1)
 	checks.Equal("succeeded", attempts[0].State)
+	checks.Equal(second.Revision, attempts[0].PersonRevision)
 }
 
 func TestWorkerDoesNotConsumeWorkOnBeginAttemptInfrastructureFailure(t *testing.T) {
-	tests := []struct {
-		name         string
-		injected     error
-		wantError    bool
-		wantReleases int64
-		wantState    string
-	}{
-		{name: "infrastructure", injected: errors.New("synthetic database failure"), wantError: true},
-		{name: "request budget policy", injected: personenrichment.ErrRequestBudgetExceeded,
-			wantReleases: 1},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			checks := assert.New(t)
-			requirements := require.New(t)
-			f := newWorkerFixture(t, "begin-attempt-error", nil)
-			f.enqueue(t)
-			work := &beginAttemptErrorStore{WorkStore: f.store, err: test.injected}
-			var starts atomic.Int64
-			worker, err := personenrichment.NewWorker(
-				work, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
-				map[string]personenrichment.ProviderFactory{f.config.Name: func(
-					personenrichment.ProviderConfig, string,
-				) (personenrichment.Provider, error) {
-					return &functionProvider{
-						start: func(context.Context, personenrichment.Request) (personenrichment.Attempt, error) {
-							starts.Add(1)
-							return personenrichment.Attempt{}, errors.New("unexpected provider start")
-						},
-						poll: func(context.Context, personenrichment.Attempt) (personenrichment.Result, error) {
-							return personenrichment.Result{}, errors.New("unexpected provider poll")
-						},
-					}, nil
-				}},
-				f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config}),
-			)
-			requirements.NoError(err)
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newWorkerFixture(t, "begin-attempt-error", nil)
+	f.enqueue(t)
+	injected := errors.New("synthetic database failure")
+	work := &beginAttemptErrorStore{WorkStore: f.store, err: injected}
+	var starts atomic.Int64
+	worker, err := personenrichment.NewWorker(
+		work, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
+		map[string]personenrichment.ProviderFactory{f.config.Name: func(
+			personenrichment.ProviderConfig, string,
+		) (personenrichment.Provider, error) {
+			return &functionProvider{
+				start: func(context.Context, personenrichment.Request) (personenrichment.Attempt, error) {
+					starts.Add(1)
+					return personenrichment.Attempt{}, errors.New("unexpected provider start")
+				},
+				poll: func(context.Context, personenrichment.Attempt) (personenrichment.Result, error) {
+					return personenrichment.Result{}, errors.New("unexpected provider poll")
+				},
+			}, nil
+		}},
+		f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config}),
+	)
+	requirements.NoError(err)
 
-			processed, err := worker.RunOnce(t.Context(), f.run.ID)
-			checks.True(processed)
-			if test.wantError {
-				requirements.ErrorIs(err, test.injected)
-			} else {
-				requirements.NoError(err)
-			}
-			checks.Equal(test.wantReleases, work.releases.Load())
-			checks.Zero(starts.Load())
-			attempts, listErr := f.store.ListPersonEnrichmentAttemptsContext(
-				t.Context(), store.PersonEnrichmentAttemptFilter{PersonID: f.person.ID, RunID: f.run.ID, Limit: 10},
-			)
-			requirements.NoError(listErr)
-			if test.wantState == "" {
-				checks.Empty(attempts)
-				if errors.Is(test.injected, personenrichment.ErrRequestBudgetExceeded) {
-					workRows, workErr := f.store.ListPersonEnrichmentWorkContext(t.Context(),
-						store.PersonEnrichmentWorkFilter{PersonID: f.person.ID,
-							ProfileFingerprint: f.profile.Fingerprint, Limit: 10})
-					requirements.NoError(workErr)
-					requirements.Len(workRows, 1)
-					checks.Nil(workRows[0].ActiveAttemptID)
-				}
-				return
-			}
-			requirements.Len(attempts, 1)
-			checks.Equal(test.wantState, attempts[0].State)
-		})
-	}
+	processed, err := worker.RunOnce(t.Context(), f.run.ID)
+	checks.True(processed)
+	requirements.ErrorIs(err, injected)
+	checks.Zero(work.releases.Load())
+	checks.Zero(starts.Load())
+	attempts, err := f.store.ListPersonEnrichmentAttemptsContext(
+		t.Context(), store.PersonEnrichmentAttemptFilter{PersonID: f.person.ID, RunID: f.run.ID, Limit: 10},
+	)
+	requirements.NoError(err)
+	checks.Empty(attempts)
 }
 
 func (s requestInputOverrideStore) LoadRequestInput(
