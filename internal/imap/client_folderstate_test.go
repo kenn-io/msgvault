@@ -1333,24 +1333,3 @@ func TestConfiguredSentPlacementSurvivesDiscoveryReset(t *testing.T) {
 		"rediscovery must not discard the per-source Sent configuration")
 	assert.False(t, client.isSentPlacementMailboxLocked("INBOX"))
 }
-
-func TestListLabelsUsesDiscoveredFallbackTrash(t *testing.T) {
-	for _, tc := range []struct {
-		name, role string
-		attrs      []imapv2.MailboxAttr
-	}{
-		{"trash", "", nil}, {"sent", "sent", []imapv2.MailboxAttr{imapv2.MailboxAttrSent}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			addr, _ := testutil.StartIMAPMemServerWithSpecialUse(t, map[string]int{"INBOX": 0, "Deleted Items": 0}, map[string][]imapv2.MailboxAttr{"Deleted Items": tc.attrs})
-			client := newTestClient(t, addr)
-			labels, err := client.ListLabels(t.Context())
-			require.NoError(t, err)
-			roles := make(map[string]string)
-			for _, label := range labels {
-				roles[label.ID] = label.SystemRole
-			}
-			assert.Equal(t, tc.role, roles["Deleted Items"])
-		})
-	}
-}

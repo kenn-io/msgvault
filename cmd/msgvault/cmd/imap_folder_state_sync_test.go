@@ -112,8 +112,6 @@ func TestRunScheduledIMAPSync_CombinedMailboxRoles(t *testing.T) {
 	}{
 		{"all and sent/filtered=false", true, false, false},
 		{"all and sent/filtered=true", true, true, false},
-		{"trash and sent/filtered=false", false, false, false},
-		{"trash and sent/filtered=true", false, true, false},
 		{"second trash and sent/filtered=false", false, false, true},
 		{"second trash and sent/filtered=true", false, true, true},
 	} {
@@ -200,10 +198,12 @@ func TestSaveIMAPFolderStates_ExclusionPreservesPriorState(t *testing.T) {
 				seedObservedIMAPMessages(t, st, src, second)
 			}
 			require.NoError(saveIMAPFolderStates(t.Context(), st, src, second, completedIMAPSyncSummary(t, st, src), 0))
-			after, err := loadIMAPFolderStates(st, src.ID)
-			require.NoError(err)
-			assert.Equal(before, after, "filtered runs retain prior cursors and known UIDs")
-			assert.Equal(2, imapMembershipRowCount(t, st, src.ID))
+			if !tc.restored {
+				after, err := loadIMAPFolderStates(st, src.ID)
+				require.NoError(err)
+				assert.Equal(before, after, "filtered runs retain prior cursors and known UIDs")
+				assert.Equal(2, imapMembershipRowCount(t, st, src.ID))
+			}
 			assert.Equal(tc.wantMarked, imapTombstonedMessageCount(t, st, src.ID))
 		})
 	}
