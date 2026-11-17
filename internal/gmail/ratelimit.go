@@ -183,7 +183,7 @@ func newRateLimiterWithCapacity(clk Clock, capacity int, refillRate float64) *Ra
 
 // reserve attempts to acquire tokens for the operation. Returns 0 if tokens
 // were acquired immediately, or the duration to wait before retrying.
-func (r *RateLimiter) reserve(op Operation) time.Duration {
+func (r *RateLimiter) reserve(op Operation) (time.Duration, bool) {
 	cost := float64(op.Cost())
 
 	r.mu.Lock()
@@ -193,27 +193,37 @@ func (r *RateLimiter) reserve(op Operation) time.Duration {
 
 	// If we're in a throttle period, wait until it expires
 	if now.Before(r.throttledUntil) {
-		return r.throttledUntil.Sub(now)
+		return r.throttledUntil.Sub(now), true
 	}
 
 	r.refill()
 
 	if r.tokens >= cost {
 		r.tokens -= cost
-		return 0
+		return 0, false
 	}
 
 	// Calculate wait time based on token deficit
 	deficit := cost - r.tokens
 	waitTime := max(time.Duration(deficit/r.refillRate*1000)*time.Millisecond, minWait)
-	return waitTime
+	return waitTime, false
 }
 
 // Acquire blocks until the required tokens are available.
 // Returns an error if the context is cancelled.
 func (r *RateLimiter) Acquire(ctx context.Context, op Operation) error {
+	return r.acquire(ctx, op, false)
+}
+
+func (r *RateLimiter) acquire(ctx context.Context, op Operation, deferQuota bool) error {
 	for {
-		waitTime := r.reserve(op)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		waitTime, throttled := r.reserve(op)
+		if throttled && deferQuota {
+			return ErrQuotaDeferred
+		}
 		if waitTime == 0 {
 			return nil
 		}

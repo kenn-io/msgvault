@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDeferredQuotaKeepsOtherFailures(t *testing.T) {
+	deferred := fmt.Errorf("profile: %w", ErrQuotaDeferred)
+	assert.True(t, IsQuotaDeferred(deferred))
+	assert.False(t, IsQuotaDeferred(errors.Join(deferred, errors.New("other failure"))))
+}
 
 // Gmail API error reason constants for tests.
 const (

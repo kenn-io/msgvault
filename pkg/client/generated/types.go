@@ -57,16 +57,19 @@ type AccountScope struct {
 }
 
 type AccountStatus struct {
-	Email     string     `json:"email" validate:"required"`
-	LastError *string    `json:"last_error,omitzero"`
-	LastRun   *time.Time `json:"last_run,omitempty"`
-	NextRun   time.Time  `json:"next_run" validate:"required"`
-	Pending   *bool      `json:"pending,omitempty"`
-	Queued    *bool      `json:"queued,omitempty"`
-	QueuedAt  *time.Time `json:"queued_at,omitempty"`
-	Running   bool       `json:"running"`
-	Schedule  string     `json:"schedule" validate:"required"`
-	StartedAt *time.Time `json:"started_at,omitempty"`
+	Email         string     `json:"email" validate:"required"`
+	LastAttempted *time.Time `json:"last_attempted,omitempty"`
+	LastCompleted *time.Time `json:"last_completed,omitempty"`
+	LastError     *string    `json:"last_error,omitzero"`
+	LastRun       *time.Time `json:"last_run,omitempty"`
+	NextRun       time.Time  `json:"next_run" validate:"required"`
+	Pending       *bool      `json:"pending,omitempty"`
+	PollInterval  *string    `json:"poll_interval,omitzero"`
+	Queued        *bool      `json:"queued,omitempty"`
+	QueuedAt      *time.Time `json:"queued_at,omitempty"`
+	Running       bool       `json:"running"`
+	Schedule      string     `json:"schedule" validate:"required"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
 }
 
 func (a AccountStatus) Validate() error {

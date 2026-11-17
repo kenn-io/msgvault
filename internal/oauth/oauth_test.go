@@ -1133,8 +1133,8 @@ func TestNormalizeGmailAddress(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.email, func(t *testing.T) {
 			t.Parallel()
-			got := normalizeGmailAddress(tt.email)
-			assert.Equal(t, tt.want, got, "normalizeGmailAddress(%q)", tt.email)
+			got := NormalizeGmailAddress(tt.email)
+			assert.Equal(t, tt.want, got, "NormalizeGmailAddress(%q)", tt.email)
 		})
 	}
 }
