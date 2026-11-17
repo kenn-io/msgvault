@@ -1635,7 +1635,7 @@ func (s *Store) retireCardDAVImportedProjectionTx(
 		return err
 	}
 
-	for _, table := range []string{personNamesTableName, personContactPointsTableName} {
+	for _, table := range []string{"person_names", "person_contact_points"} {
 		if _, err := tx.ExecContext(ctx, `UPDATE `+table+` SET
 			superseded_at = `+s.dialect.Now()+`, updated_at = `+s.dialect.Now()+`
 			WHERE person_id = ? AND source = ? AND source_ref = ? AND source_resource_uid = ?
@@ -1645,7 +1645,8 @@ func (s *Store) retireCardDAVImportedProjectionTx(
 		}
 	}
 	if remoteOwnsDisplay {
-		result, err := tx.ExecContext(ctx, `UPDATE persons SET display_name = NULL WHERE id = ?`, personID)
+		result, err := tx.ExecContext(ctx, `UPDATE persons SET display_name = NULL
+			WHERE id = ?`, personID)
 		if err != nil {
 			return fmt.Errorf("clear retired CardDAV display label: %w", err)
 		}

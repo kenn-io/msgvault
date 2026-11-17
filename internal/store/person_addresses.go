@@ -205,9 +205,8 @@ type PersonAddressInput struct {
 }
 
 var (
-	ErrInvalidPersonAddressKind               = errors.New("invalid person address kind")
-	ErrPersonAddressValueMissing              = errors.New("person address requires at least one component")
-	ErrInvalidPersonAddressExtendedComponents = errors.New("extended address components must not contain CR or NUL")
+	ErrInvalidPersonAddressKind  = errors.New("invalid person address kind")
+	ErrPersonAddressValueMissing = errors.New("person address requires at least one component")
 )
 
 func (s *Store) AddPersonAddressContext(
@@ -272,11 +271,6 @@ func (s *Store) addPersonAddressTx(
 	}
 	if !personAddressHasValue(input) {
 		return nil, ErrPersonAddressValueMissing
-	}
-	if input.AddressKind == PersonAddressPostal && input.ExtendedComponents != nil {
-		if _, err := vcard.SplitStructuredText(*input.ExtendedComponents); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrInvalidPersonAddressExtendedComponents, err)
-		}
 	}
 	original := strings.TrimSpace(input.OriginalValue)
 	if original == "" {

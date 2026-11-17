@@ -496,87 +496,6 @@ func TestReviewedPublicationIntentMetadataClearsWithBody(t *testing.T) {
 	}
 }
 
-func TestInferenceReviewTracksDerivedFullNameSelection(t *testing.T) {
-	inferredName := func(kind store.PersonNameKind, given string) store.PersonNameInput {
-		return store.PersonNameInput{
-			NameKind: kind, GivenName: new(given), FamilyName: new("Example"),
-			OriginalValue: given + ";Example",
-			Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
-		}
-	}
-	tests := []struct {
-		name         string
-		initial      []store.PersonNameInput
-		replaceIndex int
-		replacement  store.PersonNameInput
-		wantBefore   string
-		wantAfter    string
-	}{
-		{
-			name:         "structured name replaced by phonetic name",
-			initial:      []store.PersonNameInput{inferredName(store.PersonNameStructured, "Agent")},
-			replaceIndex: 0,
-			replacement:  inferredName(store.PersonNamePhonetic, "Agent"),
-			wantBefore:   "Agent Example",
-			wantAfter:    "Local Display",
-		},
-		{
-			name: "structured names reordered",
-			initial: []store.PersonNameInput{
-				inferredName(store.PersonNameStructured, "First"),
-				inferredName(store.PersonNameStructured, "Second"),
-			},
-			replaceIndex: 0,
-			replacement:  inferredName(store.PersonNameStructured, "First"),
-			wantBefore:   "First Example",
-			wantAfter:    "Second Example",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			fixture := &mutationFixture{}
-			service, st, personID, _ := seededMutationService(t, fixture)
-			person, err := st.GetPersonContext(t.Context(), personID)
-			require.NoError(err)
-			_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Local Display"))
-			require.NoError(err)
-			for _, input := range tt.initial {
-				_, err = st.AddPersonNameContext(t.Context(), personID, input)
-				require.NoError(err)
-			}
-
-			preview, err := service.PreviewPublication(t.Context(), personID)
-			require.NoError(err)
-			assert.True(preview.ReviewRequired)
-			assert.Contains(preview.VCard, "FN:"+tt.wantBefore+"\r\n")
-			require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
-
-			profile, err := st.GetPersonProfileContext(t.Context(), personID)
-			require.NoError(err)
-			require.Len(profile.Names, len(tt.initial))
-			_, err = st.ApplyPersonProfilePatchContext(t.Context(), personID, profile.Person.Revision, store.PersonProfilePatch{
-				Names: &store.PersonNamePatch{
-					Supersede: []int64{profile.Names[tt.replaceIndex].Envelope.ID},
-					Add:       []store.PersonNameInput{tt.replacement},
-				},
-			})
-			require.NoError(err)
-
-			preview, err = service.PreviewPublication(t.Context(), personID)
-			require.NoError(err)
-			assert.Contains(preview.VCard, "FN:"+tt.wantAfter+"\r\n")
-			assert.NotContains(preview.VCard, "FN:"+tt.wantBefore+"\r\n")
-			assert.True(preview.ReviewRequired)
-			require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
-			fixture.mu.Lock()
-			assert.Equal(1, fixture.puts)
-			fixture.mu.Unlock()
-		})
-	}
-}
-
 func TestImportConnectionIdentityChangeReviewsExposedInferredFullName(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
@@ -767,601 +686,218 @@ func TestKeepRemoteFullNameRemovalReviewsInferredNameInAnotherBook(t *testing.T)
 	}
 }
 
-func TestInferenceReviewTracksRenderedPhoneticFullNameFallback(t *testing.T) {
-	phoneticName := func(given string, ordinal int) store.PersonNameInput {
-		return store.PersonNameInput{
-			NameKind: store.PersonNamePhonetic, GivenName: new(given), FamilyName: new("Example"),
-			OriginalValue: given + ";Example",
-			Envelope: store.ValueEnvelopeInput{
-				Source: store.ProvenanceEnrichment, Ordinal: &ordinal,
-			},
-		}
-	}
-
-	t.Run("clearing display name exposes phonetic fallback", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		fixture := &mutationFixture{}
-		service, st, personID, _ := seededMutationService(t, fixture)
-		person, err := st.GetPersonContext(t.Context(), personID)
-		require.NoError(err)
-		_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Local Display"))
-		require.NoError(err)
-		_, err = st.AddPersonNameContext(t.Context(), personID, phoneticName("Agent", 0))
-		require.NoError(err)
-
-		preview, err := service.PreviewPublication(t.Context(), personID)
-		require.NoError(err)
-		require.Contains(preview.VCard, "FN:Local Display\r\n")
-		require.True(preview.ReviewRequired)
-		require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
-
-		person, err = st.GetPersonContext(t.Context(), personID)
-		require.NoError(err)
-		_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, nil)
-		require.NoError(err)
-
-		preview, err = service.PreviewPublication(t.Context(), personID)
-		require.NoError(err)
-		assert.Contains(preview.VCard, "FN:Agent Example\r\n")
-		assert.NotContains(preview.VCard, "FN:Local Display\r\n")
-		assert.True(preview.ReviewRequired)
-		require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
-		fixture.mu.Lock()
-		assert.Equal(1, fixture.puts)
-		fixture.mu.Unlock()
-	})
-
-	t.Run("replacing first phonetic name changes fallback ordering", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		fixture := &mutationFixture{}
-		service, st, personID, _ := seededMutationService(t, fixture)
-		person, err := st.GetPersonContext(t.Context(), personID)
-		require.NoError(err)
-		_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, nil)
-		require.NoError(err)
-		first, err := st.AddPersonNameContext(t.Context(), personID, phoneticName("First", 0))
-		require.NoError(err)
-		_, err = st.AddPersonNameContext(t.Context(), personID, phoneticName("Second", 1))
-		require.NoError(err)
-
-		preview, err := service.PreviewPublication(t.Context(), personID)
-		require.NoError(err)
-		require.Contains(preview.VCard, "FN:First Example\r\n")
-		require.True(preview.ReviewRequired)
-		require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
-
-		profile, err := st.GetPersonProfileContext(t.Context(), personID)
-		require.NoError(err)
-		require.Len(profile.Names, 2)
-		_, err = st.ApplyPersonProfilePatchContext(t.Context(), personID, profile.Person.Revision, store.PersonProfilePatch{
-			Names: &store.PersonNamePatch{
-				Supersede: []int64{first.Envelope.ID},
-				Add:       []store.PersonNameInput{phoneticName("First", 2)},
-			},
-		})
-		require.NoError(err)
-
-		preview, err = service.PreviewPublication(t.Context(), personID)
-		require.NoError(err)
-		assert.Contains(preview.VCard, "FN:Second Example\r\n")
-		assert.NotContains(preview.VCard, "FN:First Example\r\n")
-		assert.True(preview.ReviewRequired)
-		require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
-		fixture.mu.Lock()
-		assert.Equal(1, fixture.puts)
-		fixture.mu.Unlock()
-	})
-}
-
-func TestInferenceReviewTracksRenderedContactFullNameFallback(t *testing.T) {
+// Each case approves a card, changes the input that selects FN, and checks
+// whether the newly rendered name needs a fresh approval.
+func TestInferenceReviewTracksFullNameFallback(t *testing.T) {
 	tests := []struct {
-		name        string
-		kind        store.ContactAddressKind
-		firstValue  string
-		secondValue string
-		firstFN     string
-		secondFN    string
+		name, setup, change, before, after string
+		review                             bool
 	}{
-		{
-			name: "email fallback", kind: store.ContactAddressEmail,
-			firstValue: "first@example.test", secondValue: "second@example.test",
-			firstFN: "first@example.test", secondFN: "second@example.test",
-		},
-		{
-			name: "telephone fallback", kind: store.ContactAddressPhone,
-			firstValue: "+12025550101", secondValue: "+12025550102",
-			firstFN: "+12025550101", secondFN: "+12025550102",
-		},
+		{"structured becomes phonetic", "structured", "phonetic", "Agent Example", "Local Display", true},
+		{"structured order", "structured order", "name reorder", "First Example", "Second Example", true},
+		{"display removed", "phonetic display", "clear display", "Local Display", "Agent Example", true},
+		{"phonetic order", "phonetic order", "name reorder", "First Example", "Second Example", true},
+		{"email order", "email order", "contact reorder", "first@example.test", "second@example.test", true},
+		{"telephone order", "phone order", "contact reorder", "+12025550101", "+12025550102", true},
+		{"declared employment hides email", "email", "add employment", "agent@example.test", "Example Company", false},
+		{"employment update exposes email", "employment email", "update employment", "Example Company", "agent@example.test", true},
+		{"employment end exposes email", "employment email", "end employment", "Example Company", "agent@example.test", true},
+		{"employment deletion exposes email", "employment email", "delete employment", "Example Company", "agent@example.test", true},
+		{"declared organization hides email", "email", "add org attribute", "agent@example.test", "Example Company", false},
+		{"declared organization removal exposes email", "org email", "remove org attribute", "Example Company", "agent@example.test", true},
+		{"declared full name removal exposes email", "fn email", "remove fn attribute", "Curated Name", "agent@example.test", true},
+		{"replacing declared email changes order", "declared email", "replace declared contact", "declared@example.test", "inferred@example.test", true},
+		{"replacing declared phonetic name changes order", "declared phonetic", "replace declared name", "Declared Example", "Inferred Example", true},
+		{"organization removal exposes email attribute", "org email attribute", "remove org attribute", "Example Company", "agent@example.test", true},
+		{"employment removal exposes inferred organization", "employment org attribute", "delete employment", "Example Company", "Inferred Org", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			require := require.New(t)
-			assert := assert.New(t)
 			fixture := &mutationFixture{}
 			service, st, personID, _ := seededMutationService(t, fixture)
 			person, err := st.GetPersonContext(t.Context(), personID)
 			require.NoError(err)
-			_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, nil)
-			require.NoError(err)
-			firstOrdinal, secondOrdinal := 0, 1
-			first, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-				AddressKind: tt.kind, OriginalValue: tt.firstValue,
-				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment, Ordinal: &firstOrdinal},
-			})
-			require.NoError(err)
-			_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-				AddressKind: tt.kind, OriginalValue: tt.secondValue,
-				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment, Ordinal: &secondOrdinal},
-			})
+			var display *string
+			if tt.setup == "structured" || tt.setup == "structured order" || tt.setup == "phonetic display" {
+				display = new("Local Display")
+			}
+			_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, display)
 			require.NoError(err)
 
+			addName := func(kind store.PersonNameKind, given string, source store.Provenance, ordinal int) *store.PersonName {
+				t.Helper()
+				name, err := st.AddPersonNameContext(t.Context(), personID, store.PersonNameInput{
+					NameKind: kind, GivenName: new(given), FamilyName: new("Example"), OriginalValue: given + ";Example",
+					Envelope: store.ValueEnvelopeInput{Source: source, Ordinal: &ordinal},
+				})
+				require.NoError(err)
+				return name
+			}
+			addContact := func(kind store.ContactAddressKind, value string, source store.Provenance, ordinal int) *store.PersonContactPoint {
+				t.Helper()
+				contact, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+					AddressKind: kind, OriginalValue: value, Envelope: store.ValueEnvelopeInput{Source: source, Ordinal: &ordinal},
+				})
+				require.NoError(err)
+				return contact
+			}
+			setAttribute := func(slug, property, value string, source store.Provenance) {
+				t.Helper()
+				_, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{
+					UniversalID: "test-" + slug, ObjectType: store.AttributeObjectPerson, Slug: slug, Label: slug,
+					ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText,
+					Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser,
+					UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true,
+					IsDeletable: true, VCardProperty: new(property),
+				})
+				require.NoError(err)
+				_, err = st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
+					PersonID: personID, DefinitionSlug: slug,
+					Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}, Source: source,
+				})
+				require.NoError(err)
+			}
+			var firstName *store.PersonName
+			var firstContact *store.PersonContactPoint
+			var employment *store.Employment
+			var organization *store.Organization
+			addEmployment := func() {
+				t.Helper()
+				organization, err = st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Company", Kind: store.OrganizationKindCompany})
+				require.NoError(err)
+				employment, err = st.AddEmploymentContext(t.Context(), store.EmploymentInput{
+					PersonID: personID, OrganizationID: organization.ID, IsCurrent: new(true), IsPrimary: new(true), Source: store.ProvenanceUser,
+				})
+				require.NoError(err)
+			}
+			switch tt.setup {
+			case "structured":
+				firstName = addName(store.PersonNameStructured, "Agent", store.ProvenanceEnrichment, 0)
+			case "structured order", "phonetic order":
+				kind := store.PersonNameStructured
+				if tt.setup == "phonetic order" {
+					kind = store.PersonNamePhonetic
+				}
+				firstName = addName(kind, "First", store.ProvenanceEnrichment, 0)
+				addName(kind, "Second", store.ProvenanceEnrichment, 1)
+			case "phonetic display":
+				addName(store.PersonNamePhonetic, "Agent", store.ProvenanceEnrichment, 0)
+			case "email order", "phone order":
+				kind, first, second := store.ContactAddressEmail, "first@example.test", "second@example.test"
+				if tt.setup == "phone order" {
+					kind, first, second = store.ContactAddressPhone, "+12025550101", "+12025550102"
+				}
+				firstContact = addContact(kind, first, store.ProvenanceEnrichment, 0)
+				addContact(kind, second, store.ProvenanceEnrichment, 1)
+			case "declared email":
+				firstContact = addContact(store.ContactAddressEmail, "declared@example.test", store.ProvenanceUser, 0)
+				addContact(store.ContactAddressEmail, "inferred@example.test", store.ProvenanceEnrichment, 1)
+			case "declared phonetic":
+				firstName = addName(store.PersonNamePhonetic, "Declared", store.ProvenanceUser, 0)
+				addName(store.PersonNamePhonetic, "Inferred", store.ProvenanceEnrichment, 1)
+			default:
+				if tt.setup != "org email attribute" && tt.setup != "employment org attribute" {
+					addContact(store.ContactAddressEmail, "agent@example.test", store.ProvenanceEnrichment, 0)
+				}
+				if tt.setup == "employment email" || tt.setup == "employment org attribute" {
+					addEmployment()
+				}
+				if tt.setup == "org email" || tt.setup == "org email attribute" {
+					setAttribute("org", "ORG", "Example Company", store.ProvenanceUser)
+				}
+				if tt.setup == "fn email" {
+					setAttribute("fn", "FN", "Curated Name", store.ProvenanceUser)
+				}
+				if tt.setup == "org email attribute" {
+					setAttribute("email", "EMAIL", "agent@example.test", store.ProvenanceEnrichment)
+				}
+				if tt.setup == "employment org attribute" {
+					setAttribute("org", "ORG", "Inferred Org", store.ProvenanceEnrichment)
+				}
+			}
 			preview, err := service.PreviewPublication(t.Context(), personID)
 			require.NoError(err)
-			assert.True(preview.ReviewRequired)
-			assert.Contains(preview.VCard, "FN:"+tt.firstFN+"\r\n")
-			require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
-
-			profile, err := st.GetPersonProfileContext(t.Context(), personID)
-			require.NoError(err)
-			require.Len(profile.ContactPoints, 2)
-			replacementOrdinal := 2
-			_, err = st.ApplyPersonProfilePatchContext(t.Context(), personID, profile.Person.Revision, store.PersonProfilePatch{
-				ContactPoints: &store.PersonContactPointPatch{
-					Supersede: []int64{first.Envelope.ID},
-					Add: []store.PersonContactPointInput{{
-						AddressKind: tt.kind, OriginalValue: tt.firstValue,
-						Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment, Ordinal: &replacementOrdinal},
-					}},
-				},
-			})
-			require.NoError(err)
-
-			preview, err = service.PreviewPublication(t.Context(), personID)
-			require.NoError(err)
-			assert.Contains(preview.VCard, "FN:"+tt.secondFN+"\r\n")
-			assert.NotContains(preview.VCard, "FN:"+tt.firstFN+"\r\n")
-			assert.True(preview.ReviewRequired)
-			require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
-			fixture.mu.Lock()
-			assert.Equal(1, fixture.puts)
-			fixture.mu.Unlock()
-		})
-	}
-}
-
-func TestInferenceReviewTracksEmploymentRenderedFullNameFallback(t *testing.T) {
-	t.Run("adding organization removes inferred contact fallback without new debt", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		fixture := &mutationFixture{}
-		service, st, personID, _ := seededMutationService(t, fixture)
-		person, err := st.GetPersonContext(t.Context(), personID)
-		require.NoError(err)
-		_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, nil)
-		require.NoError(err)
-		_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-			AddressKind: store.ContactAddressEmail, OriginalValue: "agent@example.test",
-			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
-		})
-		require.NoError(err)
-		preview, err := service.PreviewPublication(t.Context(), personID)
-		require.NoError(err)
-		require.Contains(preview.VCard, "FN:agent@example.test\r\n")
-		require.True(preview.ReviewRequired)
-		require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
-
-		organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{
-			Name: "Example Company", Kind: store.OrganizationKindCompany,
-		})
-		require.NoError(err)
-		_, err = st.AddEmploymentContext(t.Context(), store.EmploymentInput{
-			PersonID: personID, OrganizationID: organization.ID,
-			IsCurrent: new(true), IsPrimary: new(true), Source: store.ProvenanceUser,
-		})
-		require.NoError(err)
-
-		preview, err = service.PreviewPublication(t.Context(), personID)
-		require.NoError(err)
-		assert.Contains(preview.VCard, "FN:Example Company\r\n")
-		require.False(preview.ReviewRequired)
-		require.NoError(service.PublishPerson(t.Context(), personID))
-		fixture.mu.Lock()
-		assert.Equal(2, fixture.puts)
-		fixture.mu.Unlock()
-	})
-
-	for _, operation := range []string{"update", "end", "delete"} {
-		t.Run("removing primary organization by "+operation+" reveals contact fallback", func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			fixture := &mutationFixture{}
-			service, st, personID, _ := seededMutationService(t, fixture)
-			person, err := st.GetPersonContext(t.Context(), personID)
-			require.NoError(err)
-			_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, nil)
-			require.NoError(err)
-			_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-				AddressKind: store.ContactAddressEmail, OriginalValue: "agent@example.test",
-				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
-			})
-			require.NoError(err)
-			organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{
-				Name: "Example Company", Kind: store.OrganizationKindCompany,
-			})
-			require.NoError(err)
-			employment, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{
-				PersonID: personID, OrganizationID: organization.ID,
-				IsCurrent: new(true), IsPrimary: new(true), Source: store.ProvenanceUser,
-			})
-			require.NoError(err)
-
-			preview, err := service.PreviewPublication(t.Context(), personID)
-			require.NoError(err)
-			require.Contains(preview.VCard, "FN:Example Company\r\n")
+			require.Contains(preview.VCard, "FN:"+tt.before+"\r\n")
 			require.True(preview.ReviewRequired)
 			require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
 
-			switch operation {
-			case "update":
+			switch tt.change {
+			case "phonetic", "name reorder", "replace declared name":
+				profile, err := st.GetPersonProfileContext(t.Context(), personID)
+				require.NoError(err)
+				kind, given, source, ordinal := firstName.NameKind, *firstName.GivenName, firstName.Envelope.Source, 2
+				if tt.change == "phonetic" {
+					kind = store.PersonNamePhonetic
+				}
+				if tt.change == "replace declared name" {
+					ordinal = firstName.Envelope.Ordinal
+				}
+				_, err = st.ApplyPersonProfilePatchContext(t.Context(), personID, profile.Person.Revision, store.PersonProfilePatch{
+					Names: &store.PersonNamePatch{Supersede: []int64{firstName.Envelope.ID}, Add: []store.PersonNameInput{{
+						NameKind: kind, GivenName: &given, FamilyName: new("Example"), OriginalValue: given + ";Example",
+						Envelope: store.ValueEnvelopeInput{Source: source, Ordinal: &ordinal},
+					}}},
+				})
+				require.NoError(err)
+			case "clear display":
+				person, err = st.GetPersonContext(t.Context(), personID)
+				require.NoError(err)
+				_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, nil)
+				require.NoError(err)
+			case "contact reorder", "replace declared contact":
+				profile, err := st.GetPersonProfileContext(t.Context(), personID)
+				require.NoError(err)
+				ordinal := 2
+				if tt.change == "replace declared contact" {
+					ordinal = firstContact.Envelope.Ordinal
+				}
+				_, err = st.ApplyPersonProfilePatchContext(t.Context(), personID, profile.Person.Revision, store.PersonProfilePatch{
+					ContactPoints: &store.PersonContactPointPatch{Supersede: []int64{firstContact.Envelope.ID}, Add: []store.PersonContactPointInput{{
+						AddressKind: firstContact.AddressKind, OriginalValue: firstContact.OriginalValue,
+						Envelope: store.ValueEnvelopeInput{Source: firstContact.Envelope.Source, Ordinal: &ordinal},
+					}}},
+				})
+				require.NoError(err)
+			case "add employment":
+				addEmployment()
+			case "update employment":
 				_, err = st.UpdateEmploymentContext(t.Context(), employment.ID, employment.Revision, store.EmploymentInput{
-					PersonID: personID, OrganizationID: organization.ID, IsCurrent: new(false),
-					IsPrimary: new(false), Source: store.ProvenanceUser,
+					PersonID: personID, OrganizationID: organization.ID, IsCurrent: new(false), IsPrimary: new(false), Source: store.ProvenanceUser,
 				})
-			case "end":
-				err = func() error {
-					_, err := st.EndEmploymentContext(t.Context(), employment.ID, employment.Revision, store.PartialDate{
-						Year: new(2026), Month: new(10),
-					})
-					return err
-				}()
-			case "delete":
-				err = st.DeleteEmploymentContext(t.Context(), employment.ID, employment.Revision)
+				require.NoError(err)
+			case "end employment":
+				_, err = st.EndEmploymentContext(t.Context(), employment.ID, employment.Revision, store.PartialDate{Year: new(2026), Month: new(10)})
+				require.NoError(err)
+			case "delete employment":
+				require.NoError(st.DeleteEmploymentContext(t.Context(), employment.ID, employment.Revision))
+			case "add org attribute":
+				setAttribute("org", "ORG", "Example Company", store.ProvenanceUser)
+			case "remove org attribute", "remove fn attribute":
+				slug := "org"
+				if tt.change == "remove fn attribute" {
+					slug = "fn"
+				}
+				_, err = st.SupersedePersonAttributeValueContext(t.Context(), store.PersonAttributeSupersedeInput{PersonID: personID, DefinitionSlug: slug})
+				require.NoError(err)
 			}
-			require.NoError(err)
-
 			preview, err = service.PreviewPublication(t.Context(), personID)
 			require.NoError(err)
-			assert.Contains(preview.VCard, "FN:agent@example.test\r\n")
-			assert.NotContains(preview.VCard, "FN:Example Company\r\n")
-			assert.True(preview.ReviewRequired)
-			require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
+			require.Contains(preview.VCard, "FN:"+tt.after+"\r\n")
+			require.NotContains(preview.VCard, "FN:"+tt.before+"\r\n")
+			require.Equal(tt.review, preview.ReviewRequired)
+			if tt.review {
+				require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
+			} else {
+				require.NoError(service.PublishPerson(t.Context(), personID))
+			}
 			fixture.mu.Lock()
-			assert.Equal(1, fixture.puts)
-			fixture.mu.Unlock()
+			defer fixture.mu.Unlock()
+			if tt.review {
+				require.Equal(1, fixture.puts)
+			} else {
+				require.Equal(2, fixture.puts)
+			}
 		})
 	}
-}
-
-func TestInferenceReviewTracksDeclaredOrganizationFullNameFallback(t *testing.T) {
-	t.Run("supersede", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		fixture := &mutationFixture{}
-		service, st, personID, _ := seededMutationService(t, fixture)
-		person, err := st.GetPersonContext(t.Context(), personID)
-		require.NoError(err)
-		_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, nil)
-		require.NoError(err)
-		_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-			AddressKind: store.ContactAddressEmail, OriginalValue: "agent@example.test",
-			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
-		})
-		require.NoError(err)
-		preview, err := service.PreviewPublication(t.Context(), personID)
-		require.NoError(err)
-		require.Contains(preview.VCard, "FN:agent@example.test\r\n")
-		require.True(preview.ReviewRequired)
-		require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
-
-		definition, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{
-			UniversalID:   "test-person-organization-fallback",
-			ObjectType:    store.AttributeObjectPerson,
-			Slug:          "organization",
-			Label:         "Organization",
-			ValueType:     store.AttributeValueText,
-			FieldType:     store.AttributeFieldText,
-			Cardinality:   store.AttributeCardinalitySingle,
-			Ownership:     store.AttributeOwnershipUser,
-			UICreatable:   true,
-			UIEditable:    true,
-			APIMutable:    true,
-			IsAudited:     true,
-			IsDeletable:   true,
-			VCardProperty: new("ORG"),
-		})
-		require.NoError(err)
-		organization := "Example Company"
-		_, err = st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
-			PersonID: personID, DefinitionSlug: definition.Slug,
-			Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &organization},
-			Source: store.ProvenanceUser,
-		})
-		require.NoError(err)
-		preview, err = service.PreviewPublication(t.Context(), personID)
-		require.NoError(err)
-		assert.Contains(preview.VCard, "FN:Example Company\r\n")
-		assert.False(preview.ReviewRequired, "declaring ORG removes the inferred email name fallback")
-		require.NoError(service.PublishPerson(t.Context(), personID))
-
-		_, err = st.SupersedePersonAttributeValueContext(t.Context(), store.PersonAttributeSupersedeInput{
-			PersonID: personID, DefinitionSlug: definition.Slug,
-		})
-		require.NoError(err)
-		preview, err = service.PreviewPublication(t.Context(), personID)
-		require.NoError(err)
-		assert.Contains(preview.VCard, "FN:agent@example.test\r\n")
-		assert.True(preview.ReviewRequired, "removing ORG exposes the inferred email as FN again")
-		require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
-		fixture.mu.Lock()
-		assert.Equal(2, fixture.puts)
-		fixture.mu.Unlock()
-	})
-}
-
-func TestInferenceReviewTracksRemovingAttributeFullNameBeforeEmailFallback(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	fixture := &mutationFixture{}
-	service, st, personID, _ := seededMutationService(t, fixture)
-	person, err := st.GetPersonContext(t.Context(), personID)
-	require.NoError(err)
-	_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, nil)
-	require.NoError(err)
-	_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-		AddressKind: store.ContactAddressEmail, OriginalValue: "agent@example.test",
-		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
-	})
-	require.NoError(err)
-	definition, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{
-		UniversalID: "test-person-fullname-attribute", ObjectType: store.AttributeObjectPerson,
-		Slug: "test_fullname_attribute", Label: "Preferred full name",
-		ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText,
-		Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser,
-		UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true,
-		IsDeletable: true, VCardProperty: new("FN"),
-	})
-	require.NoError(err)
-	preferredName := "Curated Name"
-	_, err = st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
-		PersonID: personID, DefinitionSlug: definition.Slug,
-		Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &preferredName},
-		Source: store.ProvenanceUser,
-	})
-	require.NoError(err)
-	preview, err := service.PreviewPublication(t.Context(), personID)
-	require.NoError(err)
-	require.Contains(preview.VCard, "FN:Curated Name\r\n")
-	require.True(preview.ReviewRequired)
-	require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
-
-	_, err = st.SupersedePersonAttributeValueContext(t.Context(), store.PersonAttributeSupersedeInput{
-		PersonID: personID, DefinitionSlug: definition.Slug,
-	})
-	require.NoError(err)
-	preview, err = service.PreviewPublication(t.Context(), personID)
-	require.NoError(err)
-	assert.Contains(preview.VCard, "FN:agent@example.test\r\n")
-	assert.True(preview.ReviewRequired, "revealing an inferred contact as FN requires fresh review")
-	require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
-	assert.Equal(1, fixture.puts)
-}
-
-// The renderer derives a missing FN from the first EMAIL or phonetic N in the
-// merged card, and the merge keeps a persisted occurrence in place while it
-// appends a replacement row. Replacing a declared value with an identical row
-// at the same ordinal therefore moves an inferred value into FN.
-func TestInferenceReviewTracksFallbackReplacementOrder(t *testing.T) {
-	email := func(source store.Provenance, value string, ordinal *int) store.PersonContactPointInput {
-		return store.PersonContactPointInput{
-			AddressKind: store.ContactAddressEmail, OriginalValue: value,
-			Envelope: store.ValueEnvelopeInput{Source: source, Ordinal: ordinal},
-		}
-	}
-	phonetic := func(source store.Provenance, given string, ordinal *int) store.PersonNameInput {
-		return store.PersonNameInput{
-			NameKind: store.PersonNamePhonetic, GivenName: new(given), FamilyName: new("Example"),
-			OriginalValue: given + ";Example",
-			Envelope:      store.ValueEnvelopeInput{Source: source, Ordinal: ordinal},
-		}
-	}
-	tests := []struct {
-		name         string
-		declared     string
-		inferred     string
-		addDeclared  func(t *testing.T, st *store.Store, personID int64)
-		addInferred  func(t *testing.T, st *store.Store, personID int64)
-		replaceFirst func(t *testing.T, st *store.Store, personID int64)
-	}{
-		{
-			name: "email", declared: "declared@example.test", inferred: "inferred@example.test",
-			addDeclared: func(t *testing.T, st *store.Store, personID int64) {
-				t.Helper()
-				_, err := st.AddPersonContactPointContext(t.Context(), personID,
-					email(store.ProvenanceUser, "declared@example.test", nil))
-				require.NoError(t, err)
-			},
-			addInferred: func(t *testing.T, st *store.Store, personID int64) {
-				t.Helper()
-				_, err := st.AddPersonContactPointContext(t.Context(), personID,
-					email(store.ProvenanceEnrichment, "inferred@example.test", nil))
-				require.NoError(t, err)
-			},
-			replaceFirst: func(t *testing.T, st *store.Store, personID int64) {
-				t.Helper()
-				profile, err := st.GetPersonProfileContext(t.Context(), personID)
-				require.NoError(t, err)
-				first := profile.ContactPoints[0]
-				require.Equal(t, "declared@example.test", first.OriginalValue)
-				_, err = st.ApplyPersonProfilePatchContext(t.Context(), personID, profile.Person.Revision, store.PersonProfilePatch{
-					ContactPoints: &store.PersonContactPointPatch{
-						Supersede: []int64{first.Envelope.ID},
-						Add: []store.PersonContactPointInput{
-							email(store.ProvenanceUser, "declared@example.test", new(first.Envelope.Ordinal)),
-						},
-					},
-				})
-				require.NoError(t, err)
-			},
-		},
-		{
-			name: "phonetic name", declared: "Declared Example", inferred: "Inferred Example",
-			addDeclared: func(t *testing.T, st *store.Store, personID int64) {
-				t.Helper()
-				_, err := st.AddPersonNameContext(t.Context(), personID, phonetic(store.ProvenanceUser, "Declared", nil))
-				require.NoError(t, err)
-			},
-			addInferred: func(t *testing.T, st *store.Store, personID int64) {
-				t.Helper()
-				_, err := st.AddPersonNameContext(t.Context(), personID, phonetic(store.ProvenanceEnrichment, "Inferred", nil))
-				require.NoError(t, err)
-			},
-			replaceFirst: func(t *testing.T, st *store.Store, personID int64) {
-				t.Helper()
-				profile, err := st.GetPersonProfileContext(t.Context(), personID)
-				require.NoError(t, err)
-				first := profile.Names[0]
-				require.Equal(t, "Declared", *first.GivenName)
-				_, err = st.ApplyPersonProfilePatchContext(t.Context(), personID, profile.Person.Revision, store.PersonProfilePatch{
-					Names: &store.PersonNamePatch{
-						Supersede: []int64{first.Envelope.ID},
-						Add: []store.PersonNameInput{
-							phonetic(store.ProvenanceUser, "Declared", new(first.Envelope.Ordinal)),
-						},
-					},
-				})
-				require.NoError(t, err)
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			fixture := &mutationFixture{}
-			service, st, personID, _ := seededMutationService(t, fixture)
-			person, err := st.GetPersonContext(t.Context(), personID)
-			require.NoError(err)
-			_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, nil)
-			require.NoError(err)
-			tt.addDeclared(t, st, personID)
-			tt.addInferred(t, st, personID)
-
-			preview, err := service.PreviewPublication(t.Context(), personID)
-			require.NoError(err)
-			assert.Contains(preview.VCard, "FN:"+tt.declared+"\r\n")
-			require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
-
-			tt.replaceFirst(t, st, personID)
-
-			preview, err = service.PreviewPublication(t.Context(), personID)
-			require.NoError(err)
-			assert.Contains(preview.VCard, "FN:"+tt.inferred+"\r\n")
-			assert.True(preview.ReviewRequired)
-			require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
-			fixture.mu.Lock()
-			assert.Equal(1, fixture.puts)
-			fixture.mu.Unlock()
-		})
-	}
-}
-
-// An attribute mapped to EMAIL renders as an EMAIL occurrence, so the renderer
-// can derive FN from it once a declared ORG no longer supplies the name.
-func TestInferenceReviewTracksAttributeEmailFallback(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	fixture := &mutationFixture{}
-	service, st, personID, _ := seededMutationService(t, fixture)
-	person, err := st.GetPersonContext(t.Context(), personID)
-	require.NoError(err)
-	_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, nil)
-	require.NoError(err)
-	setAttribute := func(slug, property, value string, source store.Provenance) {
-		t.Helper()
-		definition, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{
-			UniversalID: "test-" + slug, ObjectType: store.AttributeObjectPerson,
-			Slug: slug, Label: slug,
-			ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText,
-			Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser,
-			UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true,
-			IsDeletable: true, VCardProperty: new(property),
-		})
-		require.NoError(err)
-		_, err = st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
-			PersonID: personID, DefinitionSlug: definition.Slug,
-			Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &value},
-			Source: source,
-		})
-		require.NoError(err)
-	}
-	setAttribute("test_org_attribute", "ORG", "Example Org", store.ProvenanceUser)
-	setAttribute("test_email_attribute", "EMAIL", "agent@example.test", store.ProvenanceEnrichment)
-
-	preview, err := service.PreviewPublication(t.Context(), personID)
-	require.NoError(err)
-	require.Contains(preview.VCard, "FN:Example Org\r\n")
-	require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
-
-	_, err = st.SupersedePersonAttributeValueContext(t.Context(), store.PersonAttributeSupersedeInput{
-		PersonID: personID, DefinitionSlug: "test_org_attribute",
-	})
-	require.NoError(err)
-	preview, err = service.PreviewPublication(t.Context(), personID)
-	require.NoError(err)
-	assert.Contains(preview.VCard, "FN:agent@example.test\r\n")
-	assert.True(preview.ReviewRequired, "revealing an inferred EMAIL attribute as FN requires fresh review")
-	require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
-	assert.Equal(1, fixture.puts)
-}
-
-// The renderer derives a missing FN from the first ORG before EMAIL or TEL.
-// Deleting a declared employment can therefore expose an inferred ORG
-// attribute as FN.
-func TestInferenceReviewTracksOrganizationFallback(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	fixture := &mutationFixture{}
-	service, st, personID, _ := seededMutationService(t, fixture)
-	person, err := st.GetPersonContext(t.Context(), personID)
-	require.NoError(err)
-	_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, nil)
-	require.NoError(err)
-	organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Declared Org"})
-	require.NoError(err)
-	employment, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{
-		PersonID: personID, OrganizationID: organization.ID,
-		IsCurrent: new(true), IsPrimary: new(true), Source: store.ProvenanceUser,
-	})
-	require.NoError(err)
-	definition, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{
-		UniversalID: "test-org-attribute", ObjectType: store.AttributeObjectPerson,
-		Slug: "test_org_attribute", Label: "Organization",
-		ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText,
-		Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser,
-		UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true,
-		IsDeletable: true, VCardProperty: new("ORG"),
-	})
-	require.NoError(err)
-	inferredOrg := "Inferred Org"
-	_, err = st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
-		PersonID: personID, DefinitionSlug: definition.Slug,
-		Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &inferredOrg},
-		Source: store.ProvenanceEnrichment,
-	})
-	require.NoError(err)
-
-	preview, err := service.PreviewPublication(t.Context(), personID)
-	require.NoError(err)
-	require.Contains(preview.VCard, "FN:Declared Org\r\n")
-	require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
-
-	require.NoError(st.DeleteEmploymentContext(t.Context(), employment.ID, employment.Revision))
-	preview, err = service.PreviewPublication(t.Context(), personID)
-	require.NoError(err)
-	assert.Contains(preview.VCard, "FN:Inferred Org\r\n")
-	assert.True(preview.ReviewRequired, "revealing an inferred ORG as FN requires fresh review")
-	require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
-	assert.Equal(1, fixture.puts)
 }

@@ -37,28 +37,26 @@ type PersonContactPointVCardProjection struct {
 	ValueType   *string `json:"value_type"`
 }
 
-// VCardValue returns the unescaped export value, or empty when the contact
-// cannot render. Projection and inference review must use the same rules.
-func (p PersonContactPoint) VCardValue() string {
+func (p PersonContactPoint) VCardProjection() (PersonContactPointVCardProjection, bool) {
 	if !p.AddressKind.Exportable() {
-		return ""
+		return PersonContactPointVCardProjection{}, false
 	}
 	value := strings.TrimSpace(p.OriginalValue)
 	if p.URI != nil && strings.TrimSpace(*p.URI) != "" {
 		value = strings.TrimSpace(*p.URI)
 	}
 	if value == "" {
-		return ""
+		return PersonContactPointVCardProjection{}, false
 	}
 	switch p.AddressKind {
 	case ContactAddressEmail, ContactAddressSocial, ContactAddressLanguage:
-		return value
+		// Value is already suitable for this kind.
 	case ContactAddressProviderIdentity:
-		return ""
+		return PersonContactPointVCardProjection{}, false
 	case ContactAddressUsername, ContactAddressIMPP, ContactAddressURL,
 		ContactAddressCalendar, ContactAddressContactURI, ContactAddressOrgDirectory:
 		if !vcard.IsURIValue(value) {
-			return ""
+			return PersonContactPointVCardProjection{}, false
 		}
 	case ContactAddressPhone:
 		if !vcard.IsURIValue(value) {
@@ -66,17 +64,10 @@ func (p PersonContactPoint) VCardValue() string {
 			if phone == "" {
 				phone = strings.ReplaceAll(value, " ", "")
 			}
-			return "tel:" + phone
+			value = "tel:" + phone
 		}
 	}
-	return value
-}
 
-func (p PersonContactPoint) VCardProjection() (PersonContactPointVCardProjection, bool) {
-	value := p.VCardValue()
-	if value == "" {
-		return PersonContactPointVCardProjection{}, false
-	}
 	projection := PersonContactPointVCardProjection{Value: value}
 	switch p.AddressKind {
 	case ContactAddressEmail:

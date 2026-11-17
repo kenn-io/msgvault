@@ -683,9 +683,10 @@ func (s *Store) backfillPersonCardDAVInferenceV2Tx(ctx context.Context, tx *logg
 		return err
 	}
 	if inferenceExportProjectionHasInferred(history) {
+		inferredRows := inferredContactRows(history)
 		if !needsReview {
 			var err error
-			needsReview, err = s.personHasPublishedContactInferenceTx(ctx, tx, personID, history)
+			needsReview, err = s.personHasPublishedMappingsTx(ctx, tx, personID, inferredRows, true)
 			if err != nil {
 				return err
 			}
@@ -702,15 +703,11 @@ func (s *Store) backfillPersonCardDAVInferenceV2Tx(ctx context.Context, tx *logg
 		if err != nil {
 			return err
 		}
-		conflict, err := s.invalidateLegacyCardDAVConflictCreatesTx(ctx, tx, personID)
+		updateIntent, err := s.reviewLegacyCardDAVIntentsTx(ctx, tx, personID, inferredRows)
 		if err != nil {
 			return err
 		}
-		updateIntent, err := s.personHasPendingUpdateInferenceTx(ctx, tx, personID, history)
-		if err != nil {
-			return err
-		}
-		needsReview = needsReview || pending > 0 || conflict || updateIntent
+		needsReview = needsReview || pending > 0 || updateIntent
 	}
 	if needsReview {
 		return s.advancePersonInferenceExportRevisionTx(ctx, tx, personID)
@@ -718,136 +715,59 @@ func (s *Store) backfillPersonCardDAVInferenceV2Tx(ctx context.Context, tx *logg
 	return nil
 }
 
-// personHasPendingUpdateInferenceTx recognizes inferred contributors captured
-// by an ordinary pending UPDATE or unresolved conflict intent even when the
-// row is retired and the stored remote envelope never owned that property.
-// Keep both intents unchanged so recovery can still confirm the exact canonical
-// write read-only.
-func (s *Store) personHasPendingUpdateInferenceTx(
-	ctx context.Context, tx *loggedTx, personID int64, history personInferenceExportProjection,
-) (bool, error) {
-	inferredRows := map[string]map[int64]bool{
-		personNamesTableName:         {},
-		personContactPointsTableName: {},
-		personAddressesTableName:     {},
-	}
+// inferredContactRows identifies retired and current rows that may still be
+// owned by a frozen or published card.
+func inferredContactRows(history personInferenceExportProjection) map[string]map[int64]bool {
+	rows := make(map[string]map[int64]bool)
 	for table, components := range map[string][]personInferenceExportComponent{
 		personNamesTableName: history.Names, personContactPointsTableName: history.ContactPoints,
 		personAddressesTableName: history.Addresses,
 	} {
+		rows[table] = make(map[int64]bool)
 		for _, component := range components {
 			if component.Inferred {
-				inferredRows[table][component.RowID] = true
+				rows[table][component.RowID] = true
 			}
 		}
 	}
+	return rows
+}
+
+func hasInferredMapping(mappings []vcard.NativeMapping, inferredRows map[string]map[int64]bool) bool {
+	for _, mapping := range mappings {
+		if inferredRows[mapping.Table][mapping.RowID] {
+			return true
+		}
+	}
+	return false
+}
+
+// reviewLegacyCardDAVIntentsTx preserves frozen bodies for confirmation while
+// clearing create approval and recognizing inferred rows in update intents.
+func (s *Store) reviewLegacyCardDAVIntentsTx(ctx context.Context, tx *loggedTx, personID int64, inferredRows map[string]map[int64]bool) (bool, error) {
 	var pendingMetadata []byte
 	err := tx.QueryRowContext(ctx, `SELECT outgoing_envelope_metadata FROM carddav_publications
         WHERE person_id=? AND pending_operation=?`, personID, CardDAVMutationUpdate).Scan(&pendingMetadata)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("load pending CardDAV update ownership: %w", err)
 	}
+	needsReview := false
 	if len(pendingMetadata) > 0 {
 		envelope, err := vcard.UnmarshalResourceMetadata(pendingMetadata)
 		if err != nil {
 			return false, fmt.Errorf("decode pending CardDAV update ownership: %w", err)
 		}
-		for _, mapping := range envelope.NativeMappings {
-			if inferredRows[mapping.Table][mapping.RowID] {
-				return true, nil
-			}
-		}
+		needsReview = hasInferredMapping(envelope.NativeMappings, inferredRows)
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT c.local_mutation_intent FROM carddav_conflicts c
-        WHERE c.status=? AND c.local_mutation_intent IS NOT NULL
-          AND EXISTS(SELECT 1 FROM carddav_resources r WHERE r.address_book_id=c.address_book_id
-            AND r.href=c.href AND r.person_id=?)`, CardDAVConflictUnresolved, personID)
-	if err != nil {
-		return false, fmt.Errorf("load legacy CardDAV conflict update intents: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return false, err
-		}
-		var intent cardDAVConflictIntentV1
-		if err := json.Unmarshal(raw, &intent); err != nil {
-			return false, fmt.Errorf("decode legacy CardDAV conflict update intent: %w", err)
-		}
-		if intent.Operation != CardDAVMutationUpdate || intent.PersonID != personID || len(intent.EnvelopeMetadata) == 0 {
-			continue
-		}
-		envelope, err := vcard.UnmarshalResourceMetadata(intent.EnvelopeMetadata)
-		if err != nil {
-			return false, fmt.Errorf("decode legacy CardDAV conflict update ownership: %w", err)
-		}
-		for _, mapping := range envelope.NativeMappings {
-			if inferredRows[mapping.Table][mapping.RowID] {
-				return true, nil
-			}
-		}
-	}
-	return false, rows.Err()
-}
-
-func (s *Store) personHasPublishedContactInferenceTx(ctx context.Context, tx *loggedTx, personID int64, history personInferenceExportProjection) (bool, error) {
-	byTable := map[string]map[int64]bool{}
-	for table, components := range map[string][]personInferenceExportComponent{
-		personNamesTableName: history.Names, personContactPointsTableName: history.ContactPoints,
-		personAddressesTableName: history.Addresses,
-	} {
-		byTable[table] = make(map[int64]bool)
-		for _, component := range components {
-			if component.Inferred {
-				byTable[table][component.RowID] = true
-			}
-		}
-	}
-	mappingsExpr := "json_extract(e.resource_metadata, '$.native_mappings')"
-	if s.IsPostgreSQL() {
-		mappingsExpr = "e.resource_metadata ->> 'native_mappings'"
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT `+mappingsExpr+` FROM vcard_resource_envelopes e
-        WHERE e.person_id=? AND EXISTS(SELECT 1 FROM carddav_publications p
-            WHERE p.person_id=e.person_id AND p.desired=TRUE
-              AND e.source_ref='carddav:' || CAST(p.address_book_id AS TEXT)
-              AND e.source_resource_uid=p.href)`, personID)
-	if err != nil {
-		return false, fmt.Errorf("load published contact inference mappings: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var raw sql.NullString
-		if err := rows.Scan(&raw); err != nil {
-			return false, err
-		}
-		if !raw.Valid {
-			continue
-		}
-		var mappings []vcard.NativeMapping
-		if err := json.Unmarshal([]byte(raw.String), &mappings); err != nil {
-			return false, fmt.Errorf("decode published contact inference mappings: %w", err)
-		}
-		for _, mapping := range mappings {
-			if byTable[mapping.Table][mapping.RowID] {
-				return true, nil
-			}
-		}
-	}
-	return false, rows.Err()
-}
-
-func (s *Store) invalidateLegacyCardDAVConflictCreatesTx(ctx context.Context, tx *loggedTx, personID int64) (bool, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT c.id, c.local_mutation_intent FROM carddav_conflicts c
         WHERE c.status=? AND c.local_mutation_intent IS NOT NULL
           AND EXISTS(SELECT 1 FROM carddav_resources r WHERE r.address_book_id=c.address_book_id
             AND r.href=c.href AND r.person_id=?)`, CardDAVConflictUnresolved, personID)
 	if err != nil {
-		return false, fmt.Errorf("load legacy CardDAV conflict creates: %w", err)
+		return false, fmt.Errorf("load legacy CardDAV conflict intents: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	intents := make(map[int64]cardDAVConflictIntentV1)
+	creates := make(map[int64]cardDAVConflictIntentV1)
 	for rows.Next() {
 		var id int64
 		var raw []byte
@@ -856,10 +776,16 @@ func (s *Store) invalidateLegacyCardDAVConflictCreatesTx(ctx context.Context, tx
 		}
 		var intent cardDAVConflictIntentV1
 		if err := json.Unmarshal(raw, &intent); err != nil {
-			return false, fmt.Errorf("decode legacy CardDAV conflict create: %w", err)
+			return false, fmt.Errorf("decode legacy CardDAV conflict intent: %w", err)
 		}
 		if intent.Operation == CardDAVMutationCreate {
-			intents[id] = intent
+			creates[id] = intent
+		} else if intent.Operation == CardDAVMutationUpdate && intent.PersonID == personID && len(intent.EnvelopeMetadata) > 0 {
+			envelope, err := vcard.UnmarshalResourceMetadata(intent.EnvelopeMetadata)
+			if err != nil {
+				return false, fmt.Errorf("decode legacy CardDAV conflict update ownership: %w", err)
+			}
+			needsReview = needsReview || hasInferredMapping(envelope.NativeMappings, inferredRows)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -868,9 +794,7 @@ func (s *Store) invalidateLegacyCardDAVConflictCreatesTx(ctx context.Context, tx
 	if err := rows.Close(); err != nil {
 		return false, err
 	}
-	for id, intent := range intents {
-		// Preserve bytes for canonical confirmation. After a 404, the stale
-		// authorization releases this intent and requires a fresh review.
+	for id, intent := range creates {
 		intent.AuthorizationGeneration = 0
 		encoded, err := json.Marshal(intent, json.Deterministic(true))
 		if err != nil {
@@ -882,7 +806,49 @@ func (s *Store) invalidateLegacyCardDAVConflictCreatesTx(ctx context.Context, tx
 			return false, fmt.Errorf("invalidate legacy CardDAV conflict create approval: %w", err)
 		}
 	}
-	return len(intents) > 0, nil
+	return needsReview || len(creates) > 0, nil
+}
+
+// personHasPublishedMappingsTx shares the mapping scan while retaining v1's
+// original source selection and v2's exact published-resource selection.
+func (s *Store) personHasPublishedMappingsTx(ctx context.Context, tx *loggedTx, personID int64, inferredRows map[string]map[int64]bool, exactResource bool) (bool, error) {
+	mappingsExpr := "json_extract(e.resource_metadata, '$.native_mappings')"
+	if s.IsPostgreSQL() {
+		mappingsExpr = "e.resource_metadata ->> 'native_mappings'"
+	}
+	query := `SELECT ` + mappingsExpr + ` FROM vcard_resource_envelopes e WHERE e.person_id=? AND `
+	args := []any{personID}
+	if exactResource {
+		query += `EXISTS(SELECT 1 FROM carddav_publications p WHERE p.person_id=e.person_id AND p.desired=TRUE
+              AND e.source_ref='carddav:' || CAST(p.address_book_id AS TEXT) AND e.source_resource_uid=p.href)`
+	} else {
+		query += `e.source_ref = 'carddav:' || CAST((SELECT address_book_id FROM carddav_publications WHERE person_id = ?) AS TEXT)`
+		args = append(args, personID)
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return false, fmt.Errorf("load historical native mappings: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	found := false
+	for rows.Next() {
+		var raw sql.NullString
+		if err := rows.Scan(&raw); err != nil {
+			return false, fmt.Errorf("scan historical native mappings: %w", err)
+		}
+		if !raw.Valid {
+			continue
+		}
+		var mappings []vcard.NativeMapping
+		if err := json.Unmarshal([]byte(raw.String), &mappings); err != nil {
+			return false, fmt.Errorf("decode historical native mappings: %w", err)
+		}
+		found = found || hasInferredMapping(mappings, inferredRows)
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate historical native mappings: %w", err)
+	}
+	return found, nil
 }
 
 // personHasPublishedInferenceHistoryTx conservatively recognizes prior inferred
@@ -950,42 +916,9 @@ func (s *Store) personHasPublishedInferenceHistoryTx(ctx context.Context, tx *lo
 	if len(inferredRows) == 0 {
 		return false, nil
 	}
-	// Select only mapping metadata: full envelopes may contain large media bodies
-	// and property trees, which are irrelevant to migration attribution.
-	mappingsExpr := "json_extract(resource_metadata, '$.native_mappings')"
-	if s.IsPostgreSQL() {
-		mappingsExpr = "resource_metadata ->> 'native_mappings'"
-	}
-	rows, err = tx.QueryContext(ctx, `SELECT `+mappingsExpr+` FROM vcard_resource_envelopes
-    WHERE person_id = ? AND source_ref = 'carddav:' || CAST((SELECT address_book_id
-       FROM carddav_publications WHERE person_id = ?) AS TEXT)`, personID, personID)
-	if err != nil {
-		return false, fmt.Errorf("load historical native mappings: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	found := false
-	for rows.Next() {
-		var raw sql.NullString
-		if err := rows.Scan(&raw); err != nil {
-			return false, fmt.Errorf("scan historical native mappings: %w", err)
-		}
-		if !raw.Valid {
-			continue
-		}
-		var mappings []vcard.NativeMapping
-		if err := json.Unmarshal([]byte(raw.String), &mappings); err != nil {
-			return false, fmt.Errorf("decode historical native mappings: %w", err)
-		}
-		for _, mapping := range mappings {
-			if mapping.Table == "person_attribute_values" && inferredRows[mapping.RowID] {
-				found = true
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("iterate historical native mappings: %w", err)
-	}
-	return found, nil
+	return s.personHasPublishedMappingsTx(ctx, tx, personID, map[string]map[int64]bool{
+		"person_attribute_values": inferredRows,
+	}, false)
 }
 
 // advancePersonInferenceExportRevisionTx serializes first invalidation with

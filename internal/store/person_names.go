@@ -63,13 +63,12 @@ type PersonNameVCardProjection struct {
 	SortAs         []string `json:"sort_as"`
 }
 
-// VCardValue returns the property name and escaped value, or empty strings when
-// the name cannot render. Projection and inference review use the same rules.
-func (n PersonName) VCardValue() (propertyName, rawValue string) {
+func (n PersonName) VCardProjection() (PersonNameVCardProjection, bool) {
+	var property, value string
 	switch n.NameKind {
 	case PersonNameFormatted:
 		if n.Formatted != nil && strings.TrimSpace(*n.Formatted) != "" {
-			return "FN", vcard.EscapeText(*n.Formatted)
+			property, value = "FN", vcard.EscapeText(*n.Formatted)
 		}
 	case PersonNameStructured, PersonNamePhonetic:
 		components := []string{
@@ -79,29 +78,25 @@ func (n PersonName) VCardValue() (propertyName, rawValue string) {
 		}
 		for _, component := range components {
 			if strings.TrimSpace(component) != "" {
-				return "N", vcard.JoinStructuredText(components)
+				property, value = "N", vcard.JoinStructuredText(components)
+				break
 			}
 		}
 	case PersonNameNickname:
-		value := n.OriginalValue
+		nickname := n.OriginalValue
 		if n.Formatted != nil && strings.TrimSpace(*n.Formatted) != "" {
-			value = *n.Formatted
+			nickname = *n.Formatted
 		}
-		if strings.TrimSpace(value) != "" {
+		if strings.TrimSpace(nickname) != "" {
 			// Each row is one nickname, including any literal commas.
-			return "NICKNAME", vcard.EscapeText(value)
+			property = "NICKNAME"
+			value = vcard.EscapeText(nickname)
 		}
-	case PersonNameSort:
-		return "", ""
 	}
-	return "", ""
-}
-
-func (n PersonName) VCardProjection() (PersonNameVCardProjection, bool) {
-	property, value := n.VCardValue()
 	if property == "" {
 		return PersonNameVCardProjection{}, false
 	}
+
 	script := n.Script
 	if n.NameKind == PersonNamePhonetic && vcardProjectionParameterValue(n.PhoneticScript) != nil {
 		script = n.PhoneticScript
@@ -144,7 +139,6 @@ type PersonNameInput struct {
 
 var (
 	ErrInvalidPersonNameKind  = errors.New("invalid person name kind")
-	ErrInvalidPersonNameText  = errors.New("person name contains invalid vCard text")
 	ErrPersonNameValueMissing = errors.New("person name requires at least one non-empty component")
 )
 
@@ -205,9 +199,6 @@ func (s *Store) addPersonNameTx(
 	if !input.NameKind.Valid() {
 		return nil, ErrInvalidPersonNameKind
 	}
-	if err := validatePersonNameInput(input); err != nil {
-		return nil, err
-	}
 	original := strings.TrimSpace(input.OriginalValue)
 	if original == "" {
 		original = firstNonBlankNameComponent(input)
@@ -247,53 +238,6 @@ func (s *Store) addPersonNameTx(
 		return nil, fmt.Errorf("add person name: %w", err)
 	}
 	return getPersonNameTx(ctx, tx, personID, id)
-}
-
-func validatePersonNameText(field, value string) error {
-	if strings.ContainsAny(value, "\r\x00") {
-		return fmt.Errorf("%w: %s contains CR or NUL", ErrInvalidPersonNameText, field)
-	}
-	return nil
-}
-
-func validatePersonNameInput(input PersonNameInput) error {
-	for _, field := range []struct {
-		name  string
-		value *string
-	}{
-		{name: "formatted", value: input.Formatted},
-		{name: "family_name", value: input.FamilyName},
-		{name: "given_name", value: input.GivenName},
-		{name: "additional_names", value: input.AdditionalNames},
-		{name: "honorific_prefixes", value: input.HonorificPrefixes},
-		{name: "honorific_suffixes", value: input.HonorificSuffixes},
-		{name: "secondary_surname", value: input.SecondarySurname},
-		{name: "generation", value: input.Generation},
-	} {
-		if field.value != nil {
-			if err := validatePersonNameText(field.name, *field.value); err != nil {
-				return err
-			}
-		}
-	}
-	if err := validatePersonNameText("original_value", input.OriginalValue); err != nil {
-		return err
-	}
-	for _, field := range []struct {
-		name  string
-		value *string
-	}{
-		{name: "language", value: input.Language},
-		{name: "script", value: input.Script},
-		{name: "phonetic_system", value: input.PhoneticSystem},
-		{name: "phonetic_script", value: input.PhoneticScript},
-		{name: "sort_as", value: input.SortAs},
-	} {
-		if field.value != nil && strings.ContainsAny(*field.value, "\r\n\x00") {
-			return fmt.Errorf("%w: %s contains CR, LF, or NUL", ErrInvalidPersonNameText, field.name)
-		}
-	}
-	return nil
 }
 
 func (s *Store) listPersonNamesTx(
