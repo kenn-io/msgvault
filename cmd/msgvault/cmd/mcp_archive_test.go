@@ -26,34 +26,18 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestMCPDelegatedReadAndArchiveSenderScope(t *testing.T) {
+func TestMCPDelegatedArchiveSenderScope(t *testing.T) {
 	requirements := require.New(t)
 	_, source, allowed, _, serverURL, owner, provider := newArchiveDaemon(t)
-	grant, err := owner.IssueAgentToken(t.Context(), "code reader", []string{"search.read", "message.read", "verification.read", "message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
+	grant, err := owner.IssueAgentToken(t.Context(), "code reader", []string{"message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
 	requirements.NoError(err)
 	client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: grant.Secret, AllowInsecure: true})
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	opts, err := delegatedMCPServeOptions(t.Context(), client)
 	requirements.NoError(err)
-	ctx, cancel := context.WithCancel(t.Context())
-	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-	done := make(chan error, 1)
-	go func() { done <- mcpserver.ServeTransport(ctx, opts, serverTransport) }()
-	var session *sdkmcp.ClientSession
-	t.Cleanup(func() {
-		if session != nil {
-			_ = session.Close()
-		}
-		cancel()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			assert.Fail(t, "MCP server did not stop")
-		}
-	})
-	session, err = sdkmcp.NewClient(&sdkmcp.Implementation{Name: "scope-test", Version: "1"}, nil).Connect(ctx, clientTransport, nil)
-	requirements.NoError(err)
+	session, closeSession := archiveMCPSession(t, opts)
+	defer closeSession()
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "archive_message", Arguments: map[string]any{"message_id": allowed, "archived": true}})
 	requirements.NoError(err)
 	requirements.False(result.IsError, "%v", result.Content)
@@ -61,23 +45,44 @@ func TestMCPDelegatedReadAndArchiveSenderScope(t *testing.T) {
 	assert.EqualValues(t, 1, provider.connects.Load())
 }
 
-func archiveMCPCatalog(t *testing.T, opts mcpserver.ServeOptions) *sdkmcp.ListToolsResult {
+func archiveMCPSession(t *testing.T, opts mcpserver.ServeOptions) (*sdkmcp.ClientSession, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
 	done := make(chan error, 1)
 	go func() { done <- mcpserver.ServeTransport(ctx, opts, serverTransport) }()
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "archive-test", Version: "1"}, nil)
 	session, err := client.Connect(ctx, clientTransport, nil)
-	require.NoError(t, err)
-	listed, err := session.ListTools(ctx, nil)
-	require.NoError(t, err)
-	require.NoError(t, session.Close())
-	cancel()
-	if err := <-done; err != nil {
-		require.ErrorIs(t, err, context.Canceled)
+	if err != nil {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			assert.Fail(t, "MCP server did not stop")
+		}
+		require.NoError(t, err)
 	}
+	return session, func() {
+		closeErr := session.Close()
+		cancel()
+		select {
+		case err := <-done:
+			require.NoError(t, closeErr)
+			if err != nil {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+		case <-time.After(5 * time.Second):
+			assert.Fail(t, "MCP server did not stop")
+		}
+	}
+}
+
+func archiveMCPCatalog(t *testing.T, opts mcpserver.ServeOptions) *sdkmcp.ListToolsResult {
+	t.Helper()
+	session, closeSession := archiveMCPSession(t, opts)
+	defer closeSession()
+	listed, err := session.ListTools(t.Context(), nil)
+	require.NoError(t, err)
 	return listed
 }
 

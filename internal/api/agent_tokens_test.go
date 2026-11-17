@@ -767,24 +767,24 @@ func TestAgentTokenIncomingSendersIndependentOfDraftIdentities(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: agentTokenTestAPIKey, AgentAccess: true}}, Store: stub, Logger: testLogger()})
 	srv.agentGrants = agentgrant.NewRegistry()
 	for _, tc := range []struct {
-		name, restrictions string
-		permissions        []string
-		status             int
+		name, field, restrictions string
+		permissions               []string
+		status                    int
 	}{
-		{"canonical incoming", `{"1":["Code Sender <CODES@example.test>"]}`, []string{"message.read", "message.archive", "draft.create"}, http.StatusCreated},
-		{"dotless", `{"1":["Root@localhost"]}`, []string{"message.read"}, http.StatusCreated},
-		{"omitted", "", []string{"message.archive"}, http.StatusCreated},
-		{"empty", `{"1":[]}`, []string{"message.archive"}, http.StatusBadRequest},
-		{"top-level null", `null`, []string{"message.archive"}, http.StatusBadRequest},
-		{"unknown field", `{"1":["codes@example.test"]}`, []string{"message.read"}, http.StatusBadRequest},
-		{"duplicate", `{"1":["codes@example.test","CODES@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
-		{"duplicate dotless domain", `{"1":["Root@localhost","root@localhost"]}`, []string{"message.archive"}, http.StatusBadRequest},
-		{"invalid mailbox", `{"1":["invalid"]}`, []string{"message.archive"}, http.StatusBadRequest},
-		{"unselected", `{"2":["codes@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
-		{"noncanonical source", `{"01":["codes@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
-		{"invalid source", `{"invalid":["codes@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
-		{"draft only", `{"1":["codes@example.test"]}`, []string{"draft.create"}, http.StatusCreated},
-		{"missing permission", `{"1":["codes@example.test"]}`, []string{"calendar.read"}, http.StatusBadRequest},
+		{"canonical incoming", "incoming_senders", `{"1":["Code Sender <CODES@example.test>"]}`, []string{"message.read", "message.archive", "draft.create"}, http.StatusCreated},
+		{"dotless", "incoming_senders", `{"1":["Root@localhost"]}`, []string{"message.read"}, http.StatusCreated},
+		{"omitted", "incoming_senders", "", []string{"message.archive"}, http.StatusCreated},
+		{"empty", "incoming_senders", `{"1":[]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"top-level null", "incoming_senders", `null`, []string{"message.archive"}, http.StatusBadRequest},
+		{"unknown field", "incoming_sender", `{"1":["codes@example.test"]}`, []string{"message.read"}, http.StatusBadRequest},
+		{"duplicate", "incoming_senders", `{"1":["codes@example.test","CODES@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"duplicate dotless domain", "incoming_senders", `{"1":["Root@localhost","root@localhost"]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"invalid mailbox", "incoming_senders", `{"1":["invalid"]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"unselected", "incoming_senders", `{"2":["codes@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"noncanonical source", "incoming_senders", `{"01":["codes@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"invalid source", "incoming_senders", `{"invalid":["codes@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"draft only", "incoming_senders", `{"1":["codes@example.test"]}`, []string{"draft.create"}, http.StatusCreated},
+		{"missing permission", "incoming_senders", `{"1":["codes@example.test"]}`, []string{"calendar.read"}, http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertionsForTest := assert.New(t)
@@ -793,11 +793,7 @@ func TestAgentTokenIncomingSendersIndependentOfDraftIdentities(t *testing.T) {
 			requirementsForTest.NoError(err)
 			body := fmt.Sprintf(`{"label":"archive-test","permissions":%s,"source_ids":[1]}`, permissions)
 			if tc.restrictions != "" {
-				field := "incoming_senders"
-				if tc.name == "unknown field" {
-					field = "incoming_sender"
-				}
-				body = strings.TrimSuffix(body, "}") + `,"` + field + `":` + tc.restrictions + "}"
+				body = strings.TrimSuffix(body, "}") + `,"` + tc.field + `":` + tc.restrictions + "}"
 			}
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
 			req.Header.Set("X-Api-Key", agentTokenTestAPIKey)

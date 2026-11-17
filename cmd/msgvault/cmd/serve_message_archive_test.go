@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/mail"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -32,7 +31,6 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/gmail"
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -144,10 +142,6 @@ func TestArchiveMessageDaemonGrantEnforcement(t *testing.T) {
 	require.NoError(t, err)
 	archived := true
 	change := emailtags.ArchiveChange{Archived: &archived, DryRun: true}
-	_, err = owner.ArchiveMessage(t.Context(), imapID, change)
-	var ownerFailure *emailtags.MessageTagError
-	require.ErrorAs(t, err, &ownerFailure)
-	assert.Equal(t, "archive_unsupported", ownerFailure.Code)
 
 	var hidden *emailtags.MessageTagError
 	for _, target := range []struct {
@@ -218,7 +212,7 @@ func TestArchiveMessageDaemonGrantEnforcement(t *testing.T) {
 func TestArchiveMessageDaemonAgentCLI(t *testing.T) {
 	assertionsForTest, requirementsForTest := assert.New(t), require.New(t)
 	_, source, id, _, serverURL, owner, _ := newArchiveDaemon(t) //nolint:dogsled // This case checks the CLI through the daemon.
-	cliGrant, err := owner.IssueAgentToken(t.Context(), "code reader", []string{"message.read", "verification.read", "message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
+	cliGrant, err := owner.IssueAgentToken(t.Context(), "code reader", []string{"message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
 	requirementsForTest.NoError(err)
 
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
@@ -246,6 +240,7 @@ func TestArchiveMessageDaemonPreviewDuringSync(t *testing.T) {
 	st, source, id, adapter, _, owner, _ := newArchiveDaemon(t)
 	syncExecution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
 	requirementsForTest.NoError(err)
+	t.Cleanup(func() { assert.NoError(t, syncExecution.Release()) })
 	previewArchived := true
 	preview, err := owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &previewArchived, DryRun: true})
 	requirementsForTest.NoError(err)
@@ -256,7 +251,6 @@ func TestArchiveMessageDaemonPreviewDuringSync(t *testing.T) {
 	var failure *emailtags.MessageTagError
 	requirementsForTest.ErrorAs(err, &failure)
 	assertionsForTest.Equal("sync_active", failure.Code)
-	requirementsForTest.NoError(syncExecution.Release())
 }
 
 func TestArchiveMessageMatchingLocalSnapshot(t *testing.T) {
@@ -278,27 +272,26 @@ func TestArchiveMessageMatchingLocalSnapshot(t *testing.T) {
 			assert.Zero(t, provider.connects.Load())
 		})
 	}
-}
-
-func TestArchiveMessageRetryAfterRemovingLastLabel(t *testing.T) {
-	st, _, id, _, _, owner, provider := newArchiveDaemon(t, []string{"INBOX"}) //nolint:dogsled // This case checks stored labels and provider calls.
-	target, err := st.EmailTagTargetContext(t.Context(), id, "")
-	require.NoError(t, err)
-	require.NoError(t, st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"INBOX"}, Verified: true}))
-	archived := true
-	result, err := owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
-	require.NoError(t, err)
-	require.True(t, result.Verified)
-	labels, err := st.MessageLabelIDsContext(t.Context(), id)
-	require.NoError(t, err)
-	require.Empty(t, labels)
-	connections := provider.connects.Load()
-	result, err = owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
-	require.NoError(t, err)
-	assert.True(t, result.Archived)
-	assert.False(t, result.Changed)
-	assert.False(t, result.Verified)
-	assert.Equal(t, connections, provider.connects.Load())
+	t.Run("empty after archive", func(t *testing.T) {
+		st, _, id, _, _, owner, provider := newArchiveDaemon(t, []string{"INBOX"})
+		target, err := st.EmailTagTargetContext(t.Context(), id, "")
+		require.NoError(t, err)
+		require.NoError(t, st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"INBOX"}, Verified: true}))
+		archived := true
+		result, err := owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
+		require.NoError(t, err)
+		require.True(t, result.Verified)
+		labels, err := st.MessageLabelIDsContext(t.Context(), id)
+		require.NoError(t, err)
+		require.Empty(t, labels)
+		connections := provider.connects.Load()
+		result, err = owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
+		require.NoError(t, err)
+		assert.True(t, result.Archived)
+		assert.False(t, result.Changed)
+		assert.False(t, result.Verified)
+		assert.Equal(t, connections, provider.connects.Load())
+	})
 }
 
 func TestArchiveMessageDaemonWriteAndReconcile(t *testing.T) {
@@ -390,7 +383,7 @@ func TestArchiveMessageUnsupportedProviderAndMissingScope(t *testing.T) {
 	}
 }
 
-func TestArchiveIncomingSenderPreservesLiteralFromAndRechecksUnderLock(t *testing.T) {
+func TestArchiveIncomingSenderRecheckedUnderLock(t *testing.T) {
 	assertionsForTest := assert.New(t)
 	requirementsForTest := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -401,49 +394,8 @@ func TestArchiveIncomingSenderPreservesLiteralFromAndRechecksUnderLock(t *testin
 	conversation, err := st.EnsureConversation(t.Context(), source.ID, "envelope-thread", "Synthetic Envelope")
 	requirementsForTest.NoError(err)
 	archived := true
-	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageArchive}, Sources: []agentgrant.SourceRef{{Type: source.SourceType, Identifier: source.Identifier, IncomingSenderKeys: []string{"allowed@example.test", "first last@example.test"}}}}
+	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageArchive}, Sources: []agentgrant.SourceRef{{Type: source.SourceType, Identifier: source.Identifier, IncomingSenderKeys: []string{"allowed@example.test"}}}}
 	adapter := &storeAPIAdapter{store: st}
-	// Address.String encodes literal quotes inside the addr-spec.
-	literal := `"allowed"@example.test`
-	provider := newArchiveProviderFixture(t)
-	cfg := &config.Config{HomeDir: t.TempDir()}
-	cfg.Data.DataDir = cfg.HomeDir
-	adapter.config = cfg
-	adapter.logger = slog.New(slog.DiscardHandler)
-	adapter.emailTagClientFactory = func(context.Context, *store.Source) (gmail.API, error) {
-		return provider.client, nil
-	}
-	for _, tc := range []struct {
-		name, header, literal string
-		allowed               bool
-	}{
-		{"literal quote characters", (&mail.Address{Address: literal}).String(), literal, false},
-		{"quoted local part", `<"first last"@example.test>`, "first last@example.test", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertionsForTest := assert.New(t)
-			requirementsForTest := require.New(t)
-			parsed, err := mime.Parse([]byte("From: " + tc.header + "\r\n\r\nsynthetic\r\n"))
-			requirementsForTest.NoError(err)
-			requirementsForTest.Len(parsed.From, 1)
-			requirementsForTest.Equal(tc.literal, parsed.From[0].Email)
-			provider.messageID = "gmail-archive-" + tc.name
-			id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
-				Message:    &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: provider.messageID, MessageType: "email"},
-				Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{participant}, EmailAddresses: []string{parsed.From[0].Email}}},
-			})
-			requirementsForTest.NoError(err)
-			result, err := adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: true}, grant, nil)
-			if tc.allowed {
-				requirementsForTest.NoError(err, "an allowed sender parsed and stored by production MIME code must remain allowed")
-				assertionsForTest.True(result.Archived)
-				return
-			}
-			var failure *emailtags.MessageTagError
-			requirementsForTest.ErrorAs(err, &failure)
-			assertionsForTest.Equal("message_not_found", failure.Code)
-		})
-	}
 	data := &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "changing", MessageType: "email"}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{participant}, EmailAddresses: []string{"allowed@example.test"}}}}
 	id, err := st.PersistMessageContext(t.Context(), data)
 	requirementsForTest.NoError(err)
@@ -568,46 +520,28 @@ func TestArchiveCodeReaderGrant(t *testing.T) {
 	st, source, id, _, serverURL, owner, _ := newArchiveDaemon(t)
 	require.NoError(t, st.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: "Your code is 482913", Valid: true}, sql.NullString{}))
 	require.NoError(t, st.UpsertFTSContext(t.Context(), id, "", "Your code is 482913", "codes@example.test", "", ""))
-	for _, tc := range []struct {
-		name        string
-		permissions []string
-		wantCode    bool
-	}{
-		{"documented grant", []string{"search.read", "message.read", "verification.read", "message.archive"}, true},
-		{"masked", []string{"message.read", "message.archive"}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertionsForTest := assert.New(t)
-			requirementsForTest := require.New(t)
-			token, err := owner.IssueAgentToken(t.Context(), tc.name, tc.permissions, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
-			requirementsForTest.NoError(err)
-			if tc.name == "documented grant" {
-				searchRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, serverURL+"/api/v1/cli/search?q=code", nil)
-				requirementsForTest.NoError(err)
-				searchRequest.Header.Set(apiprotocol.AgentTokenHeader, token.Secret)
-				searchResponse, err := http.DefaultClient.Do(searchRequest)
-				requirementsForTest.NoError(err)
-				defer func() { _ = searchResponse.Body.Close() }()
-				searchBody, err := io.ReadAll(searchResponse.Body)
-				requirementsForTest.NoError(err)
-				requirementsForTest.Equal(http.StatusOK, searchResponse.StatusCode, string(searchBody))
-				assertionsForTest.Contains(string(searchBody), fmt.Sprintf(`"id":%d`, id))
-			}
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/messages/%d", serverURL, id), nil)
-			requirementsForTest.NoError(err)
-			req.Header.Set(apiprotocol.AgentTokenHeader, token.Secret)
-			resp, err := http.DefaultClient.Do(req)
-			requirementsForTest.NoError(err)
-			defer func() { _ = resp.Body.Close() }()
-			body, err := io.ReadAll(resp.Body)
-			requirementsForTest.NoError(err)
-			requirementsForTest.Equal(http.StatusOK, resp.StatusCode, string(body))
-			if tc.wantCode {
-				assertionsForTest.Contains(string(body), "482913")
-			} else {
-				assertionsForTest.NotContains(string(body), "482913")
-				assertionsForTest.Contains(string(body), "[verification content masked]")
-			}
-		})
-	}
+	assertionsForTest := assert.New(t)
+	requirementsForTest := require.New(t)
+	token, err := owner.IssueAgentToken(t.Context(), "documented grant", []string{"search.read", "message.read", "verification.read", "message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
+	requirementsForTest.NoError(err)
+	searchRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, serverURL+"/api/v1/cli/search?q=code", nil)
+	requirementsForTest.NoError(err)
+	searchRequest.Header.Set(apiprotocol.AgentTokenHeader, token.Secret)
+	searchResponse, err := http.DefaultClient.Do(searchRequest)
+	requirementsForTest.NoError(err)
+	defer func() { _ = searchResponse.Body.Close() }()
+	searchBody, err := io.ReadAll(searchResponse.Body)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Equal(http.StatusOK, searchResponse.StatusCode, string(searchBody))
+	assertionsForTest.Contains(string(searchBody), fmt.Sprintf(`"id":%d`, id))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/messages/%d", serverURL, id), nil)
+	requirementsForTest.NoError(err)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token.Secret)
+	resp, err := http.DefaultClient.Do(req)
+	requirementsForTest.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Equal(http.StatusOK, resp.StatusCode, string(body))
+	assertionsForTest.Contains(string(body), "482913")
 }

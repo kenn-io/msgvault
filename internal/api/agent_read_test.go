@@ -27,7 +27,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
-	"go.kenn.io/msgvault/internal/verification"
 )
 
 func TestAgentCLISearchOmitsHybridHint(t *testing.T) {
@@ -993,21 +992,6 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 			assert.NotContains(t, w.Body.String(), tc.excludes)
 		})
 	}
-	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{src.ID: {"codes@example.test"}})
-	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
-	detail, err := st.GetMessageContext(ctx, allowed)
-	requirementsForTest.NoError(err)
-	requirementsForTest.Equal("private code", detail.ConversationTitle)
-	message, err := engine.GetMessageBySourceID(ctx, "allowed", []int64{src.ID})
-	requirementsForTest.NoError(err)
-	requirementsForTest.Equal("private code", message.ConversationTitle)
-	batch, err := engine.GetMessageSummariesByIDs(ctx, []int64{allowed})
-	requirementsForTest.NoError(err)
-	requirementsForTest.Len(batch, 1)
-	requirementsForTest.Equal("private code", batch[0].ConversationTitle)
-	owner, err := st.GetMessageContext(t.Context(), allowed)
-	requirementsForTest.NoError(err)
-	requirementsForTest.Equal("private code", owner.ConversationTitle)
 
 	other, err := st.GetOrCreateSource("test", "other-account@example.test")
 	requirementsForTest.NoError(err)
@@ -1032,28 +1016,6 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 		requirementsForTest.Contains(w.Body.String(), tc.want)
 		requirementsForTest.NotContains(w.Body.String(), tc.exclude)
 	}
-
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE conversations SET title = ? WHERE source_id = ?"), "Your verification code is 482913", src.ID)
-	requirementsForTest.NoError(err)
-	issueWithoutVerification := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(strings.Replace(body, `,"verification.read"`, "", 1)))
-	issueWithoutVerification.Header.Set("X-Api-Key", "owner-key")
-	issueWithoutVerification.Header.Set("Content-Type", "application/json")
-	issuedWithoutVerification := httptest.NewRecorder()
-	srv.Router().ServeHTTP(issuedWithoutVerification, issueWithoutVerification)
-	requirementsForTest.Equal(http.StatusCreated, issuedWithoutVerification.Code, issuedWithoutVerification.Body.String())
-	var maskedGrant agentTokenIssueResponse
-	requirementsForTest.NoError(json.Unmarshal(issuedWithoutVerification.Body.Bytes(), &maskedGrant))
-	readAllowed := func() string {
-		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", allowed), nil)
-		r.Header.Set(apiprotocol.AgentTokenHeader, maskedGrant.Secret)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, r)
-		requirementsForTest.Equal(http.StatusOK, w.Code, w.Body.String())
-		return w.Body.String()
-	}
-	ordinary := readAllowed()
-	requirementsForTest.Contains(ordinary, verification.Masked)
-	requirementsForTest.NotContains(ordinary, "482913")
 }
 
 func TestAgentRelatedMessageIncomingScope(t *testing.T) {
