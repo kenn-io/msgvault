@@ -497,7 +497,7 @@ func (s *Store) RenewLease(
 func (s *Store) ReleaseWork(
 	ctx context.Context, token personenrichment.LeaseToken, release personenrichment.WorkRelease,
 ) error {
-	if release.Outcome != "policy" && release.Outcome != "suppressed" && release.Outcome != "defer" &&
+	if release.Outcome != "policy" && release.Outcome != "suppressed" &&
 		release.Outcome != "retry" && release.Outcome != "complete" {
 		return fmt.Errorf("invalid person enrichment work release outcome %q", release.Outcome)
 	}
@@ -506,16 +506,6 @@ func (s *Store) ReleaseWork(
 			return err
 		}
 		switch release.Outcome {
-		case "defer":
-			if release.NextActionAt == nil {
-				return errDeferRelease
-			}
-			if release.Failure != nil {
-				if err := validateSafeFailure(*release.Failure); err != nil {
-					return err
-				}
-			}
-			return deferEnrichmentWorkTx(ctx, tx, token, *release.NextActionAt, s.personEnrichmentTime())
 		case "retry":
 			if release.NextActionAt == nil || !release.NextActionAt.After(s.personEnrichmentTime()) {
 				return errors.New("person enrichment retry release requires a future next action")
