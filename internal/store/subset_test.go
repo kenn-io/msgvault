@@ -5852,6 +5852,88 @@ func TestCopySubsetMeetingDecisionOnDeduplicatedCopy(t *testing.T) {
 	assert.Equal(t, []int64{other}, record.MessageIDs)
 }
 
+func TestCopySubsetPreservesUndatedChoice(t *testing.T) {
+	for _, tc := range []struct{ name, updated string }{
+		{"single", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`},
+		{"series", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			path := filepath.Join(t.TempDir(), "source.db")
+			source, err := Open(path)
+			r.NoError(err)
+			r.NoError(source.InitSchemaContext(t.Context()))
+			initial := `{"id":"event","status":"cancelled"}`
+			data, event := calendarFixture(t, source, "subset-undated-event", initial)
+			_, note := projectionFixture(t, source, "subset-undated-note", "meeting_json", `{}`)
+			noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+			_, err = source.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, noteRef, "link")
+			r.NoError(err)
+			data.RawMIME = []byte(tc.updated)
+			_, err = source.PersistMessage(data)
+			r.NoError(err)
+			before, err := source.MeetingRecordContext(t.Context(), noteRef)
+			r.NoError(err)
+			r.Empty(before.Links)
+			r.NoError(source.Close())
+			dir := filepath.Join(t.TempDir(), "subset")
+			_, err = CopySubset(t.Context(), path, dir, 2, false)
+			r.NoError(err)
+			dst, err := Open(filepath.Join(dir, "msgvault.db"))
+			r.NoError(err)
+			t.Cleanup(func() { r.NoError(dst.Close()) })
+			var key string
+			r.NoError(dst.DB().QueryRowContext(t.Context(), `SELECT left_key FROM meeting_link_decisions WHERE left_kind='evt'`).Scan(&key))
+			r.Empty(key)
+			record, err := dst.MeetingRecordContext(t.Context(), noteRef)
+			r.NoError(err)
+			r.Empty(record.Links)
+			data.RawMIME = []byte(initial)
+			_, err = dst.PersistMessage(data)
+			r.NoError(err)
+			record, err = dst.MeetingRecordContext(t.Context(), noteRef)
+			r.NoError(err)
+			r.Contains(record.MessageIDs, note)
+			r.Len(record.Links, 1)
+			r.Equal(event, record.Links[0].MessageID)
+		})
+	}
+}
+
+func TestCopySubsetUndatedEditGainsOriginalTime(t *testing.T) {
+	r := require.New(t)
+	path := filepath.Join(t.TempDir(), "source.db")
+	source, err := Open(path)
+	r.NoError(err)
+	r.NoError(source.InitSchemaContext(t.Context()))
+	data, edit := calendarFixture(t, source, "subset-undated-edit", `{"id":"edit","recurringEventId":"series","status":"cancelled"}`)
+	_, note := projectionFixture(t, source, "subset-undated-edit-note", "meeting_json", `{}`)
+	eventRef := MeetingLinkRef{Kind: "evt", MessageID: edit}
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err = source.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "link")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`)
+	_, err = source.PersistMessage(data)
+	r.NoError(err)
+	r.NoError(source.Close())
+	dir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), path, dir, 2, false)
+	r.NoError(err)
+	dst, err := Open(filepath.Join(dir, "msgvault.db"))
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(dst.Close()) })
+	var key string
+	r.NoError(dst.DB().QueryRowContext(t.Context(), `SELECT left_key FROM meeting_link_decisions WHERE left_kind='evt'`).Scan(&key))
+	r.Empty(key)
+	record, err := dst.MeetingRecordContext(t.Context(), eventRef)
+	r.NoError(err)
+	r.Contains(record.MessageIDs, note)
+	record, err = dst.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	r.Equal(edit, record.Links[0].MessageID)
+}
+
 func TestCopySubsetRetainsInactiveSingleChoice(t *testing.T) {
 	r := require.New(t)
 	path := filepath.Join(t.TempDir(), "source.db")
@@ -5975,6 +6057,10 @@ func TestCopySubsetMeetingDecisionAcrossOccurrenceRepresentations(t *testing.T) 
 			t.Cleanup(func() { r.NoError(destination.Close()) })
 			record, err := destination.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
 			r.NoError(err)
+			if keep == "series" {
+				r.Empty(record.Links)
+				return
+			}
 			r.Len(record.Links, 1)
 			assert.Equal(t, selected, record.Links[0].MessageID)
 		})

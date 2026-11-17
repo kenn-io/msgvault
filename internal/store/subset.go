@@ -8,13 +8,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
@@ -3161,9 +3159,7 @@ func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) err
 	rewrite := strings.NewReplacer(
 		"FROM messages", "FROM src.messages", "JOIN messages", "JOIN src.messages",
 		"FROM calendar_events", "FROM src.calendar_events", "JOIN calendar_events", "JOIN src.calendar_events",
-		"FROM sources", "FROM src.sources", "JOIN sources", "JOIN src.sources",
 		"FROM meeting_copy_survivors", "FROM src.meeting_copy_survivors",
-		"FROM meeting_link_decisions", "FROM src.meeting_link_decisions",
 		"FROM source_merge_messages", "FROM src.source_merge_messages",
 		"FROM source_merge_archive_only_messages", "FROM src.source_merge_archive_only_messages",
 	)
@@ -3185,113 +3181,33 @@ func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) err
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
 	}
-	resolve := func(endpoint meetingDecisionEndpoint) (meetingDecisionEndpoint, bool, error) {
-		budget := calrecur.RequestReadBudget
-		key, err := s.meetingOccurrenceKey(ctx, endpoint, &budget)
-		inactive := errors.Is(err, sql.ErrNoRows) && endpoint.Kind == meetingRefEvent
-		if inactive {
-			id, ok, resolveErr := s.resolveMeetingMessage(ctx, endpoint.ID)
-			if resolveErr != nil || !ok {
-				return endpoint, false, resolveErr
-			}
-			key = endpoint
-			key.ID = id
-			err = nil
-		}
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMeetingOccurrenceRequired) {
-			return endpoint, false, nil
-		}
-		if err != nil {
-			return endpoint, false, err
+	resolve := func(id int64) (int64, bool, error) {
+		id, ok, err := s.resolveMeetingMessage(ctx, id)
+		if err != nil || !ok {
+			return 0, false, err
 		}
 		var selected bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM selected_messages WHERE id=?)`, key.ID).Scan(&selected); err != nil {
-			return endpoint, false, err
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM selected_messages WHERE id=?)`, id).Scan(&selected); err != nil {
+			return 0, false, err
 		}
-		if selected {
-			return key, true, nil
-		}
-		if key.Kind != meetingRefEvent {
-			return endpoint, false, nil
-		}
-		copies, err := s.meetingCopyLookup(ctx, key)
-		if err != nil {
-			return endpoint, false, err
-		}
-		var candidates []int64
-		for batch := range slices.Chunk(copies, 100) {
-			args := make([]any, len(batch))
-			for i, id := range batch {
-				args[i] = id
-			}
-			rows, err := tx.QueryContext(ctx, `SELECT id FROM selected_messages WHERE id IN (`+placeholders(len(batch))+`) ORDER BY id`, args...)
-			if err != nil {
-				return endpoint, false, err
-			}
-			for rows.Next() {
-				var id int64
-				if err := rows.Scan(&id); err != nil {
-					return endpoint, false, errors.Join(err, rows.Close()) //nolint:sqlclosecheck // Close before returning the scan error.
-				}
-				candidates = append(candidates, id)
-			}
-			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-				return endpoint, false, err
-			}
-		}
-		for _, id := range candidates {
-			if inactive {
-				resolved, ok, err := s.resolveMeetingMessage(ctx, id)
-				if err != nil {
-					return endpoint, false, err
-				}
-				if ok && resolved == key.ID {
-					key.ID = id
-					return key, true, nil
-				}
-				continue
-			}
-			candidate, err := s.meetingOccurrenceKey(ctx, meetingDecisionEndpoint{ID: id, Kind: meetingRefEvent, Key: key.Key}, &budget)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			if err != nil {
-				return endpoint, false, err
-			}
-			if candidate == key {
-				candidate.ID = id
-				return candidate, true, nil
-			}
-		}
-		return endpoint, false, nil
+		return id, selected, nil
 	}
 	for _, edge := range edges {
-		budget := calrecur.RequestReadBudget
-		left, right, valid, err := s.meetingPairKeys(ctx, edge.a, edge.b, &budget)
-		if err != nil {
-			return err
-		}
-		if !valid {
-			left, right = edge.a, edge.b
-		}
-		a, ok, err := resolve(left)
+		left, ok, err := resolve(edge.a.ID)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			continue
 		}
-		b, ok, err := resolve(right)
+		right, ok, err := resolve(edge.b.ID)
 		if err != nil {
 			return err
 		}
-		if !ok || a == b {
+		if !ok {
 			continue
 		}
-		if compareMeetingEndpoints(a, b) > 0 {
-			a, b = b, a
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO meeting_link_decisions(id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES(?,?,?,?,?,?,?,?)`, edge.id, a.ID, a.Kind, a.Key, b.ID, b.Kind, b.Key, edge.decision); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO meeting_link_decisions(id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES(?,?,?,?,?,?,?,?)`, edge.id, left, edge.a.Kind, edge.a.Key, right, edge.b.Kind, edge.b.Key, edge.decision); err != nil {
 			return err
 		}
 	}
