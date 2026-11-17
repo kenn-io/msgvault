@@ -386,6 +386,8 @@ test('an old Everything-as-Files link opens Files at its deep anchor with bounde
   await page.keyboard.press('End');
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-600');
   await expect.poll(() => requests).toBe(7);
+  // The request count advances before the response has populated the grid.
+  await expect(grid).toHaveAttribute('aria-busy', 'false');
   await page.keyboard.press('ArrowDown');
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-601');
   await expect(grid.getByText('deep-601.pdf')).toBeVisible();
