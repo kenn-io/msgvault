@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Archive [Bland calls](usage/meetings.md#bland) as meetings with their summaries, retained transcripts and recordings saved locally, up to 1 GiB each by default (`max_media_mb`).
+
 - Start bounded Gmail or IMAP historical imports through MCP with `--allow-import-writes`, and follow their durable job status.
 - MCP clients can list and read msgvault's bundled guides with `msgvault.skills`: the MCP quickstart as `workflow` and every [agent skill](guides/agent-skills.md#skills-and-the-mcp-server). Delegated sessions can use it too.
 

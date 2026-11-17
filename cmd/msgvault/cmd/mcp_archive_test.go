@@ -58,6 +58,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		{"muesli", "get_meeting_context", false}, {"notion_meetings", "get_meeting_context", false},
 		{"meeting_import", "get_meeting_context", false}, {"omi", "get_meeting_context", false},
 		{"plaud", "get_meeting_context", false}, {"twilio", "get_meeting_context", false},
+		{"bland", "get_meeting_context", false},
 		{"twenty", "get_meeting_context", false}, {"beeper", "find_chat", false},
 		{"slack", "get_slack_sync_policy", false},
 		{"imap", "draft_reply", false},

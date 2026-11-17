@@ -17,7 +17,7 @@ func addMCPSourceFamilies(f *mcpserver.ArchiveFamilies, kind string) {
 		f.Calendar = true
 	case "ics", sourceTypeGmail, "imap", "o365", "msmail", "mbox", "hey", "apple-mail", "eml", "emlx", "maildir", "pst", "google-groups":
 		f.CalendarRecords = true
-	case "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot":
+	case "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "bland", "twenty", "chatwoot":
 		f.Meetings = true
 	}
 	switch kind {
