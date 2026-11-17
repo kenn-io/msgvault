@@ -233,32 +233,24 @@ func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID
 	if err != nil {
 		return peoplesweep.CommitmentSource{}, false, err
 	}
-	var conversationID int64
-	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
+	var conversation LoopConversation
+	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT c.id, c.source_id, c.conversation_type
 		FROM messages m JOIN sources src ON src.id = m.source_id
-		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND `+s.loopLiveMessageSQL()), messageID).Scan(&conversationID)
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.id = ? AND `+s.loopLiveMessageSQL()), messageID).
+		Scan(&conversation.ConversationID, &conversation.SourceID, &conversation.ConversationType)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peoplesweep.CommitmentSource{}, false, nil
 	}
 	if err != nil {
 		return peoplesweep.CommitmentSource{}, false, err
 	}
-	heads, err := s.loopConversationHeads(ctx, LoopQuery{PersonID: personID, ConversationID: conversationID})
+	messages, err := s.loopMessages(ctx, []int64{messageID}, owners)
 	if err != nil {
 		return peoplesweep.CommitmentSource{}, false, err
 	}
-	conversations, err := s.loopChunk(ctx, heads, owners)
-	if err != nil {
-		return peoplesweep.CommitmentSource{}, false, err
-	}
-	if len(conversations) > 0 {
-		messages, err := s.loopMessages(ctx, []int64{messageID}, owners)
-		if err != nil {
-			return peoplesweep.CommitmentSource{}, false, err
-		}
-		if len(messages) == 1 {
-			return s.commitmentMessage(ctx, personID, conversations[0], messages[0], owners)
-		}
+	if len(messages) == 1 {
+		return s.commitmentMessage(ctx, personID, conversation, messages[0], owners)
 	}
 	return peoplesweep.CommitmentSource{}, false, nil
 }
