@@ -119,6 +119,7 @@ import type {
   DocbankAttachmentBackfillResponse,
   DocbankAttachmentStatus,
   DomainSummary,
+  EmailFamily,
   EmbeddingStatus,
   Employment,
   EmploymentBody,
@@ -126,6 +127,7 @@ import type {
   EndEmploymentBody,
   EndEmploymentPathParameters,
   ExplainPersonTierPathParameters,
+  FactSummary,
   FastSearchParams,
   FileMetadataResponse,
   FilterMessagesParams,
@@ -155,6 +157,7 @@ import type {
   GetConversationPathParameters,
   GetDeletionPathParameters,
   GetDomainPathParameters,
+  GetEmailFamilyPathParameters,
   GetEmbeddingStatusParams,
   GetEmploymentPathParameters,
   GetFileContentPathParameters,
@@ -180,6 +183,7 @@ import type {
   GetPersonBriefPathParameters,
   GetPersonByUIDParams,
   GetPersonContactStatePathParameters,
+  GetPersonFactSummaryPathParameters,
   GetPersonMergePathParameters,
   GetPersonMergeSnapshotPathParameters,
   GetPersonMessagingRoutesParams,
@@ -2392,6 +2396,21 @@ export const getMessage = (
   );
 };
 /**
+ * @summary Read the other archived copies, replies and forwards of an email
+ */
+export const getEmailFamily = (
+  { id }: GetEmailFamilyPathParameters,
+  options?: SecondParameter<typeof orvalFetch<EmailFamily>>,
+) => {
+  return orvalFetch<EmailFamily>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/family`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
  * @summary Get an inline MIME part
  */
 export const getMessageInlinePart = (
@@ -3422,6 +3441,21 @@ export const setPersonFactPin = (
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       data: setPersonFactPinRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Get person fact summary
+ */
+export const getPersonFactSummary = (
+  { id }: GetPersonFactSummaryPathParameters,
+  options?: SecondParameter<typeof orvalFetch<FactSummary>>,
+) => {
+  return orvalFetch<FactSummary>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-summary`,
+      method: "GET",
     },
     options,
   );

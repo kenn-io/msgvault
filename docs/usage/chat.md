@@ -199,6 +199,8 @@ Use these read tools for [archived meeting context and follow-ups](meetings.md):
 | Tool | Use |
 |---|---|
 | `get_meeting_context` | Export selected meeting IDs as JSON or Markdown; transcript opt-in and byte budget |
+| `get_meeting_record` | Read linked notes and calendar copies from a meeting or occurrence |
+| `suggest_meeting_links` | Find overlapping meeting notes and calendar events to link |
 | `list_meeting_action_items` | Read source action status, explicit assignees, coverage, and source links |
 | `get_meeting_metrics` | Count scoped meetings and inspect known/unknown duration and monthly activity |
 
@@ -223,6 +225,8 @@ These tools use the same
 need daemon API schema 2.27.0 or newer. They make no AI call and require no
 profile-write permission. Source action status remains archived evidence;
 these tools do not complete tasks or infer new ones.
+
+`link_meeting`, `unlink_meeting`, and `reset_meeting_link` join or separate copies, or clear a saved choice. They need daemon API schema 5.10.0 or newer and follow the normal [write controls](#write-controls).
 
 ## Setup
 
@@ -494,6 +498,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_deletion` | Read a staged batch lifecycle receipt. | Required `batch_id` |
 | `stage_deletion` | Stage every match its source can delete (creates manifest only); refuses above 100000 Gmail, Microsoft Graph, or IMAP matches | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
 | `find_contact_candidates` | Find durable people by saved or observed names; returns stable UIDs and explicit ambiguity. Available with daemon API schema 3.20.0 or newer. | `query` (required), `limit` (1–100, default 20), `after_id` |
+| `get_email_family` | Read the other archived copies, replies and forwards of an email across accounts, with each copy's direction and the header evidence connecting it. Owner-only and read-only. Available with daemon API schema 5.12.0 or newer. | `message_id` (int, required) |
 | `get_person_messaging_routes` | Resolve a selected UID to curated points, bound observations, unreviewed suggestions and exact archived routes, with status and evidence. | `person_uid` (required), `network`, `source_id`, `limit` (1–100 per section, default 20), `after_conversation_id`, `after_contact_point_id`, `after_observation_id`, `after_suggestion_id` |
 | `find_chat` | Find archived chats by whole query tokens in names, aliases, identifiers and titles, ranked by the best matching name. Owner clients only; requires API schema 3.24.0. Returns archive/provider chat IDs, network labels and bounded match evidence. | `query` (string, required), `limit` (int, default 20, max 100), `source_id` (positive int, optional) |
 | `search_people` | Find observed contacts and saved profiles by name or identity. Saved-profile rows include `vcard_uid` and `carddav_bindings`; older daemons return no CardDAV binding entries. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
@@ -901,12 +906,16 @@ source, cache, or person-edit tools.
 |---|---|---|
 | `list_source_status` | Read source capabilities, recent runs, and queued or pending work. | Optional `source_type` |
 | `get_source_identities` | Read confirmed sender identities and confirmation signals. | Required `source_id` |
+| `get_import_job` | Read a historical import job’s durable status and summary. | Required `job_id` |
+| `create_import_job` | Start a bounded historical Gmail or IMAP import; requires confirmation and `--allow-import-writes`. | Required `account`, positive `limit`; optional `after`, `before`, `query`, `noresume` |
 | `get_source_scheduler_status` | Read scheduler status without starting a sync. | — |
 | `sync_source` | Request a configured source sync; requires confirmation. | Required `account`, `source_type` from `list_source_status` |
 | `get_slack_sync_policy` | Read channel and direct-message selection, the settings ETag, and restart state. | — |
 | `update_slack_sync_policy` | Change Slack selection; requires confirmation. | Required `etag`; at least one of `dms`, `group_dms`, `channels`, `exclude_channels` |
 | `get_participant_identity` | Read observed identifiers, service and scope context, cluster members, and link evidence. | Required `participant_id` |
 | `get_cache_build_status` | Follow an accepted analytics refresh job. | Required `job_id` from a fresh query response |
+
+`create_import_job` returns acceptance, not completion. Use `get_import_job` to follow it. Dates use `YYYY-MM-DD`, `after` must be earlier than `before`, and `query` is Gmail-only. An interrupted or uncertain creation may have started a job; do not retry automatically.
 
 `sync_source` returns acceptance, not completion. A generic source uses its
 configured shared scheduler job. The response preserves `disposition` when the
@@ -968,7 +977,7 @@ one second, then make a new call, which needs approval again. MCP never
 retries a write by itself. If a write reports
 `operation_may_have_completed: true`, list the loops again before retrying.
 
-## Write controls
+## Write responses
 
 On unreleased `main`, owner sessions can use `get_person_record`,
 `get_person_record_history`, and `get_person_record_media` to read all structured
@@ -992,6 +1001,12 @@ disclosures are refused. A successful patch returns its new ETag and omits the
 profile when it exceeds 1 MiB. If the result says the operation may have
 completed, read the record again before retrying.
 
+If any MCP write returns `operation_receipt_unavailable`, the write
+may have completed but its receipt could not be read. Read the current state
+before retrying.
+
+## Write controls
+
 Enable only the writes intended for the assistant's session:
 
 | Writes | Stdio | HTTP |
@@ -1000,6 +1015,7 @@ Enable only the writes intended for the assistant's session:
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Structured person profile patches | `--allow-curated-writes` | `--http-allow-writes --allow-curated-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
+| Historical imports | `--allow-import-writes` | `--http-allow-writes --allow-import-writes`, protocol `2026-07-28` or newer |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
 
@@ -1091,6 +1107,7 @@ msgvault mcp --http 8080
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-curated-writes` | `false` | On unreleased `main`, expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-import-writes` | `false` | Expose bounded historical import creation with per-call confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |

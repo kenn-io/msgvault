@@ -128,6 +128,7 @@ type Client struct {
 	selectedNumMessages         uint32               // EXISTS count from the last SELECT
 	mailboxCache                []string             // cached list of selectable mailboxes
 	messageListCache            []gmailapi.MessageID // full message ID list, built once per session
+	trashMailboxes              map[string]bool      // LIST-advertised \Trash mailboxes, or the fallback Trash
 	trashMailbox                string               // cached trash mailbox name
 	junkMailbox                 string               // cached junk/spam mailbox name
 	allMailFolder               string               // mailbox with \All attribute (empty if not detected)
@@ -725,8 +726,14 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 				}
 			}
 		}
-		if c.trashMailbox == "" && hasAttr(item.Attrs, imap.MailboxAttrTrash) {
-			c.trashMailbox = item.Mailbox
+		if hasAttr(item.Attrs, imap.MailboxAttrTrash) {
+			if c.trashMailboxes == nil {
+				c.trashMailboxes = make(map[string]bool)
+			}
+			c.trashMailboxes[item.Mailbox] = true
+			if c.trashMailbox == "" {
+				c.trashMailbox = item.Mailbox
+			}
 		}
 		if c.allMailFolder == "" && hasAttr(item.Attrs, imap.MailboxAttrAll) {
 			c.allMailFolder = item.Mailbox
@@ -760,6 +767,7 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 			for _, mb := range names {
 				if strings.EqualFold(mb, candidate) {
 					c.trashMailbox = mb
+					c.trashMailboxes = map[string]bool{mb: true}
 					break
 				}
 			}
@@ -781,6 +789,7 @@ func (c *Client) clearMailboxDiscoveryLocked() {
 	c.mailboxCache = nil
 	c.mailboxAttrs = nil
 	c.trashMailbox = ""
+	c.trashMailboxes = nil
 	c.junkMailbox = ""
 	c.allMailFolder = ""
 	c.advertisedOutgoingMailboxes = nil

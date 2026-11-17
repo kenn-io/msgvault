@@ -21,6 +21,7 @@ Usage:
   msgvault [command]
 
 Search and read:
+  family        Read an email's related copies
   find-chat     Find archived chats by name or title
   list-accounts List archive accounts with type, message count, last sync
   list-domains  List top sender domains by message count
@@ -134,6 +135,7 @@ Import local exports:
 
 Drafts, calendar, and Kata (write to providers):
   calendar      Read archived events and control live calendars
+  comment       Act on archived Facebook and Instagram comments
   draft-compose Create an email, native Beeper, or local chat draft
   draft-delete  Delete a managed draft
   draft-edit    Replace the body of a managed draft

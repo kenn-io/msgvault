@@ -19,7 +19,7 @@ func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRo
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	require.NoError(t, err)
 	defer release()
-	return calendarEventRowsInWindow(ctx, st.db, st.dialect, start, end)
+	return calendarEventRowsInWindow(ctx, st.meetingSQLReader(ctx), st.dialect, start, end)
 }
 func bulkCalendarCandidates(t *testing.T, st *Store, sourceID, conversationID int64, kind string, count int) {
 	t.Helper()
@@ -110,7 +110,7 @@ func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	require.NoError(t, err)
 	defer release()
-	_, err = queryCalendarEventRowsWithinBudget(ctx, st.db, "1 = 1", nil, 1)
+	_, err = queryCalendarEventRowsWithinBudget(ctx, st.meetingSQLReader(ctx), "1 = 1", nil, 1)
 	assert.ErrorIs(t, err, ErrQueryTooBroad)
 }
 func TestCalendarEventSourceZoneRebuild(t *testing.T) {

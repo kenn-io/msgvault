@@ -27,6 +27,12 @@ browser login, secure remote deployment, search states, and keyboard controls.
 
 Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
 
+### Person fact decisions
+
+`GET /api/v1/people/{id}/fact-decisions` returns decisions in newest-first order. Use `claim_key` to select one claim before applying `limit` and `offset`. Each decision includes its target, resolver version, score, and score maxima for that version. The outcome is `saved`, `value-retired`, `current-value-kept`, `pinned-value-kept`, `too-close-to-choose`, or `not-used`; the reason explains the decision. Older decisions have a null outcome when their history cannot establish the result. An unknown resolver version has no score maxima.
+
+`GET /api/v1/people/{id}/fact-summary` returns `claimed_fields`, `latest_claim_at`, `has_values`, and `has_fact_history`. The count groups claims by target kind and key. The last claim time is null when there are no claims. Values include attribute values and employments; fact history includes claims, evidence, and pin events. Filter `GET /api/v1/people/{id}/fact-evidence` by `evidence_id` to retrieve one evidence row.
+
 ### Filename suggestions
 
 API schema 3.15 adds
@@ -166,7 +172,19 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.8.0**.
+it is separate from the binary release version. The current schema is **5.14.0**.
+
+Schema 5.14.0 adds each fact decision's submitted claim value.
+
+Schema 5.13.0 adds fact decision outcomes, evidence filtering, and a person fact summary.
+
+Schema 5.12.0 adds owner-only [related copies](#get-apiv1messagesidfamily).
+
+Schema 5.11.0 adds meeting link suggestions.
+
+Schema 5.10.0 adds owner meeting link decisions.
+
+Schema 5.9.0 adds meeting records.
 
 Schema 5.8.0 advertises the existing structured person profile routes to MCP:
 `GET` and `PATCH /api/v1/people/{id}/profile`,
@@ -653,7 +671,8 @@ Start a Gmail or IMAP history backfill and poll its progress without keeping an
 HTTP request open. These endpoints use the daemon's existing account
 credentials and full-sync path. They do not accept uploaded archive files.
 See [the importing guide](/docs/usage/importing/#historical-import-jobs) for a
-step-by-step example.
+step-by-step example. For the assistant workflow, see
+[MCP source status and sync](/docs/usage/chat/#source-status-and-sync).
 
 ### Start an import {#post-apiv1imports}
 
@@ -1859,6 +1878,61 @@ Schema 3.42.0 adds an optional `sender_auth` object to message details and `GET 
 
 ---
 
+### Related copies {#get-apiv1messagesidfamily}
+
+**Endpoint:** `GET /api/v1/messages/{id}/family`
+
+The other archived copies of an email, plus the replies and forwards that name
+it, across accounts and conversations. Owner credentials only; delegated agent
+tokens are refused. The response is never cached.
+
+**Response:**
+
+```json
+{
+  "anchor_message_id": 12345,
+  "truncated": false,
+  "pending_linkage": false,
+  "members": [
+    {
+      "message_id": 12345,
+      "source_id": 1,
+      "source_type": "imap",
+      "source_identifier": "work@example.com",
+      "account_address": "work@example.com",
+      "account_path": "inbound",
+      "draft": false,
+      "conversation_id": 77,
+      "subject": "Q4 Planning",
+      "sent_at": "2024-10-15T09:30:00Z",
+      "linkage_outcome": "complete",
+      "evidence": "anchor"
+    }
+  ]
+}
+```
+
+`members` includes the opened email. `evidence` is the member's relation to it:
+`anchor`, `copy` (the same Message-ID), `reply`, `replied_to`, `forward`,
+`forwarded_original`, `references`, `indirect` (found through another member) or
+`thread` (in the provider's thread for the opened email or one of its exact copies, with no header link). Members are
+in ascending `message_id` order.
+`account_path` is `inbound` or `sent`, and `draft` is true while the copy is a
+draft. `linkage_outcome` is `complete`, `pending` before the copy's identifiers
+are derived, `missing_message_id` when the copy was indexed but has no stored
+Message-ID for replies to match, or the reason its identifiers could not be
+read; anything other than `complete` may hide relations. The lookup follows Message-ID, In-Reply-To, References and
+attached-original identifiers, and, for Gmail and Google Groups, the provider threads of the email and its exact copies. It stops at 500 copies or 5,000 identifiers, setting `truncated`
+and `truncated_reason` (`members` or `identifiers`); the identifier limit can be
+reached with far fewer than 500 copies. When 500 is exceeded, copies with the same
+Message-ID stay first, then direct replies and forwards, then shared references.
+`pending_linkage` is true while any email in the archive has no derived
+identifiers yet; it could be a related copy the lookup cannot see, so an empty or
+short list is not complete. Deleted and non-email messages are
+left out. A missing message returns 404.
+
+---
+
 ### Attachment metadata {#get-apiv1attachmentsid}
 
 **Endpoint:** `GET /api/v1/attachments/{id}`
@@ -2477,6 +2551,18 @@ for the user workflow and coverage meanings.
 | `POST /api/v1/meetings/context` | Exactly one of `message_ids` or an Explore `selection`; returns a context packet envelope |
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
+
+`GET /api/v1/meetings/suggestions?ref=...` ranks overlapping meeting notes and calendar events; use `POST /api/v1/meetings/links/decisions` to link a suggested pair. It requires API schema 5.11.0. Without `verification.read`, withheld titles add no title words and withheld partner titles are masked.
+
+`GET /api/v1/meetings/record?ref=...` returns the notes and calendar copies
+for a `msg:<id>` or `evt:<id>[@occurrence key]` reference. It requires API
+schema 5.9.0. A `message.read` grant returns notes and calendar copies from its authorized sources.
+
+`POST /api/v1/meetings/links/decisions` accepts owner requests with `left`,
+`right`, and `decision` (`link`, `unlink`, or `clear`). It returns the canonical refs and
+`state` (`link`, `split`, or `automatic`). Link and unlink replace the saved
+choice; clear restores automatic matching. A conflicting choice returns 409. This
+operation requires API schema 5.10.0.
 
 Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
 `include_transcript` (default false), and `max_bytes` (default 131072, range

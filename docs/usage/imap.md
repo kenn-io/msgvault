@@ -197,7 +197,7 @@ information from the selected folders.
 When the account's saved exclusions skip only Trash or Junk, msgvault still
 tracks deletions in the folders it scans. A message moved into a skipped Trash
 is marked deleted once no stored folder membership remains, and `gc` can purge
-it.
+it. If you restore it to a scanned folder, the next sync clears the mark.
 
 Any other filter pauses deletion tracking for that run: saved exclusions of
 other folders, a `folders` allow list, `--folder`, `--skip-folder`, or a date

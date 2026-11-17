@@ -902,7 +902,8 @@ excluded if created later. Blank saved folder names prevent daemon startup.
 
 Saved exclusions that skip only Trash or Junk keep deletion tracking on for the
 folders msgvault still scans. A message moved from INBOX into a skipped Trash is
-marked deleted, and `gc` can purge it. msgvault counts every mailbox the server
+marked deleted, and `gc` can purge it. A marked message stays marked until sync
+finds it again in a folder it scans. msgvault counts every mailbox the server
 advertises with a Trash or Junk LIST special-use role, and falls back to common
 folder names only when no role is advertised.
 
@@ -1009,7 +1010,7 @@ Each `[[server.remote_clients]]` entry gives one remote CLI its own read-only ke
 
 `msgvault serve` reads these files after it settles the server key, whether that key comes from `api_key`, a file, an environment variable, or is created at startup. It fails to start if a file is missing or empty or a key repeats another. CLI commands that start a local daemon also trigger these checks. Restart to add, remove, or rotate a key.
 
-`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
+`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. An automatically started daemon does not idle out while a [Meta webhook receiver](#meta-webhooks) is listening. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
 
 Flags and environment variables can configure the server
 without `config.toml`. `serve --bind` and `serve --port` take priority over
@@ -1701,13 +1702,35 @@ schedule = "*/30 * * * *"
 | `token_env` | required | Explicit environment variable name on the daemon host; no token values or fallback variables |
 | `enabled` | `false` | Enable scheduled sync; manual commands remain available |
 | `schedule` | empty | Five-field cron expression; empty means manual sync only |
+| `actions` | empty | Comment changes allowed on Meta: `"hide"` (also allows unhide), `"delete"`, and `"reply"`. Empty means read only. See [Hide or delete comments](usage/facebook-comments.md#hide-or-delete-comments) and [Reply to comments](usage/facebook-comments.md#reply-to-comments) |
 
 `identifier` is trimmed and must be nonempty and unique ignoring case.
 `app_id` and `page_id` must be positive decimal IDs without leading zeros.
 Duplicate app/Page pairs, invalid environment variable names, unknown profile
-keys, and invalid schedules are rejected. The source identifier is
+keys, unknown actions, and invalid schedules are rejected. The source identifier is
 `app:<app_id>:page:<page_id>`; scheduled jobs use
 `facebook_comments:<source-identifier>`, independently of email account dispatch.
+
+### `[[facebook_messages]]` and `[[instagram_messages]]` {#meta-inboxes}
+
+Select a Page's Messenger inbox or a linked Instagram account's inbox
+(unreleased). See [Facebook and Instagram messages](usage/meta-messages.md).
+`[[facebook_messages]]` takes the keys and rules of
+[`[[facebook_comments]]`](#facebook-comments), and `[[instagram_messages]]`
+those of [`[[instagram_comments]]`](#instagram-comments), except `actions`
+and `mentions`. Scheduled jobs are
+`facebook_messages:<source-identifier>` and
+`instagram_messages:<source-identifier>`.
+
+### `[meta_webhooks]` {#meta-webhooks}
+
+Start a listener for signed Meta webhook deliveries (unreleased). See
+[Meta webhooks](usage/meta-webhooks.md) for setup. `listen_addr` is a
+`host:port` address; leave it empty to keep the receiver off. Each
+`[[meta_webhooks.apps]]` entry needs a decimal `app_id` and the names of the
+daemon environment variables that hold the app secret (`app_secret_env`) and
+the verify token (`verify_token_env`). App IDs must be unique, and a
+`listen_addr` needs at least one app. Unknown keys are rejected.
 
 ### `[[instagram_comments]]` {#instagram-comments}
 
@@ -1715,7 +1738,10 @@ Select a professional Instagram account linked to an explicitly selected Page.
 See [Instagram comments](usage/instagram-comments.md) for setup
 and coverage. Each profile requires `identifier`, `app_id`, `page_id`,
 `instagram_account_id`, and `token_env`; `enabled` defaults to `false`, and
-an empty `schedule` means manual sync only.
+an empty `schedule` means manual sync only. `actions` works as in
+`[[facebook_comments]]`. Set `ad_account_id` (decimal, without `act_`) and
+`ad_token_env` together to also archive comments on the account's ads; see
+[Include ad media](usage/instagram-comments.md#include-ad-media).
 
 The label is trimmed, nonempty, and unique ignoring case. All three IDs must
 be positive decimal IDs without leading zeros. Duplicate app/Page/Instagram
@@ -1725,6 +1751,12 @@ environment variable. Renaming the label preserves archive identity.
 The canonical source identifier is
 `app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
 scheduler job is `instagram_comments:<source-identifier>`.
+
+Set `mentions = true` to also archive media in which other accounts tag the
+account, as a separate `instagram_mentions` source with the same identifier.
+It defaults to `false`. When the profile has a schedule, the scheduler job is
+`instagram_mentions:<source-identifier>`. See
+[Archive media that tags the account](usage/instagram-comments.md#archive-media-that-tags-the-account).
 
 ### `[feeds]` {#feeds}
 

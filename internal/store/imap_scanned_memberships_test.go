@@ -136,3 +136,60 @@ func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
 		})
 	}
 }
+
+// A scoped apply that skips Trash cannot see it, so it clears a deletion mark
+// only for a message it found in a scanned folder outside Trash. Saved
+// memberships in skipped mailboxes never count as that evidence.
+func TestApplyIMAPScannedMailboxDeltas_TrashDeletionMarks(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// savedTrash records the message in Trash during the prior complete sync.
+		savedTrash bool
+		// marked simulates msgvault moving the message to Trash.
+		marked bool
+		// scanned lists the mailboxes the scoped sync finds the message in.
+		// "Trash" is scanned with the Trash role, as when Trash also advertises
+		// All Mail and the saved exclusions skip only Junk.
+		scanned    []string
+		wantMarked bool
+	}{
+		{name: "msgvault trashed then restored to INBOX", marked: true, scanned: []string{"INBOX"}},
+		{name: "msgvault trashed and still in skipped Trash", marked: true, wantMarked: true},
+		{name: "msgvault trashed with a saved Trash membership", savedTrash: true, marked: true, wantMarked: true},
+		{name: "moved to skipped Trash by the user", wantMarked: true},
+		{name: "marked but in INBOX and skipped Trash", savedTrash: true, marked: true, scanned: []string{"INBOX"}},
+		{name: "unmarked in INBOX and skipped Trash", savedTrash: true, scanned: []string{"INBOX"}},
+		{name: "marked in scanned Trash role mailbox and INBOX", marked: true, scanned: []string{"INBOX", "Trash"}, wantMarked: true},
+		{name: "marked in scanned Trash role mailbox only", marked: true, scanned: []string{"Trash"}, wantMarked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newIMAPIdentityFixture(t)
+			id := f.createMessage(t, "INBOX|1", "<trash-mark@example.com>")
+			trash := scannedIMAPDelta("Trash", 22)
+			if tc.savedTrash {
+				trash = scannedIMAPDelta("Trash", 22, "INBOX|1")
+			}
+			trash.Trash = true
+			require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
+				scannedIMAPDelta("INBOX", 11, "INBOX|1"), trash,
+			}))
+			if tc.marked {
+				require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "INBOX|1"))
+			}
+
+			deltas := []store.IMAPMailboxDelta{scannedIMAPDelta("INBOX", 11)}
+			if slices.Contains(tc.scanned, "INBOX") {
+				deltas[0] = scannedIMAPDelta("INBOX", 11, "INBOX|1")
+			}
+			if slices.Contains(tc.scanned, "Trash") {
+				scannedTrash := scannedIMAPDelta("Trash", 22, "INBOX|1")
+				scannedTrash.Trash = true
+				deltas = append(deltas, scannedTrash)
+			}
+			require.NoError(t, f.store.ApplyIMAPScannedMailboxDeltasForSyncContext(
+				t.Context(), f.source.ID, completedScannedIMAPSync(t, f), deltas,
+			))
+			assert.Equal(t, tc.wantMarked, messageTombstoned(t, f.store, id))
+		})
+	}
+}

@@ -39,6 +39,7 @@ var mcpAllowCalendarWrites bool
 var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
 var mcpAllowSourceWrites bool
 var mcpAllowLoopWrites bool
+var mcpAllowImportWrites bool
 var mcpAllowCuratedWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
@@ -202,6 +203,11 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		Engine: daemonclient.NewEngineAdapter(st), AttachmentReader: st,
 		Calendar: st, GrantPermissions: grant.Permissions, Families: families,
 	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingLinksMinAPISchemaVersion) {
+		opts.Meetings = st
+		opts.MeetingRecords = true
+		opts.MeetingSuggestions = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingSuggestionsMinAPISchemaVersion)
+	}
 	return opts, nil
 }
 
@@ -314,12 +320,18 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		log.Warn("meeting tools disabled because the daemon capability probe failed", "error", capabilityErr)
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
 		opts.Meetings = st
+		opts.MeetingRecords = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingLinksMinAPISchemaVersion)
+		opts.MeetingSuggestions = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingSuggestionsMinAPISchemaVersion)
+		opts.MeetingDecisions = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingDecisionsMinAPISchemaVersion)
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, contactRoutesMinAPISchemaVersion) {
 		opts.ContactRoutesBackend = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.EmailFamilyMinAPISchemaVersion) {
+		opts.EmailFamilyBackend = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st
@@ -639,6 +651,8 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
 	flags.BoolVar(bind(&mcpAllowLoopWrites), prefix+"allow-loop-writes", false,
 		"Allow approved open-loop done, snooze, and reopen decisions")
+	flags.BoolVar(bind(&mcpAllowImportWrites), prefix+"allow-import-writes", false,
+		"Expose bounded historical import jobs. Each call requires confirmation; HTTP also requires the general write opt-in.")
 	flags.BoolVar(bind(&mcpAllowCuratedWrites), prefix+"allow-curated-writes", false,
 		"Expose approved structured person profile writes")
 	flags.BoolVar(bind(&mcpAllowSourceWrites), prefix+"allow-source-writes", false,
@@ -659,6 +673,9 @@ func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.Serve
 	}
 	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-loop-writes"); enabled {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyLoops)
+	}
+	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-import-writes"); enabled {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyImports)
 	}
 	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-curated-writes"); enabled {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyCurated)

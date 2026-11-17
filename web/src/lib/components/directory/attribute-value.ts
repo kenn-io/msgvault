@@ -1,3 +1,4 @@
+import { readablePartialDate } from '../../directory/dates';
 import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import type { AttributeDefinition, AttributeValue, PersonAttributeGroup, PersonAttributeValue } from '../../api/generated/models';
 
@@ -27,6 +28,24 @@ export function displayAttributeValue(definition: AttributeDefinition, value: At
   const canonical = value.type === 'boolean' && value.boolean !== undefined ? String(value.boolean) : display;
   const choice = definition.options?.choices?.find((candidate) => candidate.value === canonical);
   return choice?.label ?? display;
+}
+
+export function displayClaimValue(value: unknown, kind: string): string {
+  if (value === null) return 'No value';
+  if (kind === 'employment' && value && typeof value === 'object') {
+    const job = value as { title?: string; role?: string; organization?: string | { name?: string } };
+    const title = job.title || job.role, organization = typeof job.organization === 'string' ? job.organization : job.organization?.name;
+    return title && organization ? `${title} at ${organization}` : title || organization || 'Job';
+  }
+  if (Array.isArray(value)) return value.map(item => displayClaimValue(item, kind)).join(', ');
+  return rawValue(typeof value === 'boolean' ? { type: 'boolean', boolean: value } : typeof value === 'string' ? { type: 'text', text: value } : { type: 'json', json: value });
+}
+
+export function employmentClaimDetailItems(value: unknown): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const job = value as { title?: string; role?: string; department?: string; location?: string; organization?: string | { domain?: string }; start_date?: string | { year?: number; month?: number; day?: number }; end_date?: string | { year?: number; month?: number; day?: number } };
+  const start = readablePartialDate(job.start_date), end = readablePartialDate(job.end_date);
+  return [job.title && job.role !== job.title ? job.role : undefined, job.department, job.location, typeof job.organization === 'object' ? job.organization?.domain : undefined, start ? `Started ${start}` : undefined, end ? `Ended ${end}` : undefined].filter((item): item is string => !!item);
 }
 
 export interface JoinedAttribute { definition: AttributeDefinition; current: PersonAttributeValue[]; history: PersonAttributeValue[]; }

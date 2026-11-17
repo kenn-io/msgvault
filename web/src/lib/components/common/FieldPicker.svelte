@@ -6,24 +6,29 @@
   let { options, value, onselect, placeholder, fallbackLabel = '', title = placeholder,
     loading = false, loadingLabel, error = '', errorDetails, onretry, onquery, emptyLabel = 'No matches',
     oncreate, createLabel, existingLabel, creation, creating = false, onexisting,
-    icon, panelAnchor, disabled = false, remote = false, highlightFirstOption = false }: {
+    icon, panelAnchor, disabled = false, remote = false, highlightFirstOption = false, onmanage, manageLabel = 'Manage fields…' }: {
     options: TypeaheadOption[]; value: string; onselect: (value: string) => void | Promise<void>;
     placeholder: string; fallbackLabel?: string; title?: string; loading?: boolean; loadingLabel?: string;
     error?: string; errorDetails?: string; onretry?: () => void; onquery?: (query: string) => void; emptyLabel?: string;
     oncreate?: (query: string) => void; createLabel?: string; existingLabel?: string; creation?: Snippet; creating?: boolean;
     onexisting?: () => void; icon?: Snippet<[TypeaheadOption]>; panelAnchor?: HTMLElement;
-    disabled?: boolean; remote?: boolean; highlightFirstOption?: boolean;
+    disabled?: boolean; remote?: boolean; highlightFirstOption?: boolean; onmanage?: () => void; manageLabel?: string;
   } = $props();
   let query = $state('');
+  const id = $props.id();
+  const manageID = `${id}-manage`;
+  const needle = $derived(query.trim().toLowerCase());
+  const matches = $derived(onmanage && needle ? options.filter(option => option.label.toLowerCase().includes(needle)) : options);
+  const listed = $derived(onmanage ? [...matches, { name: manageID, label: manageLabel }] : options);
 </script>
 
-{#snippet errorRow()}<InlineNotice message={error} details={errorDetails} actionLabel={onretry ? 'Retry' : undefined} onaction={onretry} />{/snippet}
+{#snippet headerRow()}{#if error}<InlineNotice message={error} details={errorDetails} actionLabel={onretry ? 'Retry' : undefined} onaction={onretry} />{:else}<span class="no-matches">{emptyLabel}</span>{/if}{/snippet}
 <div class="field-picker" role="group" aria-label={title}>
-  <Typeahead {options} {value} {placeholder} {fallbackLabel} {title} disabled={disabled || creating}
+  <Typeahead options={listed} {value} {placeholder} {fallbackLabel} {title} disabled={disabled || creating}
     {loading} {loadingLabel} {panelAnchor} {highlightFirstOption} {icon}
-    {remote} emptyLabel={error ? '' : emptyLabel} allowCustom={!!oncreate && !options.some(option => option.label.trim().toLowerCase() === query.trim().toLowerCase())} customLabel={createLabel}
-    onquery={value => { query = value; onquery?.(value); }} onselect={async name => { if (oncreate && !options.some(option => option.name === name)) oncreate(name); else await onselect(name); }}
-    header={error && !loading ? errorRow : undefined} />
+    remote={remote || !!onmanage} emptyLabel={error ? '' : emptyLabel} allowCustom={!!oncreate && !options.some(option => option.label.trim().toLowerCase() === query.trim().toLowerCase())} customLabel={createLabel}
+    onquery={value => { query = value; onquery?.(value); }} onselect={async name => { if (name === manageID) onmanage?.(); else if (oncreate && !options.some(option => option.name === name)) oncreate(name); else await onselect(name); }}
+    header={!loading && (error || (onmanage && needle && !matches.length)) ? headerRow : undefined} />
   {#if creating}<div class="creation">
     {@render creation?.()}
     {#if onexisting && existingLabel}<button class="existing kit-control-states" type="button" {disabled} onclick={onexisting}>{existingLabel}</button>{/if}
@@ -32,6 +37,7 @@
 
 <style>
   .field-picker { display: grid; gap: var(--space-pane); min-width: 0; --typeahead-max-width: none; --typeahead-min-width: 0px; }
+  .no-matches { padding-inline-start: var(--space-box); }
   .creation { --creation-indent: calc(var(--space-box) + 2px); display: grid; gap: var(--space-pane); min-width: 0; padding-inline-start: var(--space-box); border-inline-start: 2px solid var(--border-muted); border-start-start-radius: 0; border-end-start-radius: 0; }
   /* A pair in the indented block splits where the form's pairs below it do: its first column gives up the indent. */
   @media (min-width: 641px) {

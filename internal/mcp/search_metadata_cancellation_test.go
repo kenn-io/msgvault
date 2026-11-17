@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,26 +26,30 @@ func TestSearchMetadataHTTPDisconnectCancelsSQLite(t *testing.T) {
 		t.Run(version, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			started := make(chan struct{})
+			started := make(chan struct{}, 2)
 			release := make(chan struct{})
-			var once sync.Once
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			defer unblock()
 			var enabled atomic.Bool
-			db, observer := sqlobserve.Open(t, func(conn *sqlite3.SQLiteConn) error {
+			// Give the page and count reads separate connections so both can be
+			// running when the client disconnects.
+			db, observer := sqlobserve.OpenFile(t, filepath.Join(t.TempDir(), "archive.db"), func(conn *sqlite3.SQLiteConn) error {
+				var once sync.Once
 				return conn.RegisterFunc(sqliteutil.UnicodeLowerFunction, func(value string) string {
 					if enabled.Load() {
-						once.Do(func() { close(started) })
+						once.Do(func() { started <- struct{}{} })
 						<-release
 					}
 					return strings.ToLower(value)
 				}, true)
 			})
+			// Reuse must wait for an interrupted read, never open a third connection.
+			db.SetMaxOpenConns(2)
 			seedMetadataSearch(t, db)
 			var requests atomic.Int32
 			adapter := metadataDaemon(t, query.NewSQLiteEngine(db), &requests)
-			sqlContexts := make(chan context.Context, 1)
+			sqlContexts := make(chan context.Context, 2)
 			observer.BeforeQuery = func(ctx context.Context, _ string) {
 				select {
 				case sqlContexts <- ctx:
@@ -76,19 +81,23 @@ func TestSearchMetadataHTTPDisconnectCancelsSQLite(t *testing.T) {
 				}
 				responseDone <- err
 			}()
-			select {
-			case <-started:
-			case err := <-responseDone:
-				require.FailNow("request ended before SQL started", "%v", err)
-			case <-time.After(10 * time.Second):
-				require.FailNow("SQL did not start")
+			for range 2 {
+				select {
+				case <-started:
+				case err := <-responseDone:
+					require.FailNow("request ended before both SQL reads started", "%v", err)
+				case <-time.After(10 * time.Second):
+					require.FailNow("both SQL reads did not start")
+				}
 			}
-			sqlCtx := <-sqlContexts
 			cancel() // net/http closes the connection without an MCP cancel notification.
-			select {
-			case <-sqlCtx.Done():
-			case <-time.After(3 * time.Second):
-				assert.Fail("client disconnect did not cancel the SQLite query context")
+			for range 2 {
+				sqlCtx := <-sqlContexts
+				select {
+				case <-sqlCtx.Done():
+				case <-time.After(3 * time.Second):
+					assert.Fail("client disconnect did not cancel the SQLite query context")
+				}
 			}
 			unblock()
 			select {
@@ -101,7 +110,7 @@ func TestSearchMetadataHTTPDisconnectCancelsSQLite(t *testing.T) {
 			var value int
 			require.NoError(db.QueryRowContext(t.Context(), "SELECT 1").Scan(&value), "SQLite connection should be reusable after cancellation")
 			assert.Equal(1, value)
-			assert.Len(observer.Statements(), 2, "interrupted page and connection reuse only; no count or stats")
+			assert.Len(observer.Statements(), 3, "interrupted page and count, then connection reuse; no stats")
 		})
 	}
 }

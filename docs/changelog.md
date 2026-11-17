@@ -10,6 +10,10 @@ All notable changes to msgvault, grouped by release.
 
 - IMAP accounts whose saved `imap_skip_folders` skip only Trash or Junk now track deletions in the folders they scan, so mail moved into a skipped Trash is marked deleted and `gc` can purge it. See [`imap_skip_folders`](configuration.md#sync).
 
+- Start bounded Gmail or IMAP historical imports through MCP with `--allow-import-writes`, and follow their durable job status.
+
+- Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose.
+
 - Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.
   With `--allow-curated-writes` and explicit client confirmation, it can apply
   atomic profile patches. The client is responsible for obtaining user approval.
@@ -19,8 +23,57 @@ All notable changes to msgvault, grouped by release.
 - Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
 
 - Account matching recovers after identity changes. Explore refreshes pending counts and lets you retry matching for each source.
+- MCP operation tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unusable. This replaces `operation_response_limit_exceeded`, `operation_response_failed`, and `invalid_operation_response` for those write receipts. Read current state before retrying.
+
+- Join or separate archived meeting copies with `meetings link` and `meetings unlink`, the API, or MCP. Choices survive sync and rebuilds. `meetings reset-link` restores automatic matching. Requires HTTP API schema 5.10.0; existing archives upgrade to schema 47.
+
+- Open linked calendar copies and notes with `msgvault meetings links`,
+  `GET /api/v1/meetings/record`, or MCP `get_meeting_record`. Copy an
+  occurrence reference from `msgvault calendar events` to select a specific
+  week.
+
+- New Messenger and Instagram inbox messages, including the ones the Page or
+  account sends, are archived as they arrive when the
+  [Meta webhook receiver](usage/meta-webhooks.md#inbox-messages) gets the
+  `messages` and `message_echoes` fields.
+- [Facebook and Instagram messages](usage/meta-messages.md) archive a Page's
+  Messenger inbox or a linked Instagram account's direct messages as searchable
+  chats. Configure `[[facebook_messages]]` or `[[instagram_messages]]`, then run
+  `msgvault source facebook-messages` or `instagram-messages` `add` and `sync`.
+  Meta returns the 20 most recent messages of each conversation.
+- Posts and comments by others that mention a Facebook Page are archived in
+  its comment source when the [Meta webhook receiver](usage/meta-webhooks.md)
+  gets the Page `mention` field.
+- Instagram captions and comments that @-mention a linked account are archived
+  into its [mentions source](usage/instagram-comments.md#archive-media-that-tags-the-account)
+  when the Meta webhook receiver gets the `mentions` field.
+- [Meta webhooks](usage/meta-webhooks.md) archive new Instagram comments and
+  live comments as they arrive. Subscribe the Instagram object to `comments`
+  and `live_comments`.
+- [Meta webhooks](usage/meta-webhooks.md) archive new, edited, hidden and
+  removed Facebook Page comments as they happen. Configure `[meta_webhooks]`
+  and subscribe the Page to the `feed` field; polling sync stays available for
+  backfill.
+- [Instagram mentions sync](usage/instagram-comments.md#archive-media-that-tags-the-account)
+  archives media in which other accounts tag a linked professional account, in a
+  separate opt-in source. Set `mentions = true` on the profile, then run
+  `msgvault source instagram-mentions add` and `sync`.
+- [Reply publicly](usage/facebook-comments.md#reply-to-comments) to an archived
+  Facebook Page or Instagram comment with `msgvault comment reply`. The reply
+  is archived straight away, and msgvault refuses to send the same text to a
+  comment twice. Each profile opts in with `"reply"` in `actions`.
+- [Hide, unhide, or delete](usage/facebook-comments.md#hide-or-delete-comments)
+  an archived Facebook Page or Instagram comment with `msgvault comment moderate`.
+  Each profile opts in with `actions`, and delete needs `--yes`.
+- Instagram comment sync can also archive comments on the account's ads that
+  its media list leaves out. Set `ad_account_id` and `ad_token_env` on the
+  profile; see [Include ad media](usage/instagram-comments.md#include-ad-media).
 
 - An interrupted `sync-full` prints a command to run again with the same account, filters, configuration, and logging flags. It exits with status 130; on Windows, run the command in PowerShell 7.3 or later.
+
+- Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
+- Use `msgvault family show <id>`, the MCP tool `get_email_family`, or the family read endpoint to find an email's archived copies, replies and forwards across accounts. Results identify the evidence connecting each copy and report when the lookup is incomplete. These reads are available to the archive owner.
+- Open **Related copies** beside an email to find copies in other accounts and conversations. The panel loads when opened and leaves out messages already shown in the conversation.
 
 ## 0.25.0
 <small>2026-11-14</small>

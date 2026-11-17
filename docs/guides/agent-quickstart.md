@@ -235,6 +235,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `accept_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `reject_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |
+| `create_import_job` | import_write | `--allow-import-writes` | owner-only |
 | `create_kata_issue` | kata_write | `--allow-kata-writes` | owner-only |
 | `link_kata_evidence` | kata_write | `--allow-kata-writes` | owner-only |
 | `close_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
@@ -261,12 +262,15 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
 | `get_deletion` | read | — | owner-only |
+| `get_email_family` | read | — | owner-only |
 | `get_embeddings_status` | read | — | owner-only |
 | `get_identity_match` | read | — | owner-only |
 | `get_identity_scoring_status` | read | — | owner-only |
+| `get_import_job` | read | — | owner-only |
 | `get_kata_issue_context` | read | — | owner-only |
 | `get_meeting_context` | read | — | owner-only |
 | `get_meeting_metrics` | read | — | owner-only |
+| `get_meeting_record` | read | — | message.read |
 | `get_message` | read | — | message.read |
 | `get_message_tags` | read | — | owner-only |
 | `get_participant_identity` | read | — | owner-only |
@@ -311,6 +315,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `search_tools` | read | — | metadata-only |
 | `search_visual_attachments` | read | — | owner-only |
 | `semantic_search_messages` | read | — | owner-only |
+| `suggest_meeting_links` | read | — | message.read |
 | `sync_source` | source_write | `--allow-source-writes` | owner-only |
 | `update_slack_sync_policy` | source_write | `--allow-source-writes` | owner-only |
 | `create_saved_view` | write | — | owner-only |
@@ -322,7 +327,10 @@ backend checks for action permissions, source scope, and sender identity;
 | `draft_recover` | write | — | backend-dependent |
 | `draft_reply` | write | — | backend-dependent |
 | `export_attachment` | write | — | owner-only |
+| `link_meeting` | write | — | owner-only |
+| `reset_meeting_link` | write | — | owner-only |
 | `stage_deletion` | write | — | owner-only |
+| `unlink_meeting` | write | — | owner-only |
 | `update_message_tags` | write | — | owner-only |
 | `update_saved_view` | write | — | owner-only |
 <!-- END GENERATED tools -->

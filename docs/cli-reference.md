@@ -107,6 +107,25 @@ msgvault meetings actions --status pending --assignee alex@example.com --json
 msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 ```
 
+### meetings links
+
+`msgvault meetings links <note-id|ref> [--json]` reads the calendar copies and
+notes that share an exact meeting occurrence. Use a note ID, `msg:<id>`, or an
+event `ref` from `calendar events --json`. This command requires daemon API
+schema 5.9.0 or newer.
+
+### meetings suggest
+
+`msgvault meetings suggest <ref> [--limit N] [--json]` ranks overlapping meeting notes and calendar events. Use `meetings link` to accept a suggestion. This command requires daemon API schema 5.11.0 or newer.
+
+### meetings link, unlink, and reset-link
+
+`msgvault meetings link <ref> <ref>` joins two meeting copies, and
+`msgvault meetings unlink <ref> <ref>` separates them. Either replaces the
+previous choice. `msgvault meetings reset-link <ref> <ref>` clears the choice
+and restores automatic matching. These commands require
+daemon API schema 5.10.0 or newer.
+
 ### meetings context
 
 | Flag | Contract |
@@ -914,10 +933,12 @@ msgvault sync-full account@example.com
 
 An idle incremental sync cannot discover older omitted messages unless Gmail
 reports a new history event for them. The full listing resumes from its saved
-checkpoint when the request scope matches. A resumed full sync without filters
-or a limit publishes the History point its first run recorded, unless the source
-already has a newer cursor. The next incremental sync catches mail that arrived
-meanwhile. Filtered or limited full syncs leave the source cursor
+checkpoint when the request scope matches. A full sync without filters or a
+limit preserves an existing History cursor, including when resumed. The next
+incremental sync can then read pending label changes and deletions as well as
+new arrivals. If that cursor has expired, the next incremental sync runs History
+recovery. A first full sync seeds the History point recorded at its start.
+Filtered or limited full syncs leave the source cursor
 unchanged. A full sync interrupted under an earlier release starts
 from the first page once. Previously archived messages aren't downloaded again
 or duplicated. Gmail can return only messages that still exist in the mailbox;
@@ -1687,6 +1708,109 @@ msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--fu
 
 See [Instagram comments](usage/instagram-comments.md) for setup, identity,
 resuming, and coverage limits. These commands do not send replies.
+
+## source facebook-messages add
+
+Register the Messenger inbox of the Page in a `[[facebook_messages]]` profile
+(unreleased). No identifier selects every profile.
+
+```bash
+msgvault source facebook-messages add [identifier]
+```
+
+## source facebook-messages sync
+
+Archive the Page's Messenger conversations as chats, with up to the 20 most
+recent messages of each (unreleased). `--full` restarts from the most recent
+conversations.
+
+```bash
+msgvault source facebook-messages sync [identifier] [--max-requests 1000] [--full]
+```
+
+## source instagram-messages add
+
+Register the inbox of the Instagram account in an `[[instagram_messages]]`
+profile (unreleased). No identifier selects every profile.
+
+```bash
+msgvault source instagram-messages add [identifier]
+```
+
+## source instagram-messages sync
+
+Archive the account's Instagram conversations as chats, with up to the 20 most
+recent messages of each (unreleased). Flags match `source facebook-messages sync`.
+
+```bash
+msgvault source instagram-messages sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Facebook and Instagram messages](usage/meta-messages.md) for setup and limits.
+
+## source instagram-mentions add
+
+Register the mentions source for `[[instagram_comments]]` profiles that set
+`mentions = true` (unreleased). No identifier selects every such profile.
+
+```bash
+msgvault source instagram-mentions add [identifier]
+```
+
+## source instagram-mentions sync
+
+Archive media in which other accounts tag the linked account (unreleased). An
+unfinished run resumes next time; `--full` restarts from the newest tagged
+media without deleting rows.
+
+```bash
+msgvault source instagram-mentions sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Archive media that tags the account](usage/instagram-comments.md#archive-media-that-tags-the-account).
+## comment moderate
+
+Hide, unhide, or delete an archived Facebook Page or Instagram comment on Meta,
+then record the change in the archive (unreleased). The comment's profile must
+allow the action in [`actions`](configuration.md#facebook-comments).
+
+```bash
+msgvault comment moderate <message-id> --hide|--unhide|--delete [--dry-run] [--yes]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--hide` | `false` | Hide the comment from public view |
+| `--unhide` | `false` | Make a hidden comment visible again |
+| `--delete` | `false` | Delete the comment from Meta; the archive keeps it and its replies, marked deleted |
+| `--dry-run` | `false` | Show the comment without calling Meta |
+| `--yes` | `false` | Confirm `--delete` |
+
+Choose exactly one of `--hide`, `--unhide`, or `--delete`. See
+[Hide or delete comments](usage/facebook-comments.md#hide-or-delete-comments).
+
+## comment reply
+
+Post a public reply to an archived Facebook Page or Instagram comment, then
+archive the reply (unreleased). The comment's profile must list `"reply"` in
+[`actions`](configuration.md#facebook-comments). msgvault refuses to send the
+same text to the same comment twice.
+
+```bash
+msgvault comment reply <message-id> --body <text> [--dry-run | --clear-unknown]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--body` | required | Reply text |
+| `--dry-run` | `false` | Show the comment and reply without calling Meta |
+| `--clear-unknown` | `false` | After checking the comment on Meta, allow a reply whose outcome is unknown to be sent again; sends nothing |
+
+The command exits with code 1 when the same text was already posted, or when
+an earlier send of it has an unknown outcome. If Meta accepts the reply but
+msgvault cannot archive it yet, the command still succeeds and says so; the
+next sync archives the reply. See
+[Reply to comments](usage/facebook-comments.md#reply-to-comments).
 
 ## add-chatwoot
 
@@ -4804,6 +4928,7 @@ msgvault mcp [flags]
 | `--allow-curated-writes` | `false` | On unreleased `main`, expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--confirm-sensitive-drafts` | `false` | Require client confirmation before creating or editing drafts with detected sensitive content. Grants no tools; HTTP writes still require `--http-allow-writes`. |
+| `--allow-import-writes` | `false` | Expose bounded historical import creation with per-call confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` and `get_kata_issue_context` need no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
@@ -4929,6 +5054,7 @@ with the configured owner bearer key. Native MCP never permits keyless access.
 | `--mcp-allow-kata-writes` | `false` | Enable Kata issue creation and evidence linking. |
 | `--mcp-allow-loop-writes` | `false` | Enable approved open-loop done, snooze, and reopen decisions. |
 | `--mcp-confirm-sensitive-drafts` | `false` | Require client confirmation before creating or editing drafts with detected sensitive content. Writes still require `--mcp-allow-writes`. |
+| `--mcp-allow-import-writes` | `false` | Enable confirmed bounded historical import creation. |
 | `--mcp-allow-source-writes` | `false` | Enable confirmed source synchronization and policy writes. |
 
 Every family flag also requires `--mcp-allow-writes`. These are process flags;
@@ -5119,6 +5245,44 @@ keep the archived body text unchanged.
 Each message in `show-thread --json` includes `hidden_text_present`, using the
 same check as `show-message`. Text output prints the same stderr warning once
 when any message on the shown page is flagged.
+
+## family show
+
+Show the other archived copies of an email, and the replies and forwards that
+name it, across accounts and conversations.
+
+```bash
+msgvault family show <message-id> [--json]
+```
+
+Each row is a message ID, the account, whether that account sent or received the
+copy (or holds it as a draft), the date, and the header evidence that connects
+it to the email you gave: the same message, a reply, a reply it answers, a
+forward, a forwarded original, shared references, a relation through another
+copy, or only the same provider thread. Rows are in ascending message ID order;
+the row marked "this message" is the email you gave. Relations come from
+Message-ID, In-Reply-To, References and attached-original headers, plus the
+rest of the provider threads of a Gmail or Google Groups email and its exact
+copies, so a copy in another account that has none
+of them stays unlinked. Other sources derive conversations from headers, so
+their conversations are not evidence.
+
+A copy marked "not indexed yet" may have relations this output cannot show;
+sync or run [`repair-derived`](#repair-derived) to index it. A copy marked
+"headers not fully read" had an oversized payload, unreadable headers or too
+many identifiers, and may also have hidden relations; indexing again won't
+change that. A copy marked "original message not stored" or "stored format not
+readable" has no raw message to read; storing the message again clears it. A
+copy marked "no stored Message-ID" was indexed, but replies that name it cannot
+find it. While any email in the archive is still waiting to be indexed, a note
+on stderr says related emails may be missing, because that email could be one
+the lookup cannot see yet. The lookup stops at 500 emails or 5,000 identifiers
+and says which on stderr.
+
+JSON includes `anchor_message_id`, `members`, `truncated`, `truncated_reason`
+and `pending_linkage`; each member carries `linkage_outcome` and `evidence`.
+The command uses the selected daemon and needs API schema 3.49.0. Only the
+owner can read it; delegated grants cannot.
 
 ---
 
@@ -5525,7 +5689,7 @@ MIME like any other source. Every source also derives account attribution for
 email and calendar rows still pending it, so `received:` and `account:` find
 them. Every source also indexes the Message-ID, In-Reply-To, References and
 attached-original identifiers of emails still pending it, which
-related-copy lookups read. Missing or unreadable payloads are recorded
+[`family show`](#family-show) reads. Missing or unreadable payloads are recorded
 as incomplete and do not block later messages. Source syncs and imports run the
 same work first, so use this command for on-demand repair, file imports you will
 not run again, or retrying an interrupted pass.
