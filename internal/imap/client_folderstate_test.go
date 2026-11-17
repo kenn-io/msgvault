@@ -922,7 +922,6 @@ func TestFullScanLabelMapRecordsEveryMailboxMembership(t *testing.T) {
 		flags[delta.Mailbox] = delta.Trash
 	}
 	assert.Equal(t, map[string]bool{"INBOX": false, "A-Trash": true, "Z-Trash": true}, flags)
-
 }
 
 func TestGmailAllMailFullScanPublishesDeltaForLabelOnlyMailbox(t *testing.T) {
