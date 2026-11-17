@@ -158,7 +158,8 @@
     {#if controller.syncStatus}<p class="notice notice--success" role="status">{controller.syncStatus}</p>{/if}
     {#if (controller.bindingConflicts ?? 0) > 0}
       <p class="notice notice--warning" role="status">
-        <span>{controller.bindingConflicts?.toLocaleString()} <span class="nowrap">archive-wide</span> CardDAV binding {controller.bindingConflicts === 1 ? 'conflict' : 'conflicts'}. Run <code>msgvault carddav bind-participants --dry-run</code> for details.</span>
+        <span><span>{controller.bindingConflicts?.toLocaleString()} archive‑wide CardDAV binding {controller.bindingConflicts === 1 ? 'conflict' : 'conflicts'}.</span>
+          <span class="conflict-command">Run <code>msgvault carddav bind-participants --dry-run</code> for details.</span></span>
       </p>
     {/if}
     {#if controller.syncUnknown}
@@ -300,7 +301,7 @@
               <td>{historyRun.trigger === 'scheduled' ? 'Scheduled' : 'Manual'}</td>
               <td
                 >{counters(historyRun)}{#if historyRun.binding_conflicts !== undefined && historyRun.binding_conflicts > 0}<span class="conflict-copy"
-                    >{historyRun.binding_conflicts.toLocaleString()} binding conflict{historyRun.binding_conflicts === 1 ? '' : 's'} <span class="nowrap">archive-wide</span> as of this run</span
+                    >{historyRun.binding_conflicts.toLocaleString()} binding conflict{historyRun.binding_conflicts === 1 ? '' : 's'} archive‑wide as of this run</span
                   >{/if}{#if historyRun.error_message}<span class="error-copy"
                     >{historyRun.error_message}</span
                   >{/if}</td
@@ -391,11 +392,11 @@
     color: var(--status-warning-ink);
   }
   .notice--warning code {
-    font-size: var(--font-size-sm);
+    font-size: 0.85em;
     overflow-wrap: anywhere;
   }
-  .nowrap {
-    white-space: nowrap;
+  .conflict-command {
+    display: block;
   }
   .error-copy {
     display: block;

@@ -5155,7 +5155,9 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 			return err
 		}
 		if personID != 0 {
-			if err := s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}, peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+			if err := s.publishPersonIdentityScopeChangesTx(
+				ctx, tx, []int64{personID},
+				peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
 				return err
 			}
 			if personRevisionBumped {

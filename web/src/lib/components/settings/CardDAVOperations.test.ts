@@ -8,7 +8,7 @@ import CardDAVOperations from './CardDAVOperations.svelte';
 const conflictWarning = /for details/;
 
 function warningText(): string | undefined {
-  return screen.queryByText(conflictWarning)?.textContent?.replace(/\s+/g, ' ').trim();
+  return screen.queryByText(conflictWarning)?.closest('p')?.textContent?.replace(/\s+/g, ' ').trim();
 }
 
 describe('CardDAVOperations', () => {
@@ -224,8 +224,8 @@ describe('CardDAVOperations', () => {
     render(CardDAVOperations, { controller });
 
     const rows = screen.getAllByRole('row');
-    expect(rows[1].textContent).toContain('2 binding conflicts archive-wide as of this run');
-    expect(rows[2].textContent).toContain('1 binding conflict archive-wide as of this run');
+    expect(rows[1].textContent).toContain('2 binding conflicts archive‑wide as of this run');
+    expect(rows[2].textContent).toContain('1 binding conflict archive‑wide as of this run');
     expect(screen.getAllByText('msgvault carddav bind-participants --dry-run')).toHaveLength(1);
     controller.destroy();
   });
@@ -246,7 +246,7 @@ describe('CardDAVOperations', () => {
   });
 
   it.each([
-    { name: 'one', count: 1, warning: '1 archive-wide CardDAV binding conflict. Run msgvault carddav bind-participants --dry-run for details.' },
+    { name: 'one', count: 1, warning: '1 archive‑wide CardDAV binding conflict. Run msgvault carddav bind-participants --dry-run for details.' },
     { name: 'zero', count: 0, warning: undefined },
     { name: 'absent', count: undefined, warning: undefined },
   ])('shows the binding conflict warning only for a positive count: $name', ({ count, warning }) => {
@@ -255,6 +255,7 @@ describe('CardDAVOperations', () => {
     render(CardDAVOperations, { controller });
 
     expect(warningText()).toBe(warning);
+    if (count === 1) expect(screen.getByText('1 archive‑wide CardDAV binding conflict.')).toBeTruthy();
     controller.destroy();
   });
 });
