@@ -954,7 +954,8 @@ func scanPersonFactStatusEvent(row scanner) (personfacts.EvidenceStatusEvent, er
 }
 
 const personFactDecisionColumns = `d.id, d.person_id, d.resolution_id, d.decision_key,
-	COALESCE(c.claim_key, ''), d.action, d.reason, d.outcome, r.target_kind, r.target_key, r.target_revision, r.resolver_version, CAST(d.score_json AS TEXT),
+	COALESCE(c.claim_key, ''), COALESCE(CAST(c.submitted_value_json AS TEXT), ''),
+	d.action, d.reason, d.outcome, r.target_kind, r.target_key, r.target_revision, r.resolver_version, CAST(d.score_json AS TEXT),
 	COALESCE(competing.claim_key, ''), d.projection_kind, d.projection_row_id, d.created_at`
 
 func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
@@ -966,7 +967,8 @@ func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 	var createdAt personFactTimestamp
 	err := row.Scan(
 		&decision.ID, &decision.PersonID, &decision.ResolutionID, &decision.DecisionKey,
-		&decision.ClaimKey, &decision.Action, &decision.Reason, &outcome, &decision.Target.Kind, &decision.Target.Key, &decision.Target.Revision, &decision.ResolverVersion, &scoreJSON,
+		&decision.ClaimKey, &decision.ClaimValue, &decision.Action, &decision.Reason, &outcome,
+		&decision.Target.Kind, &decision.Target.Key, &decision.Target.Revision, &decision.ResolverVersion, &scoreJSON,
 		&decision.CompetingClaimKey, &projectionKind, &projectionRowID, &createdAt,
 	)
 	if err != nil {

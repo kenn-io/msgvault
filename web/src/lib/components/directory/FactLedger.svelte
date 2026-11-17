@@ -1,16 +1,16 @@
 <script lang="ts">
-  import { Button, Card, EmptyState, SegmentedControl, Spinner } from '@kenn-io/kit-ui';
+  import { Button, Card, Disclosure, EmptyState, SegmentedControl, Spinner } from '@kenn-io/kit-ui';
   import { formatDateTime, formatShortDate, formatShortDateTime } from '../../util/format';
   import { onDestroy, tick } from 'svelte';
 
   import type { FactLedgerController, FactLedgerSection } from '../../directory/fact-ledger-controller.svelte';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
+  import { sentenceCase } from '../../explore/labels';
   import FieldPicker from '../common/FieldPicker.svelte';
   import EmptyLine from '../common/EmptyLine.svelte';
   import InlineNotice from '../common/InlineNotice.svelte';
   import Pager from '../common/Pager.svelte';
-  import { Disclosure } from '@kenn-io/kit-ui';
   import DetailRow from '../people/DetailRow.svelte';
   import AttributeSection from './AttributeSection.svelte';
   import { displayAttributeValue, displayClaimValue, employmentClaimDetailItems, joinDefinitions } from './attribute-value';
@@ -30,10 +30,9 @@
   function decisionLabel(row: FactDecisionRow): string { return controller.fieldName(row, definitions); }
   function decisionText(row: FactDecisionRow): string {
     const sensitivity = controller.claimSensitivity(row);
-    const claim = controller.claims.rows.find(candidate => candidate.claimKey === row.claimKey);
-    if (!claim) return decisionSentence(row.outcome, row.reason);
-    const value = sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(row.claimKey))
-      ? [claimText(claim, definitions.find(field => field.universal_id === row.targetKey)), row.targetKind === 'employment' ? employmentClaimDetailItems(claim.parsedValue).join(' · ') : ''].filter(Boolean).join(' · ')
+    const shown = sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(row.claimKey));
+    const value = shown
+      ? [claimText(row, definitions.find(field => field.universal_id === row.targetKey)), row.targetKind === 'employment' ? employmentClaimDetailItems(row.parsedValue).join(' · ') : ''].filter(Boolean).join(' · ')
       : 'Hidden';
     return decisionSentence(row.outcome, row.reason, value);
   }
@@ -115,7 +114,7 @@
         <div class="cards" aria-busy={controller.evidence.loading}>
           {#each controller.evidence.rows as row (row.rowToken)}
             <Card level="default" padding="sm" ariaLabel="Fact evidence">
-              <dl><div><dt>Source class</dt><dd>{row.sourceClass}</dd></div><div><dt>Directness</dt><dd>{row.directness}</dd></div><div><dt>Authority</dt><dd>{row.authority}</dd></div><div><dt>Identity score</dt><dd>{row.identityScore}</dd></div><div><dt>Event time</dt><dd>{row.eventTime}</dd></div><div><dt>Recorded time</dt><dd>{row.recordedTime}</dd></div><div><dt>Support</dt><dd>{row.supported ? 'Supported' : 'Unsupported'}</dd></div><div><dt>Current support status</dt><dd>{row.currentSupportLabel}</dd></div><div><dt>Created</dt><dd>{row.createdAt}</dd></div></dl>
+              <dl><div><dt>Source</dt><dd>{evidenceSourceWords(row.sourceClass, row.directness)}</dd></div><div><dt>Authority</dt><dd>{sentenceCase(row.authority)}</dd></div><div><dt>Identity score</dt><dd>{row.identityScore}</dd></div><div><dt>Event time</dt><dd>{formatShortDateTime(row.eventTime)}</dd></div><div><dt>Recorded time</dt><dd>{formatShortDateTime(row.recordedTime)}</dd></div><div><dt>Support</dt><dd>{row.supported ? 'Supported' : 'Unsupported'}</dd></div><div><dt>Current support status</dt><dd>{row.currentSupportLabel}</dd></div><div><dt>Created</dt><dd>{formatShortDateTime(row.createdAt)}</dd></div></dl>
               {#if row.excerpt !== null}
                 {#if controller.revealedEvidence.has(row.rowToken)}<p class="revealed"><strong>Evidence excerpt</strong><span>{row.excerpt}</span></p>
                 {:else}<Button label="Reveal evidence excerpt" size="sm" onclick={() => controller.revealEvidence(row.rowToken)} />{/if}
@@ -178,7 +177,6 @@
         <div class="rows" aria-busy={controller.decisions.loading}>
           {#each controller.decisions.rows as row (row.rowToken)}
             {@const sensitivity = controller.claimSensitivity(row)}
-            {@const claimLoaded = controller.claims.rows.some(claim => claim.claimKey === row.claimKey)}
             {@const shown = sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(row.claimKey))}
             {@const hasScore = Object.values(row.score).some(value => value !== 0)}
             {#snippet scoreDetails()}
@@ -186,7 +184,7 @@
             {/snippet}
             <div aria-label="Historical fact decision" data-fact-focus={`decision:${row.claimKey}`}><DetailRow description={projectionWords(row.projectionKind) !== decisionLabel(row) ? projectionWords(row.projectionKind) ?? undefined : undefined} details={hasScore ? scoreDetails : undefined}>
               <div class="value"><strong class="field-label">{decisionLabel(row)}</strong><span>{decisionText(row)}</span></div>
-              {#snippet actions()}{#if sensitivity === 'sensitive' && claimLoaded}{#if shown}<Button label="Hide" ariaLabel="Hide sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealedClaims.delete(row.claimKey)} />{:else}<Button label="Reveal" ariaLabel="Reveal sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealClaim(row.claimKey)} />{/if}{/if}{/snippet}
+              {#snippet actions()}{#if sensitivity === 'sensitive'}{#if shown}<Button label="Hide" ariaLabel="Hide sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealedClaims.delete(row.claimKey)} />{:else}<Button label="Reveal" ariaLabel="Reveal sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealClaim(row.claimKey)} />{/if}{/if}{/snippet}
               {#snippet meta()}<span class="meta"><time datetime={row.createdAt} title={formatDateTime(row.createdAt)}>{formatShortDate(row.createdAt)}</time>{#if hasScore}{' · Claim score: '}{row.score.total}{#if row.scoreMaxima}{' of '}{row.scoreMaxima.total}{/if}{/if}</span>{/snippet}
             </DetailRow></div>
           {:else}{#if !controller.decisions.error}<EmptyLine message={emptyTitle('decisions')} />{/if}{/each}

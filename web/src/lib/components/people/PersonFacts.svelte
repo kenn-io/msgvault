@@ -8,6 +8,7 @@
   import { formatShortDate } from '../../util/format';
   import FactLedger from '../directory/FactLedger.svelte';
   import type { FactSummary } from '../../api/generated/models';
+  import DetailSection from './DetailSection.svelte';
 
   let { client, personID, refreshKey, profile, entity, onSetUp, onManageFields }: {
     client: APIClient; personID: number; refreshKey?: unknown;
@@ -44,38 +45,17 @@
   onDestroy(() => controller.destroy());
 </script>
 
-<section aria-labelledby={`facts-${personID}`}>
-  <header>
-    <h3 id={`facts-${personID}`}>Facts</h3>
-    {#if !open && summary}<span class="summary">{summary}</span>{/if}
-    <span class="spacer"></span>
+{#snippet controls()}
+  <span class="section-controls">
     {#if onSetUp}<Button size="sm" label="Set up" ariaLabel="Set up Facts" onclick={onSetUp} />{/if}
     <Button size="sm" label={open ? 'Hide' : 'Show'} ariaExpanded={open} onclick={() => (open = !open)} />
-  </header>
-  {#if open}<FactLedger {controller} {profile} {entity} {onManageFields} />{/if}
-</section>
+  </span>
+{/snippet}
+
+<DetailSection title="Facts" summary={!open ? summary : undefined} expanded={open} control={controls}>
+  <FactLedger {controller} {profile} {entity} {onManageFields} />
+</DetailSection>
 
 <style>
-  section {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-
-  header {
-    display: flex;
-    min-height: var(--control-h);
-    align-items: center;
-    gap: var(--control-gap);
-  }
-
-  .spacer { flex: 1; }
-  .summary { color: var(--text-muted); font-size: var(--font-size-sm); }
-
-  h3 {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: var(--font-size-md);
-    font-weight: var(--font-weight-semibold, 600);
-  }
+  .section-controls { display: flex; align-items: center; gap: var(--control-gap); }
 </style>

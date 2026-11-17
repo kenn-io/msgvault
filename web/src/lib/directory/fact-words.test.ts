@@ -36,8 +36,9 @@ describe('fact words', () => {
     expect(decisionSentence('not-used', 'applied-projection', 'New York')).toBe('Not used: New York · another claim was saved');
     expect(decisionSentence('not-used', 'insufficient-margin', 'New York')).toBe('Not used: New York');
     expect(decisionSentence('not-used', 'identity-mismatch', 'New York')).toBe('Not used: New York · may be about someone else');
-    expect(decisionSentence('current-value-kept', 'insufficient-margin')).toBe("Kept the current value; the claim wasn't far enough ahead");
-    expect(decisionSentence('not-used', 'sensitive-policy')).toBe('Not used: this field is sensitive');
+    expect(decisionSentence('saved', '', '')).toBe('Result unavailable');
+    expect(decisionSentence('current-value-kept', 'insufficient-margin')).toBe('Result unavailable');
+    expect(decisionSentence('not-used', 'sensitive-policy')).toBe('Result unavailable');
     expect(decisionSentence(null, '', 'New York')).toBe('Result unavailable');
   });
 

@@ -11950,8 +11950,11 @@ func (p PersonFactClaimsResponse) Validate() error {
 }
 
 type PersonFactDecision struct {
-	Action            string                     `json:"action" validate:"required"`
-	ClaimKey          string                     `json:"claim_key" validate:"required"`
+	Action   string `json:"action" validate:"required"`
+	ClaimKey string `json:"claim_key" validate:"required"`
+
+	// ClaimValue Submitted JSON value of the claim this decision describes
+	ClaimValue        string                     `json:"claim_value" validate:"required"`
 	CompetingClaimKey *string                    `json:"competing_claim_key,omitzero"`
 	CreatedAt         time.Time                  `json:"created_at" validate:"required"`
 	DecisionKey       string                     `json:"decision_key" validate:"required"`
@@ -11973,6 +11976,9 @@ func (p PersonFactDecision) Validate() error {
 	}
 	if err := typesValidator.Var(p.ClaimKey, "required"); err != nil {
 		errors = errors.Append("ClaimKey", err)
+	}
+	if err := typesValidator.Var(p.ClaimValue, "required"); err != nil {
+		errors = errors.Append("ClaimValue", err)
 	}
 	if err := typesValidator.Var(p.CreatedAt, "required"); err != nil {
 		errors = errors.Append("CreatedAt", err)

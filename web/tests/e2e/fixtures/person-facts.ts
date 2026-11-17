@@ -20,7 +20,7 @@ export async function installPersonFacts(page: Page): Promise<void> {
   };
   const decisions = [
     {
-      id: 81, decision_key: 'location-decision', claim_key: 'location-claim',
+      id: 81, decision_key: 'location-decision', claim_key: 'location-claim', claim_value: '"New York"',
       outcome: 'current-value-kept', target, resolver_version: 'person-fact-resolver-v1',
       action: 'retained', reason: 'insufficient-margin',
       score_maxima: { authority: 300, confidence: 100, corroboration: 150, directness: 400, freshness: 100, source_class: 500, total: 1550 },
@@ -28,7 +28,7 @@ export async function installPersonFacts(page: Page): Promise<void> {
       created_at: '2026-01-03T12:00:00Z',
     },
     {
-      id: 82, decision_key: 'old-location-decision', claim_key: 'old-location-claim',
+      id: 82, decision_key: 'old-location-decision', claim_key: 'old-location-claim', claim_value: '"Portland"',
       outcome: null, target, resolver_version: 'person-fact-resolver-v1', action: 'retained',
       reason: 'legacy', score: { authority: 0, confidence: 0, corroboration: 0, directness: 0, freshness: 0, source_class: 0, total: 0 },
       created_at: '2025-01-03T12:00:00Z',

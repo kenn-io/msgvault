@@ -51,4 +51,5 @@ it('keeps Claims available beside Set up with no stored facts', async () => {
   expect(screen.getByRole('button', { name: 'Set up Facts' })).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Show' }));
   expect(await screen.findByRole('radio', { name: 'Claims' })).toBeDefined();
+  expect(screen.getByRole('region', { name: 'Facts' }).querySelector('.section-body')).not.toBeNull();
 });

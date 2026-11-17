@@ -76,6 +76,8 @@ export interface FactClaimRow {
 }
 export interface FactDecisionRow {
   rowToken: string;
+  displayValue: string;
+  parsedValue: unknown;
   targetKind: string;
   action: string;
   reason: string;
@@ -673,8 +675,11 @@ function projectClaim(row: RawClaim, index: number): FactClaimRow {
   };
 }
 function projectDecision(row: RawDecision, index: number): FactDecisionRow {
+  const { parsedValue, displayValue } = claimValue(row.claim_value, row.target.kind);
   return {
     rowToken: `decision-${index}`,
+    displayValue,
+    parsedValue,
     targetKind: row.target.kind,
     action: row.action,
     reason: row.reason,

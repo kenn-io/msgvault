@@ -35,7 +35,7 @@ function payload(path: string, marker = 'safe') {
     value_fingerprint: 'private-value-fingerprint'
   }] };
   if (path.endsWith('/fact-decisions')) return { decisions: [{
-    id: 6, decision_key: 'private-decision-key', claim_key: 'private-claim-key', competing_claim_key: 'private-competing-key',
+    id: 6, decision_key: 'private-decision-key', claim_key: 'private-claim-key', claim_value: JSON.stringify(`allowed value ${marker}`), competing_claim_key: 'private-competing-key',
     resolution_id: 7, target: { kind: 'attribute', key: 'work:email', revision }, outcome: 'saved', resolver_version: 'person-fact-resolver-v1', action: 'applied', reason: 'applied-projection', projection: { kind: 'person_attribute', row_id: 8 },
     score: { authority: 100, confidence: 8, corroboration: 0, directness: 400, freshness: 100, source_class: 300, total: 908 },
     created_at: '2026-08-03T00:00:00Z'
@@ -52,6 +52,21 @@ describe('FactLedgerController', () => {
     expect(claimValue('9007199254740993', 'attribute').displayValue).toBe('9007199254740993');
     const job = { title: 'Engineer', organization: { name: 'Acme' } };
     expect(claimValue(job, 'employment')).toEqual({ parsedValue: job, displayValue: 'Engineer at Acme' });
+  });
+
+  it('projects a decision value when the claims page does not contain its claim', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const path = new URL(requestOf(input).url).pathname;
+      return Response.json(path.endsWith('/fact-claims') ? { claims: [] } : payload(path));
+    });
+    const controller = new FactLedgerController(createAPIClient(fetchFn));
+    controller.applyContext(true, 42);
+
+    await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
+
+    expect(controller.claims.rows).toEqual([]);
+    expect(controller.decisions.rows[0]?.displayValue).toBe('allowed value safe');
+    controller.destroy();
   });
 
   it('stays network silent without a durable person and issues only five exact initial reads for one', async () => {

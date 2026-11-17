@@ -48,7 +48,7 @@ function controller(): FactLedgerController {
     excerpt: 'allowed evidence excerpt', evidenceKey: 'forbidden-evidence-key' }];
   value.claims.rows = [{ rowToken: 'claim-0', targetKind: 'attribute', targetKey: 'note', displayValue: 'allowed sensitive value', claimKey: 'claim', evidenceIDs: [], submittedValue: 'allowed sensitive value', normalizedValue: 'allowed normalized value', relation: 'support', origin: 'extraction',
     validFrom: '2026-01-01', validUntil: null, reportedScore: 88, createdAt: '2026-08-03', targetCanonical: value.targets[0]!.canonical }];
-  value.decisions.rows = [{ rowToken: 'decision-0', claimKey: 'claim', targetKind: 'attribute', outcome: 'saved', targetKey: 'note', targetCanonical: value.targets[0]!.canonical, scoreMaxima: { authority: 300, confidence: 100, corroboration: 150, directness: 400, freshness: 100, sourceClass: 500, total: 1550 }, action: 'applied', reason: 'applied-projection', score: { authority: 100, confidence: 8, corroboration: 0,
+  value.decisions.rows = [{ rowToken: 'decision-0', claimKey: 'claim', displayValue: 'allowed sensitive value', parsedValue: 'allowed sensitive value', targetKind: 'attribute', outcome: 'saved', targetKey: 'note', targetCanonical: value.targets[0]!.canonical, scoreMaxima: { authority: 300, confidence: 100, corroboration: 150, directness: 400, freshness: 100, sourceClass: 500, total: 1550 }, action: 'applied', reason: 'applied-projection', score: { authority: 100, confidence: 8, corroboration: 0,
     directness: 400, freshness: 100, sourceClass: 300, total: 908 }, projectionKind: 'person_attribute', createdAt: '2026-08-03' }];
   value.pins.rows = [{ rowToken: 'pin-0', kind: 'attribute', description: 'Private note', pinned: true, targetCanonical: value.targets[0]!.canonical }];
   return value;
@@ -70,6 +70,35 @@ describe('FactLedger', () => {
     await fireEvent.click(within(rows[0]!).getByRole('button', { name: 'Hide sensitive fact value' }));
     expect(rows[0]!.textContent).not.toContain('allowed sensitive value');
   });
+
+  it('uses the value carried by a decision outside the claims page', () => {
+    const value = controller();
+    value.selectedSection = 'decisions';
+    value.claims.rows = [];
+    value.targets[0] = { ...value.targets[0]!, sensitive: false };
+    Object.assign(value.decisions.rows[0]!, { displayValue: 'New York', parsedValue: 'New York' });
+
+    render(FactLedger, { controller: value });
+
+    expect(screen.getByLabelText('Historical fact decision').textContent).toContain('Saved: New York');
+  });
+
+  it('keeps a decision value hidden until its claim key is revealed', async () => {
+    const value = controller();
+    value.selectedSection = 'decisions';
+    value.claims.rows = [];
+    Object.assign(value.decisions.rows[0]!, { displayValue: 'allowed sensitive decision value', parsedValue: 'allowed sensitive decision value' });
+    render(FactLedger, { controller: value });
+
+    const row = screen.getByLabelText('Historical fact decision');
+    expect(row.textContent).toContain('Saved: Hidden');
+    expect(row.textContent).not.toContain('allowed sensitive decision value');
+    await fireEvent.click(within(row).getByRole('button', { name: 'Reveal sensitive fact value' }));
+    expect(row.textContent).toContain('Saved: allowed sensitive decision value');
+    await fireEvent.click(within(row).getByRole('button', { name: 'Hide sensitive fact value' }));
+    expect(row.textContent).toContain('Saved: Hidden');
+  });
+
   it('shows submitted job details', () => {
     const value = controller();
     value.targets[0] = { ...value.targets[0]!, kind: 'employment', targetKey: 'system:employment', canonical: `employment:system:employment:${revision}`, sensitive: false };
@@ -103,19 +132,21 @@ describe('FactLedger', () => {
     value.targets[0] = { ...value.targets[0]!, name: 'Work', description: 'Work', kind: 'employment', targetKey: 'system:employment', canonical: `employment:system:employment:${revision}`, sensitive: false };
     value.selectedSection = 'decisions';
     Object.assign(value.claims.rows[0]!, { targetKind: 'employment', targetKey: 'system:employment', targetCanonical: value.targets[0]!.canonical, displayValue: 'Engineer at Acme', parsedValue: { title: 'Engineer', organization: { name: 'Acme' }, location: 'Boston' } });
-    Object.assign(value.decisions.rows[0]!, { targetKind: 'employment', targetKey: 'system:employment', targetCanonical: value.targets[0]!.canonical });
+    Object.assign(value.decisions.rows[0]!, { targetKind: 'employment', targetKey: 'system:employment', targetCanonical: value.targets[0]!.canonical,
+      displayValue: 'Engineer at Acme', parsedValue: { title: 'Engineer', organization: { name: 'Acme' }, location: 'Boston' } });
     render(FactLedger, { controller: value });
     expect(screen.getByLabelText('Historical fact decision').textContent).toContain('Saved: Engineer at Acme · Boston');
   });
 
-  it('does not offer to reveal a sensitive decision when its claim is not loaded', () => {
+  it('hides a decision value when target sensitivity is unknown', () => {
     const value = controller();
     value.selectedSection = 'decisions';
     value.claims.rows = [];
+    value.targets = [];
     render(FactLedger, { controller: value });
     const row = screen.getByLabelText('Historical fact decision');
-    expect(row.textContent).toContain('Saved a value');
-    expect(row.textContent).not.toContain('undefined');
+    expect(row.textContent).toContain('Saved: Hidden');
+    expect(row.textContent).not.toContain('allowed sensitive value');
     expect(within(row).queryByRole('button', { name: 'Reveal sensitive fact value' })).toBeNull();
   });
 
@@ -145,6 +176,19 @@ describe('FactLedger', () => {
     expect(rendered.container.innerHTML).not.toContain('attribute:note:sha256');
     await fireEvent.click(screen.getByRole('button', { name: 'Reveal evidence excerpt' }));
     expect(screen.getByText(/allowed evidence excerpt/)).toBeDefined();
+  });
+
+  it('uses readable source and date labels on linked evidence cards', () => {
+    const value = controller();
+    value.selectedSection = 'evidence';
+    render(FactLedger, { controller: value });
+
+    const card = screen.getByLabelText('Fact evidence');
+    expect(card.textContent).toContain('From a message they sent');
+    expect(card.textContent).toContain(formatShortDateTime('2026-08-01T00:00:00Z'));
+    expect(card.textContent).not.toContain('archive');
+    expect(card.textContent).not.toContain('direct-self');
+    expect(card.textContent).not.toContain('2026-08-01T00:00:00Z');
   });
 
   it('reveals sensitive claims', async () => {

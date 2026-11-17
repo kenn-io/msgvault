@@ -49,17 +49,18 @@ const NOT_USED_REASONS: Record<string, string> = {
   'evidence-unsupported': 'its source was removed', 'outside-validity': 'outside its valid dates',
 };
 export function decisionSentence(outcome: string | null, reason: string, value?: string): string {
+  if (!outcome || !value) return 'Result unavailable';
   switch (outcome) {
-    case 'saved': return value ? `Saved: ${value}` : 'Saved a value';
-    case 'value-retired': return value ? `This value is no longer saved: ${value}` : 'This value is no longer saved';
+    case 'saved': return `Saved: ${value}`;
+    case 'value-retired': return `This value is no longer saved: ${value}`;
     case 'current-value-kept':
-      if (reason === 'insufficient-margin') return `Kept the current value; ${value ?? 'the claim'} wasn't far enough ahead`;
-      return value ? `${value}: Kept the current value` : 'Kept the current value';
-    case 'pinned-value-kept': return value ? `${value}: Kept your pinned value` : 'Kept your pinned value';
-    case 'too-close-to-choose': return value ? `The evidence was too close to choose: ${value}` : 'The evidence was too close to choose';
+      if (reason === 'insufficient-margin') return `Kept the current value; ${value} wasn't far enough ahead`;
+      return `${value}: Kept the current value`;
+    case 'pinned-value-kept': return `${value}: Kept your pinned value`;
+    case 'too-close-to-choose': return `The evidence was too close to choose: ${value}`;
     case 'not-used': {
       const reasonWords = NOT_USED_REASONS[reason];
-      return value ? reasonWords ? `Not used: ${value} · ${reasonWords}` : `Not used: ${value}` : reasonWords ? `Not used: ${reasonWords}` : 'Not used';
+      return reasonWords ? `Not used: ${value} · ${reasonWords}` : `Not used: ${value}`;
     }
     default: return 'Result unavailable';
   }
