@@ -560,12 +560,13 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 		return window, err
 	}
 	sameEligibility := len(scope) == 64 && scope[:56] == window.ScopeFingerprint[:56]
-	if sameEligibility && (window.BackfillMessageID != -1 || previous < through) && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
+	ownershipChanged := scope == "" && since.Valid
+	if (sameEligibility || ownershipChanged) && (window.BackfillMessageID != -1 || previous < through) && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
 		window.SelectionAt = since.Time.Add(cfg.Window)
 	}
 	if !sameEligibility {
 		previous, window.BackfillMessageID = 0, 0
-		window.ResetSkipped = true
+		window.ResetSkipped = !ownershipChanged
 	}
 	window.SnapshotSequence, window.ThroughSequence = through, through
 	inProfile := func(at time.Time) bool {

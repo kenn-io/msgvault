@@ -320,6 +320,64 @@ func commitmentApplyRequest(t *testing.T, f personSweepApplyFixture, window peop
 }
 
 func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
+	for _, journal := range []bool{false, true} {
+		name := "backfill"
+		if journal {
+			name = "journal"
+		}
+		t.Run("ownership change preserves aged skip/"+name, func(t *testing.T) {
+			r, ctx := require.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "identity-aged-skip", false)
+			source, persist := newCommitmentTestConversation(t, f)
+			large := persist("large", strings.Repeat("x", 200)+" I will call.", -time.Hour)
+			_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-time.Hour)), large)
+			r.NoError(err)
+			_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-time.Hour)), large)
+			r.NoError(err)
+			if !journal {
+				_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM person_sweep_changes WHERE person_id = ?`), f.personID)
+				r.NoError(err)
+			}
+			cfg, profile := commitmentTestConfig()
+			cfg.Commitments.MaxBytes = 30
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+			r.NoError(err)
+			r.Contains(window.SkippedMessageIDs, large)
+			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+			r.NoError(err)
+			r.NoError(f.store.AddAccountIdentity(source, "unrelated@example.test", "manual"))
+			later := personFactLedgerNow.Add(31 * 24 * time.Hour)
+			f = nextCommitmentTestAttempt(t, f, "-ownership")
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, later)
+			r.NoError(err)
+			request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
+			request.Generation.ResolvedAt = later
+			_, err = f.store.ApplyPersonSweep(ctx, request)
+			r.NoError(err)
+			_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+			r.NoError(err)
+			r.False(complete)
+			cfg.Commitments.MaxBytes = 1000
+			f = nextCommitmentTestAttempt(t, f, "-retry")
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, later)
+			r.NoError(err)
+			r.Len(window.Sources, 1)
+			r.Equal(large, window.Sources[0].MessageID)
+			parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":201,"end":213,"summary":"Call","due_on":null,"due_phrase":null}]}`, window.Sources[0].ID)), window)
+			r.NoError(err)
+			request = commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
+			request.Generation.ResolvedAt = later
+			_, err = f.store.ApplyPersonSweep(ctx, request)
+			r.NoError(err)
+			items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, later, 5, false)
+			r.NoError(err)
+			r.Len(items, 1)
+			r.Equal(large, items[0].AnchorMessageID)
+			_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+			r.NoError(err)
+			r.True(complete)
+		})
+	}
 	t.Run("removed skipped message preserves ordinary results", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "removed-selected-skip", true)
@@ -1026,7 +1084,7 @@ func TestCommitmentDiscoveryRestartsWhenOwnershipChangesDuringScan(t *testing.T)
 			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 			r.NoError(err)
 			r.Zero(window.BackfillMessageID)
-			r.Equal(personFactLedgerNow, window.SelectionAt)
+			r.Equal(priorSince.Add(cfg.Commitments.Window), window.SelectionAt)
 			cfg.Commitments.MaxItems = 60
 			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 			r.NoError(err)
