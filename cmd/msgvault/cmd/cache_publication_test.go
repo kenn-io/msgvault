@@ -123,10 +123,12 @@ func TestIncrementalPublicationPlanAppendsActivityAndReplacesCompactDatasets(t *
 		identityindex.DatasetPeople,
 		identityindex.DatasetDomains,
 		identityindex.DatasetRelationshipDaily,
+		identityindex.DatasetMeetingOwners,
 	} {
 		assertions.True(plan.Replace[dataset], dataset)
 		assertions.False(plan.Append[dataset], dataset)
 	}
+	assertions.True(derivedCachePublishPlan(false, false, false, false, false).Replace[identityindex.DatasetMeetingOwners])
 }
 
 func TestCleanupStaleCacheStagingUsesBuilderPID(t *testing.T) {

@@ -215,7 +215,7 @@ func CopySubsetWithOptions(
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 
-	result, err := copyData(ctx, tx, rowCount, options)
+	result, err := copyData(ctx, db, tx, rowCount, options)
 	if err != nil {
 		_ = tx.Rollback()
 		_, _ = db.ExecContext(ctx, "DETACH DATABASE src")
@@ -365,7 +365,7 @@ func verifyForeignKeys(ctx context.Context, db *sql.DB) error {
 }
 
 // copyData executes INSERT INTO ... SELECT in dependency order.
-func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult, error) {
+func copyData(ctx context.Context, db *sql.DB, tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult, error) {
 	result := &CopyResult{}
 
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
@@ -1027,6 +1027,13 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 	} else if present {
 		if _, err := copyByName(ctx, tx, "loop_decisions", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
 			return nil, fmt.Errorf("copy loop decisions: %w", err)
+		}
+	}
+	if present, err := sourceTableExists(ctx, tx, "meeting_link_decisions"); err != nil {
+		return nil, err
+	} else if present {
+		if err := copySubsetMeetingDecisions(ctx, db, tx); err != nil {
+			return nil, fmt.Errorf("copy meeting decisions: %w", err)
 		}
 	}
 
@@ -3145,4 +3152,64 @@ func preserveSubsetDraftEvidence(ctx context.Context, tx *sql.Tx) (int64, error)
 		}
 	}
 	return int64(len(sourceIDs)), nil
+}
+
+func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) error {
+	// The attached source and selected destination share this transaction's snapshot.
+	rewrite := strings.NewReplacer(
+		"FROM messages", "FROM src.messages", "JOIN messages", "JOIN src.messages",
+		"FROM calendar_events", "FROM src.calendar_events", "JOIN calendar_events", "JOIN src.calendar_events",
+		"FROM meeting_copy_survivors", "FROM src.meeting_copy_survivors",
+		"FROM source_merge_messages", "FROM src.source_merge_messages",
+		"FROM source_merge_archive_only_messages", "FROM src.source_merge_archive_only_messages",
+	)
+	s := &Store{db: newLoggedDB(db, nil), dialect: &SQLiteDialect{}}
+	reader := reboundSQLReader{SQLReader: tx, rebind: rewrite.Replace}
+	ctx = context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: db, reader: reader})
+	rows, err := tx.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision FROM src.meeting_link_decisions ORDER BY id DESC`)
+	if err != nil {
+		return err
+	}
+	var edges []meetingDecisionEdge
+	for rows.Next() {
+		var edge meetingDecisionEdge
+		if err := rows.Scan(&edge.id, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.decision); err != nil {
+			return errors.Join(err, rows.Close()) //nolint:sqlclosecheck // Close before returning the scan error.
+		}
+		edges = append(edges, edge)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	resolve := func(id int64) (int64, bool, error) {
+		id, ok, err := s.resolveMeetingMessage(ctx, id)
+		if err != nil || !ok {
+			return 0, false, err
+		}
+		var selected bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM selected_messages WHERE id=?)`, id).Scan(&selected); err != nil {
+			return 0, false, err
+		}
+		return id, selected, nil
+	}
+	for _, edge := range edges {
+		left, ok, err := resolve(edge.a.ID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		right, ok, err := resolve(edge.b.ID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO meeting_link_decisions(id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES(?,?,?,?,?,?,?,?)`, edge.id, left, edge.a.Kind, edge.a.Key, right, edge.b.Kind, edge.b.Key, edge.decision); err != nil {
+			return err
+		}
+	}
+	return nil
 }

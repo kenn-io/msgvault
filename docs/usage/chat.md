@@ -199,6 +199,8 @@ Use these read tools for [archived meeting context and follow-ups](meetings.md):
 | Tool | Use |
 |---|---|
 | `get_meeting_context` | Export selected meeting IDs as JSON or Markdown; transcript opt-in and byte budget |
+| `get_meeting_record` | Read linked notes and calendar copies from a meeting or occurrence |
+| `suggest_meeting_links` | Find overlapping meeting notes and calendar events to link |
 | `list_meeting_action_items` | Read source action status, explicit assignees, coverage, and source links |
 | `get_meeting_metrics` | Count scoped meetings and inspect known/unknown duration and monthly activity |
 
@@ -223,6 +225,8 @@ These tools use the same
 need daemon API schema 2.27.0 or newer. They make no AI call and require no
 profile-write permission. Source action status remains archived evidence;
 these tools do not complete tasks or infer new ones.
+
+`link_meeting`, `unlink_meeting`, and `reset_meeting_link` join or separate copies, or clear a saved choice. They need daemon API schema 5.10.0 or newer and follow the normal [write controls](#write-controls).
 
 ## Setup
 

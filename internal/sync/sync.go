@@ -29,7 +29,7 @@ import (
 )
 
 // ErrHistoryExpired indicates that the Gmail history ID is too old and requires History recovery.
-var ErrHistoryExpired = errors.New("history expired - history recovery required")
+var ErrHistoryExpired = errors.New("Gmail history expired; retry sync")
 
 const (
 	labelTypeSystem               = "system"

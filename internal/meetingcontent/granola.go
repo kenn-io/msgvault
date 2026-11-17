@@ -9,6 +9,14 @@ import (
 
 func decodeGranola(fields map[string]jsontext.Value) Content {
 	content := baseRecognizedContent()
+	var owner personWire
+	_ = json.Unmarshal(fields["owner"], &owner)
+	content.LinkEvidence.CalendarOwner = strings.TrimSpace(owner.Email)
+	var calendar map[string]jsontext.Value
+	if json.Unmarshal(fields["calendar_event"], &calendar) == nil {
+		id, _ := optionalString(calendar["calendar_event_id"])
+		content.LinkEvidence.GoogleEventID = strings.TrimSpace(id)
+	}
 	content.Summary = decodeStringAliases(fields, "summary_markdown", "summary_text")
 	content.Notes = Section{State: StateUnsupported}
 	content.ActionCoverage = CoverageUnsupported
@@ -19,18 +27,13 @@ func decodeGranola(fields map[string]jsontext.Value) Content {
 	if transcript.State == StateAvailable {
 		content.Transcript.Segments = segments
 	}
-	content.SourceParticipants = granolaParticipants(fields)
+	content.SourceParticipants = granolaParticipants(fields, owner)
 
-	if calendarRaw, ok := fields["calendar_event"]; ok && !isNull(calendarRaw) {
-		var calendar map[string]jsontext.Value
-		if json.Unmarshal(calendarRaw, &calendar) == nil {
-			start, startOK := rawTime(calendar["scheduled_start_time"], false)
-			end, endOK := rawTime(calendar["scheduled_end_time"], false)
-			if startOK && endOK && end.After(start) {
-				setDuration(&content, end.Sub(start).Seconds(), DurationScheduled)
-				return content
-			}
-		}
+	start, startOK := rawTime(calendar["scheduled_start_time"], false)
+	end, endOK := rawTime(calendar["scheduled_end_time"], false)
+	if startOK && endOK && end.After(start) {
+		setDuration(&content, end.Sub(start).Seconds(), DurationScheduled)
+		return content
 	}
 	var starts, ends []time.Time
 	for _, segment := range segments {
@@ -123,9 +126,7 @@ func granolaSpeaker(name, diarization, source string) string {
 	return "Them"
 }
 
-func granolaParticipants(fields map[string]jsontext.Value) []Participant {
-	var owner personWire
-	_ = json.Unmarshal(fields["owner"], &owner)
+func granolaParticipants(fields map[string]jsontext.Value, owner personWire) []Participant {
 	var calendar struct {
 		Organiser string `json:"organiser"`
 		Invitees  []struct {

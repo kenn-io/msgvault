@@ -120,6 +120,45 @@ func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
+func TestCalendarSeriesIndexRecreated(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("SQLite index check")
+	}
+	ctx := t.Context()
+	_, err := f.Store.DB().ExecContext(ctx, `DROP INDEX IF EXISTS idx_calendar_events_series_id`)
+	require.NoError(err)
+	require.NoError(f.Store.InitSchemaContext(ctx))
+	query := `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_calendar_events_series_id'`
+	var count int
+	require.NoError(f.Store.DB().QueryRowContext(ctx, query).Scan(&count))
+	require.Equal(1, count)
+}
+
+func TestSchemaVersionMeetingDecisionsPreviousUpgrade(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	_, err := f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_copy_survivors`)
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_link_decisions`)
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = '46' WHERE key = 'schema_version'`)
+	require.NoError(err)
+	require.Error(f.Store.ValidateSchemaContext(ctx))
+	require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
+	var count int
+	require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
+	require.Zero(count)
+	require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM meeting_copy_survivors`).Scan(&count))
+	require.Zero(count)
+	version, err := f.Store.SchemaVersionContext(ctx)
+	require.NoError(err)
+	require.Equal(store.SchemaVersion, version)
+	require.NoError(f.Store.ValidateSchemaContext(ctx))
+}
+
 func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -343,6 +382,8 @@ var (
 		43: "81541e5c85e1846374020de19a42c4a481af1554161331bb68890c3d0975057b",
 		44: "053a17f434e83a1e31845b1fe434b0f4a46eaf43c2ef9accd915b34323410c7d",
 		45: "976143b6a16bea27c9ddbf2e2c23e3909e3c0fd48b3a3ec65f877afd88c278dd",
+		46: "b461fc6b400cfef51c90d20946d31003ec68190467c137e3eb6adf29af2a881f",
+		47: "446ac2e639d0c49992e416072be4c2d80544325b30d1e90d6e5cee0db2ea7896",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -385,6 +426,8 @@ var (
 		43: "663fab118e92dbefaf81cd6b9fe01b91643048581f26a756ed3607993c9d1de6",
 		44: "90c8894dd03273a01e067bb094b20f58c97d009d003aa0953d456a1ced6443aa",
 		45: "944577f5687a62a6defc5df8a5e39abd24a3ca1ad42791f9bda550cdbd1dc36d",
+		46: "b66d14fe605ee1d2b7500ed949a5bc40dc60c068a45dafd41099df66312e223b",
+		47: "7f0413f60ff0523e71e0a7c2fbd6e52ff87148c1807e6b7d792bafeecb61bc5a",
 	}
 )
 

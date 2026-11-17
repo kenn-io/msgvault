@@ -293,7 +293,7 @@ func (s *Server) resolveMeetingExploreScope(
 			return meetingScopeResolution{}, false
 		}
 	}
-	if contextExport && result.SelectedCount != result.MeetingCount {
+	if contextExport && result.SelectedCount != int64(len(result.MessageIDs)) {
 		writeError(w, http.StatusBadRequest, "selection_not_all_meetings",
 			"Meeting context selections may contain only meetings")
 		return meetingScopeResolution{}, false
