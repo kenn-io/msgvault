@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Start bounded Gmail or IMAP historical imports through MCP with `--allow-import-writes`, and follow their durable job status.
+
 - Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose.
 
 - Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.

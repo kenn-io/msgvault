@@ -67,6 +67,7 @@ func mcpOperationDescribed(operationID string) bool {
 		"getSettings", "patchSettings", "getParticipant", "getCacheBuildStatus",
 		"getPersonProfile", "patchPerson", "createPerson", "enableLocalEmbeddings",
 		"listDeletions", "getDeletion",
+		"createImportJob", "getImportJob",
 		"listLoops", "markLoopDone", "snoozeLoop", "reopenLoop",
 		"getPersonStructuredProfile", "patchPersonStructuredProfile", "getPersonProfileHistory", "getPersonProfileMediaContent":
 		return true
