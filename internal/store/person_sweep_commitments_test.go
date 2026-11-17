@@ -163,6 +163,13 @@ func TestCommitmentListPages(t *testing.T) {
 		persist("overdue", quote, -24*time.Hour)
 		cfg, _ := commitmentTestConfig()
 		applyCommitmentTestSources(t, f, cfg.Commitments, map[string]string{quote: "2026-08-22"})
+		var walked []PersonCommitment
+		err := f.store.WalkOpenPersonCommitments(ctx, personFactLedgerNow, func(c PersonCommitment) error {
+			walked = append(walked, c)
+			return nil
+		})
+		r.NoError(err)
+		r.Len(walked, 41)
 		items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 40, false)
 		r.NoError(err)
 		r.Len(items, 40)

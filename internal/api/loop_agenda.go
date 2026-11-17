@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +25,7 @@ import (
 type loopAgendaArchive interface {
 	loops.Store
 	GetPersonCommitmentContext(context.Context, int64, time.Time) (store.PersonCommitment, error)
+	WalkOpenPersonCommitments(context.Context, time.Time, func(store.PersonCommitment) error) error
 }
 
 var errAgendaPersonRequired = errors.New("link the contact to a person first")
@@ -40,6 +43,10 @@ func NewLoopAgenda(cfg config.TaskIntegrationConfig, archive *store.Store, origi
 }
 
 func (a *LoopAgenda) File(ctx context.Context, ref string, now time.Time) (kataissues.Result, error) {
+	return a.file(ctx, ref, now, nil)
+}
+
+func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, service *kataissues.Service) (kataissues.Result, error) {
 	var input kataissues.CreateInput
 	var messageID, conversationID int64
 	var selectors []kataevidence.Selector
@@ -102,10 +109,23 @@ func (a *LoopAgenda) File(ctx context.Context, ref string, now time.Time) (katai
 		return kataissues.Result{}, kataevidence.ErrChanged
 	}
 	input.Thread = strconv.FormatInt(conversationID, 10)
-	if origin := apiprotocol.BrowserOrigin(ctx, a.origin); origin != "" {
-		input.Brief = fmt.Sprintf("[Open the original message](%s/messages/%d)", strings.TrimRight(origin, "/"), messageID)
+	origin := apiprotocol.BrowserOrigin(ctx, "")
+	if origin == "" {
+		origin = a.origin
+		if parsed, err := url.Parse(origin); err == nil && (parsed.Hostname() == "localhost" || net.ParseIP(parsed.Hostname()).IsLoopback()) {
+			origin = ""
+		}
 	}
-	result, err := a.backend.Create(ctx, key, input)
+	if origin != "" {
+		input.OriginLink = fmt.Sprintf("[Open the original message](%s/messages/%d)", strings.TrimRight(origin, "/"), messageID)
+	}
+	if service == nil {
+		service, err = a.backend.service(ctx)
+		if err != nil {
+			return kataissues.Result{}, err
+		}
+	}
+	result, err := service.Create(ctx, key, input)
 	if errors.Is(err, kataissues.ErrIdempotencyConflict) && result.Issue.UID != "" {
 		result.Replayed = true
 		return result, nil
@@ -115,35 +135,47 @@ func (a *LoopAgenda) File(ctx context.Context, ref string, now time.Time) (katai
 
 // Run files at most 25 new obligations in one pass.
 func (a *LoopAgenda) Run(ctx context.Context, now time.Time) error {
-	listed, err := loops.List(ctx, a.archive, loops.Options{Limit: loops.MaxLimit}, now)
+	service, err := a.backend.service(ctx)
 	if err != nil {
 		return err
 	}
-	var refs []string
-	for _, l := range listed.Loops {
-		if l.Kind == loops.ReplyOwed {
-			refs = append(refs, strconv.FormatInt(l.Anchor.ID, 10))
-		}
-	}
-	for _, c := range listed.Commitments {
-		refs = append(refs, fmt.Sprintf("c%d", c.ID))
-	}
 	var failures []error
 	created := 0
-	for _, ref := range refs {
-		result, err := a.File(ctx, ref, now)
-		if err != nil {
-			if !errors.Is(err, errAgendaPersonRequired) && !errors.Is(err, kataissues.ErrIssueDeleted) && !errors.Is(err, kataevidence.ErrUnsupported) && !errors.Is(err, kataissues.ErrUnsupportedEvidence) {
-				failures = append(failures, err)
-			}
-			continue
+	stop := errors.New("agenda pass limit reached")
+	file := func(ref, key string) error {
+		found, err := service.Filed(ctx, key)
+		if err == nil && found {
+			return nil
 		}
-		if !result.Replayed {
-			created++
+		if err == nil {
+			var result kataissues.Result
+			result, err = a.file(ctx, ref, now, service)
+			if err == nil && !result.Replayed {
+				created++
+			}
+		}
+		if err != nil && !errors.Is(err, errAgendaPersonRequired) && !errors.Is(err, kataissues.ErrIssueDeleted) && !errors.Is(err, kataevidence.ErrUnsupported) && !errors.Is(err, kataissues.ErrUnsupportedEvidence) {
+			failures = append(failures, err)
 		}
 		if created == 25 {
-			break
+			return stop
 		}
+		return nil
+	}
+	err = loops.WalkOpen(ctx, a.archive, now, func(l loops.Loop) error {
+		if l.Kind != loops.ReplyOwed || l.Counterparty.PersonID == 0 {
+			return nil
+		}
+		return file(strconv.FormatInt(l.Anchor.ID, 10), fmt.Sprintf("loop:%d", l.Anchor.ID))
+	})
+	if err == nil {
+		err = a.archive.WalkOpenPersonCommitments(ctx, now, func(c store.PersonCommitment) error {
+			ref := fmt.Sprintf("c%d", c.ID)
+			return file(ref, "commitment:"+ref)
+		})
+	}
+	if err != nil && !errors.Is(err, stop) {
+		failures = append(failures, err)
 	}
 	return errors.Join(failures...)
 }
@@ -181,12 +213,15 @@ func (s *Server) handleLoopAgenda(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
+	} else if id, err := strconv.ParseInt(ref, 10, 64); err != nil || id < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid message ID")
+		return
 	}
 	result, err := s.loopAgenda.File(r.Context(), ref, s.clockNow().UTC())
 	switch {
 	case errors.Is(err, errAgendaPersonRequired):
 		writeError(w, http.StatusConflict, "person_required", errAgendaPersonRequired.Error())
-	case errors.Is(err, loops.ErrNotOpen):
+	case errors.Is(err, loops.ErrNotOpen) || !commitment && errors.Is(err, sql.ErrNoRows):
 		writeError(w, http.StatusNotFound, "loop_not_open", "Loop not open")
 	case commitment && errors.Is(err, sql.ErrNoRows):
 		writeError(w, http.StatusNotFound, "commitment_not_found", "Commitment not found")

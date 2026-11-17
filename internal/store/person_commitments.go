@@ -126,6 +126,36 @@ func (s *Store) listCommitmentsByFreshness(ctx context.Context, personID int64, 
 	return result, nil
 }
 
+// WalkOpenPersonCommitments visits all visible open commitments using the candidate cursor.
+func (s *Store) WalkOpenPersonCommitments(ctx context.Context, now time.Time, visit func(PersonCommitment) error) error {
+	const pageSize = 32
+	for _, fresh := range []bool{true, false} {
+		var after PersonCommitment
+		for {
+			candidates, err := s.loadCommitmentCandidates(ctx, 0, now, after, pageSize, fresh, false)
+			if err != nil {
+				return err
+			}
+			for _, candidate := range candidates {
+				c, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now)
+				if err != nil {
+					return err
+				}
+				if visible {
+					if err := visit(c); err != nil {
+						return err
+					}
+				}
+			}
+			if len(candidates) < pageSize {
+				break
+			}
+			after = candidates[len(candidates)-1].commitment
+		}
+	}
+	return nil
+}
+
 // commitmentLatestClaimSQL selects column from the latest supported claim and
 // evidence row of the current commitment.
 func commitmentLatestClaimSQL(column string) string {

@@ -238,6 +238,16 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 	return result, nil
 }
 
+// WalkOpen visits all open loops without the list response limit.
+func WalkOpen(ctx context.Context, st Store, now time.Time, visit func(Loop) error) error {
+	marks, err := st.LoopMarksContext(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = find(ctx, st, store.LoopQuery{}, now, marks, visit)
+	return err
+}
+
 // openQuestions applies exact decisions before choosing the visible anchor.
 // List and actions use the same selection, and each question must be past
 // its own grace period.

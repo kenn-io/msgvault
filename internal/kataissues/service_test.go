@@ -914,3 +914,18 @@ func TestCreateThreadParentAndDeadline(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, show(third.Issue.UID).Parent)
 }
+
+func TestCreateReplaysAcrossOriginLinks(t *testing.T) {
+	f := newFixture(t)
+	input := kataissues.CreateInput{Title: "Send the draft", Brief: "Follow up", OriginLink: "https://first.example.test/messages/1", Evidence: []kataevidence.Reference{f.evidence(t, 0).Reference}}
+	created, err := f.service.Create(t.Context(), "origin-key", input)
+	require.NoError(t, err)
+	input.OriginLink = "https://second.example.test/messages/1"
+	replay, err := f.service.Create(t.Context(), "origin-key", input)
+	require.NoError(t, err)
+	assert.True(t, replay.Replayed)
+	assert.Equal(t, created.Issue.UID, replay.Issue.UID)
+	input.Brief = "Changed request"
+	_, err = f.service.Create(t.Context(), "origin-key", input)
+	assert.ErrorIs(t, err, kataissues.ErrIdempotencyConflict)
+}
