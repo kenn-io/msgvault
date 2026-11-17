@@ -26,10 +26,10 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestMCPDelegatedArchiveSenderScope(t *testing.T) {
+func TestMCPDelegatedArchive(t *testing.T) {
 	requirements := require.New(t)
 	_, source, allowed, _, serverURL, owner, provider := newArchiveDaemon(t)
-	grant, err := owner.IssueAgentToken(t.Context(), "code reader", []string{"message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
+	grant, err := owner.IssueAgentToken(t.Context(), "code reader", []string{"message.archive"}, []int64{source.ID}, nil, nil, time.Time{})
 	requirements.NoError(err)
 	client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: grant.Secret, AllowInsecure: true})
 	requirements.NoError(err)

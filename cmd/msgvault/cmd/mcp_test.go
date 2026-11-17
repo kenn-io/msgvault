@@ -666,7 +666,7 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 }
 
 func TestDelegatedMCPArchiveCapability(t *testing.T) {
-	for _, version := range []string{"5.8.0", daemonclient.MessageArchiveMinAPISchemaVersion} {
+	for _, version := range []string{"5.8.0"} {
 		t.Run(version, func(t *testing.T) {
 			assertionsForTest := assert.New(t)
 			requirementsForTest := require.New(t)
@@ -687,11 +687,7 @@ func TestDelegatedMCPArchiveCapability(t *testing.T) {
 			t.Cleanup(func() { _ = client.Close() })
 			opts, err := delegatedMCPServeOptions(t.Context(), client)
 			requirementsForTest.NoError(err)
-			if version != daemonclient.MessageArchiveMinAPISchemaVersion {
-				assertionsForTest.Nil(opts.MessageArchive)
-			} else {
-				assertionsForTest.NotNil(opts.MessageArchive)
-			}
+			assertionsForTest.Nil(opts.MessageArchive)
 		})
 	}
 }

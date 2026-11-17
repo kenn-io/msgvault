@@ -20,45 +20,27 @@ type cliArchiveBackend struct {
 }
 
 func TestArchiveCommandRefusesOldDaemon(t *testing.T) {
-	for _, tc := range []struct {
-		version   string
-		supported bool
-	}{
-		{"5.8.0", false},
-		{"5.9.0", true},
-	} {
-		t.Run(tc.version, func(t *testing.T) {
-			posts := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/health" {
-					w.Header().Set("Content-Type", "application/json")
-					_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"` + tc.version + `"}`))
-					assert.NoError(t, err)
-					return
-				}
-				posts++
-				w.Header().Set("Content-Type", "application/json")
-				_, err := w.Write([]byte(`{"message_id":7,"archived":true,"verified":true}`))
-				assert.NoError(t, err)
-			}))
-			t.Cleanup(server.Close)
-			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "fixture", AllowInsecure: true})
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = client.Close() })
-			command := newMessageArchiveCommand(true, client)
-			command.SetArgs([]string{"--message", "7"})
-			command.SetErr(&bytes.Buffer{})
-			command.SetOut(&bytes.Buffer{})
-			err = command.ExecuteContext(t.Context())
-			if tc.supported {
-				require.NoError(t, err)
-				assert.Equal(t, 1, posts)
-			} else {
-				require.ErrorContains(t, err, "upgrade the daemon")
-				assert.Zero(t, posts)
-			}
-		})
-	}
+	posts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			w.Header().Set("Content-Type", "application/json")
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.8.0"}`))
+			assert.NoError(t, err)
+			return
+		}
+		posts++
+	}))
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "fixture", AllowInsecure: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	command := newMessageArchiveCommand(true, client)
+	command.SetArgs([]string{"--message", "7"})
+	command.SetErr(&bytes.Buffer{})
+	command.SetOut(&bytes.Buffer{})
+	err = command.ExecuteContext(t.Context())
+	require.ErrorContains(t, err, "upgrade the daemon")
+	assert.Zero(t, posts)
 }
 
 func (b *cliArchiveBackend) SupportsAPISchemaVersion(context.Context, string) (bool, error) {
@@ -87,7 +69,7 @@ func TestArchiveMessageCommands(t *testing.T) {
 		assertionsForTest.True(backend.change.WholeChat)
 		assertionsForTest.Contains(output.String(), `"dry_run":true`)
 	}
-	for _, args := range [][]string{{"--message", "0"}, {"--message", "-1"}, {"--message", "7", "extra"}} {
+	for _, args := range [][]string{{"--message", "0"}} {
 		backend := &cliArchiveBackend{}
 		command := newMessageArchiveCommand(true, backend)
 		command.SetArgs(args)

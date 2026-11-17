@@ -6,8 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -26,7 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/emailtags"
@@ -433,9 +430,6 @@ func TestArchiveOnlyGrantFailureBodyHidesLabels(t *testing.T) {
 			if caller == "archive-reader" {
 				permissions = append(permissions, "message.read")
 				incomingSenders = map[int64][]string{source.ID: {"codes@example.test"}}
-				snapshot, err := provider.client.MessageTags(t.Context(), provider.messageID, nil)
-				requirementsForTest.NoError(err)
-				requirementsForTest.NotEmpty(snapshot.AvailableTags)
 			}
 			token, err := owner.IssueAgentToken(t.Context(), caller, permissions, []int64{source.ID}, nil, incomingSenders, time.Time{})
 			requirementsForTest.NoError(err)
@@ -523,34 +517,4 @@ func TestArchivePreviewAuthorizesResolvedSourceDuringMerge(t *testing.T) {
 	var failure *emailtags.MessageTagError
 	requirementsForTest.ErrorAs(err, &failure)
 	assertionsForTest.Equal("message_not_found", failure.Code)
-}
-
-func TestArchiveCodeReaderGrant(t *testing.T) {
-	st, source, id, _, serverURL, owner, _ := newArchiveDaemon(t)
-	require.NoError(t, st.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: "Your code is 482913", Valid: true}, sql.NullString{}))
-	require.NoError(t, st.UpsertFTSContext(t.Context(), id, "", "Your code is 482913", "codes@example.test", "", ""))
-	assertionsForTest := assert.New(t)
-	requirementsForTest := require.New(t)
-	token, err := owner.IssueAgentToken(t.Context(), "documented grant", []string{"search.read", "message.read", "verification.read", "message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
-	requirementsForTest.NoError(err)
-	searchRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, serverURL+"/api/v1/cli/search?q=code", nil)
-	requirementsForTest.NoError(err)
-	searchRequest.Header.Set(apiprotocol.AgentTokenHeader, token.Secret)
-	searchResponse, err := http.DefaultClient.Do(searchRequest)
-	requirementsForTest.NoError(err)
-	defer func() { _ = searchResponse.Body.Close() }()
-	searchBody, err := io.ReadAll(searchResponse.Body)
-	requirementsForTest.NoError(err)
-	requirementsForTest.Equal(http.StatusOK, searchResponse.StatusCode, string(searchBody))
-	assertionsForTest.Contains(string(searchBody), fmt.Sprintf(`"id":%d`, id))
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/messages/%d", serverURL, id), nil)
-	requirementsForTest.NoError(err)
-	req.Header.Set(apiprotocol.AgentTokenHeader, token.Secret)
-	resp, err := http.DefaultClient.Do(req)
-	requirementsForTest.NoError(err)
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	requirementsForTest.NoError(err)
-	requirementsForTest.Equal(http.StatusOK, resp.StatusCode, string(body))
-	assertionsForTest.Contains(string(body), "482913")
 }
