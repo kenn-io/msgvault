@@ -940,18 +940,16 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				checkpoint.ErrorsCount++
 				continue
 			}
-			if markedGmail &&
-				!slices.Contains(labelResult.LabelIDs, "TRASH") {
-				if err := s.store.ClearMessageDeletedFromSourceContext(
-					ctx, sourceID, sourceMessageID,
-				); err != nil {
+			if markedGmail {
+				cleared, err := s.clearRestoredGmailMessage(ctx, sourceID, sourceMessageID, labelResult.LabelIDs)
+				if err != nil {
 					checkpoint.MessagesUpdated += result.updated
 					return nil, fmt.Errorf(
 						"clear Gmail deletion mark for restored message %s: %w",
 						sourceMessageID, err,
 					)
 				}
-				changed = true
+				changed = changed || cleared
 			}
 			if changed {
 				result.updated++
@@ -1157,9 +1155,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			updated, err := s.ingestMessage(
 				ctx, sourceID, raw, threadID, labelMap)
 			_, committed := errors.AsType[*committedMessageError](err)
-			if (err == nil || committed) && !slices.Contains(raw.LabelIDs, "TRASH") {
+			if err == nil || committed {
 				if _, marked := markedGmailMessageIDs[sourceMessageID]; marked {
-					if clearErr := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, sourceMessageID); clearErr != nil {
+					if _, clearErr := s.clearRestoredGmailMessage(ctx, sourceID, sourceMessageID, raw.LabelIDs); clearErr != nil {
 						return nil, fmt.Errorf("clear Gmail deletion mark for restored message %s: %w", sourceMessageID, clearErr)
 					}
 				}

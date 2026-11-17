@@ -714,14 +714,21 @@ func (s *Syncer) reconcileGmailTrashRemovals(
 			}
 			return fmt.Errorf("fetch final Gmail labels for %s: %w", messageID, result.Err)
 		}
-		if slices.Contains(result.LabelIDs, "TRASH") {
-			continue
-		}
-		if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, messageID); err != nil {
+		if _, err := s.clearRestoredGmailMessage(ctx, sourceID, messageID, result.LabelIDs); err != nil {
 			return fmt.Errorf("clear deletion mark for restored message %s: %w", messageID, err)
 		}
 	}
 	return nil
+}
+
+func (s *Syncer) clearRestoredGmailMessage(ctx context.Context, sourceID int64, messageID string, labels []string) (bool, error) {
+	if slices.Contains(labels, "TRASH") {
+		return false, nil
+	}
+	if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, messageID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // logLabelChangeError logs label change errors, downgrading "not found"

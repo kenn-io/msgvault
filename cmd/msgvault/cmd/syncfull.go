@@ -511,9 +511,13 @@ func applyIMAPMailboxDeltas(
 			continue
 		}
 		observationIndexes[key] = len(normalizedObservations)
-		normalized := imapStoreObservation(observation)
-		normalized.Flags = append([]string(nil), observation.Flags...)
-		normalizedObservations = append(normalizedObservations, normalized)
+		normalizedObservations = append(normalizedObservations, store.IMAPMembershipObservation{
+			Mailbox: observation.Mailbox, UIDValidity: observation.UIDValidity, UID: observation.UID,
+			SourceMessageID: observation.SourceMessageID, CanonicalSourceMessageID: observation.CanonicalSourceMessageID,
+			RFC822MessageID: observation.RFC822MessageID, RawSHA256: observation.RawSHA256,
+			RawSize: observation.RawSize, ArchivedMessageID: observation.ArchivedMessageID,
+			Flags: append([]string(nil), observation.Flags...),
+		})
 	}
 	byMailbox := make(map[string][]store.IMAPMembershipObservation)
 	for _, observation := range normalizedObservations {
@@ -552,20 +556,6 @@ func applyIMAPMailboxDeltas(
 	return s.ApplyIMAPMailboxDeltasForSyncContext(ctx, src.ID, syncRunID, storeDeltas)
 }
 
-func imapStoreObservation(observation imaplib.MembershipObservation) store.IMAPMembershipObservation {
-	return store.IMAPMembershipObservation{
-		Mailbox:                  observation.Mailbox,
-		UIDValidity:              observation.UIDValidity,
-		UID:                      observation.UID,
-		SourceMessageID:          observation.SourceMessageID,
-		CanonicalSourceMessageID: observation.CanonicalSourceMessageID,
-		RFC822MessageID:          observation.RFC822MessageID,
-		RawSHA256:                observation.RawSHA256,
-		RawSize:                  observation.RawSize,
-		ArchivedMessageID:        observation.ArchivedMessageID,
-	}
-}
-
 func imapSyncCanCommit(ctx context.Context, summary *gmail.SyncSummary, limit int) bool {
 	return summary != nil &&
 		ctx.Err() == nil &&
@@ -588,10 +578,7 @@ func saveIMAPFolderStates(
 	if !ok || !imapSyncCanCommit(ctx, summary, limit) {
 		return nil
 	}
-	if imapClient.LabelsSnapshotFiltered() {
-		return nil
-	}
-	if !imapClient.LabelsSnapshotComplete() {
+	if imapClient.LabelsSnapshotFiltered() || !imapClient.LabelsSnapshotComplete() {
 		return nil
 	}
 	deltas := imapClient.ObservedMailboxDeltas()

@@ -446,6 +446,24 @@ func (s *Store) applyIMAPMailboxDeltas(
 			}
 		}
 
+		// Mailbox roles can change without a membership delta. Recheck marked
+		// messages whose saved memberships no longer include any Trash mailbox.
+		trashMembership := ""
+		if len(trashArgs) > 0 {
+			trashMembership = ` AND NOT EXISTS (
+				SELECT 1 FROM imap_message_memberships tm
+				WHERE tm.source_id = m.source_id AND tm.message_id = m.id
+				AND tm.mailbox IN (?` + strings.Repeat(",?", len(trashArgs)-1) + `))`
+		}
+		if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
+			SELECT m.id FROM messages m
+			WHERE m.source_id = ? AND m.deleted_from_source_at IS NOT NULL
+			AND EXISTS (SELECT 1 FROM imap_message_memberships mm
+				WHERE mm.source_id = m.source_id AND mm.message_id = m.id)`+trashMembership,
+			append([]any{sourceID}, trashArgs...)...); err != nil {
+			return fmt.Errorf("capture IMAP messages outside Trash: %w", err)
+		}
+
 		for _, messageID := range sortedIMAPMessageIDs(affected) {
 			mailboxes, err := s.imapMembershipMailboxes(ctx, tx, sourceID, messageID)
 			if err != nil {
