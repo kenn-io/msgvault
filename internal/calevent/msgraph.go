@@ -164,7 +164,7 @@ func decodeGraphEvent(raw, metadata []byte, calendarZone string) (Event, bool, e
 	case "exception":
 		// Graph gives each occurrence its own iCalUId. Leaving it empty
 		// lets the occurrence inherit the series UID, as Google events do.
-		e.Kind, e.SeriesProviderID = "exception", g.SeriesMasterID
+		e.Kind, e.SeriesProviderID = kindException, g.SeriesMasterID
 	default:
 		// Plain occurrences are expanded from their series, never stored.
 		return Event{}, false, nil
@@ -196,7 +196,7 @@ func decodeGraphEvent(raw, metadata []byte, calendarZone string) (Event, bool, e
 		}
 	} else {
 		e.EventTimeZone = zone
-		if _, err := time.LoadLocation(zone); err != nil && e.Kind == "exception" {
+		if _, err := time.LoadLocation(zone); err != nil && e.Kind == kindException {
 			// A timed edit is placed by its instants and needs no zone of its
 			// own. An unknown one would make the whole series unexpandable.
 			e.EventTimeZone = ""
@@ -217,7 +217,7 @@ func decodeGraphEvent(raw, metadata []byte, calendarZone string) (Event, bool, e
 		}
 	}
 
-	if e.Kind == "exception" {
+	if e.Kind == kindException {
 		original, err := time.Parse(time.RFC3339, g.OriginalStart)
 		if err != nil {
 			return Event{}, false, fmt.Errorf("calendar original start: %w", err)

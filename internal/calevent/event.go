@@ -29,6 +29,10 @@ type Attendee struct {
 	RSVP        string `json:"rsvp"`
 	IsCopySelf  bool   `json:"is_self"`
 }
+
+// kindException marks an event that overrides one occurrence of a series.
+const kindException = "exception"
+
 type Event struct {
 	ProviderEventID, SeriesProviderID, Kind string
 	ICalUID                                 string

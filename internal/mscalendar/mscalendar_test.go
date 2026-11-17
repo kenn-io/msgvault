@@ -212,12 +212,12 @@ func TestSyncArchivesSeriesWithEditsAndCancellations(t *testing.T) {
 	assertions.Equal(int64(3), run.MessagesProcessed)
 
 	var metadata string
-	requirements.NoError(st.DB().QueryRow(`SELECT metadata FROM messages WHERE source_message_id = 'series-1'`).Scan(&metadata))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages WHERE source_message_id = 'series-1'`).Scan(&metadata))
 	assertions.Equal([]string{"RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=TU;WKST=SU;COUNT=4", "EXDATE:20270112T090000"},
 		decodeMetadata(t, metadata).Recurrence)
 
 	var rooms int
-	requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participants WHERE email_address = 'room1@example.com'`).Scan(&rooms))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participants WHERE email_address = 'room1@example.com'`).Scan(&rooms))
 	assertions.Equal(0, rooms, "a room is not a participant")
 }
 
@@ -400,7 +400,7 @@ func TestSyncKeepsAnUndoneEditOutOfTheSeries(t *testing.T) {
 		assert.Equal(t, []string{"01-19 14:00 Standup deleted=false"}, ts.on(19))
 	}
 	var deleted bool
-	requirements.NoError(ts.st.DB().QueryRow(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE source_message_id = 'exc-1'`).Scan(&deleted))
+	requirements.NoError(ts.st.DB().QueryRowContext(t.Context(), `SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE source_message_id = 'exc-1'`).Scan(&deleted))
 	assert.False(t, deleted, "an undone edit is not a deletion")
 }
 
@@ -414,7 +414,7 @@ func TestSyncMarksTheEditOfACancelledOccurrenceDeleted(t *testing.T) {
 	_, err = ts.run("me@example.com")
 	requirements.NoError(err)
 	var deleted bool
-	requirements.NoError(ts.st.DB().QueryRow(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE source_message_id = 'exc-1'`).Scan(&deleted))
+	requirements.NoError(ts.st.DB().QueryRowContext(t.Context(), `SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE source_message_id = 'exc-1'`).Scan(&deleted))
 	assert.True(t, deleted, "a cancelled edit is deleted, not undone")
 }
 
@@ -441,7 +441,7 @@ func TestSyncPlacesTheEditOfAConvertedAllDaySeries(t *testing.T) {
 	_, err = ts.run("me@example.com")
 	requirements.NoError(err)
 	var deleted bool
-	requirements.NoError(ts.st.DB().QueryRow(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE source_message_id = 'exc-1'`).Scan(&deleted))
+	requirements.NoError(ts.st.DB().QueryRowContext(t.Context(), `SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE source_message_id = 'exc-1'`).Scan(&deleted))
 	assertions.True(deleted, "the edit of a cancelled all-day occurrence is deleted, not undone")
 }
 
@@ -505,7 +505,7 @@ func TestSyncStoresConvertedAllDayDatesInTheMailboxZone(t *testing.T) {
 	assertions := assert.New(t)
 	var meta, body string
 	var sentAt time.Time
-	requirements.NoError(ts.st.DB().QueryRow(`SELECT m.metadata, b.body_text, m.sent_at FROM messages m
+	requirements.NoError(ts.st.DB().QueryRowContext(t.Context(), `SELECT m.metadata, b.body_text, m.sent_at FROM messages m
 		JOIN message_bodies b ON b.message_id = m.id WHERE m.source_message_id = 'day-1'`).Scan(&meta, &body, &sentAt))
 	assertions.Equal("2027-03-01", decodeMetadata(t, meta).Start)
 	assertions.Contains(body, "When: 2027-03-01 (all day)")
@@ -521,10 +521,10 @@ func TestSyncWritesTheEventClockIntoTheBody(t *testing.T) {
 	_, err := ts.run("me@example.com")
 	requirements.NoError(err)
 	var body string
-	requirements.NoError(ts.st.DB().QueryRow(`SELECT b.body_text FROM messages m
+	requirements.NoError(ts.st.DB().QueryRowContext(t.Context(), `SELECT b.body_text FROM messages m
 		JOIN message_bodies b ON b.message_id = m.id WHERE m.source_message_id = 'series-1'`).Scan(&body))
 	assert.Contains(t, body, "When: 2027-01-05 09:00 - 2027-01-05 09:30", "the series runs in Eastern time")
-	requirements.NoError(ts.st.DB().QueryRow(`SELECT b.body_text FROM messages m
+	requirements.NoError(ts.st.DB().QueryRowContext(t.Context(), `SELECT b.body_text FROM messages m
 		JOIN message_bodies b ON b.message_id = m.id WHERE m.source_message_id = 'utc-1'`).Scan(&body))
 	assert.Contains(t, body, "When: 2027-01-06 15:00 - 2027-01-06 16:00", "an event created in UTC keeps the UTC clock")
 }
@@ -538,7 +538,7 @@ func TestSyncAttributesEveryOwnedCalendarToTheAccount(t *testing.T) {
 	requirements.NoError(err)
 	var address string
 	for _, id := range []string{"single-1", "other-1"} {
-		requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COALESCE(account_address, '') FROM messages WHERE source_message_id = ?`), id).Scan(&address))
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COALESCE(account_address, '') FROM messages WHERE source_message_id = ?`), id).Scan(&address))
 		assert.Equal(t, "me@example.com", address, id)
 	}
 }
