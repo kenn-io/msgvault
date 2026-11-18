@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-14"
+last_edited: "2026-11-17"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -468,6 +468,7 @@ The MCP server exposes the following tools to connected AI clients:
 | Tool | Description | Parameters |
 |---|---|---|
 | `search_tools` | Find available tools for a task; see [task discovery](#find-tools-for-a-task). | `query` (string, required), `limit` (int, 1–20, default 5) |
+| `msgvault.skills` | List the bundled guides, or read one as Markdown. Available in every session, including delegated ones; reads no archive data. See [skills and the MCP server](../guides/agent-skills.md#skills-and-the-mcp-server). | `name` (string, optional); omit to list |
 | `search_messages` | Deprecated compatibility wrapper. Omitted mode dispatches to `search_metadata`; `vector`/`hybrid` dispatch to `semantic_search_messages`. | `query` (string, required), `mode` (string: `vector`/`hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
 | `search_metadata` | Search message metadata with a subset of Gmail query syntax (not full Gmail compatibility). Matches subject, snippet, and sender/recipient metadata, not message bodies. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
 | `search_message_bodies` | Keyword full-text search inside message bodies. Returns `matches` excerpts (up to 5 per message), ordered newest-first. Backend excerpts may omit `char_offset` and `line`; use `search_in_message` when exact locations are needed. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
@@ -498,6 +499,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_deletion` | Read a staged batch lifecycle receipt. | Required `batch_id` |
 | `stage_deletion` | Stage every match its source can delete (creates manifest only); refuses above 100000 Gmail, Microsoft Graph, or IMAP matches | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
 | `find_contact_candidates` | Find durable people by saved or observed names; returns stable UIDs and explicit ambiguity. Available with daemon API schema 3.20.0 or newer. | `query` (required), `limit` (1–100, default 20), `after_id` |
+| `get_email_family` | Read the other archived copies, replies and forwards of an email across accounts, with each copy's direction and the header evidence connecting it. Owner-only and read-only. Available with daemon API schema 5.12.0 or newer. | `message_id` (int, required) |
 | `get_person_messaging_routes` | Resolve a selected UID to curated points, bound observations, unreviewed suggestions and exact archived routes, with status and evidence. | `person_uid` (required), `network`, `source_id`, `limit` (1–100 per section, default 20), `after_conversation_id`, `after_contact_point_id`, `after_observation_id`, `after_suggestion_id` |
 | `find_chat` | Find archived chats by whole query tokens in names, aliases, identifiers and titles, ranked by the best matching name. Owner clients only; requires API schema 3.24.0. Returns archive/provider chat IDs, network labels and bounded match evidence. | `query` (string, required), `limit` (int, default 20, max 100), `source_id` (positive int, optional) |
 | `search_people` | Find observed contacts and saved profiles by name or identity. Saved-profile rows include `vcard_uid` and `carddav_bindings`; older daemons return no CardDAV binding entries. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
@@ -903,14 +905,19 @@ source, cache, or person-edit tools.
 
 | Tool | Use | Parameters |
 |---|---|---|
+| `list_changes` | Follow arrivals and in-scope edits with a cursor. | Optional `cursor`, `limit`, `person_id`, `source_ids`, `conversation_ids`, `incoming_only` |
 | `list_source_status` | Read source capabilities, recent runs, and queued or pending work. | Optional `source_type` |
 | `get_source_identities` | Read confirmed sender identities and confirmation signals. | Required `source_id` |
+| `get_import_job` | Read a historical import job’s durable status and summary. | Required `job_id` |
+| `create_import_job` | Start a bounded historical Gmail or IMAP import; requires confirmation and `--allow-import-writes`. | Required `account`, positive `limit`; optional `after`, `before`, `query`, `noresume` |
 | `get_source_scheduler_status` | Read scheduler status without starting a sync. | — |
 | `sync_source` | Request a configured source sync; requires confirmation. | Required `account`, `source_type` from `list_source_status` |
 | `get_slack_sync_policy` | Read channel and direct-message selection, the settings ETag, and restart state. | — |
 | `update_slack_sync_policy` | Change Slack selection; requires confirmation. | Required `etag`; at least one of `dms`, `group_dms`, `channels`, `exclude_channels` |
 | `get_participant_identity` | Read observed identifiers, service and scope context, cluster members, and link evidence. | Required `participant_id` |
 | `get_cache_build_status` | Follow an accepted analytics refresh job. | Required `job_id` from a fresh query response |
+
+`create_import_job` returns acceptance, not completion. Use `get_import_job` to follow it. Dates use `YYYY-MM-DD`, `after` must be earlier than `before`, and `query` is Gmail-only. An interrupted or uncertain creation may have started a job; do not retry automatically.
 
 `sync_source` returns acceptance, not completion. A generic source uses its
 configured shared scheduler job. The response preserves `disposition` when the
@@ -1010,6 +1017,7 @@ Enable only the writes intended for the assistant's session:
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Structured person profile patches | `--allow-curated-writes` | `--http-allow-writes --allow-curated-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
+| Historical imports | `--allow-import-writes` | `--http-allow-writes --allow-import-writes`, protocol `2026-07-28` or newer |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
 
@@ -1101,6 +1109,7 @@ msgvault mcp --http 8080
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-curated-writes` | `false` | On unreleased `main`, expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-import-writes` | `false` | Expose bounded historical import creation with per-call confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |

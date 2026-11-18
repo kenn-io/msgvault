@@ -356,7 +356,8 @@ func (w *Worker) beginAndStart(
 	})
 	if err != nil {
 		if errors.Is(err, ErrRequestBudgetExceeded) || errors.Is(err, ErrCostBudgetExceeded) {
-			return w.deferBudgetExhausted(ctx, lease.Token, input)
+			// The store already deferred the work to its next budget day.
+			return nil
 		}
 		if errors.Is(err, ErrSuppressed) {
 			return w.releaseTerminalBeforeAttempt(ctx, lease, input, hashes, "suppressed")
@@ -369,18 +370,6 @@ func (w *Worker) beginAndStart(
 	lease.Token = attempt.Token
 	lease.ActiveAttempt = attempt
 	return w.startAttempt(ctx, lease, request, profile, config, provider, knownIDs)
-}
-
-func (w *Worker) deferBudgetExhausted(
-	ctx context.Context, token LeaseToken, input RequestInput,
-) error {
-	now := w.options.Clock().UTC()
-	nextDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
-	failure := safeFailure(FailurePolicy, 0, "", "enrichment budget exhausted")
-	return w.work.ReleaseWork(ctx, token, WorkRelease{
-		Outcome: "defer", Failure: &failure, NextActionAt: &nextDay,
-		PersonRevision: input.PersonRevision,
-	})
 }
 
 func guaranteedCharge(

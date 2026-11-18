@@ -21,7 +21,7 @@ func TestQuickstartOffline(t *testing.T) {
 		want string
 	}{
 		{name: "cli", want: quickstartText},
-		{name: "mcp", args: []string{"--mcp"}, want: mcpQuickstart(docs.AgentQuickstart)},
+		{name: "mcp", args: []string{"--mcp"}, want: docs.MCPQuickstart(docs.AgentQuickstart)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -55,7 +55,7 @@ func TestMCPQuickstartNormalizesGuide(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			output := mcpQuickstart(tc.doc)
+			output := docs.MCPQuickstart(tc.doc)
 			assert.True(strings.HasPrefix(output, "# msgvault MCP quickstart\n\n"))
 			assert.NotContains(output, "\r")
 			assert.NotContains(output, "title:")

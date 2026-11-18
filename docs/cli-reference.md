@@ -950,11 +950,11 @@ Metadata errors, a listed archived message disappearing, an unknown catalog
 label, or a failed label/checkpoint save stop the scan and leave it retryable.
 Earlier successful rows may already have changed. Rerun the command to retry
 with a fresh label catalog; `--noresume` starts the refresh from the beginning.
-Acquisition-only checkpoints cannot skip required label observations.
+Resuming an earlier ordinary full sync still checks archived labels.
 
 Already-pending History recovery takes precedence and is reported in the sync
 log. It retains its broader recovery phases, including absence reconciliation
-and History catch-up. The label-refresh option requires daemon API schema 5.9.0
+and History catch-up. The label-refresh option requires daemon API schema 5.18.0
 or newer; an older daemon fails explicitly instead of silently skipping refresh.
 
 ### Gmail Spam and Trash coverage
@@ -1335,6 +1335,44 @@ msgvault sync-twilio work --probe
 When `--limit` stops before the end of the call list, the summary says the sync
 paused and prints the command that continues it. See the
 [meeting guide](usage/meetings.md#twilio) for retries and coverage.
+
+## add-bland
+
+Check a configured Bland account's access and register it as a meeting source
+(unreleased). Nothing about individual calls is printed.
+
+```bash
+msgvault add-bland [identifier]
+```
+
+With one `[[bland]]` entry, omit the identifier. See
+[Bland configuration](configuration.md#bland-sources).
+
+## sync-bland
+
+Archive every listed Bland call, ended or not, with its summary, retained
+transcript and recording as a meeting (unreleased). Without an identifier, sync
+every configured source. Run `add-bland` first.
+
+```bash
+msgvault sync-bland [identifier]
+msgvault sync-bland work --limit 20
+msgvault sync-bland work --full --after 2026-01-01
+msgvault sync-bland work --probe
+```
+
+| Flag | Description |
+|---|---|
+| `--limit n` | Fetch at most n calls, including recent calls still missing artifacts and saved retries. 0 is unlimited |
+| `--full` | Revisit every call, not only those from the last seven days, including recordings that were skipped or unavailable |
+| `--after YYYY-MM-DD` | Only calls created on or after this UTC date; implies `--full` |
+| `--probe` | Read one call and its postcall data and print what is available; requires an identifier when several accounts are configured |
+| `--build-cache` | Refresh analytics cache after sync |
+| `--no-build-cache` | Skip analytics cache refresh; mutually exclusive with `--build-cache` |
+
+When `--limit` stops before the end of the call list, the summary says the sync
+paused and prints the command that continues it. See the
+[meeting guide](usage/meetings.md#bland) for retries and coverage.
 
 ## add-plaud
 
@@ -3258,9 +3296,9 @@ msgvault media search "quarterly numbers"
 msgvault media search "quarterly numbers" --person 7 --direction from_person --limit 20 --json
 ```
 
-`--mode lexical` is the default. `--mode semantic` and `--mode hybrid` retrieve mirrored attachment content through Docbank; recordings return `recordings_error=media_search_mode_unavailable`. `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
+`--mode lexical` is the default. `--mode semantic` and `--mode hybrid` search recording transcripts and mirrored attachment content by meaning through Docbank. Recordings use `recording_search_profile` and attachments use `attachment_search_profile`; see [semantic media search](usage/searching.md#search-spoken-words). `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
 
-The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty recording result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields and adds optional `filename`, `containing_title` and `occurred_at`. Recording search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A recording with more than 64 distinct current caption inputs is left out; its occurrences count in `unavailable_occurrences`, with `partial=true`. See [the API scope limits](api-server.md#media-transcript-search) for the version and source ceilings; narrow the person scope if it exceeds a ceiling. Use `msgvault show-message <message_id>` to read a result in context. See [browser recording search](web-ui.md#recording-matches) for transcript matches in Messages.
+The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty recording result proves no match only with complete coverage and `partial=false`. Its coverage line reports the actual recording mode, pending media, unavailable attribution, partial coverage and truncated results, followed by any degradations. JSON preserves the same fields and adds optional `filename`, `containing_title` and `occurred_at`. Recording search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A recording with more than 64 distinct current caption inputs is left out; its occurrences count in `unavailable_occurrences`, with `partial=true`. See [the API scope limits](api-server.md#media-transcript-search) for the version and source ceilings; narrow the person scope if it exceeds a ceiling. Use `msgvault show-message <message_id>` to read a result in context. See [browser recording search](web-ui.md#recording-matches) for transcript matches in Messages.
 
 The command also prints a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by actual attachment mode, coverage, partial status, degradations, truncation and search errors. It searches text Docbank has extracted from mirrored document files. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. Semantic/hybrid retrieval uses the configured `attachment_search_profile`. See [attachment search formats](usage/searching.md#search-mirrored-attachment-text) for the files included in the scope.
 
@@ -3904,8 +3942,8 @@ for classifications, Fastmail inventory, and import formats.
 ## person
 
 Manage durable person profiles and their typed, historized attributes. A
-profile can be created by explicitly promoting an observed participant's
-identity cluster or by importing contacts from a subscribed CardDAV address book.
+profile can be created directly, by promoting an observed participant's
+identity cluster, or by importing a subscribed CardDAV contact.
 A participant is one address or handle seen in messages; a person groups
 participants into a profile with notes, attributes, relationships, and briefs.
 
@@ -3925,14 +3963,15 @@ msgvault query "SELECT id, email_address, display_name FROM participants WHERE e
 Use the returned participant `id` with `person promote`. `person list --json`
 returns `id`, `participant_ids`, `revision`, `vcard_uid`, `created_at`,
 `updated_at`, and `display_name` when one is known. Promotion takes the name
-from the first named participant; CardDAV import takes the contact's name.
-The list is empty until a participant is promoted or a CardDAV contact is
-imported. Addresses are in `person identities <person-id>`; use `person get`
+from the first named participant; CardDAV import takes the contact's name, and
+`create` takes `--name`. The list is empty until a person is created, a
+participant is promoted, or a CardDAV contact is imported. Addresses are in `person identities <person-id>`; use `person get`
 for the saved profile.
 `person search` ranks semantic matches; `msgvault setup status` explains how
 to enable its lane.
 
 ```bash
+msgvault person create --name <name> [flags]
 msgvault person promote <participant-id>
 msgvault person list [--json]
 msgvault person directory [flags]
@@ -3957,6 +3996,15 @@ msgvault person attributes clear <person-id> <slug> [flags]
 with daemon API schema 5.7.0 or newer. JSON includes the appearance reference, `email_intro` or `observed` kind, and introducer when known. See
 [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance)
 for evidence rules and limitations.
+
+`create` is available on `main` after the latest release. It creates a profile
+with a new vCard UID and no participants. Optional flags are repeatable
+`--email <value[:type]>`, repeatable `--phone <value[:type]>`, `--org`, `--title`,
+`--address`, `--note`, `--json`, and `--publish`. `--title` requires `--org`.
+It refuses existing current contact points and observed identities, identifying
+the matched person or participant. Without `--publish`, all data stays local.
+Publication uses the existing CardDAV path; a failure keeps the new person and
+reports its ID for retry or review. See [Create a person](usage/people.md#create-a-person).
 
 `promote` seeds a new profile with the first nonblank observed name in its
 linked cluster, ordered by participant ID. It leaves the name empty when no
@@ -4965,6 +5013,7 @@ msgvault mcp [flags]
 | `--allow-curated-writes` | `false` | On unreleased `main`, expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--confirm-sensitive-drafts` | `false` | Require client confirmation before creating or editing drafts with detected sensitive content. Grants no tools; HTTP writes still require `--http-allow-writes`. |
+| `--allow-import-writes` | `false` | Expose bounded historical import creation with per-call confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` and `get_kata_issue_context` need no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
@@ -5090,6 +5139,7 @@ with the configured owner bearer key. Native MCP never permits keyless access.
 | `--mcp-allow-kata-writes` | `false` | Enable Kata issue creation and evidence linking. |
 | `--mcp-allow-loop-writes` | `false` | Enable approved open-loop done, snooze, and reopen decisions. |
 | `--mcp-confirm-sensitive-drafts` | `false` | Require client confirmation before creating or editing drafts with detected sensitive content. Writes still require `--mcp-allow-writes`. |
+| `--mcp-allow-import-writes` | `false` | Enable confirmed bounded historical import creation. |
 | `--mcp-allow-source-writes` | `false` | Enable confirmed source synchronization and policy writes. |
 
 Every family flag also requires `--mcp-allow-writes`. These are process flags;
@@ -5280,6 +5330,44 @@ keep the archived body text unchanged.
 Each message in `show-thread --json` includes `hidden_text_present`, using the
 same check as `show-message`. Text output prints the same stderr warning once
 when any message on the shown page is flagged.
+
+## family show
+
+Show the other archived copies of an email, and the replies and forwards that
+name it, across accounts and conversations.
+
+```bash
+msgvault family show <message-id> [--json]
+```
+
+Each row is a message ID, the account, whether that account sent or received the
+copy (or holds it as a draft), the date, and the header evidence that connects
+it to the email you gave: the same message, a reply, a reply it answers, a
+forward, a forwarded original, shared references, a relation through another
+copy, or only the same provider thread. Rows are in ascending message ID order;
+the row marked "this message" is the email you gave. Relations come from
+Message-ID, In-Reply-To, References and attached-original headers, plus the
+rest of the provider threads of a Gmail or Google Groups email and its exact
+copies, so a copy in another account that has none
+of them stays unlinked. Other sources derive conversations from headers, so
+their conversations are not evidence.
+
+A copy marked "not indexed yet" may have relations this output cannot show;
+sync or run [`repair-derived`](#repair-derived) to index it. A copy marked
+"headers not fully read" had an oversized payload, unreadable headers or too
+many identifiers, and may also have hidden relations; indexing again won't
+change that. A copy marked "original message not stored" or "stored format not
+readable" has no raw message to read; storing the message again clears it. A
+copy marked "no stored Message-ID" was indexed, but replies that name it cannot
+find it. While any email in the archive is still waiting to be indexed, a note
+on stderr says related emails may be missing, because that email could be one
+the lookup cannot see yet. The lookup stops at 500 emails or 5,000 identifiers
+and says which on stderr.
+
+JSON includes `anchor_message_id`, `members`, `truncated`, `truncated_reason`
+and `pending_linkage`; each member carries `linkage_outcome` and `evidence`.
+The command uses the selected daemon and needs API schema 3.49.0. Only the
+owner can read it; delegated grants cannot.
 
 ---
 
@@ -5686,7 +5774,7 @@ MIME like any other source. Every source also derives account attribution for
 email and calendar rows still pending it, so `received:` and `account:` find
 them. Every source also indexes the Message-ID, In-Reply-To, References and
 attached-original identifiers of emails still pending it, which
-related-copy lookups read. Missing or unreadable payloads are recorded
+[`family show`](#family-show) reads. Missing or unreadable payloads are recorded
 as incomplete and do not block later messages. Source syncs and imports run the
 same work first, so use this command for on-demand repair, file imports you will
 not run again, or retrying an interrupted pass.

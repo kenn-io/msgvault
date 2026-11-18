@@ -2087,6 +2087,12 @@ type ListChangedMessagesErrorResponse = ErrorResponse
 
 type ListChangedMessagesErrorResponseJSON = ErrorResponse
 
+type ListChangedMessagesErrorResponseJSON404 = ErrorResponse
+
+type ListChangedMessagesErrorResponseJSON409 = ErrorResponse
+
+type ListChangedMessagesErrorResponseJSON422 = ErrorResponse
+
 type ListChangedMessagesErrorResponseJSON429 = ErrorResponse
 
 type ListChangedMessagesErrorResponseJSON500 = ErrorResponse
@@ -2106,6 +2112,20 @@ type GetGmailIDsByFilterErrorResponse = ErrorResponse
 type GetMessageResponse = MessageDetail
 
 type GetMessageErrorResponse = ErrorResponse
+
+type GetEmailFamilyResponse = EmailFamily
+
+type GetEmailFamilyErrorResponse = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON403 = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON404 = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON503 = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSONDefault = ErrorResponse
 
 type GetMessageInlinePartResponse = runtime.File
 
@@ -2707,6 +2727,16 @@ type FindContactCandidatesErrorResponseJSON503 = ErrorResponse
 
 type FindContactCandidatesErrorResponseJSONDefault = ErrorResponse
 
+type CreateStandalonePersonResponse = Person
+
+type CreateStandalonePersonErrorResponse = ErrorResponse
+
+type CreateStandalonePersonErrorResponseJSON = ErrorResponse
+
+type CreateStandalonePersonErrorResponseJSON503 = ErrorResponse
+
+type CreateStandalonePersonErrorResponseJSONDefault = ErrorResponse
+
 type ListDirectoryPeopleResponse = DirectoryPeopleResponse
 
 type ListDirectoryPeopleErrorResponse = ErrorResponse
@@ -3072,6 +3102,16 @@ type SetPersonFactPinErrorResponseJSON409 = ErrorResponse
 type SetPersonFactPinErrorResponseJSON503 = ErrorResponse
 
 type SetPersonFactPinErrorResponseJSONDefault = ErrorResponse
+
+type GetPersonFactSummaryResponse = FactSummary
+
+type GetPersonFactSummaryErrorResponse = ErrorResponse
+
+type GetPersonFactSummaryErrorResponseJSON = ErrorResponse
+
+type GetPersonFactSummaryErrorResponseJSON503 = ErrorResponse
+
+type GetPersonFactSummaryErrorResponseJSONDefault = ErrorResponse
 
 type SearchPersonFilesResponse = PersonFileSearchHTTPResponse
 
@@ -6066,6 +6106,9 @@ type ListChangedMessagesResp struct {
 	JSON200      *ListChangedMessagesResponse
 	JSON400      *ListChangedMessagesErrorResponse
 	JSON401      *ListChangedMessagesErrorResponseJSON
+	JSON404      *ListChangedMessagesErrorResponseJSON404
+	JSON409      *ListChangedMessagesErrorResponseJSON409
+	JSON422      *ListChangedMessagesErrorResponseJSON422
 	JSON429      *ListChangedMessagesErrorResponseJSON429
 	JSON500      *ListChangedMessagesErrorResponseJSON500
 	JSON503      *ListChangedMessagesErrorResponseJSON503
@@ -6094,6 +6137,19 @@ type GetMessageResp struct {
 	StatusCode   int
 	JSON200      *GetMessageResponse
 	JSONDefault  *GetMessageErrorResponse
+}
+
+type GetEmailFamilyResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetEmailFamilyResponse
+	JSON400      *GetEmailFamilyErrorResponse
+	JSON401      *GetEmailFamilyErrorResponseJSON
+	JSON403      *GetEmailFamilyErrorResponseJSON403
+	JSON404      *GetEmailFamilyErrorResponseJSON404
+	JSON503      *GetEmailFamilyErrorResponseJSON503
+	JSONDefault  *GetEmailFamilyErrorResponseJSONDefault
 }
 
 type GetMessageInlinePartResp struct {
@@ -6557,6 +6613,22 @@ type FindContactCandidatesResp struct {
 	JSONDefault  *FindContactCandidatesErrorResponseJSONDefault
 }
 
+type CreateStandalonePersonResp201Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type CreateStandalonePersonResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateStandalonePersonResponse
+	Headers201   *CreateStandalonePersonResp201Headers
+	JSON400      *CreateStandalonePersonErrorResponse
+	JSON409      *CreateStandalonePersonErrorResponseJSON
+	JSON503      *CreateStandalonePersonErrorResponseJSON503
+	JSONDefault  *CreateStandalonePersonErrorResponseJSONDefault
+}
+
 type ListDirectoryPeopleResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -6934,6 +7006,17 @@ type SetPersonFactPinResp struct {
 	JSON409      *SetPersonFactPinErrorResponseJSON409
 	JSON503      *SetPersonFactPinErrorResponseJSON503
 	JSONDefault  *SetPersonFactPinErrorResponseJSONDefault
+}
+
+type GetPersonFactSummaryResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonFactSummaryResponse
+	JSON400      *GetPersonFactSummaryErrorResponse
+	JSON404      *GetPersonFactSummaryErrorResponseJSON
+	JSON503      *GetPersonFactSummaryErrorResponseJSON503
+	JSONDefault  *GetPersonFactSummaryErrorResponseJSONDefault
 }
 
 type SearchPersonFilesResp struct {

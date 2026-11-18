@@ -39,6 +39,7 @@ func TestHandleCLISyncLabelRefresh(t *testing.T) {
 		{query: "email=reader@example.test&refresh_labels=true&limit=0&limit=1", full: true},
 		{query: "email=reader@example.test&email=other@example.test&refresh_labels=true", full: true},
 		{query: "email=reader@example.test&source_id=42&refresh_labels=true", full: true},
+		{query: "email=&source_id=42&refresh_labels=true", full: true},
 		{query: "source_id=42&source_id=43&refresh_labels=true", full: true},
 	} {
 		t.Run(fmt.Sprintf("%s/full=%t", scenario.query, scenario.full), func(t *testing.T) {

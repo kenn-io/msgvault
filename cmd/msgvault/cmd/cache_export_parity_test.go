@@ -128,16 +128,11 @@ func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datas
 		actual := filepath.Join(actualDir, dataset, "**", "*.parquet")
 		full := filepath.Join(fullDir, dataset, "**", "*.parquet")
 		assert.Equal(columnSchema(full), columnSchema(actual), "%s column names and types", dataset)
-		columns := "*"
-		if dataset == "relationship_people" {
-			// Each build records its own wall-clock watermark.
-			columns = "* EXCLUDE (temperature_effective_at, temperature_effective_date)"
-		}
 		var rows, missing, extra int
-		require.NoError(duckDB.QueryRowContext(t.Context(), fmt.Sprintf(`SELECT
+		require.NoError(duckDB.QueryRowContext(t.Context(), `SELECT
 			(SELECT count(*) FROM read_parquet(?, hive_partitioning=true)),
-			(SELECT count(*) FROM (SELECT %[1]s FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT %[1]s FROM read_parquet(?, hive_partitioning=true))),
-			(SELECT count(*) FROM (SELECT %[1]s FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT %[1]s FROM read_parquet(?, hive_partitioning=true)))`, columns),
+			(SELECT count(*) FROM (SELECT * FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT * FROM read_parquet(?, hive_partitioning=true))),
+			(SELECT count(*) FROM (SELECT * FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT * FROM read_parquet(?, hive_partitioning=true)))`,
 			full, full, actual, actual, full).Scan(&rows, &missing, &extra), dataset)
 		require.Positive(rows, "%s must hold rows for the comparison to mean anything", dataset)
 		assert.Zero(missing, "%s: rows the derived refresh did not write", dataset)

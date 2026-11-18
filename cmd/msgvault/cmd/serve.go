@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/beeper"
+	"go.kenn.io/msgvault/internal/bland"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/clirun"
@@ -284,7 +285,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}()
 	telemetryReporter := telemetry.NewReporterOrDisabled(telemetry.Options{
 		DataDir: cfg.Data.DataDir, Version: Version, Commit: Commit,
-		ConfigEnabled: cfg.Telemetry.EnabledOrDefault(),
 	}, logger)
 	defer func() {
 		if err := telemetryReporter.Close(); err != nil {
@@ -929,6 +929,34 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Info("scheduled twilio source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
+	for _, src := range cfg.Bland {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("bland source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "15 */6 * * *") on the [[bland]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledBlandSources() {
+		source := src
+		jobName, ok := api.SchedulerJobNameForSource(bland.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for bland source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+					return runConfiguredBlandSync(ctx, s, source)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule bland source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled bland source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
 	for _, src := range cfg.Muesli {
 		if src.Enabled && src.Schedule == "" {
 			logger.Warn("muesli source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
@@ -1190,10 +1218,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  API server: http://%s\n", apiAddr)
 		fmt.Printf("  Scheduled accounts: %d\n", count)
 		fmt.Printf("  Data directory: %s\n", cfg.Data.DataDir)
-		if telemetryReporter.Enabled() {
-			fmt.Printf("  Anonymous telemetry: on ([telemetry] enabled = false or %s=0 turns it off)\n",
-				telemetry.EnabledEnv)
-		}
 		fmt.Println()
 		fmt.Println("Press Ctrl+C to stop.")
 		fmt.Println()
@@ -3424,6 +3448,10 @@ func (a *storeAPIAdapter) ListPersonFactDecisionsContext(
 	ctx context.Context, personID int64, filter personfacts.DecisionFilter,
 ) ([]personfacts.Decision, error) {
 	return a.store.ListPersonFactDecisionsContext(ctx, personID, filter)
+}
+
+func (a *storeAPIAdapter) PersonFactSummaryContext(ctx context.Context, personID int64) (personfacts.FactSummary, error) {
+	return a.store.PersonFactSummaryContext(ctx, personID)
 }
 
 func (a *storeAPIAdapter) ListPersonFactPinsContext(

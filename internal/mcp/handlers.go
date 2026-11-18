@@ -159,10 +159,12 @@ type handlers struct {
 	identityReview       IdentityReviewBackend
 	personCardDAV        PersonCardDAVBackend
 	messageTags          MessageTagBackend
+	personCreator        PersonCreator
 	identityScoring      IdentityScoringBackend
 	drafts               DraftRunner
 	contactRoutesBackend ContactRoutesBackend
 	chatDiscoveryBackend ChatDiscoveryBackend
+	emailFamilyBackend   EmailFamilyBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with

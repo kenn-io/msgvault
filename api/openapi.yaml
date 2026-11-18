@@ -4256,6 +4256,69 @@ components:
         - total_known_seconds
         - average_known_seconds
       type: object
+    EmailFamily:
+      additionalProperties: true
+      properties:
+        anchor_message_id:
+          format: int64
+          type: integer
+        members:
+          items:
+            $ref: "#/components/schemas/EmailFamilyMember"
+          type: array
+        pending_linkage:
+          type: boolean
+        truncated:
+          type: boolean
+        truncated_reason:
+          type: string
+      required:
+        - anchor_message_id
+        - members
+        - truncated
+        - pending_linkage
+      type: object
+    EmailFamilyMember:
+      additionalProperties: true
+      properties:
+        account_address:
+          type: string
+        account_path:
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        draft:
+          type: boolean
+        evidence:
+          type: string
+        linkage_outcome:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        sent_at:
+          format: date-time
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_type:
+          type: string
+        subject:
+          type: string
+      required:
+        - message_id
+        - source_id
+        - source_type
+        - source_identifier
+        - draft
+        - conversation_id
+        - linkage_outcome
+        - evidence
+      type: object
     EmbeddingBatch:
       additionalProperties: true
       properties:
@@ -5440,6 +5503,29 @@ components:
       required:
         - action
         - reason
+      type: object
+    FactSummary:
+      additionalProperties: true
+      properties:
+        claimed_fields:
+          format: int64
+          type: integer
+        has_fact_history:
+          description: Whether claims, evidence, or pin events are stored
+          type: boolean
+        has_values:
+          description: Whether attribute values or employments are stored
+          type: boolean
+        latest_claim_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+      required:
+        - claimed_fields
+        - latest_claim_at
+        - has_values
+        - has_fact_history
       type: object
     FieldDescriptor:
       additionalProperties: true
@@ -7534,6 +7620,9 @@ components:
     MediaSearchResponse:
       additionalProperties: true
       properties:
+        actual_mode:
+          description: "Recording mode Docbank ran: lexical, semantic, hybrid, or unavailable when no recording search ran"
+          type: string
         attachments:
           $ref: "#/components/schemas/MediaAttachmentSearch"
         attribution_unavailable:
@@ -7542,6 +7631,11 @@ components:
           type: integer
         coverage:
           $ref: "#/components/schemas/SearchCoverage"
+        degradations:
+          description: Why recording search ran below the requested mode, such as semantic_unconfigured or semantic_unavailable
+          items:
+            type: string
+          type: array
         partial:
           description: Coverage or occurrence attribution is incomplete, even with no matching excerpts
           type: boolean
@@ -7560,6 +7654,8 @@ components:
           format: int64
           type: integer
       required:
+        - actual_mode
+        - degradations
         - coverage
         - pending_occurrences
         - unavailable_occurrences
@@ -11721,6 +11817,56 @@ components:
             type: integer
           type: array
       type: object
+    PersonCreateContact:
+      additionalProperties: false
+      properties:
+        type:
+          pattern: ^[A-Za-z0-9-]{1,64}$
+          type: string
+        value:
+          type: string
+      required:
+        - value
+      type: object
+    PersonCreateInput:
+      additionalProperties: false
+      properties:
+        address:
+          maxLength: 1000
+          type: string
+        emails:
+          items:
+            $ref: "#/components/schemas/PersonCreateContact"
+          maxItems: 200
+          type: array
+        name:
+          maxLength: 256
+          minLength: 1
+          type: string
+        note:
+          maxLength: 10000
+          type: string
+        org:
+          maxLength: 256
+          type: string
+        phones:
+          items:
+            $ref: "#/components/schemas/PersonCreateContact"
+          maxItems: 200
+          type: array
+        source:
+          description: Provenance of every created value; defaults to user
+          enum:
+            - user
+            - enrichment
+          type: string
+        title:
+          description: Job title at org; requires org
+          maxLength: 280
+          type: string
+      required:
+        - name
+      type: object
     PersonDate:
       additionalProperties: true
       properties:
@@ -12079,6 +12225,9 @@ components:
           type: string
         claim_key:
           type: string
+        claim_value:
+          description: Submitted JSON value of the claim this decision describes
+          type: string
         competing_claim_key:
           type: string
         created_at:
@@ -12089,6 +12238,17 @@ components:
         id:
           format: int64
           type: integer
+        outcome:
+          enum:
+            - saved
+            - value-retired
+            - current-value-kept
+            - pinned-value-kept
+            - too-close-to-choose
+            - not-used
+          type:
+            - string
+            - "null"
         projection:
           $ref: "#/components/schemas/ProjectionRef"
         reason:
@@ -12096,13 +12256,23 @@ components:
         resolution_id:
           format: int64
           type: integer
+        resolver_version:
+          type: string
         score:
           $ref: "#/components/schemas/PersonFactScoreBreakdown"
+        score_maxima:
+          $ref: "#/components/schemas/PersonFactScoreBreakdown"
+        target:
+          $ref: "#/components/schemas/TargetRef"
       required:
         - id
         - resolution_id
         - decision_key
         - claim_key
+        - claim_value
+        - outcome
+        - target
+        - resolver_version
         - action
         - reason
         - score
@@ -17356,7 +17526,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.12.0
+  version: 5.18.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24885,7 +25055,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: "Attachment mode: lexical (default), semantic, or hybrid; recordings support lexical only"
+        - description: "Search mode for recordings and attachments: lexical (default), semantic, or hybrid"
           in: query
           name: mode
           schema:
@@ -25474,6 +25644,33 @@ paths:
     get:
       operationId: listChangedMessages
       parameters:
+        - description: Only messages sent by a linked identity of this person
+          in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source IDs; repeat for multiple sources (maximum 50)
+          in: query
+          name: source_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
+        - description: Conversation IDs; repeat for multiple conversations (maximum 50)
+          in: query
+          name: conversation_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
+        - description: Best-effort incoming filter; direction corrections alone do not redeliver changes
+          in: query
+          name: incoming_only
+          schema:
+            type: boolean
         - description: "Opaque cursor from the next_cursor of the previous response, sent back verbatim. Do not parse, construct, compare, or order it; its contents may change without notice. Omit, or send it empty, to start from the beginning of the archive. The token is not authenticated: the server does not sign it and cannot tell one it issued from a well-formed one you built, so a fabricated cursor naming this archive is accepted and simply moves your own position. Rejected with 400 invalid_cursor, rather than read as the beginning: a token the server cannot read, one carrying a cursor format this build does not speak, and one issued against a different archive"
           in: query
           name: cursor
@@ -25499,6 +25696,24 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
           content:
             application/json:
               schema:
@@ -25874,6 +26089,65 @@ paths:
       security:
         - apiKey: []
       summary: Get one message
+      tags:
+        - API
+  /api/v1/messages/{id}/family:
+    get:
+      operationId: getEmailFamily
+      parameters:
+        - description: Live archived email message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailFamily"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read the other archived copies, replies and forwards of an email
       tags:
         - API
   /api/v1/messages/{id}/inline:
@@ -27923,6 +28197,57 @@ paths:
       summary: Find durable people by saved or observed names without selecting a duplicate
       tags:
         - API
+  /api/v1/people/create:
+    post:
+      description: Creates a durable profile with a new vCard UID and user-curated contact data. Refuses contacts already present on a person or observed participant cluster. A title requires an organization. Does not publish to CardDAV.
+      operationId: createStandalonePerson
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonCreateInput"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: Created
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a person without message participants
+      tags:
+        - API
   /api/v1/people/directory:
     get:
       description: Returns one stable, non-sensitive page of promoted durable people.
@@ -29667,6 +29992,11 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Restrict to one claim key
+          in: query
+          name: claim_key
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -29728,6 +30058,12 @@ paths:
         - description: Zero-based row offset
           in: query
           name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Restrict to one evidence row
+          in: query
+          name: evidence_id
           schema:
             format: int64
             type: integer
@@ -29955,6 +30291,53 @@ paths:
       security:
         - apiKey: []
       summary: Replace an effective person fact pin
+      tags:
+        - API
+  /api/v1/people/{id}/fact-summary:
+    get:
+      operationId: getPersonFactSummary
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FactSummary"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get person fact summary
       tags:
         - API
   /api/v1/people/{id}/files/search:

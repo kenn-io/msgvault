@@ -58,6 +58,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		{"muesli", "get_meeting_context", false}, {"notion_meetings", "get_meeting_context", false},
 		{"meeting_import", "get_meeting_context", false}, {"omi", "get_meeting_context", false},
 		{"plaud", "get_meeting_context", false}, {"twilio", "get_meeting_context", false},
+		{"bland", "get_meeting_context", false},
 		{"twenty", "get_meeting_context", false}, {"beeper", "find_chat", false},
 		{"slack", "get_slack_sync_policy", false},
 		{"imap", "draft_reply", false},
@@ -294,8 +295,8 @@ func TestMCPArchiveCatalogBudgets(t *testing.T) {
 		kinds  []string
 		budget int
 	}{
-		{"mail only", []string{"mbox"}, 212_931},
-		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 265_581},
+		{"mail only", []string{"mbox"}, 220_424},
+		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 273_074},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)

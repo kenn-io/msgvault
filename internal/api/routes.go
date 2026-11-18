@@ -364,6 +364,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerPersonProfileRoutes(apiV1)
 	s.registerPersonIdentityRoutes(apiV1)
 	s.registerContactRouteRoutes(apiV1)
+	s.registerEmailFamilyRoutes(apiV1)
 	s.registerPersonNetworkRoutes(apiV1)
 	s.registerPersonTrackingRoutes(apiV1)
 	s.registerPersonTierRoutes(apiV1)
@@ -602,8 +603,9 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[AggregateResponse](apiV1, "getSubAggregates", http.MethodGet, "/aggregates/sub", "Get nested aggregate rows", s.handleSubAggregates)
 	registerAPIV1RawHumaJSONRoute[FilteredMessagesResponse](apiV1, "filterMessages", http.MethodGet, "/messages/filter", "List filtered messages", s.handleFilteredMessages)
 	// The change feed's error statuses are contract, not incident: a 400 means
-	// a cursor the consumer must abandon, while 401, 429, 500 and 503 are
-	// conditions to retry from the same cursor. Declaring them keeps that
+	// invalid input or an incompatible cursor; 404 and 422 describe a person
+	// scope that cannot be used. Other failures can be retried from the same
+	// cursor. Declaring them keeps that
 	// distinction in the generated client rather than in every consumer's
 	// hand-written decode.
 	//
@@ -618,6 +620,9 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		"List messages whose content changed since a cursor", s.changeFeedGuard(s.handleMessageChanges),
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
+		http.StatusNotFound,
+		http.StatusConflict,
+		http.StatusUnprocessableEntity,
 		http.StatusTooManyRequests,
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,
@@ -896,7 +901,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "searchMedia":
 		return []*huma.Param{
 			queryStringParam("q", "Words to find in recordings and attachments", true),
-			queryStringParam("mode", "Attachment mode: lexical (default), semantic, or hybrid; recordings support lexical only", false),
+			queryStringParam("mode", "Search mode for recordings and attachments: lexical (default), semantic, or hybrid", false),
 			queryIntegerParam("person_id", "Durable person ID"),
 			queryIntegerParam("participant_id", "Observed participant ID; selects its current Explore identity cluster; mutually exclusive with person_id"),
 			queryRefArrayParam("direction", "Person relation: from_person, to_person, or group"),
@@ -1251,6 +1256,10 @@ func semanticMessageFilterParams() []*huma.Param {
 // outside this server is allowed to depend on its contents.
 func changesParams() []*huma.Param {
 	return []*huma.Param{
+		queryIntegerParam("person_id", "Only messages sent by a linked identity of this person"),
+		queryIntegerArrayParam("source_id", "Source IDs; repeat for multiple sources (maximum 50)"),
+		queryIntegerArrayParam("conversation_id", "Conversation IDs; repeat for multiple conversations (maximum 50)"),
+		queryBooleanParam("incoming_only", "Best-effort incoming filter; direction corrections alone do not redeliver changes"),
 		queryStringParam("cursor",
 			"Opaque cursor from the next_cursor of the previous response, sent back "+
 				"verbatim. Do not parse, construct, compare, or order it; its contents may "+

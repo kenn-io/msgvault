@@ -139,7 +139,7 @@ func TestMixedLedgerUpgradePreservesSearchClaims(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	stub := newWireStub(t)
 	dir := t.TempDir()
-	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=upgrade")
+	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=upgrade", posthog.GenericEnabledEnv+"=1")
 	events := batchEvents(t, stub)
 	require.Len(events, 2, "only screen and message claims recount on upgrade")
 	assert.Equal(EventScreenViewed, events[0]["event"])
@@ -150,7 +150,7 @@ func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	stub := newWireStub(t)
 	dir := t.TempDir()
-	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=1")
+	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=1", posthog.GenericEnabledEnv+"=1")
 	screenMessages := func() []map[string]any {
 		return slices.DeleteFunc(batchEvents(t, stub), func(event map[string]any) bool { return event["event"] != EventScreenViewed })
 	}
@@ -183,20 +183,20 @@ func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
 	}
 	assertions.Contains(screens, "directory")
 	assertions.Equal(1, strings.Count(strings.Join(screens, ","), "settings"))
-	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=restart")
+	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=restart", posthog.GenericEnabledEnv+"=1")
 	assertions.Len(screenMessages(), 3)
 	assertions.Len(batchEvents(t, stub), 19)
 	install, err := posthog.LoadOrCreateInstall(dir)
 	requirements.NoError(err)
 	requirements.NoError(os.Remove(filepath.Join(dir, posthog.InstallFileName)))
-	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=restart")
+	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=restart", posthog.GenericEnabledEnv+"=1")
 	messages = screenMessages()
 	requirements.Len(messages, 4)
 	assertions.NotEqual(install.ID, messages[3]["distinct_id"])
 }
 
 func TestDailyViewsResumeAfterUTCMidnight(t *testing.T) {
-	runWireHelper(t, "http://example.invalid", t.TempDir(), "MSGVAULT_SCREEN_VIEWS_TEST=rollover")
+	runWireHelper(t, "http://example.invalid", t.TempDir(), posthog.GenericEnabledEnv+"=1", "MSGVAULT_SCREEN_VIEWS_TEST=rollover")
 }
 
 func exerciseDailyViewRollover(t *testing.T, opts Options) {

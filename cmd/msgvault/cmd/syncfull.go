@@ -538,16 +538,11 @@ func applyIMAPMailboxDeltas(
 		}
 		observationIndexes[key] = len(normalizedObservations)
 		normalizedObservations = append(normalizedObservations, store.IMAPMembershipObservation{
-			Mailbox:                  observation.Mailbox,
-			UIDValidity:              observation.UIDValidity,
-			UID:                      observation.UID,
-			SourceMessageID:          observation.SourceMessageID,
-			CanonicalSourceMessageID: observation.CanonicalSourceMessageID,
-			RFC822MessageID:          observation.RFC822MessageID,
-			RawSHA256:                observation.RawSHA256,
-			RawSize:                  observation.RawSize,
-			Flags:                    append([]string(nil), observation.Flags...),
-			ArchivedMessageID:        observation.ArchivedMessageID,
+			Mailbox: observation.Mailbox, UIDValidity: observation.UIDValidity, UID: observation.UID,
+			SourceMessageID: observation.SourceMessageID, CanonicalSourceMessageID: observation.CanonicalSourceMessageID,
+			RFC822MessageID: observation.RFC822MessageID, RawSHA256: observation.RawSHA256,
+			RawSize: observation.RawSize, ArchivedMessageID: observation.ArchivedMessageID,
+			Flags: append([]string(nil), observation.Flags...),
 		})
 	}
 	byMailbox := make(map[string][]store.IMAPMembershipObservation)
@@ -568,6 +563,7 @@ func applyIMAPMailboxDeltas(
 		}
 		storeDeltas = append(storeDeltas, store.IMAPMailboxDelta{
 			Mailbox: delta.Mailbox,
+			Trash:   delta.Trash,
 			State: store.IMAPFolderState{
 				Mailbox:       delta.Mailbox,
 				UIDValidity:   delta.State.UIDValidity,

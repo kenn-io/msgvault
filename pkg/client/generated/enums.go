@@ -2261,6 +2261,24 @@ func (p PeopleInferencePresetCreateRequestPresetID) Validate() error {
 	}
 }
 
+// PersonCreateInputSource Provenance of every created value; defaults to user
+type PersonCreateInputSource string
+
+const (
+	PersonCreateInputSourceEnrichment PersonCreateInputSource = "enrichment"
+	PersonCreateInputSourceUser       PersonCreateInputSource = "user"
+)
+
+// Validate checks if the PersonCreateInputSource value is valid
+func (p PersonCreateInputSource) Validate() error {
+	switch p {
+	case PersonCreateInputSourceEnrichment, PersonCreateInputSourceUser:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonCreateInputSource value, got: %v", p))
+	}
+}
+
 type PersonEnrichmentProviderSettingKind string
 
 const (
@@ -2292,6 +2310,27 @@ func (p PersonEnrichmentProviderUpdateKind) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonEnrichmentProviderUpdateKind value, got: %v", p))
+	}
+}
+
+type PersonFactDecisionOutcome string
+
+const (
+	CurrentValueKept PersonFactDecisionOutcome = "current-value-kept"
+	NotUsed          PersonFactDecisionOutcome = "not-used"
+	PinnedValueKept  PersonFactDecisionOutcome = "pinned-value-kept"
+	Saved            PersonFactDecisionOutcome = "saved"
+	TooCloseToChoose PersonFactDecisionOutcome = "too-close-to-choose"
+	ValueRetired     PersonFactDecisionOutcome = "value-retired"
+)
+
+// Validate checks if the PersonFactDecisionOutcome value is valid
+func (p PersonFactDecisionOutcome) Validate() error {
+	switch p {
+	case CurrentValueKept, NotUsed, PinnedValueKept, Saved, TooCloseToChoose, ValueRetired:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFactDecisionOutcome value, got: %v", p))
 	}
 }
 

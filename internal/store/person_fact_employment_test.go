@@ -1595,6 +1595,63 @@ func TestPersonFactEmploymentMultipleProjectionsBumpVCardOnce(t *testing.T) {
 	assert.Equal(t, before+1, personFactProjectionRevision(t, st, personID))
 }
 
+func TestPersonFactEmploymentPinnedOutcomeMatchesIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, seed, claim string
+		want              personfacts.DecisionOutcome
+	}{
+		{"matching", `{"organization":{"name":"Example Company"},"title":"Engineer"}`, `{"organization":{"name":"Example Company"},"title":"Engineer"}`, personfacts.OutcomePinnedValueKept},
+		{"different employer", `{"organization":{"name":"Example Company"},"title":"Engineer"}`, `{"organization":{"name":"Other Company"},"title":"Engineer"}`, personfacts.OutcomeNotUsed},
+		{"different title", `{"organization":{"name":"Example Company"},"title":"Engineer"}`, `{"organization":{"name":"Example Company"},"title":"Manager"}`, personfacts.OutcomeNotUsed},
+		{"separate stints", "", `{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"Engineer","start_date":{"year":2023},"end_date":{"year":2025}}`, personfacts.OutcomeNotUsed},
+		{"manual ended job", "", `{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"Engineer","start_date":{"year":2018},"end_date":{"year":2020}}`, personfacts.OutcomePinnedValueKept},
+		{"title case", "", `{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"engineer","start_date":{"year":2018},"end_date":{"year":2020}}`, personfacts.OutcomePinnedValueKept},
+		{"date precision", "", `{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"Engineer","start_date":{"year":2018,"month":2},"end_date":{"year":2020,"month":3}}`, personfacts.OutcomePinnedValueKept},
+		{"historical", `{"organization":{"name":"Example Company"},"title":"Engineer","end_date":{"year":2020}}`, `{"organization":{"name":"Example Company"},"title":"Engineer","role":"Developer","end_date":{"year":2020}}`, personfacts.OutcomePinnedValueKept},
+		{"current role change without start date", `{"organization":{"name":"Example Company"},"title":"Engineer","start_date":{"year":2018}}`, `{"organization":{"name":"Example Company"},"title":"Engineer","role":"Developer"}`, personfacts.OutcomePinnedValueKept},
+		{"undated ended job", "", `{"organization":{"id":%d,"name":"Example Company","domain":"example.org"},"title":"Engineer","start_date":{"year":2023}}`, personfacts.OutcomeNotUsed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, personID, _ := newPersonFactProjectionStore(t)
+			target := projectionTargetBySlug(t, st, "employment")
+			var err error
+			if tc.seed == "" {
+				organization := createPersonFactOrganization(t, st, "Example Company", "example.org")
+				end := &PartialDate{Year: new(2020)}
+				if tc.name == "undated ended job" {
+					end = nil
+				}
+				_, err = st.AddEmploymentContext(t.Context(), EmploymentInput{
+					PersonID: personID, OrganizationID: organization.ID, Title: new("Engineer"),
+					StartDate: &PartialDate{Year: new(2018)}, EndDate: end,
+					IsCurrent: new(false), Source: ProvenanceUser,
+				})
+				require.NoError(t, err)
+				tc.claim = fmt.Sprintf(tc.claim, organization.ID)
+			} else {
+				seed := personFactProjectionClaim(personID, target, tc.seed, "pin-seed")
+				_, err = st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, "pin-seed", []personfacts.ProposedClaim{seed}, nil), nil)
+				require.NoError(t, err)
+			}
+			_, err = st.SetPersonFactPinContext(t.Context(), personID, personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, true, "test")
+			require.NoError(t, err)
+			claim := personFactProjectionClaim(personID, target, tc.claim, "pin-claim")
+			input := personFactProjectionInput(personID, "pin-claim", []personfacts.ProposedClaim{claim}, nil)
+			prepared, err := personfacts.PreparePersonFactGeneration(t.Context(), input, nil)
+			require.NoError(t, err)
+			key, err := personfacts.ClaimKey(prepared.GenerationKey(), prepared.Claims()[0])
+			require.NoError(t, err)
+			_, err = st.ApplyPersonFactGenerationContext(t.Context(), input, nil)
+			require.NoError(t, err)
+			rows, err := st.ListPersonFactDecisionsContext(t.Context(), personID, personfacts.DecisionFilter{ClaimKey: key, Limit: 1})
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			require.NotNil(t, rows[0].Outcome)
+			assert.Equal(t, tc.want, *rows[0].Outcome)
+		})
+	}
+}
+
 func TestPersonFactEmploymentExpiresOwnedProjectionAtExclusiveValidityEnd(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -1635,7 +1692,7 @@ func TestPersonFactEmploymentExpiresOwnedProjectionAtExclusiveValidityEnd(t *tes
 	requirements.NoError(err)
 	foundExpired := false
 	for _, decision := range result.Decisions {
-		if decision.Reason == personfacts.ReasonOutsideValidity {
+		if decision.Reason == personfacts.ReasonOutsideValidity && decision.Projection != nil {
 			foundExpired = true
 		}
 	}

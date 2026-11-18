@@ -203,6 +203,10 @@ var buildCacheBeforeStateWriteHook func()
 // export failures before the messages COPY begins.
 var buildCacheBeforeMessagesExportHook func() error
 
+// cacheExportNow supplies the cache watermark. Relationship temperatures decay
+// by whole UTC days from it, so tests that compare two builds pin it.
+var cacheExportNow = time.Now
+
 // cacheSnapshotGOOS selects the platform branch in openCacheSourceSnapshot.
 // Tests override it to exercise platform-specific snapshot behavior.
 var cacheSnapshotGOOS = runtime.GOOS
@@ -1201,7 +1205,7 @@ func buildCacheLockedAttempt(
 	// Record the freshness boundary immediately before the first source read.
 	// A sync or deletion that finishes after this instant may not be represented
 	// by the snapshot and must invalidate the cache on the next check.
-	exportStarted := time.Now()
+	exportStarted := cacheExportNow()
 	cacheWatermark := exportStarted.UTC().Truncate(time.Second)
 
 	var maxMessageID sql.NullInt64

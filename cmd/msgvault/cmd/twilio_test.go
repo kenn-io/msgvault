@@ -207,7 +207,7 @@ func TestTwilioSyncPrintsResumeHint(t *testing.T) {
 		want         []string
 	}{
 		{"paused", "processing", http.StatusOK, false, []string{"Twilio sync paused with more calls to discover."}},
-		{"failed", "completed", http.StatusServiceUnavailable, true, []string{"Twilio sync failed; later syncs retry calls that errored while they're within seven days; an older call that failed during a first sync or --full needs --full.", "legacy transcription coverage unavailable (HTTP 404)"}},
+		{"failed", "completed", http.StatusServiceUnavailable, true, []string{"Twilio sync failed; later syncs retry the calls that errored, even after they leave the seven-day window.", "legacy transcription coverage unavailable (HTTP 404)"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)

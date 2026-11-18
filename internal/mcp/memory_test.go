@@ -73,6 +73,7 @@ func TestMCPMemoryChild(t *testing.T) {
 // a backend, so empty implementations suffice.
 func daemonProxyMemoryOptions() ServeOptions {
 	return ServeOptions{
+		EmailFamilyBackend:   struct{ EmailFamilyBackend }{},
 		EmbeddingStatus:      struct{ EmbeddingStatusReader }{},
 		Engine:               &querytest.MockEngine{},
 		AttachmentReader:     struct{ AttachmentReader }{},
@@ -100,6 +101,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 		ArchiveSQLQuerier:    struct{ ArchiveSQLQuerier }{},
 		IdentityReview:       struct{ IdentityReviewBackend }{},
 		PersonCardDAV:        struct{ PersonCardDAVBackend }{},
+		PersonCreator:        struct{ PersonCreator }{},
 		IdentityScoring:      struct{ IdentityScoringBackend }{},
 		Drafts:               struct{ DraftRunner }{},
 		DraftCommands:        slices.Sorted(maps.Keys(stableDraftDefinitions)),

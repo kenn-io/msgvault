@@ -20,14 +20,17 @@ func TestTUISessionUsesSelectedDaemonAfterCancellation(t *testing.T) {
 		return
 	}
 	for _, tc := range []struct {
-		name               string
-		timeout, configOff bool
+		name            string
+		timeout, envOff bool
 	}{
 		{name: "delivery"},
 		{name: "timeout", timeout: true},
-		{name: "config opt-out", configOff: true},
+		{name: "environment opt-out", envOff: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.envOff {
+				t.Setenv("DO_NOT_TRACK", "1")
+			}
 			synctest.Test(t, func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				requests := 0
@@ -54,8 +57,7 @@ func TestTUISessionUsesSelectedDaemonAfterCancellation(t *testing.T) {
 				var exitStart time.Time
 				root := &cobra.Command{Use: "tui", RunE: func(cmd *cobra.Command, _ []string) error {
 					ctx, cancel := context.WithCancel(cmd.Context())
-					enabled := !tc.configOff
-					cfg := &config.Config{Telemetry: config.TelemetryConfig{Enabled: &enabled}}
+					cfg := &config.Config{}
 					cfg.Data.DataDir = t.TempDir()
 					cfg.Remote.APIKey = "selected-daemon-key"
 					cfg.Remote.AllowInsecure = true
@@ -68,7 +70,7 @@ func TestTUISessionUsesSelectedDaemonAfterCancellation(t *testing.T) {
 				root.SetArgs([]string{})
 				require.NoError(executeRootContext(t.Context(), root))
 				synctest.Wait()
-				if tc.configOff {
+				if tc.envOff {
 					invocationFromCommand(root).sends.Wait(time.Second)
 					assert.Zero(requests)
 					close(release)

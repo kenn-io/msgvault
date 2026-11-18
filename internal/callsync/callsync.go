@@ -393,15 +393,21 @@ func Transient(err error) bool {
 	return errors.Is(err, ErrTransport) || errors.As(err, &netErr) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.DeadlineExceeded)
 }
 
+// RecordingCap is the largest recording Fetch stores: the media policy's cap,
+// or the shared chat default when the policy sets none.
+func (r *Run) RecordingCap() int64 {
+	if r.Opts.MediaPolicy.MaxBytes > 0 {
+		return r.Opts.MediaPolicy.MaxBytes
+	}
+	return attachmentpolicy.DefaultChatMaxBytes
+}
+
 // Fetch stores one recording's audio from open into write. A failure that
 // isn't Transient becomes a failed row, reported once when it first fails;
 // providerErr is worth retrying later, and storeErr is a local write failure
 // that must stop the run.
 func (r *Run) Fetch(ctx context.Context, name string, open func(maxBytes int64) (io.ReadCloser, error), alreadyFailed bool, write *store.AttachmentWrite) (providerErr, storeErr error) {
-	capBytes := r.Opts.MediaPolicy.MaxBytes
-	if capBytes <= 0 {
-		capBytes = attachmentpolicy.DefaultChatMaxBytes
-	}
+	capBytes := r.RecordingCap()
 	reader, err := open(capBytes)
 	if err == nil {
 		body := &export.SourceReader{R: reader}

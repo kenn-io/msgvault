@@ -1,7 +1,7 @@
 ---
 title: Agent quickstart
 description: Connect an agent to msgvault and work safely with an archive.
-last_edited: "2026-11-13"
+last_edited: "2026-11-17"
 ---
 
 Use msgvault's MCP server to find and read conversations, analyze archive
@@ -56,6 +56,13 @@ to see its tools. A missing tool or denied call can
 mean the grant is too narrow or a write class is disabled; ask the owner to
 review access instead of attempting to bypass it. A grant without `stats.read`
 cannot use `get_stats` as a universal connection check.
+
+Call `msgvault.skills {}` to list the bundled guides and
+`msgvault.skills {"name":"<guide-name>"}` to read one. They include this
+quickstart as `workflow` and every [agent skill](../guides/agent-skills.md). The
+tool works in every session, including delegated ones, and reads no archive data.
+
+Use owner tool `list_changes` to follow filtered message changes with a cursor.
 
 ## Find people and read conversations
 
@@ -159,7 +166,8 @@ Continue with the same `id` and advance `offset` by `body_returned` while
   using the profile selected by
   `integrations.docbank.attachment_search_profile`. Check the
   attachment list's actual mode, coverage, partial status and degradations.
-  Recordings support lexical mode only. See [attachment search](../usage/searching.md#search-mirrored-attachment-text).
+  Recordings use `integrations.docbank.recording_search_profile` and report
+  their own actual mode and degradations. See [attachment search](../usage/searching.md#search-mirrored-attachment-text).
 - Page search results with `offset` and `limit`; check `has_more`. See
   [search syntax](../usage/searching.md) and the tool schema for supported filters.
 - Use `aggregate` with `group_by`, such as `sender` or `time`, for grouped
@@ -235,12 +243,14 @@ backend checks for action permissions, source scope, and sender identity;
 | `accept_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `reject_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |
+| `create_import_job` | import_write | `--allow-import-writes` | owner-only |
 | `create_kata_issue` | kata_write | `--allow-kata-writes` | owner-only |
 | `link_kata_evidence` | kata_write | `--allow-kata-writes` | owner-only |
 | `close_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `reopen_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `snooze_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `merge_person` | person_merge | `--allow-person-merges` | owner-only |
+| `create_person` | profile_write | `--allow-profile-writes` | owner-only |
 | `promote_person` | profile_write | `--allow-profile-writes` | owner-only |
 | `set_person_display_name` | profile_write | `--allow-profile-writes` | owner-only |
 | `update_person_notes` | profile_write | `--allow-profile-writes` | owner-only |
@@ -261,9 +271,11 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
 | `get_deletion` | read | — | owner-only |
+| `get_email_family` | read | — | owner-only |
 | `get_embeddings_status` | read | — | owner-only |
 | `get_identity_match` | read | — | owner-only |
 | `get_identity_scoring_status` | read | — | owner-only |
+| `get_import_job` | read | — | owner-only |
 | `get_kata_issue_context` | read | — | owner-only |
 | `get_meeting_context` | read | — | owner-only |
 | `get_meeting_metrics` | read | — | owner-only |
@@ -286,6 +298,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_source_identities` | read | — | owner-only |
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
+| `list_changes` | read | — | owner-only |
 | `list_deletions` | read | — | owner-only |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |
@@ -296,6 +309,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
+| `msgvault.skills` | read | — | guidance-only |
 | `prepare_kata_evidence` | read | — | owner-only |
 | `preview_carddav_publication` | read | — | owner-only |
 | `preview_person_tiers` | read | — | owner-only |

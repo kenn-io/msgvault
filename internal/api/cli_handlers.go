@@ -1254,7 +1254,7 @@ func parseCLISyncRequest(r *http.Request, full bool) (CLISyncRequest, *apiHTTPEr
 		if !full {
 			return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_refresh_labels", "label refresh requires sync-full")
 		}
-		if (strings.TrimSpace(req.Email) == "" && !req.SourceIDSet) || len(values["email"]) > 1 {
+		if (strings.TrimSpace(req.Email) == "" && !req.SourceIDSet) || len(values["email"]) > 1 || (req.SourceIDSet && values.Has("email")) {
 			return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_source_selector", "label refresh requires one explicit Gmail account or source_id")
 		}
 		if slices.ContainsFunc([]string{"query", "before", "after", "folder", "skip-folder"}, values.Has) {
@@ -1812,6 +1812,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-synctech-sms-drive",
 		"add-teams",
 		"add-twilio",
+		"add-bland",
 		"backfill-beeper-media",
 		"backfill-discord-media",
 		"backfill-inline-media",
@@ -1876,7 +1877,8 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams",
-		"sync-twilio":
+		"sync-twilio",
+		"sync-bland":
 		return true
 	default:
 		return false

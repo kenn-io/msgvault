@@ -104,7 +104,7 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
 				return
 			}
-			if len(request.MediaSources) > 0 || r.URL.Path == "/api/v1/search/validate" {
+			if r.URL.Path == "/api/v1/search/validate" {
 				assert.Equal(t, "lexical", request.Mode)
 			}
 			assert.True(t, request.ContentFirst)
@@ -275,8 +275,11 @@ func TestMediaSearchParametersAndAuthorization(t *testing.T) {
 	for _, query := range []string{"q=words&mode=semantic", "q=words&mode=hybrid", "q=words&mode=invalid", "q=words&limit=101", "q=words&person_id=0", "q=words&participant_id=7&person_id=7", "q=words&direction=from_person", "q=words&person_id=7&direction=invalid", "q=words&person_id=7&direction=", "q=" + url.QueryEscape(strings.Repeat("x", 8193))} {
 		status, _, raw := searchMediaFor(t, f.server(true), query)
 		want := http.StatusBadRequest
-		if strings.Contains(query, "mode=semantic") || strings.Contains(query, "mode=hybrid") {
+		switch {
+		case strings.Contains(query, "mode=semantic"):
 			want = http.StatusServiceUnavailable
+		case strings.Contains(query, "mode=hybrid"):
+			want = http.StatusOK
 		}
 		assert.Equal(want, status, raw)
 		if strings.Contains(query, "participant_id=7&person_id=7") {
@@ -1328,7 +1331,7 @@ func TestMediaSearchLocalMappingAfterDocbankBudget(t *testing.T) {
 			}
 			if kind == "recording" {
 				f.duringSearch = slow
-				response, err := server.messageRecordings.search(t.Context(), remoteCtx, "quartz", 20, nil, resolve)
+				response, err := server.messageRecordings.search(t.Context(), remoteCtx, "quartz", "lexical", 20, nil, resolve)
 				require.NoError(err)
 				require.Len(response.Results, 1)
 				assert.Equal(recording.messageID, response.Results[0].MessageID)
@@ -1375,11 +1378,125 @@ func TestMediaSearchDocumentModes(t *testing.T) {
 			require.Len(f.documentRequests, 1)
 			assert.Equal("existing-profile", f.documentRequests[0].Profile)
 			assert.Empty(response.Attachments.Results[0].Excerpt)
-			require.NotNil(response.RecordingsError)
-			assert.Equal("media_search_mode_unavailable", response.RecordingsError.Error)
-			assert.Equal("Recordings support lexical search only.", response.RecordingsError.Message)
+			// Recordings have no search profile configured.
+			if mode == "semantic" {
+				require.NotNil(response.RecordingsError)
+				assert.Equal("media_search_mode_unavailable", response.RecordingsError.Error)
+				assert.Contains(response.RecordingsError.Message, "integrations.docbank.recording_search_profile")
+			} else {
+				assert.Nil(response.RecordingsError)
+				assert.Equal([]string{"semantic_unconfigured"}, response.Degradations)
+				assert.True(response.Partial)
+			}
 		})
 	}
+}
+
+func TestMediaSearchRecordingModes(t *testing.T) {
+	for _, test := range []struct {
+		name, mode, profile, docbankMode string
+		docbankDegradations              []string
+		wantMode, wantProfile            string
+		wantDegradations                 []string
+		wantPartial                      bool
+	}{
+		{name: "semantic", mode: "semantic", profile: "transcript-vectors", docbankMode: "semantic", wantMode: "semantic", wantProfile: "transcript-vectors", wantDegradations: []string{}},
+		{name: "hybrid", mode: "hybrid", profile: "transcript-vectors", docbankMode: "hybrid", wantMode: "hybrid", wantProfile: "transcript-vectors", wantDegradations: []string{}},
+		{name: "unconfigured hybrid", mode: "hybrid", docbankMode: "lexical", wantMode: "lexical", wantProfile: suppliedTranscriptProfile, wantDegradations: []string{"semantic_unconfigured"}, wantPartial: true},
+		{name: "embeddings unavailable", mode: "semantic", profile: "transcript-vectors", docbankMode: "lexical", docbankDegradations: []string{"semantic_unavailable"}, wantMode: "semantic", wantProfile: "transcript-vectors", wantDegradations: []string{"semantic_unavailable"}, wantPartial: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			seed := f.match(t, "audio")
+			server := f.server(true)
+			server.messageRecordings.SearchProfile = test.profile
+			f.report.RequestedMode, f.report.ActualMode, f.report.Degradations = test.wantMode, test.docbankMode, test.docbankDegradations
+			lexical := f.report.Results[0].Evidence[0]
+			lexical.TimeSpan = &docbankmedia.MediaTimeSpan{StartMS: 1200, EndMS: 2800}
+			embedding := docbankmedia.SearchEvidence{Kind: "embedding", BuildID: lexical.BuildID, TimeSpan: lexical.TimeSpan, MediaSources: lexical.MediaSources}
+			switch test.docbankMode {
+			case "semantic":
+				f.report.Results[0].Evidence = []docbankmedia.SearchEvidence{embedding}
+			case "hybrid":
+				f.report.Results[0].Evidence = []docbankmedia.SearchEvidence{lexical, embedding}
+			default:
+				f.report.Results[0].Evidence = []docbankmedia.SearchEvidence{lexical}
+			}
+			status, response, raw := searchMediaFor(t, server, "q=telescope+arrival&mode="+test.mode)
+			require.Equal(http.StatusOK, status, raw)
+			require.Len(f.requests, 1)
+			assert.Equal(test.wantMode, f.requests[0].Mode)
+			assert.Equal(test.wantProfile, f.requests[0].Profile)
+			assert.Equal(test.docbankMode, response.ActualMode)
+			assert.Equal(test.wantDegradations, response.Degradations)
+			assert.Equal(test.wantPartial, response.Partial)
+			assert.Nil(response.RecordingsError)
+			require.Len(response.Results, 1)
+			assert.Equal(seed.messageID, response.Results[0].MessageID)
+			require.NotNil(response.Results[0].StartMS)
+			assert.Equal(int64(1200), *response.Results[0].StartMS)
+		})
+	}
+}
+
+func TestMediaSearchRecordingModesKeepHitsWhenAttachmentsFail(t *testing.T) {
+	for _, mode := range []string{"semantic", "hybrid"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			seed := f.match(t, "audio")
+			server := f.server(true)
+			server.messageRecordings.SearchProfile = "transcript-vectors"
+			f.report.RequestedMode, f.report.ActualMode = mode, mode
+			f.document(t, server)
+			if mode == "hybrid" {
+				// Semantic without a profile fails locally; hybrid needs a remote failure.
+				server.docbankAttachments.SearchProfile = "attachment-vectors"
+				f.documentStatus = http.StatusServiceUnavailable
+			}
+			status, response, raw := searchMediaFor(t, server, "q=telescope&mode="+mode)
+			require.Equal(http.StatusOK, status, raw)
+			require.Len(response.Results, 1)
+			assert.Equal(seed.messageID, response.Results[0].MessageID)
+			assert.Equal(mode, response.ActualMode)
+			assert.Nil(response.RecordingsError)
+			require.NotNil(response.Attachments)
+			require.NotNil(response.Attachments.Error)
+			assert.Empty(response.Attachments.Results)
+		})
+	}
+}
+
+func TestMediaSearchRecordingModesWithoutSearch(t *testing.T) {
+	t.Run("semantic unconfigured", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := newMediaSearchFixture(t)
+		f.match(t, "audio")
+		status, _, raw := searchMediaFor(t, f.server(true), "q=telescope&mode=semantic")
+		require.Equal(http.StatusServiceUnavailable, status, raw)
+		assert.Contains(raw, "media_search_mode_unavailable")
+		assert.Contains(raw, "integrations.docbank.recording_search_profile")
+		assert.Empty(f.requests)
+		assert.Zero(f.validated)
+	})
+	t.Run("empty scope", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := newMediaSearchFixture(t)
+		server := f.server(true)
+		server.messageRecordings.SearchProfile = "transcript-vectors"
+		status, response, raw := searchMediaFor(t, server, "q=telescope&mode=semantic")
+		require.Equal(http.StatusOK, status, raw)
+		assert.Equal("unavailable", response.ActualMode)
+		assert.True(response.Partial)
+		assert.Empty(response.Results)
+		assert.Equal(1, f.validated, "the query is validated lexically")
+		assert.Empty(f.requests)
+	})
 }
 
 func TestMediaSearchDocumentFallbackAndCoverage(t *testing.T) {

@@ -40,6 +40,10 @@ export type SyncFullCLIParams = {
    */
   noresume?: boolean;
   /**
+   * Refresh archived labels for one unrestricted Gmail source
+   */
+  refresh_labels?: boolean;
+  /**
    * IMAP folder names to include (repeatable)
    */
   folder?: string[];

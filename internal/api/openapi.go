@@ -425,8 +425,13 @@ import (
 // 5.9.0 adds meeting records.
 // 5.10.0 adds owner meeting link decisions.
 // 5.11.0 adds meeting link suggestions.
-// 5.12.0 adds explicit archived Gmail label refresh to CLI full sync.
-const APISchemaVersion = "5.12.0"
+// 5.12.0 adds owner-only email family lookup.
+// 5.13.0 adds fact decision outcomes, evidence filtering, and a person fact summary.
+// 5.14.0 adds each decision's submitted claim value to its history row.
+// 5.15.0 applies media search mode to recordings and reports their actual mode and degradations.
+// 5.16.0 adds standalone person creation at POST /api/v1/people/create.
+// 5.17.0 adds person, source, conversation and incoming filters to the message change feed.
+const APISchemaVersion = "5.18.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1183,6 +1188,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
+	nullableSchemaProperty(schemas["FactSummary"], "latest_claim_at")
 	for schemaName, property := range map[string]string{
 		"MeetingPerson":       emailProperty,
 		"Source":              "account_email",

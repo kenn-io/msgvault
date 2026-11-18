@@ -63,10 +63,11 @@ func mcpRouteDescriptors(doc *huma.OpenAPI) []apiprotocol.MCPRouteDescriptor {
 // are registered.
 func mcpOperationDescribed(operationID string) bool {
 	switch operationID {
-	case "listSourceStatus", "listSourceIdentities", "getSchedulerStatus", "triggerSync", "runCLI",
+	case "listChangedMessages", "listSourceStatus", "listSourceIdentities", "getSchedulerStatus", "triggerSync", "runCLI",
 		"getSettings", "patchSettings", "getParticipant", "getCacheBuildStatus",
 		"getPersonProfile", "patchPerson", "createPerson", "enableLocalEmbeddings",
 		"listDeletions", "getDeletion",
+		"createImportJob", "getImportJob",
 		"listLoops", "markLoopDone", "snoozeLoop", "reopenLoop",
 		"getPersonStructuredProfile", "patchPersonStructuredProfile", "getPersonProfileHistory", "getPersonProfileMediaContent":
 		return true

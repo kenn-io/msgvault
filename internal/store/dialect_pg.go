@@ -617,6 +617,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
 		{`ALTER TABLE meeting_details ADD COLUMN IF NOT EXISTS link_key TEXT`, "meeting_details.link_key"},
 		{`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS ical_uid TEXT NOT NULL DEFAULT ''`, "calendar_events.ical_uid"},
+		{`ALTER TABLE person_fact_decisions ADD COLUMN IF NOT EXISTS outcome TEXT`, "person_fact_decisions.outcome"},
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS locally_published BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.locally_published"},
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN IF NOT EXISTS started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
@@ -721,6 +722,8 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// projection write moves it, so no backfill is needed.
 		{`ALTER TABLE persons ADD COLUMN IF NOT EXISTS vcard_projection_revision BIGINT NOT NULL DEFAULT 1`,
 			"persons.vcard_projection_revision"},
+		{`ALTER TABLE persons ADD COLUMN IF NOT EXISTS display_name_source_name_id BIGINT`,
+			"persons.display_name_source_name_id"},
 		{`ALTER TABLE person_names ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_names.source_resource_uid"},
 		{`ALTER TABLE person_contact_points ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_contact_points.source_resource_uid"},
 		{`ALTER TABLE person_addresses ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_addresses.source_resource_uid"},

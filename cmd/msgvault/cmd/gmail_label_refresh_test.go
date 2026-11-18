@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func labelRefreshTestCommand(ctx context.Context) *cobra.Command {
@@ -80,7 +82,7 @@ func TestSyncFullLabelRefreshDaemonJourney(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/api/v1/health":
-					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "5.12.0"}))
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "5.18.0"}))
 				case "/api/v1/cli/accounts":
 					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"accounts": accounts}))
 				case "/api/v1/cli/sync-full":
@@ -147,4 +149,30 @@ func TestCLISyncSubprocessCarriesLabelRefresh(t *testing.T) {
 	t.Parallel()
 	args := cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, SourceID: 42, SourceIDSet: true, RefreshLabels: true})
 	assert.Equal(t, []string{"sync-full", "--source-id", "42", "--refresh-labels"}, args)
+}
+
+func TestSyncFullLabelRefreshLocalRejectsOtherProviders(t *testing.T) {
+	for _, provider := range []string{"imap", "msmail"} {
+		for _, byID := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/source-id=%t", provider, byID), func(t *testing.T) {
+				resetSyncFullFlagsForTest(t)
+				cfg := lifecycleTestConfig(t.TempDir())
+				st, err := store.OpenContext(t.Context(), cfg.DatabaseDSN())
+				require.NoError(t, err)
+				require.NoError(t, st.InitSchemaContext(t.Context()))
+				source, err := st.GetOrCreateSourceContext(t.Context(), provider, "reader@example.test")
+				require.NoError(t, err)
+				require.NoError(t, st.Close())
+				cmd := labelRefreshTestCommand(testInvocationContext(t.Context(), cfg, invocationOptions{useLocal: true}))
+				args := []string{"reader@example.test"}
+				flags := []string{"--refresh-labels"}
+				if byID {
+					args = nil
+					flags = append(flags, fmt.Sprintf("--source-id=%d", source.ID))
+				}
+				require.NoError(t, cmd.ParseFlags(flags))
+				require.ErrorContains(t, runSyncFullLocal(cmd, args), "exactly one configured Gmail source")
+			})
+		}
+	}
 }

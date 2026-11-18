@@ -177,6 +177,59 @@ func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	assert.Zero(count)
 }
 
+func TestSchemaVersionFactOutcomeUpgradeFrom45(t *testing.T) {
+	f := storetest.New(t)
+	ctx := t.Context()
+	_, err := f.Store.DB().ExecContext(ctx, "ALTER TABLE person_fact_decisions DROP COLUMN outcome")
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(ctx, "UPDATE archive_metadata SET value='45' WHERE key='schema_version'")
+	require.NoError(t, err)
+	require.Error(t, f.Store.ValidateSchemaContext(ctx))
+	require.NoError(t, f.Store.InitSchemaUnlessCurrentContext(ctx))
+	require.NoError(t, f.Store.ValidateSchemaContext(ctx))
+	var count int
+	require.NoError(t, f.Store.DB().QueryRowContext(ctx, "SELECT COUNT(outcome) FROM person_fact_decisions").Scan(&count))
+	assert.Zero(t, count)
+}
+
+func TestSchemaVersionAddsDisplayNameOwnerOnUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s := testutil.NewTestStore(t)
+	_, err := s.DB().ExecContext(t.Context(), s.Rebind("UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'"),
+		strconv.Itoa(store.SchemaVersion-1))
+	require.NoError(err)
+	var ownerColumns int
+	require.NoError(s.DB().QueryRowContext(t.Context(), displayNameOwnerColumnCountQuery()).Scan(&ownerColumns))
+	if ownerColumns > 0 {
+		_, err = s.DB().ExecContext(t.Context(), `ALTER TABLE persons DROP COLUMN display_name_source_name_id`)
+		require.NoError(err)
+	}
+	_, err = s.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
+		VALUES ('legacy-name-owner-upgrade', 'Legacy Example')`)
+	require.NoError(err)
+
+	require.NoError(s.InitSchemaContext(t.Context()))
+	ownerColumns = 0
+	require.NoError(s.DB().QueryRowContext(t.Context(), displayNameOwnerColumnCountQuery()).Scan(&ownerColumns))
+	assert.Equal(1, ownerColumns)
+	var displayName string
+	require.NoError(s.DB().QueryRowContext(t.Context(), `SELECT display_name FROM persons
+		WHERE vcard_uid = 'legacy-name-owner-upgrade'`).Scan(&displayName))
+	assert.Equal("Legacy Example", displayName,
+		"schema upgrade keeps the existing curated display name")
+}
+
+func displayNameOwnerColumnCountQuery() string {
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		return `SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = 'persons'
+			AND column_name = 'display_name_source_name_id'`
+	}
+	return `SELECT COUNT(*) FROM pragma_table_info('persons')
+		WHERE name = 'display_name_source_name_id'`
+}
+
 func TestSchemaVersionSQLiteFailedUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -384,6 +437,8 @@ var (
 		45: "976143b6a16bea27c9ddbf2e2c23e3909e3c0fd48b3a3ec65f877afd88c278dd",
 		46: "b461fc6b400cfef51c90d20946d31003ec68190467c137e3eb6adf29af2a881f",
 		47: "446ac2e639d0c49992e416072be4c2d80544325b30d1e90d6e5cee0db2ea7896",
+		48: "07dd36cdfff6c46735a6db924e0f9e3701dd68d8fec798f196c894ba7cdc948d",
+		49: "aba299e2311d826c1db938c2461c3bc9a8d844065695c4f6548af4e0d9a32df8",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -428,6 +483,8 @@ var (
 		45: "944577f5687a62a6defc5df8a5e39abd24a3ca1ad42791f9bda550cdbd1dc36d",
 		46: "b66d14fe605ee1d2b7500ed949a5bc40dc60c068a45dafd41099df66312e223b",
 		47: "7f0413f60ff0523e71e0a7c2fbd6e52ff87148c1807e6b7d792bafeecb61bc5a",
+		48: "88e0cabb45d64a8274c254a16a8c5990205c16f8eeca807a579cb38d336bcf04",
+		49: "26e862477d035b98f3c45c39dc90d03383e5adc4bd148790c0efd0b27900ce8c",
 	}
 )
 

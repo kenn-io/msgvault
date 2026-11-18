@@ -79,7 +79,11 @@ func ToolSummaries() []ToolSummary {
 	definitions := operationDefinitions(catalogCapabilities{kataDocbank: true})
 	definitions = append(definitions, stableToolDiscoveryDefinition)
 	definitions = append(definitions, stableIdentityScoringDefinitions...)
-	summaries := make([]ToolSummary, 0, len(definitions))
+	summaries := make([]ToolSummary, 0, len(definitions)+1)
+	summaries = append(summaries, ToolSummary{
+		Name: ToolSkills, Description: bundledSkills().Tool().Description,
+		Security: "read", GrantPermission: "guidance-only",
+	})
 	for _, definition := range definitions {
 		summaries = append(summaries, summarizeTool(definition))
 	}
@@ -102,6 +106,8 @@ func ToolSummaries() []ToolSummary {
 				summary.Flag = securityFlag(toolSecurityProfileWrite)
 			case OperationFamilySources:
 				summary.Security, summary.Flag = "source_write", "--allow-source-writes"
+			case OperationFamilyImports:
+				summary.Security, summary.Flag = "import_write", "--allow-import-writes"
 			case OperationFamilyLoops:
 				summary.Security, summary.Flag = "loop_write", "--allow-loop-writes"
 			case OperationFamilyCurated:

@@ -6454,6 +6454,50 @@ func (o *GetMessageRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// GetEmailFamilyRequestOptions is the options needed to make a request to GetEmailFamily.
+type GetEmailFamilyRequestOptions struct {
+	PathParams *GetEmailFamilyPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetEmailFamilyRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetEmailFamilyRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetEmailFamilyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetEmailFamilyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetEmailFamilyRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetMessageInlinePartRequestOptions is the options needed to make a request to GetMessageInlinePart.
 type GetMessageInlinePartRequestOptions struct {
 	PathParams *GetMessageInlinePartPath
@@ -8165,6 +8209,50 @@ func (o *FindContactCandidatesRequestOptions) GetHeader() (map[string]string, er
 	return nil, nil
 }
 
+// CreateStandalonePersonRequestOptions is the options needed to make a request to CreateStandalonePerson.
+type CreateStandalonePersonRequestOptions struct {
+	Body *CreateStandalonePersonBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *CreateStandalonePersonRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateStandalonePersonRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateStandalonePersonRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateStandalonePersonRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateStandalonePersonRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListDirectoryPeopleRequestOptions is the options needed to make a request to ListDirectoryPeople.
 type ListDirectoryPeopleRequestOptions struct {
 	Query *ListDirectoryPeopleQuery
@@ -9680,6 +9768,50 @@ func (o *SetPersonFactPinRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *SetPersonFactPinRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPersonFactSummaryRequestOptions is the options needed to make a request to GetPersonFactSummary.
+type GetPersonFactSummaryRequestOptions struct {
+	PathParams *GetPersonFactSummaryPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetPersonFactSummaryRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPersonFactSummaryRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPersonFactSummaryRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPersonFactSummaryRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPersonFactSummaryRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 

@@ -4,6 +4,6 @@ Usage:
   msgvault source instagram-comments add [identifier] [flags]
 
 Flags:
-  -h, --help   help for add
+  -h, --help[=true|false]   help for add
 
 Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')

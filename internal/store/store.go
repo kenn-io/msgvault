@@ -1823,6 +1823,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
+	if err := s.runOnceMigration(ctx, migrationPersonFactOutcomes, 1, false, s.backfillPersonFactOutcomes); err != nil {
+		return fmt.Errorf("backfill person fact outcomes: %w", err)
+	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
 	// the legacy migrations above. PostgreSQL builds them concurrently in
@@ -2588,6 +2591,12 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 		s.backfillCardDAVInferenceExportState,
 	); err != nil {
 		return fmt.Errorf("backfill CardDAV inference export state: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationCardDAVInferenceExportStateV2, 1, false,
+		s.backfillCardDAVInferenceExportStateV2,
+	); err != nil {
+		return fmt.Errorf("backfill CardDAV inference export state for names and contacts: %w", err)
 	}
 
 	// Reconcile the system relationship type catalog on every open: insert
