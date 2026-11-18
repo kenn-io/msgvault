@@ -65,6 +65,7 @@ type catalogCapabilities struct {
 	identityReview     bool
 	personCardDAV      bool
 	messageTags        bool
+	personCreate       bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -159,6 +160,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		identityReview:     opts.IdentityReview != nil,
 		personCardDAV:      opts.PersonCardDAV != nil,
 		messageTags:        opts.MessageTags != nil,
+		personCreate:       opts.PersonCreator != nil,
 	}
 }
 
@@ -296,6 +298,7 @@ func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 		semanticSearchMessagesDefinition(nil, capabilities.semanticSearch),
 		stageDeletionDefinition(nil),
 		promotePersonDefinition(nil),
+		createPersonDefinition(),
 		acceptIdentityMatchDefinition(),
 		mergePersonDefinition(),
 		approveCardDAVPublicationDefinition(),
