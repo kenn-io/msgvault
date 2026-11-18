@@ -239,7 +239,7 @@ func changesArchiveUID(t *testing.T, srv *Server) string {
 // after the row (at, id) — through the same codec the server publishes with.
 func changesCursor(t *testing.T, srv *Server, at time.Time, id int64) string {
 	t.Helper()
-	return encodeChangesCursor(changesArchiveUID(t, srv), store.ChangedMessagesAfter(at, id))
+	return encodeChangesCursor(changesArchiveUID(t, srv), store.ChangedMessagesAfter(at, id), "")
 }
 
 // changesInstantCursor builds the other position the server publishes: the
@@ -248,7 +248,7 @@ func changesCursor(t *testing.T, srv *Server, at time.Time, id int64) string {
 // absent cursor means with at zero.
 func changesInstantCursor(t *testing.T, srv *Server, at time.Time) string {
 	t.Helper()
-	return encodeChangesCursor(changesArchiveUID(t, srv), store.ChangedMessagesFrom(at))
+	return encodeChangesCursor(changesArchiveUID(t, srv), store.ChangedMessagesFrom(at), "")
 }
 
 // changesFarFuture is a cursor no watermark can reach, so a page requested with
