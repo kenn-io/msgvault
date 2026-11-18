@@ -14,6 +14,17 @@ describe('TaskIssuePicker', () => {
     await fireEvent.click(choice);
     expect(choice).toHaveProperty('checked', true);
   });
+  it.each([
+    ['other#w3fa', 'garden'], ['garden#w3fa#x', 'garden'], ['garden#', 'garden'],
+    ['garden#w3 fa', 'garden'], [' garden#w3fa', 'garden'], ['garden#w3fa', ''],
+  ])('does not offer invalid reference %s for project %s', async (query, project) => {
+    render(TaskIssuePicker, { load: async () => { throw new Error('Unavailable'); }, noun: 'open issues', empty: 'No open issues.', project });
+    await screen.findByRole('alert');
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: query } });
+    await waitFor(() => expect(screen.getByRole('alert')).toBeDefined());
+    expect(screen.queryByRole('radio')).toBeNull();
+  });
+
   it('keeps issue search guidance visible while filtering', async () => {
     let respond!: (result: { items: typeof item[]; truncated: boolean }) => void;
     const load = (query: string) => query ? new Promise<{ items: typeof item[]; truncated: boolean }>(resolve => { respond = resolve; }) : Promise.resolve({ items: [item], truncated: true });

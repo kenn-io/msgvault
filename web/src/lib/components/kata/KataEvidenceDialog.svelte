@@ -148,7 +148,7 @@
 
   <div class="kata-dialog" class:has-receipt={!!receipt}>
     {#if receipt}
-      <div role="status"><p>Kata · <strong>{receipt.qualified_ref}</strong></p>{#if replayed}<p>Already filed ({receipt.status}).</p>{/if}</div>
+      <div role="status"><p>{replayed ? `Already filed (${receipt.status}).` : 'Saved.'}</p><p>Kata · <strong>{receipt.qualified_ref}</strong></p></div>
       {#if receipt.web_url}<a href={receipt.web_url} target="_blank" rel="noreferrer">Open in Kata</a>{/if}
       {#if replayed}<Button label="File as a new issue" disabled={busy} onclick={() => void fileAgain()} />{/if}
       {#if error}<InlineNotice message={error} />{/if}
@@ -184,7 +184,7 @@
         {/if}
         {#if error}<InlineNotice message={error} />{/if}
         {#if deletedKey}<Button label="File as a new issue" disabled={busy} onclick={() => void fileAgain()} />{/if}
-        <p class="disclosure">Only the quoted passage is sent; attachments stay out.</p>
+        <p class="disclosure">{mode === 'create' ? 'The quote, title, and description are sent; attachments stay out.' : 'Only the quote is sent; attachments stay out.'}</p>
         <div class="actions"><Button label="Cancel" surface="soft" disabled={busy} onclick={onclose} />
         <Button type="submit" tone={canSubmit ? 'info' : 'neutral'} surface={canSubmit ? 'solid' : 'soft'} label={mode === 'create' ? 'Create issue' : 'Add quote'} disabled={!canSubmit} /></div>
       </form>

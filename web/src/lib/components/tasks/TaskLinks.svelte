@@ -60,7 +60,6 @@
   const integrationMessage = $derived(status.message ?? 'Task integration status is unavailable.');
   const project = $derived(status.project ?? '');
   let indexState = $state('loading');
-  let complete = $state(false);
   let reason = $state('');
   let lastScan = $state('');
   let tasks = $state<Task[]>([]);
@@ -89,7 +88,6 @@
     loading = true;
     localStatus = { state: 'loading' };
     indexState = 'loading';
-    complete = false;
     reason = '';
     lastScan = '';
     tasks = [];
@@ -134,7 +132,6 @@
     } catch (cause) {
       if (currentGeneration !== generation || controller.signal.aborted) return;
       indexState = 'unavailable';
-      complete = false;
       error = cause instanceof Error ? cause.message : 'Task integration is unavailable.';
     } finally {
       if (currentGeneration === generation) loading = false;
@@ -142,7 +139,6 @@
   }
   function apply(data: Lookup): void {
     indexState = data.state;
-    complete = data.complete;
     reason = data.reason ?? '';
     lastScan = data.last_scan ?? '';
     tasks = data.tasks ?? [];
@@ -228,9 +224,13 @@
   $effect(() => {
     if (mode === 'add' && mutationReady && outboundMetadata) creationInitialized = true;
   });
+  const rowsVisible = $derived(mode === 'list' && integrationState !== 'authentication_required' && indexState !== 'authentication_required' && tasks.length > 0);
+  const degradedNotice = $derived(degraded && (showSetup || integrationState === 'ready'));
+  const errorNotice = $derived(!!error && (mode !== 'add' || action === 'create' || !mutationReady));
+  const settledContent = $derived(rowsVisible || degradedNotice || partialIndex || sessionOnlyIndex || errorNotice);
   $effect(() => {
     actionReady = mutationReady;
-    present = !loading && ((integrationState !== 'authentication_required' && indexState !== 'authentication_required' && tasks.length > 0) || (!complete && (integrationState !== 'disabled' || showSetup)) || sessionOnlyIndex || !!error);
+    present = !loading && settledContent;
   });
   const stateMessage = $derived(
     integrationState === 'disabled' ? integrationMessage || 'Task integration is disabled.'
@@ -260,27 +260,25 @@
   );
 </script>
 
-{#if showSetup || integrationState === 'ready' || integrationState === 'loading' || (tasks.length > 0 && integrationState !== 'authentication_required') || error}
+{#if (loading && (showSetup || integrationState === 'ready' || integrationState === 'loading')) || (!loading && settledContent) || (mode === 'add' && mutationReady && action !== 'create')}
 <section class="task-links" class:add={mode === 'add'} aria-label="Linked tasks">
   {#if mode !== 'add' && !embedded && integrationState !== 'disabled'}<header>
     <h2>Tasks</h2>
   </header>{/if}
   {#if loading}<p role="status">Loading linked tasks…</p>
   {:else}
-    {#if degraded && (showSetup || integrationState === 'ready')}
+    {#if degradedNotice}
       <InlineNotice tone={integrationState === 'disabled' ? 'info' : 'error'} message={stateMessage} actionLabel={integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onaction={onsettings} />
     {/if}
     {#if partialIndex}<InlineNotice message={stateMessage} />{/if}
     {#if sessionOnlyIndex}<InlineNotice tone="info" message="Linked-task index updates are available for this session but are not persisted to disk on this platform." />{/if}
-    {#if mode !== 'add' && integrationState !== 'authentication_required' && indexState !== 'authentication_required'}
-    {#if tasks.length > 0}
+    {#if rowsVisible}
       {#each tasks as task (task.id)}
         <DetailRow description={`Tasks · ${project}`}>
           {task.title}
           {#snippet actions()}<Button size="sm" class="text-action" label="Unlink" ariaLabel={`Unlink ${task.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(task.id)} />{/snippet}
         </DetailRow>
       {/each}
-    {/if}
     {/if}
     {#if mutationReady && mode === 'add'}
       {#if action !== 'create'}
@@ -293,7 +291,7 @@
       </div>
       {/if}
     {/if}
-    {#if error && (mode !== 'add' || action === 'create' || !mutationReady)}<InlineNotice message={error} />{/if}
+    {#if errorNotice}<InlineNotice message={error} />{/if}
   {/if}
 </section>
 {/if}
@@ -328,7 +326,7 @@
     padding: 0 var(--space-5) var(--space-5);
   }
   .task-links.add { padding: 0; gap: var(--space-6); }
-  .create-task:not([hidden]) { margin-top: var(--space-6); }
+  .task-links.add + .create-task:not([hidden]) { margin-top: var(--space-6); }
   .disclosure { color: var(--text-secondary); font-size: 12px; }
   .actions { display: flex; justify-content: flex-end; gap: var(--space-4); }
   h2, p { margin: 0; }

@@ -43,7 +43,7 @@ describe('KataEvidenceDialog', () => {
     const h = harness();
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up' });
     expect(await screen.findByText('Opening passage')).toBeDefined();
-    expect(screen.getByText('Only the quoted passage is sent; attachments stay out.')).toBeDefined();
+    expect(screen.getByText('The quote, title, and description are sent; attachments stay out.')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Earlier passage' })).toHaveProperty('disabled', true);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Later passage' }));
@@ -53,6 +53,7 @@ describe('KataEvidenceDialog', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
     expect(await screen.findByText('example#abcd')).toBeDefined();
+    expect(screen.getByText('Saved.')).toBeDefined();
     const sent = await h.posted('/integrations/kata/issues')[0].json();
     expect(sent).toEqual({ title: 'Follow up', evidence: [passages[500].reference] });
   });
@@ -102,7 +103,7 @@ describe('KataEvidenceDialog', () => {
   });
 
   it.each([
-    { name: 'a replay', first: () => Response.json({ issue: { ...issue, status: 'closed' }, replayed: true }), role: 'status', says: 'Kata · example#abcdAlready filed (closed).' },
+    { name: 'a replay', first: () => Response.json({ issue: { ...issue, status: 'closed' }, replayed: true }), role: 'status', says: 'Already filed (closed).Kata · example#abcd' },
     { name: 'a deleted issue', first: () => Response.json({ error: 'kata_issue_deleted', message: 'The issue this key filed was deleted in Kata or is not visible to this credential; use a new idempotency key, or restore the issue in Kata' }, { status: 409 }), role: 'alert', says: /not visible to this credential/ },
   ])('says when the issue already exists and can file a new one after $name', async ({ first, role, says }) => {
     const h = harness(async () => h.posted('/integrations/kata/issues').length === 1
@@ -145,6 +146,44 @@ describe('KataEvidenceDialog', () => {
     expect((await screen.findByText('example#efgh')).closest('p')?.textContent).toBe('Kata · example#efgh');
     const keys = (h: ReturnType<typeof harness>) => h.posted('/integrations/kata/issues').map((request) => request.headers.get('Idempotency-Key'));
     expect(keys(remounted)).toEqual(keys(lost));
+  });
+
+  it('files a selected Unicode quote on a chosen open issue', async () => {
+    const text = 'Café 🙂 send the budget';
+    const quote = 'send the budget';
+    const start = [...text.slice(0, text.indexOf(quote))].length;
+    const prepared = evidence(start, quote);
+    const issues = [issue, { ...issue, uid: 'two', qualified_ref: 'example#two', title: 'Second' }, { ...issue, uid: 'three', qualified_ref: 'example#three', title: 'Third' }];
+    const requests: Request[] = [];
+    const client = createAPIClient(async input => {
+      const request = (input as Request).clone(); requests.push(request);
+      const url = new URL(request.url);
+      if (url.pathname.endsWith('/prepare')) {
+        const body = await request.clone().json();
+        return Response.json({ evidence: [body.selectors[0].end_rune ? prepared : evidence(0, text)] });
+      }
+      if (url.pathname.endsWith('/open-issues')) return Response.json({ issues, truncated: false });
+      if (url.pathname.endsWith('/issues/example%23two/evidence')) return Response.json({ issue: issues[1], replayed: false });
+      throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+    });
+    render(KataEvidenceDialog, { client, selector, defaultTitle: 'Follow up' });
+    const node = (await screen.findByText(text)).firstChild as Text;
+    const range = document.createRange();
+    range.setStart(node, text.indexOf(quote)); range.setEnd(node, text.length);
+    window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range);
+    await fireEvent.click(screen.getByRole('button', { name: 'Quote selection' }));
+    await screen.findByText(quote);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    expect(screen.getByText('Only the quote is sent; attachments stay out.')).toBeDefined();
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Second · example#two' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
+    await screen.findByText('Saved.');
+    expect(requests).toHaveLength(4);
+    expect(await requests[1].clone().json()).toEqual({ selectors: [{ kind: 'message', message_id: 42, start_rune: start, end_rune: start + [...quote].length }] });
+    expect(new URL(requests[2].url).search).toBe('');
+    expect(requests[2].method).toBe('GET');
+    expect(new URL(requests[3].url).pathname).toMatch(/example%23two\/evidence$/);
+    expect(await requests[3].clone().json()).toEqual({ evidence: [prepared.reference] });
   });
 
   it('lists 25 open issues before typing', async () => {

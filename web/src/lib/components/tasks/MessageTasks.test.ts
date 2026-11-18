@@ -5,6 +5,42 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
+  it('hides an unavailable empty group when setup is suppressed', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'unavailable' }
+      : { state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} }));
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup: false });
+    await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
+    expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
+  });
+
+  it('shows an outage notice when setup is enabled and retains safe cached rows', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'unavailable' }
+      : { state: 'unavailable', complete: false, tasks: [{ id: 'one', title: 'Cached task' }], outbound_metadata: {} }));
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
+    expect(await screen.findByText('Cached task')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Open Settings' })).toBeDefined();
+  });
+
+  it('keeps the partial-index notice visible without rows', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'ready' }
+      : { state: 'partial', complete: false, tasks: [], outbound_metadata: {} }));
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
+    expect(await screen.findByText('Some linked tasks may be missing.')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
+  });
+
+  it('keeps a lookup error visible without rows', async () => {
+    const client = createAPIClient(async input => (input as Request).url.endsWith('/status')
+      ? Response.json({ state: 'ready' }) : Response.json({ message: 'Lookup failed' }, { status: 503 }));
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
+    expect(await screen.findByText('Lookup failed')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
+  });
+
   it('shows the session-only cache notice when no tasks are linked', async () => {
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
       ? { state: 'ready', project: 'example' }

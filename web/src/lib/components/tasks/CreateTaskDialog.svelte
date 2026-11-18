@@ -135,7 +135,7 @@
     }}
   >
     <p class="project"><span>Project</span><strong>{project}</strong></p>
-    <Chip uppercase={false}>{contextParts.join(' · ') || defaultTitle}</Chip>
+    <div class="message"><span>Message</span><Chip uppercase={false}>{contextParts.join(' · ') || defaultTitle}</Chip></div>
     <label>Task title<TextInput ariaLabel="Task title" bind:value={title} autocomplete="off" block /></label>
     <label>Description<textarea aria-label="Description" bind:value={description}></textarea></label>
     <label
@@ -214,6 +214,7 @@
   </form>
 
 <style>
+  .message { display: grid; justify-items: start; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
   form {
     --field-text-size: 16px;
     display: grid;

@@ -50,6 +50,7 @@ describe('CreateTaskDialog', () => {
       archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
       sourceMessageId: 'source-42', subject: '', from: '', sentAt: '2026-07-18T12:00:00Z'
     });
+    expect(screen.getByText('Message')).toBeDefined();
     expect(screen.getByText(/^Jul 18(?:, 2026)?$/)).toBeDefined();
   });
 
