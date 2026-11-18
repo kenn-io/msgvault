@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-14"
+last_edited: "2026-11-18"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -266,10 +266,6 @@ Schema 3.11.0 adds `GET /media/search/status` to report whether Docbank transcri
 
 Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
 See [scoped archive reads](cli-reference.md#scoped-archive-reads).
-
-Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web, terminal UI, and interactive CLI use to
-report anonymous usage events through the daemon. See
-[Telemetry](configuration.md#telemetry).
 
 Schema 3.22.0 adds account aliases and lifecycle fields, account merging, and
 owner source-maintenance requests. Existing source identifiers and account

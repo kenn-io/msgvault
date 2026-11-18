@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-17"
+last_edited: "2026-11-18"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -621,7 +621,6 @@ Mistral retired the pinned `mistral-ocr-4-0` model. 0.23.0 fixes this.
 - Stored people provider keys move into `tokens/provider-credentials.json` the first time msgvault uses them. An older release cannot read that file, so before downgrading run `msgvault person provider remove <name>` for each profile with a stored key.
 - A stored person-enrichment suppression key now overrides `suppression_key_env`. Make the two agree before upgrading.
 - A server bound to a non-loopback address without an API key now generates `tokens/server-api-key` and reuses it, so the Web UI asks for a login on `127.0.0.1` too.
-- msgvault now sends anonymous usage telemetry. Turn it off with `[telemetry] enabled = false`, `MSGVAULT_TELEMETRY_ENABLED=0` or `DO_NOT_TRACK=1`.
 
 ### New features
 
@@ -660,7 +659,6 @@ Mistral retired the pinned `mistral-ocr-4-0` model. 0.23.0 fixes this.
 - Use msgvault as a Go library through `go.kenn.io/msgvault/pkg/archive`: set up and open SQLite or PostgreSQL archives, run the Slack and Discord importers, purge channels and sources, scope reads per request, and mount the HTTP API in your own server. PostgreSQL-only programs build without CGO.
 - Check embedding coverage, running and queued jobs, throughput with an ETA, and per-batch timings with `msgvault embeddings status`, `GET /api/v1/embeddings/status` or MCP `get_embeddings_status`.
 - Compare a new binary's expected archive version with the stored one using `schema-version`, then run `migrate` before replacing the executable.
-- Anonymous usage telemetry: a daemon ping at startup and once each later UTC day, Web UI opens, screen views at most once per day, session length in four buckets, and counts of searches, empty searches, message opens, manual syncs, displayed errors and failing sources. Events carry the version, commit, OS, architecture and a random install ID, never query text, IDs or archive content. CI runs and non-release builds never send, and the CLI and TUI wait at most 50 ms for pending reports at exit.
 
 ### Improvements
 
@@ -727,7 +725,7 @@ Thanks to everyone who contributed to this release:
 - [@fucx](https://github.com/fucx) for restoring Apple Mail attachments in messages with mixed line endings.
 - [@jr-k](https://github.com/jr-k) for OR searches with `|` and linking many people at once in Relationships.
 - [@mariusvniekerk](https://github.com/mariusvniekerk) for cron schedules that handle daylight saving, and patched toolchains for builds.
-- [@rodboev](https://github.com/rodboev) for searching recording transcripts, Microsoft 365 contacts sync, quoting archive passages in Kata issues, anonymous telemetry, and Windows startup fixes.
+- [@rodboev](https://github.com/rodboev) for searching recording transcripts, Microsoft 365 contacts sync, quoting archive passages in Kata issues, and Windows startup fixes.
 - [@salmonumbrella](https://github.com/salmonumbrella) for Plaud, Twenty, Omi, Chatwoot and Twilio archiving, calendar event control, message tag editing, account merging, and new MCP tools.
 - [@wesm](https://github.com/wesm) for using msgvault as a library in other Go programs, Slack archives with public-channel-only tokens, the clickable relationship heatmap, and backup and Slack sync fixes.
 - [@X1pheR](https://github.com/X1pheR) for patching PCRE2 in container images.

@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"go.kenn.io/kit/telemetry/posthog"
 	"testing"
 	"time"
 
@@ -26,7 +27,7 @@ func TestSessionEndedWire(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	stub := newWireStub(t)
-	runWireHelper(t, stub.server.URL, t.TempDir(), "MSGVAULT_SESSION_TEST=1")
+	runWireHelper(t, stub.server.URL, t.TempDir(), posthog.GenericEnabledEnv+"=1", "MSGVAULT_SESSION_TEST=1")
 	messages := batchEvents(t, stub)
 	require.Len(messages, 3)
 	for i, expected := range []map[string]any{
