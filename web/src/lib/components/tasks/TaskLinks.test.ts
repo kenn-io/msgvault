@@ -16,6 +16,41 @@ function expectOneInitialTaskRead(requests: Request[]): void {
 }
 
 describe('TaskLinks', () => {
+  it('unlinks two tasks from the same message in sequence', async () => {
+    let tasks = [{ id: 'one', title: 'First task' }, { id: 'two', title: 'Second task' }];
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      if (request.url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (request.method === 'DELETE') {
+        tasks = tasks.filter(task => !request.url.endsWith(`/${task.id}`));
+        return Response.json({ task: { id: 'removed', title: 'Removed' } });
+      }
+      return Response.json({ state: 'ready', complete: true, tasks, outbound_metadata: taskOutboundMetadata });
+    });
+    render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Unlink First task' }));
+    await waitFor(() => expect(screen.queryByText('First task')).toBeNull());
+    const second = screen.getByRole('button', { name: 'Unlink Second task' });
+    expect(second).toHaveProperty('disabled', false);
+    await fireEvent.click(second);
+    await waitFor(() => expect(screen.queryByText('Second task')).toBeNull());
+  });
+
+  it('clears a lookup error after a later refresh succeeds', async () => {
+    let lookups = 0;
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      if (request.url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (++lookups === 1) return Response.json({ message: 'Lookup failed' }, { status: 503 });
+      return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'one', title: 'Recovered task' }], outbound_metadata: taskOutboundMetadata });
+    });
+    const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic', refresh: 0 });
+    await screen.findByText('Lookup failed');
+    await view.rerender({ refresh: 1 });
+    await screen.findByText('Recovered task');
+    expect(screen.queryByText('Lookup failed')).toBeNull();
+  });
+
   it('shows outbound metadata before linking an existing task', async () => {
     render(TaskLinks, { client: taskCreationClient(), mode: 'add', messageId: 42, title: 'Follow up' });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));

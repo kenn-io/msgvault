@@ -88,26 +88,29 @@
     return () => activeController?.abort();
   });
   function resetForSelection(): void {
-    loading = true;
     localStatus = { state: 'loading' };
     indexState = 'loading';
     reason = '';
     lastScan = '';
     tasks = [];
     selected = '';
-    mutating = false;
-    error = '';
     outboundMetadata = null;
     creationInitialized = false;
     existingLinkRetry = undefined;
+  }
+  function resetForLoad(selectedMessageID: number): void {
+    if (loadedMessageID !== selectedMessageID || loadedClient !== client) resetForSelection();
+    loading = true;
+    mutating = false;
+    busy = false;
+    error = '';
   }
   async function loadFor(selectedMessageID: number): Promise<void> {
     const currentGeneration = ++generation;
     activeController?.abort();
     const controller = new AbortController();
     activeController = controller;
-    if (loadedMessageID !== selectedMessageID || loadedClient !== client) resetForSelection();
-    else loading = true;
+    resetForLoad(selectedMessageID);
     loadedMessageID = selectedMessageID;
     loadedClient = client;
     try {
