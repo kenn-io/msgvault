@@ -70,7 +70,11 @@ func TestImportLinkedInEndToEnd(t *testing.T) {
 	rootCmd.SetOut(&stdout)
 	rootCmd.SetErr(&stderr)
 	rootCmd.SetArgs([]string{"--home", home, "import-linkedin", "example-account", fixture, "--me", "https://www.linkedin.com/in/alex-example/", "--json"})
-	require.NoError(rootCmd.ExecuteContext(t.Context()), stderr.String())
+	captured := captureStdout(t)
+	err = rootCmd.ExecuteContext(t.Context())
+	processOutput := captured()
+	require.NoError(err, stderr.String())
+	assert.Empty(processOutput, "JSON imports must not print cache progress on process stdout")
 	var summary map[string]int64
 	require.NoError(json.Unmarshal(stdout.Bytes(), &summary))
 	assert.Equal(int64(4), summary["messages_added"])

@@ -66,8 +66,9 @@ func runImportLinkedIn(cmd *cobra.Command, archive string, opts linkedin.Options
 	// The importer confirms the --me identity itself; the identifier is a
 	// nickname, not an address, so no default identity is added here.
 	migrationErr := runPostSourceCreateMigrationsForInvocation(context.WithoutCancel(ctx), st, state)
-	// Cache already committed rows even after cancellation or partial failure.
-	cacheErr := rebuildCacheAfterWrite(ctx, state.cfg.DatabaseDSN(), state)
+	// Through the daemon, the daemon refreshes the cache once the import
+	// returns (see manualSyncCLICommand); a --local run refreshes it here.
+	cacheErr := rebuildCacheAfterManualSync(state.cfg.DatabaseDSN(), state)
 	if err := errors.Join(importErr, migrationErr, cacheErr); err != nil {
 		return err
 	}

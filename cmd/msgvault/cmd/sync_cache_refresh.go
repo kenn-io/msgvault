@@ -54,7 +54,7 @@ func manualSyncCLICommand(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "import-tiktok":
+	case "import-tiktok", "import-linkedin":
 		// The daemon refreshes the cache after the import, so --json output
 		// stays free of cache progress.
 		return true
