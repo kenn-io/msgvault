@@ -9,4 +9,6 @@ export const ListDirectoryPeopleSort = {
   name: "name",
   last_contact_desc: "last_contact_desc",
   last_contact_asc: "last_contact_asc",
+  most_overdue: "most_overdue",
+  next_due: "next_due",
 } as const;

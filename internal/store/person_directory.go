@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/contactcadence"
 	"go.kenn.io/msgvault/internal/namematch"
 )
 
@@ -28,6 +29,8 @@ const (
 	maxDirectoryFirstRawCandidateChunkSize = 64
 	directoryCursorVersion                 = 6
 	directoryLastContactKeyLayout          = "2006-01-02T15:04:05.000000000Z"
+	DirectoryPeopleSortMostOverdue         = "most_overdue"
+	DirectoryPeopleSortNextDue             = "next_due"
 	DirectoryPeopleSortName                = "name"
 	DirectoryPeopleSortLastContactAsc      = "last_contact_asc"
 	DirectoryPeopleSortLastContactDesc     = "last_contact_desc"
@@ -37,6 +40,8 @@ const (
 // Address preserves internal whitespace and matches literal substrings;
 // other text fields use the Directory's lexical normalization.
 type DirectoryPeopleQuery struct {
+	Cadence           string     `json:"cadence,omitempty"`
+	DueWithinDays     *int       `json:"due_within_days,omitempty"`
 	Query             string     `json:"query,omitempty"`
 	Address           string     `json:"address,omitempty"`
 	Cursor            string     `json:"cursor,omitempty"`
@@ -54,25 +59,33 @@ type DirectoryPeopleQuery struct {
 // a durable person root. ContactState is "active" when a contact projection
 // has a last-contact timestamp and "inactive" otherwise.
 type DirectoryPersonSummary struct {
-	ID              int64            `json:"id"`
-	VCardUID        string           `json:"vcard_uid"`
-	CardDAVBindings []CardDAVBinding `json:"carddav_bindings"`
-	DisplayName     *string          `json:"display_name,omitzero" nullable:"false"`
-	Revision        int64            `json:"revision"`
-	PrimaryChannel  string           `json:"primary_channel,omitempty"`
-	ContactState    string           `json:"contact_state"`
-	LastContactAt   *time.Time       `json:"last_contact_at,omitempty"`
-	Categories      []string         `json:"categories" nullable:"false"`
-	Organizations   []string         `json:"organizations" nullable:"false"`
+	Cadence            DirectoryCadence          `json:"cadence,omitzero"`
+	LastContactChannel string                    `json:"last_contact_channel,omitempty"`
+	ReachOutContext    *DirectoryReachOutContext `json:"reach_out_context,omitempty"`
+	ID                 int64                     `json:"id"`
+	VCardUID           string                    `json:"vcard_uid"`
+	CardDAVBindings    []CardDAVBinding          `json:"carddav_bindings"`
+	DisplayName        *string                   `json:"display_name,omitzero" nullable:"false"`
+	Revision           int64                     `json:"revision"`
+	PrimaryChannel     string                    `json:"primary_channel,omitempty"`
+	ContactState       string                    `json:"contact_state"`
+	LastContactAt      *time.Time                `json:"last_contact_at,omitempty"`
+	Categories         []string                  `json:"categories" nullable:"false"`
+	Organizations      []string                  `json:"organizations" nullable:"false"`
 }
 
 // DirectoryPeoplePage is one stable keyset page of directory people.
 type DirectoryPeoplePage struct {
-	People     []DirectoryPersonSummary `json:"people"`
-	NextCursor string                   `json:"next_cursor,omitempty"`
+	CadencePresets  []contactcadence.Preset   `json:"cadence_presets,omitempty"`
+	CadenceCoverage *DirectoryCadenceCoverage `json:"cadence_coverage,omitempty"`
+	People          []DirectoryPersonSummary  `json:"people"`
+	NextCursor      string                    `json:"next_cursor,omitempty"`
 }
 
 type normalizedDirectoryPeopleQuery struct {
+	cadence           string
+	dueWithinDays     int
+	all               bool
 	query             string
 	address           string
 	terms             []string
@@ -89,6 +102,7 @@ type normalizedDirectoryPeopleQuery struct {
 }
 
 type directoryPeopleCursor struct {
+	EvaluatedAt string `json:"evaluated_at,omitempty"`
 	Version     int    `json:"version"`
 	Fingerprint string `json:"fingerprint"`
 	Quality     int    `json:"quality"`
@@ -130,6 +144,7 @@ func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirect
 	normalized := normalizedDirectoryPeopleQuery{
 		query:          normalizeDirectoryText(query.Query),
 		address:        strings.ToLower(strings.TrimSpace(query.Address)),
+		cadence:        normalizeDirectoryText(query.Cadence),
 		cursor:         strings.TrimSpace(query.Cursor),
 		contactState:   normalizeDirectoryText(query.ContactState),
 		category:       normalizeDirectoryText(query.Category),
@@ -140,8 +155,19 @@ func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirect
 	if normalized.sort == "" {
 		normalized.sort = DirectoryPeopleSortName
 	}
-	if normalized.sort != DirectoryPeopleSortName && normalized.sort != DirectoryPeopleSortLastContactAsc && normalized.sort != DirectoryPeopleSortLastContactDesc {
+	if normalized.sort != DirectoryPeopleSortName && normalized.sort != DirectoryPeopleSortLastContactAsc && normalized.sort != DirectoryPeopleSortLastContactDesc && !directoryCadenceSort(normalized.sort) {
 		return normalized, fmt.Errorf("%w: unknown sort", ErrInvalidDirectoryQuery)
+	}
+	switch normalized.cadence {
+	case "", "overdue", "due", "no_list", "unknown":
+	default:
+		return normalized, fmt.Errorf("%w: unknown cadence", ErrInvalidDirectoryQuery)
+	}
+	if query.DueWithinDays != nil {
+		if normalized.cadence != "due" || *query.DueWithinDays < 0 || *query.DueWithinDays > 3660 {
+			return normalized, fmt.Errorf("%w: due horizon requires cadence=due and 0..3660 days", ErrInvalidDirectoryQuery)
+		}
+		normalized.dueWithinDays = *query.DueWithinDays
 	}
 	if query.LastContactAfter != nil {
 		normalized.lastContactAfter = directoryLastContactKey(*query.LastContactAfter)
@@ -173,6 +199,8 @@ func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirect
 	encoded, err := json.Marshal(struct {
 		Query             string `json:"query"`
 		Address           string `json:"address,omitempty"`
+		Cadence           string `json:"cadence"`
+		DueWithinDays     int    `json:"due_within_days"`
 		ContactState      string `json:"contact_state"`
 		Category          string `json:"category"`
 		Organization      string `json:"organization"`
@@ -181,7 +209,7 @@ func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirect
 		LastContactBefore string `json:"last_contact_before"`
 		Sort              string `json:"sort"`
 	}{
-		Query: normalized.query, Address: normalized.address, ContactState: normalized.contactState,
+		Query: normalized.query, Address: normalized.address, Cadence: normalized.cadence, DueWithinDays: normalized.dueWithinDays, ContactState: normalized.contactState,
 		Category: normalized.category, Organization: normalized.organization,
 		PrimaryChannel:   normalized.primaryChannel,
 		LastContactAfter: normalized.lastContactAfter, LastContactBefore: normalized.lastContactBefore,
@@ -213,6 +241,14 @@ func (s *Store) directoryPeoplePageContext(
 
 	var page *DirectoryPeoplePage
 	err := s.withFreshDirectorySnapshotContext(ctx, func(tx *loggedTx) error {
+		if query.cadence != "" || directoryCadenceSort(query.sort) {
+			var err error
+			page, err = s.directoryCadencePageTx(ctx, tx, query, after)
+			return err
+		}
+		if after != nil && after.EvaluatedAt != "" {
+			return ErrInvalidDirectoryCursor
+		}
 		if after != nil {
 			anchor, err := s.directoryCursorAnchorTx(ctx, tx, query, after.PersonID)
 			if err != nil {
@@ -229,7 +265,7 @@ func (s *Store) directoryPeoplePageContext(
 		if err != nil {
 			return err
 		}
-		page = &DirectoryPeoplePage{People: make([]DirectoryPersonSummary, 0, min(query.limit, len(candidates)))}
+		page = &DirectoryPeoplePage{CadencePresets: contactcadence.Presets(), People: make([]DirectoryPersonSummary, 0, min(query.limit, len(candidates)))}
 		if len(candidates) > query.limit {
 			last := candidates[query.limit-1]
 			page.NextCursor, err = encodeDirectoryPeopleCursor(directoryPeopleCursor{
@@ -242,6 +278,9 @@ func (s *Store) directoryPeoplePageContext(
 			candidates = candidates[:query.limit]
 		}
 		if err := s.hydrateDirectoryPeopleTx(ctx, tx, candidates); err != nil {
+			return err
+		}
+		if err := s.hydrateDirectoryCadenceTx(ctx, tx, candidates, time.Now().UTC()); err != nil {
 			return err
 		}
 		for _, candidate := range candidates {
@@ -264,7 +303,7 @@ func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query
 	}
 	target, chunkSize := query.limit+1, directoryRawCandidateChunkSize(query.limit)
 	verified := make([]directoryPersonCandidate, 0, target)
-	for len(verified) < target {
+	for query.all || len(verified) < target {
 		raw, err := s.selectDirectoryRawCandidateChunkTx(ctx, tx, querySQL, args, rawAfter, chunkSize, query.sort)
 		if err != nil {
 			return nil, err
@@ -282,13 +321,13 @@ func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query
 			return nil, err
 		}
 		verified = append(verified, raw...)
-		if len(verified) >= target || rawCount < chunkSize {
+		if (!query.all && len(verified) >= target) || rawCount < chunkSize {
 			break
 		}
 		rawAfter = &directoryRawCandidateCursor{quality: lastRaw.quality, sortKey: lastRaw.sortKey, orderName: lastRaw.orderName, personID: lastRaw.summary.ID}
 		chunkSize *= 2
 	}
-	if len(verified) > target {
+	if !query.all && len(verified) > target {
 		verified = verified[:target]
 	}
 	return verified, nil

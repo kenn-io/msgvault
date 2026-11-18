@@ -267,7 +267,8 @@ func (s *Store) setAttributeValueTx(
 	if err != nil {
 		return nil, err
 	}
-	if input.ExpectedValueID != nil && (!hasCurrent || current.ID != *input.ExpectedValueID) {
+	if input.ExpectedValueID != nil && ((*input.ExpectedValueID == 0 && hasCurrent) ||
+		(*input.ExpectedValueID != 0 && (!hasCurrent || current.ID != *input.ExpectedValueID))) {
 		return nil, owner.conflict(current)
 	}
 	write := &attributeValueWrite{}

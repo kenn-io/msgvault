@@ -431,7 +431,8 @@ import (
 // 5.15.0 applies media search mode to recordings and reports their actual mode and degradations.
 // 5.16.0 adds standalone person creation at POST /api/v1/people/create.
 // 5.17.0 adds person, source, conversation and incoming filters to the message change feed.
-const APISchemaVersion = "5.17.0"
+// 5.18.0 adds Directory cadence filters, ordering, presets and coverage.
+const APISchemaVersion = "5.18.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
