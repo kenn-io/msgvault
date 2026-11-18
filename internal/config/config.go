@@ -458,7 +458,8 @@ type SynctechSMSSource struct {
 }
 
 // RemoteConfig holds configuration for a remote msgvault server.
-// Remote-capable commands use this destination unless --local is selected.
+// Remote-capable commands use [remote] unless --local is selected, or
+// --remote selects one of the named [remotes.<name>] tables instead.
 type RemoteConfig struct {
 	URL           string `toml:"url"`     // Remote server URL (e.g., http://nas:8080)
 	APIKey        string `toml:"api_key"` // API key for authentication
@@ -619,6 +620,7 @@ type Config struct {
 	Web                WebConfig                 `toml:"web"`
 	Integrations       IntegrationsConfig        `toml:"integrations"`
 	Remote             RemoteConfig              `toml:"remote"`
+	Remotes            map[string]RemoteConfig   `toml:"remotes,omitempty"`
 	Vector             vector.Config             `toml:"vector"`
 	Identity           IdentityConfig            `toml:"identity"`
 	Fastmail           []FastmailSource          `toml:"fastmail"`

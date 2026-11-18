@@ -1275,6 +1275,29 @@ destination and its secret sources. An unused destination's secret is not read.
 Runtime keys from files or environment variables are never copied into saved
 `api_key` fields by `setup` or `export-token`.
 
+### `[remotes.<name>]`
+
+Named remotes let one config reach several servers, such as a home archive in
+`[remote]` and a second archive server. Each table takes the same keys as
+`[remote]`; `url` is required. Pass `--remote <name>` to use that server for one
+command:
+
+```toml
+[remotes.work]
+url = "https://archive.example.com"
+api_key_file = "work.key"
+```
+
+```sh
+msgvault --remote work search "quarterly plan"
+```
+
+`[remote]` stays the default when `--remote` is absent. `--remote` replaces the
+whole `[remote]` destination for that run, including `MSGVAULT_REMOTE_URL` and
+`MSGVAULT_REMOTE_API_KEY`. A relative `api_key_file` resolves next to the
+config file. `--remote` cannot be combined with `--local` or agent-delegated
+mode, and an unknown name fails the command.
+
 ### `[[accounts]]`
 
 Scheduled sync sources for the web server. Each `[[accounts]]` entry defines a
