@@ -429,7 +429,8 @@ import (
 // 5.13.0 adds fact decision outcomes, evidence filtering, and a person fact summary.
 // 5.14.0 adds each decision's submitted claim value to its history row.
 // 5.15.0 applies media search mode to recordings and reports their actual mode and degradations.
-const APISchemaVersion = "5.15.0"
+// 5.16.0 adds standalone person creation at POST /api/v1/people/create.
+const APISchemaVersion = "5.16.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
