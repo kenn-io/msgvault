@@ -452,9 +452,6 @@ func newLoopsAgendaCommand() *cobra.Command {
 			if result.Replayed {
 				suffix += " (already filed)"
 			}
-			if result.ParentRef != nil {
-				suffix += " under " + *result.ParentRef
-			}
 			url := ""
 			if result.Issue.WebURL != nil {
 				url = *result.Issue.WebURL

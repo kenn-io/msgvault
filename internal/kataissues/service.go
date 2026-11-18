@@ -108,12 +108,6 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 		return Result{}, err
 	}
 	if found {
-		if input.Thread != "" {
-			existing, err = s.Kata.GetTask(ctx, existing.Project, existing.UID)
-			if err != nil {
-				return Result{}, err
-			}
-		}
 		return s.replay(existing, hash)
 	}
 	metadata := map[string]any{taskclient.ActionMetadataKey: marker, RequestMetadataKey: hash}
@@ -151,31 +145,12 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 	metadata[EvidenceMetadataKey] = Envelope{Version: 1, Entries: entriesOf(quotes)}
 	issue, reused, err := s.Kata.CreateTaskReused(ctx, s.Project, marker, taskclient.KataCreate{Title: input.Title, Body: renderBody(strings.TrimSpace(strings.Join([]string{input.Brief, input.OriginLink}, "\n\n")), firstOfEachPassage(quotes)), Metadata: metadata, ParentRef: parentRef})
 	if errors.Is(err, taskclient.ErrConflict) {
-		result, conflictErr := s.createConflict(ctx, marker, hash, taskclient.ErrorCode(err))
-		if input.Thread != "" && result.Issue.UID != "" {
-			issue, readErr := s.Kata.GetTask(ctx, result.Issue.Project, result.Issue.UID)
-			if readErr != nil {
-				return Result{}, readErr
-			}
-			result.Issue = issue
-		}
-		return result, conflictErr
+		return s.createConflict(ctx, marker, hash, taskclient.ErrorCode(err))
 	}
 	if err != nil {
 		return Result{}, err
 	}
 	return Result{Issue: issue, Replayed: reused}, nil
-}
-
-// Filed reports whether a key already has an issue, including closed issues.
-func (s *Service) Filed(ctx context.Context, key string) (bool, error) {
-	archive, err := s.archiveUID(ctx)
-	if err != nil {
-		return false, err
-	}
-	marker := kataevidence.Digest("msgvault.kata.create-marker.v1", archive, key)
-	_, found, err := s.Kata.FindActionTask(ctx, s.Project, marker)
-	return found, err
 }
 
 // FindFiled returns the issue filed under a key, including closed issues.
@@ -185,12 +160,7 @@ func (s *Service) FindFiled(ctx context.Context, key string) (taskclient.KataTas
 		return taskclient.KataTask{}, false, err
 	}
 	marker := kataevidence.Digest("msgvault.kata.create-marker.v1", archive, key)
-	issue, found, err := s.Kata.FindActionTask(ctx, s.Project, marker)
-	if err != nil || !found {
-		return issue, found, err
-	}
-	issue, err = s.Kata.GetTask(ctx, issue.Project, issue.UID)
-	return issue, true, err
+	return s.Kata.FindActionTask(ctx, s.Project, marker)
 }
 
 // createConflict reads Kata's refusal of a create. A key Kata already holds

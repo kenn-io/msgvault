@@ -52,7 +52,7 @@ func TestLoopAgendaFilesReplyAndReplays(t *testing.T) {
 	assert.False(t, first.Replayed)
 	service, err := agenda.backend.service(t.Context())
 	require.NoError(t, err)
-	filed, err := service.Filed(t.Context(), fmt.Sprintf("loop:%d", id))
+	_, filed, err := service.FindFiled(t.Context(), fmt.Sprintf("loop:%d", id))
 	require.NoError(t, err)
 	assert.True(t, filed)
 	assert.Contains(t, first.Issue.Body, "Can you send the contract?")
@@ -78,19 +78,9 @@ func TestLoopAgendaFilesReplyAndReplays(t *testing.T) {
 	assert.Equal(t, first.Issue.UID, receipt.Issue.UID)
 }
 
-func TestLoopAgendaRunLimitsCreatesAndSkipsAwaiting(t *testing.T) {
+func TestLoopAgendaRunSkipsAwaiting(t *testing.T) {
 	f := storetest.New(t)
 	now := time.Now().UTC()
-	for i := range 201 {
-		f.PersistEmail(storetest.EmailSpec{Thread: fmt.Sprintf("unlinked-%d", i), From: "unlinked@example.test", To: []string{storetest.OwnerAddress}, Subject: "Request", Body: "Can you send it?", SentAt: now.Add(-time.Duration(300-i) * time.Hour)})
-	}
-	for i := range 26 {
-		address := fmt.Sprintf("person%d@example.test", i)
-		f.PersistEmail(storetest.EmailSpec{Thread: fmt.Sprintf("thread-%d", i), From: address, To: []string{storetest.OwnerAddress}, Subject: "Request", Body: "Can you send it?", SentAt: now.Add(-48 * time.Hour)})
-		participant := f.EnsureParticipant(address, "", "example.test")
-		_, _, err := f.Store.CreatePersonFromParticipant(participant)
-		require.NoError(t, err)
-	}
 	waitingID := f.PersistEmail(storetest.EmailSpec{Thread: "waiting", From: storetest.OwnerAddress, To: []string{"other@example.test"}, Subject: "Question", Body: "Can you reply?", SentAt: now.Add(-96 * time.Hour)})
 	participant := f.EnsureParticipant("other@example.test", "", "example.test")
 	_, _, err := f.Store.CreatePersonFromParticipant(participant)
@@ -107,15 +97,7 @@ func TestLoopAgendaRunLimitsCreatesAndSkipsAwaiting(t *testing.T) {
 	require.NoError(t, err)
 	issues, _, err := client.OpenIssues(t.Context(), katatest.Project, 100)
 	require.NoError(t, err)
-	assert.Len(t, issues, 25)
-	require.NoError(t, agenda.Run(t.Context(), now))
-	issues, _, err = client.OpenIssues(t.Context(), katatest.Project, 100)
-	require.NoError(t, err)
-	assert.Len(t, issues, 26)
-	require.NoError(t, agenda.Run(t.Context(), now))
-	issues, _, err = client.OpenIssues(t.Context(), katatest.Project, 100)
-	require.NoError(t, err)
-	assert.Len(t, issues, 26)
+	assert.Empty(t, issues)
 }
 
 func TestLoopAgendaFilesPromise(t *testing.T) {
@@ -155,14 +137,14 @@ func TestLoopAgendaFilesPromise(t *testing.T) {
 	archive.promises = append(archive.promises, third)
 	different, err := agenda.File(t.Context(), "c3", now)
 	require.NoError(t, err)
-	assert.Empty(t, different.Issue.ParentRef)
+	assert.Empty(t, agendaParent(t, native, server, different.Issue.UID))
 	fourth := third
 	fourth.ID, fourth.PersonID = 4, person.ID
 	fourth.AnchorMessageID = f.PersistEmail(storetest.EmailSpec{Thread: "promise", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: quote, SentAt: now})
 	archive.promises = append(archive.promises, fourth)
 	same, err := agenda.File(t.Context(), "c4", now)
 	require.NoError(t, err)
-	assert.Equal(t, result.Issue.QualifiedRef, same.Issue.ParentRef)
+	assert.Equal(t, result.Issue.UID, agendaParent(t, native, server, same.Issue.UID))
 }
 
 func TestLoopAgendaFilesLaterLoopUnderOpenIssue(t *testing.T) {
@@ -182,7 +164,7 @@ func TestLoopAgendaFilesLaterLoopUnderOpenIssue(t *testing.T) {
 	laterID := f.PersistEmail(storetest.EmailSpec{Thread: "thread", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Subject: "Follow up", Body: "Can you revise it?", SentAt: now.Add(-48 * time.Hour)})
 	later, err := agenda.File(t.Context(), strconv.FormatInt(laterID, 10), now)
 	require.NoError(t, err)
-	assert.Equal(t, first.Issue.QualifiedRef, later.Issue.ParentRef)
+	assert.Equal(t, first.Issue.UID, agendaParent(t, native, server, later.Issue.UID))
 }
 
 func TestLoopAgendaRequiresLinkedPerson(t *testing.T) {
@@ -300,9 +282,9 @@ func TestLoopAgendaPromiseScopeAndOrder(t *testing.T) {
 	require.NoError(t, err)
 	reply, err := agenda.File(t.Context(), strconv.FormatInt(laterID, 10), now)
 	require.NoError(t, err)
-	assert.Empty(t, one.Issue.ParentRef)
-	assert.Empty(t, two.Issue.ParentRef)
-	assert.Equal(t, one.Issue.QualifiedRef, reply.Issue.ParentRef)
+	assert.Empty(t, agendaParent(t, native, server, one.Issue.UID))
+	assert.Empty(t, agendaParent(t, native, server, two.Issue.UID))
+	assert.Equal(t, one.Issue.UID, agendaParent(t, native, server, reply.Issue.UID))
 	laterPromiseID := f.PersistEmail(storetest.EmailSpec{Thread: "scope", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: body, SentAt: now.Add(-time.Hour)})
 	third := promise
 	third.AnchorMessageID = laterPromiseID
@@ -314,7 +296,7 @@ func TestLoopAgendaPromiseScopeAndOrder(t *testing.T) {
 	archive.promises = append(archive.promises, third)
 	different, err := agenda.File(t.Context(), "c3", now)
 	require.NoError(t, err)
-	assert.Empty(t, different.Issue.ParentRef)
+	assert.Empty(t, agendaParent(t, native, server, different.Issue.UID))
 	// A promise after an earlier reply for the same person nests under it.
 	replyID := f.PersistEmail(storetest.EmailSpec{Thread: "reply-first", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send it?", SentAt: now.Add(-48 * time.Hour)})
 	earlierReply, err := agenda.File(t.Context(), strconv.FormatInt(replyID, 10), now)
@@ -328,7 +310,7 @@ func TestLoopAgendaPromiseScopeAndOrder(t *testing.T) {
 	archive.promises = append(archive.promises, fourth)
 	last, err := agenda.File(t.Context(), "c4", now)
 	require.NoError(t, err)
-	assert.Equal(t, earlierReply.Issue.QualifiedRef, last.Issue.ParentRef)
+	assert.Equal(t, earlierReply.Issue.UID, agendaParent(t, native, server, last.Issue.UID))
 }
 
 func TestLoopAgendaWaitingAndIncompleteScan(t *testing.T) {
@@ -463,31 +445,23 @@ func TestLoopAgendaPromiseReplayAfterPersonMerge(t *testing.T) {
 	assert.Equal(t, first.Issue.UID, replay.Issue.UID)
 }
 
-func TestLoopAgendaRunLimitsUncertainCreates(t *testing.T) {
-	f := storetest.New(t)
-	now := time.Now().UTC()
-	for i := range 26 {
-		address := fmt.Sprintf("person%d@example.test", i)
-		f.PersistEmail(storetest.EmailSpec{Thread: fmt.Sprintf("uncertain-%d", i), From: address, To: []string{storetest.OwnerAddress}, Body: "Can you send it?", SentAt: now.Add(-48 * time.Hour)})
-		p := f.EnsureParticipant(address, "", "example.test")
-		_, _, err := f.Store.CreatePersonFromParticipant(p)
-		require.NoError(t, err)
+func agendaParent(t *testing.T, native katatest.Kata, server *httptest.Server, uid string) string {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%d/issues/%s", server.URL, native.ProjectID, uid), nil)
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer "+katatest.Token)
+	response, err := server.Client().Do(request)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, response.Body.Close()) }()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	var body struct {
+		Parent *struct {
+			UID string `json:"uid"`
+		} `json:"parent"`
 	}
-	native := katatest.New(t)
-	handler := native.Service.Handler()
-	creates := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues") {
-			creates++
-			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, r)
-			http.Error(w, "response lost", http.StatusInternalServerError)
-			return
-		}
-		handler.ServeHTTP(w, r)
-	}))
-	t.Cleanup(server.Close)
-	agenda := NewLoopAgenda(config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}, f.Store, "")
-	require.Error(t, agenda.Run(t.Context(), now))
-	assert.Equal(t, 25, creates)
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	if body.Parent == nil {
+		return ""
+	}
+	return body.Parent.UID
 }

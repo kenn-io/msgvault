@@ -33,7 +33,6 @@ type KataTask struct {
 	UID           string
 	Ref           string
 	QualifiedRef  string
-	ParentRef     string
 	Project       string
 	Title         string
 	Body          string
@@ -289,9 +288,6 @@ func (c *KataClient) GetTask(ctx context.Context, project, taskID string) (KataT
 		labels = append(labels, label.Label)
 	}
 	task := taskFromKataIssue(project, response.Issue, labels, response.WebURL)
-	if response.Parent != nil {
-		task.ParentRef = response.Parent.QualifiedID
-	}
 	for _, comment := range response.Comments {
 		task.CommentBodies = append(task.CommentBodies, comment.Body)
 	}

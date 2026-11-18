@@ -889,19 +889,16 @@ func TestCreateThreadParentAndDeadline(t *testing.T) {
 	// Equal or earlier source times cannot make a parent; another person is isolated.
 	equal, err := f.service.Create(t.Context(), "thread-equal", input)
 	require.NoError(t, err)
-	assert.Empty(t, equal.Issue.ParentRef)
 	earlier := input
 	earlier.SourceTime = input.SourceTime.Add(-time.Minute)
 	early, err := f.service.Create(t.Context(), "thread-earlier", earlier)
 	require.NoError(t, err)
-	assert.Empty(t, early.Issue.ParentRef)
 	f.service.People = people{7: {"person-uid-7"}, 8: {"person-uid-8"}}
 	other := input
 	other.PersonID = new(int64(8))
 	other.SourceTime = input.SourceTime.Add(time.Second)
 	different, err := f.service.Create(t.Context(), "thread-other", other)
 	require.NoError(t, err)
-	assert.Empty(t, different.Issue.ParentRef)
 	input.Title = "Follow up"
 	input.SourceTime = input.SourceTime.Add(time.Minute)
 	input.DeadlineOn = nil
@@ -910,8 +907,6 @@ func TestCreateThreadParentAndDeadline(t *testing.T) {
 	replayed, err := f.service.Create(t.Context(), "thread-second", input)
 	require.NoError(t, err)
 	assert.True(t, replayed.Replayed)
-	assert.Equal(t, second.Issue.ParentRef, replayed.Issue.ParentRef)
-	assert.NotEmpty(t, replayed.Issue.ParentRef)
 	show := func(uid string) katagen.ShowIssueResponseBody {
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%d/issues/%s", f.kata.URL, f.kata.projectID, uid), nil)
 		require.NoError(t, err)
@@ -924,6 +919,9 @@ func TestCreateThreadParentAndDeadline(t *testing.T) {
 		require.NoError(t, json.UnmarshalRead(resp.Body, &body))
 		return body
 	}
+	assert.Nil(t, show(equal.Issue.UID).Parent)
+	assert.Nil(t, show(early.Issue.UID).Parent)
+	assert.Nil(t, show(different.Issue.UID).Parent)
 	firstShow := show(first.Issue.UID)
 	require.NotNil(t, firstShow.Issue.DeadlineOnDate)
 	assert.Equal(t, "2026-12-01", *firstShow.Issue.DeadlineOnDate)

@@ -44,10 +44,10 @@ func NewLoopAgenda(cfg config.TaskIntegrationConfig, archive *store.Store, origi
 }
 
 func (a *LoopAgenda) File(ctx context.Context, ref string, now time.Time) (kataissues.Result, error) {
-	return a.file(ctx, ref, now, nil, nil)
+	return a.file(ctx, ref, now, nil)
 }
 
-func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, service *kataissues.Service, attempted *bool) (kataissues.Result, error) {
+func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, service *kataissues.Service) (kataissues.Result, error) {
 	var input kataissues.CreateInput
 	var messageID, conversationID int64
 	var selectors []kataevidence.Selector
@@ -145,9 +145,6 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 	if origin != "" {
 		input.OriginLink = fmt.Sprintf("[Open the original message](%s/messages/%d)", strings.TrimRight(origin, "/"), messageID)
 	}
-	if attempted != nil {
-		*attempted = true
-	}
 	result, err := service.Create(ctx, key, input)
 	if errors.Is(err, kataissues.ErrIdempotencyConflict) && result.Issue.UID != "" {
 		result.Replayed = true
@@ -160,35 +157,24 @@ func commitmentAgendaKey(c store.PersonCommitment) string {
 	return fmt.Sprintf("commitment:%d:%d-%d", c.AnchorMessageID, c.Start, c.End)
 }
 
-// Run files at most 25 new obligations in one pass.
+// Run files open obligations in one pass.
 func (a *LoopAgenda) Run(ctx context.Context, now time.Time) error {
 	service, err := a.backend.service(ctx)
 	if err != nil {
 		return err
 	}
 	var failures []error
-	created := 0
-	stop := errors.New("agenda pass limit reached")
-	file := func(ref, key string) error {
-		found, err := service.Filed(ctx, key)
+	file := func(ref, key string) {
+		_, found, err := service.FindFiled(ctx, key)
 		if err == nil && found {
-			return nil
+			return
 		}
 		if err == nil {
-			var attempted bool
-			var result kataissues.Result
-			result, err = a.file(ctx, ref, now, service, &attempted)
-			if attempted && !result.Replayed {
-				created++
-			}
+			_, err = a.file(ctx, ref, now, service)
 		}
 		if err != nil && !errors.Is(err, errAgendaPersonRequired) && !errors.Is(err, kataissues.ErrIssueDeleted) && !errors.Is(err, kataevidence.ErrUnsupported) && !errors.Is(err, kataevidence.ErrChanged) && !errors.Is(err, kataissues.ErrUnsupportedEvidence) && !errors.Is(err, kataissues.ErrEvidenceLimit) && !errors.Is(err, personagenda.ErrPersonIdentity) && !errors.Is(err, loops.ErrNotOpen) {
 			failures = append(failures, err)
 		}
-		if created == 25 {
-			return stop
-		}
-		return nil
 	}
 	type candidate struct {
 		ref, key string
@@ -214,18 +200,15 @@ func (a *LoopAgenda) Run(ctx context.Context, now time.Time) error {
 	}
 	slices.SortStableFunc(candidates, func(a, b candidate) int { return a.at.Compare(b.at) })
 	for _, item := range candidates {
-		if errors.Is(file(item.ref, item.key), stop) {
-			break
-		}
+		file(item.ref, item.key)
 	}
 	return errors.Join(failures...)
 }
 
 // LoopAgendaResponse identifies the issue that tracks an obligation.
 type LoopAgendaResponse struct {
-	Issue     KataIssueReceipt `json:"issue"`
-	Replayed  bool             `json:"replayed"`
-	ParentRef string           `json:"parent_ref,omitempty"`
+	Issue    KataIssueReceipt `json:"issue"`
+	Replayed bool             `json:"replayed"`
 }
 
 func (s *Server) registerLoopAgenda(api huma.API) {
@@ -270,6 +253,6 @@ func (s *Server) handleLoopAgenda(w http.ResponseWriter, r *http.Request) {
 		s.writeKataIssueError(w, err)
 	default:
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusOK, LoopAgendaResponse{Issue: kataIssueReceipt(result.Issue), Replayed: result.Replayed, ParentRef: result.Issue.ParentRef})
+		writeJSON(w, http.StatusOK, LoopAgendaResponse{Issue: kataIssueReceipt(result.Issue), Replayed: result.Replayed})
 	}
 }

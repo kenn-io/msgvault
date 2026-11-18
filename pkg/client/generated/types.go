@@ -7331,9 +7331,8 @@ func (l LocalEmbeddingsStatus) Validate() error {
 }
 
 type LoopAgendaResponse struct {
-	Issue     KataIssueReceipt `json:"issue"`
-	ParentRef *string          `json:"parent_ref,omitzero"`
-	Replayed  bool             `json:"replayed"`
+	Issue    KataIssueReceipt `json:"issue"`
+	Replayed bool             `json:"replayed"`
 }
 
 func (l LoopAgendaResponse) Validate() error {

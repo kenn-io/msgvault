@@ -45,7 +45,7 @@ Each issue carries these metadata keys:
 - `msgvault.source_time`: the source message time used to find an earlier parent.
 - `deadline_on`: the promise’s due date, when present, recorded once at filing and not updated afterward.
 
-The automatic pass files at most 25 new issues per hour. Set `auto_agenda = false` in `[integrations.kata]` to turn off automatic filing. You can still file an open obligation yourself with its message ID or promise ID:
+Set `auto_agenda = false` in `[integrations.kata]` to turn off automatic filing. You can still file an open obligation yourself with its message ID or promise ID:
 
 ```bash
 msgvault loops agenda 4521

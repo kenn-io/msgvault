@@ -5,7 +5,6 @@ import type { KataIssueReceipt } from "./kataIssueReceipt";
 
 export interface LoopAgendaResponse {
   issue: KataIssueReceipt;
-  parent_ref?: string;
   replayed: boolean;
   [key: string]: unknown;
 }
