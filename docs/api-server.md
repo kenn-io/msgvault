@@ -172,7 +172,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.22.0**.
+it is separate from the binary release version. The current schema is **5.23.0**.
+
+Schema 5.23.0 adds agenda filing for open obligations.
 
 Schema 5.22.0 adds cited commitments and their decisions to the open loops API.
 
