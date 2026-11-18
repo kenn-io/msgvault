@@ -736,20 +736,22 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   await page.getByRole('menuitem', { name: 'Add to task…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add to task' });
   await expect(dialog.getByText('garden', { exact: true })).toBeVisible();
-  const context = dialog.getByText(/Garden plans\s· Mira Example/);
-  await expect(context).toContainText('Mira Example <mira@example.com> · Jul 18');
-  expect.soft(await context.evaluate(el => el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight)).toBe(true);
+  const context = dialog.locator('.kit-chip__label');
+  expect.soft(await context.innerText()).toBe('Garden plans · Mira Example · Jul 18');
+  await expect(context.locator('..')).toHaveAttribute('aria-label', 'Garden plans · Mira Example <mira@example.com> · Jul 18');
+  await expect(context.locator('..')).toHaveAttribute('title', 'Garden plans · Mira Example <mira@example.com> · Jul 18');
+  expect.soft(await context.evaluate(el => el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight))).toBeLessThan(1.5);
+  expect.soft(await context.evaluate(el => el.scrollWidth)).toBeLessThanOrEqual(await context.evaluate(el => el.clientWidth));
   expect.soft(await context.evaluate(el => Number(getComputedStyle(el).fontWeight))).toBeLessThan(600);
   const phoneRadius = await context.locator('..').evaluate(el => getComputedStyle(el).borderRadius);
   await page.setViewportSize({ width: 1280, height: 900 });
   expect.soft(phoneRadius).toBe(await context.locator('..').evaluate(el => getComputedStyle(el).borderRadius));
   await page.setViewportSize({ width: 390, height: 844 });
   expect.soft(await context.evaluate(el => getComputedStyle(el.closest('.kit-chip')!).paddingTop)).not.toBe('0px');
-  expect.soft(await context.evaluate(el => el.textContent?.includes('\u00a0· Jul 18'))).toBe(true);
   const title = dialog.getByRole('textbox', { name: 'Task title' });
   expect.soft(await context.evaluate(el => getComputedStyle(el.closest('.kit-chip')!).backgroundColor)).not.toBe(await title.evaluate(el => getComputedStyle(el).backgroundColor));
   const bounds = (await dialog.boundingBox())!;
-  for (const control of [dialog.getByText('garden', { exact: true }), dialog.getByText(/Garden plans\s· Mira Example/), dialog.getByRole('textbox', { name: 'Task title' }), dialog.getByRole('textbox', { name: 'Description' }), dialog.getByRole('combobox', { name: 'Priority: No priority' }), dialog.getByRole('textbox', { name: 'Labels' }), dialog.getByRole('button', { name: 'Create task' })]) {
+  for (const control of [dialog.getByText('garden', { exact: true }), context, dialog.getByRole('textbox', { name: 'Task title' }), dialog.getByRole('textbox', { name: 'Description' }), dialog.getByRole('combobox', { name: 'Priority: No priority' }), dialog.getByRole('textbox', { name: 'Labels' }), dialog.getByRole('button', { name: 'Create task' })]) {
     const box = (await control.boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(bounds.x);
     expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width);
