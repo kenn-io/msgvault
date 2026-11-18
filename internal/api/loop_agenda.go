@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -37,28 +36,6 @@ type LoopAgenda struct {
 	archive loopAgendaArchive
 	backend *kataIssueBackend
 	origin  string
-	browser atomic.Pointer[string]
-}
-
-// noteBrowserOrigin records the origin a signed-in browser reached the server
-// at, so issues filed without a request link to an address browsers reach.
-func (a *LoopAgenda) noteBrowserOrigin(origin string) {
-	if a == nil {
-		return
-	}
-	if seen := a.browser.Load(); seen == nil || *seen != origin {
-		a.browser.Store(&origin)
-	}
-}
-
-// linkOrigin prefers the request's own origin, then the last signed-in
-// browser's, then the configured server address.
-func (a *LoopAgenda) linkOrigin(ctx context.Context) string {
-	fallback := a.origin
-	if seen := a.browser.Load(); seen != nil {
-		fallback = *seen
-	}
-	return apiprotocol.BrowserOrigin(ctx, fallback)
 }
 
 func NewLoopAgenda(cfg config.TaskIntegrationConfig, archive *store.Store, origin string) *LoopAgenda {
@@ -164,7 +141,7 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 		return kataissues.Result{}, kataevidence.ErrChanged
 	}
 	input.Thread = strconv.FormatInt(conversationID, 10)
-	origin := a.linkOrigin(ctx)
+	origin := apiprotocol.BrowserOrigin(ctx, a.origin)
 	if origin != "" {
 		input.OriginLink = fmt.Sprintf("[Open the original message](%s/messages/%d)", strings.TrimRight(origin, "/"), messageID)
 	}

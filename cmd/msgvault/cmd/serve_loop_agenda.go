@@ -18,9 +18,8 @@ func registerLoopAgendaJob(sched *scheduler.Scheduler, cfg config.TaskIntegratio
 }
 
 // loopAgendaOrigin is the address issues filed without a browser request link
-// to until a signed-in browser shows which address it uses. A server listening
-// on every interface has no address of its own a browser is known to reach,
-// so those issues carry no link.
+// to. A server listening on every interface has no address of its own a
+// browser is known to reach, so those issues carry no link.
 func loopAgendaOrigin(listener net.Addr) string {
 	addr, ok := listener.(*net.TCPAddr)
 	if !ok || addr.IP.IsUnspecified() {
