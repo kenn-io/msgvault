@@ -285,7 +285,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}()
 	telemetryReporter := telemetry.NewReporterOrDisabled(telemetry.Options{
 		DataDir: cfg.Data.DataDir, Version: Version, Commit: Commit,
-		ConfigEnabled: cfg.Telemetry.EnabledOrDefault(),
 	}, logger)
 	defer func() {
 		if err := telemetryReporter.Close(); err != nil {
@@ -1219,10 +1218,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  API server: http://%s\n", apiAddr)
 		fmt.Printf("  Scheduled accounts: %d\n", count)
 		fmt.Printf("  Data directory: %s\n", cfg.Data.DataDir)
-		if telemetryReporter.Enabled() {
-			fmt.Printf("  Anonymous telemetry: on ([telemetry] enabled = false or %s=0 turns it off)\n",
-				telemetry.EnabledEnv)
-		}
 		fmt.Println()
 		fmt.Println("Press Ctrl+C to stop.")
 		fmt.Println()

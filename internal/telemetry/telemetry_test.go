@@ -22,9 +22,8 @@ import (
 )
 
 const (
-	wireStubEnv      = "MSGVAULT_TELEMETRY_WIRE_STUB"
-	wireDirEnv       = "MSGVAULT_TELEMETRY_WIRE_DIR"
-	wireConfigOffEnv = "MSGVAULT_TELEMETRY_WIRE_CONFIG_OFF"
+	wireStubEnv = "MSGVAULT_TELEMETRY_WIRE_STUB"
+	wireDirEnv  = "MSGVAULT_TELEMETRY_WIRE_DIR"
 	// testAPIKey stands in for the key release builds set at link time.
 	testAPIKey = "phc_test"
 )
@@ -33,8 +32,8 @@ const (
 // in-process reporter disables telemetry for the rest of the test binary.
 func enableTelemetryEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(posthog.GenericEnabledEnv, "")
+	t.Setenv(posthog.PrefixedEnabledEnv("MSGVAULT"), "")
+	t.Setenv(posthog.GenericEnabledEnv, "1")
 	for _, name := range []string{"CI", "DO_NOT_TRACK"} {
 		t.Setenv(name, os.Getenv(name))
 		require.NoError(t, os.Unsetenv(name))
@@ -49,10 +48,9 @@ func TestNewReporterOrDisabledFallsBackWhenInstallFails(t *testing.T) {
 	require.NoError(t, os.WriteFile(notDir, []byte("x"), 0o600))
 	var logs bytes.Buffer
 
-	reporter := NewReporterOrDisabled(Options{DataDir: notDir, ConfigEnabled: true}, slog.New(slog.NewTextHandler(&logs, nil)))
+	reporter := NewReporterOrDisabled(Options{DataDir: notDir}, slog.New(slog.NewTextHandler(&logs, nil)))
 	assert.False(reporter.Enabled())
 	assert.Contains(logs.String(), "telemetry disabled")
-	assert.NotContains(logs.String(), "telemetry is on")
 }
 
 // TestEnabledReporterWireHelper runs only inside the helper process the wire tests start.
@@ -61,7 +59,10 @@ func TestEnabledReporterWireHelper(t *testing.T) {
 	if stub == "" {
 		return
 	}
-	opts := Options{DataDir: os.Getenv(wireDirEnv), Version: "v1.2.3", Commit: "test-commit", ConfigEnabled: os.Getenv(wireConfigOffEnv) == ""}
+	if os.Getenv("MSGVAULT_TEST_CONSENT") == "yes" {
+		require.NoError(t, posthog.RecordConsent(true))
+	}
+	opts := Options{DataDir: os.Getenv(wireDirEnv), Version: "v1.2.3", Commit: "test-commit"}
 	require := require.New(t)
 	if os.Getenv("MSGVAULT_SCREEN_VIEWS_TEST") == "rollover" {
 		exerciseDailyViewRollover(t, opts)
@@ -130,21 +131,21 @@ func (s *wireStub) recorded() []recordedRequest {
 	return slices.Clone(s.requests)
 }
 
-// runWireHelper runs the helper with only the given telemetry variables set and returns its output.
-func runWireHelper(t *testing.T, stubURL, dir string, env ...string) string {
+// runWireHelper runs the helper with only the given telemetry variables set.
+func runWireHelper(t *testing.T, stubURL, dir string, env ...string) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestEnabledReporterWireHelper$", "-test.count=1") //nolint:gosec // os.Args[0] is the test binary; args are fixed test flags.
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, EnabledEnv+"=") && !strings.HasPrefix(kv, posthog.GenericEnabledEnv+"=") &&
+		if !strings.HasPrefix(kv, posthog.PrefixedEnabledEnv("MSGVAULT")+"=") && !strings.HasPrefix(kv, posthog.GenericEnabledEnv+"=") &&
 			!strings.HasPrefix(kv, "CI=") && !strings.HasPrefix(kv, "DO_NOT_TRACK=") {
 			cmd.Env = append(cmd.Env, kv)
 		}
 	}
-	cmd.Env = append(cmd.Env, wireStubEnv+"="+stubURL, wireDirEnv+"="+dir)
+	home := t.TempDir()
+	cmd.Env = append(cmd.Env, "HOME="+home, "USERPROFILE="+home, wireStubEnv+"="+stubURL, wireDirEnv+"="+dir)
 	cmd.Env = append(cmd.Env, env...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
-	return string(out)
 }
 
 func batchEvents(t *testing.T, stub *wireStub) []map[string]any {
@@ -171,13 +172,11 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 	install, err := posthog.LoadOrCreateInstall(dir)
 	require.NoError(err)
 
-	out := runWireHelper(t, stub.server.URL, dir)
-	assert.Contains(out, "telemetry is on", "serve tells the user how to turn telemetry off")
-	assert.Contains(out, EnabledEnv+"=0")
+	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_TEST_CONSENT=yes")
 
 	messages := batchEvents(t, stub)
 	require.Len(messages, 2)
-	kitKeys := []string{"$process_person_profile", "$geoip_disable", "application", "source", "version", "commit", "distribution", "goos", "goarch", "install_age_hours"}
+	kitKeys := []string{"$process_person_profile", "$geoip_disable", "application", "source", "version", "commit", "distribution", "goos", "goarch", "install_age_hours", "telemetry_consent"}
 	sdkKeys := []string{"$lib", "$lib_version"}
 	events := make([]string, 0, len(messages))
 	for _, message := range messages {
@@ -198,6 +197,7 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 				slices.Contains(eventKeys, key)
 			assert.True(allowed, "unexpected property %q on %v", key, message["event"])
 		}
+		assert.Equal(true, props["telemetry_consent"])
 		assert.Equal("msgvault", props["application"])
 		assert.Equal("daemon", props["source"])
 		assert.Equal("v1.2.3", props["version"])
@@ -207,30 +207,29 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 	assert.ElementsMatch([]string{EventAppOpened, posthog.EventDaemonActive}, events)
 }
 
-// A daemon started by launchd or systemd may have the env var set where the config says off; the env var wins.
-func TestEnvOverridesConfigOff(t *testing.T) {
-	stub := newWireStub(t)
-	runWireHelper(t, stub.server.URL, t.TempDir(), wireConfigOffEnv+"=1", EnabledEnv+"=1")
-	assert.Len(t, batchEvents(t, stub), 2)
-}
-
 func TestOptedOutReporterSendsNothing(t *testing.T) {
 	cases := []struct {
 		name string
 		env  []string
 	}{
-		{"config off", []string{wireConfigOffEnv + "=1"}},
-		{"prefixed variable", []string{EnabledEnv + "=0", "MSGVAULT_SCREEN_VIEWS_TEST=1"}},
-		{"generic variable", []string{EnabledEnv + "=1", posthog.GenericEnabledEnv + "=0"}},
+		{"prefixed variable", []string{posthog.PrefixedEnabledEnv("MSGVAULT") + "=0", posthog.GenericEnabledEnv + "=1", "MSGVAULT_SCREEN_VIEWS_TEST=1"}},
+		{"generic variable", []string{"MSGVAULT_TEST_CONSENT=yes", posthog.GenericEnabledEnv + "=0"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := newWireStub(t)
 			dir := t.TempDir()
-			out := runWireHelper(t, stub.server.URL, dir, tc.env...)
+			runWireHelper(t, stub.server.URL, dir, tc.env...)
 			assert.Empty(t, stub.recorded(), "an opted-out daemon must send nothing")
 			assert.NoFileExists(t, filepath.Join(dir, posthog.InstallFileName))
-			assert.NotContains(t, out, "telemetry is on")
 		})
 	}
+}
+
+func TestTelemetryUnansweredConsentSendsNothing(t *testing.T) {
+	stub := newWireStub(t)
+	dir := t.TempDir()
+	runWireHelper(t, stub.server.URL, dir)
+	assert.Empty(t, stub.recorded())
+	assert.NoFileExists(t, filepath.Join(dir, posthog.InstallFileName))
 }

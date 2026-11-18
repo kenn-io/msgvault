@@ -16,9 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/telemetry/posthog"
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/telemetry"
 )
 
 // tuiTelemetryDaemon records TUI telemetry events and answers with the status
@@ -84,8 +82,8 @@ func prepareTUITelemetryTest(t *testing.T, testName, subprocessEnv string) bool 
 		return false
 	}
 	clearTelemetryVetoEnvironment(t)
-	t.Setenv(telemetry.EnabledEnv, "")
-	t.Setenv(posthog.GenericEnabledEnv, "")
+	t.Setenv(posthog.PrefixedEnabledEnv("MSGVAULT"), "")
+	t.Setenv(posthog.GenericEnabledEnv, "1")
 	return true
 }
 
@@ -94,17 +92,13 @@ func TestTUIScreenAndActionReportersUseSelectedDaemon(t *testing.T) {
 		return
 	}
 	for _, tc := range []struct {
-		name      string
-		configOff bool
-		envOff    bool
+		name   string
+		envOff bool
 	}{
 		{name: "enabled"},
-		{name: "config opt-out", configOff: true},
 		{name: "environment opt-out", envOff: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			enabled := !tc.configOff
-			cfg := &config.Config{Telemetry: config.TelemetryConfig{Enabled: &enabled}}
 			if tc.envOff {
 				t.Setenv("DO_NOT_TRACK", "1")
 			}
@@ -124,9 +118,9 @@ func TestTUIScreenAndActionReportersUseSelectedDaemon(t *testing.T) {
 			require.NoError(err)
 			defer func() { require.NoError(client.Close()) }()
 			gate := newTUITelemetryGate(t.TempDir(), client.BaseURL())
-			require.NoError(tuiScreenReporter(gate, client, cfg)(t.Context(), "settings"))
-			require.NoError(tuiActionReporter(gate, client, cfg)(t.Context(), "search_run", "search_type", "hybrid"))
-			if tc.configOff || tc.envOff {
+			require.NoError(tuiScreenReporter(gate, client)(t.Context(), "settings"))
+			require.NoError(tuiActionReporter(gate, client)(t.Context(), "search_run", "search_type", "hybrid"))
+			if tc.envOff {
 				assert.Empty(requests)
 				return
 			}
@@ -141,9 +135,9 @@ func TestTUIScreenAndActionReportersUseSelectedDaemon(t *testing.T) {
 // reportAll sends a screen, a message open, and a search as one TUI process.
 func reportAll(t *testing.T, gate *tuiTelemetryGate, client *daemonclient.Client) {
 	t.Helper()
-	_ = tuiScreenReporter(gate, client, &config.Config{})(t.Context(), "settings")
-	_ = tuiActionReporter(gate, client, &config.Config{})(t.Context(), "message_opened", "", "")
-	_ = tuiActionReporter(gate, client, &config.Config{})(t.Context(), "search_run", "search_type", "text")
+	_ = tuiScreenReporter(gate, client)(t.Context(), "settings")
+	_ = tuiActionReporter(gate, client)(t.Context(), "message_opened", "", "")
+	_ = tuiActionReporter(gate, client)(t.Context(), "search_run", "search_type", "text")
 }
 
 func TestTUITelemetryGateKeepsReceiptsAcrossRestarts(t *testing.T) {
@@ -170,7 +164,7 @@ func TestTUITelemetryGateKeepsReceiptsAcrossRestarts(t *testing.T) {
 				}
 			}
 			reportAll(t, restarted, client)
-			_ = tuiScreenReporter(restarted, client, &config.Config{})(t.Context(), "directory")
+			_ = tuiScreenReporter(restarted, client)(t.Context(), "directory")
 			assert.Equal(t, tc.want, daemon.sent())
 		})
 	}
@@ -214,7 +208,7 @@ func TestTUITelemetryGateSendsShownErrorsEachTime(t *testing.T) {
 	}
 	daemon := newTUITelemetryDaemon(t, "queued")
 	client := daemon.client(t)
-	report := tuiActionReporter(newTUITelemetryGate(t.TempDir(), client.BaseURL()), client, &config.Config{})
+	report := tuiActionReporter(newTUITelemetryGate(t.TempDir(), client.BaseURL()), client)
 	for range 2 {
 		require.NoError(t, report(t.Context(), "error_shown", "kind", "search"))
 		require.NoError(t, report(t.Context(), "search_empty", "search_type", "text"))
@@ -232,7 +226,7 @@ func TestTUITelemetryGateAcceptedReportClearsFailures(t *testing.T) {
 	gate := newTUITelemetryGate(t.TempDir(), client.BaseURL())
 	clock := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
 	gate.now = func() time.Time { return clock }
-	report := tuiScreenReporter(gate, client, &config.Config{})
+	report := tuiScreenReporter(gate, client)
 	failRun := func(screen string) {
 		daemon.answer(http.StatusServiceUnavailable, "")
 		for range tuiTelemetryFailures - 1 {
@@ -276,12 +270,12 @@ func TestTUITelemetryGateStaysStoppedAcrossMidnight(t *testing.T) {
 			require.Len(daemon.sent(), attempts)
 			clock = time.Date(2026, 10, 21, 0, 1, 0, 0, time.UTC)
 			daemon.answer(http.StatusAccepted, "queued")
-			_ = tuiScreenReporter(gate, client, &config.Config{})(t.Context(), "directory")
+			_ = tuiScreenReporter(gate, client)(t.Context(), "directory")
 			require.NoError(gate.report(t.Context(), client, "session_ended", "duration_bucket", "1_to_5m"))
 			assert.Len(daemon.sent(), attempts, "the stopped process stays quiet across midnight")
 			restarted := newTUITelemetryGate(dataDir, client.BaseURL())
 			restarted.now = gate.now
-			_ = tuiScreenReporter(restarted, client, &config.Config{})(t.Context(), "settings")
+			_ = tuiScreenReporter(restarted, client)(t.Context(), "settings")
 			assert.Equal([]string{"screen_viewed:settings"}, daemon.sent()[attempts:], "a fresh process can report the unclaimed key")
 		})
 	}
@@ -331,7 +325,7 @@ func TestTUITelemetryGateLateCompletionLeavesNextDayFileAlone(t *testing.T) {
 				clock := time.Date(2026, 10, 20, 23, 59, 0, 0, time.UTC)
 				gate.now = func() time.Time { return clock }
 				finished := make(chan error, 1)
-				go func() { finished <- tuiScreenReporter(gate, client, &config.Config{})(t.Context(), "settings") }()
+				go func() { finished <- tuiScreenReporter(gate, client)(t.Context(), "settings") }()
 				synctest.Wait()
 				clock = clock.Add(2 * time.Minute)
 				if saved != "" {
@@ -377,14 +371,14 @@ func TestTUITelemetryGateRetriesUnconfirmedReceipts(t *testing.T) {
 			gate := newTUITelemetryGate(dataDir, client.BaseURL())
 			now := time.Now()
 			gate.now = func() time.Time { return now }
-			require.Error(tuiScreenReporter(gate, client, &config.Config{})(t.Context(), "settings"))
+			require.Error(tuiScreenReporter(gate, client)(t.Context(), "settings"))
 			require.NoFileExists(gate.path)
 			daemon.answer(http.StatusAccepted, "queued")
 			now = gate.retryAt
-			require.NoError(tuiScreenReporter(gate, client, &config.Config{})(t.Context(), "settings"))
+			require.NoError(tuiScreenReporter(gate, client)(t.Context(), "settings"))
 			restarted := newTUITelemetryGate(dataDir, client.BaseURL())
 			restarted.now = gate.now
-			require.NoError(tuiScreenReporter(restarted, client, &config.Config{})(t.Context(), "settings"))
+			require.NoError(tuiScreenReporter(restarted, client)(t.Context(), "settings"))
 			assert.Equal([]string{"screen_viewed:settings", "screen_viewed:settings"}, daemon.sent())
 		})
 	}
@@ -401,10 +395,10 @@ func TestTUITelemetryGateRecoversMalformedState(t *testing.T) {
 	gate := newTUITelemetryGate(dataDir, client.BaseURL())
 	gate.now = func() time.Time { return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC) }
 	require.NoError(os.WriteFile(gate.path, []byte(`{"day":"2026-10-20","sent":["screen_viewed:settings"]}`), 0o600))
-	_ = tuiScreenReporter(gate, client, &config.Config{})(t.Context(), "settings")
+	_ = tuiScreenReporter(gate, client)(t.Context(), "settings")
 	restarted := newTUITelemetryGate(dataDir, client.BaseURL())
 	restarted.now = gate.now
-	_ = tuiScreenReporter(restarted, client, &config.Config{})(t.Context(), "settings")
+	_ = tuiScreenReporter(restarted, client)(t.Context(), "settings")
 	assert.Equal(t, []string{"screen_viewed:settings"}, daemon.sent())
 }
 
@@ -435,7 +429,7 @@ func TestTUITelemetryGateSerializesReports(t *testing.T) {
 				require.NoError(t, err)
 				t.Cleanup(func() { assert.NoError(t, client.Close()) })
 				gate := newTUITelemetryGate("", server.URL)
-				report := tuiScreenReporter(gate, client, &config.Config{})
+				report := tuiScreenReporter(gate, client)
 				finished := make(chan error, 3)
 				go func() { finished <- report(t.Context(), "directory") }()
 				synctest.Wait()
