@@ -118,7 +118,7 @@ describe('MessageCard', () => {
 
   it('offers plain text through a small overflow control, defaulting to HTML', async () => {
     const onViewModeChange = vi.fn();
-    render(MessageCard, {
+    const view = render(MessageCard, {
       props: {
         message: detail({ bodyHtml: '<p>Formatted body</p>' }),
         expanded: true,
@@ -127,7 +127,7 @@ describe('MessageCard', () => {
     });
 
     const menu = screen.getByRole('button', { name: /^More actions for .+ on / });
-    expect(menu.getAttribute('aria-label')).toContain('More actions for Alice Example <alice@example.com> on ');
+    expect(menu.getAttribute('aria-label')).toBe(`More actions for Alice Example <alice@example.com> on ${view.container.querySelector('time')?.textContent}`);
     await fireEvent.click(menu);
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Show plain text' }));
     expect(onViewModeChange).toHaveBeenCalledWith(42, 'text');

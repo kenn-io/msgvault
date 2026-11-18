@@ -27,7 +27,14 @@ describe('TaskIssuePicker', () => {
     await waitFor(() => expect(load.mock.calls.at(-1)?.[0]).toBe(query));
     await screen.findByRole('alert');
     expect(screen.queryByRole('radio')).toBeNull();
-    if (query === 'other#w3fa') expect(screen.getByText('Use a reference from the configured project: garden.')).toBeDefined();
+  });
+
+  it('explains the configured project for a wrong-project reference', async () => {
+    const load = async () => { throw new Error('Unavailable'); };
+    render(TaskIssuePicker, { load, noun: 'open issues', empty: 'No open issues.', project: 'garden' });
+    await screen.findByRole('alert');
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'other#w3fa' } });
+    expect(await screen.findByText('Use a reference from the configured project: garden.')).toBeDefined();
   });
 
   it('keeps issue search guidance visible while filtering', async () => {

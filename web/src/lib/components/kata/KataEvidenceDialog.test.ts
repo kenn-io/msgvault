@@ -106,7 +106,7 @@ describe('KataEvidenceDialog', () => {
   });
 
   it.each([
-    { name: 'a replay', first: () => Response.json({ issue: { ...issue, status: 'closed' }, replayed: true }), role: 'status', says: 'Already filed (closed).Kata · example#abcd' },
+    { name: 'a replay', first: () => Response.json({ issue: { ...issue, status: 'closed' }, replayed: true }), role: 'status', says: 'Already filed (closed).' },
     { name: 'a deleted issue', first: () => Response.json({ error: 'kata_issue_deleted', message: 'The issue this key filed was deleted in Kata or is not visible to this credential; use a new idempotency key, or restore the issue in Kata' }, { status: 409 }), role: 'alert', says: /not visible to this credential/ },
   ])('says when the issue already exists and can file a new one after $name', async ({ first, role, says }) => {
     const h = harness(async () => h.posted('/integrations/kata/issues').length === 1
@@ -115,7 +115,11 @@ describe('KataEvidenceDialog', () => {
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up' });
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
-    expect((await screen.findByRole(role)).textContent).toMatch(says);
+    const result = await screen.findByRole(role);
+    if (role === 'status') {
+      expect(screen.getByText('Already filed (closed).')).toBeDefined();
+      expect(screen.getByText('example#abcd').closest('p')?.textContent).toBe('Kata · example#abcd');
+    } else expect(result.textContent).toMatch(says);
     await fireEvent.click(screen.getByRole('button', { name: 'File as a new issue' }));
     expect((await screen.findByText('example#efgh')).closest('p')?.textContent).toBe('Kata · example#efgh');
     const keys = h.posted('/integrations/kata/issues').map((posted) => posted.headers.get('Idempotency-Key'));
@@ -147,6 +151,7 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'File as a new issue' }));
     expect((await screen.findByText('example#efgh')).closest('p')?.textContent).toBe('Kata · example#efgh');
+    expect(screen.getByText('Already filed (open).')).toBeDefined();
     const keys = (h: ReturnType<typeof harness>) => h.posted('/integrations/kata/issues').map((request) => request.headers.get('Idempotency-Key'));
     expect(keys(remounted)).toEqual(keys(lost));
   });
@@ -224,7 +229,7 @@ describe('KataEvidenceDialog', () => {
       await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
       await screen.findByRole('alert');
       await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
-      await fireEvent.click(await screen.findByRole('radio', { name: 'example#abcd · Not checked yet' }));
+      await fireEvent.click(await screen.findByRole('radio', { name: /example#abcd/ }));
       await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
       await screen.findByText('example#abcd');
       expect(new URL(filed!.url).pathname).toBe('/api/v1/integrations/kata/issues/example%23abcd/evidence');

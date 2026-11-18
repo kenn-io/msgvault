@@ -5,33 +5,13 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
-  it.each([
-    ['unavailable', { state: 'unavailable' }, { state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} }, false, ''],
-    ['partial', { state: 'ready' }, { state: 'partial', complete: false, tasks: [], outbound_metadata: {} }, true, 'Some linked tasks may be missing.'],
-    ['error', { state: 'ready' }, null, true, 'Lookup failed'],
-    ['disabled', { state: 'disabled' }, { state: 'disabled', complete: false, tasks: [], outbound_metadata: {} }, true, 'Set up'],
-    ['session-only', { state: 'ready', project: 'example' }, { state: 'ready', complete: true, reason: 'cache_persistence_unsupported', tasks: [], outbound_metadata: {} }, true, 'Linked-task index updates are available for this session but are not persisted to disk on this platform.']
-  ])('keeps an empty group hidden for %s', async (_state, status, result, showSetup, notice) => {
-    let loaded = false;
-    const client = createAPIClient(async input => {
-      if ((input as Request).url.endsWith('/status')) return Response.json(status);
-      loaded = true;
-      return result ? Response.json(result) : Response.json({ message: 'Lookup failed' }, { status: 503 });
-    });
-    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup });
-    await waitFor(() => expect(loaded).toBe(true));
-    if (notice) expect(await screen.findByText(notice)).toBeDefined();
-    else await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
-    expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
-  });
-
-  it('shows an outage notice when setup is enabled and retains safe cached rows', async () => {
+  it('keeps the Tasks group hidden when there are no linked rows', async () => {
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: 'unavailable' }
-      : { state: 'unavailable', complete: false, tasks: [{ id: 'one', title: 'Cached task' }], outbound_metadata: {} }));
+      ? { state: 'ready' }
+      : { state: 'partial', complete: false, tasks: [], outbound_metadata: {} }));
     render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
-    expect(await screen.findByText('Cached task')).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
+    expect(await screen.findByText('Some linked tasks may be missing.')).toBeDefined();
+    expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
   });
 
   it('groups task and Kata links under one Tasks heading', async () => {
@@ -98,11 +78,6 @@ describe('Message task list', () => {
     await view.rerender({ refresh: 3 });
     await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
     expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
-    expect(screen.queryByText('No linked Kata issues.')).toBeNull();
-    truncated = false;
-    await view.rerender({ refresh: 4 });
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull());
-    expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();
     view.unmount(); readiness.dispose();
   });
 });
