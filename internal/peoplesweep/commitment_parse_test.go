@@ -212,3 +212,33 @@ func TestParseCommitmentsKeepsOverlappingCitations(t *testing.T) {
 	assert.Equal(t, "Send draft", parsed.Promises[0].Summary)
 	assert.Equal(t, "Call", parsed.Promises[1].Summary)
 }
+
+func TestCommitmentSourceKey(t *testing.T) {
+	recorded := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	const quote = "I will send the draft."
+	source := CommitmentSource{SourceID: 3, SourceMessageID: "<a@example.test>", RecordedTime: recorded, MessageID: 10,
+		Direction: CommitmentOwedBy, Text: "Thanks. " + quote, ContentSHA256: "content-a"}
+	key := CommitmentSourceKey(source, quote, 8, 30)
+
+	// The archive row, the person, and a unique quote's position stay out of the key.
+	moved := source
+	moved.MessageID, moved.Text, moved.ContentSHA256 = 99, "Hello there, thanks. "+quote, "content-b"
+	assert.Equal(t, key, CommitmentSourceKey(moved, quote, 21, 43))
+
+	// Different wording, a replacement message, and a separate arrival each get their own key.
+	assert.NotEqual(t, key, CommitmentSourceKey(source, "I will send the deck.", 8, 29))
+	replacement := source
+	replacement.SourceMessageID = "<b@example.test>"
+	assert.NotEqual(t, key, CommitmentSourceKey(replacement, quote, 8, 30))
+	arrival := source
+	arrival.SourceID, arrival.RecordedTime = 4, recorded.Add(time.Minute)
+	assert.NotEqual(t, key, CommitmentSourceKey(arrival, quote, 8, 30))
+	owed := source
+	owed.Direction = CommitmentOwedTo
+	assert.NotEqual(t, key, CommitmentSourceKey(owed, quote, 8, 30))
+
+	// A quote that repeats in its message keeps its position, so each copy is its own promise.
+	twice := source
+	twice.Text = quote + " " + quote
+	assert.NotEqual(t, CommitmentSourceKey(twice, quote, 0, 22), CommitmentSourceKey(twice, quote, 23, 45))
+}

@@ -50,6 +50,8 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	a.Equal(first, items[0].Quote)
 	a.Equal(second, items[1].Quote)
 	a.Equal(id, items[0].AnchorMessageID)
+	a.Equal(peoplesweep.CommitmentSourceKey(window.Sources[0], first, 0, int64(len(first))), items[0].SourceKey)
+	a.Equal(peoplesweep.CommitmentSourceKey(window.Sources[0], second, start, end), items[1].SourceKey)
 	r.NotNil(items[0].DueOn)
 	a.Equal("2026-08-31", *items[0].DueOn)
 	claims, err := st.ListPersonFactClaimsContext(ctx, f.personID, personfacts.ClaimFilter{Limit: 10})

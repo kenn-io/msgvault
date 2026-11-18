@@ -154,7 +154,7 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 }
 
 func commitmentAgendaKey(c store.PersonCommitment) string {
-	return fmt.Sprintf("commitment:%d:%d-%d", c.AnchorMessageID, c.Start, c.End)
+	return "commitment:" + c.SourceKey
 }
 
 // Run files open obligations in one pass.

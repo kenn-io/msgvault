@@ -114,10 +114,7 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 			}
 		}
 		// Human-readable wording is deliberately absent from identity.
-		hash, start, end := source.ContentSHA256, promise.Start, promise.End
-		if !CommitmentQuoteRepeated(source.Text, promise.Quote) {
-			hash, start, end = "", 0, 0
-		}
+		hash, start, end := commitmentSpanIdentity(source, promise.Quote, promise.Start, promise.End)
 		promise.TargetKey = commitmentTargetKey(window.PersonID, source, promise.Quote, hash, start, end)
 		if !seen[promise.TargetKey] {
 			seen[promise.TargetKey] = true
@@ -135,6 +132,26 @@ func CommitmentQuoteRepeated(text, quote string) bool {
 	}
 	first := strings.Index(text, quote)
 	return first >= 0 && strings.Contains(text[first+1:], quote)
+}
+
+// commitmentSpanIdentity keeps a quote's position in identity only when the
+// quote repeats in its source, so a unique quote keeps its identity when it moves.
+func commitmentSpanIdentity(source CommitmentSource, quote string, start, end int64) (string, int64, int64) {
+	if !CommitmentQuoteRepeated(source.Text, quote) {
+		return "", 0, 0
+	}
+	return source.ContentSHA256, start, end
+}
+
+// CommitmentSourceKey identifies a promise by its source message and quote,
+// leaving out the person and the archive row, so the same promise keeps its
+// key across person merges and row reuse while a changed quote, a replacement
+// message or a separate arrival gets a new one.
+func CommitmentSourceKey(source CommitmentSource, quote string, start, end int64) string {
+	hash, start, end := commitmentSpanIdentity(source, quote, start, end)
+	identity := fmt.Sprintf("%s/%d/%q/%s/%s/%d/%d/%q", source.Direction, source.SourceID, source.SourceMessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), hash, start, end, quote)
+	digest := sha256.Sum256([]byte(identity))
+	return hex.EncodeToString(digest[:])
 }
 
 func commitmentTargetKey(personID int64, source CommitmentSource, quote, hash string, start, end int64) string {

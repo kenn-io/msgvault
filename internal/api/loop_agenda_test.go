@@ -229,17 +229,26 @@ type agendaTestArchive struct {
 	incomplete bool
 }
 
+// sourced gives a promise without a source key one of its own, as the store
+// gives each promise its source message's key.
+func sourced(c store.PersonCommitment) store.PersonCommitment {
+	if c.SourceKey == "" {
+		c.SourceKey = "source-" + strconv.FormatInt(c.ID, 10)
+	}
+	return c
+}
+
 func (a *agendaTestArchive) GetPersonCommitmentContext(_ context.Context, id int64, _ time.Time) (store.PersonCommitment, error) {
 	for _, c := range a.promises {
 		if c.ID == id {
-			return c, nil
+			return sourced(c), nil
 		}
 	}
 	return store.PersonCommitment{}, sql.ErrNoRows
 }
 func (a *agendaTestArchive) WalkOpenPersonCommitments(_ context.Context, _ time.Time, visit func(store.PersonCommitment) error) error {
 	for _, c := range a.promises {
-		if err := visit(c); err != nil {
+		if err := visit(sourced(c)); err != nil {
 			return err
 		}
 	}
@@ -431,7 +440,7 @@ func TestLoopAgendaPromiseReplayAfterPersonMerge(t *testing.T) {
 	server := httptest.NewServer(native.Service.Handler())
 	t.Cleanup(server.Close)
 	agenda := NewLoopAgenda(config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}, f.Store, "")
-	archive := &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{{ID: 1, PersonID: absorbed.ID, AnchorMessageID: id, Quote: body, End: int64(len(body)), Summary: "Send it", Direction: "owed_by", PromisedAt: now.Add(-time.Hour)}}}
+	archive := &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{{ID: 1, PersonID: absorbed.ID, AnchorMessageID: id, Quote: body, End: int64(len(body)), Summary: "Send it", Direction: "owed_by", PromisedAt: now.Add(-time.Hour), SourceKey: "same-source"}}}
 	agenda.archive = archive
 	first, err := agenda.File(t.Context(), "c1", now)
 	require.NoError(t, err)
@@ -443,6 +452,39 @@ func TestLoopAgendaPromiseReplayAfterPersonMerge(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, replay.Replayed)
 	assert.Equal(t, first.Issue.UID, replay.Issue.UID)
+}
+
+func TestLoopAgendaPromiseKeyFollowsSource(t *testing.T) {
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	body := "I will send it."
+	first := f.PersistEmail(storetest.EmailSpec{Thread: "source-key", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: body, SentAt: now.Add(-2 * time.Hour)})
+	moved := f.PersistEmail(storetest.EmailSpec{Thread: "source-key", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: "Hi. " + body, SentAt: now.Add(-time.Hour)})
+	p := f.EnsureParticipant("alex@example.test", "Alex", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(p)
+	require.NoError(t, err)
+	native := katatest.New(t)
+	server := httptest.NewServer(native.Service.Handler())
+	t.Cleanup(server.Close)
+	agenda := NewLoopAgenda(config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}, f.Store, "")
+	promise := store.PersonCommitment{ID: 1, PersonID: person.ID, AnchorMessageID: first, Quote: body, End: int64(len(body)), Summary: "Send it", Direction: "owed_by", PromisedAt: now.Add(-2 * time.Hour), SourceKey: "source-a"}
+	// The same source promise read from another row and position files nothing new.
+	again := promise
+	again.ID, again.AnchorMessageID, again.Start, again.End = 2, moved, 4, int64(4+len(body))
+	// Different wording or a replacement message at the first row and position is a new promise.
+	replaced := promise
+	replaced.ID, replaced.SourceKey = 3, "source-b"
+	agenda.archive = &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{promise, again, replaced}}
+	filed, err := agenda.File(t.Context(), "c1", now)
+	require.NoError(t, err)
+	reused, err := agenda.File(t.Context(), "c2", now)
+	require.NoError(t, err)
+	assert.True(t, reused.Replayed)
+	assert.Equal(t, filed.Issue.UID, reused.Issue.UID)
+	fresh, err := agenda.File(t.Context(), "c3", now)
+	require.NoError(t, err)
+	assert.False(t, fresh.Replayed)
+	assert.NotEqual(t, filed.Issue.UID, fresh.Issue.UID)
 }
 
 func agendaParent(t *testing.T, native katatest.Kata, server *httptest.Server, uid string) string {

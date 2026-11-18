@@ -37,6 +37,9 @@ type PersonCommitment struct {
 	Freshness       personfacts.FreshnessStatus `json:"freshness"`
 	State           string                      `json:"state"`
 	SnoozedUntil    *time.Time                  `json:"snoozed_until,omitempty"`
+	// SourceKey identifies the promise by its source message and quote, apart
+	// from the person and the archive row that hold it.
+	SourceKey string `json:"-"`
 }
 
 const commitmentColumns = `id, person_id, target_key, owner_state, snoozed_until`
@@ -305,6 +308,7 @@ func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commit
 		return c, false, nil
 	}
 	c.Freshness = commitmentCitationFreshness(source, input, c, now)
+	c.SourceKey = peoplesweep.CommitmentSourceKey(source, c.Quote, c.Start, c.End)
 	if c.State == LoopStateSnoozed && c.SnoozedUntil != nil && !c.SnoozedUntil.After(now) {
 		c.State, c.SnoozedUntil = LoopStateOpen, nil
 	}
