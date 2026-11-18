@@ -719,6 +719,7 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   await page.route('**/api/v1/integrations/kata/issues?*', route => route.fulfill({ json: { issues: [{ uid: 'one', qualified_ref: 'garden#one', title: 'Garden issue', status: 'open', web_url: 'https://example.org/issue' }], truncated: false } }));
   await page.route('**/api/v1/integrations/kata/open-issues', route => route.fulfill({ json: { issues: [{ uid: 'one', qualified_ref: 'garden#one', title: 'First', status: 'open' }], truncated: false } }));
   await page.route('**/api/v1/integrations/kata/evidence/prepare', route => route.fulfill({ json: { evidence: [{ id: 'a'.repeat(64), passage: 'b'.repeat(64), reference: { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, message: { body_sha256: 'c'.repeat(64), start_rune: 0, end_rune: 18 } }, excerpt: message.body, display: {}, content_trust: 'untrusted' }] } }));
+  await page.route('**/api/v1/integrations/kata/issues', route => route.fulfill({ json: { issue: { uid: 'one', qualified_ref: 'garden#one', title: 'First', status: 'open', web_url: 'https://example.org/issue' }, replayed: false } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
   await page.getByRole('grid', { name: 'Messages results' }).getByText('Garden plans', { exact: true }).click();
   const unlink = page.getByRole('button', { name: 'Unlink Garden task' });
@@ -754,6 +755,7 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   const earlier = kata.getByRole('button', { name: 'Earlier passage' });
   const later = kata.getByRole('button', { name: 'Later passage' });
   const quote = kata.getByRole('button', { name: 'Quote selection' });
+  expect.soft(await quote.innerText()).toBe('Quote selection');
   expect.soft(await earlier.innerText()).toContain('passage');
   expect.soft(await later.innerText()).toContain('passage');
   const passage = kata.getByRole('region', { name: 'Quoted passage' }).locator('pre');
@@ -766,6 +768,7 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   }
   await kata.getByRole('radio', { name: 'Existing', exact: true }).click();
   await expect(kata.getByRole('radio', { name: 'First · garden#one' })).toBeVisible();
+  expect.soft(await quote.innerText()).toBe('Quote selection');
   expect.soft((await quote.boundingBox())!.y).toBe((await earlier.boundingBox())!.y);
   expect.soft((await earlier.boundingBox())!.y).toBe((await later.boundingBox())!.y);
   expect.soft((await quote.boundingBox())!.y - ((await passage.boundingBox())!.y + (await passage.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
@@ -780,4 +783,18 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   await page.setViewportSize({ width: 1280, height: 900 });
   expect.soft((await results.boundingBox())!.height).toBeLessThan(100);
   expect.soft((await hint.boundingBox())!.y - ((await results.boundingBox())!.y + (await results.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await kata.getByRole('radio', { name: 'New', exact: true }).click();
+  await kata.getByRole('button', { name: 'Create issue' }).click();
+  const saved = kata.getByText('Saved.', { exact: true });
+  const destination = kata.getByText('Kata · garden#one');
+  const receiptLink = kata.getByRole('link', { name: 'Open in Kata' });
+  const done = kata.getByRole('button', { name: 'Done' });
+  await expect(saved).toBeVisible();
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 }]) {
+    await page.setViewportSize(viewport);
+    expect.soft((await destination.boundingBox())!.y - ((await saved.boundingBox())!.y + (await saved.boundingBox())!.height)).toBeGreaterThanOrEqual(4);
+    expect.soft((await done.boundingBox())!.y - ((await receiptLink.boundingBox())!.y + (await receiptLink.boundingBox())!.height)).toBeLessThanOrEqual(16);
+  }
+
 });

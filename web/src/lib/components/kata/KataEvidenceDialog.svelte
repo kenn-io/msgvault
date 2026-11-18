@@ -168,7 +168,7 @@
               {#if narrowed}
                 <Button size="sm" surface="soft" label="Whole passage" shortLabel="Whole" disabled={busy || loading} onclick={() => page(start)} />
               {:else}
-                <Button size="sm" surface="soft" label="Quote selection" shortLabel="Quote" disabled={busy || loading || !preview} onclick={quoteSelection} />
+                <Button size="sm" surface="soft" label="Quote selection" shortLabel="Quote selection" disabled={busy || loading || !preview} onclick={quoteSelection} />
               {/if}
               <Button size="sm" surface="soft" label="Earlier passage" shortLabel="Earlier passage" disabled={busy || loading || start === 0} onclick={() => page(Math.max(0, start - EVIDENCE_STEP))} />
               <Button size="sm" surface="soft" label="Later passage" shortLabel="Later passage" disabled={busy || loading || !windowHasMore} onclick={() => page(start + EVIDENCE_STEP)} />
@@ -189,7 +189,8 @@
   .kata-dialog, form { display: grid; gap: var(--space-6); }
   form { --field-text-size: 16px; }
   .kata-dialog { width: 100%; }
-  .kata-dialog.has-receipt { gap: var(--space-7); }
+  .kata-dialog.has-receipt { gap: var(--space-5); }
+  .has-receipt [role="status"] { display: grid; gap: var(--space-2); }
   p { margin: 0; }
   .disclosure { color: var(--text-secondary); font-size: var(--font-size-sm); }
   .issue-mode { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
@@ -202,6 +203,7 @@
   .passage-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   @media (max-width: 640px) {
     .passage-controls { margin-top: var(--space-4); }
+    .passage-controls :global(.kit-button) { padding-inline: 6px; font-size: 12px; }
     .passage-controls :global(.kit-button__label) { display: none; }
     .passage-controls :global(.kit-button__short-label) { display: inline-flex; }
   }
