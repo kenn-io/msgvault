@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // MessageExporter streams the msgvault-message-export/1 JSONL contract.
@@ -18,8 +19,16 @@ type MessageExporter interface {
 // source resolution finish before the first byte, so they return HTTP errors;
 // a failure while streaming leaves the stream without its completion record.
 func (s *Server) handleCLIMessageExport(w http.ResponseWriter, r *http.Request) {
-	exporter, ok := s.store.(MessageExporter)
-	if !ok {
+	var open func(context.Context, export.MessagesRequest) (*export.MessagesExport, error)
+	switch st := s.store.(type) {
+	case *store.Store:
+		// An embedded archive passes its native store.
+		open = func(ctx context.Context, request export.MessagesRequest) (*export.MessagesExport, error) {
+			return export.OpenMessages(ctx, st, request)
+		}
+	case MessageExporter:
+		open = st.OpenMessageExport
+	default:
 		writeError(w, http.StatusServiceUnavailable, "message_export_unavailable", "Message export is not available for this archive")
 		return
 	}
@@ -38,7 +47,7 @@ func (s *Server) handleCLIMessageExport(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	messages, err := exporter.OpenMessageExport(r.Context(), request)
+	messages, err := open(r.Context(), request)
 	if err != nil {
 		if errors.Is(err, export.ErrMessageSourceNotFound) {
 			writeError(w, http.StatusNotFound, "source_not_found", err.Error())
