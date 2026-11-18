@@ -17,7 +17,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full), [source feeds add](#source-feeds-add) |
-| Import local exports | [import-ics](#import-ics), [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-tiktok](#import-tiktok), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-ics](#import-ics), [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-linkedin](#import-linkedin), [import-tiktok](#import-tiktok), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -2788,6 +2788,26 @@ transcripts are supported; JSON transcripts are experimental. Attachment URLs
 are stored as links. Re-running is safe and resumes an interrupted import. See
 [Discord packages](usage/discord.md#import-a-personal-data-package) for
 requirements and limits.
+
+## import-linkedin
+
+Import a LinkedIn member data export ZIP or extracted folder:
+
+```bash
+msgvault import-linkedin <identifier> <archive> --me <profile-url>
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--me` | (required) | Your LinkedIn member profile URL |
+| `--display-name` | | Your display name for posts and comments |
+| `--include-drafts` | `false` | Include unsent message drafts |
+| `--json` | `false` | Print the import summary as JSON |
+
+Imports DMs and your own posts and comments; `Connections.csv` adds people
+without creating messages. Attachment URLs are stored as links. Use the same
+identifier for newer exports. See [LinkedIn import](usage/linkedin.md) for
+supported files and limits.
 
 ## import-telegram
 

@@ -182,5 +182,6 @@ var KnownMessageTypes = []string{
 	"telegram",
 	"x_dm",
 	"tiktok_export",
+	"linkedin",
 	"feed_item",
 }
