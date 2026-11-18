@@ -58,6 +58,17 @@ describe('KataEvidenceDialog', () => {
     expect(sent).toEqual({ title: 'Follow up', evidence: [passages[500].reference] });
   });
 
+  it('keeps the passage frame while preparing a quote', async () => {
+    let resolve!: (response: Response) => void;
+    const client = createAPIClient(() => new Promise<Response>(done => { resolve = done; }));
+    render(KataEvidenceDialog, { client, selector, defaultTitle: 'Follow up' });
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toBe('Preparing the passage…');
+    expect(status.closest('pre')).not.toBeNull();
+    resolve(Response.json({ evidence: [passages[0]] }));
+    expect(await screen.findByText('Opening passage')).toBeDefined();
+  });
+
   it.each([false, true])('narrows a message citation to the selected text, counting runes, earlier=%s', async (earlier) => {
     const passage = 'Café 🙂 send the budget by Friday';
     const text = earlier ? 'x'.repeat(500) + passage + 'y'.repeat(500) : passage;

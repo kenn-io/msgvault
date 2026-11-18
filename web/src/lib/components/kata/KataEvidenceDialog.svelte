@@ -161,8 +161,8 @@
         {/if}
         <section aria-label="Quoted passage">
           <p class="disclosure">Quote saved in Kata</p>
-          {#if loading}<p role="status">Preparing the passage…</p>{/if}
-          {#if preview}<pre bind:this={excerptElement}>{preview.excerpt}</pre>{/if}
+          {#if loading}<pre><span role="status">Preparing the passage…</span></pre>
+          {:else if preview}<pre bind:this={excerptElement}>{preview.excerpt}</pre>{/if}
           {#if windowed}
             <div class="passage-controls">
               {#if narrowed}
@@ -193,6 +193,8 @@
   .has-receipt [role="status"] { display: grid; gap: var(--space-2); }
   p { margin: 0; }
   .disclosure { color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .has-receipt a { color: var(--link-ink); text-decoration: none; justify-self: start; }
+  .has-receipt a:hover { text-decoration: underline; }
   .issue-mode { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
   form :global(.kit-segmented) { justify-self: start; }
   label { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
