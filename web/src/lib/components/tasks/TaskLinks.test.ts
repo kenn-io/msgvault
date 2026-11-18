@@ -87,7 +87,7 @@ describe('TaskLinks', () => {
   });
 
   it('preserves a creation draft when switching between New and Existing', async () => {
-    render(TaskLinks, { client: taskCreationClient(), mode: 'add', messageId: 42, title: 'Follow up', oncomplete: vi.fn() });
+    render(TaskLinks, { client: taskCreationClient(), mode: 'add', messageId: 42, title: 'Follow up' });
     expect(await screen.findByRole('radiogroup', { name: 'Task' })).toBeDefined();
     await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Revised follow up' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });

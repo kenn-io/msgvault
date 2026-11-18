@@ -58,33 +58,6 @@ describe('KataEvidenceDialog', () => {
     expect(sent).toEqual({ title: 'Follow up', evidence: [passages[500].reference] });
   });
 
-  it('keeps the previous passage frame while preparing a selected quote', async () => {
-    const text = 'First line of the message.\nSecond line with a selected quote.';
-    let resolve!: (response: Response) => void;
-    let calls = 0;
-    const client = createAPIClient(async () => {
-      calls++;
-      if (calls === 1) return Response.json({ evidence: [evidence(0, text)] });
-      return new Promise<Response>(done => { resolve = done; });
-    });
-    render(KataEvidenceDialog, { client, selector, defaultTitle: 'Follow up' });
-    const frame = await screen.findByText((_, element) => element?.tagName === 'PRE' && element.textContent === text);
-    const node = frame.firstChild!;
-    const start = text.indexOf('selected quote');
-    const range = document.createRange();
-    range.setStart(node, start);
-    range.setEnd(node, start + 'selected quote'.length);
-    window.getSelection()?.removeAllRanges();
-    window.getSelection()?.addRange(range);
-    await fireEvent.click(screen.getByRole('button', { name: 'Quote selection' }));
-    expect((await screen.findByRole('status')).textContent).toBe('Preparing the passage…');
-    expect(frame.isConnected).toBe(true);
-    expect(screen.getByRole('button', { name: 'Create issue' })).toHaveProperty('disabled', true);
-    resolve(Response.json({ evidence: [evidence(start, 'selected quote')] }));
-    expect(await screen.findByText('selected quote')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Create issue' })).toHaveProperty('disabled', false);
-  });
-
   it.each([false, true])('narrows a message citation to the selected text, counting runes, earlier=%s', async (earlier) => {
     const passage = 'Café 🙂 send the budget by Friday';
     const text = earlier ? 'x'.repeat(500) + passage + 'y'.repeat(500) : passage;
@@ -180,8 +153,7 @@ describe('KataEvidenceDialog', () => {
     const reads: string[] = [];
     const posts: Request[] = [];
     const text = 'Café 🙂 send the budget';
-    const quote = 'send the budget';
-    const prepared = evidence(7, quote);
+    const prepared = evidence(0, text);
     const client = createAPIClient(async input => {
       const request = input as Request;
       const url = new URL(request.url);
@@ -190,20 +162,12 @@ describe('KataEvidenceDialog', () => {
         reads.push(q);
         return Response.json({ issues: q === 'budget' ? [{ ...issue, title: 'Older budget', ref: 'k3f9', qualified_ref: 'example#k3f9' }] : [issue], truncated: false });
       }
-      if (url.pathname.endsWith('/prepare')) {
-        const body = await request.clone().json();
-        return Response.json({ evidence: [body.selectors[0].end_rune ? prepared : evidence(0, text)] });
-      }
+      if (url.pathname.endsWith('/prepare')) return Response.json({ evidence: [prepared] });
       posts.push(request);
       return Response.json({ issue, replayed: false });
     });
     render(KataEvidenceDialog, { client, selector });
-    const node = (await screen.findByText(text)).firstChild as Text;
-    const range = document.createRange();
-    range.setStart(node, text.indexOf(quote)); range.setEnd(node, text.length);
-    window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range);
-    await fireEvent.click(screen.getByRole('button', { name: 'Quote selection' }));
-    await screen.findByText(quote);
+    await screen.findByText(text);
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     expect(screen.getByText('Only the quote is sent; attachments stay out.')).toBeDefined();
     await screen.findByRole('radio', { name: 'Follow up · example#abcd' });

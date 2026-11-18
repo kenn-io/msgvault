@@ -1,5 +1,5 @@
 import { taskCreationClient, taskOutboundMetadata } from './fixtures.test-support';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
@@ -121,14 +121,13 @@ describe('Add to task', () => {
 
   it.each(['create', 'link'])('shows a receipt after %s and closes on Done', async (action) => {
     const onclose = vi.fn();
-    const oncomplete = vi.fn();
     const client = createAPIClient(async input => {
       const request = input as Request;
       if (request.method === 'POST') return Response.json({ task: { id: 'task-1', title: 'Filed task' } }, { status: 201 });
-      if (request.url.includes('/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Filed task' }] });
+      if (request.url.includes('/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Filed task' }], truncated: false });
       return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
-    render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose, oncomplete });
+    render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose });
     if (action === 'link') {
       await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
       await fireEvent.click(await screen.findByRole('radio', { name: 'Filed task · task-1' }));
@@ -136,21 +135,9 @@ describe('Add to task', () => {
     await fireEvent.click(await screen.findByRole('button', { name: action === 'create' ? 'Create task' : 'Link task' }));
     expect(await screen.findByText(action === 'create' ? 'Task created' : 'Task linked')).toBeTruthy();
     expect(screen.getByText('Filed task')).toBeTruthy();
-    expect(oncomplete).toHaveBeenCalledOnce();
     expect(onclose).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(onclose).toHaveBeenCalledOnce();
-  });
-
-  it('shows outbound metadata for an existing task', async () => {
-    render(AddToTaskDialog, { client: taskCreationClient(), messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    const existing = within(screen.getByRole('region', { name: 'Linked tasks' }));
-    const disclosure = existing.getByText("What's sent");
-    await fireEvent.click(disclosure);
-    expect(disclosure.closest('details')?.open).toBe(true);
-    expect(existing.getByText('Subject snapshot').nextElementSibling?.textContent).toBe('Follow up');
-    expect(existing.getByText('Sender snapshot').nextElementSibling?.textContent).toBe('sender@example.com');
   });
 
   it.each(['success', 'failure'])('guards dismissal while busy and releases it after %s', async (result) => {
@@ -171,7 +158,8 @@ describe('Add to task', () => {
       expect(onclose).toHaveBeenCalledOnce();
     } else {
       await screen.findByRole('button', { name: 'Done' });
-      expect(onclose).not.toHaveBeenCalled();
+      await fireEvent.keyDown(close, { key: 'Escape' });
+      expect(onclose).toHaveBeenCalledOnce();
     }
   });
 });

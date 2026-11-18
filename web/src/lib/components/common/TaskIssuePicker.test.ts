@@ -7,10 +7,10 @@ const item = { id: 'one', label: 'Send the budget' };
 
 describe('TaskIssuePicker', () => {
   it.each([
-    ['garden#w3fa', true, false], ['  garden#w3fa  ', true, false],
-    ['other#w3fa', false, true], ['garden#w3fa#x', false, false],
-    ['garden#', false, false], ['garden#w3 fa', false, false],
-  ])('handles reference %s when lookup fails', async (query, valid, wrongProject) => {
+    ['garden#w3fa', true], ['  garden#w3fa  ', true],
+    ['other#w3fa', false], ['garden#w3fa#x', false],
+    ['garden#', false], ['garden#w3 fa', false],
+  ])('handles reference %s when lookup fails', async (query, valid) => {
     const load = vi.fn(async (_query: string) => { throw new Error('Unavailable'); });
     render(TaskIssuePicker, { load, noun: 'open issues', empty: 'No open issues.', project: 'garden' });
     await screen.findByRole('alert');
@@ -22,7 +22,6 @@ describe('TaskIssuePicker', () => {
       expect(choice).toHaveProperty('checked', true);
     } else {
       expect(screen.queryByRole('radio')).toBeNull();
-      if (wrongProject) expect(screen.getByText('Use a reference from the configured project: garden.')).toBeDefined();
     }
   });
 

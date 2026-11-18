@@ -11,6 +11,7 @@ export function taskCreationClient(requests: Request[] = []) {
     const request = input as Request;
     requests.push(request);
     if (request.method === 'POST') return Response.json({ task: { id: 'task-1', title: 'Follow up' } }, { status: 201 });
+    if (request.url.includes('/search')) return Response.json({ tasks: [], truncated: false });
     return Response.json(request.url.endsWith('/status')
       ? { state: 'ready', project: 'example' }
       : { state: 'ready', complete: true, last_scan: '', tasks: [], outbound_metadata: taskOutboundMetadata });
