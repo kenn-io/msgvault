@@ -58,15 +58,31 @@ describe('KataEvidenceDialog', () => {
     expect(sent).toEqual({ title: 'Follow up', evidence: [passages[500].reference] });
   });
 
-  it('keeps the passage frame while preparing a quote', async () => {
+  it('keeps the previous passage frame while preparing a selected quote', async () => {
+    const text = 'First line of the message.\nSecond line with a selected quote.';
     let resolve!: (response: Response) => void;
-    const client = createAPIClient(() => new Promise<Response>(done => { resolve = done; }));
+    let calls = 0;
+    const client = createAPIClient(async () => {
+      calls++;
+      if (calls === 1) return Response.json({ evidence: [evidence(0, text)] });
+      return new Promise<Response>(done => { resolve = done; });
+    });
     render(KataEvidenceDialog, { client, selector, defaultTitle: 'Follow up' });
-    const status = await screen.findByRole('status');
-    expect(status.textContent).toBe('Preparing the passage…');
-    expect(status.closest('pre')).not.toBeNull();
-    resolve(Response.json({ evidence: [passages[0]] }));
-    expect(await screen.findByText('Opening passage')).toBeDefined();
+    const frame = await screen.findByText((_, element) => element?.tagName === 'PRE' && element.textContent === text);
+    const node = frame.firstChild!;
+    const start = text.indexOf('selected quote');
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, start + 'selected quote'.length);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    await fireEvent.click(screen.getByRole('button', { name: 'Quote selection' }));
+    expect((await screen.findByRole('status')).textContent).toBe('Preparing the passage…');
+    expect(frame.isConnected).toBe(true);
+    expect(screen.getByRole('button', { name: 'Create issue' })).toHaveProperty('disabled', true);
+    resolve(Response.json({ evidence: [evidence(start, 'selected quote')] }));
+    expect(await screen.findByText('selected quote')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Create issue' })).toHaveProperty('disabled', false);
   });
 
   it.each([false, true])('narrows a message citation to the selected text, counting runes, earlier=%s', async (earlier) => {

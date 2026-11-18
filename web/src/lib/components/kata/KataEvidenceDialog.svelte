@@ -64,7 +64,7 @@
     const current = ++generation;
     controller?.abort();
     const signal = (controller = new AbortController()).signal;
-    loading = true; error = ''; preview = undefined;
+    loading = true; error = '';
     const { max_chars: _window, ...base } = selector;
     let request: EvidenceSelector = selector;
     if (exact) request = { ...base, start_rune: exact.start, end_rune: exact.end };
@@ -76,7 +76,7 @@
       preview = data.evidence[0];
       if (!exact) windowHasMore = !!preview.next_rune;
     } catch (cause) {
-      if (current === generation && !signal.aborted) error = errorMessage(cause, 'This passage is unavailable.');
+      if (current === generation && !signal.aborted) { preview = undefined; error = errorMessage(cause, 'This passage is unavailable.'); }
     } finally {
       if (current === generation) loading = false;
     }
@@ -161,8 +161,12 @@
         {/if}
         <section aria-label="Quoted passage">
           <p class="disclosure">Quote saved in Kata</p>
-          {#if loading}<pre><span role="status">Preparing the passage…</span></pre>
-          {:else if preview}<pre bind:this={excerptElement}>{preview.excerpt}</pre>{/if}
+          {#if loading || preview}
+            <div class="passage">
+              <pre bind:this={excerptElement} aria-hidden={loading}>{preview?.excerpt ?? ''}</pre>
+              {#if loading}<span class="preparing" role="status">Preparing the passage…</span>{/if}
+            </div>
+          {/if}
           {#if windowed}
             <div class="passage-controls">
               {#if narrowed}
@@ -202,6 +206,8 @@
   textarea { resize: vertical; padding: var(--space-2); color: var(--text-primary); background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
   section { display: grid; gap: var(--space-2); }
   pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 30px; max-height: 14rem; overflow: auto; font: inherit; font-family: var(--font-field); font-size: 16px; line-height: var(--type-body-line); padding: var(--space-2) var(--space-4); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
+  .passage { position: relative; }
+  .preparing { position: absolute; inset: 1px; padding: var(--space-2) var(--space-4); background: var(--bg-surface); border-radius: var(--radius-sm); }
   .passage-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   @media (max-width: 640px) {
     .passage-controls { display: grid; grid-template-columns: 1fr 1fr; margin-top: var(--space-4); }
