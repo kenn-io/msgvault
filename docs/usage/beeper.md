@@ -452,13 +452,9 @@ resolving to the same person).
 
 Telegram users also link to [Telegram Desktop imports](text-messages.md#import-telegram) by numeric user ID when a sync revisits their chat; `sync-beeper --full` covers quiet chats.
 
-Linking users does not deduplicate their messages. Beeper's documented Desktop
-API does not promise Telegram chat or message IDs, and whether a particular
-Desktop version returns additional bridge identity fields is unverified; native
-ID questions are tracked in [issue #2119](https://github.com/kenn-io/msgvault/issues/2119).
-Beeper IDs should not be treated as Telegram IDs. If both sources contain a chat, use
-the [conversation search recipe](searching.md#search-one-copy-of-overlapping-chats)
-to choose which archived copy to search.
+Linking users doesn't merge their messages, so a chat archived from both
+sources appears twice in search. To search one copy, see
+[Search one copy of overlapping chats](searching.md#search-one-copy-of-overlapping-chats).
 
 ## Caveats
 

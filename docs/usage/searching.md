@@ -237,54 +237,40 @@ and hybrid search. Vector and hybrid queries still need free text.
 
 ### Search one copy of overlapping chats
 
-If you imported a Telegram Desktop export and also synced those chats through
-Beeper, search can return both archived copies. This recipe suits focused
-searches in a few chats. To search one whole source instead, use the
-[`--account` filter](#account-and-collection-filters) with the source identifier
-or display name shown by `msgvault list-accounts`. To choose one copy of each
-selected chat:
+If you imported a Telegram Desktop export and also sync Telegram through
+Beeper, search returns both archived copies of most messages. msgvault does
+not merge the two copies.
 
-1. Find candidates by title or participant name:
+To search only one source, pass its identifier or display name from
+`msgvault list-accounts` to the
+[`--account` filter](#account-and-collection-filters).
+
+To pick one copy of particular chats:
+
+1. Find the candidates:
 
    ```bash
    msgvault find-chat "Example Group" --json
    ```
 
-2. Inspect each result's `source_type`, `source_identifier`, `source_id`, and
-   `source_conversation_id` to identify its source. A title is a clue, not proof
-   that two results are the same chat; inspect their messages if needed. A
-   linked Telegram participant can also help identify a direct chat. Select the
-   local `conversation_id` of the copy you want. Repeat for each chat.
-   If `has_more` is true, increase `--limit` up to 100, narrow the name, or
-   restrict discovery to a known source with `--source-id`. If there are no
-   results, try another name; discovery only returns chats with a visible message.
-3. Search the selected ID, replacing the example ID with your own:
+   Each result has a `conversation_id`, plus `source_type` and
+   `source_identifier` to tell you which source it came from. A matching
+   title doesn't prove two results are the same chat, so check their messages
+   if you're unsure. If `has_more` is true, raise `--limit` (up to 100),
+   narrow the name, or pass `--source-id`.
 
-   ```bash
-   msgvault search 'conversation_id:41 budget' --mode fts --json
-   ```
-
-   For two chats, suppose you choose export conversation 41 over its Beeper
-   counterpart 42, and Beeper conversation 52 over export counterpart 51:
+2. Search the copies you chose. Repeated `conversation_id:` filters match any
+   of the listed conversations:
 
    ```bash
    msgvault search 'conversation_id:41 conversation_id:52 budget' --mode fts --json
    ```
 
-   Repeated IDs match either selected conversation, and `budget` applies to
-   both. Reuse the chosen `conversation_id:` prefix with other search terms.
-   For pipe OR, repeat all selected IDs in each alternative:
+   With `|`, repeat the filters in each alternative, because an alternative
+   without them searches the whole archive.
 
-   ```bash
-   msgvault search 'conversation_id:41 conversation_id:52 budget | conversation_id:41 conversation_id:52 receipt' --mode fts --json
-   ```
-
-Only alternatives with these filters search exclusively within the selected
-conversations. Choosing the export omits newer messages found only in Beeper;
-choosing Beeper omits export-only history. This sets no persistent preference,
-does not change unrestricted search, and does not merge or delete messages.
-The `account:` operator is an email address filter; `message_type:beeper`
-includes every Beeper network and cannot select individual chats.
+Choosing the export leaves out newer messages that only Beeper has, and
+choosing Beeper leaves out older history that only the export has.
 
 ## Repairing Existing Archives
 
