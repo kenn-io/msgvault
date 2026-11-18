@@ -77,7 +77,10 @@ func runImportLinkedIn(cmd *cobra.Command, archive string, opts linkedin.Options
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Messages: %d added, %d updated\nDrafts skipped: %d\nConnections: %d\n",
 		summary.MessagesAdded, summary.MessagesUpdated, summary.DraftsSkipped, summary.ConnectionsProcessed)
-	return err
+	if err != nil {
+		return fmt.Errorf("write LinkedIn import summary: %w", err)
+	}
+	return nil
 }
 
 func init() { rootCmd.AddCommand(newImportLinkedInCmd()) }

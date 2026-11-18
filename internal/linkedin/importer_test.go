@@ -366,8 +366,8 @@ func TestImportMalformedCommentsPreservesEarlierStandardRows(t *testing.T) {
 	require.ErrorContains(err, "invalid CSV at record 3")
 	assert.Equal(1, count(t, st, "SELECT COUNT(*) FROM messages"))
 	var id int64
-	require.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&id))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
 	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), id).Scan(&body))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), id).Scan(&body))
 	assert.Equal(value, body)
 }
