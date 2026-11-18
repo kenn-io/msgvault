@@ -43,7 +43,10 @@ describe('KataEvidenceDialog', () => {
     const h = harness();
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up' });
     expect(await screen.findByText('Opening passage')).toBeDefined();
-    expect(screen.getByText('Only the quoted passage is sent; attachments stay out.')).toBeDefined();
+    expect(screen.getByText('The quote, title, and description are sent; attachments stay out.')).toBeDefined();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    expect(screen.getByText('Only the quote is sent; attachments stay out.')).toBeDefined();
+    await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
     expect(screen.getByRole('button', { name: 'Earlier passage' })).toHaveProperty('disabled', true);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Later passage' }));
