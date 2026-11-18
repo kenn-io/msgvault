@@ -19,8 +19,8 @@ func newImportLinkedInCmd() *cobra.Command {
 ZIP or extracted folder. Connections.csv adds people without creating messages.
 
 Use the same identifier for newer exports; repeated rows update in place.
---me is your LinkedIn profile URL. Attachment URLs are kept as links, and no
-network requests are made. Repeat an interrupted import to continue.
+Attachment URLs are kept as links, and no network requests are made. Repeat an
+interrupted import to continue.
 
 Examples:
   msgvault import-linkedin linkedin ~/Downloads/Basic_LinkedInDataExport.zip --me https://www.linkedin.com/in/example

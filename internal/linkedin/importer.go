@@ -344,12 +344,7 @@ func (imp *importer) message(ctx context.Context, kind string, r row) error {
 		}
 		attachments := splitURLs(r["attachments"])
 		slices.Sort(attachments)
-		contentKey := body
-		if len(attachments) > 0 {
-			contentKey = digest(body, digest(slices.Compact(attachments)...))
-		} else if body == "" {
-			contentKey = digest(body, subject)
-		}
+		contentKey := digest(subject, body, digest(slices.Compact(attachments)...))
 		conversation := strings.TrimSpace(r["conversation id"])
 		parts := []string{conversation, senderKey, sent.Format("2006-01-02T15:04:05.999999999Z"), contentKey}
 		if conversation == "" {

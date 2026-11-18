@@ -209,6 +209,26 @@ func writeMessageRows(t *testing.T, dir string, rows [][]string) {
 	writeCSV(t, dir, "messages.csv", data.String())
 }
 
+func TestImportKeepsMessagesThatDifferOnlyBySubject(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	dir := t.TempDir()
+	header := "CONVERSATION ID,DATE,SUBJECT,CONTENT,SENDER PROFILE URL,TO,RECIPIENT PROFILE URLS\n"
+	first := "thread,2026-10-01 12:00:00 UTC,Offer,Same text,https://www.linkedin.com/in/morgan-example/,Alex Example," + ownerURL + "\n"
+	second := "thread,2026-10-01 12:00:00 UTC,Follow-up,Same text,https://www.linkedin.com/in/morgan-example/,Alex Example," + ownerURL + "\n"
+	writeCSV(t, dir, "messages.csv", header+first+second)
+	opts := Options{Identifier: "example", Me: ownerURL}
+	sum, err := Import(t.Context(), st, dir, opts)
+	require.NoError(err)
+	assert.Equal(int64(2), sum.MessagesAdded)
+	writeCSV(t, dir, "messages.csv", header+second+first)
+	sum, err = Import(t.Context(), st, dir, opts)
+	require.NoError(err)
+	assert.Zero(sum.MessagesAdded)
+	assert.Equal(2, count(t, st, "SELECT COUNT(DISTINCT subject) FROM messages"))
+}
+
 func TestImportDistinctAttachmentOnlyMessages(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
