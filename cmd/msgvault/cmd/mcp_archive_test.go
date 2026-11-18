@@ -66,6 +66,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		{"whatsapp", "find_chat", false}, {"telegram", "find_chat", false}, {"matrix", "find_chat", false},
 		{"apple_messages", "find_chat", false}, {"synctech_sms", "find_chat", false}, {"imazing_csv", "find_chat", false},
 		{"facebook_messenger", "find_chat", false}, {"discord_package", "find_chat", true},
+		{"tiktok_export", "find_chat", true},
 		{"inline", "find_chat", false}, {"google_voice", "find_chat", false}, {"gmail", "find_chat", false},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
