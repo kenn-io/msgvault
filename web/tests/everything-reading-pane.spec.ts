@@ -740,7 +740,10 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   await expect(context).toContainText('Mira Example <mira@example.com> · Jul 18');
   expect.soft(await context.evaluate(el => el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight)).toBe(true);
   expect.soft(await context.evaluate(el => Number(getComputedStyle(el).fontWeight))).toBeLessThan(600);
-  expect.soft(await context.locator('..').evaluate(el => parseFloat(getComputedStyle(el).borderRadius))).toBeLessThanOrEqual(8);
+  const phoneRadius = await context.locator('..').evaluate(el => getComputedStyle(el).borderRadius);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  expect.soft(phoneRadius).toBe(await context.locator('..').evaluate(el => getComputedStyle(el).borderRadius));
+  await page.setViewportSize({ width: 390, height: 844 });
   expect.soft(await context.evaluate(el => getComputedStyle(el.closest('.kit-chip')!).paddingTop)).not.toBe('0px');
   expect.soft(await context.evaluate(el => el.textContent?.includes('\u00a0· Jul 18'))).toBe(true);
   const title = dialog.getByRole('textbox', { name: 'Task title' });

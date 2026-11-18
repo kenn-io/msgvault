@@ -223,7 +223,7 @@
   }
   form :global(.kit-chip) { justify-self: start; max-width: 100%; font-weight: 400; line-height: var(--type-meta-line); }
   form :global(.kit-chip__label) { margin: 0; padding: 0; overflow: visible; white-space: normal; overflow-wrap: anywhere; }
-  @media (max-width: 640px) { form :global(.kit-chip.kit-chip--md) { border-radius: var(--radius-sm); padding: var(--space-2) var(--space-4); } }
+  @media (max-width: 640px) { form :global(.kit-chip.kit-chip--md) { padding: var(--space-2) var(--space-4); } }
   .disclosure { margin: 0; color: var(--text-secondary); font-size: 12px; }
   label {
     display: grid;
