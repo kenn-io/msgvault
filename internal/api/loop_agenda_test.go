@@ -388,10 +388,23 @@ func TestLoopAgendaRunSkipsChangedQuote(t *testing.T) {
 	t.Cleanup(server.Close)
 	cfg := config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}
 	agenda := NewLoopAgenda(cfg, f.Store, "http://localhost:8080")
-	agenda.archive = &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{{ID: 1, PersonID: person.ID, AnchorMessageID: id, Direction: "owed_by", Quote: "changed text", End: int64(len(body)), Summary: "Send it", PromisedAt: now.Add(-time.Hour)}}}
+	agenda.archive = &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{{ID: 1, PersonID: person.ID, AnchorMessageID: id, Direction: "owed_by", Quote: body, End: int64(len(body)), Summary: "Send it", PromisedAt: now.Add(-time.Hour)}}}
+	// The archived message is edited after the promise was found, so its quote no longer matches.
+	editMessageBody(t, f, id, "I will send it soon.")
 	require.NoError(t, agenda.Run(t.Context(), now))
 	_, err = agenda.File(t.Context(), "c1", now)
-	assert.ErrorIs(t, err, kataevidence.ErrChanged)
+	require.ErrorIs(t, err, kataevidence.ErrChanged)
+	client, err := connectKata(t.Context(), cfg)
+	require.NoError(t, err)
+	issues, _, err := client.OpenIssues(t.Context(), katatest.Project, 10)
+	require.NoError(t, err)
+	assert.Empty(t, issues)
+}
+
+func editMessageBody(t *testing.T, f *storetest.Fixture, id int64, body string) {
+	t.Helper()
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), body, id)
+	require.NoError(t, err)
 }
 
 func TestLoopAgendaRunSkipsPersonWithoutStableIdentity(t *testing.T) {
@@ -434,7 +447,8 @@ func TestLoopAgendaReplayBeforeCitationValidation(t *testing.T) {
 	agenda.archive = archive
 	first, err := agenda.File(t.Context(), "c1", now)
 	require.NoError(t, err)
-	archive.promises[0].Quote = "outdated quote"
+	// After the archived message is edited, the citation no longer validates, but the issue already exists.
+	editMessageBody(t, f, id, "I will send it soon.")
 	replay, err := agenda.File(t.Context(), "c1", now)
 	require.NoError(t, err)
 	assert.True(t, replay.Replayed)
