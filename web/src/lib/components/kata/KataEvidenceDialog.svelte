@@ -197,8 +197,6 @@
   .has-receipt [role="status"] { display: grid; gap: var(--space-2); }
   p { margin: 0; }
   .disclosure { color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .has-receipt a { color: var(--link-ink); text-decoration: none; justify-self: start; }
-  .has-receipt a:hover { text-decoration: underline; }
   .issue-mode { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
   form :global(.kit-segmented) { justify-self: start; }
   label { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
