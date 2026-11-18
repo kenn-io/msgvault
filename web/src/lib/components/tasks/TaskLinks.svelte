@@ -17,7 +17,6 @@
     TaskSummary as GeneratedTaskSummary,
   } from '../../api/generated/models';
   import TaskIssuePicker from '../common/TaskIssuePicker.svelte';
-  import TaskMetadataDisclosure from './TaskMetadataDisclosure.svelte';
   import CreateTaskDialog from './CreateTaskDialog.svelte';
   import DetailRow from '../people/DetailRow.svelte';
   import InlineNotice from '../common/InlineNotice.svelte';
@@ -29,6 +28,9 @@
     mode = 'list',
     showSetup = true,
     refresh = 0,
+    embedded = false,
+    action = $bindable('create'),
+    actionReady = $bindable(false),
     present = $bindable(false),
     busy = $bindable(false),
     oncomplete = undefined,
@@ -41,16 +43,18 @@
     mode?: 'list' | 'add';
     showSetup?: boolean;
     refresh?: number;
+    embedded?: boolean;
+    action?: string;
+    actionReady?: boolean;
     present?: boolean;
     busy?: boolean;
-    oncomplete?: (action: 'created' | 'linked', task: Task) => void;
+    oncomplete?: () => void;
     oncancel?: () => void;
     messageId: number;
     title: string;
     onsettings?: () => void;
   } = $props();
   const conversationStatus = getContext<ConversationTaskStatus | undefined>(conversationTaskStatusKey);
-  let action = $state('create');
   let loading = $state(true);
   let localStatus = $state<{ state: string; project?: string; message?: string }>({ state: 'loading' });
   const status = $derived(conversationStatus?.latest ?? localStatus);
@@ -177,7 +181,7 @@
       if (!data) throw new Error(messageFor(responseError, 'Unable to link task.'));
       existingLinkRetry = undefined;
       selected = '';
-      oncomplete?.('linked', data.task);
+      oncomplete?.();
     } catch (cause) {
       if (currentGeneration !== generation || activeController?.signal.aborted) return;
       error = cause instanceof Error ? cause.message : 'Unable to link task.';
@@ -227,7 +231,11 @@
   const partialIndex = $derived(mutationReady && indexState === 'partial');
   const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
   const rowsVisible = $derived(mode === 'list' && integrationState !== 'authentication_required' && indexState !== 'authentication_required' && tasks.length > 0);
-  $effect(() => { present = rowsVisible; });
+  const noticeVisible = $derived((degraded && (showSetup || integrationState === 'ready')) || partialIndex || sessionOnlyIndex || !!error);
+  $effect(() => {
+    actionReady = mutationReady;
+    present = mode === 'list' && ((!loading && noticeVisible) || rowsVisible);
+  });
   const stateMessage = $derived(
     integrationState === 'disabled' ? integrationMessage || 'Task integration is disabled.'
       : integrationState !== 'ready' && integrationState !== 'loading'
@@ -256,7 +264,7 @@
   );
 </script>
 
-{#if showSetup || integrationState === 'ready' || integrationState === 'loading' || (tasks.length > 0 && integrationState !== 'authentication_required') || error}
+{#if (loading && (showSetup || integrationState === 'ready' || integrationState === 'loading')) || rowsVisible || (!loading && noticeVisible) || (mode === 'add' && mutationReady && (!embedded || action !== 'create'))}
 <section class="task-links" class:add={mode === 'add'} aria-label="Linked tasks">
   {#if loading && !rowsVisible}<p role="status">Loading linked tasks…</p>
   {:else}
@@ -275,11 +283,10 @@
       {/each}
     {/if}
     {#if mutationReady && mode === 'add'}
-      <SegmentedControl variant="borderless" disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />
+      {#if !embedded}<SegmentedControl variant="borderless" disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />{/if}
       {#if action !== 'create'}
       <TaskIssuePicker load={loadTasks} noun="tasks" moreNote="Showing the first 25 tasks. Type to search the rest." empty={`No tasks in ${project} yet.`} disabled={busy} bind:selected />
       {#if error}<p role="alert">{error}</p>{/if}
-      {#if outboundMetadata}<TaskMetadataDisclosure {messageId} archiveUID={outboundMetadata.archive_uid} conversationId={outboundMetadata.conversation_id} sourceType={outboundMetadata.source_type} sourceIdentifier={outboundMetadata.source_identifier} sourceMessageId={outboundMetadata.source_message_id} subject={outboundMetadata.subject} from={outboundMetadata.from} sentAt={outboundMetadata.sent_at} />{/if}
       <p class="disclosure">Bodies and attachments are never sent.</p>
       <div class="actions">
         <Button surface="soft" label="Cancel" disabled={busy} onclick={oncancel} />
@@ -310,7 +317,7 @@
       from={outboundMetadata.from}
       sentAt={outboundMetadata.sent_at}
       onclose={oncancel}
-      oncreated={(task) => oncomplete?.('created', task)}
+      oncreated={oncomplete}
     />
   </div>
 {/if}
@@ -323,7 +330,6 @@
   }
   .task-links.add { padding: 0; gap: var(--space-6); }
   .task-project { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
-  .create-task:not([hidden]) { margin-top: var(--space-6); }
   .disclosure { color: var(--text-secondary); font-size: 12px; }
   .task-links.add > :global(.kit-segmented) { justify-self: start; }
   .actions { display: flex; justify-content: flex-end; gap: var(--space-4); }

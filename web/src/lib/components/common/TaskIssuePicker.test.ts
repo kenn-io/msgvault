@@ -75,7 +75,7 @@ describe('TaskIssuePicker', () => {
     await fireEvent.input(filter, { target: { value: 'broken' } });
     await waitFor(() => expect(fail).toBeTypeOf('function'));
     fail(new Error('Task service unavailable'));
-    expect((await screen.findByRole('alert')).textContent).toContain('Task service unavailable');
+    expect((await screen.findByRole('alert')).textContent).toBe('Task service unavailable');
     expect(screen.queryByText('More tasks available.')).toBeNull();
     view.unmount();
     render(TaskIssuePicker, { load: async () => ({ items: [], truncated: false }), noun: 'open issues', empty: 'No open issues yet.' });

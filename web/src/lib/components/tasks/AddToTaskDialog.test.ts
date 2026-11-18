@@ -41,7 +41,7 @@ describe('Add to task', () => {
       expect(screen.getByRole('radiogroup', { name: 'Issue' })).toBeTruthy();
       expect(screen.queryByText('Issue')).toEqual(email ? expect.anything() : null);
       expect(await screen.findByLabelText('Issue title')).toHaveProperty('value', 'Follow up');
-      expect(screen.getByLabelText('Brief')).toHaveProperty('value', `${location.origin}/messages/42`);
+      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', `${location.origin}/messages/42`);
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
@@ -91,18 +91,18 @@ describe('Add to task', () => {
         context: new Map([[kataReadinessKey, readiness]])
       });
       await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Revised follow up' } });
-      await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Draft notes' } });
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
       await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
-      await fireEvent.input(screen.getByLabelText('Brief'), { target: { value: 'Brief draft' } });
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Brief draft' } });
       await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
-      expect(screen.getByLabelText('Brief')).toHaveProperty('value', 'Brief draft');
+      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', 'Brief draft');
       await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
       expect(await screen.findByLabelText('Task title')).toHaveProperty('value', 'Revised follow up');
-      expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
+      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', 'Draft notes');
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
@@ -118,7 +118,7 @@ describe('Add to task', () => {
     } finally { view.unmount(); }
   });
 
-  it.each(['created', 'linked'])('shows a receipt after a task is %s and closes on Done', async result => {
+  it.each(['created', 'linked'])('closes after a task is %s', async result => {
     const onclose = vi.fn();
     const client = createAPIClient(async input => {
       const request = input as Request;
@@ -134,11 +134,7 @@ describe('Add to task', () => {
     } else {
       await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
     }
-    expect(await screen.findByText(result === 'linked' ? 'Task linked' : 'Task created')).toBeTruthy();
-    expect(screen.getByText('Filed task')).toBeTruthy();
-    expect(onclose).not.toHaveBeenCalled();
-    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
-    expect(onclose).toHaveBeenCalledOnce();
+    await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
   });
 
   it.each(['success', 'failure'])('guards dismissal while busy and releases it after %s', async (result) => {
@@ -153,9 +149,12 @@ describe('Add to task', () => {
     respond(result === 'success'
       ? Response.json({ task: { id: 'task-1', title: 'Follow up' } }, { status: 201 })
       : Response.json({ message: 'Unavailable' }, { status: 503 }));
-    await waitFor(async () => {
+    if (result === 'success') {
+      await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+    } else {
+      await screen.findByRole('alert');
       await fireEvent.keyDown(close, { key: 'Escape' });
       expect(onclose).toHaveBeenCalledOnce();
-    });
+    }
   });
 });

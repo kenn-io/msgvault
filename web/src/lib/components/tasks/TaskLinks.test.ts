@@ -36,6 +36,24 @@ describe('TaskLinks', () => {
     await waitFor(() => expect(screen.queryByText('Second task')).toBeNull());
   });
 
+  it('keeps linked rows visible while a refresh is pending', async () => {
+    let respond: ((response: Response) => void) | undefined;
+    let hold = false;
+    const client = createAPIClient(async input => {
+      if ((input as Request).url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (hold) return new Promise<Response>(resolve => { respond = resolve; });
+      return Response.json({ state: 'ready', tasks: [{ id: 'one', title: 'Review notes' }], outbound_metadata: taskOutboundMetadata });
+    });
+    const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic', refresh: 0 });
+    await screen.findByText('Review notes');
+    hold = true;
+    await view.rerender({ refresh: 1 });
+    await waitFor(() => expect(respond).toBeDefined());
+    expect(screen.getByText('Review notes')).toBeDefined();
+    respond!(Response.json({ state: 'ready', tasks: [{ id: 'one', title: 'Review revised notes' }], outbound_metadata: taskOutboundMetadata }));
+    expect(await screen.findByText('Review revised notes')).toBeDefined();
+  });
+
   it('clears a lookup error after a later refresh succeeds', async () => {
     let lookups = 0;
     const client = createAPIClient(async input => {
@@ -49,16 +67,6 @@ describe('TaskLinks', () => {
     await view.rerender({ refresh: 1 });
     await screen.findByText('Recovered task');
     expect(screen.queryByText('Lookup failed')).toBeNull();
-  });
-
-  it('shows outbound metadata before linking an existing task', async () => {
-    render(TaskLinks, { client: taskCreationClient(), mode: 'add', messageId: 42, title: 'Follow up' });
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    const existing = within(screen.getByRole('region', { name: 'Linked tasks' }));
-    expect(existing.getByText('archive-a')).toBeTruthy();
-    expect(existing.getByText('sender@example.com')).toBeTruthy();
-    expect(existing.getByText('gmail')).toBeTruthy();
-    expect(existing.getByText('Follow up')).toBeTruthy();
   });
 
   it("preserves an open creation draft and retry identity across another message's failed status refresh", async () => {
@@ -120,6 +128,7 @@ describe('TaskLinks', () => {
 
   it('preserves a creation draft when switching between New and Existing', async () => {
     render(TaskLinks, { client: taskCreationClient(), mode: 'add', messageId: 42, title: 'Follow up' });
+    expect(await screen.findByRole('radiogroup', { name: 'Task' })).toBeDefined();
     await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Revised follow up' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));

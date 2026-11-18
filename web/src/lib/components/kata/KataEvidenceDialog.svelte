@@ -26,6 +26,7 @@
   let title = $state(untrack(() => defaultTitle));
   let brief = $state(untrack(() => defaultBrief));
   let selected = $state('');
+  let issueTitles = $state<Record<string, string>>({});
   let start = $state(untrack(() => selector.start_rune ?? 0));
   // A message citation narrowed to text selected in the preview, in runes.
   let narrowed = $state<{ start: number; end: number }>();
@@ -48,8 +49,10 @@
   const actionOptions = [{ value: 'create', label: 'New' }, { value: 'link', label: 'Existing' }];
 
   async function loadIssues(query: string, signal: AbortSignal) {
+    issueTitles = {};
     const response = await listOpenKataIssues(query ? { q: query } : undefined, { ...client, signal });
     if (!response.data) throw new Error(errorMessage(response.error, 'Unable to load issues.'));
+    if (!signal.aborted) issueTitles = Object.fromEntries(response.data.issues.map(issue => [issue.qualified_ref, issue.title]));
     return {
       items: response.data.issues.map(issue => ({ id: issue.qualified_ref, label: issue.title, detail: issue.qualified_ref })),
       truncated: response.data.truncated,
@@ -150,14 +153,6 @@
       {#if error}<p role="alert">{error}</p>{/if}
     {:else}
       <form onsubmit={(event) => { event.preventDefault(); void submit(); }} aria-busy={busy}>
-        {#snippet issueMode()}<SegmentedControl variant="borderless" ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} />{/snippet}
-        {#if modeLabel}<div class="issue-mode"><span>Issue</span>{@render issueMode()}</div>{:else}{@render issueMode()}{/if}
-        {#if mode === 'create'}
-          <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>
-          <label>Brief<textarea aria-label="Brief" bind:value={brief} disabled={busy} rows="3" maxlength="2000"></textarea></label>
-        {:else}
-          <TaskIssuePicker load={loadIssues} noun="open issues" hint="Search by whole word. The list is capped at 25." empty="No open issues yet." project={kata?.project} disabled={busy} bind:selected />
-        {/if}
         <section aria-label="Quoted passage">
           <p class="disclosure">Quote saved in Kata</p>
           {#if loading}<p role="status">Preparing the passage…</p>{/if}
@@ -174,6 +169,18 @@
             </div>
           {/if}
         </section>
+        {#snippet issueMode()}<SegmentedControl variant="borderless" ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} />{/snippet}
+        {#if modeLabel}<div class="issue-mode"><span>Issue</span>{@render issueMode()}</div>{:else}{@render issueMode()}{/if}
+        {#if mode === 'create'}
+          <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>
+          <label>Description<textarea aria-label="Description" bind:value={brief} disabled={busy} rows="3" maxlength="2000"></textarea></label>
+        {:else}
+          {#if selected}
+            <div class="chosen"><span>{#if issueTitles[selected]}{issueTitles[selected]}<small>{selected}</small>{:else}{selected}<small>Not checked yet</small>{/if}</span><Button size="sm" surface="soft" label="Change" disabled={busy} onclick={() => selected = ''} /></div>
+          {:else}
+            <TaskIssuePicker load={loadIssues} noun="open issues" hint="Search by whole word. The list is capped at 25." empty="No open issues yet." project={kata?.project} disabled={busy} bind:selected />
+          {/if}
+        {/if}
         {#if error}<p role="alert">{error}</p>{/if}
         {#if deletedKey}<Button label="File as a new issue" disabled={busy} onclick={() => void fileAgain()} />{/if}
         <p class="disclosure">{mode === 'create' ? 'The quote, title, and description are sent; attachments stay out.' : 'Only the quote is sent; attachments stay out.'}</p>
@@ -200,5 +207,8 @@
   section { display: grid; gap: var(--space-2); }
   pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 30px; max-height: 14rem; overflow: auto; font: inherit; font-family: var(--font-field); font-size: 16px; line-height: var(--type-body-line); padding: var(--space-2) var(--space-4); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
   .passage-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .chosen { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+  .chosen span { display: grid; gap: var(--space-1); }
+  .chosen small { color: var(--text-muted); }
   .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }
 </style>

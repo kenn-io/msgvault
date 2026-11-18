@@ -37,7 +37,7 @@
   });
 </script>
 
-<div class:task-group={groupPresent} class:task-notices={!groupPresent} role={groupPresent ? 'region' : undefined} aria-label={groupPresent ? 'Tasks' : undefined}>
+<div class:task-group={groupPresent} hidden={!groupPresent} role={groupPresent ? 'region' : undefined} aria-label={groupPresent ? 'Tasks' : undefined}>
   {#if groupPresent}<h2>Tasks</h2>{/if}
   {#if email}
     <TaskLinks {client} {messageId} {title} {onsettings} {showSetup} {refresh} mode="list" bind:present={tasksPresent} />
@@ -59,8 +59,7 @@
 
 <style>
   .task-group { display: grid; gap: var(--space-2); padding: 0 var(--pane-pad-x) var(--space-4); }
-  .task-notices { padding: 0 var(--pane-pad-x); }
   .kata-links { display: grid; gap: var(--space-2); }
-  .task-group :global(.task-links), .task-notices :global(.task-links) { padding: 0; }
+  .task-group :global(.task-links) { padding: 0; }
   h2, p { margin: 0; font-size: var(--font-size-sm); }
 </style>
