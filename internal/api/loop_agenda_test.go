@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/loops"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/katatest"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -491,7 +492,6 @@ func TestLoopAgendaPromiseKeyFollowsSource(t *testing.T) {
 	now := time.Now().UTC()
 	body := "I will send it."
 	first := f.PersistEmail(storetest.EmailSpec{Thread: "source-key", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: body, SentAt: now.Add(-2 * time.Hour)})
-	moved := f.PersistEmail(storetest.EmailSpec{Thread: "source-key", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: "Hi. " + body, SentAt: now.Add(-time.Hour)})
 	p := f.EnsureParticipant("alex@example.test", "Alex", "example.test")
 	person, _, err := f.Store.CreatePersonFromParticipant(p)
 	require.NoError(t, err)
@@ -499,26 +499,52 @@ func TestLoopAgendaPromiseKeyFollowsSource(t *testing.T) {
 	server := httptest.NewServer(native.Service.Handler())
 	t.Cleanup(server.Close)
 	agenda := NewLoopAgenda(config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}, f.Store, "")
-	promise := store.PersonCommitment{ID: 1, PersonID: person.ID, AnchorMessageID: first, Quote: body, End: int64(len(body)), Summary: "Send it", Direction: "owed_by", PromisedAt: now.Add(-2 * time.Hour), SourceKey: "source-a"}
-	// The same source promise read from another row and position files nothing new.
-	again := promise
-	again.ID, again.AnchorMessageID, again.Start, again.End = 2, moved, 4, int64(4+len(body))
-	// New wording at the first row and position, after the message is edited, is a new promise.
-	const reworded = "I will mail it."
-	replaced := promise
-	replaced.ID, replaced.Quote, replaced.SourceKey = 3, reworded, "source-b"
-	agenda.archive = &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{promise, again, replaced}}
+	promise := store.PersonCommitment{ID: 1, PersonID: person.ID, AnchorMessageID: first, Quote: body, End: int64(len(body)), Summary: "Send it", Direction: "owed_by", PromisedAt: now.Add(-2 * time.Hour)}
+	promise.SourceKey = promiseSourceKey(t, f, person.ID, promise, now)
+	archive := &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{promise}}
+	agenda.archive = archive
 	filed, err := agenda.File(t.Context(), "c1", now)
 	require.NoError(t, err)
-	reused, err := agenda.File(t.Context(), "c2", now)
+	// Editing the message moves the quote; the promise keeps its key and its issue.
+	editMessageBody(t, f, first, "Hi. "+body)
+	archive.promises[0].Start, archive.promises[0].End = 4, int64(4+len(body))
+	archive.promises[0].SourceKey = promiseSourceKey(t, f, person.ID, archive.promises[0], now)
+	assert.Equal(t, promise.SourceKey, archive.promises[0].SourceKey)
+	reused, err := agenda.File(t.Context(), "c1", now)
 	require.NoError(t, err)
 	assert.True(t, reused.Replayed)
 	assert.Equal(t, filed.Issue.UID, reused.Issue.UID)
+	// New wording at the original position, after another edit, is a new promise.
+	const reworded = "I will mail it."
 	editMessageBody(t, f, first, reworded)
-	fresh, err := agenda.File(t.Context(), "c3", now)
+	replaced := promise
+	replaced.ID, replaced.Quote = 2, reworded
+	replaced.SourceKey = promiseSourceKey(t, f, person.ID, replaced, now)
+	archive.promises = append(archive.promises, replaced)
+	fresh, err := agenda.File(t.Context(), "c2", now)
 	require.NoError(t, err)
 	assert.False(t, fresh.Replayed)
 	assert.NotEqual(t, filed.Issue.UID, fresh.Issue.UID)
+}
+
+// promiseSourceKey computes a promise's key the way the store does, from the
+// source promise discovery reads for its message.
+func promiseSourceKey(t *testing.T, f *storetest.Fixture, personID int64, c store.PersonCommitment, now time.Time) string {
+	t.Helper()
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), personID, profile, cfg.Commitments, now)
+	require.NoError(t, err)
+	for _, source := range window.Sources {
+		if source.MessageID == c.AnchorMessageID {
+			require.True(t, source.MatchesQuote(c.Quote, c.Start, c.End))
+			return peoplesweep.CommitmentSourceKey(source, c.Quote, c.Start, c.End)
+		}
+	}
+	require.Failf(t, "no promise source", "message %d", c.AnchorMessageID)
+	return ""
 }
 
 func TestLoopAgendaReusedRowIDsFileNewIssues(t *testing.T) {
