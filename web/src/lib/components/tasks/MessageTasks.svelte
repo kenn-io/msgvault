@@ -16,6 +16,7 @@
   let error = $state('');
   let truncated = $state(false);
   let tasksPresent = $state(false);
+  let groupPresent = $derived(tasksPresent || issues.length > 0 || (kata?.ready && (!!error || truncated)));
   let issuesMessageId: number | undefined;
   $effect(() => {
     const id = messageId;
@@ -36,8 +37,8 @@
   });
 </script>
 
-<div class:task-group={tasksPresent || issues.length > 0} class:task-notices={!tasksPresent && issues.length === 0} role={tasksPresent || issues.length > 0 ? 'region' : undefined} aria-label={tasksPresent || issues.length > 0 ? 'Tasks' : undefined}>
-  {#if tasksPresent || issues.length > 0}<h2>Tasks</h2>{/if}
+<div class:task-group={groupPresent} class:task-notices={!groupPresent} role={groupPresent ? 'region' : undefined} aria-label={groupPresent ? 'Tasks' : undefined}>
+  {#if groupPresent}<h2>Tasks</h2>{/if}
   {#if email}
     <TaskLinks {client} {messageId} {title} {onsettings} {showSetup} {refresh} mode="list" embedded bind:present={tasksPresent} />
   {/if}

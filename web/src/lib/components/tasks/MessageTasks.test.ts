@@ -57,11 +57,17 @@ describe('Message task list', () => {
       expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
     } finally { view.unmount(); readiness.dispose(); }
   });
-  it('reports a failed Kata lookup', async () => {
-    const client = createAPIClient(async input => (input as Request).url.endsWith('/status') ? Response.json({ state: 'ready' }) : Response.json({ message: 'Kata lookup failed' }, { status: 503 }));
+  it.each(['error', 'incomplete'])('shows the Tasks group for a Kata %s notice without rows', async result => {
+    const client = createAPIClient(async input => (input as Request).url.endsWith('/status') ? Response.json({ state: 'ready' }) : result === 'error'
+      ? Response.json({ message: 'Kata lookup failed' }, { status: 503 })
+      : Response.json({ issues: [], truncated: true }));
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
-    try { expect((await screen.findByRole('alert')).textContent).toContain('Kata lookup failed'); }
+    try {
+      await screen.findByText(result === 'error' ? 'Kata lookup failed' : 'Linked Kata issues are incomplete.');
+      expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
+      expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
+    }
     finally { view.unmount(); readiness.dispose(); }
   });
 
