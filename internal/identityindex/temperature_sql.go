@@ -120,13 +120,8 @@ SELECT message_id, canonical_id, occurred_at,
 	   (NOT is_meeting AND is_chat) AS chat,
 	   is_meeting AS meeting,
 	   modality_mask
-FROM (
-	SELECT q.*, `+MeetingCopyRank("q.canonical_id", "q.message_id", "q.message_type", "q.occurred_at")+` AS meeting_rank
-	FROM qualifying q
-	LEFT JOIN %[6]s g ON g.message_id = q.message_id
-	WHERE NOT is_meeting OR message_type = 'meeting_transcript'
-) ranked
-WHERE NOT is_meeting OR meeting_rank = 1
+FROM qualifying
+WHERE NOT is_meeting OR (canonical_id, message_id) IN (%[8]s)
 `,
 		activity,
 		cutoff,
@@ -135,7 +130,32 @@ WHERE NOT is_meeting OR meeting_rank = 1
 		ModalityEmail,
 		groups,
 		MeetingOwnerGroupsSQL("(SELECT message_id FROM person_messages WHERE message_type = 'meeting_transcript')", ownerActivity, groups),
+		meetingCopyRepresentativesSQL(ownerActivity, groups, cutoff),
 	)
+}
+
+// meetingCopyRepresentativesSQL selects the transcript copy that represents
+// each linked meeting group for a person. It ranks every copy in
+// ownerActivity, not just those in activity's date window, so a windowed
+// caller keeps the representative the annual score assigns. It reads the
+// person_messages CTE of RelationshipTemperatureFactsSQL.
+func meetingCopyRepresentativesSQL(ownerActivity, groups, cutoff string) string {
+	return fmt.Sprintf(`
+SELECT canonical_id, message_id FROM (
+	SELECT c.canonical_id, c.message_id, `+MeetingCopyRank("c.canonical_id", "c.message_id", "c.message_type", "c.occurred_at")+` AS meeting_rank
+	FROM (
+		SELECT canonical_id, message_id, min(occurred_at)::TIMESTAMP AS occurred_at,
+		       any_value(message_type)::VARCHAR AS message_type
+		FROM %[1]s
+		WHERE canonical_id IN (SELECT canonical_id FROM person_messages)
+		  AND NOT is_owner AND NOT unsent AND NOT email_invite
+		  AND occurred_at <= TIMESTAMP '%[3]s'
+		  AND entry_kind IN ('event', 'meeting')
+		  AND message_type = 'meeting_transcript'
+		GROUP BY canonical_id, message_id
+	) c
+	LEFT JOIN %[2]s g ON g.message_id = c.message_id
+) WHERE meeting_rank = 1`, ownerActivity, groups, cutoff)
 }
 
 // buildRelationshipTemperatureDailySQL reduces qualifying facts to one
