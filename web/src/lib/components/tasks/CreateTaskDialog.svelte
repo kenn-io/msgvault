@@ -1,7 +1,9 @@
 <script lang="ts">
   import { createBrowserRequestID } from '../../api/request-id';
   import { createOrLinkMessageTask as generatedCreateOrLinkMessageTask } from '../../api/generated/api/api';
-  import { Chip, Disclosure, Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Chip, Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import TaskMetadataDisclosure from './TaskMetadataDisclosure.svelte';
+  import type { TaskSummary } from '../../api/generated/models';
   import { untrack } from 'svelte';
   import { formatShortDate } from '../../util/format';
   import type { APIClient } from '../../api/client';
@@ -37,7 +39,7 @@
     subject: string;
     from: string;
     sentAt: string;
-    oncreated?: () => void;
+    oncreated?: (task: TaskSummary) => void;
     onclose?: () => void;
   } = $props();
   let title = $state(untrack(() => defaultTitle));
@@ -87,7 +89,7 @@
         },
       );
       if (!data) throw new Error(messageFor(responseError));
-      oncreated();
+      oncreated(data.task);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to create task.';
     } finally {
@@ -160,54 +162,7 @@
         block
       /></label
     >
-    <Disclosure variant="plain">{#snippet summary()}What's sent{/snippet}
-      <dl>
-        <div>
-          <dt>Message URL</dt>
-          <dd>{messageURL}</dd>
-        </div>
-        <div>
-          <dt>Archive UID</dt>
-          <dd>{archiveUID}</dd>
-        </div>
-        <div>
-          <dt>Message ID</dt>
-          <dd>{messageId}</dd>
-        </div>
-        <div>
-          <dt>Conversation ID</dt>
-          <dd>{conversationId}</dd>
-        </div>
-        <div>
-          <dt>Source type</dt>
-          <dd>{sourceType}</dd>
-        </div>
-        <div>
-          <dt>Source identifier</dt>
-          <dd>{sourceIdentifier}</dd>
-        </div>
-        <div>
-          <dt>Source message ID</dt>
-          <dd>{sourceMessageId}</dd>
-        </div>
-        <div>
-          <dt>Subject snapshot</dt>
-          <dd>{subject}</dd>
-        </div>
-        <div>
-          <dt>Sender snapshot</dt>
-          <dd>{from}</dd>
-        </div>
-        <div>
-          <dt>Sent at</dt>
-          <dd>{sentAt}</dd>
-        </div>
-        <div>
-          <dt>Link added at</dt>
-          <dd>{addedAt}</dd>
-        </div>
-      </dl>
-    </Disclosure>
+    <TaskMetadataDisclosure {messageURL} {addedAt} {archiveUID} {messageId} {conversationId} {sourceType} {sourceIdentifier} {sourceMessageId} {subject} {from} {sentAt} />
     <p class="disclosure">Bodies and attachments are never sent.</p>
     {#if error}<p role="alert">{error}</p>{/if}
     <div class="actions">
@@ -251,26 +206,9 @@
     color: var(--text-primary);
   }
   .project { display: flex; justify-content: space-between; margin: 0; }
-  .project span, form :global(.kit-disclosure) {
+  .project span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-  }
-  dl {
-    display: grid;
-    gap: var(--space-1);
-  }
-  dl div {
-    display: grid;
-    grid-template-columns: 8rem minmax(0, 1fr);
-    gap: var(--space-2);
-  }
-  dt {
-    color: var(--text-muted);
-  }
-  dd {
-    margin: 0;
-    overflow-wrap: anywhere;
-    color: var(--text-primary);
   }
   .actions {
     display: flex;

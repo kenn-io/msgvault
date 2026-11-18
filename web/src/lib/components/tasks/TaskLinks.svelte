@@ -17,6 +17,7 @@
     TaskSummary as GeneratedTaskSummary,
   } from '../../api/generated/models';
   import TaskIssuePicker from '../common/TaskIssuePicker.svelte';
+  import TaskMetadataDisclosure from './TaskMetadataDisclosure.svelte';
   import CreateTaskDialog from './CreateTaskDialog.svelte';
   import DetailRow from '../people/DetailRow.svelte';
   import InlineNotice from '../common/InlineNotice.svelte';
@@ -42,7 +43,7 @@
     embedded?: boolean;
     present?: boolean;
     busy?: boolean;
-    oncomplete?: () => void;
+    oncomplete?: (action: 'created' | 'linked', task: Task) => void;
     oncancel?: () => void;
     messageId: number;
     title: string;
@@ -172,7 +173,7 @@
       if (!data) throw new Error(messageFor(responseError, 'Unable to link task.'));
       existingLinkRetry = undefined;
       selected = '';
-      oncomplete?.();
+      oncomplete?.('linked', data.task);
     } catch (cause) {
       if (currentGeneration !== generation || activeController?.signal.aborted) return;
       error = cause instanceof Error ? cause.message : 'Unable to link task.';
@@ -277,6 +278,7 @@
       {#if action !== 'create'}
       <TaskIssuePicker load={loadTasks} noun="tasks" moreNote="Showing the first 25 tasks. Type to search the rest." empty={`No tasks in ${project} yet.`} disabled={busy} bind:selected />
       {#if error}<InlineNotice message={error} />{/if}
+      {#if outboundMetadata}<TaskMetadataDisclosure {messageId} archiveUID={outboundMetadata.archive_uid} conversationId={outboundMetadata.conversation_id} sourceType={outboundMetadata.source_type} sourceIdentifier={outboundMetadata.source_identifier} sourceMessageId={outboundMetadata.source_message_id} subject={outboundMetadata.subject} from={outboundMetadata.from} sentAt={outboundMetadata.sent_at} />{/if}
       <p class="disclosure">Bodies and attachments are never sent.</p>
       <div class="actions">
         <Button surface="soft" label="Cancel" disabled={busy} onclick={oncancel} />
@@ -307,7 +309,7 @@
       from={outboundMetadata.from}
       sentAt={outboundMetadata.sent_at}
       onclose={oncancel}
-      oncreated={() => oncomplete?.()}
+      oncreated={(task) => oncomplete?.('created', task)}
     />
   </div>
 {/if}

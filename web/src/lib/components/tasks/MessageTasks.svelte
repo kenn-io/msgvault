@@ -47,7 +47,7 @@
       {#each issues as issue (issue.uid)}
         <DetailRow description={`Kata · ${issue.qualified_ref} · ${issue.status.replaceAll('_', ' ').replace(/^./, value => value.toUpperCase())}`}>
           {issue.title}
-          {#snippet actions()}{#if issue.web_url}<a class="text-action" aria-label={`Open ${issue.title} (${issue.qualified_ref}) in Kata`} href={issue.web_url} target="_blank" rel="noreferrer">Open in Kata</a>{/if}{/snippet}
+          {#snippet actions()}{#if issue.web_url}<a aria-label={`Open ${issue.title} (${issue.qualified_ref}) in Kata`} href={issue.web_url} target="_blank" rel="noreferrer">Open in Kata</a>{/if}{/snippet}
         </DetailRow>
       {/each}
     </div>
@@ -58,7 +58,6 @@
   .task-group { display: grid; gap: var(--space-2); padding: 0 var(--pane-pad-x) var(--space-4); }
   .task-notices { padding: 0 var(--pane-pad-x); }
   .kata-links { display: grid; gap: var(--space-2); }
-  .text-action { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; min-height: var(--kit-control-height, 28px); padding: 3px 10px; border: var(--border-width) solid var(--border-default); border-radius: var(--kit-control-radius, var(--radius-sm)); background: var(--bg-raised, var(--bg-inset)); color: var(--text-secondary); font-size: var(--kit-control-font-size, var(--font-size-md)); font-weight: var(--font-weight-medium, 500); text-decoration: none; box-shadow: var(--shadow-raised, none); }
   .task-group :global(.task-links), .task-notices :global(.task-links) { padding: 0; }
   @media (max-width: 640px) {
     .task-group :global(.detail-row .actions) { margin-left: 0; }

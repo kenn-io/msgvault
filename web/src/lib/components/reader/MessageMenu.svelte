@@ -90,6 +90,7 @@
     title={message.subject || 'Follow up on this message'}
     email={hasOriginal}
     onsettings={onOpenSettings}
+    oncomplete={onTaskDialogClose}
     onclose={() => { taskOpen = false; onTaskDialogClose?.(); }}
   />
 {/if}
