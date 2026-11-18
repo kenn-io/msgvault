@@ -60,5 +60,8 @@
   .kata-links { display: grid; gap: var(--space-2); }
   .text-action { display: inline-flex; min-height: var(--control-h); align-items: center; color: var(--link-ink); font-size: var(--type-meta-size); }
   .task-group :global(.task-links), .task-notices :global(.task-links) { padding: 0; }
+  @media (max-width: 640px) {
+    .task-group :global(.detail-row .actions) { margin-left: 0; }
+  }
   h2, p { margin: 0; font-size: var(--font-size-sm); }
 </style>

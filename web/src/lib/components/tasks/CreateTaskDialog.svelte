@@ -221,7 +221,8 @@
     gap: var(--space-6);
     min-width: 0;
   }
-  form :global(.kit-chip) { justify-self: start; max-width: 100%; }
+  form :global(.kit-chip) { justify-self: start; max-width: 100%; font-weight: 400; line-height: var(--type-meta-line); }
+  form :global(.kit-chip__label) { margin: 0; padding: 0; overflow: visible; white-space: normal; overflow-wrap: anywhere; }
   .disclosure { margin: 0; color: var(--text-secondary); font-size: 12px; }
   label {
     display: grid;

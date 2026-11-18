@@ -267,7 +267,7 @@
       {#each tasks as task (task.id)}
         <DetailRow description={`Tasks · ${project}`}>
           {task.title}
-          {#snippet actions()}<Button size="sm" class="text-action" label="Unlink" ariaLabel={`Unlink ${task.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(task.id)} />{/snippet}
+          {#snippet actions()}<Button size="sm" label="Unlink" ariaLabel={`Unlink ${task.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(task.id)} />{/snippet}
         </DetailRow>
       {/each}
     {/if}

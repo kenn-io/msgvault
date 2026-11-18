@@ -200,5 +200,9 @@
   section { display: grid; gap: var(--space-2); }
   pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 30px; max-height: 14rem; overflow: auto; font: inherit; font-family: var(--font-field); font-size: 16px; line-height: var(--type-body-line); padding: var(--space-2) var(--space-4); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
   .passage-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  @media (max-width: 640px) {
+    .passage-controls { display: grid; grid-template-columns: max-content max-content; justify-content: start; }
+    .passage-controls :global(.kit-button:first-child) { grid-column: 1 / -1; justify-self: start; }
+  }
   .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }
 </style>
