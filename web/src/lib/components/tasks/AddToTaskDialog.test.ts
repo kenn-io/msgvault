@@ -149,8 +149,8 @@ describe('Add to task', () => {
     const disclosure = existing.getByText("What's sent");
     await fireEvent.click(disclosure);
     expect(disclosure.closest('details')?.open).toBe(true);
-    expect(existing.getByText('archive-a')).toBeTruthy();
-    expect(existing.getByText('sender@example.com')).toBeTruthy();
+    expect(existing.getByText('Subject snapshot').nextElementSibling?.textContent).toBe('Follow up');
+    expect(existing.getByText('Sender snapshot').nextElementSibling?.textContent).toBe('sender@example.com');
   });
 
   it.each(['success', 'failure'])('guards dismissal while busy and releases it after %s', async (result) => {
