@@ -649,3 +649,55 @@ test('shows the full message time beside a long sender on a phone', async ({ pag
   const menuBox = (await menu.boundingBox())!;
   expect(timeBox.x + timeBox.width <= menuBox.x || timeBox.y >= menuBox.y + menuBox.height).toBe(true);
 });
+
+test('keeps Kata issue choices focused while navigating with arrow keys', async ({ page }) => {
+  const message = {
+    id: 42, conversation_id: 7, subject: 'Garden plans', body: 'Please send notes.',
+    from: 'Mira Example <mira@example.com>', to: ['team@example.com'],
+    sent_at: '2026-07-18T12:00:00Z', message_type: 'email', attachments: []
+  };
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [{ ...entry(42), title: 'Garden plans', conversation_id: 7, anchor_message_id: 42 }],
+    total_count: 1, cache_revision: 'fixture', search_provenance: {}
+  } }));
+  await page.route('**/api/v1/messages/42', route => route.fulfill({ json: message }));
+  await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: {
+    id: 7, messages: [message], anchor_id: 42, has_before: false, has_after: false, total: 1
+  } }));
+  await page.route('**/api/v1/integrations/tasks/status', route => route.fulfill({ json: { state: 'disabled' } }));
+  await page.route('**/api/v1/messages/42/tasks', route => route.fulfill({ json: { state: 'disabled', complete: false, tasks: [], outbound_metadata: {} } }));
+  await page.route('**/api/v1/integrations/kata/status', route => route.fulfill({ json: { state: 'ready', project: 'garden' } }));
+  await page.route('**/api/v1/integrations/kata/issues?*', route => route.fulfill({ json: { issues: [], truncated: false } }));
+  await page.route('**/api/v1/integrations/kata/open-issues', route => route.fulfill({ json: {
+    issues: [
+      { uid: 'one', qualified_ref: 'garden#one', title: 'First', status: 'open' },
+      { uid: 'two', qualified_ref: 'garden#two', title: 'Second', status: 'open' },
+      { uid: 'three', qualified_ref: 'garden#three', title: 'Third', status: 'open' }
+    ], truncated: false
+  } }));
+  await page.route('**/api/v1/integrations/kata/evidence/prepare', route => route.fulfill({ json: { evidence: [{
+    id: 'a'.repeat(64), passage: 'b'.repeat(64),
+    reference: { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, message: { body_sha256: 'c'.repeat(64), start_rune: 0, end_rune: 18 } },
+    excerpt: message.body, display: {}, content_trust: 'untrusted'
+  }] } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
+  await page.getByRole('grid', { name: 'Messages results' }).getByText('Garden plans', { exact: true }).click();
+  const card = page.getByRole('article', { name: 'Message 42' });
+  await card.getByRole('button', { name: /More actions for/ }).click();
+  await page.getByRole('menuitem', { name: 'Add to task…' }).click();
+  await page.getByRole('radio', { name: 'Kata', exact: true }).click();
+  await page.getByRole('radio', { name: 'Existing', exact: true }).click();
+  const first = page.getByRole('radio', { name: 'First · garden#one' });
+  const second = page.getByRole('radio', { name: 'Second · garden#two' });
+  const third = page.getByRole('radio', { name: 'Third · garden#three' });
+  await first.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(second).toBeChecked();
+  await expect(second).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(third).toBeChecked();
+  await expect(third).toBeFocused();
+  await expect(first).toBeVisible();
+  await expect(page.getByRole('searchbox', { name: 'Filter open issues' })).toBeVisible();
+});
