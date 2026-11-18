@@ -307,6 +307,42 @@ it.each([{ state: 'ready', shown: true }, { state: 'disabled', shown: false }])(
   readiness.dispose();
 });
 
+it('refreshes the linked task while its receipt remains open', async () => {
+  let linked = false;
+  let lookups = 0;
+  const client = createAPIClient(async input => {
+    const request = input as Request;
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+    if (path.endsWith('/integrations/tasks/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Review plan' }], truncated: false });
+    if (path.endsWith('/messages/42/tasks') && request.method === 'POST') {
+      expect(await request.json()).toMatchObject({ task_id: 'task-1' });
+      linked = true;
+      return Response.json({ task: { id: 'task-1', title: 'Review plan' } }, { status: 201 });
+    }
+    if (path.endsWith('/messages/42/tasks')) {
+      lookups++;
+      return Response.json({ state: 'ready', complete: true, tasks: linked ? [{ id: 'task-1', title: 'Review plan' }] : [], outbound_metadata: taskOutboundMetadata });
+    }
+    throw new Error(`Unexpected request: ${request.method} ${path}`);
+  });
+  render(MessageCard, { message: detail({ messageType: 'email' }), expanded: true, client });
+  await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
+  await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
+  await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+  await fireEvent.click(await screen.findByRole('radio', { name: 'Review plan · task-1' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Link task' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Add to task' });
+  expect(await within(dialog).findByText('Task linked')).toBeTruthy();
+  const reader = screen.getByRole('article', { name: 'Message 42' });
+  expect(await within(reader).findByRole('button', { name: 'Unlink Review plan' })).toBeTruthy();
+  expect(within(dialog).getByText('Task linked')).toBeTruthy();
+  const lookupsBeforeDone = lookups;
+  await fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+  expect(screen.queryByRole('dialog', { name: 'Add to task' })).toBeNull();
+  expect(lookups).toBe(lookupsBeforeDone);
+});
+
 it('refreshes links on close after a Kata comment fails after saving evidence', async () => {
   let saved = false;
   let initialTaskLookup = false;
