@@ -23,6 +23,11 @@ function detail(overrides: Partial<ArchiveMessageDetail> = {}): ArchiveMessageDe
 }
 
 describe('MessageCard', () => {
+  it('omits the current year from the message actions label', () => {
+    const year = new Date().getFullYear();
+    render(MessageCard, { message: detail({ sentAt: `${year}-05-03T12:00:00`, bodyHtml: '<p>Body</p>' }), expanded: true });
+    expect(screen.getByRole('button', { name: 'More actions for Alice Example <alice@example.com> on May 3, 12:00 PM' })).toBeDefined();
+  });
   it('omits the year for this year and retains it for older messages', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-11-17T12:00:00Z'));

@@ -553,13 +553,14 @@ test('right preview resizes, restores its width, and falls back below on narrow 
 
 test('aligns group actions and activity in wide and inspected views', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 900 });
+  const year = new Date().getFullYear();
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore/groups', route => {
     const body = route.request().postDataJSON();
     const label = body.grouping[0] === 'source' ? 'Example source' : 'Person Example';
-    const overview = { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 1 }, { bucket: '2024-06', count: 2 }], co_participants: [] };
+    const overview = { first_at: `${year}-05-03T12:00:00Z`, activity: [{ bucket: `${year}-05`, count: 1 }, { bucket: `${year}-06`, count: 2 }], co_participants: [] };
     return route.fulfill({ json: {
-      rows: [{ key: '7', label, count: 3, estimated_bytes: 512, latest_at: '2024-06-30T12:00:00Z' }],
+      rows: [{ key: '7', label, count: 3, estimated_bytes: 512, latest_at: `${year}-06-30T12:00:00Z` }],
       ...(body.group_key ? { overview } : {}),
       total_count: 1, cache_revision: 'cache-groups', search_provenance: {}
     } });
@@ -597,6 +598,7 @@ test('aligns group actions and activity in wide and inspected views', async ({ p
   const people = page.getByRole('grid', { name: 'Messages grouped by participant' });
   await people.getByText('Person Example', { exact: true }).click();
   await expect(page.getByRole('region', { name: 'Group overview' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Group overview' }).getByText('May 3 – Jun 30')).toBeVisible();
   const personAction = people.getByRole('row', { name: /Person Example/ }).getByRole('button', { name: 'Show items in Person Example' });
   const personGrid = (await people.boundingBox())!;
   const personCell = (await personAction.locator('..').boundingBox())!;

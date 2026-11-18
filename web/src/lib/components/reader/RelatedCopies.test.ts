@@ -39,6 +39,14 @@ async function openPanel() {
 }
 
 describe('RelatedCopies', () => {
+  it('omits the current year from copy dates', async () => {
+    const year = new Date().getFullYear();
+    const { client } = serve(() => Response.json(family([anchor, member(2, { sent_at: `${year}-05-03T12:00:00` })])));
+    render(RelatedCopies, { props: { client, messageID: 1 } });
+    await openPanel();
+    await screen.findByRole('link', { name: 'Copy 2' });
+    expect(screen.getByText('May 3, 12:00 PM')).toBeDefined();
+  });
   it('asks the daemon on every open and never while closed', async () => {
     const { fetchFn, client } = serve(() => Response.json(family([anchor, member(2)])));
     render(RelatedCopies, { props: { client, messageID: 1 } });
