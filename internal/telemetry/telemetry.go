@@ -85,7 +85,6 @@ func NewReporterOrDisabled(opts Options, logger *slog.Logger) *posthog.Reporter 
 func newReporterOrDisabled(opts Options, apiKey, endpoint string, logger *slog.Logger) *posthog.Reporter {
 	reporter, err := buildReporter(opts, apiKey, endpoint, logger)
 	if err != nil {
-		logger.Warn("telemetry disabled", "error", err)
 		return posthog.DisabledReporter()
 	}
 	return reporter
