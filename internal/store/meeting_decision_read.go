@@ -12,38 +12,24 @@ import (
 )
 
 // MeetingTranscriptGroupsContext resolves all visible transcripts in one graph.
-// Cache grouping runs until complete or the context is canceled.
+// Cache grouping stops with an error when recurrence work exceeds the bound,
+// or when the context is canceled.
 func (s *Store) MeetingTranscriptGroupsContext(ctx context.Context, through int64) (map[int64]int64, error) {
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	var seeds []meetingDecisionEndpoint
-	groups := make(map[int64]int64)
-	err = func() error {
-		rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT id FROM messages WHERE message_type = 'meeting_transcript' AND deleted_at IS NULL AND sent_at IS NOT NULL AND id <= ? ORDER BY id`, through)
-		if err != nil {
-			return err
-		}
-		defer rows.Close() //nolint:errcheck // read-only cursor
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				return err
-			}
-			seeds = append(seeds, meetingDecisionEndpoint{ID: id, Kind: meetingRefMessage})
-			groups[id] = id
-		}
-		return rows.Err()
-	}()
+	seeds, groups, err := s.meetingTranscriptSeeds(ctx, through)
 	if err != nil {
 		return nil, err
 	}
 	if len(seeds) == 0 {
 		return groups, nil
 	}
-	graph, err := s.loadMeetingDecisionGraph(ctx, seeds, nil, false)
+	// Each transcript may account for one full series expansion; reuse keeps the load well inside it.
+	budget := len(seeds) * calrecur.SeriesReadBudget
+	graph, err := s.loadMeetingDecisionGraph(ctx, seeds, &budget, false)
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +54,26 @@ func (s *Store) MeetingTranscriptGroupsContext(ctx context.Context, through int6
 		groups[seed.ID] = minimum[root(seed.ref())]
 	}
 	return groups, nil
+}
+
+// meetingTranscriptSeeds lists the visible transcripts, each in a group of its own.
+func (s *Store) meetingTranscriptSeeds(ctx context.Context, through int64) ([]meetingDecisionEndpoint, map[int64]int64, error) {
+	var seeds []meetingDecisionEndpoint
+	groups := make(map[int64]int64)
+	rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT id FROM messages WHERE message_type = 'meeting_transcript' AND deleted_at IS NULL AND sent_at IS NOT NULL AND id <= ? ORDER BY id`, through)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close() //nolint:errcheck // read-only cursor
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, nil, err
+		}
+		seeds = append(seeds, meetingDecisionEndpoint{ID: id, Kind: meetingRefMessage})
+		groups[id] = id
+	}
+	return seeds, groups, rows.Err()
 }
 
 // MeetingTranscriptGroupsSQLiteSnapshotContext resolves groups through a caller-owned SQLite snapshot.
@@ -309,6 +315,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, no
 }
 
 func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDecisionEndpoint, budget *int, notesOnly bool) (*meetingDecisionGraph, error) {
+	ctx = withMeetingExpansions(ctx)
 	nodes := map[string]meetingDecisionNode{}
 	var queue []meetingDecisionEndpoint
 	add := func(endpoint meetingDecisionEndpoint, link *MeetingLink) {
@@ -333,6 +340,9 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 	var candidates []meetingDecisionEdge
 	resolved := map[string]bool{}
 	for len(queue) > 0 {
+		if err := s.meetingWarmExpansions(ctx, queue, budget); err != nil {
+			return nil, err
+		}
 		var pending []meetingDecisionEndpoint
 		for len(queue) > 0 {
 			endpoint := queue[0]
@@ -355,9 +365,7 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 				if endpoint == seeds[0] {
 					automatic = record
 				}
-				for _, warning := range record.Unexpandable {
-					warnings = append(warnings, meetingDecisionWarning{endpoint, warning})
-				}
+				warnings = append(warnings, meetingDecisionWarnings(endpoint, record.Unexpandable)...)
 				members := []meetingDecisionEndpoint{endpoint}
 				memberSet := map[string]bool{endpoint.ref(): true}
 				addMember := func(member meetingDecisionEndpoint) {
@@ -371,17 +379,11 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 					add(member, nil)
 					addMember(member)
 				}
-				for _, link := range record.Links {
-					ref, err := ParseMeetingLinkRef(link.Ref)
-					if err != nil {
-						return nil, err
-					}
-					member, err := s.meetingOccurrenceKey(ctx, endpointFromRef(ref), budget)
-					if err != nil {
-						return nil, err
-					}
-					linkCopy := link
-					add(member, &linkCopy)
+				linked, err := s.meetingLinkMembers(ctx, record.Links, budget, add)
+				if err != nil {
+					return nil, err
+				}
+				for _, member := range linked {
 					addMember(member)
 				}
 				for _, member := range members {
@@ -419,6 +421,33 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 		}
 	}
 	return &meetingDecisionGraph{nodes: nodes, groups: groups, warnings: warnings, candidates: candidates, automatic: automatic}, nil
+}
+
+// meetingLinkMembers adds each linked occurrence to the graph and returns its member.
+func (s *Store) meetingLinkMembers(ctx context.Context, links []MeetingLink, budget *int, add func(meetingDecisionEndpoint, *MeetingLink)) ([]meetingDecisionEndpoint, error) {
+	members := make([]meetingDecisionEndpoint, 0, len(links))
+	for _, link := range links {
+		ref, err := ParseMeetingLinkRef(link.Ref)
+		if err != nil {
+			return nil, err
+		}
+		member, err := s.meetingOccurrenceKey(ctx, endpointFromRef(ref), budget)
+		if err != nil {
+			return nil, err
+		}
+		linkCopy := link
+		add(member, &linkCopy)
+		members = append(members, member)
+	}
+	return members, nil
+}
+
+func meetingDecisionWarnings(endpoint meetingDecisionEndpoint, unexpandable []CalendarUnexpandable) []meetingDecisionWarning {
+	warnings := make([]meetingDecisionWarning, 0, len(unexpandable))
+	for _, warning := range unexpandable {
+		warnings = append(warnings, meetingDecisionWarning{endpoint, warning})
+	}
+	return warnings
 }
 
 // Resolve links before marking their members as discovered, including automatic links.

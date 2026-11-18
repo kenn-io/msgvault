@@ -983,6 +983,41 @@ func TestMeetingLinkDecisionLongSeriesChoices(t *testing.T) {
 	}
 }
 
+func TestMeetingDecisionGraphResolvesLinkedOccurrencesWithinBudget(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, series := calendarFixture(t, st, "budget-series", `{"id":"series","iCalUID":"series@example.org","start":{"dateTime":"2017-01-01T10:00:00Z"},"end":{"dateTime":"2017-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=4000"]}`, "owner@example.test")
+	const linkCount = 150
+	seeds := make([]meetingDecisionEndpoint, 0, linkCount)
+	events := make([]MeetingLinkRef, 0, linkCount)
+	notes := make([]MeetingLinkRef, 0, linkCount)
+	for index := range linkCount {
+		date := time.Date(2026, 12, 1, 10, 0, 0, 0, time.UTC).AddDate(0, 0, index).Format("20060102T150405Z")
+		event := MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, date)}
+		_, noteID := projectionFixture(t, st, fmt.Sprintf("budget-note-%d", index), "meeting_json", `{}`)
+		note := MeetingLinkRef{Kind: "msg", MessageID: noteID}
+		_, err := st.DecideMeetingLinkContext(t.Context(), event, note, "link")
+		r.NoError(err)
+		events = append(events, event)
+		notes = append(notes, note)
+		seeds = append(seeds, endpointFromRef(note))
+	}
+
+	budget := 50_000
+	graph, err := st.loadMeetingDecisionGraph(t.Context(), seeds, &budget, false)
+	r.NoError(err)
+	root, _, err := graph.reduce(t.Context())
+	r.NoError(err)
+	roots := make(map[string]bool, linkCount)
+	for index := range linkCount {
+		eventRoot := root(endpointFromRef(events[index]).ref())
+		noteRoot := root(endpointFromRef(notes[index]).ref())
+		r.Equal(eventRoot, noteRoot)
+		roots[noteRoot] = true
+	}
+	r.Len(roots, linkCount)
+}
+
 func TestMeetingLinkDecisionEditedOccurrenceReferences(t *testing.T) {
 	for _, tc := range []struct{ name, start, end, original, movedStart, movedEnd, first, second string }{
 		{"timed", `{"dateTime":"2027-03-14T10:00:00Z"}`, `{"dateTime":"2027-03-14T11:00:00Z"}`, `{"dateTime":"2027-03-14T10:00:00Z"}`, `{"dateTime":"2027-03-15T10:00:00Z"}`, `{"dateTime":"2027-03-15T11:00:00Z"}`, "20270314T100000Z", "20270321T100000Z"},
