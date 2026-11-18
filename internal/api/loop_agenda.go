@@ -87,10 +87,18 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 			selectors = append(selectors, kataevidence.Selector{Kind: "message", MessageID: messageID, StartRune: &start, EndRune: &end})
 		}
 		key = commitmentAgendaKey(c)
+		if result, found, err := a.filed(ctx, &service, key); err != nil || found {
+			return result, err
+		}
 	} else {
 		id, err := strconv.ParseInt(ref, 10, 64)
 		if err != nil || id < 1 {
 			return kataissues.Result{}, loops.ErrNotOpen
+		}
+		// An obligation filed earlier keeps its issue after the loop closes.
+		key = fmt.Sprintf("loop:%d", id)
+		if result, found, err := a.filed(ctx, &service, key); err != nil || found {
+			return result, err
 		}
 		loop, err := loops.Open(ctx, a.archive, id, now)
 		if err != nil {
@@ -111,21 +119,6 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 		}
 		input.PersonID, input.List = &loop.Counterparty.PersonID, "replies"
 		selectors = []kataevidence.Selector{{Kind: "message", MessageID: id, MaxChars: new(kataevidence.MaxChars)}}
-		key = fmt.Sprintf("loop:%d", id)
-	}
-	if service == nil {
-		var err error
-		service, err = a.backend.service(ctx)
-		if err != nil {
-			return kataissues.Result{}, err
-		}
-	}
-	issue, found, err := service.FindFiled(ctx, key)
-	if err != nil {
-		return kataissues.Result{}, err
-	}
-	if found {
-		return kataissues.Result{Issue: issue, Replayed: true}, nil
 	}
 	input.Title = textutil.TruncateRunes(input.Title, 512)
 	evidence, err := a.backend.Prepare(ctx, selectors)
@@ -153,8 +146,27 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 	return result, err
 }
 
+// filed returns the issue an earlier filing under key created, connecting to
+// Kata on first use.
+func (a *LoopAgenda) filed(ctx context.Context, service **kataissues.Service, key string) (kataissues.Result, bool, error) {
+	if *service == nil {
+		connected, err := a.backend.service(ctx)
+		if err != nil {
+			return kataissues.Result{}, false, err
+		}
+		*service = connected
+	}
+	issue, found, err := (*service).FindFiled(ctx, key)
+	if err != nil || !found {
+		return kataissues.Result{}, false, err
+	}
+	return kataissues.Result{Issue: issue, Replayed: true}, true, nil
+}
+
+// commitmentAgendaKey names the promise's source identity and its version, so
+// a later change to that identity cannot reuse an earlier key.
 func commitmentAgendaKey(c store.PersonCommitment) string {
-	return "commitment:" + c.SourceKey
+	return "commitment-source.v1:" + c.SourceKey
 }
 
 // Run files open obligations in one pass.
@@ -164,26 +176,20 @@ func (a *LoopAgenda) Run(ctx context.Context, now time.Time) error {
 		return err
 	}
 	var failures []error
-	file := func(ref, key string) {
-		_, found, err := service.FindFiled(ctx, key)
-		if err == nil && found {
-			return
-		}
-		if err == nil {
-			_, err = a.file(ctx, ref, now, service)
-		}
+	file := func(ref string) {
+		_, err := a.file(ctx, ref, now, service)
 		if err != nil && !errors.Is(err, errAgendaPersonRequired) && !errors.Is(err, kataissues.ErrIssueDeleted) && !errors.Is(err, kataevidence.ErrUnsupported) && !errors.Is(err, kataevidence.ErrChanged) && !errors.Is(err, kataissues.ErrUnsupportedEvidence) && !errors.Is(err, kataissues.ErrEvidenceLimit) && !errors.Is(err, personagenda.ErrPersonIdentity) && !errors.Is(err, loops.ErrNotOpen) {
 			failures = append(failures, err)
 		}
 	}
 	type candidate struct {
-		ref, key string
-		at       time.Time
+		ref string
+		at  time.Time
 	}
 	var candidates []candidate
 	err = loops.WalkOpen(ctx, a.archive, now, func(l loops.Loop) error {
 		if l.Kind == loops.ReplyOwed && l.Counterparty.PersonID != 0 {
-			candidates = append(candidates, candidate{strconv.FormatInt(l.Anchor.ID, 10), fmt.Sprintf("loop:%d", l.Anchor.ID), l.Anchor.OccurredAt})
+			candidates = append(candidates, candidate{strconv.FormatInt(l.Anchor.ID, 10), l.Anchor.OccurredAt})
 		}
 		return nil
 	})
@@ -191,8 +197,7 @@ func (a *LoopAgenda) Run(ctx context.Context, now time.Time) error {
 		failures = append(failures, err)
 	}
 	err = a.archive.WalkOpenPersonCommitments(ctx, now, func(c store.PersonCommitment) error {
-		ref := fmt.Sprintf("c%d", c.ID)
-		candidates = append(candidates, candidate{ref, commitmentAgendaKey(c), c.PromisedAt})
+		candidates = append(candidates, candidate{fmt.Sprintf("c%d", c.ID), c.PromisedAt})
 		return nil
 	})
 	if err != nil {
@@ -200,7 +205,7 @@ func (a *LoopAgenda) Run(ctx context.Context, now time.Time) error {
 	}
 	slices.SortStableFunc(candidates, func(a, b candidate) int { return a.at.Compare(b.at) })
 	for _, item := range candidates {
-		file(item.ref, item.key)
+		file(item.ref)
 	}
 	return errors.Join(failures...)
 }

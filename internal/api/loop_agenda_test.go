@@ -76,6 +76,14 @@ func TestLoopAgendaFilesReplyAndReplays(t *testing.T) {
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &receipt))
 	assert.True(t, receipt.Replayed)
 	assert.Equal(t, first.Issue.UID, receipt.Issue.UID)
+	// Once the owner answers, the loop closes, and filing it again still returns its issue.
+	f.PersistEmail(storetest.EmailSpec{Thread: "thread", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Subject: "Re: Contract", Body: "Attached.", SentAt: now.Add(-24 * time.Hour)})
+	_, err = loops.Open(t.Context(), f.Store, id, now)
+	require.ErrorIs(t, err, loops.ErrNotOpen)
+	answered, err := agenda.File(t.Context(), strconv.FormatInt(id, 10), now)
+	require.NoError(t, err)
+	assert.True(t, answered.Replayed)
+	assert.Equal(t, first.Issue.UID, answered.Issue.UID)
 }
 
 func TestLoopAgendaRunSkipsAwaiting(t *testing.T) {
@@ -200,7 +208,10 @@ func TestLoopAgendaRequiresLinkedPerson(t *testing.T) {
 
 func TestLoopAgendaRouteValidation(t *testing.T) {
 	f := storetest.New(t)
-	agenda := NewLoopAgenda(config.TaskIntegrationConfig{}, f.Store, "")
+	native := katatest.New(t)
+	kata := httptest.NewServer(native.Service.Handler())
+	t.Cleanup(kata.Close)
+	agenda := NewLoopAgenda(config.TaskIntegrationConfig{Enabled: true, Endpoint: kata.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}, f.Store, "")
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, LoopAgenda: agenda, Logger: testLogger()})
 	for _, tc := range []struct {
 		path   string
