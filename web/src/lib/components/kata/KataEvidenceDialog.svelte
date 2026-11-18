@@ -203,7 +203,7 @@
   .passage-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   @media (max-width: 640px) {
     .passage-controls { margin-top: var(--space-4); }
-    .passage-controls :global(.kit-button) { padding-inline: 6px; font-size: 12px; }
+    .passage-controls :global(.kit-button) { min-height: var(--kit-control-height, 28px); padding: 5px 14px; font-size: var(--kit-control-font-size, var(--font-size-md)); }
     .passage-controls :global(.kit-button__label) { display: none; }
     .passage-controls :global(.kit-button__short-label) { display: inline-flex; }
   }

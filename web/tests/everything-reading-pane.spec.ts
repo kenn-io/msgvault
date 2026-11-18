@@ -743,6 +743,8 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   expect.soft(await context.locator('..').evaluate(el => parseFloat(getComputedStyle(el).borderRadius))).toBeLessThanOrEqual(8);
   expect.soft(await context.evaluate(el => getComputedStyle(el.closest('.kit-chip')!).paddingTop)).not.toBe('0px');
   expect.soft(await context.evaluate(el => el.textContent?.includes('\u00a0· Jul 18'))).toBe(true);
+  const title = dialog.getByRole('textbox', { name: 'Task title' });
+  expect.soft(await context.evaluate(el => getComputedStyle(el.closest('.kit-chip')!).backgroundColor)).not.toBe(await title.evaluate(el => getComputedStyle(el).backgroundColor));
   const bounds = (await dialog.boundingBox())!;
   for (const control of [dialog.getByText('garden', { exact: true }), dialog.getByText(/Garden plans\s· Mira Example/), dialog.getByRole('textbox', { name: 'Task title' }), dialog.getByRole('textbox', { name: 'Description' }), dialog.getByRole('combobox', { name: 'Priority: No priority' }), dialog.getByRole('textbox', { name: 'Labels' }), dialog.getByRole('button', { name: 'Create task' })]) {
     const box = (await control.boundingBox())!;
@@ -758,9 +760,12 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   expect.soft(await quote.innerText()).toBe('Quote selection');
   expect.soft(await earlier.innerText()).toContain('passage');
   expect.soft(await later.innerText()).toContain('passage');
+  const cancel = kata.getByRole('button', { name: 'Cancel' });
+  expect.soft(await quote.evaluate(el => getComputedStyle(el).fontSize)).toBe(await cancel.evaluate(el => getComputedStyle(el).fontSize));
+  expect.soft((await quote.boundingBox())!.height).toBeGreaterThanOrEqual((await cancel.boundingBox())!.height);
   const passage = kata.getByRole('region', { name: 'Quoted passage' }).locator('pre');
   expect.soft((await quote.boundingBox())!.y).toBe((await earlier.boundingBox())!.y);
-  expect.soft((await earlier.boundingBox())!.y).toBe((await later.boundingBox())!.y);
+  expect.soft((await later.boundingBox())!.y).toBeGreaterThan((await earlier.boundingBox())!.y);
   expect.soft((await quote.boundingBox())!.y - ((await passage.boundingBox())!.y + (await passage.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
   for (const control of [kata.getByRole('textbox', { name: 'Issue title' }), kata.getByRole('textbox', { name: 'Brief' }), kata.getByRole('button', { name: 'Later passage' }), kata.getByRole('button', { name: 'Create issue' })]) {
     const box = (await control.boundingBox())!;
@@ -770,7 +775,7 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   await expect(kata.getByRole('radio', { name: 'First · garden#one' })).toBeVisible();
   expect.soft(await quote.innerText()).toBe('Quote selection');
   expect.soft((await quote.boundingBox())!.y).toBe((await earlier.boundingBox())!.y);
-  expect.soft((await earlier.boundingBox())!.y).toBe((await later.boundingBox())!.y);
+  expect.soft((await later.boundingBox())!.y).toBeGreaterThan((await earlier.boundingBox())!.y);
   expect.soft((await quote.boundingBox())!.y - ((await passage.boundingBox())!.y + (await passage.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
   const results = kata.locator('.results');
   expect.soft((await results.boundingBox())!.height).toBeLessThan(100);

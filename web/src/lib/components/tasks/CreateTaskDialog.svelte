@@ -135,7 +135,7 @@
     }}
   >
     <p class="project"><span>Project</span><strong>{project}</strong></p>
-    <div class="message"><span>Message</span><Chip uppercase={false}>{contextParts.join(' · ') || defaultTitle}</Chip></div>
+    <div class="message"><span>Message</span><Chip tone="neutral" uppercase={false}>{contextParts.join(' · ') || defaultTitle}</Chip></div>
     <label>Task title<TextInput ariaLabel="Task title" bind:value={title} autocomplete="off" block /></label>
     <label>Description<textarea aria-label="Description" bind:value={description}></textarea></label>
     <label
