@@ -287,9 +287,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		DataDir: cfg.Data.DataDir, Version: Version, Commit: Commit,
 	}, logger)
 	defer func() {
-		if err := telemetryReporter.Close(); err != nil {
-			logger.Warn("close telemetry reporter", "error", err)
-		}
+		_ = telemetryReporter.Close()
 	}()
 	setStartupPhase := func(phase string) {
 		if err := ownership.SetStartupPhase(phase); err != nil {
