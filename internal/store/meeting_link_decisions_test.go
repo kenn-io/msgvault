@@ -149,6 +149,24 @@ func TestMeetingTranscriptGroupsFollowChoices(t *testing.T) {
 	assertions.Equal(first, groups[first])
 	assertions.Equal(first, groups[other])
 	assertions.Equal(first, groups[viaEvent])
+
+	t.Run("weekly occurrences", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		start := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
+		calendarFixture(t, st, "weekly-series", `{"id":"series","iCalUID":"weekly@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "projection@example.com")
+		_, first := projectionFixture(t, st, "weekly-granola", "granola_json", `{"owner":{"email":"projection@example.com"},"calendar_event":{"calendar_event_id":"series_20270314T100000Z"}}`)
+		_, copyID := projectionFixture(t, st, "weekly-twenty-copy", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.test","startsAt":"2027-03-14T10:00:00Z"}}`)
+		_, next := projectionFixture(t, st, "weekly-twenty-next", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.test","startsAt":"2027-03-21T10:00:00Z"}}`)
+		_, err = st.db.ExecContext(t.Context(), `UPDATE messages SET sent_at = ? WHERE id IN (?, ?)`, start, first, copyID)
+		r.NoError(err)
+		nextStart := start.AddDate(0, 0, 7)
+		_, err = st.db.ExecContext(t.Context(), `UPDATE messages SET sent_at = ? WHERE id = ?`, nextStart, next)
+		r.NoError(err)
+		groups, err := st.MeetingTranscriptGroupsContext(t.Context(), next)
+		r.NoError(err)
+		r.Equal(map[int64]int64{first: first, copyID: first, next: next}, groups)
+	})
 }
 
 func TestMeetingLinkDecisionConflictIdempotenceAndClear(t *testing.T) {
@@ -992,8 +1010,7 @@ func TestMeetingDecisionGraphResolvesLinkedOccurrencesWithinBudget(t *testing.T)
 	budget := 50_000
 	graph, err := st.loadMeetingDecisionGraph(t.Context(), seeds, &budget, false)
 	r.NoError(err)
-	root, _, err := graph.reduce(t.Context())
-	r.NoError(err)
+	root, _ := graph.reduce()
 	roots := make(map[string]bool, linkCount)
 	for index := range linkCount {
 		eventRoot := root(endpointFromRef(events[index]).ref())
@@ -2098,35 +2115,36 @@ func TestMeetingRecordAvoidsCopyScan(t *testing.T) {
 			r.Zero(copyScans)
 		})
 	}
-	t.Run("email source removal", func(t *testing.T) {
-		r := require.New(t)
-		base := newRFC822IDBackfillBackendStore(t)
-		_, first := projectionFixture(t, base, "email-unrelated-first", "meeting_json", `{}`)
-		_, second := projectionFixture(t, base, "email-unrelated-second", "meeting_json", `{}`)
-		_, err := base.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: first}, MeetingLinkRef{Kind: "msg", MessageID: second}, "link")
+}
+
+func TestMeetingDecisionRemoveSourceAvoidsCopyScan(t *testing.T) {
+	r := require.New(t)
+	base := newRFC822IDBackfillBackendStore(t)
+	_, first := projectionFixture(t, base, "email-unrelated-first", "meeting_json", `{}`)
+	_, second := projectionFixture(t, base, "email-unrelated-second", "meeting_json", `{}`)
+	_, err := base.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: first}, MeetingLinkRef{Kind: "msg", MessageID: second}, "link")
+	r.NoError(err)
+	source, err := base.GetOrCreateSource("gmail", "email@example.com")
+	r.NoError(err)
+	for i := range 5 {
+		key := fmt.Sprintf("email-%d", i)
+		_, err := base.PersistMessage(&MessagePersistData{Message: &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "email"}, Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "email"}})
 		r.NoError(err)
-		source, err := base.GetOrCreateSource("gmail", "email@example.com")
-		r.NoError(err)
-		for i := range 5 {
-			key := fmt.Sprintf("email-%d", i)
-			_, err := base.PersistMessage(&MessagePersistData{Message: &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "email"}, Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "email"}})
-			r.NoError(err)
+	}
+	var copyQueries int
+	gate := &meetingProjectionGate{before: func(_ context.Context, query string, _ []driver.NamedValue) error {
+		if strings.Contains(query, "meeting_copy_survivors") {
+			copyQueries++
 		}
-		var copyQueries int
-		gate := &meetingProjectionGate{before: func(_ context.Context, query string, _ []driver.NamedValue) error {
-			if strings.Contains(query, "meeting_copy_survivors") {
-				copyQueries++
-			}
-			return nil
-		}}
-		st := gatedMeetingProjectionStore(t, base, gate)
-		_, err = st.meetingHasCopies(t.Context())
-		r.NoError(err)
-		r.Positive(copyQueries)
-		copyQueries = 0
-		r.NoError(st.RemoveSource(source.ID))
-		r.Zero(copyQueries)
-	})
+		return nil
+	}}
+	st := gatedMeetingProjectionStore(t, base, gate)
+	_, err = st.meetingHasCopies(t.Context())
+	r.NoError(err)
+	r.Positive(copyQueries)
+	copyQueries = 0
+	r.NoError(st.RemoveSource(source.ID))
+	r.Zero(copyQueries)
 }
 
 func TestMeetingRecordBatchesCopyScans(t *testing.T) {

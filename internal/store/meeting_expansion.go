@@ -104,7 +104,7 @@ func (s *Store) meetingExpandWindow(ctx context.Context, rows []CalendarEventRow
 	if err != nil {
 		return page, err
 	}
-	if budget != nil && *budget < 0 {
+	if *budget < 0 {
 		return CalendarOccurrencePage{}, calendarRecurrenceBudgetError()
 	}
 	if cache != nil {
@@ -152,37 +152,4 @@ func meetingReferenceTime(row CalendarEventRow, identity calrecur.Identity) (tim
 		return *row.Event.End, nil
 	}
 	return time.Time{}, nil
-}
-
-// meetingKeyTime returns the instant row is expanded at to prove key.
-func meetingKeyTime(key meetingLinkKey, row CalendarEventRow) (time.Time, error) {
-	if key[0] == "ical_date" {
-		return parseMeetingKeyTime(time.DateOnly, key[3])
-	}
-	if key[0] == "ical_uid" {
-		return parseMeetingKeyTime(time.RFC3339Nano, key[3])
-	}
-	if _, instance, ok := calrecur.ParseInstanceID(key[2]); ok {
-		if instance.AllDay {
-			return parseMeetingKeyTime(time.DateOnly, instance.Date)
-		}
-		return instance.Instant, nil
-	}
-	switch {
-	case row.Event.Start != nil:
-		return *row.Event.Start, nil
-	case row.Event.Original != nil:
-		return meetingIdentityTime(*row.Event.Original)
-	case row.Event.End != nil:
-		return *row.Event.End, nil
-	}
-	return time.Time{}, nil
-}
-
-func parseMeetingKeyTime(layout, value string) (time.Time, error) {
-	at, err := time.Parse(layout, value)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("parse meeting key time %q: %w", value, err)
-	}
-	return at, nil
 }

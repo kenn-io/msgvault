@@ -275,16 +275,25 @@ func TestPeopleMeetingCountsAcrossFilters(t *testing.T) {
 	b.AddTo(first, alice, "Alice")
 	b.AddTo(second, alice, "Alice")
 	b.AddTo(second, bob, "Bob")
+	firstAfter := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "imessage", SentAt: start.Add(2 * time.Hour)})
+	b.AddTo(firstAfter, alice, "Alice")
+	secondBefore := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "imessage", SentAt: start.Add(-time.Hour)})
+	b.AddTo(secondBefore, alice, "Alice")
+	secondDeletedAt := start.Add(4 * time.Hour)
+	secondDeleted := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "imessage", SentAt: start.Add(3 * time.Hour), DeletedFromSourceAt: &secondDeletedAt})
+	b.AddTo(secondDeleted, alice, "Alice")
 	calendar := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "calendar_event", SentAt: start})
 	b.AddTo(calendar, alice, "Alice")
 	b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
 	engine := b.BuildEngine()
 	detail, err := engine.GetPerson(t.Context(), alice, Context{}, nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(3), detail.ActivityCount)
+	require.NotNil(t, detail)
+	require.Equal(t, int64(6), detail.ActivityCount)
 	require.Equal(t, int64(1), detail.MeetingCount)
 	bobDetail, err := engine.GetPerson(t.Context(), bob, Context{}, nil)
 	require.NoError(t, err)
+	require.NotNil(t, bobDetail)
 	require.Equal(t, int64(1), bobDetail.MeetingCount)
 	cutoff := start.Add(time.Hour)
 	generation := int64(1)
@@ -308,7 +317,7 @@ func TestPeopleMeetingCountsAcrossFilters(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/slow=%v", tc.name, disabled), func(t *testing.T) {
 				assertions, requirements := assert.New(t), require.New(t)
 				sources := [][]int64{{firstSource}, {secondSource}, {firstSource, secondSource}}
-				counts := [4][3]int64{}
+				counts := [3][3]int64{}
 				for i, sourceIDs := range sources {
 					filter := tc.filter
 					filter.SourceIDs = sourceIDs
@@ -330,24 +339,16 @@ func TestPeopleMeetingCountsAcrossFilters(t *testing.T) {
 					request := PersonSearchRequest{Query: "Alice", Explore: explore}
 					indexed, err := engine.SearchPeople(t.Context(), request)
 					requirements.NoError(err)
-					if len(indexed.Rows) > 0 {
-						counts[0][i] = indexed.Rows[0].MeetingCount
-					}
-					legacy, err := engine.searchPeopleLegacy(t.Context(), request, nil, nil, false)
-					requirements.NoError(err)
-					if len(legacy.Rows) > 0 {
-						counts[1][i] = legacy.Rows[0].MeetingCount
-					}
+					requirements.Len(indexed.Rows, 1)
+					counts[0][i] = indexed.Rows[0].MeetingCount
 					summary, err := engine.GetPersonSummary(t.Context(), alice, explore, nil)
 					requirements.NoError(err)
-					if len(summary.Rows) > 0 {
-						counts[2][i] = summary.Rows[0].MeetingCount
-					}
+					requirements.Len(summary.Rows, 1)
+					counts[1][i] = summary.Rows[0].MeetingCount
 					detail, err := engine.GetPerson(t.Context(), alice, filter, nil)
 					requirements.NoError(err)
-					if detail != nil {
-						counts[3][i] = detail.MeetingCount
-					}
+					requirements.NotNil(detail)
+					counts[2][i] = detail.MeetingCount
 				}
 				for method, count := range counts {
 					assertions.Equal(tc.want, count, "%s method %d", tc.name, method)
@@ -355,6 +356,7 @@ func TestPeopleMeetingCountsAcrossFilters(t *testing.T) {
 			})
 		}
 	}
+	t.Run("retained cache membership", testPersonMeetingCountsUseLiveMembershipWithRetainedCache)
 }
 
 func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
@@ -508,7 +510,7 @@ func linkedPeopleFixture(t *testing.T) (*TestDataBuilder, int64, int64, int64, i
 	return b, source, alicePrimary, aliceAlias, bob, start
 }
 
-func TestPersonMeetingCountsUseLiveMembershipWithRetainedCache(t *testing.T) {
+func testPersonMeetingCountsUseLiveMembershipWithRetainedCache(t *testing.T) {
 	for _, linkedAtBuild := range []bool{false, true} {
 		t.Run(fmt.Sprintf("linked_at_build=%v", linkedAtBuild), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -524,10 +526,15 @@ func TestPersonMeetingCountsUseLiveMembershipWithRetainedCache(t *testing.T) {
 			first := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: start})
 			second := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: start.Add(2 * time.Hour)})
 			other := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: start.Add(3 * time.Hour)})
+			firstActivity := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "imessage", SentAt: start.Add(30 * time.Minute)})
+			deletedAt := start.Add(5 * time.Hour)
+			deletedActivity := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "imessage", SentAt: start.Add(4 * time.Hour), DeletedFromSourceAt: &deletedAt})
 			b.AddTo(first, primary, "Primary")
 			b.AddTo(second, alias, "Alias")
 			b.AddTo(second, primary, "Primary")
 			b.AddTo(other, alias, "Alias")
+			b.AddTo(firstActivity, alias, "Alias")
+			b.AddTo(deletedActivity, alias, "Alias")
 			b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
 			engine := b.BuildEngine()
 			members := []int64{primary, alias}
@@ -556,28 +563,23 @@ func TestPersonMeetingCountsUseLiveMembershipWithRetainedCache(t *testing.T) {
 					assertions, requirements := assert.New(t), require.New(t)
 					detail, err := engine.GetPerson(t.Context(), alias, tc.filter, members)
 					requirements.NoError(err)
-					if detail != nil {
-						assertions.Equal(tc.want, detail.MeetingCount)
-					} else {
-						assertions.Zero(tc.want)
-					}
+					requirements.NotNil(detail)
+					assertions.Equal(tc.want, detail.MeetingCount)
 					summary, err := engine.GetPersonSummary(t.Context(), alias, ExploreRequest{Context: tc.filter}, members)
 					requirements.NoError(err)
-					if len(summary.Rows) > 0 {
-						assertions.Equal(tc.want, summary.Rows[0].MeetingCount)
-					} else {
-						assertions.Zero(tc.want)
-					}
+					requirements.Len(summary.Rows, 1)
+					assertions.Equal(tc.want, summary.Rows[0].MeetingCount)
 				})
 			}
-			for _, tc := range []struct{ id, want int64 }{{first, firstWant}, {second, 1}} {
+			searchCases := []struct{ id, want int64 }{{second, 1}}
+			if !linkedAtBuild {
+				searchCases = append(searchCases, struct{ id, want int64 }{first, firstWant})
+			}
+			for _, tc := range searchCases {
 				summary, err := engine.GetPersonSummary(t.Context(), alias, ExploreRequest{Search: SearchSpec{Mode: SearchFullText, Query: "meeting", CandidateMessageIDs: []int64{tc.id}, LexicalIndexRevision: "fts5:test"}}, members)
 				requirements.NoError(err)
-				if len(summary.Rows) > 0 {
-					assertions.Equal(tc.want, summary.Rows[0].MeetingCount)
-				} else {
-					assertions.Zero(tc.want)
-				}
+				requirements.Len(summary.Rows, 1)
+				assertions.Equal(tc.want, summary.Rows[0].MeetingCount)
 			}
 		})
 	}

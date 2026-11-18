@@ -103,7 +103,7 @@ func (s *Store) validateMeetingInput(ctx context.Context, endpoint meetingDecisi
 	if endpoint.Kind != meetingRefEvent || endpoint.Key == "" {
 		return nil
 	}
-	if budget != nil && *budget <= 0 {
+	if *budget <= 0 {
 		return calendarRecurrenceBudgetError()
 	}
 	scope, args := sourceScopeClause(ctx, "m.source_id")
@@ -114,9 +114,7 @@ func (s *Store) validateMeetingInput(ctx context.Context, endpoint meetingDecisi
 	if err != nil {
 		return err
 	}
-	if budget != nil {
-		*budget--
-	}
+	*budget--
 	if kind == calendarSingleKind && (!start.Valid || (calrecur.Identity{Instant: start.Time, Date: date, AllDay: allDay}).Key() != endpoint.Key) {
 		return sql.ErrNoRows
 	}
@@ -151,10 +149,11 @@ func (s *Store) meetingOccurrenceKey(ctx context.Context, endpoint meetingDecisi
 		endpoint.Key = ""
 		return endpoint, nil
 	}
-	rows, err := s.meetingCalendarRows(ctx, `e.message_id = ?`, []any{id}, budget)
+	rows, err := queryCalendarEventRowsWithinBudget(ctx, s.meetingSQLReader(ctx), `e.message_id = ?`, []any{id}, *budget)
 	if err != nil {
 		return endpoint, err
 	}
+	*budget -= len(rows)
 	if len(rows) == 0 {
 		return endpoint, sql.ErrNoRows
 	}
@@ -325,10 +324,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			if err != nil {
 				return err
 			}
-			root, links, err := graph.reduce(ctx)
-			if err != nil {
-				return err
-			}
+			root, links := graph.reduce()
 			for _, link := range links {
 				if root(link.a.ref()) == root(link.b.ref()) {
 					active = append(active, link)
@@ -393,15 +389,9 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			if err != nil {
 				return err
 			}
-			conflict, found, err := meetingDecisionConflict(ctx, graph, ca, cb, state == "link", active)
-			if err != nil {
-				return err
-			}
+			conflict, found := meetingDecisionConflict(graph, ca, cb, state == "link", active)
 			if found {
-				root, _, err := graph.reduce(ctx)
-				if err != nil {
-					return err
-				}
+				root, _ := graph.reduce()
 				for _, edge := range graph.candidates {
 					if edge.id != insertedID && edge.decision == "split" && ((root(edge.a.ref()) == root(conflict.a.ref()) && root(edge.b.ref()) == root(conflict.b.ref())) || (root(edge.b.ref()) == root(conflict.a.ref()) && root(edge.a.ref()) == root(conflict.b.ref()))) {
 						return fmt.Errorf("%w: %s %s", ErrMeetingLinkConflict, edge.a.ref(), edge.b.ref())

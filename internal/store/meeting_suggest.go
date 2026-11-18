@@ -350,10 +350,7 @@ func (s *Store) suggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if err != nil {
 			return page, err
 		}
-		root, links, err := graph.reduce(ctx)
-		if err != nil {
-			return page, err
-		}
+		root, links := graph.reduce()
 		if root(a.ref()) == root(b.ref()) {
 			continue
 		}
@@ -373,10 +370,7 @@ func (s *Store) suggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 		graph.candidates = append(graph.candidates, meetingDecisionEdge{id: int64(^uint64(0) >> 1), a: a, b: b, decision: "link"})
-		_, conflict, err := meetingDecisionConflict(ctx, graph, a, b, true, active)
-		if err != nil {
-			return page, err
-		}
+		_, conflict := meetingDecisionConflict(graph, a, b, true, active)
 		if conflict {
 			continue
 		}

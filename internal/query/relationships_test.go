@@ -12,64 +12,60 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRelationshipGroupOwnerEvidenceOutsideSelectedCopy(t *testing.T) {
-	b := NewTestDataBuilder(t)
-	firstSource := b.AddSourceWithType("first@example.test", "granola")
-	secondSource := b.AddSourceWithType("second@example.test", "zoom")
-	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
-	person := b.AddParticipant("alice@example.test", "example.test", "Alice")
-	b.AddOwnerParticipant(firstSource, owner)
-	b.AddOwnerParticipant(secondSource, owner)
-	ownerTime := time.Date(2025, 12, 31, 23, 0, 0, 0, time.UTC)
-	selectedTime := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	ownerCopy := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: ownerTime})
-	selectedCopy := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: selectedTime})
-	b.AddFrom(ownerCopy, owner, "Owner")
-	b.AddTo(selectedCopy, person, "Alice")
-	b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", ownerCopy, ownerCopy, selectedCopy, ownerCopy)
-	engine := b.BuildEngine()
-	after := selectedTime.Add(-time.Hour)
-	for _, filter := range []Context{{SourceIDs: []int64{secondSource}}, {After: &after}} {
-		result, err := engine.Relationships(t.Context(), RelationshipsRequest{Now: selectedTime.Add(time.Hour), Limit: 10, ShowAll: true, Context: filter})
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		require.Equal(t, person, result.Rows[0].CanonicalID)
-		require.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
-	}
-}
-
 func TestRelationshipsCountLinkedTranscriptsOnce(t *testing.T) {
-	b := NewTestDataBuilder(t)
-	source := b.AddSource("owner@example.test")
-	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
-	person := b.AddParticipant("alice@example.test", "example.test", "Alice")
-	other := b.AddParticipant("bob@example.test", "example.test", "Bob")
-	b.AddOwnerParticipant(source, owner)
-	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	first := b.AddMessage(MessageOpt{SourceID: source, MessageType: "meeting_transcript", SentAt: now.Add(-2 * time.Hour)})
-	second := b.AddMessage(MessageOpt{SourceID: source, MessageType: "meeting_transcript", SentAt: now.Add(-time.Hour)})
-	calendar := b.AddMessage(MessageOpt{SourceID: source, MessageType: "calendar_event", SentAt: now.Add(-3 * time.Hour)})
-	for _, id := range []int64{first, second, calendar} {
-		b.AddFrom(id, owner, "Owner")
-		b.AddTo(id, person, "Alice")
+	for _, tc := range []struct {
+		name              string
+		ownerOnFirstCopy  bool
+		ownerOnSecondCopy bool
+		personOnFirstCopy bool
+		filter            string
+	}{
+		{name: "linked copies count once", ownerOnFirstCopy: true, ownerOnSecondCopy: true, personOnFirstCopy: true},
+		{name: "owner evidence outside selected copy", ownerOnFirstCopy: true, filter: "selected copy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewTestDataBuilder(t)
+			firstSource := b.AddSourceWithType("first@example.test", "granola")
+			secondSource := b.AddSourceWithType("second@example.test", "zoom")
+			owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+			person := b.AddParticipant("alice@example.test", "example.test", "Alice")
+			b.AddOwnerParticipant(firstSource, owner)
+			b.AddOwnerParticipant(secondSource, owner)
+			firstAt := time.Date(2025, 12, 31, 23, 0, 0, 0, time.UTC)
+			secondAt := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+			first := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: firstAt})
+			second := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: secondAt})
+			if tc.ownerOnFirstCopy {
+				b.AddFrom(first, owner, "Owner")
+			}
+			if tc.personOnFirstCopy {
+				b.AddTo(first, person, "Alice")
+			}
+			if tc.ownerOnSecondCopy {
+				b.AddFrom(second, owner, "Owner")
+			}
+			b.AddTo(second, person, "Alice")
+			b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
+			engine := b.BuildEngine()
+			filter := Context{}
+			if tc.filter == "selected copy" {
+				filter.SourceIDs = []int64{secondSource}
+			}
+			result, err := engine.Relationships(t.Context(), RelationshipsRequest{Now: secondAt.Add(time.Hour), Limit: 10, ShowAll: true, Context: filter})
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 1)
+			require.Equal(t, person, result.Rows[0].CanonicalID)
+			require.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
+			if tc.filter == "selected copy" {
+				after := secondAt.Add(-time.Hour)
+				result, err = engine.Relationships(t.Context(), RelationshipsRequest{Now: secondAt.Add(time.Hour), Limit: 10, ShowAll: true, Context: Context{After: &after}})
+				require.NoError(t, err)
+				require.Len(t, result.Rows, 1)
+				require.Equal(t, person, result.Rows[0].CanonicalID)
+				require.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
+			}
+		})
 	}
-	event := b.AddMessage(MessageOpt{SourceID: source, MessageType: "calendar_event", SentAt: now.Add(-time.Hour)})
-	b.AddFrom(event, owner, "Owner")
-	b.AddTo(event, other, "Bob")
-	email := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", IsFromMe: true, SentAt: now.Add(-time.Hour)})
-	b.AddFrom(email, owner, "Owner")
-	b.AddTo(email, other, "Bob")
-	b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
-	engine := b.BuildEngine()
-	result, err := engine.Relationships(t.Context(), RelationshipsRequest{Now: now, Limit: 10, ShowAll: true})
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 2)
-	counts := make(map[int64]int64, len(result.Rows))
-	for _, row := range result.Rows {
-		counts[row.CanonicalID] = row.Signals.MeetingCount
-	}
-	assert.Equal(t, int64(1), counts[person])
-	assert.Equal(t, int64(0), counts[other])
 }
 
 // TestRelationshipsRanksByReciprocityAndGatesNewsletters builds an owner

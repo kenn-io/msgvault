@@ -234,8 +234,8 @@ func TestRelationshipCalendarUsesArchiveWideMeetingCopyForAnnualScore(t *testing
 				require.NotNil(t, annual2025)
 				assert.InDelta(t, 1.0, annual2025.Signals.MeetingSignal, 0,
 					"the annual score keeps the archive-wide selected copy in its year")
-			} else if annual2025 != nil {
-				assert.Zero(t, annual2025.Signals.MeetingSignal)
+			} else {
+				assert.Nil(t, annual2025)
 			}
 		})
 	}

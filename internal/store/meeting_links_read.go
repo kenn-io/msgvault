@@ -184,13 +184,31 @@ func (s *Store) meetingOccurrencesForKeys(ctx context.Context, keys []meetingLin
 				}
 				continue
 			}
-			at, err := meetingKeyTime(key, row)
+			at := time.Time{}
+			if key[0] == "ical_date" {
+				at, err = time.Parse(time.DateOnly, key[3])
+			} else if key[0] == "ical_uid" {
+				at, err = time.Parse(time.RFC3339Nano, key[3])
+			} else if _, instance, ok := calrecur.ParseInstanceID(key[2]); ok {
+				if instance.AllDay {
+					at, err = time.Parse(time.DateOnly, instance.Date)
+				} else {
+					at = instance.Instant
+				}
+			} else if row.Event.Start != nil {
+				at = *row.Event.Start
+			} else if row.Event.Original != nil {
+				at, err = meetingIdentityTime(*row.Event.Original)
+			} else if row.Event.End != nil {
+				at = *row.Event.End
+			}
 			if err != nil {
 				return nil, fmt.Errorf("parse meeting occurrence time: %w", err)
 			}
-			if !at.IsZero() {
-				groups.add(row, at.UTC())
+			if at.IsZero() {
+				continue
 			}
+			groups.add(row, at.UTC())
 		}
 	}
 	err := groups.expand(ctx, s, budget, func(page CalendarOccurrencePage) {
@@ -246,12 +264,8 @@ func (s *Store) meetingNoteKeys(ctx context.Context, keys []string, budget *int)
 	}
 	scope, extra := sourceScopeClause(ctx, "m.source_id")
 	args = append(args, extra...)
-	query := `SELECT k.link_key, m.id FROM meeting_details k JOIN messages m ON m.id = k.message_id WHERE k.link_key IN (` + placeholders(len(keys)) + `) AND m.message_type = 'meeting_transcript' AND m.deleted_at IS NULL` + scope + ` ORDER BY m.id`
-	if budget != nil {
-		query += ` LIMIT ?`
-		args = append(args, *budget+1)
-	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	args = append(args, *budget+1)
+	rows, err := s.db.QueryContext(ctx, `SELECT k.link_key, m.id FROM meeting_details k JOIN messages m ON m.id = k.message_id WHERE k.link_key IN (`+placeholders(len(keys))+`) AND m.message_type = 'meeting_transcript' AND m.deleted_at IS NULL`+scope+` ORDER BY m.id LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -263,14 +277,12 @@ func (s *Store) meetingNoteKeys(ctx context.Context, keys []string, budget *int)
 			return nil, err
 		}
 		out[key] = append(out[key], id)
-		if budget != nil {
-			*budget--
-		}
+		*budget--
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
 	}
-	if budget != nil && *budget < 0 {
+	if *budget < 0 {
 		return nil, calendarRecurrenceBudgetError()
 	}
 	return out, nil

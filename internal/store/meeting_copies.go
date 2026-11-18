@@ -121,10 +121,12 @@ func (s *Store) meetingHasCopies(ctx context.Context) (bool, error) {
 
 // meetingSameSourceSeries finds the visible series in the edit's calendar.
 func (s *Store) meetingSameSourceSeries(ctx context.Context, sourceID int64, providerID string, budget *int) (int64, error) {
-	seriesRows, err := s.meetingCalendarRows(ctx, `m.source_id = ? AND e.provider_event_id = ? AND e.kind = 'series'`, []any{sourceID, providerID}, budget)
+	reader := s.meetingSQLReader(ctx)
+	seriesRows, err := queryCalendarEventRowsWithinBudget(ctx, reader, `m.source_id = ? AND e.provider_event_id = ? AND e.kind = 'series'`, []any{sourceID, providerID}, *budget)
 	if err != nil {
 		return 0, err
 	}
+	*budget -= len(seriesRows)
 	if len(seriesRows) > 0 {
 		return seriesRows[0].MessageID, nil
 	}

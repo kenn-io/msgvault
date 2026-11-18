@@ -20,8 +20,22 @@ func (s *Store) MeetingTranscriptGroupsContext(ctx context.Context, through int6
 		return nil, err
 	}
 	defer release()
-	seeds, groups, err := s.meetingTranscriptSeeds(ctx, through)
+	var seeds []meetingDecisionEndpoint
+	groups := make(map[int64]int64)
+	rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT id FROM messages WHERE message_type = 'meeting_transcript' AND deleted_at IS NULL AND sent_at IS NOT NULL AND id <= ? ORDER BY id`, through)
 	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck // read-only cursor
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		seeds = append(seeds, meetingDecisionEndpoint{ID: id, Kind: meetingRefMessage})
+		groups[id] = id
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	if len(seeds) == 0 {
@@ -38,47 +52,18 @@ func (s *Store) MeetingTranscriptGroupsContext(ctx context.Context, through int6
 			return nil, calendarRecurrenceBudgetError()
 		}
 	}
-	root, _, err := graph.reduce(ctx)
-	if err != nil {
-		return nil, err
-	}
+	root, _ := graph.reduce()
 	minimum := make(map[string]int64)
 	for _, seed := range seeds {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		key := root(seed.ref())
 		if id, ok := minimum[key]; !ok || seed.ID < id {
 			minimum[key] = seed.ID
 		}
 	}
 	for _, seed := range seeds {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		groups[seed.ID] = minimum[root(seed.ref())]
 	}
 	return groups, nil
-}
-
-// meetingTranscriptSeeds lists the visible transcripts, each in a group of its own.
-func (s *Store) meetingTranscriptSeeds(ctx context.Context, through int64) ([]meetingDecisionEndpoint, map[int64]int64, error) {
-	var seeds []meetingDecisionEndpoint
-	groups := make(map[int64]int64)
-	rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT id FROM messages WHERE message_type = 'meeting_transcript' AND deleted_at IS NULL AND sent_at IS NOT NULL AND id <= ? ORDER BY id`, through)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer rows.Close() //nolint:errcheck // read-only cursor
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, nil, err
-		}
-		seeds = append(seeds, meetingDecisionEndpoint{ID: id, Kind: meetingRefMessage})
-		groups[id] = id
-	}
-	return seeds, groups, rows.Err()
 }
 
 // MeetingTranscriptGroupsSQLiteSnapshotContext resolves groups through a caller-owned SQLite snapshot.
@@ -198,12 +183,9 @@ func (s *Store) meetingDecisionEdgesBatch(ctx context.Context, endpoints []meeti
 			args = append(args, k.kind, k.occurrence, k.kind, k.occurrence)
 			args = append(args, leftArgs...)
 			args = append(args, rightArgs...)
+			args = append(args, *budget+1)
 			query := prefix + `
- SELECT i.idx,d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM inputs i JOIN meeting_link_decisions d ON ((d.left_message_id IN (` + matches + `) AND d.left_kind=? AND (d.left_key=? OR (d.left_kind='evt' AND d.left_key=''))) OR (d.right_message_id IN (` + matches + `) AND d.right_kind=? AND (d.right_key=? OR (d.right_kind='evt' AND d.right_key='')))) JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE TRUE` + leftScope + rightScope
-			if budget != nil {
-				query += ` LIMIT ?`
-				args = append(args, *budget+1)
-			}
+ SELECT i.idx,d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM inputs i JOIN meeting_link_decisions d ON ((d.left_message_id IN (` + matches + `) AND d.left_kind=? AND (d.left_key=? OR (d.left_kind='evt' AND d.left_key=''))) OR (d.right_message_id IN (` + matches + `) AND d.right_kind=? AND (d.right_key=? OR (d.right_kind='evt' AND d.right_key='')))) JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE TRUE` + leftScope + rightScope + ` LIMIT ?`
 			err := func() error {
 				rows, err := reader.QueryContext(ctx, query, args...)
 				if err != nil {
@@ -217,16 +199,14 @@ func (s *Store) meetingDecisionEdgesBatch(ctx context.Context, endpoints []meeti
 						return err
 					}
 					result[batch[index]] = append(result[batch[index]], edge)
-					if budget != nil {
-						*budget--
-					}
+					*budget--
 				}
 				return errors.Join(rows.Err(), rows.Close())
 			}()
 			if err != nil {
 				return nil, err
 			}
-			if budget != nil && *budget < 0 {
+			if *budget < 0 {
 				return nil, calendarRecurrenceBudgetError()
 			}
 		}
@@ -316,7 +296,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, no
 	if len(graph.candidates) == 0 {
 		return graph.automatic, nil
 	}
-	return graph.record(ctx, seed)
+	return graph.record(seed), nil
 }
 
 func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDecisionEndpoint, budget *int, notesOnly bool) (*meetingDecisionGraph, error) {
@@ -370,7 +350,9 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 				if endpoint == seeds[0] {
 					automatic = record
 				}
-				warnings = append(warnings, meetingDecisionWarnings(endpoint, record.Unexpandable)...)
+				for _, warning := range record.Unexpandable {
+					warnings = append(warnings, meetingDecisionWarning{endpoint, warning})
+				}
 				members := []meetingDecisionEndpoint{endpoint}
 				memberSet := map[string]bool{endpoint.ref(): true}
 				addMember := func(member meetingDecisionEndpoint) {
@@ -384,11 +366,17 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 					add(member, nil)
 					addMember(member)
 				}
-				linked, err := s.meetingLinkMembers(ctx, record.Links, budget, add)
-				if err != nil {
-					return nil, err
-				}
-				for _, member := range linked {
+				for _, link := range record.Links {
+					ref, err := ParseMeetingLinkRef(link.Ref)
+					if err != nil {
+						return nil, err
+					}
+					member, err := s.meetingOccurrenceKey(ctx, endpointFromRef(ref), budget)
+					if err != nil {
+						return nil, err
+					}
+					linkCopy := link
+					add(member, &linkCopy)
 					addMember(member)
 				}
 				for _, member := range members {
@@ -426,33 +414,6 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 		}
 	}
 	return &meetingDecisionGraph{nodes: nodes, groups: groups, warnings: warnings, candidates: candidates, automatic: automatic}, nil
-}
-
-// meetingLinkMembers adds each linked occurrence to the graph and returns its member.
-func (s *Store) meetingLinkMembers(ctx context.Context, links []MeetingLink, budget *int, add func(meetingDecisionEndpoint, *MeetingLink)) ([]meetingDecisionEndpoint, error) {
-	members := make([]meetingDecisionEndpoint, 0, len(links))
-	for _, link := range links {
-		ref, err := ParseMeetingLinkRef(link.Ref)
-		if err != nil {
-			return nil, err
-		}
-		member, err := s.meetingOccurrenceKey(ctx, endpointFromRef(ref), budget)
-		if err != nil {
-			return nil, err
-		}
-		linkCopy := link
-		add(member, &linkCopy)
-		members = append(members, member)
-	}
-	return members, nil
-}
-
-func meetingDecisionWarnings(endpoint meetingDecisionEndpoint, unexpandable []CalendarUnexpandable) []meetingDecisionWarning {
-	warnings := make([]meetingDecisionWarning, 0, len(unexpandable))
-	for _, warning := range unexpandable {
-		warnings = append(warnings, meetingDecisionWarning{endpoint, warning})
-	}
-	return warnings
 }
 
 // Resolve links before marking their members as discovered, including automatic links.
@@ -517,30 +478,24 @@ func (s *Store) meetingResolveOccurrenceLinks(ctx context.Context, record Meetin
 	return record, nil
 }
 
-func meetingDecisionConflict(ctx context.Context, graph *meetingDecisionGraph, a, b meetingDecisionEndpoint, linked bool, active []meetingDecisionEdge) (meetingDecisionEdge, bool, error) {
-	root, _, err := graph.reduce(ctx)
-	if err != nil {
-		return meetingDecisionEdge{}, false, err
-	}
+func meetingDecisionConflict(graph *meetingDecisionGraph, a, b meetingDecisionEndpoint, linked bool, active []meetingDecisionEdge) (meetingDecisionEdge, bool) {
+	root, _ := graph.reduce()
 	if (root(a.ref()) == root(b.ref())) != linked {
-		return meetingDecisionEdge{a: a, b: b}, true, nil
+		return meetingDecisionEdge{a: a, b: b}, true
 	}
 	for _, link := range active {
 		if root(link.a.ref()) != root(link.b.ref()) {
-			return link, true, nil
+			return link, true
 		}
 	}
-	return meetingDecisionEdge{}, false, nil
+	return meetingDecisionEdge{}, false
 }
 
-func (g *meetingDecisionGraph) reduce(ctx context.Context) (func(string) string, []meetingDecisionEdge, error) {
+func (g *meetingDecisionGraph) reduce() (func(string) string, []meetingDecisionEdge) {
 	var explicit, splits []meetingDecisionEdge
 	// Choose one effective contribution per pair.
 	effective := map[string]meetingDecisionEdge{}
 	for _, choice := range g.candidates {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
 		left, right := choice.a, choice.b
 		if compareMeetingEndpoints(left, right) > 0 {
 			left, right = right, left
@@ -553,9 +508,6 @@ func (g *meetingDecisionGraph) reduce(ctx context.Context) (func(string) string,
 		}
 	}
 	for _, choice := range effective {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
 		if choice.decision == "split" {
 			splits = append(splits, choice)
 		} else {
@@ -564,9 +516,6 @@ func (g *meetingDecisionGraph) reduce(ctx context.Context) (func(string) string,
 	}
 	parent := map[string]string{}
 	for key := range g.nodes {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
 		parent[key] = key
 	}
 	var root func(string) string
@@ -579,13 +528,7 @@ func (g *meetingDecisionGraph) reduce(ctx context.Context) (func(string) string,
 	groupByMember := map[string][][]meetingDecisionEndpoint{}
 	var vertices []meetingDecisionEndpoint
 	for _, group := range g.groups {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
 		for _, member := range group {
-			if err := ctx.Err(); err != nil {
-				return nil, nil, err
-			}
 			key := member.ref()
 			if len(groupByMember[key]) == 0 {
 				vertices = append(vertices, member)
@@ -599,25 +542,18 @@ func (g *meetingDecisionGraph) reduce(ctx context.Context) (func(string) string,
 		}
 		return compareMeetingEndpoints(a.b, b.b)
 	})
-	join := func(edge meetingDecisionEdge) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	join := func(edge meetingDecisionEdge) {
 		a, b := root(edge.a.ref()), root(edge.b.ref())
 		if a == b {
-			return nil
+			return
 		}
 		for _, split := range splits {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
 			x, y := root(split.a.ref()), root(split.b.ref())
 			if x == a && y == b || x == b && y == a {
-				return nil
+				return
 			}
 		}
 		parent[b] = a
-		return nil
 	}
 	slices.SortFunc(vertices, compareMeetingEndpoints)
 	// Join copies first so a note split applies to every copy still joined.
@@ -625,21 +561,13 @@ func (g *meetingDecisionGraph) reduce(ctx context.Context) (func(string) string,
 	for _, events := range []bool{true, false} {
 		for _, pair := range explicit {
 			if (pair.a.Kind == meetingRefEvent && pair.b.Kind == meetingRefEvent) == events {
-				if err := join(pair); err != nil {
-					return nil, nil, err
-				}
+				join(pair)
 			}
 		}
 		for _, member := range vertices {
-			if err := ctx.Err(); err != nil {
-				return nil, nil, err
-			}
 			others = others[:0]
 			for _, group := range groupByMember[member.ref()] {
 				for _, other := range group {
-					if err := ctx.Err(); err != nil {
-						return nil, nil, err
-					}
 					if compareMeetingEndpoints(member, other) < 0 {
 						others = append(others, other)
 					}
@@ -648,49 +576,32 @@ func (g *meetingDecisionGraph) reduce(ctx context.Context) (func(string) string,
 			slices.SortFunc(others, compareMeetingEndpoints)
 			for _, other := range others {
 				if (member.Kind == meetingRefEvent && other.Kind == meetingRefEvent) == events {
-					if err := join(meetingDecisionEdge{a: member, b: other}); err != nil {
-						return nil, nil, err
-					}
+					join(meetingDecisionEdge{a: member, b: other})
 				}
 			}
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
-	return root, explicit, nil
+	return root, explicit
 }
 
-func (g *meetingDecisionGraph) record(ctx context.Context, seed meetingDecisionEndpoint) (MeetingRecord, error) {
+func (g *meetingDecisionGraph) record(seed meetingDecisionEndpoint) MeetingRecord {
 	result := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}, Unexpandable: []CalendarUnexpandable{}}
-	root, _, err := g.reduce(ctx)
-	if err != nil {
-		return result, err
-	}
+	root, _ := g.reduce()
 	seedRoot := root(seed.ref())
 	visibleEvents := map[int64]bool{}
 	for key, n := range g.nodes {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
 		if n.endpoint.Kind == meetingRefEvent {
 			visibleEvents[n.endpoint.ID] = visibleEvents[n.endpoint.ID] || root(key) == seedRoot
 		}
 	}
 	// Keep a warning with its event when known, or with the group that found it.
 	for _, entry := range g.warnings {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
 		visible, present := visibleEvents[entry.warning.MessageID]
 		if visible || !present && root(entry.endpoint.ref()) == seedRoot {
 			result.Unexpandable = append(result.Unexpandable, entry.warning)
 		}
 	}
 	for key, n := range g.nodes {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
 		if root(key) != seedRoot {
 			continue
 		}
@@ -726,5 +637,5 @@ func (g *meetingDecisionGraph) record(ctx context.Context, seed meetingDecisionE
 		return cmp.Compare(a.Reason, b.Reason)
 	})
 	result.Unexpandable = slices.Compact(result.Unexpandable)
-	return result, ctx.Err()
+	return result
 }
