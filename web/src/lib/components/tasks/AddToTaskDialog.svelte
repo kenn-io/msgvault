@@ -39,7 +39,8 @@
 </Dialog>
 
 <style>
-  .task-dialog { display: grid; gap: var(--space-6); }
+  .task-dialog { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-6); }
+  .task-dialog > div { min-width: 0; }
   .provider { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
   .provider :global(.kit-segmented) { justify-self: start; }
 </style>

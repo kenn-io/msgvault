@@ -214,7 +214,7 @@
   </form>
 
 <style>
-  .message { display: grid; justify-items: start; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .message { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; justify-items: start; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
   form {
     --field-text-size: 16px;
     display: grid;
