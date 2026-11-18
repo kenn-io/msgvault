@@ -68,6 +68,40 @@ func TestRelationshipsCountLinkedTranscriptsOnce(t *testing.T) {
 	}
 }
 
+func TestRelationshipsCountsStandaloneCalendarEvents(t *testing.T) {
+	t.Parallel()
+	b := NewTestDataBuilder(t)
+	sourceID := b.AddSourceWithType("owner@example.test", "google_calendar")
+	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+	person := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	b.AddOwnerParticipant(sourceID, owner)
+	meetingAt := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
+	meetingID := b.AddMessage(MessageOpt{
+		SourceID: sourceID, MessageType: "calendar_event", SentAt: meetingAt,
+	})
+	b.AddFrom(meetingID, owner, "Owner")
+	b.AddTo(meetingID, person, "Alice")
+	engine := b.BuildEngine()
+
+	for _, tc := range []struct {
+		name   string
+		filter Context
+	}{
+		{name: "all sources"},
+		{name: "calendar source", filter: Context{SourceIDs: []int64{sourceID}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := engine.Relationships(t.Context(), RelationshipsRequest{
+				Now: meetingAt.Add(time.Hour), Limit: 10, ShowAll: true, Context: tc.filter,
+			})
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, person, result.Rows[0].CanonicalID)
+			assert.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
+		})
+	}
+}
+
 // TestRelationshipsRanksByReciprocityAndGatesNewsletters builds an owner
 // (O), a reciprocal counterpart (A, clustered with a second identity A2 that
 // only has chat activity), and an inbound-only newsletter sender (B). It

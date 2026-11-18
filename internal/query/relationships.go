@@ -328,8 +328,10 @@ meeting_owners AS (
 	SELECT p.*, ` + identityindex.MeetingCopyRank("p.canonical_id", "p.entry_num", "p.message_type", "p.occurred_at") + ` AS meeting_rank
 	FROM logical_people p
 	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = p.entry_num
-	WHERE NOT p.is_owner AND NOT (p.entry_kind IN ('event','meeting') AND (p.message_type <> 'meeting_transcript'
-	    OR NOT EXISTS (SELECT 1 FROM meeting_owners o WHERE o.meeting_group = coalesce(g.group_id, p.entry_num))))
+	WHERE NOT p.is_owner AND (p.entry_kind NOT IN ('event','meeting')
+	    OR (p.message_type = 'meeting_transcript'
+	        AND EXISTS (SELECT 1 FROM meeting_owners o WHERE o.meeting_group = coalesce(g.group_id, p.entry_num)))
+	    OR (p.message_type <> 'meeting_transcript' AND p.with_owner))
 ), relationship_interactions AS (
 	SELECT p.*,
 	       CASE WHEN p.is_from_me

@@ -160,8 +160,10 @@ WITH meeting_owners AS (
 	FROM `+logicalBuildRelation+` l
 	LEFT JOIN `+groups+` g ON g.message_id = l.anchor_message_id
 	WHERE l.relation_kind = 1 AND NOT l.is_owner
-	  AND NOT (l.entry_kind IN ('event','meeting') AND (l.message_type <> 'meeting_transcript'
-	      OR NOT EXISTS (SELECT 1 FROM meeting_owners o WHERE o.meeting_group = coalesce(g.group_id, l.anchor_message_id))))
+	  AND (l.entry_kind NOT IN ('event','meeting')
+	      OR (l.message_type = 'meeting_transcript'
+	          AND EXISTS (SELECT 1 FROM meeting_owners o WHERE o.meeting_group = coalesce(g.group_id, l.anchor_message_id)))
+	      OR (l.message_type <> 'meeting_transcript' AND l.with_owner))
 ), interactions AS (
 	SELECT p.*,
 	       CASE WHEN p.is_from_me
