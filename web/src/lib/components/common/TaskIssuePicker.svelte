@@ -48,6 +48,7 @@
     {#if loading || query.trim() !== listedQuery}<p role="status">Loading…</p>
     {:else}
       {#if error}<InlineNotice message={error} />{/if}
+      {#if error && project && /^[^#\s]+#[^#\s]+$/.test(listedQuery) && !listedQuery.startsWith(`${project}#`)}<p>Use a reference from the configured project: {project}.</p>{/if}
       {#if choices.length}<RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={choices.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
       {:else if !error}<p>{listedQuery ? `No ${noun} match "${listedQuery}".` : empty}</p>{/if}
     {/if}

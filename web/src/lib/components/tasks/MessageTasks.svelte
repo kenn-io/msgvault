@@ -34,7 +34,7 @@
   });
 </script>
 
-<section class="task-group" aria-label="Tasks">
+<div class:task-group={tasksPresent || issues.length > 0} class:task-notices={!tasksPresent && issues.length === 0} role={tasksPresent || issues.length > 0 ? 'region' : undefined} aria-label={tasksPresent || issues.length > 0 ? 'Tasks' : undefined}>
   {#if tasksPresent || issues.length > 0}<h2>Tasks</h2>{/if}
   {#if email}
     {#key refresh}<TaskLinks {client} {messageId} {title} {onsettings} {showSetup} mode="list" embedded bind:present={tasksPresent} />{/key}
@@ -52,12 +52,13 @@
       {/each}
     </div>
   {/if}
-</section>
+</div>
 
 <style>
   .task-group { display: grid; gap: var(--space-2); padding: 0 var(--pane-pad-x) var(--space-4); }
+  .task-notices { padding: 0 var(--pane-pad-x); }
   .kata-links { display: grid; gap: var(--space-2); }
   .text-action { display: inline-flex; min-height: var(--control-h); align-items: center; color: var(--link-ink); font-size: var(--type-meta-size); }
-  .task-group :global(.task-links) { padding: 0; }
+  .task-group :global(.task-links), .task-notices :global(.task-links) { padding: 0; }
   h2, p { margin: 0; font-size: var(--font-size-sm); }
 </style>

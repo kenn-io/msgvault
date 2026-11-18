@@ -31,6 +31,8 @@ describe('Message task list', () => {
     render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
     expect(await screen.findByText('Some linked tasks may be missing.')).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
+    expect(screen.getByText('Some linked tasks may be missing.').closest('.task-group')).toBeNull();
   });
 
   it('keeps a lookup error visible without rows', async () => {
@@ -68,10 +70,12 @@ describe('Message task list', () => {
     try {
       await waitFor(() => expect(tasksStarted && issuesStarted).toBe(true));
       expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
       resolveTasks(Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: {} }));
       resolveIssues(Response.json({ issues: [], truncated: false }));
       await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
       expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
     } finally { view.unmount(); readiness.dispose(); }
   });
   it('groups task and Kata links under one Tasks heading', async () => {

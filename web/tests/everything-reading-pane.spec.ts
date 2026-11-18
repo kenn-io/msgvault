@@ -684,6 +684,8 @@ test('keeps Kata issue choices focused while navigating with arrow keys', async 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
   await page.getByRole('grid', { name: 'Messages results' }).getByText('Garden plans', { exact: true }).click();
   const card = page.getByRole('article', { name: 'Message 42' });
+  await expect(card.getByRole('region', { name: 'Tasks', exact: true })).toHaveCount(0);
+  await expect(card.locator('.task-notices')).toHaveCSS('padding-bottom', '0px');
   await card.getByRole('button', { name: /More actions for/ }).click();
   await page.getByRole('menuitem', { name: 'Add to task…' }).click();
   await page.getByRole('radio', { name: 'Kata', exact: true }).click();

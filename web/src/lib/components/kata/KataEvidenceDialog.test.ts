@@ -287,4 +287,26 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     expect((await screen.findByRole('alert')).textContent).toContain('List unavailable');
   });
+
+  it('explains the configured project for a wrong-project reference when the list fails', async () => {
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (path.endsWith('/open-issues')) return Response.json({ message: 'List unavailable' }, { status: 503 });
+      return Response.json({ evidence: [passages[0]] });
+    });
+    const readiness = new KataReadiness(client);
+    await waitFor(() => expect(readiness.ready).toBe(true));
+    const view = render(KataEvidenceDialog, { props: { client, selector }, context: new Map([[kataReadinessKey, readiness]]) });
+    try {
+      await screen.findByText('Opening passage');
+      await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+      await screen.findByText('List unavailable');
+      await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'other#abcd' } });
+      expect(await screen.findByText('Use a reference from the configured project: example.')).toBeDefined();
+      expect(screen.getByText('List unavailable')).toBeDefined();
+      expect(screen.queryByRole('radio', { name: /other#abcd/ })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Add quote' })).toHaveProperty('disabled', true);
+    } finally { view.unmount(); readiness.dispose(); }
+  });
 });
