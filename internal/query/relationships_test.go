@@ -118,6 +118,38 @@ func TestRelationshipsCountLinkedTranscriptsOnce(t *testing.T) {
 	}
 }
 
+func TestRelationshipsRosterOnlyOwnerDoesNotCountMeeting(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.test", "zoom")
+	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+	person := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	b.AddOwnerParticipant(source, owner)
+	const conversationID = 900
+	transcript := b.AddMessage(MessageOpt{
+		SourceID: source, ConversationID: conversationID,
+		MessageType: "meeting_transcript", ConversationType: "meeting",
+		SentAt: time.Date(2026, time.January, 2, 17, 0, 0, 0, time.UTC),
+	})
+	b.AddConversationParticipant(conversationID, owner)
+	b.AddTo(transcript, person, "Alice")
+	engine := b.BuildEngine()
+
+	for _, filter := range []Context{{}, {SourceIDs: []int64{source}}} {
+		result, err := engine.Relationships(t.Context(), RelationshipsRequest{
+			Now:   time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC),
+			Limit: 10, ShowAll: true, Context: filter,
+		})
+		require.NoError(t, err)
+		var meetingCount int64
+		for _, row := range result.Rows {
+			if row.CanonicalID == person {
+				meetingCount = row.Signals.MeetingCount
+			}
+		}
+		assert.Zero(t, meetingCount, "roster membership alone is not meeting attendance")
+	}
+}
+
 // TestRelationshipsRanksByReciprocityAndGatesNewsletters builds an owner
 // (O), a reciprocal counterpart (A, clustered with a second identity A2 that
 // only has chat activity), and an inbound-only newsletter sender (B). It

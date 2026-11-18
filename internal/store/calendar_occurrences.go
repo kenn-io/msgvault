@@ -313,7 +313,7 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 			return nil, count, "", ctx.Err()
 		}
 		if errors.Is(err, calrecur.ErrBudgetExceeded) {
-			if count > remaining || count > limit {
+			if count > remaining {
 				return resolved, count, calendarSeriesWorkLimitReason, nil
 			}
 			return bounded, count, err.Error(), nil

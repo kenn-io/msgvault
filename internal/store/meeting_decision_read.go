@@ -34,7 +34,7 @@ func (s *Store) MeetingTranscriptGroupsContext(ctx context.Context, through int6
 		return nil, err
 	}
 	for _, warning := range graph.warnings {
-		if warning.warning.Reason == calendarSeriesWorkLimitReason {
+		if warning.warning.Reason == calendarSeriesWorkLimitReason || warning.warning.Reason == calrecur.ErrBudgetExceeded.Error() {
 			return nil, calendarRecurrenceBudgetError()
 		}
 	}

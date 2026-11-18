@@ -41,6 +41,9 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 			(6::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 17:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, true),
 			(6::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 17:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, false),
 			(7::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 18:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, false),
+			-- Owner listed in the roster without a direct attendance edge.
+			(8::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 19:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, false, true, false, true),
+			(8::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 19:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, false),
 			-- A duplicate linked-alias edge for canonical person 2.
 			(2::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 13:00:00', true, 'item'::VARCHAR, 'group_chat'::VARCHAR, false, true, false, true, false)
 		) AS t(message_id, canonical_id, occurred_at, is_chat, entry_kind,

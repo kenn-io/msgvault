@@ -31,7 +31,7 @@ SELECT coalesce(g.group_id, a.message_id) AS meeting_group
 FROM %s a
 JOIN meeting_copies c ON c.message_id = a.message_id
 LEFT JOIN %s g ON g.message_id = a.message_id
-WHERE a.is_owner AND a.message_type = 'meeting_transcript' AND NOT a.unsent AND NOT a.email_invite
+WHERE a.is_owner AND a.is_direct AND a.message_type = 'meeting_transcript' AND NOT a.unsent AND NOT a.email_invite
 GROUP BY meeting_group`, selected, groups, groups, ownerActivity, groups)
 }
 

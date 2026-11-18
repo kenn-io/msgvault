@@ -104,6 +104,11 @@ func (s *Store) meetingExpandWindow(ctx context.Context, rows []CalendarEventRow
 	if err != nil {
 		return page, err
 	}
+	for i := range page.Unexpandable {
+		if page.Unexpandable[i].Reason == calrecur.ErrBudgetExceeded.Error() {
+			page.Unexpandable[i].Reason = calendarSeriesWorkLimitReason
+		}
+	}
 	if budget != nil && *budget < 0 {
 		return CalendarOccurrencePage{}, calendarRecurrenceBudgetError()
 	}
