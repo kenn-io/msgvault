@@ -35,8 +35,12 @@ func (h *handlers) getMessageRecords(ctx context.Context, req toolRequest) (*too
 	}
 	// The daemon masks verification messages for delegated readers; owners
 	// get the original, so check both to give everyone the same answer.
-	if msg.BodyText == verification.Masked ||
-		verification.Is(verification.Content{Subject: msg.Subject, Snippet: msg.Snippet, Text: msg.BodyText, HTML: msg.BodyHTML}) {
+	// Check the same fields the daemon checks before masking.
+	content := verification.Content{Subject: msg.Subject, Snippet: msg.Snippet, Title: msg.ConversationTitle, Text: msg.BodyText, HTML: msg.BodyHTML}
+	for _, attachment := range msg.Attachments {
+		content.Filenames = append(content.Filenames, attachment.Filename)
+	}
+	if msg.BodyText == verification.Masked || verification.Is(content) {
 		// Never extract values from a sign-in code or credential link.
 		value := mailrecords.Extract(mailrecords.Input{})
 		value.Kind, value.KindSource, value.KindTrust = "verification", "rule", "claimed_by_sender"

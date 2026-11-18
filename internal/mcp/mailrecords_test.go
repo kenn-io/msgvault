@@ -97,4 +97,23 @@ func TestMessageRecordsDaemonAndEmbeddedScope(t *testing.T) {
 	assertions.Equal("verification", value.Kind)
 	assertions.Empty(value.Records)
 	assertions.NotContains(task5SDKResultText(result), "654321")
+
+	// A code cue in the conversation title alone also marks the message as
+	// verification, for the embedded reader as well as the daemon.
+	requirements.NoError(st.UpsertMessageBody(allowed, sql.NullString{String: "Order B-42", Valid: true}, sql.NullString{String: body, Valid: true}))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET title = ? WHERE id = (SELECT conversation_id FROM messages WHERE id = ?)`), "Your sign-in verification code is 654321", allowed)
+	requirements.NoError(err)
+	embeddedResult, structured, err := embedded.Call(t.Context(), []int64{source.ID}, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: ToolGetMessageRecords}}, map[string]any{"message_id": float64(allowed)})
+	requirements.NoError(err)
+	embeddedResult.StructuredContent = structured
+	for _, titled := range []*sdkmcp.CallToolResult{embeddedResult, func() *sdkmcp.CallToolResult {
+		daemonResult, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolGetMessageRecords, Arguments: map[string]any{"message_id": allowed}})
+		requirements.NoError(callErr)
+		return daemonResult
+	}()} {
+		requirements.False(titled.IsError, task5SDKResultText(titled))
+		titledValue := task5StructuredAs[messageRecordsResponse](t, titled)
+		assertions.Equal("verification", titledValue.Kind)
+		assertions.Empty(titledValue.Records)
+	}
 }
