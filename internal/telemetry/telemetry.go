@@ -74,16 +74,16 @@ type Options struct {
 	Commit  string
 }
 
-// NewReporterOrDisabled builds the reporter. When it can't build one it logs why and returns kit's
-// disabled reporter so startup continues.
-func NewReporterOrDisabled(opts Options, logger *slog.Logger) *posthog.Reporter {
-	return newReporterOrDisabled(opts, "", "", logger)
+// NewReporterOrDisabled builds the reporter. When it can't build one it returns kit's disabled
+// reporter so startup continues.
+func NewReporterOrDisabled(opts Options) *posthog.Reporter {
+	return newReporterOrDisabled(opts, "", "")
 }
 
 // newReporterOrDisabled takes the API key and endpoint so the helper-process test can point the
 // enabled path at a stub. Production passes "", so kit uses the key release builds set at link time.
-func newReporterOrDisabled(opts Options, apiKey, endpoint string, logger *slog.Logger) *posthog.Reporter {
-	reporter, err := buildReporter(opts, apiKey, endpoint, logger)
+func newReporterOrDisabled(opts Options, apiKey, endpoint string) *posthog.Reporter {
+	reporter, err := buildReporter(opts, apiKey, endpoint)
 	if err != nil {
 		return posthog.DisabledReporter()
 	}
@@ -100,7 +100,7 @@ func Enabled() bool {
 	return posthog.EnabledFromEnv(envPrefix)
 }
 
-func buildReporter(opts Options, apiKey, endpoint string, logger *slog.Logger) (*posthog.Reporter, error) {
+func buildReporter(opts Options, apiKey, endpoint string) (*posthog.Reporter, error) {
 	claims := posthog.NewDailyClaims(filepath.Join(opts.DataDir, "telemetry-screen-claims.json"))
 	allowed := []posthog.Option{
 		posthog.WithAllowedEvent(posthog.EventDaemonActive),

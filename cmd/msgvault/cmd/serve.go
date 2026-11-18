@@ -285,7 +285,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}()
 	telemetryReporter := telemetry.NewReporterOrDisabled(telemetry.Options{
 		DataDir: cfg.Data.DataDir, Version: Version, Commit: Commit,
-	}, logger)
+	})
 	defer func() {
 		_ = telemetryReporter.Close()
 	}()
