@@ -1,7 +1,6 @@
 package tiktokexport
 
 import (
-	"context"
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
@@ -24,7 +23,7 @@ func TestNamedVariantsAndFallback(t *testing.T) {
 	require.NoError(err)
 	txt = append(txt, []byte("\nChat History with second_friend:\nDate: 2026-01-04 00:00:00\nFrom: second_friend\nContent: fallback\ncontinued line\n")...)
 	require.NoError(os.WriteFile(filepath.Join(dir, "Direct Messages.txt"), txt, 0600))
-	out, err := readArchive(context.Background(), dir)
+	out, err := readArchive(t.Context(), dir)
 	require.NoError(err)
 	assert.Equal("archive_owner", out.Username)
 	require.Len(out.Messages, 3)
@@ -54,7 +53,7 @@ func TestMessageKeysIgnoreOrderingAndKeepChatAndContent(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	a, err := readArchive(context.Background(), "testdata/json")
+	a, err := readArchive(t.Context(), "testdata/json")
 	require.NoError(err)
 	m := a.Messages[1]
 	// Raw TXT chat headers must not collapse keys when their bytes are not UTF-8.
@@ -72,7 +71,7 @@ func TestMessageKeysIgnoreOrderingAndKeepChatAndContent(t *testing.T) {
 	changed = m
 	changed.Sender = "another_friend"
 	assert.NotEqual(m.key(), changed.key())
-	b, err := readArchive(context.Background(), "testdata/txt")
+	b, err := readArchive(t.Context(), "testdata/txt")
 	require.NoError(err)
 	require.Len(b.Messages, len(a.Messages))
 	for i := range a.Messages {

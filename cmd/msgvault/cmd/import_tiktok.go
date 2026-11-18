@@ -68,7 +68,10 @@ func runImportTikTok(cmd *cobra.Command, identifier, archive string, jsonOutput 
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Messages: %d added, %d processed\nConversations: %d\nFrom you: %d\n",
 		summary.MessagesAdded, summary.MessagesProcessed, summary.Conversations, summary.FromMe)
-	return err
+	if err != nil {
+		return fmt.Errorf("write TikTok import summary: %w", err)
+	}
+	return nil
 }
 
 func init() { rootCmd.AddCommand(newImportTikTokCmd()) }
