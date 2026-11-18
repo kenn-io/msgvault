@@ -97,6 +97,12 @@ func Import(ctx context.Context, st *store.Store, root string, opts Options) (su
 	if err != nil {
 		return nil, err
 	}
+	// Read the source again now that this import holds its sync, so a
+	// concurrent first import's owner binding is seen before it is reused.
+	source, err = st.GetSourceByIDContext(ctx, source.ID)
+	if err != nil {
+		return nil, errors.Join(err, st.FailSync(syncID, "read LinkedIn source"))
+	}
 	st = st.ScopedToSync(source.ID, syncID)
 	defer func() {
 		if summary != nil {
