@@ -8,7 +8,7 @@ describe('GroupOverview', () => {
     const year = new Date().getFullYear();
     render(GroupOverview, { selection: {
       kind: 'group', dimension: 'participant', key: '42', label: 'Person Example', count: 2,
-      latestAt: `${year}-05-04T12:00:00Z`, overview: { first_at: `${year - 1}-05-03T12:00:00Z`, activity: [] }
+      latestAt: `${year}-05-04T12:00:00Z`, overview: { first_at: `${year - 1}-05-03T12:00:00Z`, activity: [], co_participants: [] }
     } });
     expect(screen.getByText(`May 3, ${year - 1} – May 4`)).toBeDefined();
   });
