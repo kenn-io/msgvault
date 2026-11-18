@@ -75,12 +75,12 @@ describe('TaskLinks', () => {
 
   it('preserves a creation draft when switching between New and Existing', async () => {
     render(TaskLinks, { client: taskCreationClient(), mode: 'add', messageId: 42, title: 'Follow up', oncomplete: vi.fn() });
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Task title' }), { target: { value: 'Revised follow up' } });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Draft notes' } });
+    await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Revised follow up' } });
+    await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
-    expect(screen.getByRole('textbox', { name: 'Task title' })).toHaveProperty('value', 'Revised follow up');
-    expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', 'Draft notes');
+    expect(screen.getByLabelText('Task title')).toHaveProperty('value', 'Revised follow up');
+    expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
   });
 
   it('completes creation without refreshing the closing add surface', async () => {

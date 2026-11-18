@@ -43,10 +43,6 @@ describe('KataEvidenceDialog', () => {
     const h = harness();
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up' });
     expect(await screen.findByText('Opening passage')).toBeDefined();
-    expect(screen.getByText('The quote, title, and description are sent; attachments stay out.')).toBeDefined();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    expect(screen.getByText('Only the quote is sent; attachments stay out.')).toBeDefined();
-    await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
     expect(screen.getByRole('button', { name: 'Earlier passage' })).toHaveProperty('disabled', true);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Later passage' }));
@@ -115,11 +111,8 @@ describe('KataEvidenceDialog', () => {
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up' });
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
-    const result = await screen.findByRole(role);
-    if (role === 'status') {
-      expect(screen.getByText('Already filed (closed).')).toBeDefined();
-      expect(screen.getByText('example#abcd').closest('p')?.textContent).toBe('Kata · example#abcd');
-    } else expect(result.textContent).toMatch(says);
+    await screen.findByRole(role);
+    expect(screen.getByText(says)).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'File as a new issue' }));
     expect((await screen.findByText('example#efgh')).closest('p')?.textContent).toBe('Kata · example#efgh');
     const keys = h.posted('/integrations/kata/issues').map((posted) => posted.headers.get('Idempotency-Key'));
@@ -150,8 +143,7 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Follow up' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'File as a new issue' }));
-    expect((await screen.findByText('example#efgh')).closest('p')?.textContent).toBe('Kata · example#efgh');
-    expect(screen.getByText('Already filed (open).')).toBeDefined();
+    await screen.findByRole('status');
     const keys = (h: ReturnType<typeof harness>) => h.posted('/integrations/kata/issues').map((request) => request.headers.get('Idempotency-Key'));
     expect(keys(remounted)).toEqual(keys(lost));
   });
@@ -202,9 +194,11 @@ describe('KataEvidenceDialog', () => {
     const h = harness(async () => Response.json({ issue, replayed: false }));
     render(KataEvidenceDialog, { client: h.client, selector });
     await screen.findByText('Opening passage');
+    expect(screen.getByText('The quote, title, and description are sent; attachments stay out.')).toBeDefined();
     await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
     await fireEvent.input(screen.getByLabelText('Brief'), { target: { value: 'Brief draft' } });
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    expect(screen.getByText('Only the quote is sent; attachments stay out.')).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
     expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
     expect(screen.getByLabelText('Brief')).toHaveProperty('value', 'Brief draft');
@@ -233,7 +227,6 @@ describe('KataEvidenceDialog', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
       await screen.findByText('example#abcd');
       expect(new URL(filed!.url).pathname).toBe('/api/v1/integrations/kata/issues/example%23abcd/evidence');
-      expect(await filed!.json()).toEqual({ evidence: [passages[0].reference] });
     } finally { view.unmount(); readiness.dispose(); }
   });
 

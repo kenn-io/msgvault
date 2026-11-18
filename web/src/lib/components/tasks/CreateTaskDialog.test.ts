@@ -45,7 +45,7 @@ describe('CreateTaskDialog', () => {
   });
 
   it.each([
-    ['2026-07-18T12:00:00Z', /^Jul 18(?:, 2026)?$/],
+    [`${new Date().getFullYear()}-07-18T12:00:00`, /^Jul 18$/],
     ['', /^Fallback title$/]
   ])('shows available message context for sentAt=%s', (sentAt, expected) => {
     render(CreateTaskDialog, {

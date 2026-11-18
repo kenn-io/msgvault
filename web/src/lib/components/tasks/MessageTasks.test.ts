@@ -1,3 +1,4 @@
+import { taskOutboundMetadata } from './fixtures.test-support';
 import { render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -7,8 +8,8 @@ import MessageTasks from './MessageTasks.svelte';
 describe('Message task list', () => {
   it('keeps the Tasks group hidden when there are no linked rows', async () => {
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: 'ready' }
-      : { state: 'partial', complete: false, tasks: [], outbound_metadata: {} }));
+      ? { state: 'ready', project: 'example' }
+      : { state: 'partial', complete: false, tasks: [], outbound_metadata: taskOutboundMetadata }));
     render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
     expect(await screen.findByText('Some linked tasks may be missing.')).toBeDefined();
     expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
@@ -19,7 +20,7 @@ describe('Message task list', () => {
       const url = (input as Request).url;
       if (url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (url.includes('/kata/')) return Response.json({ issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Kata work', status: 'open', web_url: 'https://example.org/issue' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }], truncated: false });
-      return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Task work' }], outbound_metadata: {} });
+      return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Task work' }], outbound_metadata: taskOutboundMetadata });
     });
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
@@ -62,7 +63,13 @@ describe('Message task list', () => {
     let title = 'Send notes';
     let truncated = false;
     let empty = false;
-    const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/status') ? { state: 'ready' } : { truncated, issues: empty ? [] : [{ uid: 'issue-1', qualified_ref: 'example#abcd', title, status: 'open', web_url: 'https://example.org/tasks/abcd' }] }));
+    let held: ((response: Response) => void) | undefined;
+    let hold = false;
+    const client = createAPIClient(async (input) => {
+      if ((input as Request).url.endsWith('/status')) return Response.json({ state: 'ready' });
+      if (hold) return new Promise<Response>(resolve => { held = resolve; });
+      return Response.json({ truncated, issues: empty ? [] : [{ uid: 'issue-1', qualified_ref: 'example#abcd', title, status: 'open', web_url: 'https://example.org/tasks/abcd' }] });
+    });
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
     const link = await screen.findByRole('link', { name: 'Open in Kata' });
@@ -78,6 +85,13 @@ describe('Message task list', () => {
     await view.rerender({ refresh: 3 });
     await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
     expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
+    hold = true;
+    await view.rerender({ refresh: 4 });
+    await waitFor(() => expect(held).toBeDefined());
+    expect(screen.getByRole('status').textContent).toContain('Loading linked Kata issues');
+    held!(Response.json({ issues: [], truncated: false }));
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+    expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();
     view.unmount(); readiness.dispose();
   });
 });

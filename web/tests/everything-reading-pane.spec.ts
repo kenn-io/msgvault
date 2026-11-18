@@ -622,7 +622,7 @@ test('aligns group actions and activity in wide and inspected views', async ({ p
   expect(await people.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
-test('shows the full message time beside a long sender on a phone', async ({ page }) => {
+test('keeps the message time clear of the menu beside a long sender on a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const message = {
     id: 42, conversation_id: 7, subject: 'Garden plans',

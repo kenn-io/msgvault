@@ -6,35 +6,24 @@ import TaskIssuePicker from './TaskIssuePicker.svelte';
 const item = { id: 'one', label: 'Send the budget' };
 
 describe('TaskIssuePicker', () => {
-  it.each(['garden#w3fa', '  garden#w3fa  '])('offers the trimmed reference %s when lookup fails', async (query) => {
-    const load = vi.fn(async (_query: string) => { throw new Error('Unavailable'); });
-    render(TaskIssuePicker, { load, noun: 'open issues', empty: 'No open issues.', project: 'garden' });
-    await screen.findByRole('alert');
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: query } });
-    const choice = await screen.findByRole('radio', { name: 'garden#w3fa · Not checked yet' });
-    expect(load.mock.calls.at(-1)?.[0]).toBe('garden#w3fa');
-    await fireEvent.click(choice);
-    expect(choice).toHaveProperty('checked', true);
-  });
   it.each([
-    ['other#w3fa', 'garden'], ['garden#w3fa#x', 'garden'], ['garden#', 'garden'],
-    ['garden#w3 fa', 'garden'],
-  ])('does not offer invalid reference %s for project %s', async (query, project) => {
+    ['garden#w3fa', true, false], ['  garden#w3fa  ', true, false],
+    ['other#w3fa', false, true], ['garden#w3fa#x', false, false],
+    ['garden#', false, false], ['garden#w3 fa', false, false],
+  ])('handles reference %s when lookup fails', async (query, valid, wrongProject) => {
     const load = vi.fn(async (_query: string) => { throw new Error('Unavailable'); });
-    render(TaskIssuePicker, { load, noun: 'open issues', empty: 'No open issues.', project });
-    await screen.findByRole('alert');
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: query } });
-    await waitFor(() => expect(load.mock.calls.at(-1)?.[0]).toBe(query));
-    await screen.findByRole('alert');
-    expect(screen.queryByRole('radio')).toBeNull();
-  });
-
-  it('explains the configured project for a wrong-project reference', async () => {
-    const load = async () => { throw new Error('Unavailable'); };
     render(TaskIssuePicker, { load, noun: 'open issues', empty: 'No open issues.', project: 'garden' });
     await screen.findByRole('alert');
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'other#w3fa' } });
-    expect(await screen.findByText('Use a reference from the configured project: garden.')).toBeDefined();
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: query } });
+    await waitFor(() => expect(load.mock.calls.at(-1)?.[0]).toBe(query.trim()));
+    if (valid) {
+      const choice = await screen.findByRole('radio', { name: 'garden#w3fa · Not checked yet' });
+      await fireEvent.click(choice);
+      expect(choice).toHaveProperty('checked', true);
+    } else {
+      expect(screen.queryByRole('radio')).toBeNull();
+      if (wrongProject) expect(screen.getByText('Use a reference from the configured project: garden.')).toBeDefined();
+    }
   });
 
   it('keeps issue search guidance visible while filtering', async () => {

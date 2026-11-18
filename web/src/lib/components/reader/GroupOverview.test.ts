@@ -3,18 +3,6 @@ import { describe, expect, it } from 'vitest';
 import GroupOverview from './GroupOverview.svelte';
 
 describe('GroupOverview', () => {
-  it('omits the current year from ranges and daily chart labels', () => {
-    const year = new Date().getFullYear();
-    render(GroupOverview, { selection: {
-      kind: 'group', dimension: 'month', key: `${year}-05`, label: 'May', count: 2,
-      latestAt: `${year}-05-04T12:00:00Z`,
-      overview: { first_at: `${year}-05-03T12:00:00Z`, activity: [{ bucket: `${year}-05-03`, count: 1 }, { bucket: `${year}-05-04`, count: 1 }] }
-    } });
-    expect(screen.getByRole('img', { name: 'Activity by day, May 3 to May 4, busiest May 3 with 1 item' })).toBeDefined();
-    expect(screen.getByText('May 3')).toBeDefined();
-    expect(screen.getByText('May 4')).toBeDefined();
-    expect(screen.queryByText('May 3 – May 4')).toBeNull();
-  });
 
   it('omits the current year in the range while retaining earlier years', () => {
     const year = new Date().getFullYear();
@@ -25,6 +13,11 @@ describe('GroupOverview', () => {
     expect(screen.getByText(`May 3, ${year - 1} – May 4`)).toBeDefined();
   });
   it.each([
+    { name: 'current year', selection: {
+      kind: 'group' as const, dimension: 'month' as const, key: `${new Date().getFullYear()}-05`, label: 'May', count: 2,
+      latestAt: `${new Date().getFullYear()}-05-04T12:00:00Z`, overview: { first_at: `${new Date().getFullYear()}-05-03T12:00:00Z`, activity: [{ bucket: `${new Date().getFullYear()}-05-03`, count: 1 }, { bucket: `${new Date().getFullYear()}-05-04`, count: 1 }], co_participants: [{ key: '1', label: 'Person Example', count: 2 }] }
+    }, range: 'May 3 – May 4', showRange: false,
+    image: 'Activity by day, May 3 to May 4, busiest May 3 with 1 item', dates: ['May 3', 'May 4'] },
     { name: 'daily', selection: {
       kind: 'group' as const,
       dimension: 'month' as const,
