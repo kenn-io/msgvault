@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/mail"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -189,12 +190,9 @@ func (s *Store) CreateStandalonePersonContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		var formatted serviceFormattedPhoneOwners
-		if len(input.Phones) > 0 {
-			var err error
-			if formatted, err = s.loadServiceFormattedPhoneOwnersTx(ctx, tx); err != nil {
-				return err
-			}
+		formatted, err := s.loadServiceFormattedContactOwnersTx(ctx, tx, points)
+		if err != nil {
+			return err
 		}
 		for _, point := range points {
 			if err := s.refusePersonContactDuplicateTx(ctx, tx, point.kind, point.normalized, formatted); err != nil {
@@ -351,24 +349,23 @@ func (s *Store) createPersonEmploymentTx(
 
 func (s *Store) refusePersonContactDuplicateTx(
 	ctx context.Context, tx *loggedTx, kind ContactAddressKind, value string,
-	formatted serviceFormattedPhoneOwners,
+	formatted serviceFormattedContactOwners,
 ) error {
 	match := &PersonContactExistsError{Kind: kind, Value: value}
-	caseKept, caseKeptArgs := caseKeptEmailMatch("c", kind, value)
 	err := tx.QueryRowContext(ctx, `
 		SELECT c.person_id, COALESCE(p.display_name, '')
 		FROM person_contact_points c JOIN persons p ON p.id = c.person_id
-		WHERE c.address_kind = ? AND (c.normalized_value = ?`+caseKept+`)
+		WHERE c.address_kind = ? AND c.normalized_value = ?
 		  AND c.active_until IS NULL AND c.superseded_at IS NULL
-		ORDER BY c.person_id LIMIT 1`, append([]any{kind, value}, caseKeptArgs...)...,
-	).Scan(&match.PersonID, &match.Name)
+		ORDER BY c.person_id LIMIT 1`, kind, value).Scan(&match.PersonID, &match.Name)
 	if err == nil {
 		return match
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("check curated contact duplicates: %w", err)
 	}
-	if owner, ok := formatted.persons[value]; ok && kind == ContactAddressPhone {
+	key := serviceFormattedContactKey(kind, value)
+	if owner, ok := formatted.persons[key]; ok {
 		match.PersonID, match.Name = owner.id, owner.name
 		return match
 	}
@@ -377,8 +374,8 @@ func (s *Store) refusePersonContactDuplicateTx(
 		return err
 	}
 	if !found {
-		owner, ok := formatted.participants[value]
-		if !ok || kind != ContactAddressPhone {
+		owner, ok := formatted.participants[key]
+		if !ok {
 			return nil
 		}
 		match.ParticipantID, match.Name = owner.id, owner.name
@@ -408,81 +405,98 @@ type contactOwner struct {
 	name string
 }
 
-// serviceFormattedPhoneOwners maps the E.164 form of a phone to the first
-// person and the first participant that hold it under a service-specific
-// normalization.
-type serviceFormattedPhoneOwners struct {
+// serviceFormattedContactOwners maps the canonical form of an email or phone
+// to the first person and the first participant that hold it under a
+// service normalization that does not produce that form. Keys come from
+// serviceFormattedContactKey.
+type serviceFormattedContactOwners struct {
 	persons, participants map[string]contactOwner
 }
 
-// loadServiceFormattedPhoneOwnersTx reads every current phone whose service
-// keeps the value as typed. Telegram, for example, stores "+1 (202) 555-0123"
-// unchanged, so normalized_value cannot find it. The rows are read once per
-// creation and compared in E.164; the lowest owner ID wins.
-func (s *Store) loadServiceFormattedPhoneOwnersTx(
-	ctx context.Context, tx *loggedTx,
-) (serviceFormattedPhoneOwners, error) {
-	owners := serviceFormattedPhoneOwners{
+func serviceFormattedContactKey(kind ContactAddressKind, canonical string) string {
+	return string(kind) + ":" + canonical
+}
+
+// loadServiceFormattedContactOwnersTx reads, once per creation, the current
+// emails and phones a service stored in a form the indexed lookup cannot
+// find. Telegram keeps "+1 (202) 555-0123" as typed rather than in E.164, and
+// Matrix keeps an email's case. Rows are read only for kinds the request
+// contains, canonicalized like the request, and the lowest owner ID wins.
+func (s *Store) loadServiceFormattedContactOwnersTx(
+	ctx context.Context, tx *loggedTx, points []personCreateContactPoint,
+) (serviceFormattedContactOwners, error) {
+	owners := serviceFormattedContactOwners{
 		persons: map[string]contactOwner{}, participants: map[string]contactOwner{},
 	}
-	for _, lookup := range []struct {
-		owners map[string]contactOwner
-		query  string
-	}{
-		{owners.persons, `
-			SELECT c.person_id, COALESCE(p.display_name, ''), c.original_value
-			FROM person_contact_points c JOIN persons p ON p.id = c.person_id
-			WHERE c.address_kind = ? AND c.normalization NOT IN (?, ?)
-			  AND c.active_until IS NULL AND c.superseded_at IS NULL
-			ORDER BY c.person_id, c.id`},
-		{owners.participants, `
-			SELECT o.participant_id, COALESCE(p.display_name, ''), o.original_value
-			FROM participant_contact_observations o JOIN participants p ON p.id = o.participant_id
-			WHERE o.address_kind = ? AND o.normalization NOT IN (?, ?)
-			  AND o.active_until IS NULL AND o.superseded_at IS NULL
-			ORDER BY o.participant_id, o.id`},
-	} {
-		rows, err := tx.QueryContext(ctx, lookup.query,
-			ContactAddressPhone, NormalizationPhoneE164, NormalizationByAddressKind)
-		if err != nil {
-			return serviceFormattedPhoneOwners{}, fmt.Errorf("load service-formatted phones: %w", err)
+	// Each kind lists the normalizations whose stored values already match
+	// the canonical form, so the indexed lookup finds them.
+	canonicalNormalizations := map[ContactAddressKind][]any{
+		ContactAddressPhone: {NormalizationPhoneE164, NormalizationByAddressKind},
+		ContactAddressEmail: {NormalizationEmail, NormalizationLower,
+			NormalizationStripAtLower, NormalizationByAddressKind},
+	}
+	for kind, canonical := range canonicalNormalizations {
+		if !slices.ContainsFunc(points, func(point personCreateContactPoint) bool {
+			return point.kind == kind
+		}) {
+			continue
 		}
-		for rows.Next() {
-			var owner contactOwner
-			var original string
-			if err := rows.Scan(&owner.id, &owner.name, &original); err != nil {
-				_ = rows.Close()
-				return serviceFormattedPhoneOwners{}, fmt.Errorf("scan service-formatted phone: %w", err)
+		placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(canonical)), ", ")
+		for _, lookup := range []struct {
+			owners map[string]contactOwner
+			query  string
+		}{
+			{owners.persons, `
+				SELECT c.person_id, COALESCE(p.display_name, ''), c.original_value
+				FROM person_contact_points c JOIN persons p ON p.id = c.person_id
+				WHERE c.address_kind = ? AND c.normalization NOT IN (` + placeholders + `)
+				  AND c.active_until IS NULL AND c.superseded_at IS NULL
+				ORDER BY c.person_id, c.id`},
+			{owners.participants, `
+				SELECT o.participant_id, COALESCE(p.display_name, ''), o.original_value
+				FROM participant_contact_observations o JOIN participants p ON p.id = o.participant_id
+				WHERE o.address_kind = ? AND o.normalization NOT IN (` + placeholders + `)
+				  AND o.active_until IS NULL AND o.superseded_at IS NULL
+				ORDER BY o.participant_id, o.id`},
+		} {
+			if err := loadServiceFormattedRowsTx(ctx, tx, lookup.owners, kind,
+				lookup.query, append([]any{kind}, canonical...)); err != nil {
+				return serviceFormattedContactOwners{}, err
 			}
-			// A value that is not a phone number cannot match one.
-			normalized, err := NormalizeServiceValue(nil, ContactAddressPhone, original)
-			if err != nil {
-				continue
-			}
-			if _, seen := lookup.owners[normalized]; !seen {
-				lookup.owners[normalized] = owner
-			}
-		}
-		if err := rows.Close(); err != nil {
-			return serviceFormattedPhoneOwners{}, fmt.Errorf("close service-formatted phones: %w", err)
-		}
-		if err := rows.Err(); err != nil {
-			return serviceFormattedPhoneOwners{}, fmt.Errorf("read service-formatted phones: %w", err)
 		}
 	}
 	return owners, nil
 }
 
-// caseKeptEmailMatch widens an email lookup to rows from services that keep
-// identifier case, such as Matrix. Those rows store the email as typed, so
-// their normalized value can differ from the lowercase input only in case.
-// Other kinds and normalizations already compare exactly.
-func caseKeptEmailMatch(alias string, kind ContactAddressKind, value string) (string, []any) {
-	if kind != ContactAddressEmail {
-		return "", nil
+func loadServiceFormattedRowsTx(
+	ctx context.Context, tx *loggedTx, owners map[string]contactOwner,
+	kind ContactAddressKind, query string, args []any,
+) error {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("load service-formatted %s contacts: %w", kind, err)
 	}
-	return ` OR (` + alias + `.normalization = ? AND LOWER(` + alias + `.normalized_value) = ?)`,
-		[]any{NormalizationNone, value}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var owner contactOwner
+		var original string
+		if err := rows.Scan(&owner.id, &owner.name, &original); err != nil {
+			return fmt.Errorf("scan service-formatted %s contact: %w", kind, err)
+		}
+		// A value that does not normalize as this kind cannot match one.
+		canonical, err := NormalizeServiceValue(nil, kind, original)
+		if err != nil {
+			continue
+		}
+		key := serviceFormattedContactKey(kind, canonical)
+		if _, seen := owners[key]; !seen {
+			owners[key] = owner
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read service-formatted %s contacts: %w", kind, err)
+	}
+	return nil
 }
 
 // findObservedContactParticipantTx looks up the lowest participant observed
@@ -498,7 +512,6 @@ func (s *Store) findObservedContactParticipantTx(
 	if kind == ContactAddressPhone {
 		participantLookup = `SELECT id FROM participants WHERE phone_number = ?`
 	}
-	caseKept, caseKeptArgs := caseKeptEmailMatch("o", kind, value)
 	err := tx.QueryRowContext(ctx, `
 		SELECT p.id, COALESCE(p.display_name, '') FROM participants p
 		WHERE p.id IN (`+participantLookup+`
@@ -507,10 +520,9 @@ func (s *Store) findObservedContactParticipantTx(
 			WHERE LOWER(i.identifier_value) = ?
 			UNION
 			SELECT o.participant_id FROM participant_contact_observations o
-			WHERE o.address_kind = ? AND (o.normalized_value = ?`+caseKept+`)
+			WHERE o.address_kind = ? AND o.normalized_value = ?
 			  AND o.active_until IS NULL AND o.superseded_at IS NULL)
-		ORDER BY p.id LIMIT 1`, append([]any{value, value, kind, value}, caseKeptArgs...)...,
-	).Scan(&match.ParticipantID, &match.Name)
+		ORDER BY p.id LIMIT 1`, value, value, kind, value).Scan(&match.ParticipantID, &match.Name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

@@ -904,3 +904,28 @@ func TestInferredReplacementChangingOnlyARenderedParameterNeedsReview(t *testing
 		})
 	}
 }
+
+// Saving the display name an enrichment-created person already has leaves its
+// inferred name row in place, so that row must keep owning the display name.
+func TestSavingUnchangedDisplayNameKeepsInferredNameOwnership(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	person, err := f.Store.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+		Name: "Alex Example", Source: store.ProvenanceEnrichment,
+	})
+	require.NoError(err)
+	_, err = f.Store.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, new("Alex Example"))
+	require.NoError(err)
+
+	names, err := f.Store.ListPersonNamesContext(t.Context(), person.ID, true)
+	require.NoError(err)
+	require.Len(names, 1)
+	require.Equal(store.ProvenanceEnrichment, names[0].Envelope.Source)
+	require.NoError(f.Store.SupersedePersonNameContext(
+		t.Context(), person.ID, names[0].Envelope.ID, nil,
+	))
+	retired, err := f.Store.GetPersonContext(t.Context(), person.ID)
+	require.NoError(err)
+	assert.Nil(retired.DisplayName, "retiring the inferred name row clears the name it still owns")
+}

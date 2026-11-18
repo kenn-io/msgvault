@@ -695,17 +695,22 @@ func (s *Store) updatePersonDisplayNameOnce(
 			}
 		}
 
+		// An unchanged name keeps its owning inferred row, so the link stays.
+		releaseOwner := ""
+		if nameChanged {
+			releaseOwner = "display_name_source_name_id = NULL,"
+		}
 		var updatedID int64
 		if err := s.reviewInferenceExportChangesTx(ctx, tx, id, func() error {
 			err := tx.QueryRowContext(ctx, fmt.Sprintf(`
 				UPDATE persons
-				SET display_name = ?, display_name_source_name_id = NULL,
+				SET display_name = ?, %s
 				    revision = revision + 1,
 				    vcard_projection_revision = vcard_projection_revision + 1,
 				    updated_at = %s
 				WHERE id = ? AND revision = ?
 				RETURNING id
-			`, s.dialect.Now()), displayName, id, expectedRevision).Scan(&updatedID)
+			`, releaseOwner, s.dialect.Now()), displayName, id, expectedRevision).Scan(&updatedID)
 			if errors.Is(err, sql.ErrNoRows) {
 				return s.personCASMissTx(ctx, tx, id)
 			}
