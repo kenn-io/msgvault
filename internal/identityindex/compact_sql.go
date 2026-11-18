@@ -36,7 +36,7 @@ func buildRelationshipPeopleSQL(effectiveAt time.Time, groups string) string {
 ), source_rows AS (
 	SELECT canonical_id, source_id, source_type,
 	       count(*)::BIGINT AS activity_count,
-	       coalesce(list(DISTINCT meeting_group) FILTER (WHERE message_type = 'meeting_transcript'), []::BIGINT[]) AS meeting_groups,
+	       coalesce(list(DISTINCT meeting_group ORDER BY meeting_group) FILTER (WHERE message_type = 'meeting_transcript'), []::BIGINT[]) AS meeting_groups,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
