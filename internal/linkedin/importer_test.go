@@ -187,11 +187,30 @@ func TestImportMessageShardsAndLinkCommas(t *testing.T) {
 	assert.Equal(1, count(t, st, "SELECT COUNT(*) FROM attachments WHERE storage_path = 'https://files.example.com/asset?ids=1,2'"))
 }
 
+func TestRecipientNamesWithCommas(t *testing.T) {
+	assert := assert.New(t)
+	one := recipients(row{"recipient profile urls": "https://www.linkedin.com/in/morgan-example/", "to": "Morgan Example, PhD"})
+	assert.Equal([]actor{{URL: "https://www.linkedin.com/in/morgan-example/", Name: "Morgan Example, PhD"}}, one)
+	// Semicolons separate the names, so commas inside each name stay.
+	two := recipients(row{"recipient profile urls": "https://www.linkedin.com/in/one-example/; https://www.linkedin.com/in/two-example/", "to": "One Example, PhD; Two Example, MD"})
+	assert.Equal([]actor{{URL: "https://www.linkedin.com/in/one-example/", Name: "One Example, PhD"}, {URL: "https://www.linkedin.com/in/two-example/", Name: "Two Example, MD"}}, two)
+	// Two URLs but three comma-separated names: keep the URLs, drop the names.
+	mismatched := recipients(row{"recipient profile urls": "https://www.linkedin.com/in/one-example/; https://www.linkedin.com/in/two-example/", "to": "Alex, Sam, Lee"})
+	assert.Equal([]actor{{URL: "https://www.linkedin.com/in/one-example/"}, {URL: "https://www.linkedin.com/in/two-example/"}}, mismatched)
+}
+
+func TestSplitURLsKeepsSemicolonsInsideLinks(t *testing.T) {
+	assert := assert.New(t)
+	assert.Equal([]string{"https://files.example.com/file;version=2"}, splitURLs("https://files.example.com/file;version=2"))
+	assert.Equal([]string{"https://files.example.com/a?ids=1,2", "https://files.example.com/b;v=1"},
+		splitURLs("https://files.example.com/a?ids=1,2; https://files.example.com/b;v=1"))
+	assert.Equal([]string{"https://files.example.com/a", "https://files.example.com/b"}, splitURLs("https://files.example.com/a,https://files.example.com/b"))
+}
+
 func TestRecipientsURLLists(t *testing.T) {
 	require := require.New(t)
 	for _, separator := range []string{"; ", ", ", ",", "\n"} {
-		people, err := recipients(row{"recipient profile urls": "https://www.linkedin.com/in/one-example/" + separator + "https://www.linkedin.com/in/two-example/", "to": "One Example; Two Example"})
-		require.NoError(err)
+		people := recipients(row{"recipient profile urls": "https://www.linkedin.com/in/one-example/" + separator + "https://www.linkedin.com/in/two-example/", "to": "One Example; Two Example"})
 		require.Len(people, 2)
 		for _, person := range people {
 			_, err := ProfileURL(person.URL)
@@ -293,7 +312,9 @@ func TestImportPreservesPartialRecipientURLs(t *testing.T) {
 	assert.Equal(1, count(t, st, "SELECT COUNT(*) FROM conversations WHERE conversation_type = 'group_chat'"))
 	writeMessageRows(t, dir, [][]string{{"thread", "2026-10-02 12:00:00 UTC", "Ambiguous", ownerURL, "One Example; Two Example; Three Example", "https://www.linkedin.com/in/one-example/;https://www.linkedin.com/in/three-example/", ""}})
 	_, err = Import(t.Context(), st, dir, Options{Identifier: "example", Me: ownerURL})
-	require.ErrorContains(err, "recipient")
+	require.NoError(err, "a row whose names can't be paired with URLs imports with the URLs alone")
+	assert.Equal(2, count(t, st, "SELECT COUNT(*) FROM messages"))
+	assert.Equal(2, count(t, st, "SELECT COUNT(*) FROM message_recipients mr JOIN messages m ON m.id = mr.message_id WHERE m.snippet = 'Ambiguous' AND mr.recipient_type = 'to'"))
 }
 
 func TestImportLinksPreviouslyArchivedCommentToPost(t *testing.T) {

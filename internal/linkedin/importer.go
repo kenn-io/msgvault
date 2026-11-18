@@ -243,11 +243,18 @@ func splitRecipientList(value string) []string {
 	return parts
 }
 
-func recipients(r row) ([]actor, error) {
+func recipients(r row) []actor {
 	urls := splitRecipientList(r["recipient profile urls"])
 	names := splitRecipientList(r["to"])
-	if len(urls) > 0 && len(names) > 0 && len(urls) != len(names) {
-		return nil, errors.New("recipient names and profile URL positions differ; cannot align recipients")
+	if len(urls) == 1 {
+		// One recipient: a comma in the name ("Morgan Example, PhD") is
+		// part of the name, not a list separator.
+		names = []string{strings.TrimSpace(r["to"])}
+	}
+	if len(urls) > 0 && len(names) != len(urls) {
+		// Names that can't be paired with URLs would attach to the wrong
+		// people, so keep the URLs alone.
+		names = nil
 	}
 	var out []actor
 	for i := range max(len(urls), len(names)) {
@@ -262,7 +269,7 @@ func recipients(r row) ([]actor, error) {
 			out = append(out, a)
 		}
 	}
-	return out, nil
+	return out
 }
 
 func actorKey(a actor) (string, error) {
@@ -329,10 +336,7 @@ func (imp *importer) message(ctx context.Context, kind string, r row) error {
 	switch kind {
 	case "messages.csv":
 		sender = actor{URL: strings.TrimSpace(r["sender profile url"]), Name: r["from"]}
-		to, err = recipients(r)
-		if err != nil {
-			return err
-		}
+		to = recipients(r)
 		body, subject, title = r["content"], r["subject"], r["conversation title"]
 		convType = "direct_chat"
 		if len(to) > 1 {
@@ -508,14 +512,14 @@ func snippet(s string) string {
 	return s
 }
 
+// splitURLs splits a list of links. A comma or semicolon separates links
+// only when the next link starts there; inside a URL both are literal.
 func splitURLs(value string) []string {
-	value = strings.ReplaceAll(value, ",https://", " https://")
-	value = strings.ReplaceAll(value, ",http://", " http://")
-	parts := strings.FieldsFunc(value, func(r rune) bool { return r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r' })
-	for i := 0; i+1 < len(parts); i++ {
-		if strings.HasPrefix(parts[i+1], "http://") || strings.HasPrefix(parts[i+1], "https://") {
-			parts[i] = strings.TrimSuffix(parts[i], ",")
+	for _, separator := range []string{",", ";"} {
+		for _, scheme := range []string{"https://", "http://"} {
+			value = strings.ReplaceAll(value, separator+" "+scheme, " "+scheme)
+			value = strings.ReplaceAll(value, separator+scheme, " "+scheme)
 		}
 	}
-	return parts
+	return strings.Fields(value)
 }
