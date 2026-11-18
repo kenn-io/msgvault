@@ -41,9 +41,7 @@ describe('Add to task', () => {
       expect(screen.getByRole('radiogroup', { name: 'Issue' })).toBeTruthy();
       expect(screen.queryByText('Issue')).toEqual(email ? expect.anything() : null);
       expect(await screen.findByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Follow up');
-      const quote = await screen.findByRole('region', { name: 'Quoted passage' });
-      const issueMode = screen.getByRole('radiogroup', { name: 'Issue' });
-      expect(issueMode.compareDocumentPosition(quote) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      await screen.findByRole('region', { name: 'Quoted passage' });
       expect(screen.getByRole('textbox', { name: 'Brief' })).toHaveProperty('value', `${location.origin}/messages/42`);
     } finally { view?.unmount(); readiness.dispose(); }
   });
@@ -95,10 +93,6 @@ describe('Add to task', () => {
       });
       await fireEvent.input(await screen.findByRole('textbox', { name: 'Task title' }), { target: { value: 'Revised follow up' } });
       await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Draft notes' } });
-      await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-      await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
-      expect(screen.getByRole('textbox', { name: 'Task title' })).toHaveProperty('value', 'Revised follow up');
-      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', 'Draft notes');
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
       await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });

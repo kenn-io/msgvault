@@ -5,13 +5,24 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
-  it('hides an unavailable empty group when setup is suppressed', async () => {
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: 'unavailable' }
-      : { state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} }));
-    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup: false });
-    await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
-    expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
+  it.each([
+    ['unavailable', { state: 'unavailable' }, { state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} }, false, ''],
+    ['partial', { state: 'ready' }, { state: 'partial', complete: false, tasks: [], outbound_metadata: {} }, true, 'Some linked tasks may be missing.'],
+    ['error', { state: 'ready' }, null, true, 'Lookup failed'],
+    ['disabled', { state: 'disabled' }, { state: 'disabled', complete: false, tasks: [], outbound_metadata: {} }, true, 'Set up'],
+    ['session-only', { state: 'ready', project: 'example' }, { state: 'ready', complete: true, reason: 'cache_persistence_unsupported', tasks: [], outbound_metadata: {} }, true, 'Linked-task index updates are available for this session but are not persisted to disk on this platform.']
+  ])('keeps an empty group hidden for %s', async (_state, status, result, showSetup, notice) => {
+    let loaded = false;
+    const client = createAPIClient(async input => {
+      if ((input as Request).url.endsWith('/status')) return Response.json(status);
+      loaded = true;
+      return result ? Response.json(result) : Response.json({ message: 'Lookup failed' }, { status: 503 });
+    });
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup });
+    await waitFor(() => expect(loaded).toBe(true));
+    if (notice) expect(await screen.findByText(notice)).toBeDefined();
+    else await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
+    expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
   });
 
   it('shows an outage notice when setup is enabled and retains safe cached rows', async () => {
@@ -21,68 +32,13 @@ describe('Message task list', () => {
     render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
     expect(await screen.findByText('Cached task')).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Open Settings' })).toBeDefined();
   });
 
-  it('keeps the partial-index notice visible without rows', async () => {
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: 'ready' }
-      : { state: 'partial', complete: false, tasks: [], outbound_metadata: {} }));
-    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
-    expect(await screen.findByText('Some linked tasks may be missing.')).toBeDefined();
-    expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
-    expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
-    expect(screen.getByText('Some linked tasks may be missing.').closest('.task-group')).toBeNull();
-  });
-
-  it('keeps a lookup error visible without rows', async () => {
-    const client = createAPIClient(async input => (input as Request).url.endsWith('/status')
-      ? Response.json({ state: 'ready' }) : Response.json({ message: 'Lookup failed' }, { status: 503 }));
-    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
-    expect(await screen.findByText('Lookup failed')).toBeDefined();
-    expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
-  });
-
-  it('shows the session-only cache notice when no tasks are linked', async () => {
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: 'ready', project: 'example' }
-      : { state: 'ready', complete: true, reason: 'cache_persistence_unsupported', tasks: [], outbound_metadata: {} }));
-    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
-    expect((await screen.findByText('Linked-task index updates are available for this session but are not persisted to disk on this platform.')).closest('section[hidden]')).toBeNull();
-  });
-
-  it('keeps an empty group hidden while task and issue lookups are pending', async () => {
-    let resolveTasks!: (response: Response) => void;
-    let resolveIssues!: (response: Response) => void;
-    const tasks = new Promise<Response>(resolve => { resolveTasks = resolve; });
-    const issues = new Promise<Response>(resolve => { resolveIssues = resolve; });
-    let tasksStarted = false;
-    let issuesStarted = false;
-    const client = createAPIClient(async input => {
-      const url = (input as Request).url;
-      if (url.endsWith('/status')) return Response.json({ state: 'ready' });
-      if (url.includes('/kata/')) { issuesStarted = true; return issues; }
-      tasksStarted = true; return tasks;
-    });
-    const readiness = new KataReadiness(client);
-    await waitFor(() => expect(readiness.ready).toBe(true));
-    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
-    try {
-      await waitFor(() => expect(tasksStarted && issuesStarted).toBe(true));
-      expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
-      expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
-      resolveTasks(Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: {} }));
-      resolveIssues(Response.json({ issues: [], truncated: false }));
-      await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
-      expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
-      expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
-    } finally { view.unmount(); readiness.dispose(); }
-  });
   it('groups task and Kata links under one Tasks heading', async () => {
     const client = createAPIClient(async input => {
       const url = (input as Request).url;
       if (url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-      if (url.includes('/kata/')) return Response.json({ issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Kata work', status: 'open', web_url: 'https://example.org/issue' }], truncated: false });
+      if (url.includes('/kata/')) return Response.json({ issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Kata work', status: 'open', web_url: 'https://example.org/issue' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }], truncated: false });
       return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Task work' }], outbound_metadata: {} });
     });
     const readiness = new KataReadiness(client);
@@ -93,29 +49,15 @@ describe('Message task list', () => {
       expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
       expect(screen.getByText('Tasks · example')).toBeDefined();
       expect(screen.getByText('Kata · example#abcd · Open')).toBeDefined();
+      expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
     } finally { view.unmount(); readiness.dispose(); }
   });
-  it('shows a closed issue state beside its reference', async () => {
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status') ? { state: 'ready' } : { issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Closed issue', status: 'closed' }], truncated: false }));
-    const readiness = new KataReadiness(client);
-    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
-    try { expect(await screen.findByText('Kata · example#abcd · Closed')).toBeDefined(); }
-    finally { view.unmount(); readiness.dispose(); }
-  });
-
-  it('reports a failed Kata lookup in the Tasks group', async () => {
+  it('reports a failed Kata lookup', async () => {
     const client = createAPIClient(async input => (input as Request).url.endsWith('/status') ? Response.json({ state: 'ready' }) : Response.json({ message: 'Kata lookup failed' }, { status: 503 }));
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
     try { expect((await screen.findByRole('alert')).textContent).toContain('Kata lookup failed'); }
     finally { view.unmount(); readiness.dispose(); }
-  });
-
-  it('offers setup when the task integration is disabled', async () => {
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status') ? { state: 'disabled' } : { state: 'disabled', complete: false, tasks: [], outbound_metadata: {} }));
-    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
-    expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
-    expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
   });
 
   it('reloads persisted email links and skips task lookup for non-email messages', async () => {

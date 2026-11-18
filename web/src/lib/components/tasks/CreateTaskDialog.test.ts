@@ -44,23 +44,17 @@ describe('CreateTaskDialog', () => {
     expect(requests[0]!.headers.get('X-Request-Id')).toBeTruthy();
   });
 
-  it('omits missing subject and sender from the message chip', () => {
-    render(CreateTaskDialog, {
-      client: createAPIClient(vi.fn()), messageId: 42, project: 'project', defaultTitle: 'Task',
-      archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
-      sourceMessageId: 'source-42', subject: '', from: '', sentAt: '2026-07-18T12:00:00Z'
-    });
-    expect(screen.getByText('Message')).toBeDefined();
-    expect(screen.getByText(/^Jul 18(?:, 2026)?$/)).toBeDefined();
-  });
-
-  it('uses the default title when all message context fields are empty', () => {
+  it.each([
+    ['2026-07-18T12:00:00Z', /^Jul 18(?:, 2026)?$/],
+    ['', /^Fallback title$/]
+  ])('shows available message context for sentAt=%s', (sentAt, expected) => {
     render(CreateTaskDialog, {
       client: createAPIClient(vi.fn()), messageId: 42, project: 'project', defaultTitle: 'Fallback title',
       archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
-      sourceMessageId: 'source-42', subject: '', from: '', sentAt: ''
+      sourceMessageId: 'source-42', subject: '', from: '', sentAt
     });
-    expect(screen.getByText('Fallback title')).toBeDefined();
+    expect(screen.getByText('Message')).toBeDefined();
+    expect(screen.getByText(expected)).toBeDefined();
   });
 
   it('keeps the request ID and added_at stable across a failed browser retry', async () => {

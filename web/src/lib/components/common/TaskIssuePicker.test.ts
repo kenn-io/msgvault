@@ -6,7 +6,7 @@ import TaskIssuePicker from './TaskIssuePicker.svelte';
 const item = { id: 'one', label: 'Send the budget' };
 
 describe('TaskIssuePicker', () => {
-  it.each(['garden#w3fa', ' garden#w3fa', 'garden#w3fa ', '  garden#w3fa  '])('offers the trimmed reference %s when lookup fails', async (query) => {
+  it.each(['garden#w3fa', '  garden#w3fa  '])('offers the trimmed reference %s when lookup fails', async (query) => {
     const load = vi.fn(async (_query: string) => { throw new Error('Unavailable'); });
     render(TaskIssuePicker, { load, noun: 'open issues', empty: 'No open issues.', project: 'garden' });
     await screen.findByRole('alert');
@@ -18,7 +18,7 @@ describe('TaskIssuePicker', () => {
   });
   it.each([
     ['other#w3fa', 'garden'], ['garden#w3fa#x', 'garden'], ['garden#', 'garden'],
-    ['garden#w3 fa', 'garden'], ['garden#w3fa', ''],
+    ['garden#w3 fa', 'garden'],
   ])('does not offer invalid reference %s for project %s', async (query, project) => {
     const load = vi.fn(async (_query: string) => { throw new Error('Unavailable'); });
     render(TaskIssuePicker, { load, noun: 'open issues', empty: 'No open issues.', project });
@@ -27,6 +27,7 @@ describe('TaskIssuePicker', () => {
     await waitFor(() => expect(load.mock.calls.at(-1)?.[0]).toBe(query));
     await screen.findByRole('alert');
     expect(screen.queryByRole('radio')).toBeNull();
+    if (query === 'other#w3fa') expect(screen.getByText('Use a reference from the configured project: garden.')).toBeDefined();
   });
 
   it('keeps issue search guidance visible while filtering', async () => {

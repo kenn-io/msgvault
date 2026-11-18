@@ -320,15 +320,17 @@ it.each([{ state: 'ready', shown: true }, { state: 'disabled', shown: false }])(
 
 it('refreshes links on close after a Kata comment fails after saving evidence', async () => {
   let saved = false;
+  let initialTaskLookup = false;
+  let initialKataLookup = false;
   const issue = { uid: 'issue-uid', ref: 'abcd', qualified_ref: 'example#abcd', project: 'example', title: 'Follow up', status: 'open', revision: '1' };
   const reference = { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, source_type: 'email', source_identifier: 'archive@example.com', source_message_id: 'message-example', message: { body_sha256: 'a'.repeat(64), start_rune: 0, end_rune: 15 } };
   const client = createAPIClient(async (input) => {
     const request = input as Request;
     const path = new URL(request.url).pathname;
     if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-    if (path.endsWith('/messages/42/tasks')) return Response.json({ state: 'ready', complete: true, tasks: saved ? [{ id: 'task-1', title: 'Linked task' }] : [], outbound_metadata: taskOutboundMetadata });
+    if (path.endsWith('/messages/42/tasks')) { initialTaskLookup = true; return Response.json({ state: 'ready', complete: true, tasks: saved ? [{ id: 'task-1', title: 'Linked task' }] : [], outbound_metadata: taskOutboundMetadata }); }
     if (path.endsWith('/kata/open-issues')) return Response.json({ issues: [issue], truncated: false });
-    if (path.endsWith('/kata/issues')) return Response.json({ issues: saved ? [issue] : [], truncated: false });
+    if (path.endsWith('/kata/issues')) { initialKataLookup = true; return Response.json({ issues: saved ? [issue] : [], truncated: false }); }
     if (path.endsWith('/evidence/prepare')) return Response.json({ evidence: [{ id: 'evidence-1', passage: 'passage-1', reference, excerpt: 'Opening passage', display: { containing_title: 'Synthetic message' }, content_trust: 'untrusted' }] });
     if (path.endsWith('/issues/example%23abcd/evidence') && request.method === 'POST') {
       saved = true;
@@ -341,7 +343,7 @@ it('refreshes links on close after a Kata comment fails after saving evidence', 
   const view = render(MessageCard, { props: { message: detail({ messageType: 'email' }), expanded: true, client }, context: new Map([[kataReadinessKey, readiness]]) });
   try {
     await waitFor(() => expect(readiness.ready).toBe(true));
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull());
+    await waitFor(() => expect(initialTaskLookup && initialKataLookup).toBe(true));
     await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
