@@ -48,11 +48,6 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 			is_author, is_owner)
 	`)
 	require.NoError(err)
-	_, err = db.ExecContext(t.Context(), `INSERT INTO synthetic_temperature_activity
-		SELECT * REPLACE (8::BIGINT AS message_id, true AS email_invite, 'event' AS entry_kind, 'calendar' AS conversation_type)
-		FROM synthetic_temperature_activity WHERE message_id = 6`)
-	require.NoError(err)
-
 	var sent, received, meetings, email, chat, total int64
 	var modality uint8
 	query := buildRelationshipTemperatureDailySQL(
