@@ -6,22 +6,26 @@ import TaskIssuePicker from './TaskIssuePicker.svelte';
 const item = { id: 'one', label: 'Send the budget' };
 
 describe('TaskIssuePicker', () => {
-  it('offers a typed project reference when lookup fails', async () => {
-    render(TaskIssuePicker, { load: async () => { throw new Error('Unavailable'); }, noun: 'open issues', empty: 'No open issues.', project: 'garden' });
+  it.each(['garden#w3fa', ' garden#w3fa', 'garden#w3fa ', '  garden#w3fa  '])('offers the trimmed reference %s when lookup fails', async (query) => {
+    const load = vi.fn(async (_query: string) => { throw new Error('Unavailable'); });
+    render(TaskIssuePicker, { load, noun: 'open issues', empty: 'No open issues.', project: 'garden' });
     await screen.findByRole('alert');
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'garden#w3fa' } });
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: query } });
     const choice = await screen.findByRole('radio', { name: 'garden#w3fa · Not checked yet' });
+    expect(load.mock.calls.at(-1)?.[0]).toBe('garden#w3fa');
     await fireEvent.click(choice);
     expect(choice).toHaveProperty('checked', true);
   });
   it.each([
     ['other#w3fa', 'garden'], ['garden#w3fa#x', 'garden'], ['garden#', 'garden'],
-    ['garden#w3 fa', 'garden'], [' garden#w3fa', 'garden'], ['garden#w3fa', ''],
+    ['garden#w3 fa', 'garden'], ['garden#w3fa', ''],
   ])('does not offer invalid reference %s for project %s', async (query, project) => {
-    render(TaskIssuePicker, { load: async () => { throw new Error('Unavailable'); }, noun: 'open issues', empty: 'No open issues.', project });
+    const load = vi.fn(async (_query: string) => { throw new Error('Unavailable'); });
+    render(TaskIssuePicker, { load, noun: 'open issues', empty: 'No open issues.', project });
     await screen.findByRole('alert');
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: query } });
-    await waitFor(() => expect(screen.getByRole('alert')).toBeDefined());
+    await waitFor(() => expect(load.mock.calls.at(-1)?.[0]).toBe(query));
+    await screen.findByRole('alert');
     expect(screen.queryByRole('radio')).toBeNull();
   });
 

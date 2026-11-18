@@ -142,7 +142,7 @@ describe('Message task list', () => {
     expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
     title = 'Send revised notes';
     await view.rerender({ refresh: 1 });
-    await waitFor(() => expect(screen.getByRole('link', { name: 'Open in Kata' })).toBeDefined());
+    expect(await screen.findByText('Send revised notes')).toBeDefined();
     truncated = true;
     await view.rerender({ refresh: 2 });
     expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();

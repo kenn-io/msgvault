@@ -33,7 +33,7 @@
       if (!current.signal.aborted) loading = false;
     }
   }
-  const fallback = $derived(error && project && query === listedQuery && listedQuery.startsWith(`${project}#`) && /^[^#\s]+#[^#\s]+$/.test(listedQuery) ? { id: listedQuery, label: listedQuery, detail: 'Not checked yet' } : undefined);
+  const fallback = $derived(error && project && listedQuery.startsWith(`${project}#`) && /^[^#\s]+#[^#\s]+$/.test(listedQuery) ? { id: listedQuery, label: listedQuery, detail: 'Not checked yet' } : undefined);
   const choices = $derived(fallback ? [fallback] : items);
   const schedule = debounce(() => void reload(), 250);
   onMount(() => {
