@@ -202,7 +202,8 @@
   pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 30px; max-height: 14rem; overflow: auto; font: inherit; font-family: var(--font-field); font-size: 16px; line-height: var(--type-body-line); padding: var(--space-2) var(--space-4); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
   .passage-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   @media (max-width: 640px) {
-    .passage-controls { margin-top: var(--space-4); }
+    .passage-controls { display: grid; grid-template-columns: 1fr 1fr; margin-top: var(--space-4); }
+    .passage-controls :global(.kit-button:first-child) { grid-column: 1 / -1; }
     .passage-controls :global(.kit-button) { min-height: var(--kit-control-height, 28px); padding: 5px 14px; font-size: var(--kit-control-font-size, var(--font-size-md)); }
     .passage-controls :global(.kit-button__label) { display: none; }
     .passage-controls :global(.kit-button__short-label) { display: inline-flex; }

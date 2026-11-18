@@ -764,8 +764,10 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   expect.soft(await quote.evaluate(el => getComputedStyle(el).fontSize)).toBe(await cancel.evaluate(el => getComputedStyle(el).fontSize));
   expect.soft((await quote.boundingBox())!.height).toBeGreaterThanOrEqual((await cancel.boundingBox())!.height);
   const passage = kata.getByRole('region', { name: 'Quoted passage' }).locator('pre');
-  expect.soft((await quote.boundingBox())!.y).toBe((await earlier.boundingBox())!.y);
-  expect.soft((await later.boundingBox())!.y).toBeGreaterThan((await earlier.boundingBox())!.y);
+  expect.soft((await earlier.boundingBox())!.y).toBeGreaterThan((await quote.boundingBox())!.y);
+  expect.soft((await later.boundingBox())!.y).toBe((await earlier.boundingBox())!.y);
+  expect.soft((await earlier.boundingBox())!.width).toBe((await later.boundingBox())!.width);
+  expect.soft((await quote.boundingBox())!.width).toBeCloseTo((await later.boundingBox())!.x + (await later.boundingBox())!.width - (await earlier.boundingBox())!.x);
   expect.soft((await quote.boundingBox())!.y - ((await passage.boundingBox())!.y + (await passage.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
   for (const control of [kata.getByRole('textbox', { name: 'Issue title' }), kata.getByRole('textbox', { name: 'Brief' }), kata.getByRole('button', { name: 'Later passage' }), kata.getByRole('button', { name: 'Create issue' })]) {
     const box = (await control.boundingBox())!;
@@ -774,8 +776,8 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   await kata.getByRole('radio', { name: 'Existing', exact: true }).click();
   await expect(kata.getByRole('radio', { name: 'First · garden#one' })).toBeVisible();
   expect.soft(await quote.innerText()).toBe('Quote selection');
-  expect.soft((await quote.boundingBox())!.y).toBe((await earlier.boundingBox())!.y);
-  expect.soft((await later.boundingBox())!.y).toBeGreaterThan((await earlier.boundingBox())!.y);
+  expect.soft((await earlier.boundingBox())!.y).toBeGreaterThan((await quote.boundingBox())!.y);
+  expect.soft((await later.boundingBox())!.y).toBe((await earlier.boundingBox())!.y);
   expect.soft((await quote.boundingBox())!.y - ((await passage.boundingBox())!.y + (await passage.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
   const results = kata.locator('.results');
   expect.soft((await results.boundingBox())!.height).toBeLessThan(100);
