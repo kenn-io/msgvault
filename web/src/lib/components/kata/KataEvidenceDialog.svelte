@@ -64,7 +64,7 @@
     const current = ++generation;
     controller?.abort();
     const signal = (controller = new AbortController()).signal;
-    loading = true; error = '';
+    loading = true; error = ''; preview = undefined;
     const { max_chars: _window, ...base } = selector;
     let request: EvidenceSelector = selector;
     if (exact) request = { ...base, start_rune: exact.start, end_rune: exact.end };
@@ -76,7 +76,7 @@
       preview = data.evidence[0];
       if (!exact) windowHasMore = !!preview.next_rune;
     } catch (cause) {
-      if (current === generation && !signal.aborted) { preview = undefined; error = errorMessage(cause, 'This passage is unavailable.'); }
+      if (current === generation && !signal.aborted) error = errorMessage(cause, 'This passage is unavailable.');
     } finally {
       if (current === generation) loading = false;
     }
@@ -161,21 +161,17 @@
         {/if}
         <section aria-label="Quoted passage">
           <p class="disclosure">Quote saved in Kata</p>
-          {#if loading || preview}
-            <div class="passage">
-              <pre bind:this={excerptElement} aria-hidden={loading}>{preview?.excerpt ?? ''}</pre>
-              {#if loading}<span class="preparing" role="status">Preparing the passage…</span>{/if}
-            </div>
-          {/if}
+          {#if loading}<p role="status">Preparing the passage…</p>{/if}
+          {#if preview}<pre bind:this={excerptElement}>{preview.excerpt}</pre>{/if}
           {#if windowed}
             <div class="passage-controls">
               {#if narrowed}
-                <Button size="sm" surface="soft" label="Whole passage" shortLabel="Whole" disabled={busy || loading} onclick={() => page(start)} />
+                <Button size="sm" surface="soft" label="Whole passage" disabled={busy || loading} onclick={() => page(start)} />
               {:else}
-                <Button size="sm" surface="soft" label="Quote selection" shortLabel="Quote selection" disabled={busy || loading || !preview} onclick={quoteSelection} />
+                <Button size="sm" surface="soft" label="Quote selection" disabled={busy || loading || !preview} onclick={quoteSelection} />
               {/if}
-              <Button size="sm" surface="soft" label="Earlier passage" shortLabel="Earlier passage" disabled={busy || loading || start === 0} onclick={() => page(Math.max(0, start - EVIDENCE_STEP))} />
-              <Button size="sm" surface="soft" label="Later passage" shortLabel="Later passage" disabled={busy || loading || !windowHasMore} onclick={() => page(start + EVIDENCE_STEP)} />
+              <Button size="sm" surface="soft" label="Earlier passage" disabled={busy || loading || start === 0} onclick={() => page(Math.max(0, start - EVIDENCE_STEP))} />
+              <Button size="sm" surface="soft" label="Later passage" disabled={busy || loading || !windowHasMore} onclick={() => page(start + EVIDENCE_STEP)} />
             </div>
           {/if}
         </section>
@@ -204,15 +200,6 @@
   textarea { resize: vertical; padding: var(--space-2); color: var(--text-primary); background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
   section { display: grid; gap: var(--space-2); }
   pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 30px; max-height: 14rem; overflow: auto; font: inherit; font-family: var(--font-field); font-size: 16px; line-height: var(--type-body-line); padding: var(--space-2) var(--space-4); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
-  .passage { position: relative; }
-  .preparing { position: absolute; inset: 1px; padding: var(--space-2) var(--space-4); background: var(--bg-surface); border-radius: var(--radius-sm); }
   .passage-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  @media (max-width: 640px) {
-    .passage-controls { display: grid; grid-template-columns: 1fr 1fr; margin-top: var(--space-4); }
-    .passage-controls :global(.kit-button:first-child) { grid-column: 1 / -1; }
-    .passage-controls :global(.kit-button) { min-height: var(--kit-control-height, 28px); padding: 5px 14px; font-size: var(--kit-control-font-size, var(--font-size-md)); }
-    .passage-controls :global(.kit-button__label) { display: none; }
-    .passage-controls :global(.kit-button__short-label) { display: inline-flex; }
-  }
   .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }
 </style>

@@ -9,8 +9,8 @@
   import KataEvidenceDialog from '../kata/KataEvidenceDialog.svelte';
   import TaskLinks from './TaskLinks.svelte';
 
-  let { client, messageId, title, email, onclose, onsettings, oncomplete = () => undefined }: {
-    client: APIClient; messageId: number; title: string; email: boolean; onclose: () => void; onsettings?: () => void; oncomplete?: () => void;
+  let { client, messageId, title, email, onclose, onsettings }: {
+    client: APIClient; messageId: number; title: string; email: boolean; onclose: () => void; onsettings?: () => void;
   } = $props();
   const kata = kataReadiness();
   let provider = $state(untrack(() => email ? 'tasks' : 'kata'));
@@ -33,7 +33,7 @@
     {#if taskReceipt}
       <div class="receipt"><div role="status"><p>Task {taskReceipt.action}</p><p>{taskReceipt.task.title}</p></div><div class="actions"><Button label="Done" tone="info" surface="solid" onclick={onclose} /></div></div>
     {:else if email}<div hidden={provider !== 'tasks'}>
-      <TaskLinks {client} {messageId} {title} {onsettings} mode="add" bind:busy oncancel={onclose} oncomplete={(action, task) => { taskReceipt = { action, task }; oncomplete(); }} />
+      <TaskLinks {client} {messageId} {title} {onsettings} mode="add" bind:busy oncancel={onclose} oncomplete={(action, task) => taskReceipt = { action, task }} />
     </div>{/if}
     {#if kataInitialized && (email || kata?.ready)}<div hidden={provider !== 'kata'}>
       <KataEvidenceDialog {client} selector={{ kind: 'message', message_id: messageId, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={title} defaultBrief={`${location.origin}/messages/${messageId}`} modeLabel={email} bind:busy={kataBusy} bind:receipt={kataReceipt} {onclose} />

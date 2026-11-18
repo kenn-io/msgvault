@@ -44,7 +44,6 @@
   const hasItems = $derived(canAddToTask || canExportMeeting || canDownload || hasRenderableHTML);
 
   let taskOpen = $state(false);
-  let tasksRefreshed = false;
   let exportOpen = $state(false);
 
   async function downloadOriginal(): Promise<void> {
@@ -91,8 +90,7 @@
     title={message.subject || 'Follow up on this message'}
     email={hasOriginal}
     onsettings={onOpenSettings}
-    oncomplete={() => { tasksRefreshed = true; onTaskDialogClose?.(); }}
-    onclose={() => { taskOpen = false; if (!tasksRefreshed) onTaskDialogClose?.(); tasksRefreshed = false; }}
+    onclose={() => { taskOpen = false; onTaskDialogClose?.(); }}
   />
 {/if}
 {#if client && exportOpen}
