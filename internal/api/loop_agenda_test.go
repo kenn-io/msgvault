@@ -143,7 +143,7 @@ func TestLoopAgendaFilesPromise(t *testing.T) {
 	require.True(t, ok)
 	third := archive.promises[0]
 	third.ID, third.PersonID, third.PromisedAt = 3, other.ID, now
-	third.AnchorMessageID = f.PersistEmail(storetest.EmailSpec{Thread: "promise", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: quote, SentAt: now})
+	third.AnchorMessageID = f.PersistEmail(storetest.EmailSpec{Thread: "promise", From: storetest.OwnerAddress, To: []string{"sam@example.test"}, Body: quote, SentAt: now})
 	archive.promises = append(archive.promises, third)
 	different, err := agenda.File(t.Context(), "c3", now)
 	require.NoError(t, err)
@@ -282,7 +282,8 @@ func TestLoopAgendaPromiseScopeAndOrder(t *testing.T) {
 	now := time.Now().UTC()
 	firstAt := now.Add(-72 * time.Hour)
 	body := "I will send the draft."
-	firstID := f.PersistEmail(storetest.EmailSpec{Thread: "scope", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: body, SentAt: firstAt})
+	const copyQuote = "I will send a copy."
+	firstID := f.PersistEmail(storetest.EmailSpec{Thread: "scope", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: body + " " + copyQuote, SentAt: firstAt})
 	laterID := f.PersistEmail(storetest.EmailSpec{Thread: "scope", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you revise it?", SentAt: now.Add(-48 * time.Hour)})
 	p := f.EnsureParticipant("alex@example.test", "Alex", "example.test")
 	person, _, err := f.Store.CreatePersonFromParticipant(p)
@@ -291,9 +292,10 @@ func TestLoopAgendaPromiseScopeAndOrder(t *testing.T) {
 	other, _, err := f.Store.CreatePersonFromParticipant(otherP)
 	require.NoError(t, err)
 	promise := store.PersonCommitment{ID: 1, PersonID: person.ID, AnchorMessageID: firstID, Direction: "owed_by", Quote: body, Start: 0, End: int64(len(body)), Summary: "Send draft", PromisedAt: firstAt}
+	// The same message holds a second, separately quoted promise.
 	second := promise
-	second.ID = 2
-	second.Summary = "Send copy"
+	second.ID, second.Summary, second.Quote = 2, "Send copy", copyQuote
+	second.Start, second.End = int64(len(body)+1), int64(len(body)+1+len(copyQuote))
 	native := katatest.New(t)
 	server := httptest.NewServer(native.Service.Handler())
 	t.Cleanup(server.Close)
@@ -310,7 +312,7 @@ func TestLoopAgendaPromiseScopeAndOrder(t *testing.T) {
 	assert.Empty(t, agendaParent(t, native, server, one.Issue.UID))
 	assert.Empty(t, agendaParent(t, native, server, two.Issue.UID))
 	assert.Equal(t, one.Issue.UID, agendaParent(t, native, server, reply.Issue.UID))
-	laterPromiseID := f.PersistEmail(storetest.EmailSpec{Thread: "scope", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: body, SentAt: now.Add(-time.Hour)})
+	laterPromiseID := f.PersistEmail(storetest.EmailSpec{Thread: "scope", From: storetest.OwnerAddress, To: []string{"sam@example.test"}, Body: body, SentAt: now.Add(-time.Hour)})
 	third := promise
 	third.AnchorMessageID = laterPromiseID
 	third.ID = 3
@@ -501,9 +503,10 @@ func TestLoopAgendaPromiseKeyFollowsSource(t *testing.T) {
 	// The same source promise read from another row and position files nothing new.
 	again := promise
 	again.ID, again.AnchorMessageID, again.Start, again.End = 2, moved, 4, int64(4+len(body))
-	// Different wording or a replacement message at the first row and position is a new promise.
+	// New wording at the first row and position, after the message is edited, is a new promise.
+	const reworded = "I will mail it."
 	replaced := promise
-	replaced.ID, replaced.SourceKey = 3, "source-b"
+	replaced.ID, replaced.Quote, replaced.SourceKey = 3, reworded, "source-b"
 	agenda.archive = &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{promise, again, replaced}}
 	filed, err := agenda.File(t.Context(), "c1", now)
 	require.NoError(t, err)
@@ -511,6 +514,7 @@ func TestLoopAgendaPromiseKeyFollowsSource(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, reused.Replayed)
 	assert.Equal(t, filed.Issue.UID, reused.Issue.UID)
+	editMessageBody(t, f, first, reworded)
 	fresh, err := agenda.File(t.Context(), "c3", now)
 	require.NoError(t, err)
 	assert.False(t, fresh.Replayed)
@@ -561,8 +565,10 @@ func TestLoopAgendaRefilesClosedPromise(t *testing.T) {
 	t.Cleanup(kata.Close)
 	agenda := NewLoopAgenda(config.TaskIntegrationConfig{Enabled: true, Endpoint: kata.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}, f.Store, "")
 	promise := store.PersonCommitment{ID: 1, PersonID: person.ID, AnchorMessageID: id, Quote: body, End: int64(len(body)), Summary: "Send it", Direction: "owed_by", PromisedAt: now.Add(-time.Hour)}
+	const call = "I will call you."
 	unfiled := promise
-	unfiled.ID, unfiled.State = 2, store.LoopStateDone
+	unfiled.ID, unfiled.State, unfiled.Summary, unfiled.Quote, unfiled.End = 2, store.LoopStateDone, "Call", call, int64(len(call))
+	unfiled.AnchorMessageID = f.PersistEmail(storetest.EmailSpec{Thread: "closed-call", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: call, SentAt: now.Add(-time.Hour)})
 	archive := &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{promise, unfiled}}
 	agenda.archive = archive
 	filed, err := agenda.File(t.Context(), "c1", now)
