@@ -341,7 +341,8 @@ describe('TaskLinks', () => {
         archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z'
       } });
     });
-    render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic', oncomplete });
+    render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic', oncomplete });
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
     expect(await screen.findByRole('radio', { name: 'Synthetic result · task-1' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic result · task-2' }));
     const search = requests.find(request => new URL(request.url).pathname.endsWith('/integrations/tasks/search'))!;
@@ -371,9 +372,10 @@ describe('TaskLinks', () => {
       return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: {} });
     });
     render(TaskLinks, {
-      client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic',
+      client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic',
     });
 
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic result · task-1' }));
     const link = screen.getByRole('button', { name: 'Link task' });
     await fireEvent.click(link);

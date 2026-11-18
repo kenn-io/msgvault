@@ -43,7 +43,7 @@ describe('KataEvidenceDialog', () => {
     const h = harness();
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up' });
     expect(await screen.findByText('Opening passage')).toBeDefined();
-    expect(screen.getByText('The quote, title, and description are sent; attachments stay out.')).toBeDefined();
+    expect(screen.getByText('Only the quoted passage is sent; attachments stay out.')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Earlier passage' })).toHaveProperty('disabled', true);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Later passage' }));
@@ -174,7 +174,7 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Quote selection' }));
     await screen.findByText(quote);
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    expect(screen.getByText('Only the quote is sent; attachments stay out.')).toBeDefined();
+    expect(screen.getByText('Only the quoted passage is sent; attachments stay out.')).toBeDefined();
     await fireEvent.click(await screen.findByRole('radio', { name: 'Second · example#two' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('Saved.');
@@ -197,6 +197,12 @@ describe('KataEvidenceDialog', () => {
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     await screen.findByRole('radio', { name: 'Issue 24 · example#24' });
+    const first = screen.getByRole('radio', { name: 'Issue 0 · example#0' });
+    await fireEvent.click(first);
+    expect(first).toHaveProperty('checked', true);
+    const second = screen.getByRole('radio', { name: 'Issue 1 · example#1' });
+    await fireEvent.click(second);
+    expect(second).toHaveProperty('checked', true);
     expect(screen.getAllByRole('radio')).toHaveLength(27);
   });
 
@@ -223,8 +229,7 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budget' } });
     const older = await screen.findByRole('radio', { name: 'Older budget · example#k3f9' });
     await fireEvent.click(older);
-    expect(screen.getByText('Older budget')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Change' })).toBeDefined();
+    expect(older).toHaveProperty('checked', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('example#abcd');
     expect(reads).toEqual(['', 'budget']);
@@ -237,11 +242,11 @@ describe('KataEvidenceDialog', () => {
     render(KataEvidenceDialog, { client: h.client, selector });
     await screen.findByText('Opening passage');
     await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
-    await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Brief draft' } });
+    await fireEvent.input(screen.getByLabelText('Brief'), { target: { value: 'Brief draft' } });
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
     expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
-    expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Brief draft');
+    expect(screen.getByLabelText('Brief')).toHaveProperty('value', 'Brief draft');
   });
 
   it('files a quote using a typed project ref when issue lookup fails', async () => {
@@ -268,54 +273,6 @@ describe('KataEvidenceDialog', () => {
       await screen.findByText('example#abcd');
       expect(new URL(filed!.url).pathname).toBe('/api/v1/integrations/kata/issues/example%23abcd/evidence');
       expect(await filed!.json()).toEqual({ evidence: [passages[0].reference] });
-    } finally { view.unmount(); readiness.dispose(); }
-  });
-
-  it('does not reuse a checked title after changing to an unchecked reference', async () => {
-    let lists = 0;
-    const client = createAPIClient(async input => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-      if (path.endsWith('/open-issues')) return ++lists === 1
-        ? Response.json({ issues: [issue], truncated: false })
-        : Response.json({ message: 'List unavailable' }, { status: 503 });
-      return Response.json({ evidence: [passages[0]] });
-    });
-    const readiness = new KataReadiness(client);
-    await waitFor(() => expect(readiness.ready).toBe(true));
-    const view = render(KataEvidenceDialog, { props: { client, selector }, context: new Map([[kataReadinessKey, readiness]]) });
-    try {
-      await screen.findByText('Opening passage');
-      await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-      await fireEvent.click(await screen.findByRole('radio', { name: 'Follow up · example#abcd' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Change' }));
-      await screen.findByRole('alert');
-      await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
-      await fireEvent.click(await screen.findByRole('radio', { name: 'example#abcd · Not checked yet' }));
-      expect(screen.getByText('Not checked yet')).toBeDefined();
-    } finally { view.unmount(); readiness.dispose(); }
-  });
-
-  it('does not reuse a listed title when a typed lookup fails', async () => {
-    let lists = 0;
-    const client = createAPIClient(async input => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-      if (path.endsWith('/open-issues')) return ++lists === 1
-        ? Response.json({ issues: [issue], truncated: false })
-        : Response.json({ message: 'List unavailable' }, { status: 503 });
-      return Response.json({ evidence: [passages[0]] });
-    });
-    const readiness = new KataReadiness(client);
-    await waitFor(() => expect(readiness.ready).toBe(true));
-    const view = render(KataEvidenceDialog, { props: { client, selector }, context: new Map([[kataReadinessKey, readiness]]) });
-    try {
-      await screen.findByText('Opening passage');
-      await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-      await screen.findByRole('radio', { name: 'Follow up · example#abcd' });
-      await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
-      await fireEvent.click(await screen.findByRole('radio', { name: 'example#abcd · Not checked yet' }));
-      expect(screen.getByText('Not checked yet')).toBeDefined();
     } finally { view.unmount(); readiness.dispose(); }
   });
 

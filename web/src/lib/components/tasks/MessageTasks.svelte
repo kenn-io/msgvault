@@ -34,8 +34,8 @@
   });
 </script>
 
-<section class="task-group" aria-label="Tasks" hidden={!tasksPresent && !error && !truncated && issues.length === 0}>
-  <h2>Tasks</h2>
+<section class="task-group" aria-label="Tasks">
+  {#if tasksPresent || issues.length > 0}<h2>Tasks</h2>{/if}
   {#if email}
     {#key refresh}<TaskLinks {client} {messageId} {title} {onsettings} {showSetup} mode="list" embedded bind:present={tasksPresent} />{/key}
   {/if}
@@ -56,7 +56,6 @@
 
 <style>
   .task-group { display: grid; gap: var(--space-2); padding: 0 var(--pane-pad-x) var(--space-4); }
-  .task-group[hidden] { display: none; }
   .kata-links { display: grid; gap: var(--space-2); }
   .text-action { display: inline-flex; min-height: var(--control-h); align-items: center; color: var(--link-ink); font-size: var(--type-meta-size); }
   .task-group :global(.task-links) { padding: 0; }

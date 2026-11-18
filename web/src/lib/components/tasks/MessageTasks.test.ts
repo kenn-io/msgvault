@@ -30,7 +30,7 @@ describe('Message task list', () => {
       : { state: 'partial', complete: false, tasks: [], outbound_metadata: {} }));
     render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
     expect(await screen.findByText('Some linked tasks may be missing.')).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
   });
 
   it('keeps a lookup error visible without rows', async () => {
@@ -38,7 +38,7 @@ describe('Message task list', () => {
       ? Response.json({ state: 'ready' }) : Response.json({ message: 'Lookup failed' }, { status: 503 }));
     render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
     expect(await screen.findByText('Lookup failed')).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
   });
 
   it('shows the session-only cache notice when no tasks are linked', async () => {
@@ -111,6 +111,7 @@ describe('Message task list', () => {
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status') ? { state: 'disabled' } : { state: 'disabled', complete: false, tasks: [], outbound_metadata: {} }));
     render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
     expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
   });
 
   it('reloads persisted email links and skips task lookup for non-email messages', async () => {

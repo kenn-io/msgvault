@@ -9,7 +9,7 @@
     searchIntegrationTasks as generatedSearchIntegrationTasks,
     unlinkMessageTask as generatedUnlinkMessageTask,
   } from '../../api/generated/api/api';
-  import { Button } from '@kenn-io/kit-ui';
+  import { Button, SegmentedControl } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type {
     TaskLinkLookupResponse as GeneratedTaskLinkLookupResponse,
@@ -29,8 +29,6 @@
     showSetup = true,
     embedded = false,
     present = $bindable(false),
-    action = $bindable('create'),
-    actionReady = $bindable(false),
     busy = $bindable(false),
     oncomplete = undefined,
     oncancel = undefined,
@@ -43,8 +41,6 @@
     showSetup?: boolean;
     embedded?: boolean;
     present?: boolean;
-    action?: string;
-    actionReady?: boolean;
     busy?: boolean;
     oncomplete?: () => void;
     oncancel?: () => void;
@@ -64,6 +60,7 @@
   let lastScan = $state('');
   let tasks = $state<Task[]>([]);
   let selected = $state('');
+  let action = $state('create');
   let mutating = $state(false);
   let error = $state('');
   let outboundMetadata = $state<OutboundMetadata | null>(null);
@@ -218,20 +215,14 @@
   // Mutations go through the live task service, so a partial reverse index
   // only limits lookup completeness — it does not block create/link/unlink.
   const mutationReady = $derived(integrationState === 'ready' && (indexState === 'ready' || indexState === 'partial'));
-  const degraded = $derived(!mutationReady);
-  const partialIndex = $derived(mutationReady && indexState === 'partial');
-  const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
   $effect(() => {
     if (mode === 'add' && mutationReady && outboundMetadata) creationInitialized = true;
   });
+  const degraded = $derived(!mutationReady);
+  const partialIndex = $derived(mutationReady && indexState === 'partial');
+  const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
   const rowsVisible = $derived(mode === 'list' && integrationState !== 'authentication_required' && indexState !== 'authentication_required' && tasks.length > 0);
-  const degradedNotice = $derived(degraded && (showSetup || integrationState === 'ready'));
-  const errorNotice = $derived(!!error && (mode !== 'add' || action === 'create' || !mutationReady));
-  const settledContent = $derived(rowsVisible || degradedNotice || partialIndex || sessionOnlyIndex || errorNotice);
-  $effect(() => {
-    actionReady = mutationReady;
-    present = !loading && settledContent;
-  });
+  $effect(() => { present = !loading && rowsVisible; });
   const stateMessage = $derived(
     integrationState === 'disabled' ? integrationMessage || 'Task integration is disabled.'
       : integrationState !== 'ready' && integrationState !== 'loading'
@@ -260,14 +251,14 @@
   );
 </script>
 
-{#if (loading && (showSetup || integrationState === 'ready' || integrationState === 'loading')) || (!loading && settledContent) || (mode === 'add' && mutationReady && action !== 'create')}
+{#if showSetup || integrationState === 'ready' || integrationState === 'loading' || (tasks.length > 0 && integrationState !== 'authentication_required') || error}
 <section class="task-links" class:add={mode === 'add'} aria-label="Linked tasks">
   {#if mode !== 'add' && !embedded && integrationState !== 'disabled'}<header>
     <h2>Tasks</h2>
   </header>{/if}
   {#if loading}<p role="status">Loading linked tasks…</p>
   {:else}
-    {#if degradedNotice}
+    {#if degraded && (showSetup || integrationState === 'ready')}
       <InlineNotice tone={integrationState === 'disabled' ? 'info' : 'error'} message={stateMessage} actionLabel={integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onaction={onsettings} />
     {/if}
     {#if partialIndex}<InlineNotice message={stateMessage} />{/if}
@@ -281,6 +272,7 @@
       {/each}
     {/if}
     {#if mutationReady && mode === 'add'}
+      <SegmentedControl variant="borderless" disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />
       {#if action !== 'create'}
       <TaskIssuePicker load={loadTasks} noun="tasks" moreNote="Showing the first 25 tasks. Type to search the rest." empty={`No tasks in ${project} yet.`} disabled={busy} bind:selected />
       {#if error}<InlineNotice message={error} />{/if}
@@ -291,7 +283,7 @@
       </div>
       {/if}
     {/if}
-    {#if errorNotice}<InlineNotice message={error} />{/if}
+    {#if error && (mode !== 'add' || action === 'create' || !mutationReady)}<InlineNotice message={error} />{/if}
   {/if}
 </section>
 {/if}
@@ -326,7 +318,8 @@
     padding: 0 var(--space-5) var(--space-5);
   }
   .task-links.add { padding: 0; gap: var(--space-6); }
-  .task-links.add + .create-task:not([hidden]) { margin-top: var(--space-6); }
+  .create-task:not([hidden]) { margin-top: var(--space-6); }
+  .task-links.add > :global(.kit-segmented) { justify-self: start; }
   .disclosure { color: var(--text-secondary); font-size: 12px; }
   .actions { display: flex; justify-content: flex-end; gap: var(--space-4); }
   h2, p { margin: 0; }

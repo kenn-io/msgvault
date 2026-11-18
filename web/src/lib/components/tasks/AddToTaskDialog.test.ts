@@ -43,8 +43,8 @@ describe('Add to task', () => {
       expect(await screen.findByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Follow up');
       const quote = await screen.findByRole('region', { name: 'Quoted passage' });
       const issueMode = screen.getByRole('radiogroup', { name: 'Issue' });
-      expect(quote.compareDocumentPosition(issueMode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', `${location.origin}/messages/42`);
+      expect(issueMode.compareDocumentPosition(quote) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.getByRole('textbox', { name: 'Brief' })).toHaveProperty('value', `${location.origin}/messages/42`);
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
@@ -102,11 +102,11 @@ describe('Add to task', () => {
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
       await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Brief draft' } });
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Brief' }), { target: { value: 'Brief draft' } });
       await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
-      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', 'Brief draft');
+      expect(screen.getByRole('textbox', { name: 'Brief' })).toHaveProperty('value', 'Brief draft');
       await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
       expect(await screen.findByRole('textbox', { name: 'Task title' })).toHaveProperty('value', 'Revised follow up');
       expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', 'Draft notes');
