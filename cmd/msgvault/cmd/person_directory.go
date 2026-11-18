@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -38,7 +39,7 @@ Filters combine to narrow the existing Directory page.`,
 				return err
 			}
 			switch cadence {
-			case "", "overdue", "due", "no_list", "unknown":
+			case "", store.CadenceOverdue, "due", "no_list", store.CadenceUnknown:
 			default:
 				return usageErr(cmd, errors.New("--cadence: must be overdue, due, no_list, or unknown"))
 			}
@@ -129,7 +130,7 @@ func writePersonDirectoryPage(cmd *cobra.Command, page *generated.DirectoryPeopl
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(writer, "ID\tDISPLAY NAME\tLIST\tLAST CONTACT\tDUE\tSTATUS")
 	for _, person := range page.People {
-		list, due, status := "-", "-", "unknown"
+		list, due, status := "-", "-", store.CadenceUnknown
 		if cadence := person.Cadence; cadence != nil {
 			if cadence.List != nil && *cadence.List != "" {
 				list = textutil.SanitizeTerminal(*cadence.List)
