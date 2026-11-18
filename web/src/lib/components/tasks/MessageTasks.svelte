@@ -16,12 +16,16 @@
   let error = $state('');
   let truncated = $state(false);
   let tasksPresent = $state(false);
+  let issuesMessageId: number | undefined;
+  let tasksMessageId: number | undefined;
+  $effect(() => { if (tasksMessageId !== messageId) { tasksPresent = false; tasksMessageId = messageId; } });
   $effect(() => {
     const id = messageId;
     void refresh;
     if (!kata?.ready) return;
     const request = new AbortController();
-    issues = []; loading = true; error = ''; truncated = false;
+    if (issuesMessageId !== id) issues = [];
+    issuesMessageId = id; loading = true; error = ''; truncated = false;
     void findKataIssues({ message_id: id }, { ...client, signal: request.signal }).then(({ data, error: failure }) => {
       if (request.signal.aborted) return;
       if (!data) throw new Error(failure?.message || 'Linked Kata issues are unavailable.');
@@ -37,7 +41,7 @@
 <div class:task-group={tasksPresent || issues.length > 0} class:task-notices={!tasksPresent && issues.length === 0} role={tasksPresent || issues.length > 0 ? 'region' : undefined} aria-label={tasksPresent || issues.length > 0 ? 'Tasks' : undefined}>
   {#if tasksPresent || issues.length > 0}<h2>Tasks</h2>{/if}
   {#if email}
-    {#key refresh}<TaskLinks {client} {messageId} {title} {onsettings} {showSetup} mode="list" embedded bind:present={tasksPresent} />{/key}
+    <TaskLinks {client} {messageId} {title} {onsettings} {showSetup} {refresh} mode="list" embedded bind:present={tasksPresent} />
   {/if}
   {#if kata?.ready}
     <div class="kata-links">

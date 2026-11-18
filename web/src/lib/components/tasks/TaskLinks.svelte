@@ -29,6 +29,7 @@
     mode = 'list',
     showSetup = true,
     embedded = false,
+    refresh = 0,
     present = $bindable(false),
     busy = $bindable(false),
     oncomplete = undefined,
@@ -41,6 +42,7 @@
     mode?: 'list' | 'add';
     showSetup?: boolean;
     embedded?: boolean;
+    refresh?: number;
     present?: boolean;
     busy?: boolean;
     oncomplete?: (action: 'created' | 'linked', task: Task) => void;
@@ -78,6 +80,7 @@
   $effect(() => {
     const selectedMessageID = messageId;
     const selectedClient = client;
+    void refresh;
     void selectedClient;
     void loadFor(selectedMessageID);
     return () => activeController?.abort();
@@ -223,7 +226,7 @@
   const partialIndex = $derived(mutationReady && indexState === 'partial');
   const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
   const rowsVisible = $derived(mode === 'list' && integrationState !== 'authentication_required' && indexState !== 'authentication_required' && tasks.length > 0);
-  $effect(() => { present = !loading && rowsVisible; });
+  $effect(() => { if (!loading) present = rowsVisible; });
   const stateMessage = $derived(
     integrationState === 'disabled' ? integrationMessage || 'Task integration is disabled.'
       : integrationState !== 'ready' && integrationState !== 'loading'

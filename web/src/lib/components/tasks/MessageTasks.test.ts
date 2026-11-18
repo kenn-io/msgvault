@@ -6,6 +6,44 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
+  it.each(['Tasks', 'Kata'])('keeps the %s group while refreshing the same message only', async (provider) => {
+    let hold = false;
+    let respond: ((response: Response) => void) | undefined;
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (hold) return new Promise<Response>(resolve => { respond = resolve; });
+      return Response.json(provider === 'Tasks'
+        ? { state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Linked work' }], outbound_metadata: taskOutboundMetadata }
+        : { issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Linked work', status: 'open' }], truncated: false });
+    });
+    const readiness = provider === 'Kata' ? new KataReadiness(client) : undefined;
+    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic', email: provider === 'Tasks' }, context: readiness ? new Map([[kataReadinessKey, readiness]]) : new Map() });
+    try {
+      await screen.findByText('Linked work');
+      hold = true;
+      await view.rerender({ refresh: 1 });
+      await waitFor(() => expect(respond).toBeDefined());
+      expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
+      respond!(Response.json(provider === 'Tasks'
+        ? { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata }
+        : { issues: [], truncated: false }));
+      await waitFor(() => expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull());
+      hold = false;
+      await view.rerender({ refresh: 2 });
+      await screen.findByText('Linked work');
+      hold = true;
+      respond = undefined;
+      await view.rerender({ messageId: 43 });
+      await waitFor(() => expect(respond).toBeDefined());
+      expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
+      expect(screen.queryByText('Linked work')).toBeNull();
+      respond!(Response.json(provider === 'Tasks'
+        ? { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata }
+        : { issues: [], truncated: false }));
+    } finally { view.unmount(); readiness?.dispose(); }
+  });
+
   it('keeps the Tasks group hidden when there are no linked rows', async () => {
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
       ? { state: 'ready', project: 'example' }
