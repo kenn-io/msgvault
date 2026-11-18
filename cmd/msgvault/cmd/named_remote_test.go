@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/fileutil"
 )
 
 // cacheStatsRemote answers cache-stats with its own message count and records
@@ -55,7 +56,7 @@ func TestNamedRemoteSelectsServerAndCredential(t *testing.T) {
 	home := t.TempDir()
 	defaultRemote := newCacheStatsRemote(t, 11)
 	workRemote := newCacheStatsRemote(t, 22)
-	require.NoError(os.WriteFile(filepath.Join(home, "work.key"), []byte("work-remote-key\n"), 0o600))
+	require.NoError(fileutil.SecureWriteFile(filepath.Join(home, "work.key"), []byte("work-remote-key\n"), 0o600))
 	require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte(`[remote]
 url = `+strconv.Quote(defaultRemote.URL)+`
 allow_insecure = true
