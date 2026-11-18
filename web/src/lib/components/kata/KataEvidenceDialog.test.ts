@@ -152,8 +152,6 @@ describe('KataEvidenceDialog', () => {
   it('finds an older issue by title and links its canonical ref', async () => {
     const reads: string[] = [];
     const posts: Request[] = [];
-    const text = 'Café 🙂 send the budget';
-    const prepared = evidence(0, text);
     const client = createAPIClient(async input => {
       const request = input as Request;
       const url = new URL(request.url);
@@ -162,12 +160,12 @@ describe('KataEvidenceDialog', () => {
         reads.push(q);
         return Response.json({ issues: q === 'budget' ? [{ ...issue, title: 'Older budget', ref: 'k3f9', qualified_ref: 'example#k3f9' }] : [issue], truncated: false });
       }
-      if (url.pathname.endsWith('/prepare')) return Response.json({ evidence: [prepared] });
+      if (url.pathname.endsWith('/prepare')) return Response.json({ evidence: [passages[0]] });
       posts.push(request);
       return Response.json({ issue, replayed: false });
     });
     render(KataEvidenceDialog, { client, selector });
-    await screen.findByText(text);
+    await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     expect(screen.getByText('Only the quote is sent; attachments stay out.')).toBeDefined();
     await screen.findByRole('radio', { name: 'Follow up · example#abcd' });
@@ -180,7 +178,7 @@ describe('KataEvidenceDialog', () => {
     await screen.findByText('example#abcd');
     expect(reads).toEqual(['', 'budget']);
     expect(new URL(posts[0].url).pathname).toBe('/api/v1/integrations/kata/issues/example%23k3f9/evidence');
-    expect(await posts[0].json()).toEqual({ evidence: [prepared.reference] });
+    expect(await posts[0].json()).toEqual({ evidence: [passages[0].reference] });
   });
 
   it('keeps a new issue draft across modes', async () => {

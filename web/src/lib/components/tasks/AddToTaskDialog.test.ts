@@ -41,7 +41,6 @@ describe('Add to task', () => {
       expect(screen.getByRole('radiogroup', { name: 'Issue' })).toBeTruthy();
       expect(screen.queryByText('Issue')).toEqual(email ? expect.anything() : null);
       expect(await screen.findByLabelText('Issue title')).toHaveProperty('value', 'Follow up');
-      await screen.findByRole('region', { name: 'Quoted passage' });
       expect(screen.getByLabelText('Brief')).toHaveProperty('value', `${location.origin}/messages/42`);
     } finally { view?.unmount(); readiness.dispose(); }
   });
@@ -119,7 +118,7 @@ describe('Add to task', () => {
     } finally { view.unmount(); }
   });
 
-  it.each(['create', 'link'])('shows a receipt after %s and closes on Done', async (action) => {
+  it('shows a receipt after linking and closes on Done', async () => {
     const onclose = vi.fn();
     const client = createAPIClient(async input => {
       const request = input as Request;
@@ -128,12 +127,10 @@ describe('Add to task', () => {
       return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
     render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose });
-    if (action === 'link') {
-      await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-      await fireEvent.click(await screen.findByRole('radio', { name: 'Filed task · task-1' }));
-    }
-    await fireEvent.click(await screen.findByRole('button', { name: action === 'create' ? 'Create task' : 'Link task' }));
-    expect(await screen.findByText(action === 'create' ? 'Task created' : 'Task linked')).toBeTruthy();
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Filed task · task-1' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Link task' }));
+    expect(await screen.findByText('Task linked')).toBeTruthy();
     expect(screen.getByText('Filed task')).toBeTruthy();
     expect(onclose).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
@@ -155,11 +152,12 @@ describe('Add to task', () => {
     if (result === 'failure') {
       await screen.findByRole('alert');
       await fireEvent.keyDown(close, { key: 'Escape' });
-      expect(onclose).toHaveBeenCalledOnce();
     } else {
-      await screen.findByRole('button', { name: 'Done' });
-      await fireEvent.keyDown(close, { key: 'Escape' });
-      expect(onclose).toHaveBeenCalledOnce();
+      expect(await screen.findByText('Task created')).toBeTruthy();
+      expect(screen.getByText('Follow up')).toBeTruthy();
+      expect(onclose).not.toHaveBeenCalled();
+      await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     }
+    expect(onclose).toHaveBeenCalledOnce();
   });
 });

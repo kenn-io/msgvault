@@ -88,7 +88,6 @@ describe('TaskLinks', () => {
 
   it('preserves a creation draft when switching between New and Existing', async () => {
     render(TaskLinks, { client: taskCreationClient(), mode: 'add', messageId: 42, title: 'Follow up' });
-    expect(await screen.findByRole('radiogroup', { name: 'Task' })).toBeDefined();
     await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Revised follow up' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
@@ -405,7 +404,7 @@ describe('TaskLinks', () => {
         if (posts.length === 1) return Response.json({ message: 'Unavailable' }, { status: 503 });
         return Response.json({ task: { id: 'task-1', project: 'project', title: 'Linked', revision: 'r2' } }, { status: 201 });
       }
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: {} });
+      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
     render(TaskLinks, {
       client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic',

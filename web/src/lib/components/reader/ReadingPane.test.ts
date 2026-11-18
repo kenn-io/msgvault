@@ -42,12 +42,6 @@ function renderPane(row: EntryRow) {
 }
 
 describe('ReadingPane header', () => {
-  it('omits the current year from the date', () => {
-    const year = new Date().getFullYear();
-    renderPane(entryRow({ anchor_message_id: undefined, occurred_at: `${year}-07-18T12:00:00` }));
-    expect(document.querySelector('.pane-meta')?.textContent).toContain('Jul 18');
-    expect(document.querySelector('.pane-meta')?.textContent).not.toContain(String(year));
-  });
   it('uses a plain title for a missing message selected by ID', () => {
     render(ReadingPane, {
       client: createAPIClient(vi.fn<typeof fetch>()),

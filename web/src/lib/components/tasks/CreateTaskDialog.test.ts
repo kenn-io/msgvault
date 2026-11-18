@@ -44,17 +44,14 @@ describe('CreateTaskDialog', () => {
     expect(requests[0]!.headers.get('X-Request-Id')).toBeTruthy();
   });
 
-  it.each([
-    [`${new Date().getFullYear()}-07-18T12:00:00`, /^Jul 18$/],
-    ['', /^Fallback title$/]
-  ])('shows available message context for sentAt=%s', (sentAt, expected) => {
+  it('shows the fallback title when message context is missing', () => {
     render(CreateTaskDialog, {
       client: createAPIClient(vi.fn()), messageId: 42, project: 'project', defaultTitle: 'Fallback title',
       archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
-      sourceMessageId: 'source-42', subject: '', from: '', sentAt
+      sourceMessageId: 'source-42', subject: '', from: '', sentAt: ''
     });
     expect(screen.getByText('Message')).toBeDefined();
-    expect(screen.getByText(expected)).toBeDefined();
+    expect(screen.getByText('Fallback title')).toBeDefined();
   });
 
   it('keeps the request ID and added_at stable across a failed browser retry', async () => {

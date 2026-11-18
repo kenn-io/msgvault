@@ -21,6 +21,7 @@ describe('TaskIssuePicker', () => {
       await fireEvent.click(choice);
       expect(choice).toHaveProperty('checked', true);
     } else {
+      await screen.findByRole('alert');
       expect(screen.queryByRole('radio')).toBeNull();
     }
   });
