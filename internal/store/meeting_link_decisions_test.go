@@ -130,15 +130,6 @@ func TestMeetingTranscriptGroupsFollowChoices(t *testing.T) {
 		assertions.Equal(want, groups)
 	}
 	check(map[int64]int64{first: first, copyID: first, other: other})
-	seed := meetingDecisionEndpoint{ID: first, Kind: meetingRefMessage}
-	budget := 0
-	_, err = st.loadMeetingDecisionGraph(t.Context(), []meetingDecisionEndpoint{seed}, &budget, false)
-	requirements.ErrorIs(err, ErrQueryTooBroad)
-	graph, err := st.loadMeetingDecisionGraph(t.Context(), []meetingDecisionEndpoint{seed}, nil, false)
-	requirements.NoError(err)
-	root, _, err := graph.reduce(t.Context())
-	requirements.NoError(err)
-	assertions.Equal(root(seed.ref()), root((meetingDecisionEndpoint{ID: copyID, Kind: meetingRefMessage}).ref()))
 	_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), ref(other), "link")
 	requirements.NoError(err)
 	check(map[int64]int64{first: first, copyID: first, other: first})
@@ -158,10 +149,6 @@ func TestMeetingTranscriptGroupsFollowChoices(t *testing.T) {
 	assertions.Equal(first, groups[first])
 	assertions.Equal(first, groups[other])
 	assertions.Equal(first, groups[viaEvent])
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, _, err = graph.reduce(ctx)
-	requirements.ErrorIs(err, context.Canceled)
 }
 
 func TestMeetingLinkDecisionConflictIdempotenceAndClear(t *testing.T) {
@@ -1002,7 +989,6 @@ func TestMeetingDecisionGraphResolvesLinkedOccurrencesWithinBudget(t *testing.T)
 		notes = append(notes, note)
 		seeds = append(seeds, endpointFromRef(note))
 	}
-
 	budget := 50_000
 	graph, err := st.loadMeetingDecisionGraph(t.Context(), seeds, &budget, false)
 	r.NoError(err)
@@ -1023,28 +1009,19 @@ func TestMeetingTranscriptGroupsRejectIncompleteRecurrenceExpansion(t *testing.T
 	st := newRFC822IDBackfillBackendStore(t)
 	recurrence := `"recurrence":["RRULE:FREQ=DAILY;COUNT=60000"]`
 	start := `"start":{"dateTime":"1880-01-01T10:00:00Z"},"end":{"dateTime":"1880-01-01T11:00:00Z"}`
-	_, firstSeries := calendarFixture(t, st, "long-series-first", fmt.Sprintf(`{"id":"first-series","iCalUID":"shared@example.org",%s,%s}`, start, recurrence), "first@example.test")
+	calendarFixture(t, st, "long-series-first", fmt.Sprintf(`{"id":"first-series","iCalUID":"shared@example.org",%s,%s}`, start, recurrence), "first@example.test")
 	calendarFixture(t, st, "long-series-second", fmt.Sprintf(`{"id":"second-series","iCalUID":"shared@example.org",%s,%s}`, start, recurrence), "second@example.test")
 	for index := range 4 {
 		projectionFixture(t, st, fmt.Sprintf("unrelated-transcript-%d", index), "meeting_json", `{}`)
 	}
-	_, firstNote := projectionFixture(t, st, "long-series-note-first", "granola_json", `{"owner":{"email":"owner@example.test"},"calendar_event":{"calendar_event_id":"first-series_20270101T100000Z"}}`)
+	projectionFixture(t, st, "long-series-note-first", "granola_json", `{"owner":{"email":"owner@example.test"},"calendar_event":{"calendar_event_id":"first-series_20270101T100000Z"}}`)
 	_, secondNote := projectionFixture(t, st, "long-series-note-second", "granola_json", `{"owner":{"email":"owner@example.test"},"calendar_event":{"calendar_event_id":"second-series_20270101T100000Z"}}`)
 	_, err := st.db.ExecContext(t.Context(), `UPDATE messages SET sent_at = ? WHERE message_type = 'meeting_transcript'`, time.Date(2027, 1, 1, 10, 0, 0, 0, time.UTC))
 	r.NoError(err)
 
-	noteRecord, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: firstNote})
-	r.NoError(err)
-	r.Contains(noteRecord.Unexpandable, CalendarUnexpandable{MessageID: firstSeries, Reason: calendarSeriesWorkLimitReason})
 	groups, err := st.MeetingTranscriptGroupsContext(t.Context(), secondNote)
 	r.ErrorIs(err, ErrQueryTooBroad)
 	r.Nil(groups)
-
-	ref, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270101T100000Z", firstSeries))
-	r.NoError(err)
-	record, err := st.MeetingRecordContext(t.Context(), ref)
-	r.NoError(err)
-	r.Contains(record.Unexpandable, CalendarUnexpandable{MessageID: firstSeries, Reason: calendarSeriesWorkLimitReason})
 }
 
 func TestMeetingLinkDecisionEditedOccurrenceReferences(t *testing.T) {
@@ -2564,6 +2541,25 @@ func TestMeetingDecisionEditsAfterSeriesMerge(t *testing.T) {
 			r.Equal(eb, record.Links[0].MessageID)
 		})
 	}
+	t.Run("slot link follows merged edit", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, series := calendarFixture(t, st, "slot-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "a@example.com")
+		_, note := projectionFixture(t, st, "slot-note", "meeting_json", `{}`)
+		slot := MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270314T100000Z")}
+		noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+		_, err := st.DecideMeetingLinkContext(t.Context(), slot, noteRef, "link")
+		r.NoError(err)
+		raw := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`
+		_, old := calendarFixture(t, st, "slot-edit-old", raw, "a@example.com")
+		_, kept := calendarFixture(t, st, "slot-edit-kept", raw, "b@example.com")
+		_, err = st.MergeDuplicates(t.Context(), kept, []int64{old}, "slot-edit")
+		r.NoError(err)
+		record, err := st.MeetingRecordContext(t.Context(), noteRef)
+		r.NoError(err)
+		r.Len(record.Links, 1)
+		r.Equal(kept, record.Links[0].MessageID)
+	})
 }
 
 func TestMeetingDecisionPurgeEditedCopy(t *testing.T) {

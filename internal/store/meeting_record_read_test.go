@@ -891,6 +891,15 @@ func TestMeetingRecordNoteExpansionExhaustsSharedBudget(t *testing.T) {
 	require.ErrorIs(t, err, ErrQueryTooBroad)
 }
 
+func TestMeetingRecordRetainsRecurrenceBudgetWarning(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, series := calendarFixture(t, st, "long-series", `{"id":"series","iCalUID":"long@example.org","start":{"dateTime":"1880-01-01T10:00:00Z"},"end":{"dateTime":"1880-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=60000"]}`)
+	_, note := projectionFixture(t, st, "long-series-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"long@example.org","startsAt":"2027-01-01T10:00:00Z"}}`)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	require.NoError(t, err)
+	assert.Contains(t, record.Unexpandable, CalendarUnexpandable{MessageID: series, Reason: calrecur.ErrBudgetExceeded.Error()})
+}
+
 func TestMeetingRecordAllDayMasterWithoutZone(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	source, err := st.GetOrCreateSource("gcal", "unknown-zone@example.com")

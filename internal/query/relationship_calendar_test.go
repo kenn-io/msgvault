@@ -176,52 +176,69 @@ func TestRelationshipCalendarReadsBothUTCPartitionsAtLocalYearBoundary(t *testin
 }
 
 func TestRelationshipCalendarUsesArchiveWideMeetingCopyForAnnualScore(t *testing.T) {
-	t.Parallel()
-	b := NewTestDataBuilder(t)
-	firstSource := b.AddSourceWithType("first@example.test", "granola")
-	secondSource := b.AddSourceWithType("second@example.test", "zoom")
-	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
-	person := b.AddParticipant("person@example.test", "example.test", "Person")
-	b.AddOwnerParticipant(firstSource, owner)
-	b.AddOwnerParticipant(secondSource, owner)
-	first := b.AddMessage(MessageOpt{
-		SourceID: firstSource, MessageType: "meeting_transcript",
-		SentAt: time.Date(2025, time.December, 31, 23, 0, 0, 0, time.UTC),
-	})
-	second := b.AddMessage(MessageOpt{
-		SourceID: secondSource, MessageType: "meeting_transcript",
-		SentAt: time.Date(2026, time.January, 2, 0, 0, 0, 0, time.UTC),
-	})
-	b.AddFrom(first, owner, "Owner")
-	b.AddTo(first, person, "Person")
-	b.AddTo(second, person, "Person")
-	b.meetingGroups = fmt.Sprintf(
-		"(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)",
-		first, first, second, first,
-	)
-	engine := b.BuildEngine()
+	for _, tc := range []struct {
+		name                 string
+		personOnFirstCopy    bool
+		wantCalendarMeetings int64
+		wantAnnual2025       bool
+	}{
+		{name: "earlier copy represents the group", personOnFirstCopy: true, wantCalendarMeetings: 0, wantAnnual2025: true},
+		{name: "person only appears on selected copy", personOnFirstCopy: false, wantCalendarMeetings: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := NewTestDataBuilder(t)
+			firstSource := b.AddSourceWithType("first@example.test", "granola")
+			secondSource := b.AddSourceWithType("second@example.test", "zoom")
+			owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+			person := b.AddParticipant("person@example.test", "example.test", "Person")
+			b.AddOwnerParticipant(firstSource, owner)
+			b.AddOwnerParticipant(secondSource, owner)
+			first := b.AddMessage(MessageOpt{
+				SourceID: firstSource, MessageType: "meeting_transcript",
+				SentAt: time.Date(2025, time.December, 31, 23, 0, 0, 0, time.UTC),
+			})
+			second := b.AddMessage(MessageOpt{
+				SourceID: secondSource, MessageType: "meeting_transcript",
+				SentAt: time.Date(2026, time.January, 2, 0, 0, 0, 0, time.UTC),
+			})
+			b.AddFrom(first, owner, "Owner")
+			if tc.personOnFirstCopy {
+				b.AddTo(first, person, "Person")
+			}
+			b.AddTo(second, person, "Person")
+			b.meetingGroups = fmt.Sprintf(
+				"(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)",
+				first, first, second, first,
+			)
+			engine := b.BuildEngine()
 
-	calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
-		CanonicalID: person, Year: 2026, Timezone: "UTC",
-	})
-	require.NoError(t, err)
-	var calendarMeetings int64
-	for _, day := range calendar.Days {
-		calendarMeetings += day.Meetings
-	}
-	assert.Zero(t, calendarMeetings,
-		"the later transcript copy is not a second annual meeting occurrence")
+			calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
+				CanonicalID: person, Year: 2026, Timezone: "UTC",
+			})
+			require.NoError(t, err)
+			var calendarMeetings int64
+			for _, day := range calendar.Days {
+				calendarMeetings += day.Meetings
+			}
+			assert.Equal(t, tc.wantCalendarMeetings, calendarMeetings)
 
-	var annual2025 *identityindex.AnnualTemperatureSummary
-	for index := range calendar.Annual {
-		if calendar.Annual[index].Year == 2025 {
-			annual2025 = &calendar.Annual[index]
-			break
-		}
+			var annual2025 *identityindex.AnnualTemperatureSummary
+			for index := range calendar.Annual {
+				if calendar.Annual[index].Year == 2025 {
+					annual2025 = &calendar.Annual[index]
+					break
+				}
+			}
+			if tc.wantAnnual2025 {
+				require.NotNil(t, annual2025)
+				assert.InDelta(t, 1.0, annual2025.Signals.MeetingSignal, 0,
+					"the annual score keeps the archive-wide selected copy in its year")
+			} else if annual2025 != nil {
+				assert.Zero(t, annual2025.Signals.MeetingSignal)
+			}
+		})
 	}
-	require.NotNil(t, annual2025)
-	assert.InDelta(t, 1.0, annual2025.Signals.MeetingSignal, 0,
-		"the annual score keeps the archive-wide selected copy in its year")
 }
 
 func TestRelationshipCalendarUsesSnapshotInstantForLatestLocalDay(t *testing.T) {

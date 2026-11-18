@@ -534,8 +534,9 @@ func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *test
 	engine.result = &query.ExploreMeetingSelection{
 		SelectedCount: 2, MeetingCount: 1, MessageIDs: []int64{41, 42}, CacheRevision: "cache-r1",
 	}
+	explicit := `{"selection":{"mode":"explicit","predicate":{},"row_keys":["source:1:message:41","source:1:message:42"],"cache_revision":"cache-r1","search_provenance":{}}}`
 	response = httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", selection))
+	srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", explicit))
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	assertions.Equal([]int64{41, 42}, st.contextIDs)
 

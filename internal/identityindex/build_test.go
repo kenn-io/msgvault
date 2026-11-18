@@ -281,15 +281,20 @@ func TestBuildIncrementalWritesActivityDeltaAndRebuildsCompactPopulation(t *test
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	committedRoot, db := writeRelationshipBaseFixture(t, false)
+	setMeetingRelationshipFixture(t, db, committedRoot, 100)
+	committedGroups := "(SELECT 100::BIGINT AS message_id, 100::BIGINT AS group_id)"
 	_, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: committedRoot,
 		OutputRoot:     committedRoot,
+		MeetingGroups:  committedGroups,
 	})
 	requirements.NoError(err)
 
 	stagedRoot, stagedDB := writeRelationshipBaseFixture(t, false)
 	rewriteRelationshipFixtureIDs(t, stagedDB, stagedRoot, 200, 20)
+	setMeetingRelationshipFixture(t, stagedDB, stagedRoot, 200)
+	groups := "(SELECT 100::BIGINT AS message_id, 100::BIGINT AS group_id UNION ALL SELECT 200, 100)"
 	// Incremental exports replace the roster with a complete snapshot. Keep
 	// the older conversation in this synthetic staged base as well.
 	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE staged_roster AS
@@ -305,6 +310,7 @@ func TestBuildIncrementalWritesActivityDeltaAndRebuildsCompactPopulation(t *test
 		CommittedRoot:  committedRoot,
 		StagedBaseRoot: stagedRoot,
 		OutputRoot:     stagedRoot,
+		MeetingGroups:  groups,
 	})
 	requirements.NoError(err)
 
@@ -322,15 +328,19 @@ func TestBuildIncrementalWritesActivityDeltaAndRebuildsCompactPopulation(t *test
 	`, relationshipParquetGlob(stagedRoot, DatasetPeople)).Scan(&activityCount))
 	assertions.Equal(int64(2), activityCount)
 	assertIncrementalContributionsMatchFullReduction(t, db, committedRoot, stagedRoot,
-		time.Date(2027, 7, 21, 10, 30, 0, 0, time.UTC))
+		time.Date(2027, 7, 21, 10, 30, 0, 0, time.UTC), groups)
 	assertIncrementalDatasetsMatchFullBuild(t, db, committedRoot, stagedRoot,
-		time.Date(2027, 7, 21, 10, 30, 0, 0, time.UTC))
+		time.Date(2027, 7, 21, 10, 30, 0, 0, time.UTC), groups)
 }
 
 func assertIncrementalDatasetsMatchFullBuild(
-	t *testing.T, db *sql.DB, committedRoot, stagedRoot string, effectiveAt time.Time,
+	t *testing.T, db *sql.DB, committedRoot, stagedRoot string, effectiveAt time.Time, groups ...string,
 ) {
 	t.Helper()
+	groupRelation := "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)"
+	if len(groups) > 0 {
+		groupRelation = groups[0]
+	}
 	fullRoot := t.TempDir()
 	appendDatasets := map[string]string{
 		"messages": "UNION ALL", "message_recipients": "UNION ALL",
@@ -349,7 +359,7 @@ func assertIncrementalDatasetsMatchFullBuild(
 	}
 	_, err := Build(t.Context(), db, BuildOptions{
 		Mode: ModeFull, StagedBaseRoot: fullRoot, OutputRoot: fullRoot,
-		EffectiveAt: effectiveAt,
+		EffectiveAt: effectiveAt, MeetingGroups: groupRelation,
 	})
 	require.NoError(t, err)
 	for _, dataset := range []string{
@@ -374,9 +384,13 @@ func assertIncrementalDatasetsMatchFullBuild(
 }
 
 func assertIncrementalContributionsMatchFullReduction(
-	t *testing.T, db *sql.DB, committedRoot, stagedRoot string, effectiveAt time.Time,
+	t *testing.T, db *sql.DB, committedRoot, stagedRoot string, effectiveAt time.Time, groups ...string,
 ) {
 	t.Helper()
+	groupRelation := "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)"
+	if len(groups) > 0 {
+		groupRelation = groups[0]
+	}
 	fullActivity := testExpandedActivity(stagedRoot, committedRoot, stagedRoot)
 	for _, check := range []struct {
 		name     string
@@ -386,7 +400,7 @@ func assertIncrementalContributionsMatchFullReduction(
 		{"logical", DatasetLogicalContributions,
 			buildLogicalActivityMaterializationSQL(fullActivity)},
 		{"temperature", DatasetTemperatureContributions,
-			buildRelationshipTemperatureDailySQL(fullActivity, "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)", effectiveAt)},
+			buildRelationshipTemperatureDailySQL(fullActivity, groupRelation, effectiveAt)},
 	} {
 		t.Run(check.name+" contributions match full reduction", func(t *testing.T) {
 			expectedTable := "expected_" + check.name
@@ -530,6 +544,22 @@ func setChatRelationshipFixture(t *testing.T, db *sql.DB, root string, messageID
 			(%d::BIGINT, 2::BIGINT, 'from'::VARCHAR, 'Bob'::VARCHAR),
 			(%d::BIGINT, 1::BIGINT, 'to'::VARCHAR, 'Alice'::VARCHAR)
 		) AS t(message_id, participant_id, recipient_type, display_name)`, messageID, messageID))
+}
+
+func setMeetingRelationshipFixture(t *testing.T, db *sql.DB, root string, messageID int64) {
+	t.Helper()
+	messageTable := fmt.Sprintf("meeting_fixture_messages_%d", messageID)
+	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE `+messageTable+`
+		AS SELECT * REPLACE ('meeting_transcript'::VARCHAR AS message_type)
+		FROM read_parquet(?) WHERE id = ?`, parquetDatasetGlob(root, "messages"), messageID)
+	require.NoError(t, err)
+	replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM "+messageTable)
+	conversationTable := fmt.Sprintf("meeting_fixture_conversations_%d", messageID)
+	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE `+conversationTable+`
+		AS SELECT * REPLACE ('meeting'::VARCHAR AS conversation_type)
+		FROM read_parquet(?)`, parquetDatasetGlob(root, "conversations"))
+	require.NoError(t, err)
+	replaceRelationshipParquet(t, db, root, "conversations", "SELECT * FROM "+conversationTable)
 }
 
 func TestBuildIndexOnlyUsesCommittedBaseWithStagedIdentityDimensions(t *testing.T) {

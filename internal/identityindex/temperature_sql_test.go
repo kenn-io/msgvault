@@ -19,7 +19,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.ExecContext(t.Context(), `
 		CREATE TEMP TABLE synthetic_temperature_activity AS
-		SELECT *, CASE WHEN entry_kind = 'meeting' THEN 'meeting_transcript' ELSE entry_kind END AS message_type, false AS unsent, false AS email_invite FROM (VALUES
+		SELECT *, CASE WHEN entry_kind = 'meeting' THEN 'meeting_transcript' WHEN is_chat THEN 'imessage' ELSE entry_kind END AS message_type, false AS unsent, false AS email_invite FROM (VALUES
 			-- Direct chat written by the owner: the explicit edge identifies
 			-- person 2 even when the importer has no conversation roster.
 			(1::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 12:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, false, true),

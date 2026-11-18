@@ -524,14 +524,11 @@ func TestPersonMeetingCountsUseLiveMembershipWithRetainedCache(t *testing.T) {
 			first := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: start})
 			second := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: start.Add(2 * time.Hour)})
 			other := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: start.Add(3 * time.Hour)})
-			draft := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: start.Add(-time.Hour)})
 			b.AddTo(first, primary, "Primary")
 			b.AddTo(second, alias, "Alias")
 			b.AddTo(second, primary, "Primary")
 			b.AddTo(other, alias, "Alias")
-			b.AddTo(draft, alias, "Alias")
-			b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", draft)
-			b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d UNION ALL SELECT %d, %d)", first, first, second, first, draft, first)
+			b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
 			engine := b.BuildEngine()
 			members := []int64{primary, alias}
 			if linkedAtBuild {

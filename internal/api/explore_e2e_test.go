@@ -26,6 +26,21 @@ import (
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
+func TestPeopleFullTextWithSourceAndAccountIdentity(t *testing.T) {
+	fixture := newExploreIdentityAPIFixtureWithStore(t, testutil.NewTestStore(t))
+	for _, tc := range []struct{ direction, participant string }{{"sender", "2"}, {"recipient", "1"}} {
+		predicate := fmt.Sprintf(`{"query":"alpha","search_mode":"full_text","filters":[{"dimension":"source","values":["1"]},{"dimension":"identity","values":["1","bob@members.example",%q]}]}`, tc.direction)
+		for _, path := range []string{"/api/v1/participants/search", "/api/v1/participants/" + tc.participant + "/summary"} {
+			body := predicate
+			if strings.HasSuffix(path, "/search") {
+				body = fmt.Sprintf(`{"predicate":%s}`, predicate)
+			}
+			response := postExploreJSON(t, fixture.server, path, body)
+			assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestExploreHTTPUsesCommittedDuckDBReadModel(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

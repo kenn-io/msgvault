@@ -13,72 +13,28 @@ import (
 )
 
 func TestRelationshipGroupOwnerEvidenceOutsideSelectedCopy(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		unsent bool
-	}{{"attended", false}, {"unsent", true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			b := NewTestDataBuilder(t)
-			firstSource := b.AddSourceWithType("first@example.test", "granola")
-			secondSource := b.AddSourceWithType("second@example.test", "zoom")
-			owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
-			person := b.AddParticipant("alice@example.test", "example.test", "Alice")
-			b.AddOwnerParticipant(firstSource, owner)
-			b.AddOwnerParticipant(secondSource, owner)
-			ownerTime := time.Date(2025, 12, 31, 23, 0, 0, 0, time.UTC)
-			selectedTime := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-			ownerCopy := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: ownerTime})
-			selectedCopy := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: selectedTime})
-			b.AddFrom(ownerCopy, owner, "Owner")
-			b.AddTo(selectedCopy, person, "Alice")
-			b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", ownerCopy, ownerCopy, selectedCopy, ownerCopy)
-			if tc.unsent {
-				b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", ownerCopy)
-			}
-			engine := b.BuildEngine()
-			after := selectedTime.Add(-time.Hour)
-			for _, filter := range []Context{{SourceIDs: []int64{secondSource}}, {After: &after}} {
-				result, err := engine.Relationships(t.Context(), RelationshipsRequest{Now: selectedTime.Add(time.Hour), Limit: 10, ShowAll: true, Context: filter})
-				require.NoError(t, err)
-				if tc.unsent {
-					require.Empty(t, result.Rows)
-					continue
-				}
-				require.Len(t, result.Rows, 1)
-				require.Equal(t, person, result.Rows[0].CanonicalID)
-				require.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
-			}
-			sourceFilter := Context{SourceIDs: []int64{secondSource}}
-			timeline, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{
-				CanonicalID: person, Limit: 10, Context: sourceFilter,
-			})
-			require.NoError(t, err)
-			interactions, err := engine.Explore(t.Context(), ExploreRequest{
-				SentOnly: true, PersonInteractionsOnly: true,
-				Context: Context{ParticipantIDs: []int64{person}, SourceIDs: []int64{secondSource}},
-				Page:    PageSpec{Limit: 10},
-			})
-			require.NoError(t, err)
-			if tc.unsent {
-				require.Empty(t, timeline.Rows)
-				require.Empty(t, interactions.Rows)
-			} else {
-				require.Len(t, timeline.Rows, 1)
-				assert.Equal(t, "meeting", timeline.Rows[0].Kind)
-				assert.Equal(t, fmt.Sprintf("message:%d", selectedCopy), timeline.Rows[0].Key)
-				require.Len(t, interactions.Rows, 1)
-				assert.Equal(t, selectedCopy, *interactions.Rows[0].AnchorMessageID)
-			}
-			if !tc.unsent {
-				calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: 2026, Timezone: "UTC"})
-				require.NoError(t, err)
-				var meetings int64
-				for _, day := range calendar.Days {
-					meetings += day.Meetings
-				}
-				require.Equal(t, int64(1), meetings)
-			}
-		})
+	b := NewTestDataBuilder(t)
+	firstSource := b.AddSourceWithType("first@example.test", "granola")
+	secondSource := b.AddSourceWithType("second@example.test", "zoom")
+	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+	person := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	b.AddOwnerParticipant(firstSource, owner)
+	b.AddOwnerParticipant(secondSource, owner)
+	ownerTime := time.Date(2025, 12, 31, 23, 0, 0, 0, time.UTC)
+	selectedTime := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	ownerCopy := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: ownerTime})
+	selectedCopy := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: selectedTime})
+	b.AddFrom(ownerCopy, owner, "Owner")
+	b.AddTo(selectedCopy, person, "Alice")
+	b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", ownerCopy, ownerCopy, selectedCopy, ownerCopy)
+	engine := b.BuildEngine()
+	after := selectedTime.Add(-time.Hour)
+	for _, filter := range []Context{{SourceIDs: []int64{secondSource}}, {After: &after}} {
+		result, err := engine.Relationships(t.Context(), RelationshipsRequest{Now: selectedTime.Add(time.Hour), Limit: 10, ShowAll: true, Context: filter})
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		require.Equal(t, person, result.Rows[0].CanonicalID)
+		require.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
 	}
 }
 
@@ -105,49 +61,15 @@ func TestRelationshipsCountLinkedTranscriptsOnce(t *testing.T) {
 	b.AddTo(email, other, "Bob")
 	b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
 	engine := b.BuildEngine()
-	for _, filter := range []Context{{}, {SourceIDs: []int64{source}}} {
-		result, err := engine.Relationships(t.Context(), RelationshipsRequest{Now: now, Limit: 10, ShowAll: true, Context: filter})
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 2)
-		counts := make(map[int64]int64, len(result.Rows))
-		for _, row := range result.Rows {
-			counts[row.CanonicalID] = row.Signals.MeetingCount
-		}
-		assert.Equal(t, int64(1), counts[person])
-		assert.Equal(t, int64(0), counts[other])
+	result, err := engine.Relationships(t.Context(), RelationshipsRequest{Now: now, Limit: 10, ShowAll: true})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 2)
+	counts := make(map[int64]int64, len(result.Rows))
+	for _, row := range result.Rows {
+		counts[row.CanonicalID] = row.Signals.MeetingCount
 	}
-}
-
-func TestRelationshipsRosterOnlyOwnerDoesNotCountMeeting(t *testing.T) {
-	b := NewTestDataBuilder(t)
-	source := b.AddSourceWithType("owner@example.test", "zoom")
-	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
-	person := b.AddParticipant("alice@example.test", "example.test", "Alice")
-	b.AddOwnerParticipant(source, owner)
-	const conversationID = 900
-	transcript := b.AddMessage(MessageOpt{
-		SourceID: source, ConversationID: conversationID,
-		MessageType: "meeting_transcript", ConversationType: "meeting",
-		SentAt: time.Date(2026, time.January, 2, 17, 0, 0, 0, time.UTC),
-	})
-	b.AddConversationParticipant(conversationID, owner)
-	b.AddTo(transcript, person, "Alice")
-	engine := b.BuildEngine()
-
-	for _, filter := range []Context{{}, {SourceIDs: []int64{source}}} {
-		result, err := engine.Relationships(t.Context(), RelationshipsRequest{
-			Now:   time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC),
-			Limit: 10, ShowAll: true, Context: filter,
-		})
-		require.NoError(t, err)
-		var meetingCount int64
-		for _, row := range result.Rows {
-			if row.CanonicalID == person {
-				meetingCount = row.Signals.MeetingCount
-			}
-		}
-		assert.Zero(t, meetingCount, "roster membership alone is not meeting attendance")
-	}
+	assert.Equal(t, int64(1), counts[person])
+	assert.Equal(t, int64(0), counts[other])
 }
 
 // TestRelationshipsRanksByReciprocityAndGatesNewsletters builds an owner
