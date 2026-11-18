@@ -502,6 +502,9 @@ func TestLoopAgendaPromiseKeyFollowsSource(t *testing.T) {
 
 func TestLoopAgendaReusedRowIDsFileNewIssues(t *testing.T) {
 	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL sequences never reuse a deleted row's ID")
+	}
 	now := time.Now().UTC()
 	first := f.PersistEmail(storetest.EmailSpec{Thread: "removed", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send it?", SentAt: now.Add(-72 * time.Hour)})
 	_, _, err := f.Store.CreatePersonFromParticipant(f.EnsureParticipant("alex@example.test", "", "example.test"))
@@ -515,7 +518,7 @@ func TestLoopAgendaReusedRowIDsFileNewIssues(t *testing.T) {
 	filed, err := agenda.File(t.Context(), strconv.FormatInt(first, 10), now)
 	require.NoError(t, err)
 	// Removing the newest conversation frees its row IDs, and SQLite gives them to the next import.
-	_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM conversations WHERE id = ?`, conversation.ConversationID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM conversations WHERE id = ?`), conversation.ConversationID)
 	require.NoError(t, err)
 	second := f.PersistEmail(storetest.EmailSpec{Thread: "imported", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you review it?", SentAt: now.Add(-48 * time.Hour)})
 	require.Equal(t, first, second)
