@@ -315,14 +315,23 @@ func openRemoteStore(ctx context.Context, state *invocation) (*daemonclient.Clie
 		return nil, errors.New("invocation state is required")
 	}
 	currentCfg := state.cfg
-	if err := currentCfg.ResolveRemoteKey(); err != nil {
-		return nil, err
-	}
-	st, err := newDaemonCLIClient(ctx, daemonclient.Config{
+	clientConfig := daemonclient.Config{
 		URL:           currentCfg.Remote.URL,
-		APIKey:        currentCfg.Remote.AuthenticationKey(),
 		AllowInsecure: currentCfg.Remote.AllowInsecure,
-	})
+	}
+	if len(currentCfg.Remote.CredentialProvider) > 0 {
+		source, err := remoteCredentialSource(currentCfg)
+		if err != nil {
+			return nil, err
+		}
+		clientConfig.Credential = source.Token
+	} else {
+		if err := currentCfg.ResolveRemoteKey(); err != nil {
+			return nil, err
+		}
+		clientConfig.APIKey = currentCfg.Remote.AuthenticationKey()
+	}
+	st, err := newDaemonCLIClient(ctx, clientConfig)
 	if err != nil {
 		return nil, err
 	}

@@ -179,6 +179,7 @@ when continuing a page; refresh from page one to see newer evidence.
 | `--home` | Home directory for all data (overrides `MSGVAULT_HOME`) |
 | `-v`, `--verbose` | Verbose output (implies `--log-level=debug`) |
 | `--local` | Use the local daemon instead of a configured remote for archive-access commands |
+| `--remote <name>` | Use the named remote from a [`[remotes.<name>]`](configuration.md#remotesname) table instead of `[remote]` |
 | `--log-file <path>` | Override log file path (default: `<data_dir>/logs/msgvault-YYYY-MM-DD.log`) |
 | `--log-level <level>` | Log level: `debug`, `info`, `warn`, `error` (default: `info`) |
 | `--no-log-file` | Disable file logging for this run (stderr output stays on) |
@@ -195,7 +196,7 @@ when continuing a page; refresh from page one to see newer evidence.
 
 Commands that access archive state keep their usual stdout/stderr output while using the same API path as remote access:
 
-1. If `[remote].url` is configured and `--local` is not passed, the CLI talks to that remote server.
+1. If `[remote].url` is configured and `--local` is not passed, the CLI talks to that remote server. `--remote <name>` selects a named remote instead.
 2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP. With `[server].daemon_auto_start = false`, they use a daemon that is already running or starting and never start one.
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
 4. With both `--agent-url` and `--agent-token-file`, the CLI connects to a
@@ -204,7 +205,7 @@ Commands that access archive state keep their usual stdout/stderr output while u
    `draft-delete`, and `draft-recover` are available with their required
    permissions (see [scoped archive reads](#scoped-archive-reads) and
    [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)). The CLI rejects owner
-   configuration (`--config`, `--home`, `--local`) and never writes the token
+   configuration (`--config`, `--home`, `--local`, `--remote`) and never writes the token
    to logs or argv. It sends the token in the `X-Msgvault-Agent-Token` header;
    generated OpenAPI clients do not model this transport detail.
 
