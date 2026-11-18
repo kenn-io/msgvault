@@ -58,7 +58,13 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 		s.timeoutMiddleware(gate(http.HandlerFunc(func(_ http.ResponseWriter, timed *http.Request) {
 			*r = *timed
 			if sourcescope.Restricted(r.Context()) {
-				release, apiErr := s.beginCallerRead(r)
+				begin := s.beginCallerRead
+				if permission, ok := hostScopedCLIReads[operation.ID]; ok {
+					begin = func(r *http.Request) (func(), *apiHTTPError) {
+						return s.beginAgentRead(r, operation.ID, nil, permission)
+					}
+				}
+				release, apiErr := begin(r)
 				if apiErr != nil {
 					writeAPIHTTPError(w, apiErr)
 					return
