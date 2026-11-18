@@ -34763,7 +34763,7 @@ func (c *Client) TriggerSyncWithResponse(ctx context.Context, options *TriggerSy
 	}
 }
 
-// CaptureTelemetryEvent Report a web, terminal UI, or interactive CLI usage event
+// CaptureTelemetryEvent Record an interface event
 func (c *Client) CaptureTelemetryEventWithResponse(ctx context.Context, options *CaptureTelemetryEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CaptureTelemetryEventResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
