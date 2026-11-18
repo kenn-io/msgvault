@@ -905,6 +905,7 @@ source, cache, or person-edit tools.
 
 | Tool | Use | Parameters |
 |---|---|---|
+| `list_changes` | Follow arrivals and in-scope edits with a cursor. | Optional `cursor`, `limit`, `person_id`, `source_ids`, `conversation_ids`, `incoming_only` |
 | `list_source_status` | Read source capabilities, recent runs, and queued or pending work. | Optional `source_type` |
 | `get_source_identities` | Read confirmed sender identities and confirmation signals. | Required `source_id` |
 | `get_import_job` | Read a historical import job’s durable status and summary. | Required `job_id` |

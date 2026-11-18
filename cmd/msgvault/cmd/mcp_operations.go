@@ -191,6 +191,17 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 }
 
 func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
+	return readMCPOperationResponse[T](ctx, client, method, path, options, classify, false, success...)
+}
+
+// readMCPArchivePageJSON reads a successful archive page without the 1 MiB
+// cap. One stored message can exceed it, and a capped read would leave the
+// caller unable to page past that message. Error responses stay capped.
+func readMCPArchivePageJSON[T any](ctx context.Context, client *daemonclient.Client, path string, options runtime.RequestOptions, classify func(string) bool) (*mcpserver.OperationResult, error) {
+	return readMCPOperationResponse[T](ctx, client, http.MethodGet, path, options, classify, true, http.StatusOK)
+}
+
+func readMCPOperationResponse[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, uncappedSuccess bool, success ...int) (*mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
@@ -200,14 +211,19 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 		return operationFailure("operation_failed", writes), err
 	}
 	defer func() { _ = response.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	limited := !uncappedSuccess || !slices.Contains(success, response.StatusCode)
+	var body io.Reader = response.Body
+	if limited {
+		body = io.LimitReader(body, (1<<20)+1)
+	}
+	data, err := io.ReadAll(body)
 	if err != nil {
 		if writes && slices.Contains(success, response.StatusCode) {
 			return operationFailure("operation_receipt_unavailable", true), err
 		}
 		return operationFailure("operation_response_failed", writes), err
 	}
-	if len(data) > 1<<20 {
+	if limited && len(data) > 1<<20 {
 		if writes && slices.Contains(success, response.StatusCode) {
 			return operationFailure("operation_receipt_unavailable", true), nil
 		}
