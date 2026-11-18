@@ -41,7 +41,7 @@ Each issue carries these metadata keys:
 
 - `msgvault.person`: the person’s vCard UID.
 - `msgvault.conversation`: the conversation ID.
-- `msgvault.thread`: an archive-scoped parent marker for the conversation and person.
+- `msgvault.thread`: an archive-scoped parent marker for the conversation and the person’s contact card, so a follow-up still nests after the person is merged into another.
 - `msgvault.source_time`: the source message time used to find an earlier parent.
 - `deadline_on`: the promise’s due date, when present, recorded once at filing and not updated afterward.
 

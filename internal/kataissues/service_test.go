@@ -938,6 +938,40 @@ func TestCreateThreadParentAndDeadline(t *testing.T) {
 	assert.Nil(t, show(third.Issue.UID).Parent)
 }
 
+func TestCreateThreadParentAfterPersonMerge(t *testing.T) {
+	f := newFixture(t)
+	f.service.People = people{7: {"uid-absorbed"}, 8: {"uid-other"}, 9: {"uid-survivor", "uid-absorbed"}}
+	input := kataissues.CreateInput{Title: "First obligation", Thread: "conversation-1", PersonID: new(int64(7)), SourceTime: time.Now().UTC().Add(-time.Hour), Evidence: []kataevidence.Reference{f.evidence(t, 0).Reference}}
+	first, err := f.service.Create(t.Context(), "merge-first", input)
+	require.NoError(t, err)
+	// After the merge, the survivor holds the absorbed person's UID as a former one.
+	input.Title, input.PersonID, input.SourceTime = "Follow up", new(int64(9)), input.SourceTime.Add(time.Minute)
+	followUp, err := f.service.Create(t.Context(), "merge-follow-up", input)
+	require.NoError(t, err)
+	input.Title, input.PersonID = "Someone else", new(int64(8))
+	unrelated, err := f.service.Create(t.Context(), "merge-unrelated", input)
+	require.NoError(t, err)
+	assert.Equal(t, first.Issue.QualifiedRef, issueParentRef(t, f, followUp.Issue.UID))
+	assert.Empty(t, issueParentRef(t, f, unrelated.Issue.UID))
+}
+
+func issueParentRef(t *testing.T, f *fixture, uid string) string {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%d/issues/%s", f.kata.URL, f.kata.projectID, uid), nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+katatest.Token)
+	resp, err := f.kata.Client().Do(req)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var body katagen.ShowIssueResponseBody
+	require.NoError(t, json.UnmarshalRead(resp.Body, &body))
+	if body.Parent == nil {
+		return ""
+	}
+	return body.Parent.QualifiedID
+}
+
 func TestCreateReplaysAcrossOriginLinks(t *testing.T) {
 	f := newFixture(t)
 	input := kataissues.CreateInput{Title: "Send the draft", Brief: "Follow up", OriginLink: "https://first.example.test/messages/1", Evidence: []kataevidence.Reference{f.evidence(t, 0).Reference}}

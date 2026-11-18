@@ -111,32 +111,27 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 		return s.replay(existing, hash)
 	}
 	metadata := map[string]any{taskclient.ActionMetadataKey: marker, RequestMetadataKey: hash}
+	if input.Thread != "" && (input.PersonID == nil || input.SourceTime.IsZero()) {
+		return Result{}, ErrInvalidRequest
+	}
 	var parentRef string
-	if input.Thread != "" {
-		if input.PersonID == nil || input.SourceTime.IsZero() {
-			return Result{}, ErrInvalidRequest
-		}
-		thread := kataevidence.Digest("msgvault.kata.thread.v2", archive, input.Thread, strconv.FormatInt(*input.PersonID, 10))
-		metadata["msgvault.thread"] = thread
-		metadata["msgvault.conversation"] = input.Thread
-		metadata["msgvault.source_time"] = input.SourceTime.UTC().Format(time.RFC3339Nano)
-		parent, found, err := s.Kata.FindOpenMetadataTask(ctx, s.Project, "msgvault.thread", thread, input.SourceTime)
-		if err != nil {
-			return Result{}, err
-		}
-		if found {
-			parentRef = parent.QualifiedRef
-		}
-	}
-	if input.DeadlineOn != nil {
-		metadata["deadline_on"] = *input.DeadlineOn
-	}
 	if input.PersonID != nil {
 		uids, err := personagenda.PersonUIDs(ctx, s.People, *input.PersonID)
 		if err != nil {
 			return Result{}, err
 		}
 		metadata[personagenda.PersonMetadataKey], metadata[personagenda.ListMetadataKey] = uids[0], input.List
+		if input.Thread != "" {
+			metadata["msgvault.thread"] = threadDigest(archive, input.Thread, uids[0])
+			metadata["msgvault.conversation"] = input.Thread
+			metadata["msgvault.source_time"] = input.SourceTime.UTC().Format(time.RFC3339Nano)
+			if parentRef, err = s.findParent(ctx, archive, input.Thread, uids, input.SourceTime); err != nil {
+				return Result{}, err
+			}
+		}
+	}
+	if input.DeadlineOn != nil {
+		metadata["deadline_on"] = *input.DeadlineOn
 	}
 	quotes, err := s.resolve(ctx, input.Evidence)
 	if err != nil {
@@ -151,6 +146,34 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 		return Result{}, err
 	}
 	return Result{Issue: issue, Replayed: reused}, nil
+}
+
+// threadDigest names one person's issues in one conversation by the person's
+// contact-card UID, which survives a merge into another person.
+func threadDigest(archive, conversation, uid string) string {
+	return kataevidence.Digest("msgvault.kata.thread.v3", archive, conversation, uid)
+}
+
+// findParent returns the oldest open issue filed before before in the
+// conversation under any UID the person holds, including those merged into it.
+func (s *Service) findParent(ctx context.Context, archive, conversation string, uids []string, before time.Time) (string, error) {
+	var parentRef string
+	var parentTime time.Time
+	for _, uid := range uids {
+		parent, found, err := s.Kata.FindOpenMetadataTask(ctx, s.Project, "msgvault.thread", threadDigest(archive, conversation, uid), before)
+		if err != nil {
+			return "", err
+		}
+		if !found {
+			continue
+		}
+		stamp, _ := parent.Metadata["msgvault.source_time"].(string)
+		at, _ := time.Parse(time.RFC3339Nano, stamp)
+		if parentRef == "" || at.Before(parentTime) {
+			parentRef, parentTime = parent.QualifiedRef, at
+		}
+	}
+	return parentRef, nil
 }
 
 // FindFiled returns the issue filed under a key, including closed issues.
