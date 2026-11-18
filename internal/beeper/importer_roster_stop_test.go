@@ -405,6 +405,8 @@ func TestRosterMatchingProgressSurvivesFreshImporters(t *testing.T) {
 			store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
 			t.Cleanup(func() { slog.SetDefault(previous); store.ConfigureSQLLogging(store.SQLLogOptions{}) })
 			stopped, attempts := false, 0
+			// Leave room for policy refreshes in addition to roster work.
+			const transactionBudget = 24
 			for attempt := range 30 {
 				attempts++
 				if changing && attempt > 0 {
@@ -414,7 +416,7 @@ func TestRosterMatchingProgressSurvivesFreshImporters(t *testing.T) {
 				}
 				handler.operations = 0
 				imp = NewImporter(st, imp.client)
-				sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= 20 }})
+				sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= transactionBudget }})
 				require.NoError(err)
 				require.Zero(sum.Errors)
 				stopped = stopped || sum.Stopped

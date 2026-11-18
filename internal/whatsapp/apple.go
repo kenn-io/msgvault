@@ -169,15 +169,13 @@ func (imp *Importer) importApple(
 		))
 	}
 
-	selfParticipantID, err := imp.store.EnsureParticipantByPhone(
-		ctx,
-		opts.Phone, opts.DisplayName, "whatsapp",
+	participantIDs := make(map[string]int64)
+	selfParticipantID, err := ensureAppleParticipant(
+		ctx, imp.store, source.ID, opts.Phone, opts.DisplayName, participantIDs, summary,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ensure self participant: %w", err)
 	}
-	participantIDs := map[string]int64{opts.Phone: selfParticipantID}
-	summary.Participants = 1
 
 	chats, err := fetchAppleChats(ctx, db)
 	if err != nil {
@@ -272,8 +270,7 @@ func (imp *Importer) importApple(
 				}
 				legacyName := firstNonEmptyApple(member.ContactName, member.FirstName)
 				participantID, err := ensureAppleParticipant(
-					ctx,
-					imp.store, phone, legacyName,
+					ctx, imp.store, source.ID, phone, legacyName,
 					participantIDs, summary,
 				)
 				if err != nil {
@@ -297,8 +294,7 @@ func (imp *Importer) importApple(
 			}
 		} else if phone := applePhoneForJID(chat.RawJID, lidMap); phone != "" {
 			participantID, err := ensureAppleParticipant(
-				ctx,
-				imp.store, phone, chat.Name, participantIDs, summary,
+				ctx, imp.store, source.ID, phone, chat.Name, participantIDs, summary,
 			)
 			if err != nil {
 				return summary, err
@@ -372,8 +368,7 @@ func (imp *Importer) importApple(
 				}
 
 				senderID, senderPhone, err := resolveAppleMessageSender(
-					ctx,
-					imp.store, sourceMessage, chat, lidMap,
+					ctx, imp.store, source.ID, sourceMessage, chat, lidMap,
 					selfParticipantID, participantIDs, summary,
 				)
 				if err != nil {
@@ -468,8 +463,7 @@ func (imp *Importer) importApple(
 	}
 	for phone, pushName := range pendingPushNames {
 		if _, err := ensureAppleParticipant(
-			ctx,
-			imp.store, phone, pushName, participantIDs, summary,
+			ctx, imp.store, source.ID, phone, pushName, participantIDs, summary,
 		); err != nil {
 			return summary, err
 		}
@@ -743,6 +737,7 @@ func loadApplePushNames(
 func resolveAppleMessageSender(
 	ctx context.Context,
 	s *store.Store,
+	sourceID int64,
 	message appleMessage,
 	chat appleChat,
 	lidMap map[string]string,
@@ -765,8 +760,7 @@ func resolveAppleMessageSender(
 		return sql.NullInt64{}, "", nil
 	}
 	participantID, err := ensureAppleParticipant(
-		ctx,
-		s, phone, name, participantIDs, summary,
+		ctx, s, sourceID, phone, name, participantIDs, summary,
 	)
 	if err != nil {
 		return sql.NullInt64{}, "", err
@@ -777,24 +771,34 @@ func resolveAppleMessageSender(
 func ensureAppleParticipant(
 	ctx context.Context,
 	s *store.Store,
+	sourceID int64,
 	phone, displayName string,
 	participantIDs map[string]int64,
 	summary *ImportSummary,
 ) (int64, error) {
-	if participantID, ok := participantIDs[phone]; ok {
-		if displayName != "" {
-			if _, err := s.EnsureParticipantByPhone(ctx, phone, displayName, "whatsapp"); err != nil {
-				return 0, fmt.Errorf("update Apple participant: %w", err)
-			}
+	participantID, cached := participantIDs[phone]
+	if !cached || displayName != "" {
+		var err error
+		participantID, err = s.EnsureParticipantByPhone(ctx, phone, displayName, "whatsapp")
+		if err != nil {
+			return 0, fmt.Errorf("ensure Apple participant: %w", err)
 		}
-		return participantID, nil
 	}
-	participantID, err := s.EnsureParticipantByPhone(ctx, phone, displayName, "whatsapp")
-	if err != nil {
-		return 0, fmt.Errorf("ensure Apple participant: %w", err)
+	if strings.TrimSpace(displayName) != "" {
+		_, err := s.RecordContactObservationContext(ctx, participantID, store.ParticipantContactObservationInput{
+			SourceID:      &sourceID,
+			AddressKind:   store.ContactAddressDisplayName,
+			OriginalValue: displayName,
+			Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation, SourceRef: new(appleRawFormat)},
+		})
+		if err != nil {
+			return 0, fmt.Errorf("record Apple participant name: %w", err)
+		}
 	}
-	participantIDs[phone] = participantID
-	summary.Participants++
+	if !cached {
+		participantIDs[phone] = participantID
+		summary.Participants++
+	}
 	return participantID, nil
 }
 

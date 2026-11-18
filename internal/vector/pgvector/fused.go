@@ -13,8 +13,8 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqldialect"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -117,7 +117,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			return fmt.Sprintf("$%d", len(args))
 		}
 
-		liveSQL := store.LiveMessagesWhere("m", true)
+		liveSQL := b.liveMessageWhere("m")
 		emptyFilter := req.Filter.IsEmpty()
 
 		// When the structured filter is empty the candidate universe is the
@@ -134,7 +134,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 		omittedFTS, omittedANN := "FALSE", "FALSE"
 		var ctes []string
 		if !emptyFilter {
-			filterSQL := applyFilterClauses(req.Filter, bind)
+			filterSQL := applyFilterClauses(req.Filter, bind, b.senderEligibility())
 			ctes = append(ctes, fmt.Sprintf(
 				"filtered AS (SELECT m.id FROM messages m WHERE %s%s)", liveSQL, filterSQL))
 		}
@@ -200,12 +200,11 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			// The widening loop in FusedSearch grows innerChunks when this
 			// dedup collapses the pool below KPerSignal+1.
 			annConstraint := "              JOIN filtered f ON f.id = e.message_id\n"
-			annLive := ""
+			annLive := fmt.Sprintf(
+				"               AND EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND %s)\n",
+				b.embeddedMessageWhere("e"))
 			if emptyFilter {
 				annConstraint = ""
-				annLive = fmt.Sprintf(
-					"               AND EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND %s)\n",
-					liveSQL)
 			}
 			omittedANN = fmt.Sprintf(`((SELECT COUNT(*) FROM ann_pool) > %s AND EXISTS (
  SELECT 1 FROM embeddings e %s WHERE e.generation_id = %s AND e.dimension = %d
@@ -415,7 +414,7 @@ func (b *Backend) filteredChunkMessageCount(ctx context.Context, gen vector.Gene
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
 	}
-	clauses := append([]string{store.LiveMessagesWhere("m", true)}, buildPGFilterClauses(f, bind)...)
+	clauses := append([]string{b.embeddedMessageWhere("e")}, buildPGFilterClauses(f, bind, b.senderEligibility())...)
 	query := `SELECT COUNT(DISTINCT e.message_id)
 	            FROM embeddings e
 	            JOIN messages m ON m.id = e.message_id
@@ -432,8 +431,8 @@ func (b *Backend) filteredChunkMessageCount(ctx context.Context, gen vector.Gene
 // down to messages matching the structured filter. Delegates to
 // buildPGFilterFragment (filter.go) so the clause logic stays in one
 // place and evolves consistently across the fast-path and fused paths.
-func applyFilterClauses(f vector.Filter, bind func(any) string) string {
-	return buildPGFilterFragment(f, bind)
+func applyFilterClauses(f vector.Filter, bind func(any) string, eligible search.SenderEligibility) string {
+	return buildPGFilterFragment(f, bind, eligible)
 }
 
 // applySubjectBoost re-ranks hits whose subject contains any of the

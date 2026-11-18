@@ -310,6 +310,11 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
+		// Recipient replacement takes this lock before message and person rows,
+		// which contact changes invalidate below.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		var revision int64
 		err := tx.QueryRowContext(ctx,
 			`SELECT revision FROM persons WHERE id = ?`+s.dialect.SelectForUpdate(),
@@ -455,6 +460,9 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`, id); err != nil {
 			return fmt.Errorf("clear deleted person's display-name ownership: %w", err)
+		}
+		if err := s.invalidatePersonContactPointParticipantsTx(ctx, tx, id); err != nil {
+			return fmt.Errorf("invalidate participant projections before deleting person %d: %w", id, err)
 		}
 
 		var deletedUID string

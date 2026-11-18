@@ -203,6 +203,7 @@ func (a ChatWindowAssembler) document(
 	for _, member := range members {
 		versions = append(versions, SourceVersion{
 			MessageID: member.row.ID, LastModified: member.row.LastModified,
+			EmbeddingRevision: member.row.EmbeddingRevision,
 		})
 		for i, span := range member.chunks {
 			chunks = append(chunks, OwnedChunk{
@@ -303,6 +304,11 @@ func chatDocumentRevision(
 		metadata.ConversationID, metadata.Digest)
 	for _, version := range versions {
 		_, _ = fmt.Fprintf(h, "%d\x00", version.MessageID)
+		// Revision zero keeps the pre-revision encoding, so windows embedded
+		// before the upgrade keep their revision and are not sent again.
+		if version.EmbeddingRevision != 0 {
+			_, _ = fmt.Fprintf(h, "embedding-revision:%d\x00", version.EmbeddingRevision)
+		}
 	}
 	for _, chunk := range chunks {
 		_, _ = fmt.Fprintf(h, "%d\x00%d\x00%d\x00%d\x00%d\x00%t\x00%s\x00",

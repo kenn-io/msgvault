@@ -20,10 +20,10 @@ func (s *Store) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, l
 	}
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`WITH RECURSIVE shared_email_values AS (
 		SELECT normalized_value
-		FROM participant_contact_observations
+		FROM participant_contact_observations o
 		WHERE address_kind = 'email' AND normalized_value <> ''
 		  AND source_id IS NOT NULL AND source = 'archive_observation'
-		  AND active_until IS NULL AND superseded_at IS NULL
+		  AND active_until IS NULL AND superseded_at IS NULL AND `+FullObservationWhere("o")+`
 		GROUP BY normalized_value
 		HAVING COUNT(DISTINCT participant_id) BETWEEN 2 AND ?
 	), email_pairs AS (
@@ -37,7 +37,7 @@ func (s *Store) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, l
 		  AND a.source_id IS NOT NULL AND b.source_id IS NOT NULL
 		  AND a.source = 'archive_observation' AND b.source = 'archive_observation'
 		  AND a.active_until IS NULL AND a.superseded_at IS NULL
-		  AND b.active_until IS NULL AND b.superseded_at IS NULL
+		  AND b.active_until IS NULL AND b.superseded_at IS NULL AND `+FullObservationWhere("a")+` AND `+FullObservationWhere("b")+`
 		  AND EXISTS (SELECT 1 FROM shared_email_values v WHERE v.normalized_value = a.normalized_value)
 	), reachable(left_id, right_id, participant_id) AS (
 		SELECT left_id, right_id, left_id FROM email_pairs
@@ -78,11 +78,13 @@ func (s *Store) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, l
 					JOIN identity_match_evidence_sources es ON es.evidence_id = e.id
 					WHERE e.candidate_id = c.id AND e.evidence_kind = 'email'
 					  AND e.detail = ep.normalized_value AND e.source = 'archive_observation'
+                  AND e.evidence_ref = '`+observationPairEmailRef+`'
 					  AND es.source_id = ep.left_source)
 				OR NOT EXISTS (SELECT 1 FROM identity_match_evidence e
 					JOIN identity_match_evidence_sources es ON es.evidence_id = e.id
 					WHERE e.candidate_id = c.id AND e.evidence_kind = 'email'
 					  AND e.detail = ep.normalized_value AND e.source = 'archive_observation'
+                  AND e.evidence_ref = '`+observationPairEmailRef+`'
 					  AND es.source_id = ep.right_source)
 			  ))
 	)
@@ -115,7 +117,7 @@ func (s *Store) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, l
 		if s.personMatchBlockingBeforeLockHook != nil {
 			s.personMatchBlockingBeforeLockHook()
 		}
-		err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		err := s.withConversationPolicyIdentityTx(ctx, func(tx *loggedTx) error {
 			if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 				return err
 			}
@@ -127,10 +129,10 @@ func (s *Store) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, l
 				return nil
 			}
 			observations, err := tx.QueryContext(ctx, `SELECT participant_id, normalized_value, source_id
-				FROM participant_contact_observations
+				FROM participant_contact_observations o
 				WHERE participant_id IN (?, ?) AND address_kind = 'email' AND normalized_value = ?
 				  AND source_id IS NOT NULL AND source = 'archive_observation'
-				  AND active_until IS NULL AND superseded_at IS NULL
+				  AND active_until IS NULL AND superseded_at IS NULL AND `+FullObservationWhere("o")+`
 				ORDER BY participant_id, source_id`, item.left, item.right, item.value)
 			if err != nil {
 				return fmt.Errorf("load person match email observations: %w", err)
@@ -191,7 +193,7 @@ func (s *Store) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, l
 				input := IdentityMatchCandidateInput{LeftKind: IdentityMatchParticipant, LeftID: item.left,
 					RightKind: IdentityMatchParticipant, RightID: item.right,
 					Basis: IdentityMatchEmail, NormalizedValue: &item.value,
-					State: IdentityMatchStateCandidate, Source: ProvenanceArchiveObservation}
+					State: IdentityMatchStateCandidate, Source: ProvenanceArchiveObservation, SourceRef: new(observationPairRefPrefix + "email")}
 				candidate, wasCreated, err := s.upsertIdentityMatchCandidateTx(ctx, tx, input,
 					IdentityMatchParticipant, item.left, IdentityMatchParticipant, item.right, nil, false)
 				if err != nil {
@@ -211,10 +213,11 @@ func (s *Store) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, l
 					var evidenceID int64
 					err := tx.QueryRowContext(ctx, `SELECT id FROM identity_match_evidence
 						WHERE candidate_id = ? AND evidence_kind = 'email' AND detail = ? AND source = ?
+                          AND evidence_ref = '`+observationPairEmailRef+`'
 						ORDER BY id LIMIT 1`, candidateID, value, ProvenanceArchiveObservation).Scan(&evidenceID)
 					if errors.Is(err, sql.ErrNoRows) {
 						err = tx.QueryRowContext(ctx, `INSERT INTO identity_match_evidence
-							(candidate_id, evidence_kind, detail, source) VALUES (?, 'email', ?, ?)
+							(candidate_id, evidence_kind, detail, source, evidence_ref) VALUES (?, 'email', ?, ?, '`+observationPairEmailRef+`')
 							RETURNING id`, candidateID, value, ProvenanceArchiveObservation).Scan(&evidenceID)
 					}
 					if err != nil {

@@ -142,7 +142,9 @@ func (e *LiveExploreEngine) Explore(ctx context.Context, request ExploreRequest)
 		},
 	})
 	conditions = "NOT internally_deleted AND occurred_at IS NOT NULL AND (" + conditions + ")"
-	core := "WITH " + buildScalarAnalyticalEntriesCTEWithSource("entry_core", false, "s.identifier", "NOT ("+archiveOnlyDeletionTargetGuard+")")
+	// Live reads see every archive row, so they apply the Full-room policy the
+	// cache build applies to its message dataset.
+	core := "WITH " + buildScalarAnalyticalEntriesCTEWithSource("entry_core", false, "s.identifier", "NOT ("+archiveOnlyDeletionTargetGuard+")", store.FullMessageWhere("m"))
 	chat := sqlIsChatPredicate("message_type", "conversation_type")
 	response := &ExploreResponse{Rows: make([]EntryRow, 0), CacheRevision: snapshot.revision, SearchProvenance: provenance}
 	countSQL := core + ` SELECT COUNT(*) FILTER (WHERE NOT (` + chat + `)) +

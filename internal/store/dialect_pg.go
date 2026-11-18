@@ -693,6 +693,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// correct — the scan-and-fill worker (and backstop) will embed and
 		// stamp them. No backfill.
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS embed_gen BIGINT`, "embed_gen"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS embedding_revision BIGINT NOT NULL DEFAULT 0`, "embedding_revision"},
 		// last_modified: row-level last-modified watermark, the embed
 		// worker's optimistic-CAS token. Existing rows get the default
 		// (CURRENT_TIMESTAMP at the time the column is added); the triggers
@@ -2269,7 +2270,7 @@ var exclusiveLockTables = []string{
 	// Scoped writes fence sync_runs first. Source-first sync transactions take
 	// lockSyncMaintenanceGate before their source lock, so maintenance waits
 	// here without holding tables those transactions still need.
-	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "conversation_participants",
+	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "participant_contact_observation_conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw", "voice_transcripts", "email_calendar_pending",
 	// Recording reconciliation and visual publication transactions take the
 	// sync_runs gate before child writes (including FK checks on messages).
@@ -2340,6 +2341,10 @@ var exclusiveLockTables = []string{
 // persons and waits on participants. Taking the row lock first serializes
 // the two paths instead.
 func (d *PostgreSQLDialect) BeginExclusive(ctx context.Context, conn *sql.Conn) error {
+	return d.beginExclusive(ctx, conn, nil)
+}
+
+func (d *PostgreSQLDialect) beginExclusive(ctx context.Context, conn *sql.Conn, preFence func() error) error {
 	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
 		return err
 	}
@@ -2347,8 +2352,15 @@ func (d *PostgreSQLDialect) BeginExclusive(ctx context.Context, conn *sql.Conn) 
 		_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		return err
 	}
+	// Disable the pool's statement timeout before the fence: waiting behind a
+	// long policy refresh must not time out source removal or channel purge.
 	if _, err := conn.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
 		return rollback(err)
+	}
+	if preFence != nil {
+		if err := preFence(); err != nil {
+			return rollback(err)
+		}
 	}
 	if _, err := conn.ExecContext(ctx,
 		"INSERT INTO archive_metadata (key, value) VALUES ($1, '0') ON CONFLICT DO NOTHING",

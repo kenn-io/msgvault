@@ -197,7 +197,7 @@ func TestRelayedSenderNameSearch(t *testing.T) {
 		term string
 		want []int64
 	}{{"Relay Author", []int64{first, second, third}}, {"New Name", []int64{second}}} {
-		condition, matching, args := search.SenderLookup(tc.term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		condition, matching, args := search.SenderLookup(tc.term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m", nil)
 		for _, query := range []string{"SELECT m.id FROM messages m WHERE " + condition, matching} {
 			func() {
 				rows, err := env.DB.QueryContext(t.Context(), query, args...)

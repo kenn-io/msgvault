@@ -187,7 +187,7 @@ func TestPersonSemanticDocumentRendersCuratedCurrentTextExactly(t *testing.T) {
 	assert.Equal(wantText, document.Text)
 	assert.Equal(personID, document.PersonID)
 	assert.Equal(store.PersonSemanticRendererPolicy, document.RendererPolicy)
-	assert.Equal(semanticDigest(wantText), document.Revision)
+	assert.Equal(semanticDigest(t, f.Store, document.PersonID, wantText), document.Revision)
 	assert.NotEmpty(currentName.Envelope.Source, "fixture includes excluded provenance")
 	for _, excluded := range []string{
 		"private@example.invalid", "+15550000001", "42 Private Street", "A1B 2C3",
@@ -311,7 +311,7 @@ func TestPersonSemanticDocumentMutationListAndDeletion(t *testing.T) {
 	empty, err := f.Store.LoadPersonSemanticDocumentContext(ctx, emptyPerson.ID)
 	require.NoError(err)
 	assert.Empty(empty.Text, "an extant person with no curated discoverability text is valid")
-	assert.Equal(semanticDigest(""), empty.Revision)
+	assert.Equal(semanticDigest(t, f.Store, empty.PersonID, ""), empty.Revision)
 
 	before, err := f.Store.LoadPersonSemanticDocumentContext(ctx, populatedID)
 	require.NoError(err)
@@ -447,7 +447,7 @@ func TestPersonSemanticDocumentCapsExactHashedUTF8Bytes(t *testing.T) {
 	require.NoError(err)
 	assert.Len([]byte(document.Text), store.MaxPersonSemanticDocumentBytes)
 	assert.True(utf8.ValidString(document.Text))
-	assert.Equal(semanticDigest(document.Text), document.Revision)
+	assert.Equal(semanticDigest(t, f.Store, document.PersonID, document.Text), document.Revision)
 }
 
 func createSemanticAttribute(
@@ -482,7 +482,10 @@ func setSemanticTextAttribute(
 	require.NoError(t, err)
 }
 
-func semanticDigest(text string) string {
-	digest := sha256.Sum256([]byte(store.PersonSemanticRendererPolicy + "\x00" + text))
+func semanticDigest(t *testing.T, s *store.Store, personID int64, text string) string {
+	t.Helper()
+	person, err := s.GetPersonContext(t.Context(), personID)
+	require.NoError(t, err)
+	digest := sha256.Sum256([]byte(store.PersonSemanticRendererPolicy + "\x00" + strconv.FormatInt(person.Revision, 10) + "\x00" + text))
 	return hex.EncodeToString(digest[:])
 }

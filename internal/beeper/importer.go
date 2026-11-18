@@ -71,6 +71,7 @@ var routeProbeTimeout = 15 * time.Second
 // PendingReplies buffer persistMessage appends to, keeping checkpoints
 // consistent with the cursor by construction).
 type chatScope struct {
+	chat               *Chat
 	chatID             string
 	convID             int64
 	sourceID           int64
@@ -870,6 +871,15 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 				statsErr = fmt.Errorf("clear roster repair pending marker after active sync: %w", clearErr)
 			}
 		}
+		if ctx.Err() == nil && membership.roster != nil && (membershipComplete || sum.MessagesProcessed > before) {
+			policyCtx := ctx
+			if opts.stopRequested() {
+				var cancelPolicy context.CancelFunc
+				policyCtx, cancelPolicy = opts.finalizeContext(ctx)
+				defer cancelPolicy()
+			}
+			statsErr = errors.Join(statsErr, imp.refreshConversationPolicyAndRoster(policyCtx, convID, sourceID, membership.roster, membershipComplete, opts, sum))
+		}
 		err = errors.Join(err, statsErr)
 	}()
 	if stopBeforeMessages(cs, opts, err, sum) {
@@ -882,7 +892,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		cs.RosterRetryAfter = ""
 	}
 	cc := &chatScope{
-		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID,
+		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID, chat: membership.roster,
 		opts: opts, state: state, cs: cs, membershipComplete: membershipComplete,
 		tailScan: tailScan,
 	}
@@ -968,8 +978,9 @@ func finishRosterTurn(cs *ChatState, messagesMoved bool) {
 // total is reported. Neither is known when a truncated listing reports no
 // total and the detail fetch failed; that roster stays unresolved.
 type chatMembership struct {
-	count int
-	known bool
+	roster *Chat
+	count  int
+	known  bool
 }
 
 // chatMembershipOf resolves the roster from the freshest payload this run has
@@ -1041,6 +1052,7 @@ func (imp *Importer) ensureConversation(
 		}
 	}
 	membership := chatMembershipOf(detail, membershipComplete)
+	membership.roster = detail
 	convID, err := imp.store.EnsureConversationWithTypeContext(
 		ctx, sourceID, ch.ID, conversationType(ch.Type), ch.Title,
 	)
@@ -1051,7 +1063,7 @@ func (imp *Importer) ensureConversation(
 	// echoed by the remote chat payload. This also covers direct callers of
 	// ensureConversation that do not go through Import's cache reset.
 	imp.res.accountID = opts.AccountID
-	if err := imp.res.useMessageRoster(ctx, sourceID, detail, opts.skipRoster || !membershipComplete); err != nil {
+	if err := imp.res.useMessageRoster(ctx, sourceID, convID, detail, opts.skipRoster || !membershipComplete); err != nil {
 		return 0, false, chatMembership{}, err
 	}
 	routeEvidence := routeEvidenceFor(detail, opts)
@@ -1069,6 +1081,9 @@ func (imp *Importer) ensureConversation(
 	}
 	if err != nil {
 		return 0, false, chatMembership{}, err
+	}
+	if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+		return convID, false, membership, err
 	}
 	if opts.skipRoster {
 		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature && opts.rosterState.Signature == rosterSignature(detail, opts.AccountID) {
@@ -1131,8 +1146,29 @@ func (imp *Importer) ensureConversation(
 	// Invalidate earlier proof before any roster writes.
 	needsMembers := work.Phase == "members" || !work.Verified
 	if needsMembers {
-		if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
+		// Confirm self before resolving rich contacts. Recent mentions and
+		// replies can keep this room full even with an incomplete roster.
+		proof := routeEvidence
+		for _, item := range items {
+			if !item.IsSelf {
+				continue
+			}
+			id, err := imp.res.resolveIDFallback(ctx, item.ID, "")
+			if err != nil {
+				return convID, false, membership, err
+			}
+			if id != 0 {
+				proof.ParticipantIDs = append(proof.ParticipantIDs, id)
+				proof.SelfParticipantIDs = append(proof.SelfParticipantIDs, id)
+			}
+		}
+		if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, proof); err != nil {
 			return 0, false, chatMembership{}, err
+		}
+		if len(proof.SelfParticipantIDs) > 0 {
+			if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+				return convID, false, membership, err
+			}
 		}
 	}
 	var bridgePrefix string
@@ -1182,12 +1218,79 @@ func (imp *Importer) ensureConversation(
 	// Membership must be visible before matching. The roster supplies contact
 	// details used to gather shared-conversation evidence for new candidates.
 	if work.Phase == "matching" || work.Phase == "matching_retry" {
-		if err := imp.matchRosterMembers(ctx, sourceID, provider, detail, items, opts, bridgePrefix, work, sum); err != nil {
+		if err := imp.matchRosterMembers(ctx, sourceID, convID, provider, detail, items, opts, bridgePrefix, work, sum); err != nil {
 			return convID, work.Verified, membership, err
 		}
 	}
 
 	return convID, work.Verified, membership, nil
+}
+
+func (imp *Importer) refreshConversationPolicyAndRoster(ctx context.Context, convID, sourceID int64, detail *Chat, complete bool, opts ImportOptions, sum *ImportSummary) error {
+	refreshed, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now())
+	if err != nil || len(refreshed.ChangedConversationIDs) == 0 || opts.stopRequested() {
+		return err
+	}
+	full, err := imp.store.ConversationFullEligibleContext(ctx, convID)
+	if err != nil || !full {
+		return err
+	}
+	err = imp.replayConversationRoster(ctx, convID, sourceID, detail, complete, opts, sum)
+	if errors.Is(err, errBeeperBudgetExpired) {
+		return nil // The next roster turn resumes from the stored receipts.
+	}
+	return err
+}
+
+// A message can promote its room as it arrives. Reuse the fetched members and
+// normal receipts so rich contact capture resumes with the same budget.
+func (imp *Importer) replayConversationRoster(ctx context.Context, convID, sourceID int64, detail *Chat, complete bool, opts ImportOptions, sum *ImportSummary) error {
+	imp.res.accountID = opts.AccountID
+	metadata, err := imp.store.GetConversationMetadataContext(ctx, convID)
+	if err != nil {
+		return err
+	}
+	var current struct {
+		Route store.MessagingRouteEvidence `json:"messaging_route"`
+	}
+	if metadata.Valid && metadata.String != "" {
+		if err := json.Unmarshal([]byte(metadata.String), &current); err != nil {
+			return fmt.Errorf("read current roster route proof: %w", err)
+		}
+	}
+	items := slices.Clone(detail.Participants.Items)
+	slices.SortStableFunc(items, func(a, b Participant) int { return strings.Compare(a.ID, b.ID) })
+	keys := imp.rosterKeys(items)
+	provider := rosterProvider(detail.ID)
+	var bridgePrefix string
+	if !detail.Participants.HasMore {
+		bridgePrefix = participantBridgePrefix(items)
+	}
+	if err := imp.resolveRosterMembers(ctx, sourceID, convID, provider, detail, items, keys, opts, bridgePrefix); err != nil {
+		return err
+	}
+	// A failed message fetch can revoke route proof after the roster was read.
+	// Refresh only a verification that's still current.
+	if complete && current.Route.MembershipComplete {
+		owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
+		if err != nil {
+			return err
+		}
+		current.Route.ParticipantIDs = nil
+		current.Route.SelfParticipantIDs = nil
+		if err := imp.publishRosterEvidence(ctx, convID, current.Route, items, keys, owners, chatMembershipOf(detail, complete)); err != nil {
+			return err
+		}
+	}
+	imp.obs.mu.Lock()
+	for key := range imp.obs.seen {
+		if key.conversationID == convID {
+			delete(imp.obs.seen, key)
+		}
+	}
+	imp.obs.mu.Unlock()
+	work := &rosterWork{Phase: "matching", Verified: complete}
+	return imp.matchRosterMembers(ctx, sourceID, convID, provider, detail, items, opts, bridgePrefix, work, sum)
 }
 
 // recordChatFetchError records a failed message-page read for one chat. Route
@@ -1335,12 +1438,13 @@ func (imp *Importer) captureObservations(
 	u *User,
 	ch *Chat,
 	sourceID int64,
+	conversationID int64,
 	accountID string,
 	bridgePrefix string,
 	sum *ImportSummary,
 ) {
 	results, err := imp.obs.capture(ctx, participantID, u, captureContext{
-		SourceID: sourceID, AccountID: accountID, Network: ch.Network,
+		SourceID: sourceID, ConversationID: conversationID, AccountID: accountID, Network: ch.Network,
 		BridgePrefix: bridgePrefix,
 	})
 	if err != nil && ctx.Err() == nil {
@@ -1828,6 +1932,7 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	// Failed downloads are excluded: their typed markers already drive retries.
 	errorsBefore := sum.Errors
 	msg, text := mapMessage(m, cc.convID, cc.sourceID)
+	imp.res.messageRoom = cc.convID
 	senderPID, err := imp.res.resolveID(ctx, m.SenderID, m.SenderName)
 	if err != nil {
 		return err
@@ -1878,6 +1983,23 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	}
 	attachmentErrors := sum.Errors - attachmentErrorsBefore
 
+	if cc.chat != nil {
+		if user := observationUser(cc.chat, m.SenderID, m.SenderName, cc.membershipComplete); user != nil {
+			imp.captureObservations(ctx, senderPID, user, cc.chat, cc.sourceID, cc.convID, cc.opts.AccountID, "", sum)
+		}
+		for _, uid := range m.Mentions {
+			if uid == "" || uid == "@room" {
+				continue
+			}
+			pid, err := imp.res.resolveID(ctx, uid, "")
+			if err != nil {
+				return err
+			}
+			if user := observationUser(cc.chat, uid, "", cc.membershipComplete); user != nil {
+				imp.captureObservations(ctx, pid, user, cc.chat, cc.sourceID, cc.convID, cc.opts.AccountID, "", sum)
+			}
+		}
+	}
 	if err := imp.persistMentions(ctx, messageID, m, sum); err != nil {
 		return err
 	}
@@ -2096,4 +2218,18 @@ func parseWatermark(s string) time.Time {
 // order-comparable as strings (see SyncState.Merge).
 func formatWatermark(t time.Time) string {
 	return t.UTC().Truncate(time.Second).Format(time.RFC3339)
+}
+
+// Prefer the already fetched member payload so sender/mention sightings attach
+// room support to the same logical addresses instead of adding another anchor.
+func observationUser(chat *Chat, id, name string, rosterVerified bool) *User {
+	for i := range chat.Participants.Items {
+		if chat.Participants.Items[i].ID == id {
+			if rosterVerified {
+				return nil // Roster matching already owns this member's observations.
+			}
+			return &chat.Participants.Items[i].User
+		}
+	}
+	return &User{ID: id, FullName: name}
 }

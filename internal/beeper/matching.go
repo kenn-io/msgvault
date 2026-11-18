@@ -95,6 +95,8 @@ type identityMatcher struct {
 	store *store.Store
 	// resolved memoizes candidate identities already handled this run.
 	resolved map[identityMatchMemoKey]struct{}
+	// Test seam for policy changes after gathering and before publication.
+	beforeEvidenceWrite func()
 }
 
 func newIdentityMatcher(s *store.Store) *identityMatcher {
@@ -107,12 +109,26 @@ func newIdentityMatcher(s *store.Store) *identityMatcher {
 // match evaluates one recorded observation against the ladder.
 func (m *identityMatcher) match(
 	ctx context.Context, participantID int64, result *store.RecordContactObservationResult,
-) (matchOutcome, error) {
-	var outcome matchOutcome
+) (outcome matchOutcome, err error) {
+	defer func() {
+		if errors.Is(err, store.ErrConversationPolicyStale) {
+			outcome = matchOutcome{}
+			err = nil
+		}
+	}()
 	if result == nil || result.Observation == nil || participantID == 0 {
 		return outcome, nil
 	}
+	revision, err := m.store.ConversationPolicyRevision(ctx)
+	if err != nil {
+		return outcome, err
+	}
+	admission := store.IdentityMatchEvidenceAdmission{PolicyRevision: revision, ObservationID: result.Observation.Envelope.ID}
 	observation := result.Observation
+	eligible, err := m.store.ObservationFullEligibleContext(ctx, observation.Envelope.ID)
+	if err != nil || !eligible {
+		return outcome, err
+	}
 
 	if result.Conflicting {
 		candidateIDs := result.CandidateIDs
@@ -122,19 +138,19 @@ func (m *identityMatcher) match(
 		for _, candidateID := range candidateIDs {
 			outcome.Conflicts = append(outcome.Conflicts, candidateID)
 			if err := m.explainConflict(
-				ctx, participantID, candidateID, observation.SourceID,
+				ctx, admission, participantID, candidateID, observation.SourceID,
 			); err != nil {
 				return outcome, err
 			}
 		}
 	}
 	if observation.ProviderUserID != nil {
-		if err := m.matchStableProviderID(ctx, participantID, observation, &outcome); err != nil {
+		if err := m.matchStableProviderID(ctx, admission, participantID, observation, &outcome); err != nil {
 			return outcome, err
 		}
 	}
 	gathered := make(map[int64]struct{})
-	if err := m.matchServiceScopeUsername(ctx, participantID, observation, &outcome, gathered); err != nil {
+	if err := m.matchServiceScopeUsername(ctx, admission, participantID, observation, &outcome, gathered); err != nil {
 		return outcome, err
 	}
 	candidates, err := m.store.ParticipantUsernameSuggestionsContext(ctx, participantID)
@@ -150,7 +166,7 @@ func (m *identityMatcher) match(
 		if other == participantID {
 			other = candidate.RightID
 		}
-		if err := m.gatherEvidence(ctx, candidate, participantID, other, nil); err != nil {
+		if err := m.gatherEvidence(ctx, admission, candidate, participantID, other, nil); err != nil {
 			return outcome, err
 		}
 	}
@@ -164,7 +180,7 @@ func (m *identityMatcher) match(
 // username on the same service under a different scope. That exact but weak
 // match becomes a candidate a user must accept.
 func (m *identityMatcher) matchServiceScopeUsername(
-	ctx context.Context,
+	ctx context.Context, admission store.IdentityMatchEvidenceAdmission,
 	participantID int64,
 	observation *store.ParticipantContactObservation,
 	outcome *matchOutcome,
@@ -209,7 +225,8 @@ func (m *identityMatcher) matchServiceScopeUsername(
 
 		candidate, _, err := m.store.UpsertIdentityMatchCandidateContext(
 			ctx, store.IdentityMatchCandidateInput{
-				LeftKind: store.IdentityMatchParticipant, LeftID: participantID,
+				ObservationID: observation.Envelope.ID,
+				LeftKind:      store.IdentityMatchParticipant, LeftID: participantID,
 				RightKind: store.IdentityMatchParticipant, RightID: other.ParticipantID,
 				Basis:           store.IdentityMatchServiceScopeUsername,
 				ServiceSlug:     observation.ServiceSlug,
@@ -246,7 +263,7 @@ func (m *identityMatcher) matchServiceScopeUsername(
 			" across " + derefString(observation.ScopeValue) +
 			" and " + derefString(other.ScopeValue)
 		if err := m.addEvidence(
-			ctx, candidate, evidenceUsername, detail, observation.SourceID,
+			ctx, admission, candidate, evidenceUsername, detail, observation.SourceID,
 			observationSourceIDsForParticipants(
 				others, participantID, other.ParticipantID,
 			)...,
@@ -254,7 +271,7 @@ func (m *identityMatcher) matchServiceScopeUsername(
 			return err
 		}
 		if err := m.gatherEvidence(
-			ctx, candidate, participantID, other.ParticipantID, observation.SourceID,
+			ctx, admission, candidate, participantID, other.ParticipantID, observation.SourceID,
 		); err != nil {
 			return err
 		}
@@ -270,7 +287,7 @@ func (m *identityMatcher) matchServiceScopeUsername(
 // explainConflict attaches evidence to a collision candidate without changing
 // its conflict state.
 func (m *identityMatcher) explainConflict(
-	ctx context.Context, participantID, candidateID int64, sourceID *int64,
+	ctx context.Context, admission store.IdentityMatchEvidenceAdmission, participantID, candidateID int64, sourceID *int64,
 ) error {
 	candidate, err := m.store.GetIdentityMatchCandidateContext(ctx, candidateID)
 	if err != nil {
@@ -283,23 +300,23 @@ func (m *identityMatcher) explainConflict(
 	if other == participantID {
 		return nil
 	}
-	return m.gatherEvidence(ctx, candidate, participantID, other, sourceID)
+	return m.gatherEvidence(ctx, admission, candidate, participantID, other, sourceID)
 }
 
 // gatherEvidence is rung 3: phone, email, display name, and shared
 // conversations explain an existing candidate. It creates and accepts none.
 func (m *identityMatcher) gatherEvidence(
-	ctx context.Context, candidate *store.IdentityMatchCandidate, a, b int64,
+	ctx context.Context, admission store.IdentityMatchEvidenceAdmission, candidate *store.IdentityMatchCandidate, a, b int64,
 	sourceID *int64,
 ) error {
 	if candidate == nil || a == b {
 		return nil
 	}
-	left, err := m.store.ListParticipantObservationsContext(ctx, a, true)
+	left, err := m.store.ListFullParticipantObservationsContext(ctx, a)
 	if err != nil {
 		return err
 	}
-	right, err := m.store.ListParticipantObservationsContext(ctx, b, true)
+	right, err := m.store.ListFullParticipantObservationsContext(ctx, b)
 	if err != nil {
 		return err
 	}
@@ -316,7 +333,7 @@ func (m *identityMatcher) gatherEvidence(
 				left, right, pairing.kind, shared,
 			)
 			if err := m.addEvidence(
-				ctx, candidate, pairing.evidenceKind, shared, sourceID,
+				ctx, admission, candidate, pairing.evidenceKind, shared, sourceID,
 				supportingSources...,
 			); err != nil {
 				return err
@@ -330,7 +347,7 @@ func (m *identityMatcher) gatherEvidence(
 	}
 	if nameA, nameB := names[a], names[b]; nameA != "" && strings.EqualFold(nameA, nameB) {
 		if err := m.addEvidence(
-			ctx, candidate, evidenceName, nameA, sourceID, contributingSources...,
+			ctx, admission, candidate, evidenceName, nameA, sourceID, contributingSources...,
 		); err != nil {
 			return err
 		}
@@ -348,7 +365,7 @@ func (m *identityMatcher) gatherEvidence(
 		}
 		conversationSourceID := conversation.SourceID
 		if err := m.addEvidenceWithReference(
-			ctx, candidate, evidenceMembership, reference, detail,
+			ctx, admission, candidate, evidenceMembership, reference, detail,
 			&conversationSourceID,
 		); err != nil {
 			return err
@@ -387,7 +404,7 @@ func sharedNormalizedValues(
 // than per row, and a rejected or already-decided candidate is left exactly as
 // the user left it.
 func (m *identityMatcher) matchStableProviderID(
-	ctx context.Context,
+	ctx context.Context, admission store.IdentityMatchEvidenceAdmission,
 	participantID int64,
 	observation *store.ParticipantContactObservation,
 	outcome *matchOutcome,
@@ -415,7 +432,8 @@ func (m *identityMatcher) matchStableProviderID(
 
 		candidate, _, err := m.store.UpsertIdentityMatchCandidateContext(
 			ctx, store.IdentityMatchCandidateInput{
-				LeftKind: store.IdentityMatchParticipant, LeftID: participantID,
+				ObservationID: observation.Envelope.ID,
+				LeftKind:      store.IdentityMatchParticipant, LeftID: participantID,
 				RightKind: store.IdentityMatchParticipant, RightID: other,
 				Basis:           store.IdentityMatchStableProviderID,
 				ServiceSlug:     observation.ServiceSlug,
@@ -446,7 +464,7 @@ func (m *identityMatcher) matchStableProviderID(
 			continue
 		case store.IdentityMatchStateCandidate, store.IdentityMatchStateAccepted:
 			if err := m.addEvidence(
-				ctx, candidate, evidenceProviderID, *observation.ProviderUserID,
+				ctx, admission, candidate, evidenceProviderID, *observation.ProviderUserID,
 				observation.SourceID,
 				observationSourceIDsForParticipants(others, participantID, other)...,
 			); err != nil {
@@ -476,7 +494,8 @@ func (m *identityMatcher) matchStableProviderID(
 				"right_participant_id", candidate.RightID)
 			outcome.Conflicts = append(outcome.Conflicts, candidate.ID)
 			m.resolved[memoKey] = struct{}{}
-		case errors.Is(err, store.ErrIdentityMatchNotAccepted),
+		case errors.Is(err, store.ErrConversationPolicyStale),
+			errors.Is(err, store.ErrIdentityMatchNotAccepted),
 			errors.Is(err, store.ErrIdentityMatchNotFound),
 			errors.Is(err, store.ErrIdentityMatchReviewStale):
 			if staleErr := m.handleStaleAcceptedMatch(
@@ -638,16 +657,16 @@ func observationSourceIDsForValue(
 
 // addEvidence attaches one evidence row unless it is already present.
 func (m *identityMatcher) addEvidence(
-	ctx context.Context, candidate *store.IdentityMatchCandidate, kind, detail string,
+	ctx context.Context, admission store.IdentityMatchEvidenceAdmission, candidate *store.IdentityMatchCandidate, kind, detail string,
 	sourceID *int64, additionalSourceIDs ...int64,
 ) error {
 	return m.addEvidenceWithReference(
-		ctx, candidate, kind, "", detail, sourceID, additionalSourceIDs...,
+		ctx, admission, candidate, kind, "", detail, sourceID, additionalSourceIDs...,
 	)
 }
 
 func (m *identityMatcher) addEvidenceWithReference(
-	ctx context.Context, candidate *store.IdentityMatchCandidate, kind, reference, detail string,
+	ctx context.Context, admission store.IdentityMatchEvidenceAdmission, candidate *store.IdentityMatchCandidate, kind, reference, detail string,
 	sourceID *int64, additionalSourceIDs ...int64,
 ) error {
 	if candidate == nil {
@@ -659,7 +678,11 @@ func (m *identityMatcher) addEvidenceWithReference(
 	if reference != "" {
 		evidenceReference = &reference
 	}
+	if m.beforeEvidenceWrite != nil {
+		m.beforeEvidenceWrite()
+	}
 	input := store.IdentityMatchEvidenceInput{
+		Admission:    &admission,
 		EvidenceKind: kind,
 		EvidenceRef:  evidenceReference,
 		Detail:       &value,

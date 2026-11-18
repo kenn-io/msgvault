@@ -231,7 +231,7 @@ func TestIdentityMatchReviewRejectsChangedSourceSupport(t *testing.T) {
 	})
 	require.NoError(err)
 	_, err = st.AddIdentityMatchEvidenceContext(ctx, candidate.ID, store.IdentityMatchEvidenceInput{
-		EvidenceKind: "display_name", Source: store.ProvenanceArchiveObservation,
+		EvidenceKind: "conversation_membership", Source: store.ProvenanceArchiveObservation,
 		SourceID: &fixture.Source.ID,
 	})
 	require.NoError(err)

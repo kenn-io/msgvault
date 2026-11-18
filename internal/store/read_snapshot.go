@@ -110,7 +110,7 @@ func ReadDBContext(ctx context.Context, db *sql.DB) SQLReader {
 		if snapshot.reader != nil {
 			return snapshot.reader
 		}
-		return snapshot.tx.Tx
+		return snapshot.tx.callerTransaction()
 	}
 	return db
 }

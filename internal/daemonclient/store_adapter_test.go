@@ -2470,6 +2470,35 @@ func TestGetCLISearchRejectsFilenameOnOlderDaemon(t *testing.T) {
 	}
 }
 
+// An older daemon parses include:cold as a text term and silently returns no
+// matches, so the client must refuse before sending the search.
+func TestGetCLISearchRejectsIncludeColdOnOlderDaemon(t *testing.T) {
+	for _, version := range []string{"5.15.0", "5.16.0"} {
+		t.Run(version, func(t *testing.T) {
+			require := require.New(t)
+			var searches atomic.Int64
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/health" {
+					writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": version})
+					return
+				}
+				searches.Add(1)
+				writeJSONResponse(t, w, map[string]any{"results": []any{}, "messages": []any{}})
+			}))
+			t.Cleanup(srv.Close)
+			client := newTestStore(srv, "")
+			_, err := client.GetCLISearch(t.Context(), CLISearchRequest{Query: "telescope include:cold"})
+			if version == "5.16.0" {
+				require.NoError(err)
+				assert.Equal(t, int64(1), searches.Load())
+			} else {
+				require.ErrorContains(err, "include:cold requires daemon API schema 5.16.0")
+				assert.Zero(t, searches.Load())
+			}
+		})
+	}
+}
+
 func TestGetCLIHybridSearchAttachmentMetadataAvailability(t *testing.T) {
 	zero, three := int64(0), int64(3)
 	for _, tc := range []struct {

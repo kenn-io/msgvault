@@ -80,6 +80,16 @@ each source to the authenticated email and stable user ID. Its recoverable
 attempt state rotates detail fetches across limited and failed runs. See the
 [meeting workflow](../usage/meetings.md#pocket) for the content contract and limits.
 
+In newer `main` builds, conversation policy classifies the entire archive before
+search, analytics, vector and people consumers start. Store transactions change a room's
+tier and invalidate derived state together. A minute loop in the daemon expires
+quiet rooms, reloads validated settings and retries native vector cleanup,
+including when generation is disabled. A policy lock keeps vector and cache
+publication from racing a tier change, so stale in-flight work is rejected and a
+cache built under an older policy revision is never served. Independent contact
+and manual identity support remain intact. See
+[conversation archive tiers](../configuration.md#conversation-archive-tiers).
+
 On SQLite, analytics exports message metadata to Parquet. DuckDB queries those
 files for grouping and drill-down without scanning message bodies. FTS5 indexes
 message text for keyword search. Semantic search stores vectors in a separate
