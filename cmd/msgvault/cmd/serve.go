@@ -465,8 +465,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	agendaOrigin := "http://" + net.JoinHostPort(probeHostForDial(bindAddr), strconv.Itoa(boundPort))
-	loopAgenda := api.NewLoopAgenda(cfg.Integrations.Kata, s, agendaOrigin)
+	loopAgenda := api.NewLoopAgenda(cfg.Integrations.Kata, s, loopAgendaOrigin(apiListener.Addr()))
 	if err := registerLoopAgendaJob(sched, cfg.Integrations.Kata, loopAgenda); err != nil {
 		return fmt.Errorf("schedule loop agenda: %w", err)
 	}

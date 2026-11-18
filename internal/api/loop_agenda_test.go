@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/loops"
@@ -485,6 +486,42 @@ func TestLoopAgendaPromiseKeyFollowsSource(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, fresh.Replayed)
 	assert.NotEqual(t, filed.Issue.UID, fresh.Issue.UID)
+}
+
+func TestLoopAgendaLinksToSignedInBrowserOrigin(t *testing.T) {
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	var ids []int64
+	for i := range 3 {
+		address := fmt.Sprintf("person%d@example.test", i)
+		ids = append(ids, f.PersistEmail(storetest.EmailSpec{Thread: fmt.Sprintf("origin-%d", i), From: address, To: []string{storetest.OwnerAddress}, Body: "Can you send it?", SentAt: now.Add(-48 * time.Hour)}))
+		_, _, err := f.Store.CreatePersonFromParticipant(f.EnsureParticipant(address, "", "example.test"))
+		require.NoError(t, err)
+	}
+	native := katatest.New(t)
+	kata := httptest.NewServer(native.Service.Handler())
+	t.Cleanup(kata.Close)
+	// A server on every interface has no address of its own to link to.
+	agenda := NewLoopAgenda(config.TaskIntegrationConfig{Enabled: true, Endpoint: kata.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}, f.Store, "")
+	unlinked, err := agenda.File(t.Context(), strconv.FormatInt(ids[0], 10), now)
+	require.NoError(t, err)
+	assert.NotContains(t, unlinked.Issue.Body, "/messages/")
+
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: testSessionAPIKey}}, Store: f.Store, Logger: testLogger(), LoopAgenda: agenda})
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	session, _, err := srv.sessions.create()
+	require.NoError(t, err)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://archive.example.test:8080/api/v1/loops", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	srv.Router().ServeHTTP(httptest.NewRecorder(), request)
+
+	scheduled, err := agenda.File(t.Context(), strconv.FormatInt(ids[1], 10), now)
+	require.NoError(t, err)
+	assert.Contains(t, scheduled.Issue.Body, fmt.Sprintf("http://archive.example.test:8080/messages/%d", ids[1]))
+	manual, err := agenda.File(apiprotocol.WithBrowserOrigin(t.Context(), "https://manual.example.test"), strconv.FormatInt(ids[2], 10), now)
+	require.NoError(t, err)
+	assert.Contains(t, manual.Issue.Body, fmt.Sprintf("https://manual.example.test/messages/%d", ids[2]))
 }
 
 func agendaParent(t *testing.T, native katatest.Kata, server *httptest.Server, uid string) string {

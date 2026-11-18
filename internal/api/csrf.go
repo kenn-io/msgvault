@@ -61,6 +61,9 @@ func (s *Server) requestSecurityMiddleware(next http.Handler) http.Handler {
 			// Set here because Huma raw handlers read the original request context.
 			r = r.WithContext(query.WithMessageByteLimit(r.Context(), remoteMessageBytes))
 		}
+		if auth.Mode == AuthModeSession {
+			s.loopAgenda.noteBrowserOrigin(scheme + "://" + host)
+		}
 		security := requestSecurity{
 			auth:   auth,
 			scheme: scheme,
