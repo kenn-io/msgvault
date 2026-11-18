@@ -172,7 +172,14 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.17.0**.
+it is separate from the binary release version. The current schema is **5.18.0**.
+
+Schema 5.18.0 adds `GET /api/v1/cli/messages/export`, which streams
+`export-messages` output as `application/x-ndjson`. It takes `start`, `end`,
+repeatable `message_type` and `source`, and `person_id`, with the same
+validation as the CLI flags. Bad filters return `400` and an unknown source
+returns `404` before any output; a failure while streaming ends the stream
+without its completion record. Read-only remote client keys may call it.
 
 Schema 5.17.0 adds person, source, conversation and incoming filters to the
 [message change feed](#get-apiv1messageschanges).

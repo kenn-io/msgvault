@@ -306,6 +306,7 @@ export * from "./exploreSort";
 export * from "./exploreSortDirection";
 export * from "./exploreSortField";
 export * from "./exploreUnavailableAction";
+export * from "./exportCLIMessagesParams";
 export * from "./factSummary";
 export * from "./fastSearchParams";
 export * from "./fieldDescriptor";

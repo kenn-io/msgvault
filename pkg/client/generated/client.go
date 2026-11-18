@@ -327,6 +327,10 @@ type ClientInterface interface {
 	GetCLIMessageThread(ctx context.Context, options *GetCLIMessageThreadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageThreadResponse, error)
 	GetCLIMessageThreadWithResponse(ctx context.Context, options *GetCLIMessageThreadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageThreadResp, error)
 
+	// ExportCLIMessages Stream messages in a time window as msgvault-message-export/1 JSON Lines
+	ExportCLIMessages(ctx context.Context, options *ExportCLIMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportCLIMessagesResponse, error)
+	ExportCLIMessagesWithResponse(ctx context.Context, options *ExportCLIMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportCLIMessagesResp, error)
+
 	// RebuildCLIFTS Rebuild the CLI full-text search index
 	RebuildCLIFTS(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RebuildCLIFTSResponse, error)
 	RebuildCLIFTSWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RebuildCLIFTSResp, error)
@@ -5841,6 +5845,55 @@ func (c *Client) GetCLIMessageThread(ctx context.Context, options *GetCLIMessage
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/message/thread")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ExportCLIMessages Stream messages in a time window as msgvault-message-export/1 JSON Lines
+func (c *Client) ExportCLIMessages(ctx context.Context, options *ExportCLIMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportCLIMessagesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/cli/messages/export",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ExportCLIMessagesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ExportCLIMessagesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ExportCLIMessagesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		result := ExportCLIMessagesResponse(bodyBytes)
+		return &result, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/messages/export")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

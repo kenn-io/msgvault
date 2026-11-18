@@ -127,6 +127,7 @@ import type {
   EndEmploymentBody,
   EndEmploymentPathParameters,
   ExplainPersonTierPathParameters,
+  ExportCLIMessagesParams,
   FactSummary,
   FastSearchParams,
   FileMetadataResponse,
@@ -1267,6 +1268,23 @@ export const getCLIMessageThread = (
 ) => {
   return orvalFetch<ThreadPage>(
     { url: `/api/v1/cli/message/thread`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Stream messages in a time window as msgvault-message-export/1 JSON Lines
+ */
+export const exportCLIMessages = (
+  params: ExportCLIMessagesParams,
+  options?: SecondParameter<typeof orvalFetch<Blob>>,
+) => {
+  return orvalFetch<Blob>(
+    {
+      url: `/api/v1/cli/messages/export`,
+      method: "GET",
+      params,
+      responseType: "blob",
+    },
     options,
   );
 };
