@@ -214,7 +214,7 @@ func TestPersonAttributesListPreset(t *testing.T) {
 			definition := strings.Replace(strings.Replace(testPersonAttributesJSON,
 				`"primary_channel"`, `"`+slug+`"`, 1),
 				`"59e9a7d3-4904-4d0e-97d1-d0680e1e9e55"`, `"`+universalIDs[slug]+`"`, 1)
-			_, _ = w.Write([]byte(definition))
+			_, _ = w.Write([]byte(definition)) // #nosec G705 -- Synthetic response uses application/json; the analyzer does not model response headers.
 			return
 		}
 		assert.Equal(t, http.MethodPut, r.Method)
