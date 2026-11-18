@@ -43,6 +43,7 @@ describe('KataEvidenceDialog', () => {
     const h = harness();
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up' });
     expect(await screen.findByText('Opening passage')).toBeDefined();
+    expect(screen.getByText('The quote, title, and description are sent; attachments stay out.')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Earlier passage' })).toHaveProperty('disabled', true);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Later passage' }));
@@ -143,7 +144,7 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Follow up' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'File as a new issue' }));
-    await screen.findByRole('status');
+    await screen.findByText('example#efgh');
     const keys = (h: ReturnType<typeof harness>) => h.posted('/integrations/kata/issues').map((request) => request.headers.get('Idempotency-Key'));
     expect(keys(remounted)).toEqual(keys(lost));
   });
@@ -177,6 +178,7 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Quote selection' }));
     await screen.findByText(quote);
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    expect(screen.getByText('Only the quote is sent; attachments stay out.')).toBeDefined();
     await screen.findByRole('radio', { name: 'Follow up · example#abcd' });
     expect(screen.getByText('Search by whole word. The list is capped at 25.')).toBeDefined();
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budget' } });
@@ -194,11 +196,9 @@ describe('KataEvidenceDialog', () => {
     const h = harness(async () => Response.json({ issue, replayed: false }));
     render(KataEvidenceDialog, { client: h.client, selector });
     await screen.findByText('Opening passage');
-    expect(screen.getByText('The quote, title, and description are sent; attachments stay out.')).toBeDefined();
     await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
     await fireEvent.input(screen.getByLabelText('Brief'), { target: { value: 'Brief draft' } });
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    expect(screen.getByText('Only the quote is sent; attachments stay out.')).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
     expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
     expect(screen.getByLabelText('Brief')).toHaveProperty('value', 'Brief draft');

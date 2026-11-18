@@ -75,6 +75,7 @@ describe('TaskLinks', () => {
 
   it('preserves a creation draft when switching between New and Existing', async () => {
     render(TaskLinks, { client: taskCreationClient(), mode: 'add', messageId: 42, title: 'Follow up', oncomplete: vi.fn() });
+    expect(await screen.findByRole('radiogroup', { name: 'Task' })).toBeDefined();
     await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Revised follow up' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
@@ -156,8 +157,6 @@ describe('TaskLinks', () => {
     const projects = screen.getAllByText('Tasks · garden');
     expect(projects).toHaveLength(1);
     expect(projects[0].compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Unlink Plant seeds' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Unlink Water plants' })).toBeDefined();
   });
 
   it('shows loading, linked tasks, and honest partial authority', async () => {

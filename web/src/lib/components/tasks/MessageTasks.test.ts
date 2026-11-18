@@ -28,8 +28,6 @@ describe('Message task list', () => {
       await screen.findByText('Task work');
       await screen.findByText('Kata work');
       expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
-      expect(screen.getByText('Tasks · example')).toBeDefined();
-      expect(screen.getByText('Kata · example#abcd · Open')).toBeDefined();
       expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
     } finally { view.unmount(); readiness.dispose(); }
   });

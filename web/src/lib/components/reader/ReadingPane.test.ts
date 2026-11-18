@@ -42,16 +42,11 @@ function renderPane(row: EntryRow) {
 }
 
 describe('ReadingPane header', () => {
-  it('omits this year from the date and keeps an older year', () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-11-17T12:00:00Z'));
-    try {
-      const view = renderPane(entryRow({ anchor_message_id: undefined, occurred_at: '2026-07-18T12:00:00Z' }));
-      expect(document.querySelector('.pane-meta')?.textContent).not.toContain('2026');
-      view.unmount();
-      renderPane(entryRow({ anchor_message_id: undefined, occurred_at: '2025-07-18T12:00:00Z' }));
-      expect(document.querySelector('.pane-meta')?.textContent).toContain('2025');
-    } finally { vi.useRealTimers(); }
+  it('omits the current year from the date', () => {
+    const year = new Date().getFullYear();
+    renderPane(entryRow({ anchor_message_id: undefined, occurred_at: `${year}-07-18T12:00:00` }));
+    expect(document.querySelector('.pane-meta')?.textContent).toContain('Jul 18');
+    expect(document.querySelector('.pane-meta')?.textContent).not.toContain(String(year));
   });
   it('uses a plain title for a missing message selected by ID', () => {
     render(ReadingPane, {

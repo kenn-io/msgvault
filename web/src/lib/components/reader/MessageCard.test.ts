@@ -25,8 +25,9 @@ function detail(overrides: Partial<ArchiveMessageDetail> = {}): ArchiveMessageDe
 describe('MessageCard', () => {
   it('omits the current year from the message actions label', () => {
     const year = new Date().getFullYear();
-    render(MessageCard, { message: detail({ sentAt: `${year}-05-03T12:00:00`, bodyHtml: '<p>Body</p>' }), expanded: true });
-    expect(screen.getByRole('button', { name: 'More actions for Alice Example <alice@example.com> on May 3, 12:00 PM' })).toBeDefined();
+    const view = render(MessageCard, { message: detail({ sentAt: `${year}-05-03T12:00:00`, bodyHtml: '<p>Body</p>' }), expanded: true });
+    const menu = screen.getByRole('button', { name: 'More actions for Alice Example <alice@example.com> on May 3, 12:00 PM' });
+    expect(menu.getAttribute('aria-label')).toBe(`More actions for Alice Example <alice@example.com> on ${view.container.querySelector('time')?.textContent}`);
   });
   it('collapses to one line of sender, snippet, and date that expands on click', async () => {
     const onToggle = vi.fn();
@@ -107,7 +108,7 @@ describe('MessageCard', () => {
 
   it('offers plain text through a small overflow control, defaulting to HTML', async () => {
     const onViewModeChange = vi.fn();
-    const view = render(MessageCard, {
+    render(MessageCard, {
       props: {
         message: detail({ bodyHtml: '<p>Formatted body</p>' }),
         expanded: true,
@@ -116,7 +117,6 @@ describe('MessageCard', () => {
     });
 
     const menu = screen.getByRole('button', { name: /^More actions for .+ on / });
-    expect(menu.getAttribute('aria-label')).toBe(`More actions for Alice Example <alice@example.com> on ${view.container.querySelector('time')?.textContent}`);
     await fireEvent.click(menu);
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Show plain text' }));
     expect(onViewModeChange).toHaveBeenCalledWith(42, 'text');

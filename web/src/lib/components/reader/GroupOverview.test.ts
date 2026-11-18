@@ -4,15 +4,12 @@ import GroupOverview from './GroupOverview.svelte';
 
 describe('GroupOverview', () => {
 
-  it('omits the current year in the range while retaining earlier years', () => {
-    const year = new Date().getFullYear();
-    render(GroupOverview, { selection: {
-      kind: 'group', dimension: 'participant', key: '42', label: 'Person Example', count: 2,
-      latestAt: `${year}-05-04T12:00:00Z`, overview: { first_at: `${year - 1}-05-03T12:00:00Z`, activity: [], co_participants: [] }
-    } });
-    expect(screen.getByText(`May 3, ${year - 1} – May 4`)).toBeDefined();
-  });
   it.each([
+    { name: 'mixed-year range', selection: {
+      kind: 'group' as const, dimension: 'participant' as const, key: '42', label: 'Person Example', count: 2,
+      latestAt: `${new Date().getFullYear()}-05-04T12:00:00Z`, overview: { first_at: `${new Date().getFullYear() - 1}-05-03T12:00:00Z`, activity: [{ bucket: `${new Date().getFullYear()}-05`, count: 2 }], co_participants: [{ key: '1', label: 'Person Example', count: 2 }] }
+    }, range: `May 3, ${new Date().getFullYear() - 1} – May 4`, showRange: true,
+    image: `Activity by month: May ${new Date().getFullYear()}`, dates: [] },
     { name: 'current year', selection: {
       kind: 'group' as const, dimension: 'month' as const, key: `${new Date().getFullYear()}-05`, label: 'May', count: 2,
       latestAt: `${new Date().getFullYear()}-05-04T12:00:00Z`, overview: { first_at: `${new Date().getFullYear()}-05-03T12:00:00Z`, activity: [{ bucket: `${new Date().getFullYear()}-05-03`, count: 1 }, { bucket: `${new Date().getFullYear()}-05-04`, count: 1 }], co_participants: [{ key: '1', label: 'Person Example', count: 2 }] }
