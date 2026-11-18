@@ -138,7 +138,7 @@
     }}
   >
     <p class="project"><span>Project</span><strong>{project}</strong></p>
-    <div class="message"><span>Message</span><Chip tone="neutral" uppercase={false} ariaLabel={fullContext} title={fullContext}>{#if phoneContext === fullContext}{fullContext}{:else}<span class="desktop-context">{fullContext}</span><span class="phone-context">{phoneContext}</span>{/if}</Chip></div>
+    <div class="message"><span>Message</span><Chip tone="neutral" uppercase={false} ariaLabel={fullContext} title={fullContext}>{#if phoneContext === fullContext}<span class="context">{fullContext}</span>{:else}<span class="context desktop-context">{fullContext}</span><span class="phone-context">{phoneContext}</span>{/if}</Chip></div>
     <label>Task title<TextInput ariaLabel="Task title" bind:value={title} autocomplete="off" block /></label>
     <label>Description<textarea aria-label="Description" bind:value={description}></textarea></label>
     <label
@@ -225,11 +225,11 @@
     min-width: 0;
   }
   form :global(.kit-chip) { justify-self: start; max-width: 100%; font-weight: 400; line-height: var(--type-meta-line); }
-  form :global(.kit-chip__label) { margin: 0; padding: 0; overflow: visible; white-space: normal; overflow-wrap: anywhere; }
+  .context { display: block; line-height: var(--type-meta-line); white-space: normal; overflow-wrap: anywhere; }
   .phone-context { display: none; }
   @media (max-width: 640px) {
     form :global(.kit-chip.kit-chip--md) { padding: var(--space-2) var(--space-4); }
-    form :global(.kit-chip__label) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .context { white-space: nowrap; }
     .desktop-context { display: none; }
     .phone-context { display: inline; }
   }
