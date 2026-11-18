@@ -32,6 +32,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
+	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/granola"
@@ -2044,6 +2045,11 @@ func (a *storeAPIAdapter) invocationContext(ctx context.Context) context.Context
 		state.logger = a.logger
 	}
 	return withInvocation(ctx, state)
+}
+
+// OpenMessageExport serves GET /api/v1/cli/messages/export.
+func (a *storeAPIAdapter) OpenMessageExport(ctx context.Context, request export.MessagesRequest) (*export.MessagesExport, error) {
+	return export.OpenMessages(ctx, a.store, request)
 }
 
 func (a *storeAPIAdapter) GrantPersonMatchConsentContext(ctx context.Context, disclosure personmatch.Disclosure, actor string, mutationGate func(context.Context) (func(), error)) (*store.PersonMatchConsent, bool, error) {

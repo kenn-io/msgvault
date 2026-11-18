@@ -494,6 +494,21 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,
 	)
+	registerAPIV1RawHumaBinaryRoute(
+		apiV1,
+		"exportCLIMessages",
+		http.MethodGet,
+		"/cli/messages/export",
+		"Stream messages in a time window as msgvault-message-export/1 JSON Lines",
+		"application/x-ndjson",
+		s.handleCLIMessageExport,
+		http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusForbidden,
+		http.StatusNotFound,
+		http.StatusInternalServerError,
+		http.StatusServiceUnavailable,
+	)
 	registerAPIV1RawHumaJSONRoute[cliCollectionsResponse](apiV1, "listCLICollections", http.MethodGet, "/cli/collections", "List collections for CLI output", s.handleCLICollections)
 	registerAPIV1RawHumaJSONRoute[cliCollectionEnvelope](apiV1, "getCLICollection", http.MethodGet, "/cli/collection", "Get one collection for CLI output", s.handleCLICollection)
 	s.registerCLIAccountHumaRoutes(apiV1)
@@ -924,6 +939,14 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}
 	case "getCLIAttachment":
 		return []*huma.Param{queryStringParam("content_hash", "Attachment SHA-256 content hash", true)}
+	case "exportCLIMessages":
+		return []*huma.Param{
+			queryStringParam("start", "Inclusive RFC3339 lower bound", true),
+			queryStringParam("end", "Exclusive RFC3339 upper bound", true),
+			queryRefArrayParam("message_type", "Exact message type to include (repeatable)"),
+			queryRefArrayParam("source", "Source selector type:identifier from list-accounts (repeatable)"),
+			queryIntegerParam("person_id", "Export messages for the durable person's bound participants"),
+		}
 	case "getCLICollection":
 		return []*huma.Param{queryStringParam("name", "Collection name", true)}
 	case "buildCLICache":

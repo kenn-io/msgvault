@@ -303,6 +303,27 @@ type GetCLIMessageThreadQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ExportCLIMessagesQuery struct {
+	// Start Inclusive RFC3339 lower bound
+	Start string `json:"start" validate:"required"`
+
+	// End Exclusive RFC3339 upper bound
+	End string `json:"end" validate:"required"`
+
+	// MessageType Exact message type to include (repeatable)
+	MessageType []string `json:"message_type,omitempty"`
+
+	// Source Source selector type:identifier from list-accounts (repeatable)
+	Source []string `json:"source,omitempty"`
+
+	// PersonID Export messages for the durable person's bound participants
+	PersonID *int64 `json:"person_id,omitempty"`
+}
+
+func (e ExportCLIMessagesQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
 type SearchCLIQuery struct {
 	// IncludeSnippet Include attachment names and bounded FTS match context
 	IncludeSnippet *bool `json:"include_snippet,omitempty"`

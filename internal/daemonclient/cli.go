@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/jsonexact"
@@ -1701,4 +1702,31 @@ func (c *Client) messageSummariesWithURLs(ctx context.Context, messages []genera
 		result[i].WebURL = c.messageWebURL(ctx, result[i].ID)
 	}
 	return result
+}
+
+// OpenMessageExport streams msgvault-message-export/1 JSON Lines for the
+// request. The caller closes the body; a stream without the completion record
+// is truncated.
+func (c *Client) OpenMessageExport(ctx context.Context, request export.MessagesRequest) (io.ReadCloser, error) {
+	query := &generated.ExportCLIMessagesQuery{
+		Start:       request.Start.Format(time.RFC3339),
+		End:         request.End.Format(time.RFC3339),
+		MessageType: request.MessageTypes,
+	}
+	for _, selector := range request.Sources {
+		query.Source = append(query.Source, selector.SourceType+":"+selector.Identifier)
+	}
+	if request.PersonID != nil {
+		query.PersonID = request.PersonID
+	}
+	resp, err := c.DoGeneratedRequestWithContext(ctx, http.MethodGet, "/api/v1/cli/messages/export",
+		&generated.ExportCLIMessagesRequestOptions{Query: query})
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer func() { _ = resp.Body.Close() }()
+		return nil, HandleErrorResponse(resp)
+	}
+	return resp.Body, nil
 }
