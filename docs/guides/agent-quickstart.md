@@ -62,6 +62,8 @@ Call `msgvault.skills {}` to list the bundled guides and
 quickstart as `workflow` and every [agent skill](../guides/agent-skills.md). The
 tool works in every session, including delegated ones, and reads no archive data.
 
+Use owner tool `list_changes` to follow filtered message changes with a cursor.
+
 ## Find people and read conversations
 
 Use `search_people` with a `query` to find observed contacts and saved profiles.
@@ -296,6 +298,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_source_identities` | read | — | owner-only |
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
+| `list_changes` | read | — | owner-only |
 | `list_deletions` | read | — | owner-only |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |

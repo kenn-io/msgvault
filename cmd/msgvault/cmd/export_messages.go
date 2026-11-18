@@ -12,7 +12,7 @@ import (
 )
 
 // messageExportMinAPISchemaVersion is the first daemon schema with exportCLIMessages.
-const messageExportMinAPISchemaVersion = "5.17.0"
+const messageExportMinAPISchemaVersion = "5.18.0"
 
 type exportMessagesDeps struct {
 	openStore func(context.Context) (*store.Store, func(), error)

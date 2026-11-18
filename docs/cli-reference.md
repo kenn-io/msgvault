@@ -3310,7 +3310,7 @@ msgvault export-messages \
 
 `--start` and `--end` are required. Missing bounds fail before contacting the
 daemon. Against a remote, the export streams from the server and needs server
-schema 5.17.0 or later; it works with [read-only remote
+schema 5.18.0 or later; it works with [read-only remote
 client](guides/remote-deployment.md#read-only-remote-clients) keys. For an account selector, combine its `type` and `email` from
 `msgvault list-accounts --json`, for example `--source mbox:you@example.com`.
 
