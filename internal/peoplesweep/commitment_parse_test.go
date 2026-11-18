@@ -242,3 +242,11 @@ func TestCommitmentSourceKey(t *testing.T) {
 	twice.Text = quote + " " + quote
 	assert.NotEqual(t, CommitmentSourceKey(twice, quote, 0, 22), CommitmentSourceKey(twice, quote, 23, 45))
 }
+
+// Kata stores this key in each promise's filing marker, so changing its
+// encoding refiles every promise. A deliberate change needs a new key version.
+func TestCommitmentSourceKeyEncoding(t *testing.T) {
+	source := CommitmentSource{SourceID: 3, SourceMessageID: "<a@example.test>", RecordedTime: time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC),
+		Direction: CommitmentOwedBy, Text: "Thanks. I will send the draft.", ContentSHA256: "content-a"}
+	assert.Equal(t, "eaf320c040dc5fcd5742f1f90999f6abb711c9ad270312e58d731b7a24a7a59e", CommitmentSourceKey(source, "I will send the draft.", 8, 30))
+}
