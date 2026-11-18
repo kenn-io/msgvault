@@ -3,7 +3,7 @@ import { tick } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { getTaskIntegrationStatus } from '../../api/generated/api/api';
 import { conversationTaskStatusKey, type ConversationTaskStatus } from './task-status';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -16,6 +16,19 @@ function expectOneInitialTaskRead(requests: Request[]): void {
 }
 
 describe('TaskLinks', () => {
+  it('shows outbound metadata before linking an existing task', async () => {
+    render(TaskLinks, { client: taskCreationClient(), mode: 'add', messageId: 42, title: 'Follow up' });
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    const existing = within(screen.getByRole('region', { name: 'Linked tasks' }));
+    const disclosure = existing.getByText("What's sent");
+    await fireEvent.click(disclosure);
+    expect(disclosure.closest('details')?.open).toBe(true);
+    expect(existing.getByText('archive-a')).toBeTruthy();
+    expect(existing.getByText('sender@example.com')).toBeTruthy();
+    expect(existing.getByText('gmail')).toBeTruthy();
+    expect(existing.getByText('Follow up')).toBeTruthy();
+  });
+
   it("preserves an open creation draft and retry identity across another message's failed status refresh", async () => {
     const requests: Request[] = [];
     let statusCalls = 0;

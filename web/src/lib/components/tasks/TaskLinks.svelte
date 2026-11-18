@@ -70,6 +70,8 @@
   let creationInitialized = $state(false);
   let generation = 0;
   let activeController: AbortController | null = null;
+  let loadedMessageID: number | undefined;
+  let loadedClient: APIClient | undefined;
   let existingLinkRetry:
     | {
         taskID: string;
@@ -104,7 +106,10 @@
     activeController?.abort();
     const controller = new AbortController();
     activeController = controller;
-    resetForSelection();
+    if (loadedMessageID !== selectedMessageID || loadedClient !== client) resetForSelection();
+    else loading = true;
+    loadedMessageID = selectedMessageID;
+    loadedClient = client;
     try {
       // The reverse-index response is independently authoritative and may
       // contain a safe last-good snapshot even when the live integration is
@@ -226,7 +231,7 @@
   const partialIndex = $derived(mutationReady && indexState === 'partial');
   const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
   const rowsVisible = $derived(mode === 'list' && integrationState !== 'authentication_required' && indexState !== 'authentication_required' && tasks.length > 0);
-  $effect(() => { if (!loading) present = rowsVisible; });
+  $effect(() => { present = rowsVisible; });
   const stateMessage = $derived(
     integrationState === 'disabled' ? integrationMessage || 'Task integration is disabled.'
       : integrationState !== 'ready' && integrationState !== 'loading'
@@ -260,7 +265,7 @@
   {#if mode !== 'add' && !embedded && integrationState !== 'disabled'}<header>
     <h2>Tasks</h2>
   </header>{/if}
-  {#if loading}<p role="status">Loading linked tasks…</p>
+  {#if loading && !rowsVisible}<p role="status">Loading linked tasks…</p>
   {:else}
     {#if degraded && (showSetup || integrationState === 'ready')}
       <InlineNotice tone={integrationState === 'disabled' ? 'info' : 'error'} message={stateMessage} actionLabel={integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onaction={onsettings} />
@@ -272,7 +277,7 @@
       {#each tasks as task (task.id)}
         <DetailRow>
           {task.title}
-          {#snippet actions()}<Button size="sm" label="Unlink" ariaLabel={`Unlink ${task.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(task.id)} />{/snippet}
+          {#snippet actions()}<Button size="sm" label="Unlink" ariaLabel={`Unlink ${task.title}`} disabled={loading || mutating || !mutationReady} onclick={() => void unlink(task.id)} />{/snippet}
         </DetailRow>
       {/each}
     {/if}

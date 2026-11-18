@@ -6,7 +6,7 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
-  it.each(['Tasks', 'Kata'])('keeps the %s group while refreshing the same message only', async (provider) => {
+  it.each(['Tasks', 'Kata'])('retains %s rows during refresh and clears them for another message', async provider => {
     let hold = false;
     let respond: ((response: Response) => void) | undefined;
     const client = createAPIClient(async input => {
@@ -25,6 +25,7 @@ describe('Message task list', () => {
       await view.rerender({ refresh: 1 });
       await waitFor(() => expect(respond).toBeDefined());
       expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
+      expect(screen.getByText('Linked work')).toBeDefined();
       respond!(Response.json(provider === 'Tasks'
         ? { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata }
         : { issues: [], truncated: false }));
