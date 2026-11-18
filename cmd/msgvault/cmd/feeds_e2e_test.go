@@ -40,7 +40,13 @@ func runRootForTest(t *testing.T, home string, args ...string) (string, error) {
 	prevOut, prevErr := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr()
 	defer func() {
 		command.Flags().VisitAll(func(flag *pflag.Flag) {
-			_ = flag.Value.Set(flag.DefValue)
+			// A slice flag's DefValue is the text "[]"; setting it would
+			// store that text as an element.
+			if slice, ok := flag.Value.(pflag.SliceValue); ok {
+				_ = slice.Replace(nil)
+			} else {
+				_ = flag.Value.Set(flag.DefValue)
+			}
 			flag.Changed = false
 		})
 		_ = homeFlag.Value.Set(previousHome)
