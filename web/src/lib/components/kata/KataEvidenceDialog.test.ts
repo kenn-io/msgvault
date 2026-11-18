@@ -184,9 +184,11 @@ describe('KataEvidenceDialog', () => {
     expect(screen.getByText('Search by whole word. The list is capped at 25.')).toBeDefined();
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budget' } });
     const older = await screen.findByRole('radio', { name: 'Older budget · example#k3f9' });
+    older.focus();
     await fireEvent.click(older);
-    expect(screen.getByText('Older budget')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Change' })).toBeDefined();
+    expect(document.activeElement).toBe(older);
+    expect(screen.getByRole('searchbox', { name: 'Filter open issues' })).toHaveProperty('value', 'budget');
+    expect(older).toHaveProperty('checked', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('example#abcd');
     expect(reads).toEqual(['', 'budget']);
@@ -243,11 +245,11 @@ describe('KataEvidenceDialog', () => {
       await screen.findByText('Opening passage');
       await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
       await fireEvent.click(await screen.findByRole('radio', { name: 'Follow up · example#abcd' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Change' }));
-      await screen.findByRole('alert');
       await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
-      await fireEvent.click(await screen.findByRole('radio', { name: 'example#abcd · Not checked yet' }));
-      expect(screen.getByText('Not checked yet')).toBeDefined();
+      await screen.findByRole('alert');
+      const unchecked = await screen.findByRole('radio', { name: 'example#abcd · Not checked yet' });
+      await fireEvent.click(unchecked);
+      expect(unchecked).toHaveProperty('checked', true);
     } finally { view.unmount(); readiness.dispose(); }
   });
 
@@ -269,8 +271,9 @@ describe('KataEvidenceDialog', () => {
       await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
       await screen.findByRole('radio', { name: 'Follow up · example#abcd' });
       await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
-      await fireEvent.click(await screen.findByRole('radio', { name: 'example#abcd · Not checked yet' }));
-      expect(screen.getByText('Not checked yet')).toBeDefined();
+      const unchecked = await screen.findByRole('radio', { name: 'example#abcd · Not checked yet' });
+      await fireEvent.click(unchecked);
+      expect(unchecked).toHaveProperty('checked', true);
     } finally { view.unmount(); readiness.dispose(); }
   });
 

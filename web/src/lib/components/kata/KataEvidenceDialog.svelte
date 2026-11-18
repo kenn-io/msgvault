@@ -26,7 +26,6 @@
   let title = $state(untrack(() => defaultTitle));
   let brief = $state(untrack(() => defaultBrief));
   let selected = $state('');
-  let issueTitles = $state<Record<string, string>>({});
   let start = $state(untrack(() => selector.start_rune ?? 0));
   // A message citation narrowed to text selected in the preview, in runes.
   let narrowed = $state<{ start: number; end: number }>();
@@ -49,10 +48,8 @@
   const actionOptions = [{ value: 'create', label: 'New' }, { value: 'link', label: 'Existing' }];
 
   async function loadIssues(query: string, signal: AbortSignal) {
-    issueTitles = {};
     const response = await listOpenKataIssues(query ? { q: query } : undefined, { ...client, signal });
     if (!response.data) throw new Error(errorMessage(response.error, 'Unable to load issues.'));
-    if (!signal.aborted) issueTitles = Object.fromEntries(response.data.issues.map(issue => [issue.qualified_ref, issue.title]));
     return {
       items: response.data.issues.map(issue => ({ id: issue.qualified_ref, label: issue.title, detail: issue.qualified_ref })),
       truncated: response.data.truncated,
@@ -175,11 +172,7 @@
           <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>
           <label>Description<textarea aria-label="Description" bind:value={brief} disabled={busy} rows="3" maxlength="2000"></textarea></label>
         {:else}
-          {#if selected}
-            <div class="chosen"><span>{#if issueTitles[selected]}{issueTitles[selected]}<small>{selected}</small>{:else}{selected}<small>Not checked yet</small>{/if}</span><Button size="sm" surface="soft" label="Change" disabled={busy} onclick={() => selected = ''} /></div>
-          {:else}
-            <TaskIssuePicker load={loadIssues} noun="open issues" hint="Search by whole word. The list is capped at 25." empty="No open issues yet." project={kata?.project} disabled={busy} bind:selected />
-          {/if}
+          <TaskIssuePicker load={loadIssues} noun="open issues" hint="Search by whole word. The list is capped at 25." empty="No open issues yet." project={kata?.project} disabled={busy} bind:selected />
         {/if}
         {#if error}<p role="alert">{error}</p>{/if}
         {#if deletedKey}<Button label="File as a new issue" disabled={busy} onclick={() => void fileAgain()} />{/if}
@@ -207,8 +200,5 @@
   section { display: grid; gap: var(--space-2); }
   pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 30px; max-height: 14rem; overflow: auto; font: inherit; font-family: var(--font-field); font-size: 16px; line-height: var(--type-body-line); padding: var(--space-2) var(--space-4); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
   .passage-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .chosen { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
-  .chosen span { display: grid; gap: var(--space-1); }
-  .chosen small { color: var(--text-muted); }
   .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }
 </style>
