@@ -353,6 +353,7 @@ func TestCatalogSchemas(t *testing.T) {
 					ToolExportEML,
 					"get_attachment",
 					"get_message",
+					"get_message_records",
 					"get_stats",
 					"list_messages",
 					ToolListThread,

@@ -251,6 +251,7 @@ func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 		findSimilarMessagesDefinition(nil),
 		getAttachmentDefinition(nil),
 		getMessageDefinition(nil),
+		getMessageRecordsDefinition(),
 		messageTagDefinition(false),
 		messageTagDefinition(true),
 		getIdentityMatchDefinition(),

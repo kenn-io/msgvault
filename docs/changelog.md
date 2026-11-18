@@ -25,6 +25,7 @@ All notable changes to msgvault, grouped by release.
 
 ### New features
 
+- Read the order, delivery, invoice and reservation details an email carries as schema.org markup with the MCP tool `get_message_records`, without sending the message anywhere.
 - Import a LinkedIn member data export with
   [`import-linkedin`](usage/linkedin.md). DMs, your posts, and your own
   comments become searchable conversations. `--me` takes your profile URL and
