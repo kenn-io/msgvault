@@ -146,6 +146,20 @@ describe('TaskLinks', () => {
     expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
   });
 
+  it('shows the project once above distinct linked tasks', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'ready', project: 'garden' }
+      : { state: 'ready', complete: true, tasks: [{ id: 'one', title: 'Plant seeds' }, { id: 'two', title: 'Water plants' }], outbound_metadata: taskOutboundMetadata }));
+    render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
+    const first = await screen.findByText('Plant seeds');
+    expect(screen.getByText('Water plants')).toBeDefined();
+    const projects = screen.getAllByText('Tasks · garden');
+    expect(projects).toHaveLength(1);
+    expect(projects[0].compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Unlink Plant seeds' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Unlink Water plants' })).toBeDefined();
+  });
+
   it('shows loading, linked tasks, and honest partial authority', async () => {
     let resolve!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>((input) => {

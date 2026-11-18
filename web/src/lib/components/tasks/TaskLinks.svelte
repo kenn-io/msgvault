@@ -264,8 +264,9 @@
     {#if partialIndex}<InlineNotice message={stateMessage} />{/if}
     {#if sessionOnlyIndex}<InlineNotice tone="info" message="Linked-task index updates are available for this session but are not persisted to disk on this platform." />{/if}
     {#if rowsVisible}
+      <p class="task-project">Tasks · {project}</p>
       {#each tasks as task (task.id)}
-        <DetailRow description={`Tasks · ${project}`}>
+        <DetailRow>
           {task.title}
           {#snippet actions()}<Button size="sm" label="Unlink" ariaLabel={`Unlink ${task.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(task.id)} />{/snippet}
         </DetailRow>
@@ -318,6 +319,7 @@
     padding: 0 var(--space-5) var(--space-5);
   }
   .task-links.add { padding: 0; gap: var(--space-6); }
+  .task-project { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .create-task:not([hidden]) { margin-top: var(--space-6); }
   .task-links.add > :global(.kit-segmented) { justify-self: start; }
   .disclosure { color: var(--text-secondary); font-size: 12px; }
