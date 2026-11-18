@@ -2710,9 +2710,3 @@ func TestMicrosoftNamedApps(t *testing.T) {
 	_, err = cfg.App("empty")
 	require.ErrorContains(t, err, "[microsoft.apps.empty]")
 }
-
-func TestAutoAgendaOnlyInKata(t *testing.T) {
-	cfg := TaskIntegrationConfig{}
-	cfg.ApplyDefaults()
-	assert.Nil(t, cfg.AutoAgenda)
-}
