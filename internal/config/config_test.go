@@ -804,6 +804,34 @@ func TestLoadRejectsMalformedServerTrustedProxy(t *testing.T) {
 	}
 }
 
+func TestLoadServerPublicURL(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{name: "https", value: "https://archive.example.test", valid: true},
+		{name: "http with port and path", value: "http://nas.example.test:8080/msgvault", valid: true},
+		{name: "no scheme", value: "archive.example.test", valid: false},
+		{name: "other scheme", value: "ftp://archive.example.test", valid: false},
+		{name: "user info", value: "https://user@archive.example.test", valid: false},
+		{name: "query", value: "https://archive.example.test/?a=b", valid: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(configPath, []byte("[server]\npublic_url = \""+tt.value+"\"\n"), 0o644))
+			cfg, err := Load(configPath, "")
+			if !tt.valid {
+				require.ErrorContains(t, err, "invalid [server] public_url")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.value, cfg.Server.PublicURL)
+		})
+	}
+}
+
 func TestLoadWithAnalyticsConfig(t *testing.T) {
 	assert := assert.
 		New(t)

@@ -33,7 +33,7 @@ another pass.
 
 ## File obligations in Kata
 
-With [Kata enabled](../configuration.md#integrationskata), the daemon files open promises and replies you owe in the configured project each hour. Each issue quotes its source message and links to it. An issue you file links through the address you reached the daemon at. The hourly pass links through the daemon's own address, and leaves the link out when the daemon listens on every interface. A promise's due date becomes its Kata deadline. A later obligation for the same person in the same conversation becomes a child of an earlier open issue. Obligations from the same message stay separate.
+With [Kata enabled](../configuration.md#integrationskata), the daemon files open promises and replies you owe in the configured project each hour. Each issue quotes its source message and links to it. An issue you file links through the address you reached the daemon at. The hourly pass links through `public_url` in `[server]`, or the daemon's own address; a daemon listening on every interface without `public_url` leaves the link out. A promise's due date becomes its Kata deadline. A later obligation for the same person in the same conversation becomes a child of an earlier open issue. Obligations from the same message stay separate.
 
 Enabling Kata or `auto_agenda` takes effect after a daemon restart.
 

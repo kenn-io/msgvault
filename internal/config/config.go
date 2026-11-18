@@ -277,6 +277,7 @@ type ServerConfig struct {
 	CORSCredentials         bool          `toml:"cors_credentials"`    // Allow credentials in CORS
 	CORSMaxAge              int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
 	TrustedProxies          []string      `toml:"trusted_proxies"`     // Reverse proxy IP/CIDR allowlist for forwarded scheme and host
+	PublicURL               string        `toml:"public_url"`          // Address browsers use for this server, for links the daemon writes without a request
 	DaemonIdleTimeout       time.Duration `toml:"daemon_idle_timeout"` // Automatically started daemon idle timeout (0 disables)
 	DaemonAutoRestart       string        `toml:"daemon_auto_restart"` // never, newer, or always
 	DaemonAutoStart         *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
@@ -326,6 +327,12 @@ func (s *ServerConfig) validateDaemonSettings() error {
 			return fmt.Errorf("invalid [server] remote_clients client_id %q: must be non-empty and unique", client.ClientID)
 		}
 		clientIDs[client.ClientID] = true
+	}
+	if s.PublicURL != "" {
+		u, err := url.Parse(s.PublicURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("invalid [server] public_url %q: must be an http or https URL with a host and no credentials, query, or fragment", s.PublicURL)
+		}
 	}
 	for _, entry := range s.TrustedProxies {
 		if entry == "" {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"net"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/api"
@@ -18,9 +19,13 @@ func registerLoopAgendaJob(sched *scheduler.Scheduler, cfg config.TaskIntegratio
 }
 
 // loopAgendaOrigin is the address issues filed without a browser request link
-// to. A server listening on every interface has no address of its own a
-// browser is known to reach, so those issues carry no link.
-func loopAgendaOrigin(listener net.Addr) string {
+// to: the configured public URL, else the listener's own address. A server
+// listening on every interface has no address of its own a browser is known
+// to reach, so without a public URL those issues carry no link.
+func loopAgendaOrigin(publicURL string, listener net.Addr) string {
+	if publicURL != "" {
+		return strings.TrimRight(publicURL, "/")
+	}
 	addr, ok := listener.(*net.TCPAddr)
 	if !ok || addr.IP.IsUnspecified() {
 		return ""

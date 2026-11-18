@@ -465,7 +465,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	loopAgenda := api.NewLoopAgenda(cfg.Integrations.Kata, s, loopAgendaOrigin(apiListener.Addr()))
+	agendaOrigin := loopAgendaOrigin(cfg.Server.PublicURL, apiListener.Addr())
+	if agendaOrigin == "" && cfg.Integrations.Kata.Enabled {
+		logger.Warn("Kata issues filed by the hourly pass will not link to their messages; set [server] public_url to the address browsers use for this server")
+	}
+	loopAgenda := api.NewLoopAgenda(cfg.Integrations.Kata, s, agendaOrigin)
 	if err := registerLoopAgendaJob(sched, cfg.Integrations.Kata, loopAgenda); err != nil {
 		return fmt.Errorf("schedule loop agenda: %w", err)
 	}
