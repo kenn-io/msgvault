@@ -71,7 +71,6 @@
   let generation = 0;
   let activeController: AbortController | null = null;
   let loadedMessageID: number | undefined;
-  let loadedClient: APIClient | undefined;
   let existingLinkRetry:
     | {
         taskID: string;
@@ -88,31 +87,27 @@
     return () => activeController?.abort();
   });
   function resetForSelection(): void {
+    loading = true;
     localStatus = { state: 'loading' };
     indexState = 'loading';
     reason = '';
     lastScan = '';
     tasks = [];
     selected = '';
+    mutating = false;
+    error = '';
     outboundMetadata = null;
     creationInitialized = false;
     existingLinkRetry = undefined;
-  }
-  function resetForLoad(selectedMessageID: number): void {
-    if (loadedMessageID !== selectedMessageID || loadedClient !== client) resetForSelection();
-    loading = true;
-    mutating = false;
-    busy = false;
-    error = '';
   }
   async function loadFor(selectedMessageID: number): Promise<void> {
     const currentGeneration = ++generation;
     activeController?.abort();
     const controller = new AbortController();
     activeController = controller;
-    resetForLoad(selectedMessageID);
+    if (loadedMessageID !== selectedMessageID) resetForSelection();
+    else { loading = true; mutating = false; error = ''; }
     loadedMessageID = selectedMessageID;
-    loadedClient = client;
     try {
       // The reverse-index response is independently authoritative and may
       // contain a safe last-good snapshot even when the live integration is

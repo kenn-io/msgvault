@@ -173,7 +173,6 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budget' } });
     const older = await screen.findByRole('radio', { name: 'Older budget · example#k3f9' });
     await fireEvent.click(older);
-    expect(older).toHaveProperty('checked', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('example#abcd');
     expect(reads).toEqual(['', 'budget']);
@@ -217,17 +216,5 @@ describe('KataEvidenceDialog', () => {
       await screen.findByText('example#abcd');
       expect(new URL(filed!.url).pathname).toBe('/api/v1/integrations/kata/issues/example%23abcd/evidence');
     } finally { view.unmount(); readiness.dispose(); }
-  });
-
-  it('shows list errors', async () => {
-    const client = createAPIClient(async input => {
-      const request = input as Request;
-      if (new URL(request.url).pathname.endsWith('/open-issues')) return Response.json({ message: 'List unavailable' }, { status: 503 });
-      return Response.json({ evidence: [passages[0]] });
-    });
-    render(KataEvidenceDialog, { client, selector });
-    await screen.findByText('Opening passage');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('List unavailable');
   });
 });

@@ -17,8 +17,6 @@
   let truncated = $state(false);
   let tasksPresent = $state(false);
   let issuesMessageId: number | undefined;
-  let tasksMessageId: number | undefined;
-  $effect(() => { if (tasksMessageId !== messageId) { tasksPresent = false; tasksMessageId = messageId; } });
   $effect(() => {
     const id = messageId;
     void refresh;
@@ -63,8 +61,5 @@
   .task-notices { padding: 0 var(--pane-pad-x); }
   .kata-links { display: grid; gap: var(--space-2); }
   .task-group :global(.task-links), .task-notices :global(.task-links) { padding: 0; }
-  @media (max-width: 640px) {
-    .task-group :global(.detail-row .actions) { margin-left: 0; }
-  }
   h2, p { margin: 0; font-size: var(--font-size-sm); }
 </style>

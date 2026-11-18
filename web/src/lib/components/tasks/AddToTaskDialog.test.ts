@@ -118,7 +118,7 @@ describe('Add to task', () => {
     } finally { view.unmount(); }
   });
 
-  it('shows a receipt after linking and closes on Done', async () => {
+  it.each(['created', 'linked'])('shows a receipt after a task is %s and closes on Done', async result => {
     const onclose = vi.fn();
     const client = createAPIClient(async input => {
       const request = input as Request;
@@ -127,10 +127,14 @@ describe('Add to task', () => {
       return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
     render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose });
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Filed task · task-1' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Link task' }));
-    expect(await screen.findByText('Task linked')).toBeTruthy();
+    if (result === 'linked') {
+      await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+      await fireEvent.click(await screen.findByRole('radio', { name: 'Filed task · task-1' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Link task' }));
+    } else {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
+    }
+    expect(await screen.findByText(result === 'linked' ? 'Task linked' : 'Task created')).toBeTruthy();
     expect(screen.getByText('Filed task')).toBeTruthy();
     expect(onclose).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
@@ -153,10 +157,8 @@ describe('Add to task', () => {
       await screen.findByRole('alert');
       await fireEvent.keyDown(close, { key: 'Escape' });
     } else {
-      expect(await screen.findByText('Task created')).toBeTruthy();
-      expect(screen.getByText('Follow up')).toBeTruthy();
-      expect(onclose).not.toHaveBeenCalled();
-      await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+      await screen.findByRole('button', { name: 'Done' });
+      await fireEvent.keyDown(close, { key: 'Escape' });
     }
     expect(onclose).toHaveBeenCalledOnce();
   });

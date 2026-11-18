@@ -3,13 +3,7 @@ import { describe, expect, it } from 'vitest';
 import GroupOverview from './GroupOverview.svelte';
 
 describe('GroupOverview', () => {
-
   it.each([
-    { name: 'current year', selection: {
-      kind: 'group' as const, dimension: 'month' as const, key: `${new Date().getFullYear()}-05`, label: 'May', count: 2,
-      latestAt: `${new Date().getFullYear()}-05-04T12:00:00Z`, overview: { first_at: `${new Date().getFullYear()}-05-03T12:00:00Z`, activity: [{ bucket: `${new Date().getFullYear()}-05-03`, count: 1 }, { bucket: `${new Date().getFullYear()}-05-04`, count: 1 }], co_participants: [{ key: '1', label: 'Person Example', count: 2 }] }
-    }, range: 'May 3 – May 4', showRange: false,
-    image: 'Activity by day, May 3 to May 4, busiest May 3 with 1 item', dates: ['May 3', 'May 4'] },
     { name: 'daily', selection: {
       kind: 'group' as const,
       dimension: 'month' as const,

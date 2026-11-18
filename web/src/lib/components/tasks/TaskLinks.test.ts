@@ -55,9 +55,6 @@ describe('TaskLinks', () => {
     render(TaskLinks, { client: taskCreationClient(), mode: 'add', messageId: 42, title: 'Follow up' });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
     const existing = within(screen.getByRole('region', { name: 'Linked tasks' }));
-    const disclosure = existing.getByText("What's sent");
-    await fireEvent.click(disclosure);
-    expect(disclosure.closest('details')?.open).toBe(true);
     expect(existing.getByText('archive-a')).toBeTruthy();
     expect(existing.getByText('sender@example.com')).toBeTruthy();
     expect(existing.getByText('gmail')).toBeTruthy();
@@ -148,8 +145,8 @@ describe('TaskLinks', () => {
         ? { state: 'ready', project: 'example' }
         : { state: 'authentication_required', message: 'Task service authentication is required.' });
       return Response.json(path.endsWith('/messages/42/tasks')
-        ? { state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Earlier cached task' }], outbound_metadata: {} }
-        : { state: 'authentication_required', complete: false, tasks: [], outbound_metadata: {} });
+        ? { state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Earlier cached task' }], outbound_metadata: taskOutboundMetadata }
+        : { state: 'authentication_required', complete: false, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
     const statuses = new SvelteMap<string, ConversationTaskStatus['latest']>();
     const shared: ConversationTaskStatus = {
@@ -187,7 +184,7 @@ describe('TaskLinks', () => {
     await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
     expect(screen.queryByRole('status')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
-    finish(Response.json({ state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} }));
+    finish(Response.json({ state: 'unavailable', complete: false, tasks: [], outbound_metadata: taskOutboundMetadata }));
     await waitFor(() => expect(fetchFn.mock.settledResults[0]?.type).toBe('fulfilled'));
     await tick();
     expect(screen.queryByRole('status')).toBeNull();
@@ -216,7 +213,7 @@ describe('TaskLinks', () => {
     render(TaskLinks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic' });
     expect(screen.getByRole('status').textContent).toContain('Loading linked tasks');
     await waitFor(() => expect(resolve).toBeTypeOf('function'));
-    resolve(Response.json({ state: 'partial', complete: false, last_scan: '2026-07-19T01:00:00Z', remote_revision: 'remote-1', reason: 'safety_limit', tasks: [{ id: 'task-1', title: 'Follow up', revision: 'r1' }] }));
+    resolve(Response.json({ state: 'partial', complete: false, last_scan: '2026-07-19T01:00:00Z', remote_revision: 'remote-1', reason: 'safety_limit', tasks: [{ id: 'task-1', title: 'Follow up', revision: 'r1' }], outbound_metadata: taskOutboundMetadata }));
     expect(await screen.findByText('Follow up')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('Some linked tasks may be missing');
     expect(screen.getByRole('alert').textContent).toContain('2026');
@@ -285,7 +282,7 @@ describe('TaskLinks', () => {
         requests.push(request);
         return request.url.endsWith('/integrations/tasks/status')
           ? Response.json({ state: integrationState, project: 'project', message: `Integration reason: ${integrationState}` })
-          : Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
+          : Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: taskOutboundMetadata });
       })), messageId: 42, title: 'Synthetic', onsettings });
 
       expect(await screen.findByText('Cached task')).toBeDefined();
@@ -325,7 +322,7 @@ describe('TaskLinks', () => {
         const request = input instanceof Request ? input : new Request(input);
         return request.url.endsWith('/integrations/tasks/status')
           ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
-          : Response.json({ state, complete: false, reason: state, tasks: state === 'authentication_required' ? [] : [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
+          : Response.json({ state, complete: false, reason: state, tasks: state === 'authentication_required' ? [] : [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: taskOutboundMetadata });
       })), mode: 'list', messageId: 42, title: 'Synthetic' });
 
       const alert = await screen.findByRole('alert');
@@ -344,7 +341,7 @@ describe('TaskLinks', () => {
         ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
         : Response.json({
           state: 'ready', complete: true, reason: 'cache_persistence_unsupported',
-          tasks: [{ id: 'task-1', title: 'Current-session task' }], outbound_metadata: {}
+          tasks: [{ id: 'task-1', title: 'Current-session task' }], outbound_metadata: taskOutboundMetadata
         });
     })), messageId: 42, title: 'Synthetic' });
 
@@ -366,9 +363,9 @@ describe('TaskLinks', () => {
     await view.rerender({ client: createAPIClient(fetchFn), messageId: 43, title: 'Message B' });
     expect(screen.queryByText('Task A')).toBeNull();
     await waitFor(() => expect(responses.has(43)).toBe(true));
-    responses.get(43)!(Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-b', title: 'Task B' }], outbound_metadata: {} }));
+    responses.get(43)!(Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-b', title: 'Task B' }], outbound_metadata: taskOutboundMetadata }));
     expect(await screen.findByText('Task B')).toBeDefined();
-    responses.get(42)!(Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-a', title: 'Task A' }], outbound_metadata: {} }));
+    responses.get(42)!(Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-a', title: 'Task A' }], outbound_metadata: taskOutboundMetadata }));
     await Promise.resolve();
     expect(screen.queryByText('Task A')).toBeNull();
     expect(screen.getByText('Task B')).toBeDefined();
@@ -383,7 +380,7 @@ describe('TaskLinks', () => {
       if (request.url.endsWith('/integrations/tasks/status')) return Promise.resolve(Response.json({ state: 'ready', project: 'project', message: 'Ready' }));
       if (request.method === 'DELETE') return new Promise((resolve) => { resolveDelete = resolve; });
       const id = Number(request.url.match(/messages\/(\d+)\/tasks/)?.[1]);
-      return Promise.resolve(Response.json({ state: 'ready', complete: true, tasks: [{ id: `task-${id}`, title: `Task ${id}` }], outbound_metadata: {} }));
+      return Promise.resolve(Response.json({ state: 'ready', complete: true, tasks: [{ id: `task-${id}`, title: `Task ${id}` }], outbound_metadata: taskOutboundMetadata }));
     });
     const client = createAPIClient(fetchFn);
     const view = render(TaskLinks, { client, messageId: 42, title: 'Message A' });

@@ -6,7 +6,7 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
-  it.each(['Tasks', 'Kata'])('retains %s rows during refresh and clears them for another message', async provider => {
+  it.each(['Tasks', 'Kata'])('clears %s rows for another message', async provider => {
     let hold = false;
     let respond: ((response: Response) => void) | undefined;
     const client = createAPIClient(async input => {
@@ -22,19 +22,6 @@ describe('Message task list', () => {
     try {
       await screen.findByText('Linked work');
       hold = true;
-      await view.rerender({ refresh: 1 });
-      await waitFor(() => expect(respond).toBeDefined());
-      expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
-      expect(screen.getByText('Linked work')).toBeDefined();
-      respond!(Response.json(provider === 'Tasks'
-        ? { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata }
-        : { issues: [], truncated: false }));
-      await waitFor(() => expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull());
-      hold = false;
-      await view.rerender({ refresh: 2 });
-      await screen.findByText('Linked work');
-      hold = true;
-      respond = undefined;
       await view.rerender({ messageId: 43 });
       await waitFor(() => expect(respond).toBeDefined());
       expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
@@ -81,15 +68,23 @@ describe('Message task list', () => {
   it('reloads persisted email links and skips task lookup for non-email messages', async () => {
     const requests: Request[] = [];
     let title = 'Review notes';
+    let held: ((response: Response) => void) | undefined;
+    let hold = false;
     const client = createAPIClient(async (input) => {
       const request = input as Request;
       requests.push(request);
-      return Response.json(request.url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title }], outbound_metadata: {} });
+      if (hold && !request.url.endsWith('/status')) return new Promise<Response>(resolve => { held = resolve; });
+      return Response.json(request.url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title }], outbound_metadata: taskOutboundMetadata });
     });
     const view = render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
     expect(await screen.findByText('Review notes')).toBeDefined();
     title = 'Review revised notes';
+    hold = true;
     await view.rerender({ refresh: 1 });
+    await waitFor(() => expect(held).toBeDefined());
+    expect(screen.getByText('Review notes')).toBeDefined();
+    hold = false;
+    held!(Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title }], outbound_metadata: taskOutboundMetadata }));
     expect(await screen.findByText('Review revised notes')).toBeDefined();
     requests.length = 0;
     await view.rerender({ email: false, messageId: 43 });
@@ -112,7 +107,13 @@ describe('Message task list', () => {
     const link = await screen.findByRole('link', { name: 'Open Send notes (example#abcd) in Kata' });
     expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
     title = 'Send revised notes';
+    hold = true;
     await view.rerender({ refresh: 1 });
+    await waitFor(() => expect(held).toBeDefined());
+    expect(screen.getByText('Send notes')).toBeDefined();
+    hold = false;
+    held!(Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title, status: 'open', web_url: 'https://example.org/tasks/abcd' }] }));
+    held = undefined;
     expect(await screen.findByText('Send revised notes')).toBeDefined();
     truncated = true;
     await view.rerender({ refresh: 2 });
