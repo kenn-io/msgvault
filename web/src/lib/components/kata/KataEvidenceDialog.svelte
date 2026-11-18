@@ -166,12 +166,12 @@
           {#if windowed}
             <div class="passage-controls">
               {#if narrowed}
-                <Button size="sm" surface="soft" label="Whole passage" disabled={busy || loading} onclick={() => page(start)} />
+                <Button size="sm" surface="soft" label="Whole passage" shortLabel="Whole" disabled={busy || loading} onclick={() => page(start)} />
               {:else}
-                <Button size="sm" surface="soft" label="Quote selection" disabled={busy || loading || !preview} onclick={quoteSelection} />
+                <Button size="sm" surface="soft" label="Quote selection" shortLabel="Quote" disabled={busy || loading || !preview} onclick={quoteSelection} />
               {/if}
-              <Button size="sm" surface="soft" label="Earlier passage" disabled={busy || loading || start === 0} onclick={() => page(Math.max(0, start - EVIDENCE_STEP))} />
-              <Button size="sm" surface="soft" label="Later passage" disabled={busy || loading || !windowHasMore} onclick={() => page(start + EVIDENCE_STEP)} />
+              <Button size="sm" surface="soft" label="Earlier passage" shortLabel="Earlier" disabled={busy || loading || start === 0} onclick={() => page(Math.max(0, start - EVIDENCE_STEP))} />
+              <Button size="sm" surface="soft" label="Later passage" shortLabel="Later" disabled={busy || loading || !windowHasMore} onclick={() => page(start + EVIDENCE_STEP)} />
             </div>
           {/if}
         </section>
@@ -201,8 +201,9 @@
   pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 30px; max-height: 14rem; overflow: auto; font: inherit; font-family: var(--font-field); font-size: 16px; line-height: var(--type-body-line); padding: var(--space-2) var(--space-4); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
   .passage-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   @media (max-width: 640px) {
-    .passage-controls { display: grid; grid-template-columns: max-content max-content; justify-content: start; }
-    .passage-controls :global(.kit-button:first-child) { grid-column: 1 / -1; justify-self: start; }
+    .passage-controls { margin-top: var(--space-4); }
+    .passage-controls :global(.kit-button__label) { display: none; }
+    .passage-controls :global(.kit-button__short-label) { display: inline-flex; }
   }
   .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }
 </style>

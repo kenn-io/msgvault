@@ -223,6 +223,7 @@
   }
   form :global(.kit-chip) { justify-self: start; max-width: 100%; font-weight: 400; line-height: var(--type-meta-line); }
   form :global(.kit-chip__label) { margin: 0; padding: 0; overflow: visible; white-space: normal; overflow-wrap: anywhere; }
+  @media (max-width: 640px) { form :global(.kit-chip) { border-radius: var(--radius-sm); } }
   .disclosure { margin: 0; color: var(--text-secondary); font-size: 12px; }
   label {
     display: grid;
