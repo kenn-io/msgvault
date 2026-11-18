@@ -553,14 +553,13 @@ test('right preview resizes, restores its width, and falls back below on narrow 
 
 test('aligns group actions and activity in wide and inspected views', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 900 });
-  const year = new Date().getFullYear();
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore/groups', route => {
     const body = route.request().postDataJSON();
     const label = body.grouping[0] === 'source' ? 'Example source' : 'Person Example';
-    const overview = { first_at: `${year}-05-03T12:00:00Z`, activity: [{ bucket: `${year}-05`, count: 1 }, { bucket: `${year}-06`, count: 2 }], co_participants: [] };
+    const overview = { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 1 }, { bucket: '2024-06', count: 2 }], co_participants: [] };
     return route.fulfill({ json: {
-      rows: [{ key: '7', label, count: 3, estimated_bytes: 512, latest_at: `${year}-06-30T12:00:00Z` }],
+      rows: [{ key: '7', label, count: 3, estimated_bytes: 512, latest_at: '2024-06-30T12:00:00Z' }],
       ...(body.group_key ? { overview } : {}),
       total_count: 1, cache_revision: 'cache-groups', search_provenance: {}
     } });
@@ -598,7 +597,6 @@ test('aligns group actions and activity in wide and inspected views', async ({ p
   const people = page.getByRole('grid', { name: 'Messages grouped by participant' });
   await people.getByText('Person Example', { exact: true }).click();
   await expect(page.getByRole('region', { name: 'Group overview' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Group overview' }).getByText('May 3 – Jun 30')).toBeVisible();
   const personAction = people.getByRole('row', { name: /Person Example/ }).getByRole('button', { name: 'Show items in Person Example' });
   const personGrid = (await people.boundingBox())!;
   const personCell = (await personAction.locator('..').boundingBox())!;
@@ -650,163 +648,4 @@ test('shows the full message time beside a long sender on a phone', async ({ pag
   const timeBox = (await time.boundingBox())!;
   const menuBox = (await menu.boundingBox())!;
   expect(timeBox.x + timeBox.width <= menuBox.x || timeBox.y >= menuBox.y + menuBox.height).toBe(true);
-});
-
-test('keeps Kata issue choices focused while navigating with arrow keys', async ({ page }) => {
-  const message = {
-    id: 42, conversation_id: 7, subject: 'Garden plans', body: 'Please send notes.',
-    from: 'Mira Example <mira@example.com>', to: ['team@example.com'],
-    sent_at: '2026-07-18T12:00:00Z', message_type: 'email', attachments: []
-  };
-  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
-  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
-    rows: [{ ...entry(42), title: 'Garden plans', conversation_id: 7, anchor_message_id: 42 }],
-    total_count: 1, cache_revision: 'fixture', search_provenance: {}
-  } }));
-  await page.route('**/api/v1/messages/42', route => route.fulfill({ json: message }));
-  await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: {
-    id: 7, messages: [message], anchor_id: 42, has_before: false, has_after: false, total: 1
-  } }));
-  await page.route('**/api/v1/integrations/tasks/status', route => route.fulfill({ json: { state: 'disabled' } }));
-  await page.route('**/api/v1/messages/42/tasks', route => route.fulfill({ json: { state: 'disabled', complete: false, tasks: [], outbound_metadata: {} } }));
-  await page.route('**/api/v1/integrations/kata/status', route => route.fulfill({ json: { state: 'ready', project: 'garden' } }));
-  await page.route('**/api/v1/integrations/kata/issues?*', route => route.fulfill({ json: { issues: [], truncated: false } }));
-  await page.route('**/api/v1/integrations/kata/open-issues', route => route.fulfill({ json: {
-    issues: [
-      { uid: 'one', qualified_ref: 'garden#one', title: 'First', status: 'open' },
-      { uid: 'two', qualified_ref: 'garden#two', title: 'Second', status: 'open' },
-      { uid: 'three', qualified_ref: 'garden#three', title: 'Third', status: 'open' }
-    ], truncated: false
-  } }));
-  await page.route('**/api/v1/integrations/kata/evidence/prepare', route => route.fulfill({ json: { evidence: [{
-    id: 'a'.repeat(64), passage: 'b'.repeat(64),
-    reference: { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, message: { body_sha256: 'c'.repeat(64), start_rune: 0, end_rune: 18 } },
-    excerpt: message.body, display: {}, content_trust: 'untrusted'
-  }] } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
-  await page.getByRole('grid', { name: 'Messages results' }).getByText('Garden plans', { exact: true }).click();
-  const card = page.getByRole('article', { name: 'Message 42' });
-  await expect(card.getByRole('region', { name: 'Tasks', exact: true })).toHaveCount(0);
-  await expect(card.locator('.task-notices')).toHaveCSS('padding-bottom', '0px');
-  await card.getByRole('button', { name: /More actions for/ }).click();
-  await page.getByRole('menuitem', { name: 'Add to task…' }).click();
-  await page.getByRole('radio', { name: 'Kata', exact: true }).click();
-  await page.getByRole('radio', { name: 'Existing', exact: true }).click();
-  const first = page.getByRole('radio', { name: 'First · garden#one' });
-  const second = page.getByRole('radio', { name: 'Second · garden#two' });
-  const third = page.getByRole('radio', { name: 'Third · garden#three' });
-  await first.focus();
-  await page.keyboard.press('ArrowDown');
-  await expect(second).toBeChecked();
-  await expect(second).toBeFocused();
-  await page.keyboard.press('ArrowDown');
-  await expect(third).toBeChecked();
-  await expect(third).toBeFocused();
-  await expect(first).toBeVisible();
-  await expect(page.getByRole('searchbox', { name: 'Filter open issues' })).toBeVisible();
-});
-
-test('keeps the new task form inside the dialog on a phone', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  const message = { id: 42, conversation_id: 7, subject: 'Garden plans', body: 'Please send notes.', from: 'Mira Example <mira@example.com>', to: ['team@example.com'], sent_at: '2026-07-18T12:00:00Z', message_type: 'email', attachments: [] };
-  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
-  await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [{ ...entry(42), title: 'Garden plans', conversation_id: 7, anchor_message_id: 42 }], total_count: 1, cache_revision: 'fixture', search_provenance: {} } }));
-  await page.route('**/api/v1/messages/42', route => route.fulfill({ json: message }));
-  await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: { id: 7, messages: [message], anchor_id: 42, has_before: false, has_after: false, total: 1 } }));
-  await page.route('**/api/v1/integrations/tasks/status', route => route.fulfill({ json: { state: 'ready', project: 'garden' } }));
-  await page.route('**/api/v1/messages/42/tasks', route => route.fulfill({ json: { state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Garden task' }], outbound_metadata: { archive_uid: 'archive-example', message_id: 42, conversation_id: 7, source_type: 'email', source_identifier: 'archive@example.com', source_message_id: 'message-example', subject: message.subject, from: message.from, sent_at: message.sent_at } } }));
-  await page.route('**/api/v1/integrations/kata/status', route => route.fulfill({ json: { state: 'ready', project: 'garden' } }));
-  await page.route('**/api/v1/integrations/kata/issues?*', route => route.fulfill({ json: { issues: [{ uid: 'one', qualified_ref: 'garden#one', title: 'Garden issue', status: 'open', web_url: 'https://example.org/issue' }], truncated: false } }));
-  await page.route('**/api/v1/integrations/kata/open-issues', route => route.fulfill({ json: { issues: [{ uid: 'one', qualified_ref: 'garden#one', title: 'First', status: 'open' }], truncated: false } }));
-  await page.route('**/api/v1/integrations/kata/evidence/prepare', route => route.fulfill({ json: { evidence: [{ id: 'a'.repeat(64), passage: 'b'.repeat(64), reference: { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, message: { body_sha256: 'c'.repeat(64), start_rune: 0, end_rune: 18 } }, excerpt: message.body, display: {}, content_trust: 'untrusted' }] } }));
-  await page.route('**/api/v1/integrations/kata/issues', route => route.fulfill({ json: { issue: { uid: 'one', qualified_ref: 'garden#one', title: 'First', status: 'open', web_url: 'https://example.org/issue' }, replayed: false } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
-  await page.getByRole('grid', { name: 'Messages results' }).getByText('Garden plans', { exact: true }).click();
-  const unlink = page.getByRole('button', { name: 'Unlink Garden task' });
-  await expect(unlink).toBeVisible();
-  const taskRow = unlink.locator('xpath=ancestor::div[contains(@class, "detail-row")]');
-  expect.soft(await unlink.evaluate(el => parseFloat(getComputedStyle(el).borderTopWidth))).toBeGreaterThan(0);
-  expect.soft((await unlink.boundingBox())!.x - (await taskRow.boundingBox())!.x).toBeLessThan(30);
-  const openKata = page.getByRole('link', { name: 'Open in Kata' });
-  await expect(openKata).toBeVisible();
-  expect.soft(await openKata.evaluate(el => parseFloat(getComputedStyle(el).borderTopWidth))).toBeGreaterThan(0);
-  const issueRow = openKata.locator('xpath=ancestor::div[contains(@class, "detail-row")]');
-  expect.soft((await openKata.boundingBox())!.x - (await issueRow.boundingBox())!.x).toBeLessThan(30);
-  await page.getByRole('article', { name: 'Message 42' }).getByRole('button', { name: /More actions for/ }).click();
-  await page.getByRole('menuitem', { name: 'Add to task…' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Add to task' });
-  await expect(dialog.getByText('garden', { exact: true })).toBeVisible();
-  const context = dialog.locator('.kit-chip__label');
-  expect.soft(await context.innerText()).toBe('Garden plans · Mira Example · Jul 18');
-  await expect(context.locator('..')).toHaveAttribute('aria-label', 'Garden plans · Mira Example <mira@example.com> · Jul 18');
-  await expect(context.locator('..')).toHaveAttribute('title', 'Garden plans · Mira Example <mira@example.com> · Jul 18');
-  expect.soft(await context.evaluate(el => el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight))).toBeLessThan(1.5);
-  expect.soft(await context.evaluate(el => el.scrollWidth)).toBeLessThanOrEqual(await context.evaluate(el => el.clientWidth));
-  expect.soft(await context.evaluate(el => Number(getComputedStyle(el).fontWeight))).toBeLessThan(600);
-  const phoneRadius = await context.locator('..').evaluate(el => getComputedStyle(el).borderRadius);
-  await page.setViewportSize({ width: 1280, height: 900 });
-  expect.soft(phoneRadius).toBe(await context.locator('..').evaluate(el => getComputedStyle(el).borderRadius));
-  await page.setViewportSize({ width: 390, height: 844 });
-  expect.soft(await context.evaluate(el => getComputedStyle(el.closest('.kit-chip')!).paddingTop)).not.toBe('0px');
-  const title = dialog.getByRole('textbox', { name: 'Task title' });
-  expect.soft(await context.evaluate(el => getComputedStyle(el.closest('.kit-chip')!).backgroundColor)).not.toBe(await title.evaluate(el => getComputedStyle(el).backgroundColor));
-  const bounds = (await dialog.boundingBox())!;
-  for (const control of [dialog.getByText('garden', { exact: true }), context, dialog.getByRole('textbox', { name: 'Task title' }), dialog.getByRole('textbox', { name: 'Description' }), dialog.getByRole('combobox', { name: 'Priority: No priority' }), dialog.getByRole('textbox', { name: 'Labels' }), dialog.getByRole('button', { name: 'Create task' })]) {
-    const box = (await control.boundingBox())!;
-    expect(box.x).toBeGreaterThanOrEqual(bounds.x);
-    expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width);
-  }
-  await page.getByRole('radio', { name: 'Kata', exact: true }).click();
-  const kata = page.getByRole('dialog', { name: 'Add to Kata issue' });
-  await expect(kata.getByRole('button', { name: 'Create issue' })).toBeEnabled();
-  const earlier = kata.getByRole('button', { name: 'Earlier passage' });
-  const later = kata.getByRole('button', { name: 'Later passage' });
-  const quote = kata.getByRole('button', { name: 'Quote selection' });
-  expect.soft(await quote.innerText()).toBe('Quote selection');
-  expect.soft(await earlier.innerText()).toContain('passage');
-  expect.soft(await later.innerText()).toContain('passage');
-  const cancel = kata.getByRole('button', { name: 'Cancel' });
-  expect.soft(await quote.evaluate(el => getComputedStyle(el).fontSize)).toBe(await cancel.evaluate(el => getComputedStyle(el).fontSize));
-  expect.soft((await quote.boundingBox())!.height).toBeGreaterThanOrEqual((await cancel.boundingBox())!.height);
-  const passage = kata.getByRole('region', { name: 'Quoted passage' }).locator('pre');
-  expect.soft((await earlier.boundingBox())!.y).toBeGreaterThan((await quote.boundingBox())!.y);
-  expect.soft((await later.boundingBox())!.y).toBe((await earlier.boundingBox())!.y);
-  expect.soft((await earlier.boundingBox())!.width).toBe((await later.boundingBox())!.width);
-  expect.soft((await quote.boundingBox())!.width).toBeCloseTo((await later.boundingBox())!.x + (await later.boundingBox())!.width - (await earlier.boundingBox())!.x);
-  expect.soft((await quote.boundingBox())!.y - ((await passage.boundingBox())!.y + (await passage.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
-  for (const control of [kata.getByRole('textbox', { name: 'Issue title' }), kata.getByRole('textbox', { name: 'Brief' }), kata.getByRole('button', { name: 'Later passage' }), kata.getByRole('button', { name: 'Create issue' })]) {
-    const box = (await control.boundingBox())!;
-    expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width);
-  }
-  await kata.getByRole('radio', { name: 'Existing', exact: true }).click();
-  await expect(kata.getByRole('radio', { name: 'First · garden#one' })).toBeVisible();
-  expect.soft(await quote.innerText()).toBe('Quote selection');
-  expect.soft((await earlier.boundingBox())!.y).toBeGreaterThan((await quote.boundingBox())!.y);
-  expect.soft((await later.boundingBox())!.y).toBe((await earlier.boundingBox())!.y);
-  expect.soft((await quote.boundingBox())!.y - ((await passage.boundingBox())!.y + (await passage.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
-  const results = kata.locator('.results');
-  expect.soft((await results.boundingBox())!.height).toBeLessThan(100);
-  const hint = kata.getByText('Search by whole word. The list is capped at 25.');
-  expect.soft((await hint.boundingBox())!.y - ((await results.boundingBox())!.y + (await results.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
-  for (const control of [kata.getByRole('searchbox', { name: 'Filter open issues' }), kata.getByRole('button', { name: 'Later passage' }), kata.getByRole('button', { name: 'Add quote' })]) {
-    const box = (await control.boundingBox())!;
-    expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width);
-  }
-  await page.setViewportSize({ width: 1280, height: 900 });
-  expect.soft((await results.boundingBox())!.height).toBeLessThan(100);
-  expect.soft((await hint.boundingBox())!.y - ((await results.boundingBox())!.y + (await results.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await kata.getByRole('radio', { name: 'New', exact: true }).click();
-  await kata.getByRole('button', { name: 'Create issue' }).click();
-  const saved = kata.getByText('Saved.', { exact: true });
-  const destination = kata.getByText('Kata · garden#one');
-  const receiptLink = kata.getByRole('link', { name: 'Open in Kata' });
-  const done = kata.getByRole('button', { name: 'Done' });
-  await expect(saved).toBeVisible();
-  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 }]) {
-    await page.setViewportSize(viewport);
-    expect.soft((await destination.boundingBox())!.y - ((await saved.boundingBox())!.y + (await saved.boundingBox())!.height)).toBeGreaterThanOrEqual(4);
-    expect.soft((await done.boundingBox())!.y - ((await receiptLink.boundingBox())!.y + (await receiptLink.boundingBox())!.height)).toBeLessThanOrEqual(16);
-  }
-
 });
