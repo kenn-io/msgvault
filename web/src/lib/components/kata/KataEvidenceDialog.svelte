@@ -186,7 +186,7 @@
   </div>
 
 <style>
-  .kata-dialog, form { display: grid; gap: var(--space-6); }
+  .kata-dialog, form { display: grid; gap: var(--space-6); min-width: 0; }
   form { --field-text-size: 16px; }
   .kata-dialog { width: 100%; }
   .kata-dialog.has-receipt { gap: var(--space-5); }

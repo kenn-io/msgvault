@@ -52,6 +52,7 @@
     onsettings?: () => void;
   } = $props();
   const conversationStatus = getContext<ConversationTaskStatus | undefined>(conversationTaskStatusKey);
+  let action = $state('create');
   let loading = $state(true);
   let localStatus = $state<{ state: string; project?: string; message?: string }>({ state: 'loading' });
   const status = $derived(conversationStatus?.latest ?? localStatus);
@@ -63,7 +64,6 @@
   let lastScan = $state('');
   let tasks = $state<Task[]>([]);
   let selected = $state('');
-  let action = $state('create');
   let mutating = $state(false);
   let error = $state('');
   let outboundMetadata = $state<OutboundMetadata | null>(null);
@@ -331,9 +331,14 @@
   .task-links.add { padding: 0; gap: var(--space-6); }
   .task-project { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .create-task:not([hidden]) { margin-top: var(--space-6); }
-  .task-links.add > :global(.kit-segmented) { justify-self: start; }
   .disclosure { color: var(--text-secondary); font-size: 12px; }
+  .task-links.add > :global(.kit-segmented) { justify-self: start; }
   .actions { display: flex; justify-content: flex-end; gap: var(--space-4); }
-  h2, p { margin: 0; }
-  h2 { font-size: var(--font-size-sm); }
+  h2,
+  p {
+    margin: 0;
+  }
+  h2 {
+    font-size: var(--font-size-sm);
+  }
 </style>

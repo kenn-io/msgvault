@@ -19,9 +19,9 @@
     sourceType,
     sourceIdentifier,
     sourceMessageId,
-    subject = '',
-    from = '',
-    sentAt = '',
+    subject,
+    from,
+    sentAt,
     oncreated = () => undefined,
     onclose = () => undefined,
   }: {
