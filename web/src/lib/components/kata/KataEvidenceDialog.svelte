@@ -3,7 +3,6 @@
   import { onDestroy, untrack } from 'svelte';
   import { createKataIssue, linkKataEvidence, prepareKataEvidence, listOpenKataIssues } from '../../api/generated/api/api';
   import { kataReadiness } from '../../kata/kata-ready.svelte';
-  import InlineNotice from '../common/InlineNotice.svelte';
   import TaskIssuePicker from '../common/TaskIssuePicker.svelte';
   import type { APIClient } from '../../api/client';
   import type { KataIssueCreateRequest, KataIssueReceipt } from '../../api/generated/models';
@@ -148,7 +147,7 @@
       <div role="status"><p>{replayed ? `Already filed (${receipt.status}).` : 'Saved.'}</p><p>Kata · <strong>{receipt.qualified_ref}</strong></p></div>
       {#if receipt.web_url}<a href={receipt.web_url} target="_blank" rel="noreferrer">Open in Kata</a>{/if}
       {#if replayed}<Button label="File as a new issue" disabled={busy} onclick={() => void fileAgain()} />{/if}
-      {#if error}<InlineNotice message={error} />{/if}
+      {#if error}<p role="alert">{error}</p>{/if}
     {:else}
       <form onsubmit={(event) => { event.preventDefault(); void submit(); }} aria-busy={busy}>
         {#snippet issueMode()}<SegmentedControl variant="borderless" ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} />{/snippet}
@@ -175,7 +174,7 @@
             </div>
           {/if}
         </section>
-        {#if error}<InlineNotice message={error} />{/if}
+        {#if error}<p role="alert">{error}</p>{/if}
         {#if deletedKey}<Button label="File as a new issue" disabled={busy} onclick={() => void fileAgain()} />{/if}
         <p class="disclosure">{mode === 'create' ? 'The quote, title, and description are sent; attachments stay out.' : 'Only the quote is sent; attachments stay out.'}</p>
         <div class="actions"><Button label="Cancel" surface="soft" disabled={busy} onclick={onclose} />

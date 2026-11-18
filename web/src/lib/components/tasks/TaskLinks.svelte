@@ -28,7 +28,6 @@
     client,
     mode = 'list',
     showSetup = true,
-    embedded = false,
     refresh = 0,
     present = $bindable(false),
     busy = $bindable(false),
@@ -41,7 +40,6 @@
     client: APIClient;
     mode?: 'list' | 'add';
     showSetup?: boolean;
-    embedded?: boolean;
     refresh?: number;
     present?: boolean;
     busy?: boolean;
@@ -260,9 +258,6 @@
 
 {#if showSetup || integrationState === 'ready' || integrationState === 'loading' || (tasks.length > 0 && integrationState !== 'authentication_required') || error}
 <section class="task-links" class:add={mode === 'add'} aria-label="Linked tasks">
-  {#if mode !== 'add' && !embedded && integrationState !== 'disabled'}<header>
-    <h2>Tasks</h2>
-  </header>{/if}
   {#if loading && !rowsVisible}<p role="status">Loading linked tasks…</p>
   {:else}
     {#if degraded && (showSetup || integrationState === 'ready')}
@@ -283,7 +278,7 @@
       <SegmentedControl variant="borderless" disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />
       {#if action !== 'create'}
       <TaskIssuePicker load={loadTasks} noun="tasks" moreNote="Showing the first 25 tasks. Type to search the rest." empty={`No tasks in ${project} yet.`} disabled={busy} bind:selected />
-      {#if error}<InlineNotice message={error} />{/if}
+      {#if error}<p role="alert">{error}</p>{/if}
       {#if outboundMetadata}<TaskMetadataDisclosure {messageId} archiveUID={outboundMetadata.archive_uid} conversationId={outboundMetadata.conversation_id} sourceType={outboundMetadata.source_type} sourceIdentifier={outboundMetadata.source_identifier} sourceMessageId={outboundMetadata.source_message_id} subject={outboundMetadata.subject} from={outboundMetadata.from} sentAt={outboundMetadata.sent_at} />{/if}
       <p class="disclosure">Bodies and attachments are never sent.</p>
       <div class="actions">
@@ -332,11 +327,11 @@
   .disclosure { color: var(--text-secondary); font-size: 12px; }
   .task-links.add > :global(.kit-segmented) { justify-self: start; }
   .actions { display: flex; justify-content: flex-end; gap: var(--space-4); }
-  h2,
   p {
     margin: 0;
   }
-  h2 {
-    font-size: var(--font-size-sm);
+  [role='alert'] {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
 </style>

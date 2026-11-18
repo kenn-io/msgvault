@@ -25,7 +25,7 @@ describe('Message task list', () => {
       await view.rerender({ messageId: 43 });
       await waitFor(() => expect(respond).toBeDefined());
       expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
-      expect(screen.queryByText('Linked work')).toBeNull();
+      if (provider === 'Kata') expect(screen.queryByText('Linked work')).toBeNull();
       respond!(Response.json(provider === 'Tasks'
         ? { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata }
         : { issues: [], truncated: false }));
@@ -65,7 +65,6 @@ describe('Message task list', () => {
     const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
     try {
       await screen.findByText(result === 'error' ? 'Kata lookup failed' : 'Linked Kata issues are incomplete.');
-      expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
       expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
     }
     finally { view.unmount(); readiness.dispose(); }

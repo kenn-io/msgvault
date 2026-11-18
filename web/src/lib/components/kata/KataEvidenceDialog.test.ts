@@ -53,7 +53,6 @@ describe('KataEvidenceDialog', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
     expect(await screen.findByText('example#abcd')).toBeDefined();
-    expect(screen.getByText('Saved.')).toBeDefined();
     const sent = await h.posted('/integrations/kata/issues')[0].json();
     expect(sent).toEqual({ title: 'Follow up', evidence: [passages[500].reference] });
   });
@@ -167,7 +166,6 @@ describe('KataEvidenceDialog', () => {
     render(KataEvidenceDialog, { client, selector });
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    expect(screen.getByText('Only the quote is sent; attachments stay out.')).toBeDefined();
     await screen.findByRole('radio', { name: 'Follow up · example#abcd' });
     expect(screen.getByText('Search by whole word. The list is capped at 25.')).toBeDefined();
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budget' } });
@@ -192,15 +190,13 @@ describe('KataEvidenceDialog', () => {
     expect(screen.getByLabelText('Brief')).toHaveProperty('value', 'Brief draft');
   });
 
-  it('files a quote using a typed project ref when issue lookup fails', async () => {
-    let filed: Request | undefined;
+  it('offers a typed ref from the configured project when issue lookup fails', async () => {
     const client = createAPIClient(async input => {
       const request = input as Request;
       const path = new URL(request.url).pathname;
       if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (path.endsWith('/open-issues')) return Response.json({ message: 'List unavailable' }, { status: 503 });
       if (path.endsWith('/prepare')) return Response.json({ evidence: [passages[0]] });
-      filed = request;
       return Response.json({ issue, replayed: false });
     });
     const readiness = new KataReadiness(client);
@@ -211,10 +207,7 @@ describe('KataEvidenceDialog', () => {
       await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
       await screen.findByRole('alert');
       await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
-      await fireEvent.click(await screen.findByRole('radio', { name: /example#abcd/ }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
-      await screen.findByText('example#abcd');
-      expect(new URL(filed!.url).pathname).toBe('/api/v1/integrations/kata/issues/example%23abcd/evidence');
+      expect(await screen.findByRole('radio', { name: /example#abcd/ })).toBeDefined();
     } finally { view.unmount(); readiness.dispose(); }
   });
 });

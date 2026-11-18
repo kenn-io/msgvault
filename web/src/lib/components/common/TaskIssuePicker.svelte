@@ -1,7 +1,6 @@
 <script lang="ts">
   import { debounce, RadioGroup, SearchInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
-  import InlineNotice from './InlineNotice.svelte';
 
   let { load, noun, empty, disabled = false, moreNote = '', hint = '', project = '', selected = $bindable('') }: {
     load: (query: string, signal: AbortSignal) => Promise<{ items: { id: string; label: string; detail?: string }[]; truncated: boolean }>;
@@ -47,7 +46,7 @@
   <div class="results">
     {#if loading || query.trim() !== listedQuery}<p role="status">Loading…</p>
     {:else}
-      {#if error}<InlineNotice message={error} />{/if}
+      {#if error}<p role="alert">{error}</p>{/if}
       {#if choices.length}<RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={choices.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
       {:else if !error}<p>{listedQuery ? `No ${noun} match "${listedQuery}".` : empty}</p>{/if}
     {/if}

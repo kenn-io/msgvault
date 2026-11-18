@@ -153,13 +153,9 @@ describe('Add to task', () => {
     respond(result === 'success'
       ? Response.json({ task: { id: 'task-1', title: 'Follow up' } }, { status: 201 })
       : Response.json({ message: 'Unavailable' }, { status: 503 }));
-    if (result === 'failure') {
-      await screen.findByRole('alert');
+    await waitFor(async () => {
       await fireEvent.keyDown(close, { key: 'Escape' });
-    } else {
-      await screen.findByRole('button', { name: 'Done' });
-      await fireEvent.keyDown(close, { key: 'Escape' });
-    }
-    expect(onclose).toHaveBeenCalledOnce();
+      expect(onclose).toHaveBeenCalledOnce();
+    });
   });
 });

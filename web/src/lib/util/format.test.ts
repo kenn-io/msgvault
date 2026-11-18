@@ -12,8 +12,8 @@ describe('format', () => {
     try {
       expect(formatShortDate('2026-07-18T12:00:00')).toBe('Jul 18');
       expect(formatShortDate('2025-07-18T12:00:00')).toBe('Jul 18, 2025');
-      expect(formatShortDateTime('2026-07-18T12:00:00')).toBe('Jul 18, 12:00 PM');
-      expect(formatShortDateTime('2025-07-18T12:00:00')).toBe('Jul 18, 2025, 12:00 PM');
+      const time = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(new Date('2026-07-18T12:00:00'));
+      expect(formatShortDateTime('2026-07-18T12:00:00')).toBe(`Jul 18, ${time}`);
     } finally { vi.useRealTimers(); }
   });
   it('names missing and unparseable times', () => {

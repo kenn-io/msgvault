@@ -40,7 +40,7 @@
 <div class:task-group={groupPresent} class:task-notices={!groupPresent} role={groupPresent ? 'region' : undefined} aria-label={groupPresent ? 'Tasks' : undefined}>
   {#if groupPresent}<h2>Tasks</h2>{/if}
   {#if email}
-    <TaskLinks {client} {messageId} {title} {onsettings} {showSetup} {refresh} mode="list" embedded bind:present={tasksPresent} />
+    <TaskLinks {client} {messageId} {title} {onsettings} {showSetup} {refresh} mode="list" bind:present={tasksPresent} />
   {/if}
   {#if kata?.ready}
     <div class="kata-links">
