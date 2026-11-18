@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-12"
+last_edited: "2026-11-18"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1297,6 +1297,43 @@ whole `[remote]` destination for that run, including `MSGVAULT_REMOTE_URL` and
 `MSGVAULT_REMOTE_API_KEY`. A relative `api_key_file` resolves next to the
 config file. `--remote` cannot be combined with `--local` or agent-delegated
 mode, and an unknown name fails the command.
+
+#### Credential helper
+
+A hosted archive can hand out short-lived bearers instead of an API key. Set
+`credential_provider` to a trusted local helper, as a command and its
+arguments, and describe the access the hosting service approved in a
+`delegation` table. The hosting service's own setup tool usually writes both:
+
+```toml
+[remotes.hosted]
+url = "https://archive.example.org/messages"
+credential_provider = ["example-credential-helper", "--server", "work"]
+
+[remotes.hosted.delegation]
+archive_id = "archive-a"
+client_id = "22222222-2222-4222-8222-222222222222"
+delegation_id = "33333333-3333-4333-8333-333333333333"
+source_ids = [17, 23]
+```
+
+| Key | Description |
+|---|---|
+| `credential_provider` | Helper command and arguments, run without a shell. It excludes `api_key`, `api_key_file`, and `api_key_env`. |
+| `delegation.archive_id` | The hosted archive's UID |
+| `delegation.client_id` | The approved client installation |
+| `delegation.delegation_id` | The approval record |
+| `delegation.source_ids` | The approved sources |
+
+`url` must use HTTPS. Each command asks the helper for a bearer covering the
+read operations that `list-accounts`, `stats`, `search`, `show-message`,
+`show-thread`, and `export-messages` call, and sends it only to `url`. The
+bearer stays in memory and is renewed before it expires. If the helper fails
+or refuses, the command fails; it never falls back to an API key. msgvault
+keeps a journal of requests, without credentials, in `remote-credentials/`
+under the msgvault home so an interrupted request can be resumed. The
+[credential provider guide](guides/credential-providers.md#read-a-remote-through-a-helper)
+describes the helper's side.
 
 ### `[[accounts]]`
 

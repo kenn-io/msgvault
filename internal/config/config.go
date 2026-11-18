@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -467,6 +468,20 @@ type RemoteConfig struct {
 	APIKeyEnv     string `toml:"api_key_env"`
 	credential    runtimeCredential
 	AllowInsecure bool `toml:"allow_insecure"` // Allow HTTP (insecure) for trusted networks
+	// CredentialProvider runs a trusted local helper, as a command and its
+	// arguments, for a short-lived bearer instead of using an API key. It
+	// needs Delegation and excludes every api_key setting.
+	CredentialProvider []string          `toml:"credential_provider,omitempty"`
+	Delegation         *RemoteDelegation `toml:"delegation,omitempty"`
+}
+
+// RemoteDelegation names the access a hosting service approved for this
+// client. The credential helper is asked for exactly this access.
+type RemoteDelegation struct {
+	ArchiveID    string    `toml:"archive_id"`
+	ClientID     uuid.UUID `toml:"client_id"`
+	DelegationID uuid.UUID `toml:"delegation_id"`
+	SourceIDs    []int64   `toml:"source_ids"`
 }
 
 // IdentityConfig holds the user's curated identity addresses.
