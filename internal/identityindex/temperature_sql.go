@@ -84,10 +84,12 @@ WITH message_owner AS (
 	SELECT *,
 	       entry_kind IN ('event', 'meeting') AS is_meeting,
 	       CASE
-	           WHEN entry_kind IN ('event', 'meeting') THEN EXISTS (
-	               SELECT 1 FROM meeting_owners o
-	               LEFT JOIN %[6]s g ON g.message_id = person_messages.message_id
-	               WHERE o.meeting_group = coalesce(g.group_id, person_messages.message_id))
+	           WHEN entry_kind IN ('event', 'meeting') THEN
+	               CASE WHEN message_type = 'meeting_transcript' THEN EXISTS (
+	                   SELECT 1 FROM meeting_owners o
+	                   LEFT JOIN %[6]s g ON g.message_id = person_messages.message_id
+	                   WHERE o.meeting_group = coalesce(g.group_id, person_messages.message_id))
+	               ELSE owner_present END
 	           WHEN is_chat AND lower(conversation_type) = 'direct_chat' THEN
 	               owner_present AND (is_conversation_member OR is_direct)
 	               AND (is_from_me OR is_author)
@@ -121,7 +123,8 @@ SELECT message_id, canonical_id, occurred_at,
 	   is_meeting AS meeting,
 	   modality_mask
 FROM qualifying
-WHERE NOT is_meeting OR (canonical_id, message_id) IN (%[8]s)
+WHERE NOT is_meeting OR message_type <> 'meeting_transcript'
+   OR (canonical_id, message_id) IN (%[8]s)
 `,
 		activity,
 		cutoff,
