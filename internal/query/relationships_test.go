@@ -48,6 +48,27 @@ func TestRelationshipGroupOwnerEvidenceOutsideSelectedCopy(t *testing.T) {
 				require.Equal(t, person, result.Rows[0].CanonicalID)
 				require.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
 			}
+			sourceFilter := Context{SourceIDs: []int64{secondSource}}
+			timeline, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{
+				CanonicalID: person, Limit: 10, Context: sourceFilter,
+			})
+			require.NoError(t, err)
+			interactions, err := engine.Explore(t.Context(), ExploreRequest{
+				SentOnly: true, PersonInteractionsOnly: true,
+				Context: Context{ParticipantIDs: []int64{person}, SourceIDs: []int64{secondSource}},
+				Page:    PageSpec{Limit: 10},
+			})
+			require.NoError(t, err)
+			if tc.unsent {
+				require.Empty(t, timeline.Rows)
+				require.Empty(t, interactions.Rows)
+			} else {
+				require.Len(t, timeline.Rows, 1)
+				assert.Equal(t, "meeting", timeline.Rows[0].Kind)
+				assert.Equal(t, fmt.Sprintf("message:%d", selectedCopy), timeline.Rows[0].Key)
+				require.Len(t, interactions.Rows, 1)
+				assert.Equal(t, selectedCopy, *interactions.Rows[0].AnchorMessageID)
+			}
 			if !tc.unsent {
 				calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: 2026, Timezone: "UTC"})
 				require.NoError(t, err)

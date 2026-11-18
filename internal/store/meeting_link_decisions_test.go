@@ -1018,6 +1018,35 @@ func TestMeetingDecisionGraphResolvesLinkedOccurrencesWithinBudget(t *testing.T)
 	r.Len(roots, linkCount)
 }
 
+func TestMeetingTranscriptGroupsRejectIncompleteRecurrenceExpansion(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	recurrence := `"recurrence":["RRULE:FREQ=DAILY;COUNT=60000"]`
+	start := `"start":{"dateTime":"1880-01-01T10:00:00Z"},"end":{"dateTime":"1880-01-01T11:00:00Z"}`
+	_, firstSeries := calendarFixture(t, st, "long-series-first", fmt.Sprintf(`{"id":"first-series","iCalUID":"shared@example.org",%s,%s}`, start, recurrence), "first@example.test")
+	calendarFixture(t, st, "long-series-second", fmt.Sprintf(`{"id":"second-series","iCalUID":"shared@example.org",%s,%s}`, start, recurrence), "second@example.test")
+	for index := range 4 {
+		projectionFixture(t, st, fmt.Sprintf("unrelated-transcript-%d", index), "meeting_json", `{}`)
+	}
+	_, firstNote := projectionFixture(t, st, "long-series-note-first", "granola_json", `{"owner":{"email":"owner@example.test"},"calendar_event":{"calendar_event_id":"first-series_20270101T100000Z"}}`)
+	_, secondNote := projectionFixture(t, st, "long-series-note-second", "granola_json", `{"owner":{"email":"owner@example.test"},"calendar_event":{"calendar_event_id":"second-series_20270101T100000Z"}}`)
+	_, err := st.db.ExecContext(t.Context(), `UPDATE messages SET sent_at = ? WHERE message_type = 'meeting_transcript'`, time.Date(2027, 1, 1, 10, 0, 0, 0, time.UTC))
+	r.NoError(err)
+
+	noteRecord, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: firstNote})
+	r.NoError(err)
+	r.Contains(noteRecord.Unexpandable, CalendarUnexpandable{MessageID: firstSeries, Reason: calendarSeriesWorkLimitReason})
+	groups, err := st.MeetingTranscriptGroupsContext(t.Context(), secondNote)
+	r.ErrorIs(err, ErrQueryTooBroad)
+	r.Nil(groups)
+
+	ref, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270101T100000Z", firstSeries))
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref)
+	r.NoError(err)
+	r.Contains(record.Unexpandable, CalendarUnexpandable{MessageID: firstSeries, Reason: calendarSeriesWorkLimitReason})
+}
+
 func TestMeetingLinkDecisionEditedOccurrenceReferences(t *testing.T) {
 	for _, tc := range []struct{ name, start, end, original, movedStart, movedEnd, first, second string }{
 		{"timed", `{"dateTime":"2027-03-14T10:00:00Z"}`, `{"dateTime":"2027-03-14T11:00:00Z"}`, `{"dateTime":"2027-03-14T10:00:00Z"}`, `{"dateTime":"2027-03-15T10:00:00Z"}`, `{"dateTime":"2027-03-15T11:00:00Z"}`, "20270314T100000Z", "20270321T100000Z"},

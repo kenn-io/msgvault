@@ -33,6 +33,11 @@ func (s *Store) MeetingTranscriptGroupsContext(ctx context.Context, through int6
 	if err != nil {
 		return nil, err
 	}
+	for _, warning := range graph.warnings {
+		if warning.warning.Reason == calendarSeriesWorkLimitReason {
+			return nil, calendarRecurrenceBudgetError()
+		}
+	}
 	root, _, err := graph.reduce(ctx)
 	if err != nil {
 		return nil, err

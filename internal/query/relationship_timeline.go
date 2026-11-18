@@ -248,22 +248,13 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 // read the precomputed local_day column rather than re-evaluating
 // timezone() per row.
 //
-// Event/meeting rows require owner participation, mirroring the
-// relationship ranking exactly, including its person-level global-owner
-// semantics: a subscribed or shared-calendar event the owner never attended
-// is not an interaction with the counterpart, and the ranking already
-// contributes no signal for it — the timeline must not display what the
-// ranking ignores. with_owner comes from the member_owner CTE over the
-// subject's messages, whose rows already carry the alias-merged
-// canonical_id and owner-cluster is_owner flag the relationship index
-// computed at build time, so owner participation under a clustered alias
-// resolves identically on both surfaces. with_owner counts only direct
-// owner edges: the ranking derives non-chat owner presence from direct
-// participants, so a silent owner on a conversation roster must not make
-// the timeline treat an event as attended. Email and chat rows are
-// untouched: the timeline scopes by counterpart-cluster membership, not
-// owner involvement, so a counterpart's email to a third party still
-// appears.
+// Event/meeting rows need owner attendance, matching relationship ranking.
+// The owner-message set includes every sent transcript copy in a linked
+// group when any copy records direct owner attendance. This keeps selected
+// transcript copies visible under source and date filters while excluding
+// calendar events the owner never attended. Email and chat rows stay scoped
+// by counterpart-cluster membership, so a counterpart's email to a third
+// party still appears.
 //
 // has_attachments comes from the baked per-message has_attachments flag
 // (MIME structure at sync time), not attachment_count: extraction can lag
@@ -286,9 +277,9 @@ WITH subject_facts AS (
         any_value(a.entry_kind) AS entry_kind,
         any_value(a.is_chat) AS is_chat,
         any_value(a.has_attachments) AS has_attachments,
-        bool_or(a.is_owner AND a.is_direct) AS with_owner
+        bool_or(a.message_id IN (SELECT message_id FROM relationship_owner_event_messages)) AS with_owner
     FROM relationship_activity_expanded a
-    -- Outer rows only need the subject's message facts and owner rows for with_owner.
+    -- Outer rows only need the subject's message facts and attendance membership.
     WHERE a.canonical_id IN (` + strings.TrimSuffix(strings.Repeat("?,", canonicalCount), ",") + `)
       AND a.message_id IN (
         SELECT f.message_id

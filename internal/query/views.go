@@ -474,8 +474,8 @@ func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDi
 	return nil
 }
 
-// refreshRelationshipQuerySets loads excluded and owner event message IDs and owner canonicals once
-// per committed cache publication, avoiding sparse-fact scans on each request.
+// refreshRelationshipQuerySets loads exclusions, owner attendance message IDs,
+// and owner canonicals once per committed cache publication.
 func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir string) error {
 	if analyticsDir == "" {
 		return nil
@@ -516,8 +516,32 @@ func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir 
 	}
 	eventSQL := "SELECT NULL::BIGINT AS message_id WHERE false"
 	if hasActivity {
-		// Sparse activity marks is_owner only on direct rows with a confirmed owner canonical or the is_from_me owner sender, so roster expansion adds no owner-attended events.
-		eventSQL = "SELECT message_id FROM read_parquet('" + quoteIdentitySQLPath(path) + "', hive_partitioning=true, union_by_name=true) WHERE entry_kind IN ('event', 'meeting') AND is_owner AND NOT email_invite"
+		groups := "read_parquet('" + quoteIdentitySQLPath(filepath.Join(analyticsDir, identityindex.DatasetMeetingGroups, "*.parquet")) + "')"
+		eventSQL = fmt.Sprintf(`
+WITH activity AS (
+  SELECT message_id, message_type, is_owner, is_direct, unsent, email_invite
+  FROM read_parquet('%s', hive_partitioning=true, union_by_name=true)
+), meeting_groups AS (
+  SELECT message_id, group_id FROM %s
+), owner_meeting_groups AS (
+  SELECT coalesce(g.group_id, a.message_id) AS group_id
+  FROM activity a
+  LEFT JOIN meeting_groups g ON g.message_id = a.message_id
+  WHERE a.message_type = 'meeting_transcript' AND a.is_owner AND a.is_direct
+    AND NOT a.unsent AND NOT a.email_invite
+  GROUP BY coalesce(g.group_id, a.message_id)
+)
+SELECT message_id FROM activity
+WHERE message_type = 'calendar_event' AND is_owner AND is_direct
+  AND NOT unsent AND NOT email_invite
+UNION
+SELECT a.message_id
+FROM activity a
+LEFT JOIN meeting_groups g ON g.message_id = a.message_id
+WHERE a.message_type = 'meeting_transcript'
+  AND NOT a.unsent AND NOT a.email_invite
+  AND coalesce(g.group_id, a.message_id) IN (SELECT group_id FROM owner_meeting_groups)`,
+			quoteIdentitySQLPath(path), groups)
 	}
 	if _, err := tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_owner_event_messages AS "+eventSQL); err != nil {
 		return errors.Join(fmt.Errorf("load owner event message IDs: %w", err), tx.Rollback())

@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	calendarSeriesKind = "series"
-	calendarSingleKind = "single"
+	calendarSeriesKind            = "series"
+	calendarSingleKind            = "single"
+	calendarSeriesWorkLimitReason = "request work limit reached; long-running series count their steps from their start"
 )
 
 type CalendarOccurrence struct {
@@ -299,9 +300,8 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 	if row.Event.Kind == calendarSingleKind || (row.Event.Status == "cancelled" && !row.ics) {
 		return resolved, 0, "", nil
 	}
-	const requestLimit = "request work limit reached; long-running series count their steps from their start"
 	if remaining <= 0 {
-		return resolved, 0, requestLimit, nil
+		return resolved, 0, calendarSeriesWorkLimitReason, nil
 	}
 	limit := min(remaining, calrecur.SeriesReadBudget)
 	if unlimited {
@@ -313,8 +313,8 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 			return nil, count, "", ctx.Err()
 		}
 		if errors.Is(err, calrecur.ErrBudgetExceeded) {
-			if count > remaining {
-				return resolved, count, requestLimit, nil
+			if count > remaining || count > limit {
+				return resolved, count, calendarSeriesWorkLimitReason, nil
 			}
 			return bounded, count, err.Error(), nil
 		}
