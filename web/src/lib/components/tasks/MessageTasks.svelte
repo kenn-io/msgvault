@@ -47,7 +47,7 @@
       {#each issues as issue (issue.uid)}
         <DetailRow description={`Kata · ${issue.qualified_ref} · ${issue.status.replaceAll('_', ' ').replace(/^./, value => value.toUpperCase())}`}>
           {issue.title}
-          {#snippet actions()}{#if issue.web_url}<a class="text-action" href={issue.web_url} target="_blank" rel="noreferrer">Open in Kata</a>{/if}{/snippet}
+          {#snippet actions()}{#if issue.web_url}<a class="text-action" aria-label={`Open ${issue.title} (${issue.qualified_ref}) in Kata`} href={issue.web_url} target="_blank" rel="noreferrer">Open in Kata</a>{/if}{/snippet}
         </DetailRow>
       {/each}
     </div>

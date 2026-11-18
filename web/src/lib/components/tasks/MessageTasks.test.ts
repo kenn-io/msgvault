@@ -31,6 +31,21 @@ describe('Message task list', () => {
       expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
     } finally { view.unmount(); readiness.dispose(); }
   });
+  it('identifies each linked Kata issue in its link name', async () => {
+    const client = createAPIClient(async input => (input as Request).url.endsWith('/status')
+      ? Response.json({ state: 'ready' })
+      : Response.json({ issues: [
+        { uid: 'issue-1', qualified_ref: 'example#budget', title: 'Budget', status: 'open', web_url: 'https://example.org/budget' },
+        { uid: 'issue-2', qualified_ref: 'example#schedule', title: 'Schedule', status: 'open', web_url: 'https://example.org/schedule' }
+      ], truncated: false }));
+    const readiness = new KataReadiness(client);
+    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
+    try {
+      expect((await screen.findByRole('link', { name: 'Open Budget (example#budget) in Kata' })).getAttribute('href')).toBe('https://example.org/budget');
+      expect(screen.getByRole('link', { name: 'Open Schedule (example#schedule) in Kata' }).getAttribute('href')).toBe('https://example.org/schedule');
+    } finally { view.unmount(); readiness.dispose(); }
+  });
+
   it('reports a failed Kata lookup', async () => {
     const client = createAPIClient(async input => (input as Request).url.endsWith('/status') ? Response.json({ state: 'ready' }) : Response.json({ message: 'Kata lookup failed' }, { status: 503 }));
     const readiness = new KataReadiness(client);
@@ -70,7 +85,7 @@ describe('Message task list', () => {
     });
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
-    const link = await screen.findByRole('link', { name: 'Open in Kata' });
+    const link = await screen.findByRole('link', { name: 'Open Send notes (example#abcd) in Kata' });
     expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
     title = 'Send revised notes';
     await view.rerender({ refresh: 1 });
@@ -78,7 +93,7 @@ describe('Message task list', () => {
     truncated = true;
     await view.rerender({ refresh: 2 });
     expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
-    expect(screen.getByRole('link', { name: 'Open in Kata' })).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Open Send revised notes (example#abcd) in Kata' })).toBeDefined();
     empty = true;
     await view.rerender({ refresh: 3 });
     await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
