@@ -50,7 +50,7 @@ func TestNewReporterOrDisabledFallsBackWhenInstallFails(t *testing.T) {
 
 	reporter := NewReporterOrDisabled(Options{DataDir: notDir}, slog.New(slog.NewTextHandler(&logs, nil)))
 	assert.False(reporter.Enabled())
-	assert.Contains(logs.String(), "telemetry disabled")
+	assert.Empty(logs.String())
 }
 
 // TestEnabledReporterWireHelper runs only inside the helper process the wire tests start.
