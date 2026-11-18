@@ -58,7 +58,7 @@
   .task-group { display: grid; gap: var(--space-2); padding: 0 var(--pane-pad-x) var(--space-4); }
   .task-notices { padding: 0 var(--pane-pad-x); }
   .kata-links { display: grid; gap: var(--space-2); }
-  .text-action { display: inline-flex; min-height: var(--control-h); align-items: center; color: var(--link-ink); font-size: var(--type-meta-size); }
+  .text-action { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; min-height: var(--kit-control-height, 28px); padding: 3px 10px; border: var(--border-width) solid var(--border-default); border-radius: var(--kit-control-radius, var(--radius-sm)); background: var(--bg-raised, var(--bg-inset)); color: var(--text-secondary); font-size: var(--kit-control-font-size, var(--font-size-md)); font-weight: var(--font-weight-medium, 500); text-decoration: none; box-shadow: var(--shadow-raised, none); }
   .task-group :global(.task-links), .task-notices :global(.task-links) { padding: 0; }
   @media (max-width: 640px) {
     .task-group :global(.detail-row .actions) { margin-left: 0; }

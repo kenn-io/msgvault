@@ -170,8 +170,8 @@
               {:else}
                 <Button size="sm" surface="soft" label="Quote selection" shortLabel="Quote" disabled={busy || loading || !preview} onclick={quoteSelection} />
               {/if}
-              <Button size="sm" surface="soft" label="Earlier passage" shortLabel="Earlier" disabled={busy || loading || start === 0} onclick={() => page(Math.max(0, start - EVIDENCE_STEP))} />
-              <Button size="sm" surface="soft" label="Later passage" shortLabel="Later" disabled={busy || loading || !windowHasMore} onclick={() => page(start + EVIDENCE_STEP)} />
+              <Button size="sm" surface="soft" label="Earlier passage" shortLabel="Earlier passage" disabled={busy || loading || start === 0} onclick={() => page(Math.max(0, start - EVIDENCE_STEP))} />
+              <Button size="sm" surface="soft" label="Later passage" shortLabel="Later passage" disabled={busy || loading || !windowHasMore} onclick={() => page(start + EVIDENCE_STEP)} />
             </div>
           {/if}
         </section>

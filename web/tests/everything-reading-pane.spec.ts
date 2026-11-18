@@ -728,19 +728,22 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   expect.soft((await unlink.boundingBox())!.x - (await taskRow.boundingBox())!.x).toBeLessThan(30);
   const openKata = page.getByRole('link', { name: 'Open in Kata' });
   await expect(openKata).toBeVisible();
+  expect.soft(await openKata.evaluate(el => parseFloat(getComputedStyle(el).borderTopWidth))).toBeGreaterThan(0);
   const issueRow = openKata.locator('xpath=ancestor::div[contains(@class, "detail-row")]');
   expect.soft((await openKata.boundingBox())!.x - (await issueRow.boundingBox())!.x).toBeLessThan(30);
   await page.getByRole('article', { name: 'Message 42' }).getByRole('button', { name: /More actions for/ }).click();
   await page.getByRole('menuitem', { name: 'Add to task…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add to task' });
   await expect(dialog.getByText('garden', { exact: true })).toBeVisible();
-  const context = dialog.getByText(/Garden plans · Mira Example/);
+  const context = dialog.getByText(/Garden plans\s· Mira Example/);
   await expect(context).toContainText('Mira Example <mira@example.com> · Jul 18');
   expect.soft(await context.evaluate(el => el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight)).toBe(true);
   expect.soft(await context.evaluate(el => Number(getComputedStyle(el).fontWeight))).toBeLessThan(600);
   expect.soft(await context.locator('..').evaluate(el => parseFloat(getComputedStyle(el).borderRadius))).toBeLessThanOrEqual(8);
+  expect.soft(await context.evaluate(el => getComputedStyle(el.closest('.kit-chip')!).paddingTop)).not.toBe('0px');
+  expect.soft(await context.evaluate(el => el.textContent?.includes('\u00a0· Jul 18'))).toBe(true);
   const bounds = (await dialog.boundingBox())!;
-  for (const control of [dialog.getByText('garden', { exact: true }), dialog.getByText(/Garden plans · Mira Example/), dialog.getByRole('textbox', { name: 'Task title' }), dialog.getByRole('textbox', { name: 'Description' }), dialog.getByRole('combobox', { name: 'Priority: No priority' }), dialog.getByRole('textbox', { name: 'Labels' }), dialog.getByRole('button', { name: 'Create task' })]) {
+  for (const control of [dialog.getByText('garden', { exact: true }), dialog.getByText(/Garden plans\s· Mira Example/), dialog.getByRole('textbox', { name: 'Task title' }), dialog.getByRole('textbox', { name: 'Description' }), dialog.getByRole('combobox', { name: 'Priority: No priority' }), dialog.getByRole('textbox', { name: 'Labels' }), dialog.getByRole('button', { name: 'Create task' })]) {
     const box = (await control.boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(bounds.x);
     expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width);
@@ -751,6 +754,8 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   const earlier = kata.getByRole('button', { name: 'Earlier passage' });
   const later = kata.getByRole('button', { name: 'Later passage' });
   const quote = kata.getByRole('button', { name: 'Quote selection' });
+  expect.soft(await earlier.innerText()).toContain('passage');
+  expect.soft(await later.innerText()).toContain('passage');
   const passage = kata.getByRole('region', { name: 'Quoted passage' }).locator('pre');
   expect.soft((await quote.boundingBox())!.y).toBe((await earlier.boundingBox())!.y);
   expect.soft((await earlier.boundingBox())!.y).toBe((await later.boundingBox())!.y);
@@ -766,10 +771,13 @@ test('keeps the new task form inside the dialog on a phone', async ({ page }) =>
   expect.soft((await quote.boundingBox())!.y - ((await passage.boundingBox())!.y + (await passage.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
   const results = kata.locator('.results');
   expect.soft((await results.boundingBox())!.height).toBeLessThan(100);
+  const hint = kata.getByText('Search by whole word. The list is capped at 25.');
+  expect.soft((await hint.boundingBox())!.y - ((await results.boundingBox())!.y + (await results.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
   for (const control of [kata.getByRole('searchbox', { name: 'Filter open issues' }), kata.getByRole('button', { name: 'Later passage' }), kata.getByRole('button', { name: 'Add quote' })]) {
     const box = (await control.boundingBox())!;
     expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width);
   }
   await page.setViewportSize({ width: 1280, height: 900 });
   expect.soft((await results.boundingBox())!.height).toBeLessThan(100);
+  expect.soft((await hint.boundingBox())!.y - ((await results.boundingBox())!.y + (await results.boundingBox())!.height)).toBeGreaterThanOrEqual(12);
 });
