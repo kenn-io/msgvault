@@ -52,7 +52,9 @@ func TestLoopAgendaFilesReplyAndReplays(t *testing.T) {
 	assert.False(t, first.Replayed)
 	service, err := agenda.backend.service(t.Context())
 	require.NoError(t, err)
-	_, filed, err := service.FindFiled(t.Context(), fmt.Sprintf("loop:%d", id))
+	identity, err := f.Store.MessageIdentityContext(t.Context(), id)
+	require.NoError(t, err)
+	_, filed, err := service.FindFiled(t.Context(), "loop-source.v1:"+identity.Message)
 	require.NoError(t, err)
 	assert.True(t, filed)
 	assert.Contains(t, first.Issue.Body, "Can you send the contract?")
@@ -496,6 +498,35 @@ func TestLoopAgendaPromiseKeyFollowsSource(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, fresh.Replayed)
 	assert.NotEqual(t, filed.Issue.UID, fresh.Issue.UID)
+}
+
+func TestLoopAgendaReusedRowIDsFileNewIssues(t *testing.T) {
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	first := f.PersistEmail(storetest.EmailSpec{Thread: "removed", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send it?", SentAt: now.Add(-72 * time.Hour)})
+	_, _, err := f.Store.CreatePersonFromParticipant(f.EnsureParticipant("alex@example.test", "", "example.test"))
+	require.NoError(t, err)
+	conversation, err := f.Store.MessageConversation(t.Context(), first)
+	require.NoError(t, err)
+	native := katatest.New(t)
+	kata := httptest.NewServer(native.Service.Handler())
+	t.Cleanup(kata.Close)
+	agenda := NewLoopAgenda(config.TaskIntegrationConfig{Enabled: true, Endpoint: kata.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}, f.Store, "")
+	filed, err := agenda.File(t.Context(), strconv.FormatInt(first, 10), now)
+	require.NoError(t, err)
+	// Removing the newest conversation frees its row IDs, and SQLite gives them to the next import.
+	_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM conversations WHERE id = ?`, conversation.ConversationID)
+	require.NoError(t, err)
+	second := f.PersistEmail(storetest.EmailSpec{Thread: "imported", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you review it?", SentAt: now.Add(-48 * time.Hour)})
+	require.Equal(t, first, second)
+	reused, err := f.Store.MessageConversation(t.Context(), second)
+	require.NoError(t, err)
+	require.Equal(t, conversation.ConversationID, reused.ConversationID)
+	fresh, err := agenda.File(t.Context(), strconv.FormatInt(second, 10), now)
+	require.NoError(t, err)
+	assert.False(t, fresh.Replayed)
+	assert.NotEqual(t, filed.Issue.UID, fresh.Issue.UID)
+	assert.Empty(t, agendaParent(t, native, kata, fresh.Issue.UID))
 }
 
 func agendaParent(t *testing.T, native katatest.Kata, server *httptest.Server, uid string) string {

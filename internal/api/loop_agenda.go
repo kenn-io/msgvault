@@ -27,6 +27,7 @@ type loopAgendaArchive interface {
 	GetPersonCommitmentContext(ctx context.Context, id int64, now time.Time) (store.PersonCommitment, error)
 	GetPersonContext(ctx context.Context, id int64) (*store.Person, error)
 	WalkOpenPersonCommitments(ctx context.Context, now time.Time, visit func(store.PersonCommitment) error) error
+	MessageIdentityContext(ctx context.Context, messageID int64) (store.MessageIdentity, error)
 }
 
 var errAgendaPersonRequired = errors.New("link the contact to a person first")
@@ -50,6 +51,7 @@ func (a *LoopAgenda) File(ctx context.Context, ref string, now time.Time) (katai
 func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, service *kataissues.Service) (kataissues.Result, error) {
 	var input kataissues.CreateInput
 	var messageID, conversationID int64
+	var identity store.MessageIdentity
 	var selectors []kataevidence.Selector
 	var expected string
 	var key string
@@ -68,6 +70,9 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 			return kataissues.Result{}, err
 		}
 		conversationID = conversation.ConversationID
+		if identity, err = a.archive.MessageIdentityContext(ctx, messageID); err != nil {
+			return kataissues.Result{}, err
+		}
 		input.Title, input.List, input.PersonID, input.DeadlineOn = c.Summary, "promises", &c.PersonID, c.DueOn
 		input.SourceTime = c.PromisedAt
 		if c.Direction == "owed_to" {
@@ -95,8 +100,15 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 		if err != nil || id < 1 {
 			return kataissues.Result{}, loops.ErrNotOpen
 		}
+		identity, err = a.archive.MessageIdentityContext(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return kataissues.Result{}, loops.ErrNotOpen
+		}
+		if err != nil {
+			return kataissues.Result{}, err
+		}
 		// An obligation filed earlier keeps its issue after the loop closes.
-		key = fmt.Sprintf("loop:%d", id)
+		key = "loop-source.v1:" + identity.Message
 		if result, found, err := a.filed(ctx, &service, key); err != nil || found {
 			return result, err
 		}
@@ -133,7 +145,7 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 	if expected != "" && quote.String() != expected {
 		return kataissues.Result{}, kataevidence.ErrChanged
 	}
-	input.Thread = strconv.FormatInt(conversationID, 10)
+	input.Thread, input.Conversation = identity.Conversation, strconv.FormatInt(conversationID, 10)
 	origin := apiprotocol.BrowserOrigin(ctx, a.origin)
 	if origin != "" {
 		input.OriginLink = fmt.Sprintf("[Open the original message](%s/messages/%d)", strings.TrimRight(origin, "/"), messageID)

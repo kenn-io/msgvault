@@ -2,11 +2,13 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
@@ -795,4 +797,46 @@ func (s *Store) ListDiscordAttachmentMessages(ctx context.Context, sourceID int6
 		messages = append(messages, message)
 	}
 	return messages, rows.Err()
+}
+
+// MessageIdentity names a message and its conversation by the account they
+// came from and the provider's own IDs, which a reused archive row ID does
+// not share.
+type MessageIdentity struct {
+	// Message adds the archive arrival time, so a replacement copy of a
+	// message gets its own identity.
+	Message      string
+	Conversation string
+}
+
+// MessageIdentityContext returns the source identities of a message and its conversation.
+func (s *Store) MessageIdentityContext(ctx context.Context, messageID int64) (MessageIdentity, error) {
+	var sourceType, account, sourceMessageID, sourceConversationID string
+	var conversationID int64
+	var archived requiredTimestamp
+	err := s.db.QueryRowContext(ctx, s.Rebind(`
+		SELECT src.source_type, src.identifier, COALESCE(m.source_message_id, ''), m.archived_at,
+			c.id, COALESCE(c.source_conversation_id, '')
+		FROM messages m
+		JOIN sources src ON src.id = m.source_id
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.id = ?`), messageID).Scan(&sourceType, &account, &sourceMessageID, &archived, &conversationID, &sourceConversationID)
+	if err != nil {
+		return MessageIdentity{}, fmt.Errorf("identity of message %d: %w", messageID, err)
+	}
+	// A provider that gives no ID leaves only the archive row to tell items apart.
+	message := fmt.Sprintf("%q/%q/%q/%s", sourceType, account, sourceMessageID, archived.Time.UTC().Format(time.RFC3339Nano))
+	if sourceMessageID == "" {
+		message += fmt.Sprintf("/row %d", messageID)
+	}
+	conversation := fmt.Sprintf("%q/%q/%q", sourceType, account, sourceConversationID)
+	if sourceConversationID == "" {
+		conversation += fmt.Sprintf("/row %d", conversationID)
+	}
+	return MessageIdentity{Message: identityDigest(message), Conversation: identityDigest(conversation)}, nil
+}
+
+func identityDigest(identity string) string {
+	digest := sha256.Sum256([]byte(identity))
+	return hex.EncodeToString(digest[:])
 }

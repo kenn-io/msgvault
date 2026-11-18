@@ -58,15 +58,18 @@ type Service struct {
 }
 
 type CreateInput struct {
-	OriginLink string                   `json:"-"`
-	Thread     string                   `json:"-"`
-	SourceTime time.Time                `json:"-"`
-	DeadlineOn *string                  `json:"-"`
-	Title      string                   `json:"title"`
-	Brief      string                   `json:"brief"`
-	List       string                   `json:"list"`
-	PersonID   *int64                   `json:"person_id,omitzero"`
-	Evidence   []kataevidence.Reference `json:"evidence"`
+	OriginLink string `json:"-"`
+	// Thread names the conversation by its source identity, which parent
+	// lookup trusts; Conversation is its archive ID, kept for readers.
+	Thread       string                   `json:"-"`
+	Conversation string                   `json:"-"`
+	SourceTime   time.Time                `json:"-"`
+	DeadlineOn   *string                  `json:"-"`
+	Title        string                   `json:"title"`
+	Brief        string                   `json:"brief"`
+	List         string                   `json:"list"`
+	PersonID     *int64                   `json:"person_id,omitzero"`
+	Evidence     []kataevidence.Reference `json:"evidence"`
 }
 
 // Result reports whether this call created the issue or found the one an
@@ -123,7 +126,7 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 		metadata[personagenda.PersonMetadataKey], metadata[personagenda.ListMetadataKey] = uids[0], input.List
 		if input.Thread != "" {
 			metadata["msgvault.thread"] = threadDigest(archive, input.Thread, uids[0])
-			metadata["msgvault.conversation"] = input.Thread
+			metadata["msgvault.conversation"] = input.Conversation
 			metadata["msgvault.source_time"] = input.SourceTime.UTC().Format(time.RFC3339Nano)
 			if parentRef, err = s.findParent(ctx, archive, input.Thread, uids, input.SourceTime); err != nil {
 				return Result{}, err
