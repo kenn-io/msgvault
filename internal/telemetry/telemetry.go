@@ -132,7 +132,7 @@ func buildReporter(opts Options, apiKey, endpoint string, logger *slog.Logger) (
 	}
 	options := posthog.Options{
 		APIKey: apiKey, Endpoint: endpoint, Application: application, EnvPrefix: envPrefix,
-		Version: opts.Version, Commit: opts.Commit, Source: "daemon", Logger: logger,
+		Version: opts.Version, Commit: opts.Commit, Source: "daemon", Logger: slog.New(slog.DiscardHandler),
 	}
 	if posthog.EnabledFromEnv(envPrefix) {
 		install, err := posthog.LoadOrCreateInstall(opts.DataDir)
