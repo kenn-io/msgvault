@@ -6,6 +6,7 @@ import type { DirectoryPersonSummary } from "./directoryPersonSummary";
 import type { Preset } from "./preset";
 
 export interface DirectoryPeopleResponse {
+  /** People matching the other filters, counted by cadence before the cadence filter. Present only when the request uses a cadence filter or sort. */
   cadence_coverage?: DirectoryCadenceCoverage;
   cadence_presets?: Preset[];
   next_cursor?: string;

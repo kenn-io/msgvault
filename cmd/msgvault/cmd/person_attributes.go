@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/contactcadence"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -115,8 +116,8 @@ var personAttributesSetCmd = &cobra.Command{
 		if hasList {
 			var valid bool
 			listDays, valid = contactcadence.DaysForList(personAttributeList)
-			if slug != "contact_frequency" || !valid || hasScalar || hasJSON {
-				return usageErr(cmd, errors.New("--list requires contact_frequency, A/B/C/D, and no --value or --value-json"))
+			if !valid || hasScalar || hasJSON {
+				return usageErr(cmd, errors.New("--list requires A/B/C/D and no --value or --value-json"))
 			}
 		}
 		expectedValueIDSet := cmd.Flags().Changed("expected-value-id")
@@ -138,6 +139,15 @@ var personAttributesSetCmd = &cobra.Command{
 
 		body := generated.SetPersonAttributeBody{}
 		if hasList {
+			// The Directory reads the contact interval by its universal ID, so
+			// --list follows that identity rather than the archive-local slug.
+			definition, defErr := cliPersonAttributeDefinition(cmd, client, personID, slug)
+			if defErr != nil {
+				return defErr
+			}
+			if definition.UniversalID != store.AttributeUniversalIDContactFrequency {
+				return usageErr(cmd, fmt.Errorf("--list sets the contact interval attribute; %q is a different attribute", slug))
+			}
 			body.Value = generated.AttributeValue{Type: "integer", Integer: &listDays}
 		} else if hasJSON {
 			document, readErr := readCLIDocument(cmd, personAttributeValueJSON)

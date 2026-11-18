@@ -3830,6 +3830,7 @@ components:
       properties:
         cadence_coverage:
           $ref: "#/components/schemas/DirectoryCadenceCoverage"
+          description: People matching the other filters, counted by cadence before the cadence filter. Present only when the request uses a cadence filter or sort.
         cadence_presets:
           items:
             $ref: "#/components/schemas/Preset"

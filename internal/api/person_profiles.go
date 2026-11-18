@@ -71,7 +71,7 @@ type PeopleResponse struct {
 // durable person roots.
 type DirectoryPeopleResponse struct {
 	CadencePresets  []contactcadence.Preset         `json:"cadence_presets,omitempty" nullable:"false"`
-	CadenceCoverage *store.DirectoryCadenceCoverage `json:"cadence_coverage,omitempty"`
+	CadenceCoverage *store.DirectoryCadenceCoverage `json:"cadence_coverage,omitempty" doc:"People matching the other filters, counted by cadence before the cadence filter. Present only when the request uses a cadence filter or sort."`
 	People          []store.DirectoryPersonSummary  `json:"people"`
 	NextCursor      string                          `json:"next_cursor,omitempty"`
 }
