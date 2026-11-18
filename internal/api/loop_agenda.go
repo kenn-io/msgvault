@@ -92,8 +92,12 @@ func (a *LoopAgenda) file(ctx context.Context, ref string, now time.Time, servic
 			selectors = append(selectors, kataevidence.Selector{Kind: "message", MessageID: messageID, StartRune: &start, EndRune: &end})
 		}
 		key = commitmentAgendaKey(c)
+		// A promise marked done or snoozed keeps its issue, but files no new one.
 		if result, found, err := a.filed(ctx, &service, key); err != nil || found {
 			return result, err
+		}
+		if c.State != store.LoopStateOpen {
+			return kataissues.Result{}, sql.ErrNoRows
 		}
 	} else {
 		id, err := strconv.ParseInt(ref, 10, 64)

@@ -248,6 +248,9 @@ func sourced(c store.PersonCommitment) store.PersonCommitment {
 	if c.SourceKey == "" {
 		c.SourceKey = "source-" + strconv.FormatInt(c.ID, 10)
 	}
+	if c.State == "" {
+		c.State = store.LoopStateOpen
+	}
 	return c
 }
 
@@ -530,6 +533,37 @@ func TestLoopAgendaReusedRowIDsFileNewIssues(t *testing.T) {
 	assert.False(t, fresh.Replayed)
 	assert.NotEqual(t, filed.Issue.UID, fresh.Issue.UID)
 	assert.Empty(t, agendaParent(t, native, kata, fresh.Issue.UID))
+}
+
+func TestLoopAgendaRefilesClosedPromise(t *testing.T) {
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	body := "I will send it."
+	id := f.PersistEmail(storetest.EmailSpec{Thread: "closed", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: body, SentAt: now.Add(-time.Hour)})
+	person, _, err := f.Store.CreatePersonFromParticipant(f.EnsureParticipant("alex@example.test", "Alex", "example.test"))
+	require.NoError(t, err)
+	native := katatest.New(t)
+	kata := httptest.NewServer(native.Service.Handler())
+	t.Cleanup(kata.Close)
+	agenda := NewLoopAgenda(config.TaskIntegrationConfig{Enabled: true, Endpoint: kata.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}, f.Store, "")
+	promise := store.PersonCommitment{ID: 1, PersonID: person.ID, AnchorMessageID: id, Quote: body, End: int64(len(body)), Summary: "Send it", Direction: "owed_by", PromisedAt: now.Add(-time.Hour)}
+	unfiled := promise
+	unfiled.ID, unfiled.State = 2, store.LoopStateDone
+	archive := &agendaTestArchive{Store: f.Store, promises: []store.PersonCommitment{promise, unfiled}}
+	agenda.archive = archive
+	filed, err := agenda.File(t.Context(), "c1", now)
+	require.NoError(t, err)
+	// Marking the promise done or snoozing it keeps returning its issue.
+	for _, state := range []string{store.LoopStateDone, store.LoopStateSnoozed} {
+		archive.promises[0].State = state
+		again, err := agenda.File(t.Context(), "c1", now)
+		require.NoError(t, err, state)
+		assert.True(t, again.Replayed, state)
+		assert.Equal(t, filed.Issue.UID, again.Issue.UID, state)
+	}
+	// A closed promise that was never filed files nothing.
+	_, err = agenda.File(t.Context(), "c2", now)
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func agendaParent(t *testing.T, native katatest.Kata, server *httptest.Server, uid string) string {
