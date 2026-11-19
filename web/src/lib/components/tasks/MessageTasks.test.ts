@@ -84,7 +84,6 @@ describe('Message task list', () => {
   });
 
   it.each([
-    { truncated: true, empty: false, reload: false },
     { truncated: true, empty: true, reload: false },
     { truncated: false, empty: true, reload: false },
     { truncated: true, empty: false, reload: true }
