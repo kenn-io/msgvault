@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -33,6 +34,10 @@ type MessagesRequest struct {
 	MessageTypes []string
 	Sources      []MessageSourceSelector
 	PersonID     *int64
+	// Scope, when non-nil, limits the export to these source IDs, as a host
+	// that authorizes sources supplies them. A selected source outside it is
+	// not found, and an empty scope exports no records.
+	Scope []int64
 }
 
 // ParseMessagesRequest validates export bounds and normalizes filters. The
@@ -62,6 +67,7 @@ type MessagesExport struct {
 	request  MessagesRequest
 	filter   store.MessageExportFilter
 	personID *int64
+	empty    bool
 }
 
 // OpenMessages starts a read snapshot and resolves the request's sources and
@@ -71,10 +77,15 @@ func OpenMessages(ctx context.Context, st *store.Store, request MessagesRequest)
 	if err != nil {
 		return nil, err
 	}
-	sourceIDs, err := resolveMessageSources(ctx, st, request.Sources)
+	sourceIDs, err := resolveMessageSources(ctx, st, request.Sources, request.Scope)
 	if err != nil {
 		release()
 		return nil, err
+	}
+	empty := false
+	if request.Scope != nil && len(request.Sources) == 0 {
+		sourceIDs = slices.DeleteFunc(slices.Clone(request.Scope), func(id int64) bool { return id <= 0 })
+		empty = len(sourceIDs) == 0
 	}
 	var scope *personscope.Scope
 	var personID *int64
@@ -100,6 +111,7 @@ func OpenMessages(ctx context.Context, st *store.Store, request MessagesRequest)
 			MessageTypes: request.MessageTypes,
 		},
 		personID: personID,
+		empty:    empty,
 	}, nil
 }
 
@@ -123,9 +135,13 @@ func (e *MessagesExport) Write(w io.Writer, msgvaultVersion string) error {
 	}, json.Deterministic(true)); err != nil {
 		return fmt.Errorf("encode message export manifest: %w", err)
 	}
-	counts, err := e.store.ExportMessages(e.ctx, e.filter, messagesJSONLSink{encoder: encoder})
-	if err != nil {
-		return fmt.Errorf("export messages: %w", err)
+	var counts store.MessageExportCounts
+	if !e.empty {
+		var err error
+		counts, err = e.store.ExportMessages(e.ctx, e.filter, messagesJSONLSink{encoder: encoder})
+		if err != nil {
+			return fmt.Errorf("export messages: %w", err)
+		}
 	}
 	if err := json.MarshalEncode(encoder, messagesComplete{
 		RecordType: "complete",
@@ -302,7 +318,9 @@ func normalizeMessageSelectors(values []string) ([]MessageSourceSelector, error)
 	return compactMessageSelectors(selectors), nil
 }
 
-func resolveMessageSources(ctx context.Context, st *store.Store, selectors []MessageSourceSelector) ([]int64, error) {
+// resolveMessageSources treats a source outside a non-nil scope as missing,
+// so a scoped caller cannot learn that it exists.
+func resolveMessageSources(ctx context.Context, st *store.Store, selectors []MessageSourceSelector, scope []int64) ([]int64, error) {
 	sourceIDs := make([]int64, 0, len(selectors))
 	for _, selector := range selectors {
 		sources, err := st.ListSourcesContext(ctx, selector.SourceType)
@@ -311,7 +329,7 @@ func resolveMessageSources(ctx context.Context, st *store.Store, selectors []Mes
 		}
 		var matched *store.Source
 		for _, source := range sources {
-			if source.Identifier == selector.Identifier {
+			if source.Identifier == selector.Identifier && (scope == nil || slices.Contains(scope, source.ID)) {
 				matched = source
 				break
 			}
