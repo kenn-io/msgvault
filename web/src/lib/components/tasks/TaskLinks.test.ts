@@ -200,7 +200,7 @@ describe('TaskLinks', () => {
   it('shows the project once above distinct linked tasks', async () => {
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
       ? { state: 'ready', project: 'garden' }
-      : { state: 'ready', complete: true, tasks: [{ id: 'one', title: 'Plant seeds' }, { id: 'two', title: 'Water plants' }], outbound_metadata: taskOutboundMetadata }));
+      : taskLookup({ tasks: [{ id: 'one', title: 'Plant seeds' }, { id: 'two', title: 'Water plants' }] })));
     render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
     const first = await screen.findByText('Plant seeds');
     expect(screen.getByText('Water plants')).toBeDefined();

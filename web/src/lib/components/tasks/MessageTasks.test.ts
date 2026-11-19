@@ -12,7 +12,7 @@ describe('Message task list', () => {
       if (url.endsWith('/status')) return Response.json({ state: scenario === 'suppressed' ? 'unavailable' : 'ready', project: 'example' });
       if (url.includes('/kata/')) return scenario === 'error'
         ? Response.json({ message: 'Kata lookup failed' }, { status: 503 })
-        : Response.json({ issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Kata work', status: 'open', web_url: 'https://example.org/issue' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }], truncated: false });
+        : Response.json({ issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Kata work', status: 'open', web_url: 'https://example.org/issue' }], truncated: false });
       return Response.json(taskLookup(scenario === 'partial'
         ? { state: 'partial', complete: false }
         : scenario === 'suppressed'
@@ -34,7 +34,6 @@ describe('Message task list', () => {
         await screen.findByText('Task work');
         await screen.findByText('Kata work');
         expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
-        expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
       } else {
         await screen.findByText('Kata lookup failed');
         expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
@@ -69,12 +68,13 @@ describe('Message task list', () => {
     const client = createAPIClient(async (input) => {
       if ((input as Request).url.endsWith('/status')) return Response.json({ state: 'ready' });
       if (hold) return new Promise<Response>(resolve => { held = resolve; });
-      return Response.json({ truncated, issues: empty ? [] : [{ uid: 'issue-1', qualified_ref: 'example#abcd', title, status: 'open', web_url: 'https://example.org/tasks/abcd' }] });
+      return Response.json({ truncated, issues: empty ? [] : [{ uid: 'issue-1', qualified_ref: 'example#abcd', title, status: 'open', web_url: 'https://example.org/tasks/abcd' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }] });
     });
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
     const link = await screen.findByRole('link', { name: 'Open Send notes (example#abcd) in Kata' });
     expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
+    expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
     title = 'Send revised notes';
     hold = true;
     await view.rerender({ refresh: 1 });

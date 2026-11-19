@@ -124,11 +124,10 @@ describe('Add to task', () => {
     expect(await screen.findByText('No tasks in example yet.')).toBeDefined();
   });
 
-  it('hides the task toolbar when the index is stale', async () => {
-    const state = 'stale';
+  it.each([{ status: 'ready', state: 'stale' }, { status: 'unavailable', state: 'ready' }])('hides the task toolbar with status $status and index $state', async ({ status, state }) => {
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: 'ready', project: 'example' }
-      : taskLookup({ state, complete: false, reason: state })));
+      ? { state: status, project: 'example' }
+      : taskLookup({ state, complete: state === 'ready', reason: state })));
     render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
     await screen.findByRole('alert');
     expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
