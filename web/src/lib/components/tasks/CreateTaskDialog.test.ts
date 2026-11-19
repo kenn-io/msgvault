@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import { formatShortDate, formatShortDateTime } from '../../util/format';
+import { formatShortDate } from '../../util/format';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import CreateTaskDialog from './CreateTaskDialog.svelte';
 
@@ -14,7 +14,7 @@ describe('CreateTaskDialog', () => {
       return Response.json({ task: { id: 'task-1', project: 'project', title: 'Edited', revision: 'r1' } }, { status: 201 });
     });
     const oncreated = vi.fn();
-    const sentAt = '2026-07-18T12:00:00Z';
+    const sentAt = '2026-07-18T12:00:37Z';
     render(CreateTaskDialog, {
       client: createAPIClient(fetchFn), messageId: 42, project: 'project', defaultTitle: 'Synthetic subject',
       archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
@@ -30,7 +30,7 @@ describe('CreateTaskDialog', () => {
     ]) {
       expect(screen.getByText(label).nextElementSibling?.textContent).toBe(value);
     }
-    expect(screen.getByText('Sent at').nextElementSibling?.textContent).toBe(formatShortDateTime(sentAt));
+    expect(screen.getByText('Sent at').nextElementSibling?.textContent).toBe('2026-07-18T12:00:37Z');
     expect(screen.getByText('Link added at').nextElementSibling?.textContent).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(screen.getByLabelText('Description')).toHaveProperty('value', '');
     expect(screen.getByText(`Synthetic subject · sender@example.com · ${formatShortDate(sentAt)}`)).toBeDefined();

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { Disclosure } from '@kenn-io/kit-ui';
-  import { formatShortDateTime } from '../../util/format';
   let { messageURL = '', addedAt = '', archiveUID, messageId, conversationId, sourceType, sourceIdentifier, sourceMessageId, subject, from, sentAt }: {
     messageURL?: string; addedAt?: string; archiveUID: string; messageId: number; conversationId: number; sourceType: string; sourceIdentifier: string; sourceMessageId: string; subject: string; from: string; sentAt: string;
   } = $props();
@@ -47,7 +46,7 @@
         </div>
         <div>
           <dt>Sent at</dt>
-          <dd>{formatShortDateTime(sentAt)}</dd>
+          <dd>{sentAt}</dd>
         </div>
         <div>
           <dt>Link added at</dt>
