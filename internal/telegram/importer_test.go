@@ -784,3 +784,65 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 		})
 	}
 }
+
+type batchChat struct {
+	id   int64
+	kind string
+	size int
+}
+
+func batchExport(t *testing.T, list []batchChat, text func(chat int64, id int) string) string {
+	var chats []string
+	for _, c := range list {
+		var msgs []string
+		for id := 1; id <= c.size; id++ {
+			msgs = append(msgs, `{"id":`+strconv.Itoa(id)+`,"type":"message","date_unixtime":"1","text":"`+text(c.id, id)+`"}`)
+		}
+		chats = append(chats, `{"id":`+strconv.FormatInt(c.id, 10)+`,"type":"`+c.kind+`","messages":[`+strings.Join(msgs, ",")+`]}`)
+	}
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[`+strings.Join(chats, ",")+`]}}`))
+	return root
+}
+
+func countChatMessages(t *testing.T, st *store.Store, peer string) int {
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE source_message_id LIKE ?", peer+":%").Scan(&n))
+	return n
+}
+
+func TestImportBatchRollsBackFailedBatchAndResumes(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	size := BatchSize + 10
+	root := batchExport(t, []batchChat{{2, "personal_chat", size}, {3, "personal_chat", size}}, func(chat int64, id int) string {
+		if chat == 3 && id == 2 {
+			return "fail-me"
+		}
+		return "m"
+	})
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_batch BEFORE INSERT ON messages WHEN NEW.snippet = 'fail-me' BEGIN SELECT RAISE(ABORT, 'forced failure'); END`)
+	require.NoError(t, err)
+	_, err = Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
+	require.ErrorContains(t, err, "forced failure")
+	assert.Equal(t, size, countChatMessages(t, st, "user2"))
+	assert.Equal(t, 0, countChatMessages(t, st, "user3"))
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_batch`)
+	require.NoError(t, err)
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
+	require.NoError(t, err)
+	assert.EqualValues(t, size, summary.MessagesAdded)
+	assert.EqualValues(t, 0, summary.MessagesSkipped)
+	assert.Equal(t, size, countChatMessages(t, st, "user2"))
+	assert.Equal(t, size, countChatMessages(t, st, "user3"))
+}
+
+func TestImportBatchStopsWhenRunSuperseded(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := batchExport(t, []batchChat{{2, "private_group", 3}, {3, "private_group", 3}}, func(int64, int) string { return "m" })
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER supersede_run AFTER INSERT ON conversations WHEN NEW.source_conversation_id = 'chat3' BEGIN UPDATE sync_runs SET status = 'failed' WHERE status = 'running'; END`)
+	require.NoError(t, err)
+	_, err = Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
+	require.ErrorIs(t, err, store.ErrSyncRunSuperseded)
+	assert.Equal(t, 3, countChatMessages(t, st, "chat2"))
+	assert.Equal(t, 0, countChatMessages(t, st, "chat3"))
+}

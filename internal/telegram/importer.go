@@ -114,7 +114,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	batch := newMessageBatch(st, opts.BatchSize)
 	root, err := filepath.Abs(opts.RootDir)
 	if err != nil {
 		return summary, err
@@ -170,6 +169,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		return summary, err
 	}
 	st = st.ScopedToSync(source.ID, syncID)
+	batch := newMessageBatch(st, opts.BatchSize)
 	defer func() {
 		cleanup := context.WithoutCancel(ctx)
 		retErr = errors.Join(retErr, st.ResolveDeferredMessageRepliesContext(cleanup, source.ID, MessageType, 500), st.RecomputeConversationStatsContext(cleanup, source.ID))
