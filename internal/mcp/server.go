@@ -30,6 +30,7 @@ import (
 
 // Tool name constants.
 const (
+	ToolSetPersonContactList      = "set_person_contact_list"
 	ToolDraftReply                = "draft_reply"
 	ToolDraftCompose              = "draft_compose"
 	ToolDraftForward              = "draft_forward"

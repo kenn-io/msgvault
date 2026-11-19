@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -194,4 +196,44 @@ func TestPersonAttributesClearForwardsOrdinalAndExpectedValueID(t *testing.T) {
 	assert.NotContains(query, "dry_run",
 		"a prior test's --dry-run must not leak into this run")
 	assert.Contains(output, "Superseded")
+}
+
+func TestPersonAttributesListPreset(t *testing.T) {
+	// The archive renamed the contact interval to "interval" and gave
+	// "contact_frequency" to an unrelated attribute.
+	universalIDs := map[string]string{
+		"interval":          store.AttributeUniversalIDContactFrequency,
+		"contact_frequency": "59e9a7d3-4904-4d0e-97d1-d0680e1e9e55",
+	}
+	var putPath string
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			slug := r.URL.Query().Get("slug")
+			definition := strings.Replace(strings.Replace(testPersonAttributesJSON,
+				`"primary_channel"`, `"`+slug+`"`, 1),
+				`"59e9a7d3-4904-4d0e-97d1-d0680e1e9e55"`, `"`+universalIDs[slug]+`"`, 1)
+			_, _ = w.Write([]byte(definition)) // #nosec G705 -- Synthetic response uses application/json; the analyzer does not model response headers.
+			return
+		}
+		assert.Equal(t, http.MethodPut, r.Method)
+		putPath = r.URL.Path
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		_, _ = w.Write([]byte(`{"dry_run":true}`))
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_, err := runAttributeCommand(ctx, t, personAttributesSetCmd, "7", "interval", "--list", "b", "--dry-run", "--json")
+	require.NoError(t, err)
+	assert.Equal(t, "/api/v1/people/7/attributes/interval", putPath)
+	assert.Equal(t, map[string]any{"type": "integer", "integer": float64(60)}, received["value"])
+	putPath = ""
+	_, err = runAttributeCommand(ctx, t, personAttributesSetCmd, "7", "contact_frequency", "--list", "A")
+	require.ErrorContains(t, err, "different attribute")
+	assert.Empty(t, putPath, "--list must not write an unrelated attribute")
+	for _, args := range [][]string{{"7", "interval", "--list", "Z"}, {"7", "interval", "--list", "A", "--value", "21"}} {
+		_, err := runAttributeCommand(ctx, t, personAttributesSetCmd, args...)
+		require.Error(t, err)
+	}
 }
