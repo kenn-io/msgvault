@@ -1709,8 +1709,8 @@ func (c *Client) messageSummariesWithURLs(ctx context.Context, messages []genera
 // is truncated.
 func (c *Client) OpenMessageExport(ctx context.Context, request export.MessagesRequest) (io.ReadCloser, error) {
 	query := &generated.ExportCLIMessagesQuery{
-		Start:       request.Start.Format(time.RFC3339),
-		End:         request.End.Format(time.RFC3339),
+		Start:       request.Start.Format(time.RFC3339Nano),
+		End:         request.End.Format(time.RFC3339Nano),
 		MessageType: request.MessageTypes,
 	}
 	for _, selector := range request.Sources {

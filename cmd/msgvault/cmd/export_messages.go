@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -152,8 +154,54 @@ func runExportMessagesHTTP(cmd *cobra.Command, request export.MessagesRequest) e
 	if err != nil {
 		return err
 	}
-	_, copyErr := io.Copy(cmd.OutOrStdout(), body)
-	return errors.Join(copyErr, body.Close())
+	out := &lastLineWriter{w: cmd.OutOrStdout()}
+	_, copyErr := io.Copy(out, body)
+	if err := errors.Join(copyErr, body.Close()); err != nil {
+		return err
+	}
+	// The server reports a failure after the first byte only by ending the
+	// stream without its completion record.
+	var last struct {
+		RecordType string `json:"record_type"`
+	}
+	if json.Unmarshal(out.last, &last) != nil || last.RecordType != "complete" {
+		return errors.New("message export ended without its completion record; the server stopped mid-stream, so the output is incomplete")
+	}
+	return nil
+}
+
+// maxCompletionRecordBytes bounds what lastLineWriter keeps of a line. The
+// completion record holds only counts, so it is far smaller.
+const maxCompletionRecordBytes = 4096
+
+// lastLineWriter forwards every byte and keeps the last complete line when it
+// fits in maxCompletionRecordBytes.
+type lastLineWriter struct {
+	w        io.Writer
+	line     []byte
+	overflow bool
+	last     []byte
+}
+
+func (l *lastLineWriter) Write(p []byte) (int, error) {
+	n, err := l.w.Write(p)
+	for rest := p[:n]; len(rest) > 0; {
+		chunk, after, found := bytes.Cut(rest, []byte("\n"))
+		if !l.overflow && len(l.line)+len(chunk) <= maxCompletionRecordBytes {
+			l.line = append(l.line, chunk...)
+		} else {
+			l.overflow = true
+		}
+		if !found {
+			break
+		}
+		l.last = nil
+		if !l.overflow {
+			l.last = append(l.last, l.line...)
+		}
+		l.line, l.overflow, rest = l.line[:0], false, after
+	}
+	return n, err
 }
 
 func init() {

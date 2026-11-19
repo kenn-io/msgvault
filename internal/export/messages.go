@@ -263,6 +263,10 @@ func parseMessageBounds(startValue, endValue string) (time.Time, time.Time, erro
 		return time.Time{}, time.Time{}, fmt.Errorf("invalid --end %q (expected RFC3339): %w", endValue, err)
 	}
 	start, end = start.UTC(), end.UTC()
+	if start.IsZero() {
+		// The store reads the zero time as a missing bound.
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid --start %q: use a time after %s", startValue, time.Time{}.Format(time.RFC3339))
+	}
 	if !start.Before(end) {
 		return time.Time{}, time.Time{}, errors.New("--start must be before --end")
 	}

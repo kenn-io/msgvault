@@ -3343,7 +3343,8 @@ keeping the address unchanged.
 The stream schema is `msgvault-message-export/1`. Records appear as one
 manifest, all sources, all conversations, all messages, and one completion
 record with counts. A missing completion record means the stream is partial
-and must be rejected. Stdout contains JSONL only; diagnostics use stderr.
+and must be rejected; the command then exits nonzero. Stdout contains JSONL
+only; diagnostics use stderr.
 
 See [Exporting Data](/docs/usage/exporting/) for the full record, identity, ordering,
 and validation contract.

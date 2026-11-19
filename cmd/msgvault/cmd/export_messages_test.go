@@ -156,6 +156,13 @@ func TestExportMessagesCommandRejectsPreflightErrorsWithoutOutput(t *testing.T) 
 			},
 		},
 		{
+			name: "zero start",
+			args: []string{
+				"--start", "0001-01-01T00:00:00Z",
+				"--end", "2026-07-20T00:00:00Z",
+			},
+		},
+		{
 			name: "missing source",
 			args: []string{
 				"--start", "2026-07-20T00:00:00Z",
@@ -281,7 +288,17 @@ func TestExportMessagesStreamsFromRemoteServer(t *testing.T) {
 		Logger:        logger,
 		DaemonVersion: Version,
 	})
-	httpServer := httptest.NewServer(server.Router())
+	// An export starting on 2026-07-19 ends after its first record, as a
+	// server does when it fails mid-stream.
+	router := server.Router()
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/cli/messages/export" && strings.HasPrefix(r.URL.Query().Get("start"), "2026-07-19") {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_, _ = io.WriteString(w, `{"record_type":"manifest"}`+"\n")
+			return
+		}
+		router.ServeHTTP(w, r)
+	}))
 	t.Cleanup(httpServer.Close)
 	t.Cleanup(func() { require.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
 	t.Setenv(daemonCLISubprocessEnv, "")
@@ -319,6 +336,16 @@ func TestExportMessagesStreamsFromRemoteServer(t *testing.T) {
 
 	_, err = remote(append(append([]string(nil), window...), "--source", "text:missing")...)
 	require.ErrorContains(err, "source text:missing not found")
+
+	output, err := remote("--start", "2026-07-20T00:00:00Z", "--end", "2026-07-20T00:00:00.5Z", "--source", "text:archive")
+	require.NoError(err, "a sub-second window reaches the server intact")
+	assert.Equal([]string{"manifest", "source", "conversation", "message", "complete"},
+		exportMessageRecordTypes(decodeExportMessageRecords(t, []byte(output))))
+
+	output, err = remote("--start", "2026-07-19T00:00:00Z", "--end", "2026-07-21T00:00:00Z")
+	require.ErrorContains(err, "without its completion record")
+	assert.Equal([]string{"manifest"}, exportMessageRecordTypes(decodeExportMessageRecords(t, []byte(output))),
+		"the received records still reach stdout")
 }
 
 func decodeExportMessageRecords(t *testing.T, data []byte) []map[string]any {
