@@ -37,7 +37,6 @@ describe('Add to task', () => {
       if (email) {
         await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
       }
-      expect(screen.getByRole('dialog', { name: 'Add to Kata issue' })).toBeTruthy();
       expect(screen.getByRole('radiogroup', { name: 'Issue' })).toBeTruthy();
       expect(screen.queryByText('Issue')).toEqual(email ? expect.anything() : null);
       expect(await screen.findByLabelText('Issue title')).toHaveProperty('value', 'Follow up');
@@ -90,9 +89,11 @@ describe('Add to task', () => {
         props: { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() },
         context: new Map([[kataReadinessKey, readiness]])
       });
+      expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeTruthy();
       await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Revised follow up' } });
       await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Draft notes' } });
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
+      expect(screen.getByRole('dialog', { name: 'Add to Kata issue' })).toBeTruthy();
       expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
       await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
       await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Brief draft' } });
