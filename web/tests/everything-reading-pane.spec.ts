@@ -649,3 +649,26 @@ test('keeps the message time clear of the menu beside a long sender on a phone',
   const menuBox = (await menu.boundingBox())!;
   expect(timeBox.x + timeBox.width <= menuBox.x || timeBox.y >= menuBox.y + menuBox.height).toBe(true);
 });
+
+test('aligns the Kata link with the issue title', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 844 });
+  const message = { ...recordingMessage, id: 42, conversation_id: 7, subject: 'Garden plans', body: 'Revised budget', message_type: 'email', has_attachments: false, attachments: [] };
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [{ ...entry(42), title: 'Garden plans', conversation_id: 7, anchor_message_id: 42 }], total_count: 1, cache_revision: 'fixture', search_provenance: {} } }));
+  await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: { id: 7, messages: [message], anchor_id: 42, has_before: false, has_after: false, total: 1 } }));
+  await page.route('**/api/v1/integrations/kata/status', route => route.fulfill({ json: { state: 'ready', project: 'example' } }));
+  await page.route('**/api/v1/integrations/kata/issues?*', route => route.fulfill({ json: { truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }] } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
+  await page.getByRole('grid', { name: 'Messages results' }).getByText('Garden plans', { exact: true }).click();
+  const link = page.getByRole('link', { name: 'Open Send revised notes (example#abcd) in Kata' });
+  await expect(link).toBeVisible();
+  const title = link.locator('xpath=ancestor::div[contains(@class, "detail-row")]').locator('.value');
+  const titleLine = await title.evaluate(element => {
+    const range = document.createRange();
+    range.selectNodeContents(element.firstChild!);
+    const rect = range.getBoundingClientRect();
+    return { y: rect.y, height: rect.height };
+  });
+  const linkBox = (await link.boundingBox())!;
+  expect(Math.abs(titleLine.y + titleLine.height / 2 - (linkBox.y + linkBox.height / 2))).toBeLessThanOrEqual(1);
+});

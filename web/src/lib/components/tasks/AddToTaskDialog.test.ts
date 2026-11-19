@@ -26,6 +26,8 @@ describe('Add to task', () => {
     await fireEvent.click(existing.getByText("What's sent"));
     expect(existing.getByText('archive-a')).toBeTruthy();
     expect(existing.getByText('source-42')).toBeTruthy();
+    expect(existing.getByText('Follow up')).toBeTruthy();
+    expect(existing.getByText('sender@example.com')).toBeTruthy();
     expect(existing.getByText('When linked')).toBeTruthy();
   });
 
