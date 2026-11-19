@@ -179,6 +179,7 @@ when continuing a page; refresh from page one to see newer evidence.
 | `--home` | Home directory for all data (overrides `MSGVAULT_HOME`) |
 | `-v`, `--verbose` | Verbose output (implies `--log-level=debug`) |
 | `--local` | Use the local daemon instead of a configured remote for archive-access commands |
+| `--remote <name>` | Use the named remote from a [`[remotes.<name>]`](configuration.md#remotesname) table instead of `[remote]` |
 | `--log-file <path>` | Override log file path (default: `<data_dir>/logs/msgvault-YYYY-MM-DD.log`) |
 | `--log-level <level>` | Log level: `debug`, `info`, `warn`, `error` (default: `info`) |
 | `--no-log-file` | Disable file logging for this run (stderr output stays on) |
@@ -195,7 +196,7 @@ when continuing a page; refresh from page one to see newer evidence.
 
 Commands that access archive state keep their usual stdout/stderr output while using the same API path as remote access:
 
-1. If `[remote].url` is configured and `--local` is not passed, the CLI talks to that remote server.
+1. If `[remote].url` is configured and `--local` is not passed, the CLI talks to that remote server. `--remote <name>` selects a named remote instead.
 2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP. With `[server].daemon_auto_start = false`, they use a daemon that is already running or starting and never start one.
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
 4. With both `--agent-url` and `--agent-token-file`, the CLI connects to a
@@ -204,7 +205,7 @@ Commands that access archive state keep their usual stdout/stderr output while u
    `draft-delete`, and `draft-recover` are available with their required
    permissions (see [scoped archive reads](#scoped-archive-reads) and
    [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)). The CLI rejects owner
-   configuration (`--config`, `--home`, `--local`) and never writes the token
+   configuration (`--config`, `--home`, `--local`, `--remote`) and never writes the token
    to logs or argv. It sends the token in the `X-Msgvault-Agent-Token` header;
    generated OpenAPI clients do not model this transport detail.
 
@@ -958,7 +959,7 @@ resumes an interrupted ordinary `sync-full`; it starts its own scan.
 
 Already-pending History recovery takes precedence and is reported in the sync
 log. It retains its broader recovery phases, including absence reconciliation
-and History catch-up. The label-refresh option requires daemon API schema 5.19.0
+and History catch-up. The label-refresh option requires daemon API schema 5.20.0
 or newer; an older daemon fails explicitly instead of silently skipping refresh.
 
 ### Gmail Spam and Trash coverage
@@ -3370,7 +3371,9 @@ msgvault export-messages \
 | `--format` | `jsonl` | Output format; v1 accepts only `jsonl` |
 
 `--start` and `--end` are required. Missing bounds fail before contacting the
-daemon. For an account selector, combine its `type` and `email` from
+daemon. Against a remote, the export streams from the server and needs server
+schema 5.19.0 or later; it works with [read-only remote
+client](guides/remote-deployment.md#read-only-remote-clients) keys. For an account selector, combine its `type` and `email` from
 `msgvault list-accounts --json`, for example `--source mbox:you@example.com`.
 
 Use `--person-id N` to export messages involving a durable person's bound
@@ -3381,7 +3384,8 @@ keeping the address unchanged.
 The stream schema is `msgvault-message-export/1`. Records appear as one
 manifest, all sources, all conversations, all messages, and one completion
 record with counts. A missing completion record means the stream is partial
-and must be rejected. Stdout contains JSONL only; diagnostics use stderr.
+and must be rejected; the command then exits nonzero. Stdout contains JSONL
+only; diagnostics use stderr.
 
 See [Exporting Data](/docs/usage/exporting/) for the full record, identity, ordering,
 and validation contract.
@@ -3601,17 +3605,18 @@ JSON always includes these integer counts, even when zero:
 The CLI's `total_messages` includes active and source-deleted messages. The
 daemon HTTP API retains its legacy active-only `total_messages` for compatibility.
 
-The `scope` object identifies `kind` as `archive`, `account`, `collection`, or
-`agent_grant`. Its `source_count` equals `total_accounts`; both count source
+The `scope` object identifies `kind` as `archive`, `account`, `collection`,
+`agent_grant`, or `authorized_sources`. Its `source_count` equals `total_accounts`; both count source
 records, including associated calendar sources and sources with no messages.
 One account can span multiple source records. Scoped results include a `label`
 when available. Without an explicit account or collection, delegated reads use
 `agent_grant` and count only granted sources, including a zero count when none
-remain.
+remain. A remote whose host limits it to some sources, such as one that uses a
+credential helper, reports `authorized_sources` and counts only those sources.
 
 Owner reads include `database_size_bytes`, even when zero, with
 `database_size_scope: "global"`. Size remains global with `--account` or
-`--collection`. Delegated reads omit both size fields. JSON contains no database
+`--collection`. Delegated and source-limited reads omit both size fields. JSON contains no database
 path or server URL. `--json=false` selects text output.
 
 For custom structured counts, use:

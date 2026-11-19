@@ -2,10 +2,11 @@
   import { debounce, RadioGroup, SearchInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
 
-  let { load, noun, empty, disabled = false, moreNote = '', hint = '', selected = $bindable('') }: {
+  let { load, noun, empty, disabled = false, moreNote = '', hint = '', project = '', selected = $bindable('') }: {
     load: (query: string, signal: AbortSignal) => Promise<{ items: { id: string; label: string; detail?: string }[]; truncated: boolean }>;
     moreNote?: string;
     hint?: string;
+    project?: string;
     noun: string;
     empty: string;
     disabled?: boolean;
@@ -31,6 +32,8 @@
       if (!current.signal.aborted) loading = false;
     }
   }
+  const fallback = $derived(error && project && listedQuery.startsWith(`${project}#`) && /^[^#\s]+#[^#\s]+$/.test(listedQuery) ? { id: listedQuery, label: listedQuery, detail: 'Not checked yet' } : undefined);
+  const choices = $derived(fallback ? [fallback] : items);
   const schedule = debounce(() => void reload(), 250);
   onMount(() => {
     void reload();
@@ -44,7 +47,7 @@
     {#if loading || query.trim() !== listedQuery}<p role="status">Loading…</p>
     {:else}
       {#if error}<p role="alert">{error}</p>{/if}
-      {#if items.length}<RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
+      {#if choices.length}<RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={choices.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
       {:else if !error}<p>{listedQuery ? `No ${noun} match "${listedQuery}".` : empty}</p>{/if}
     {/if}
   </div>
@@ -55,7 +58,7 @@
 <style>
   .picker { display: grid; gap: var(--space-2); min-width: 0; }
   .picker :global(.kit-text-input__control) { font-size: 16px; }
-  .results { height: 13.875rem; box-sizing: border-box; overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-sm); padding: var(--space-3) 12px; }
+  .results { max-height: 13.875rem; box-sizing: border-box; overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-sm); padding: var(--space-3) 12px; }
   /* kit-ui-check-ignore: RadioGroup does not expose a legend class. */
   .results :global(.kit-radio-group__legend) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
   /* kit-ui-check-ignore: RadioGroup does not expose its mark color. */

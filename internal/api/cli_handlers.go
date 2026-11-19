@@ -962,7 +962,7 @@ func (s cliScope) displayName() string {
 }
 
 func (s *Server) handleCLIStats(w http.ResponseWriter, r *http.Request) {
-	if s.requestAuthentication(r).Grant != nil {
+	if agentReadScoped(r) {
 		s.agentScopedStats(w, r, true)
 		return
 	}
@@ -2414,9 +2414,8 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var scope cliScope
-	grant := s.requestAuthentication(r).Grant
-	admitted, _ := r.Context().Value(agentReadScopeKey{}).(agentReadScope)
-	if grant != nil {
+	admitted, scoped := r.Context().Value(agentReadScopeKey{}).(agentReadScope)
+	if scoped {
 		scope = admitted.scope
 		if scope.Collection != nil {
 			collection = scope.Collection.Name
@@ -2439,7 +2438,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "empty_search", "empty search query")
 		return
 	}
-	if grant != nil {
+	if scoped {
 		parsed.AccountIDs = admitted.ids
 	}
 	resp := cliSearchResponse{
@@ -2447,14 +2446,14 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		ScopeSourceCount: len(scope.sourceIDs()),
 	}
 
-	if grant != nil {
+	if scoped {
 		resp.ScopeSourceCount = admitted.sourceCount()
 		if admitted.scope.Account.Input == "" {
-			resp.ScopeLabel = "agent grant"
+			resp.ScopeLabel = s.agentReadScopeLabel(r)
 		}
 	}
 	resp.IndexState = admitted.indexState
-	if grant == nil {
+	if !scoped {
 		resp.IndexState = s.ensureCLISearchIndexAsync(cliStore, true)
 	}
 	results, err := s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit+1, offset)
@@ -2488,7 +2487,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	}
 	// Search leaves summary BodyText empty; /cli/message serves full bodies.
 	resp.Results = results
-	if grant == nil && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
+	if !scoped && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
 		len(parsed.AccountAddrs) == 0 && len(parsed.ReceivedAddrs) == 0 &&
 		parsed.DeletionScope != search.DeletionScopeDeleted && parsed.DeletionScope != search.DeletionScopeAny {
 		resp.HybridAvailable = s.hybridHintAvailable(r.Context(), parsed.MessageTypes)

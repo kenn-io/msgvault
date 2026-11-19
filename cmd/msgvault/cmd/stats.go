@@ -72,7 +72,10 @@ func runStats(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("get stats: %w", err)
 	}
 	dbStats := resp.Stats
-	showSize := info.Kind != HTTPStoreAgentDelegated
+	// A host that limits an unscoped request to some sources labels the
+	// result and withholds the archive's size, which is global.
+	hostScoped := !scoped && resp.ScopeLabel != ""
+	showSize := !hostScoped && info.Kind != HTTPStoreAgentDelegated
 	logger.Info("stats",
 		tableMessages, dbStats.MessageCount,
 		"threads", dbStats.ThreadCount,
@@ -100,8 +103,10 @@ func runStats(cmd *cobra.Command, _ []string) error {
 			scope.Kind = "collection"
 		case info.Kind == HTTPStoreAgentDelegated:
 			scope.Kind = "agent_grant"
+		case hostScoped:
+			scope.Kind = "authorized_sources"
 		}
-		if scoped || info.Kind == HTTPStoreAgentDelegated {
+		if scoped || hostScoped || info.Kind == HTTPStoreAgentDelegated {
 			scope.Label = label
 		}
 		result := statsJSONOutput{
@@ -130,6 +135,9 @@ func runStats(cmd *cobra.Command, _ []string) error {
 		_, _ = fmt.Fprintf(out, "Remote: %s\n", info.URL)
 	} else {
 		_, _ = fmt.Fprintf(out, "Database: %s\n", cfg.DatabaseDSN())
+	}
+	if hostScoped {
+		_, _ = fmt.Fprintf(out, "Scope: %s\n", resp.ScopeLabel)
 	}
 
 	printStats(out, dbStats, showSize)

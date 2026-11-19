@@ -91,7 +91,7 @@ func TestGmailFullLabelRefreshFailuresRetryPage(t *testing.T) {
 			_, err := e.Syncer.Full(ctx, testEmail)
 			require.Error(t, err)
 			if fault == "unknown" {
-				assert.ErrorContains(t, err, "run sync-full --refresh-labels again")
+				require.ErrorContains(t, err, "run sync-full --refresh-labels again")
 			}
 			run, err := e.Store.GetLatestSyncContext(t.Context(), gmailCoverageSource(t.Context(), t, e).ID, 0)
 			require.NoError(t, err)

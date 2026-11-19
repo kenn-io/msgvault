@@ -2,29 +2,37 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
+import { formatShortDate } from '../../util/format';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import CreateTaskDialog from './CreateTaskDialog.svelte';
 
 describe('CreateTaskDialog', () => {
-  it('fixes the project, sends task fields, and discloses each outbound metadata value', async () => {
+  it('sends task fields and discloses metadata', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       requests.push(input instanceof Request ? input : new Request(input));
       return Response.json({ task: { id: 'task-1', project: 'project', title: 'Edited', revision: 'r1' } }, { status: 201 });
     });
     const oncreated = vi.fn();
+    const sentAt = '2026-07-18T12:00:37Z';
     render(CreateTaskDialog, {
       client: createAPIClient(fetchFn), messageId: 42, project: 'project', defaultTitle: 'Synthetic subject',
       archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
-      sourceMessageId: 'source-42', subject: 'Synthetic subject', from: 'sender@example.com', sentAt: '2026-07-18T12:00:00Z',
+      sourceMessageId: 'source-42', subject: 'Synthetic subject', from: 'sender@example.com', sentAt,
       oncreated, onclose: vi.fn()
     });
 
     expect(screen.getByText('project')).toBeDefined();
-    for (const value of ['archive-a', '42', '7', 'gmail', 'archive@example.com', 'source-42', 'Synthetic subject', 'sender@example.com', '2026-07-18T12:00:00Z']) {
-      expect(screen.getByText(value)).toBeDefined();
+    for (const [label, value] of [
+      ['Message URL', `${location.origin}/messages/42`], ['Archive UID', 'archive-a'], ['Message ID', '42'],
+      ['Conversation ID', '7'], ['Source type', 'gmail'], ['Source identifier', 'archive@example.com'],
+      ['Source message ID', 'source-42'], ['Subject snapshot', 'Synthetic subject'], ['Sender snapshot', 'sender@example.com'],
+    ]) {
+      expect(screen.getByText(label).nextElementSibling?.textContent).toBe(value);
     }
-    expect(screen.getByLabelText('Description')).toHaveProperty('value', `${location.origin}/messages/42`);
+    expect(screen.getByText('Sent at').nextElementSibling?.textContent).toBe('2026-07-18T12:00:37Z');
+    expect(screen.getByLabelText('Description')).toHaveProperty('value', '');
+    expect(screen.getByText(`Synthetic subject · sender@example.com · ${formatShortDate(sentAt)}`)).toBeDefined();
     expect(screen.getByText(/Bodies and attachments are never sent/i).closest('details')).toBeNull();
     await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Edited' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Notes' } });
@@ -33,10 +41,10 @@ describe('CreateTaskDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
     await waitFor(() => expect(oncreated).toHaveBeenCalledOnce());
     await expect(requests[0]!.clone().json()).resolves.toMatchObject({
-      title: 'Edited', description: 'Notes', priority: 'high', labels: ['mail', 'follow-up']
+      title: 'Edited', description: `Notes\n\n${location.origin}/messages/42`, priority: 'high', labels: ['mail', 'follow-up']
     });
     const body = await requests[0]!.clone().json() as { added_at?: string };
-    expect(body.added_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(screen.getByText('Link added at').nextElementSibling?.textContent).toBe(body.added_at);
     expect(requests[0]!.headers.get('X-Request-Id')).toBeTruthy();
   });
 

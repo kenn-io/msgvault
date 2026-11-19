@@ -223,6 +223,7 @@ Flags:
       --log-sql[=true|false]                log every SQL query at info level (verbose; for debugging)
       --log-sql-slow-ms int                 threshold in ms above which a SQL query is logged as slow (default 100; 0 uses the default)
       --no-log-file[=true|false]            disable the log file for this run (stderr output stays on)
+      --remote string                       use the named remote from a [remotes.<name>] config table
   -v, --verbose[=true|false]                verbose output (implies --log-level=debug)
 
 Use "msgvault [command] --help" for more information about a command.

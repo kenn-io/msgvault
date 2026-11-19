@@ -1275,6 +1275,69 @@ destination and its secret sources. An unused destination's secret is not read.
 Runtime keys from files or environment variables are never copied into saved
 `api_key` fields by `setup` or `export-token`.
 
+### `[remotes.<name>]`
+
+Named remotes let one config reach several servers, such as a home archive in
+`[remote]` and a second archive server. Each table takes the same keys as
+`[remote]`; `url` is required. Pass `--remote <name>` to use that server for one
+command:
+
+```toml
+[remotes.work]
+url = "https://archive.example.com"
+api_key_file = "work.key"
+```
+
+```sh
+msgvault --remote work search "quarterly plan"
+```
+
+`[remote]` stays the default when `--remote` is absent. `--remote` replaces the
+whole `[remote]` destination for that run, including `MSGVAULT_REMOTE_URL` and
+`MSGVAULT_REMOTE_API_KEY`. A relative `api_key_file` resolves next to the
+config file. `export-token --remote <name>` uploads to the named server and saves
+no settings to `[remote]`. `--remote` cannot be combined with `--local` or
+agent-delegated mode, and an unknown name fails the command.
+
+#### Credential helper
+
+A hosted archive can hand out short-lived bearers instead of an API key. Set
+`credential_provider` to a trusted local helper, as a command and its
+arguments, and describe the access the hosting service approved in a
+`delegation` table. The hosting service's own setup tool usually writes both:
+
+```toml
+[remotes.hosted]
+url = "https://archive.example.org/messages"
+credential_provider = ["example-credential-helper", "--server", "work"]
+
+[remotes.hosted.delegation]
+archive_id = "archive-a"
+client_id = "22222222-2222-4222-8222-222222222222"
+delegation_id = "33333333-3333-4333-8333-333333333333"
+source_ids = [17, 23]
+```
+
+| Key | Description |
+|---|---|
+| `credential_provider` | Helper command and arguments, run without a shell. It excludes `api_key`, `api_key_file`, and `api_key_env`. |
+| `delegation.archive_id` | The hosted archive's UID |
+| `delegation.client_id` | The approved client installation |
+| `delegation.delegation_id` | The approval record |
+| `delegation.source_ids` | The approved sources |
+
+`url` must use HTTPS. Each command asks the helper for a bearer covering the
+read operations that `list-accounts`, `stats`, `search`, `show-message`,
+`show-thread`, and `export-messages` call, and sends it only to `url`. The
+bearer stays in memory and is renewed before it expires. If the helper fails
+or refuses, the command fails; it never falls back to an API key. `search`
+supports `--mode fts` only, and `export-token` needs `--to` and `--api-key`
+for a server where you hold the owner key. msgvault
+keeps a journal of requests, without credentials, in `remote-credentials/`
+under the msgvault home so an interrupted request can be resumed. The
+[credential provider guide](guides/credential-providers.md#read-a-remote-through-a-helper)
+describes the helper's side.
+
 ### `[[accounts]]`
 
 Scheduled sync sources for the web server. Each `[[accounts]]` entry defines a

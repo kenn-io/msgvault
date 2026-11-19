@@ -15,6 +15,15 @@ func releaseReadSnapshot(r *http.Request) {
 	*r = *r.WithContext(store.WithoutReadSnapshotContext(r.Context()))
 }
 
+// holdReadSnapshot keeps a scoped request's snapshot open past the first
+// response byte, for a handler that streams from it. The middleware that began
+// the read still releases it when the handler returns.
+func holdReadSnapshot(r *http.Request) {
+	if boundary, ok := r.Context().Value(readResponseKey{}).(*readResponseWriter); ok {
+		boundary.release = nil
+	}
+}
+
 type readResponseKey struct{}
 
 type readResponseWriter struct {

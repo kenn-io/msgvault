@@ -20,11 +20,11 @@ func TestRunCLISyncLabelRefreshCapability(t *testing.T) {
 		wantErr string
 	}{
 		{name: "ordinary old daemon", version: "5.8.0", full: true},
-		{name: "refresh old daemon", version: "5.8.0", full: true, refresh: true, wantErr: "requires daemon API schema 5.19.0"},
-		{name: "refresh previous daemon", version: "5.18.0", full: true, refresh: true, wantErr: "requires daemon API schema 5.19.0"},
-		{name: "refresh unknown daemon", full: true, refresh: true, wantErr: "requires daemon API schema 5.19.0"},
-		{name: "refresh supported daemon", version: "5.19.0", full: true, refresh: true},
-		{name: "incremental rejected", version: "5.19.0", refresh: true, wantErr: "requires a full sync"},
+		{name: "refresh old daemon", version: "5.8.0", full: true, refresh: true, wantErr: "requires daemon API schema 5.20.0"},
+		{name: "refresh previous daemon", version: "5.19.0", full: true, refresh: true, wantErr: "requires daemon API schema 5.20.0"},
+		{name: "refresh unknown daemon", full: true, refresh: true, wantErr: "requires daemon API schema 5.20.0"},
+		{name: "refresh supported daemon", version: "5.20.0", full: true, refresh: true},
+		{name: "incremental rejected", version: "5.20.0", refresh: true, wantErr: "requires a full sync"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()

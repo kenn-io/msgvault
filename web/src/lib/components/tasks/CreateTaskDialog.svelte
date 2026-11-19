@@ -1,8 +1,10 @@
 <script lang="ts">
   import { createBrowserRequestID } from '../../api/request-id';
   import { createOrLinkMessageTask as generatedCreateOrLinkMessageTask } from '../../api/generated/api/api';
-  import { Disclosure, Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Chip, Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
+  import TaskMetadataDisclosure from './TaskMetadataDisclosure.svelte';
+  import { formatShortDate } from '../../util/format';
   import type { APIClient } from '../../api/client';
   let {
     client,
@@ -40,15 +42,18 @@
     onclose?: () => void;
   } = $props();
   let title = $state(untrack(() => defaultTitle));
-  let description = $state(untrack(() => `${location.origin}/messages/${messageId}`));
+  let description = $state('');
   let priority = $state('');
   let labels = $state('');
   let error = $state('');
   let browserRequestID = createBrowserRequestID();
   let addedAt = $state(new Date().toISOString());
   let lastAttemptFingerprint = $state<string>();
+  const messageURL = $derived(`${location.origin}/messages/${messageId}`);
+  const contextParts = $derived([subject.trim(), from.trim(), sentAt.trim() ? formatShortDate(sentAt) : ''].filter(Boolean));
+  const fullContext = $derived(contextParts.join(' · ') || defaultTitle);
   const priorityOptions = [
-    { value: '', label: 'Default' },
+    { value: '', label: 'No priority' },
     { value: 'low', label: 'Low' },
     { value: 'normal', label: 'Normal' },
     { value: 'high', label: 'High' },
@@ -108,7 +113,7 @@
     const normalizedLabels = parsedLabels();
     return {
       title: title.trim(),
-      ...(description.trim() ? { description: description.trim() } : {}),
+      description: [description.trim(), messageURL].filter(Boolean).join('\n\n'),
       ...(priority ? { priority } : {}),
       ...(normalizedLabels.length ? { labels: normalizedLabels } : {}),
     };
@@ -132,6 +137,7 @@
     }}
   >
     <p class="project"><span>Project</span><strong>{project}</strong></p>
+    <div class="message"><span>Message</span><Chip tone="neutral" uppercase={false} ariaLabel={fullContext} title={fullContext}><span class="context">{fullContext}</span></Chip></div>
     <label>Task title<TextInput ariaLabel="Task title" bind:value={title} autocomplete="off" block /></label>
     <label>Description<textarea aria-label="Description" bind:value={description}></textarea></label>
     <label
@@ -153,50 +159,7 @@
         block
       /></label
     >
-    <Disclosure variant="plain">{#snippet summary()}Metadata leaving the archive{/snippet}
-      <dl>
-        <div>
-          <dt>Archive UID</dt>
-          <dd>{archiveUID}</dd>
-        </div>
-        <div>
-          <dt>Message ID</dt>
-          <dd>{messageId}</dd>
-        </div>
-        <div>
-          <dt>Conversation ID</dt>
-          <dd>{conversationId}</dd>
-        </div>
-        <div>
-          <dt>Source type</dt>
-          <dd>{sourceType}</dd>
-        </div>
-        <div>
-          <dt>Source identifier</dt>
-          <dd>{sourceIdentifier}</dd>
-        </div>
-        <div>
-          <dt>Source message ID</dt>
-          <dd>{sourceMessageId}</dd>
-        </div>
-        <div>
-          <dt>Subject snapshot</dt>
-          <dd>{subject}</dd>
-        </div>
-        <div>
-          <dt>Sender snapshot</dt>
-          <dd>{from}</dd>
-        </div>
-        <div>
-          <dt>Sent at</dt>
-          <dd>{sentAt}</dd>
-        </div>
-        <div>
-          <dt>Link added at</dt>
-          <dd>{addedAt}</dd>
-        </div>
-      </dl>
-    </Disclosure>
+    <TaskMetadataDisclosure {messageURL} {addedAt} {archiveUID} {messageId} {conversationId} {sourceType} {sourceIdentifier} {sourceMessageId} {subject} {from} {sentAt} />
     <p class="disclosure">Bodies and attachments are never sent.</p>
     {#if error}<p role="alert">{error}</p>{/if}
     <div class="actions">
@@ -206,12 +169,15 @@
   </form>
 
 <style>
+  .message { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; justify-items: start; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
   form {
     --field-text-size: 16px;
     display: grid;
     gap: var(--space-6);
     min-width: 0;
   }
+  form :global(.kit-chip) { justify-self: start; max-width: 100%; font-weight: 400; line-height: var(--type-meta-line); }
+  .context { display: block; line-height: var(--type-meta-line); white-space: normal; overflow-wrap: anywhere; }
   .disclosure { margin: 0; color: var(--text-secondary); font-size: 12px; }
   label {
     display: grid;
@@ -229,28 +195,8 @@
     background: var(--bg-canvas);
     color: var(--text-primary);
   }
-  .project { display: flex; justify-content: space-between; margin: 0; }
-  .project span, form :global(.kit-disclosure) {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-  dl {
-    display: grid;
-    gap: var(--space-1);
-  }
-  dl div {
-    display: grid;
-    grid-template-columns: 8rem minmax(0, 1fr);
-    gap: var(--space-2);
-  }
-  dt {
-    color: var(--text-muted);
-  }
-  dd {
-    margin: 0;
-    overflow-wrap: anywhere;
-    color: var(--text-primary);
-  }
+  .project { display: grid; gap: var(--space-2); margin: 0; }
+  .project span { color: var(--text-secondary); font-size: var(--font-size-sm); }
   .actions {
     display: flex;
     justify-content: flex-end;
