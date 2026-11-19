@@ -175,16 +175,16 @@ describe('TaskLinks', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => lookup);
     const status = { state: 'unreachable' as const, message: 'Task service is unreachable.' };
     const shared: ConversationTaskStatus = { latest: status, load: async () => ({ data: status, response: Response.json(status) }) };
-    const view = render(TaskLinks, {
+    render(TaskLinks, {
       props: { client: createAPIClient(fetchFn), messageId: 43, title: 'Later email', showSetup: false },
       context: new Map([[conversationTaskStatusKey, shared]]),
     });
     await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
-    expect(view.container.querySelector('.task-links')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
     finish(Response.json(taskLookup({ state: 'unavailable', complete: false }, 43)));
     await waitFor(() => expect(fetchFn.mock.settledResults[0]?.type).toBe('fulfilled'));
     await tick();
-    expect(view.container.querySelector('.task-links')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
   });
 
   it('shows the project once above distinct linked tasks', async () => {
@@ -206,13 +206,16 @@ describe('TaskLinks', () => {
       if (request.url.endsWith('/integrations/tasks/status')) return Promise.resolve(Response.json({ state: 'ready', project: 'project', message: 'Ready' }));
       return new Promise((done) => { resolve = done; });
     });
-    render(TaskLinks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic' });
+    const view = render(TaskLinks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic' });
     expect(screen.getByRole('status').textContent).toContain('Loading linked tasks');
     await waitFor(() => expect(resolve).toBeTypeOf('function'));
     resolve(Response.json(taskLookup({ state: 'partial', complete: false, last_scan: '2026-07-19T01:00:00Z', remote_revision: 'remote-1', reason: 'safety_limit', tasks: [{ id: 'task-1', title: 'Follow up', revision: 'r1' }] })));
     expect(await screen.findByText('Follow up')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('Some linked tasks may be missing');
     expect(screen.getByRole('alert').textContent).toContain('2026');
+    expect(screen.getByRole('button', { name: 'Unlink Follow up' })).toHaveProperty('disabled', false);
+    await view.rerender({ mode: 'add' });
+    expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
   });
 
   it('requests linked tasks without waiting for integration status', async () => {
@@ -269,21 +272,6 @@ describe('TaskLinks', () => {
       expect(onsettings).toHaveBeenCalledOnce();
     }
   );
-
-  it('enables create and unlink on a partial index', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
-      return Response.json(taskLookup({ state: 'partial', complete: false, reason: 'safety_limit', last_scan: '2026-07-19T01:00:00Z', tasks: [{ id: 'task-1', title: 'Partial task' }] }));
-    });
-    const client = createAPIClient(fetchFn);
-    const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
-
-    expect(await screen.findByText('Partial task')).toBeDefined();
-    expect((screen.getByRole('button', { name: 'Unlink Partial task' }) as HTMLButtonElement).disabled).toBe(false);
-    await view.rerender({ mode: 'add' });
-    expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
-  });
 
   it.each([
     ['authentication_required', 'Authentication is required'],

@@ -41,7 +41,7 @@ describe('Message task list', () => {
     expect(requests).toHaveLength(0);
   });
 
-  it.each(['refresh', 'message change', 'truncated', 'truncated empty', 'empty', 'error'])('updates the Tasks group for %s', async scenario => {
+  it.each(['composition', 'refresh', 'message change', 'truncated', 'truncated empty', 'empty', 'error'])('updates the Tasks group for %s', async scenario => {
     let next = false;
     let held: ((response: Response) => void) | undefined;
     const issues = [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }];
@@ -55,16 +55,15 @@ describe('Message task list', () => {
       return Response.json({ truncated: true, issues: scenario === 'truncated empty' ? [] : issues });
     });
     const readiness = new KataReadiness(client);
-    const view = render(MessageTasks, { props: { client, messageId: scenario === 'refresh' || scenario === 'message change' ? 42 : 43, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
+    const view = render(MessageTasks, { props: { client, messageId: scenario === 'composition' || scenario === 'refresh' || scenario === 'message change' ? 42 : 43, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
     try {
       const link = await screen.findByRole('link', { name: 'Open Send revised notes (example#abcd) in Kata' });
-      if (scenario === 'refresh') {
+      if (scenario === 'composition') {
         expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
         expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
-      }
-      if (scenario === 'refresh') {
         await screen.findByText('Task work');
         expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
+        return;
       }
       next = true;
       await view.rerender(scenario === 'message change' ? { messageId: 43 } : { refresh: 1 });
