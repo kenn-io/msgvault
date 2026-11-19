@@ -199,7 +199,7 @@ describe('TaskLinks', () => {
     expect(projects[0].compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('shows partial index status and permits create and unlink', async () => {
+  it('shows loading and permits create and unlink on a partial index', async () => {
     let resolve!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>((input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -276,7 +276,7 @@ describe('TaskLinks', () => {
   it.each([
     ['authentication_required', 'Authentication is required'],
     ['incompatible', 'incompatible'],
-    ['unavailable', 'unavailable'],
+    ['unavailable', 'The task service is unavailable; safe cached links may be shown.'],
     ['stale', 'stale'],
     ['disabled', 'disabled'],
     ['not_found', 'not found'],
@@ -293,7 +293,6 @@ describe('TaskLinks', () => {
 
       const alert = await screen.findByRole('alert');
       expect(alert.textContent?.toLowerCase()).toContain(copy.toLowerCase());
-      if (state === 'unavailable') expect(alert.textContent).toContain('The task service is unavailable; safe cached links may be shown.');
       expect(screen.queryByText('Cached task') !== null).toBe(state !== 'authentication_required');
       if (state !== 'authentication_required') expect(screen.getByRole('button', { name: 'Unlink Cached task' })).toHaveProperty('disabled', true);
       await view.rerender({ mode: 'add' });
