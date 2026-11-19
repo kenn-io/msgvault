@@ -175,6 +175,7 @@ opening an archive. OpenAPI `info.version` is the **API schema version**;
 it is separate from the binary release version. The current schema is **5.20.0**.
 
 Schema 5.20.0 adds `message_type` to file details.
+Schema 5.20.0 allows `diagnose-gmail-inventory` through the daemon command interface.
 
 Schema 5.19.0 adds `GET /api/v1/cli/messages/export`, which streams
 `export-messages` output as `application/x-ndjson`. It takes `start`, `end`,
