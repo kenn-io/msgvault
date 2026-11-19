@@ -1,4 +1,3 @@
-import { tick } from 'svelte';
 import { taskLookup } from './fixtures.test-support';
 import { render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
@@ -8,22 +7,17 @@ import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
   it.each(['partial', 'suppressed'])('sets Tasks group visibility for %s', async scenario => {
-    let bodyRead = false;
     const fetchFn = vi.fn<typeof fetch>(async input => {
       if ((input as Request).url.endsWith('/status')) return Response.json({ state: scenario === 'suppressed' ? 'unavailable' : 'ready', project: 'example' });
-      const response = Response.json(taskLookup(scenario === 'partial'
+      return Response.json(taskLookup(scenario === 'partial'
         ? { state: 'partial', complete: false }
         : { state: 'unavailable', complete: false }));
-      const read = response.text.bind(response);
-      response.text = async () => { const body = await read(); bodyRead = true; return body; };
-      return response;
     });
     render(MessageTasks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic', email: true, showSetup: scenario !== 'suppressed' });
     if (scenario === 'partial') {
       expect(await screen.findByRole('region', { name: 'Tasks' })).toBeDefined();
     } else {
-      await waitFor(() => expect(bodyRead).toBe(true));
-      await tick();
+      await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
       expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
     }
   });
@@ -41,18 +35,6 @@ describe('Message task list', () => {
       await screen.findByText('Task work');
       await screen.findByText('Kata work');
       expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
-    } finally { view.unmount(); readiness.dispose(); }
-  });
-
-  it('shows the Tasks group for a Kata error without rows', async () => {
-    const client = createAPIClient(async input => (input as Request).url.endsWith('/status')
-      ? Response.json({ state: 'ready', project: 'example' })
-      : Response.json({ message: 'Kata lookup failed' }, { status: 503 }));
-    const readiness = new KataReadiness(client);
-    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
-    try {
-      await screen.findByText('Kata lookup failed');
-      expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
     } finally { view.unmount(); readiness.dispose(); }
   });
 
@@ -80,9 +62,11 @@ describe('Message task list', () => {
     let empty = false;
     let held: ((response: Response) => void) | undefined;
     let hold = false;
+    let fail = false;
     const client = createAPIClient(async (input) => {
       if ((input as Request).url.endsWith('/status')) return Response.json({ state: 'ready' });
       if (hold) return new Promise<Response>(resolve => { held = resolve; });
+      if (fail) return Response.json({ message: 'Kata lookup failed' }, { status: 503 });
       return Response.json({ truncated, issues: empty ? [] : [{ uid: 'issue-1', qualified_ref: 'example#abcd', title, status: 'open', web_url: 'https://example.org/tasks/abcd' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }] });
     });
     const readiness = new KataReadiness(client);
@@ -123,6 +107,11 @@ describe('Message task list', () => {
     held!(Response.json({ issues: [], truncated: false }));
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
     expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();
+    hold = false;
+    fail = true;
+    await view.rerender({ refresh: 5 });
+    await screen.findByText('Kata lookup failed');
+    expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
     view.unmount(); readiness.dispose();
   });
 });
