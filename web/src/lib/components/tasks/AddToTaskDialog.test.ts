@@ -119,16 +119,9 @@ describe('Add to task', () => {
   });
 
   it('opens the existing task picker from the toolbar', async () => {
-    const onclose = vi.fn();
-    const client = createAPIClient(async input => {
-      const request = input as Request;
-      if (request.method === 'POST') return Response.json({ task: { id: 'task-1', title: 'Filed task' } }, { status: 201 });
-      if (request.url.includes('/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Filed task' }], truncated: false });
-      return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
-    });
-    render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose });
+    render(AddToTaskDialog, { client: taskCreationClient(), messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    expect(await screen.findByRole('radio', { name: 'Filed task · task-1' })).toBeDefined();
+    expect(await screen.findByText('No tasks in example yet.')).toBeDefined();
   });
 
   it.each(['success', 'failure'])('guards dismissal while busy and releases it after %s', async (result) => {

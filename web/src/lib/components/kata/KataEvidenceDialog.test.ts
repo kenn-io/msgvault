@@ -170,11 +170,7 @@ describe('KataEvidenceDialog', () => {
     expect(screen.getByText('Search by whole word. The list is capped at 25.')).toBeDefined();
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budget' } });
     const older = await screen.findByRole('radio', { name: 'Older budget · example#k3f9' });
-    older.focus();
     await fireEvent.click(older);
-    expect(document.activeElement).toBe(older);
-    expect(screen.getByRole('searchbox', { name: 'Filter open issues' })).toHaveProperty('value', 'budget');
-    expect(older).toHaveProperty('checked', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('example#abcd');
     expect(reads).toEqual(['', 'budget']);

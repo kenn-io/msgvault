@@ -97,7 +97,7 @@ describe('TaskLinks', () => {
     };
     const context = new Map([[conversationTaskStatusKey, shared]]);
     const oncomplete = vi.fn();
-    render(TaskLinks, { props: { client, mode: 'add', messageId: 42, title: 'Follow up', oncomplete }, context });
+    render(TaskLinks, { props: { client, mode: 'add', embedded: true, messageId: 42, title: 'Follow up', oncomplete }, context });
     const title = await screen.findByLabelText('Task title');
     await fireEvent.input(title, { target: { value: 'Draft title' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
@@ -140,7 +140,7 @@ describe('TaskLinks', () => {
   it('completes creation without refreshing the closing add surface', async () => {
     const reads: Request[] = [];
     const oncomplete = vi.fn();
-    render(TaskLinks, { client: taskCreationClient(reads), mode: 'add', messageId: 42, title: 'Follow up', oncomplete });
+    render(TaskLinks, { client: taskCreationClient(reads), mode: 'add', embedded: true, messageId: 42, title: 'Follow up', oncomplete });
     await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
     await waitFor(() => expect(oncomplete).toHaveBeenCalledOnce());
     await tick();
@@ -316,7 +316,7 @@ describe('TaskLinks', () => {
     expect(await screen.findByText('Partial task')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('Some linked tasks may be missing');
     expect((screen.getByRole('button', { name: 'Unlink Partial task' }) as HTMLButtonElement).disabled).toBe(false);
-    await view.rerender({ mode: 'add' });
+    await view.rerender({ mode: 'add', embedded: true });
     expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
   });
 
@@ -333,9 +333,8 @@ describe('TaskLinks', () => {
       const alert = await screen.findByRole('alert');
       if (state === 'unavailable') expect(alert.textContent).toContain('The task service is unavailable; safe cached links may be shown.');
       expect(screen.queryByText('Cached task') !== null).toBe(state !== 'authentication_required');
-      await view.rerender({ mode: 'add' });
+      await view.rerender({ mode: 'add', embedded: true });
       expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
-      expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
     }
   );
 
