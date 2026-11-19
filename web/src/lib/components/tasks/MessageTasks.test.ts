@@ -83,36 +83,25 @@ describe('Message task list', () => {
   });
 
   it.each([
-    { name: 'incomplete empty result', initial: () => Response.json({ truncated: false, issues }), initialText: 'Send revised notes', refreshed: () => Response.json({ truncated: true, issues: [] }), visible: true, alert: null, link: false },
-    { name: 'complete empty result', initial: () => Response.json({ truncated: false, issues }), initialText: 'Send revised notes', refreshed: () => Response.json({ truncated: false, issues: [] }), visible: false, alert: null, link: false },
-    { name: 'Kata lookup error', initial: () => Response.json({ message: 'Kata lookup failed' }, { status: 503 }), initialText: 'Kata lookup failed', refreshed: () => Response.json({ truncated: false, issues: [] }), visible: false, alert: null, link: false }
-  ])('updates the Tasks group for $name', async ({ initial, initialText, refreshed, visible, alert, link }) => {
+    { name: 'incomplete empty result', initial: () => Response.json({ truncated: false, issues }), initialText: 'Send revised notes', steps: [{ truncated: true, rows: [], visible: true, incomplete: true, link: false }] },
+    { name: 'complete empty result', initial: () => Response.json({ truncated: false, issues }), initialText: 'Send revised notes', steps: [{ truncated: false, rows: [], visible: false, incomplete: false, link: false }] },
+    { name: 'Kata lookup error', initial: () => Response.json({ message: 'Kata lookup failed' }, { status: 503 }), initialText: 'Kata lookup failed', steps: [{ truncated: false, rows: [], visible: false, incomplete: false, link: false }] },
+    { name: 'recovery from incomplete result', initial: () => Response.json({ truncated: false, issues }), initialText: 'Send revised notes', steps: [{ truncated: true, rows: issues, visible: true, incomplete: true, link: true }, { truncated: false, rows: issues, visible: true, incomplete: false, link: true }] }
+  ])('updates linked Kata visibility for $name', async ({ initial, initialText, steps }) => {
     const group = groupFixture(43, initial());
     try {
       await screen.findByText(initialText);
-      group.respond(refreshed());
-      await group.view.rerender({ refresh: 1 });
-      await waitFor(() => {
-        expect(screen.queryByText('Loading linked Kata issues…')).toBeNull();
-        expect(screen.queryByRole('region', { name: 'Tasks' }) !== null).toBe(visible);
-        expect(screen.queryByText('Kata lookup failed')?.textContent ?? null).toBe(alert);
-        expect(screen.queryByRole('link', { name: issueLink }) !== null).toBe(link);
-      });
-    } finally { group.view.unmount(); group.readiness.dispose(); }
-  });
-
-  it('clears the incomplete notice after a clean reload', async () => {
-    const group = groupFixture(43);
-    try {
-      await screen.findByRole('link', { name: issueLink });
-      group.respond(Response.json({ truncated: true, issues }));
-      await group.view.rerender({ refresh: 1 });
-      expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
-      expect(screen.getByRole('link', { name: issueLink })).toBeDefined();
-      group.respond(Response.json({ truncated: false, issues }));
-      await group.view.rerender({ refresh: 2 });
-      await waitFor(() => expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull());
-      expect(screen.getByRole('link', { name: issueLink })).toBeDefined();
+      for (const [index, step] of steps.entries()) {
+        group.respond(Response.json({ truncated: step.truncated, issues: step.rows }));
+        await group.view.rerender({ refresh: index + 1 });
+        await waitFor(() => {
+          expect(screen.queryByText('Loading linked Kata issues…')).toBeNull();
+          expect(screen.queryByRole('region', { name: 'Tasks' }) !== null).toBe(step.visible);
+          expect(screen.queryByText('Linked Kata issues are incomplete.') !== null).toBe(step.incomplete);
+          expect(screen.queryByText('Kata lookup failed')).toBeNull();
+          expect(screen.queryByRole('link', { name: issueLink }) !== null).toBe(step.link);
+        });
+      }
     } finally { group.view.unmount(); group.readiness.dispose(); }
   });
 });
