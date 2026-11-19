@@ -8,39 +8,98 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- `[telemetry] enabled = false` is now ignored. To keep [usage telemetry](configuration.md#usage-reporting) off, set `MSGVAULT_TELEMETRY_ENABLED=0` instead.
-- Circleback syncs wait and retry when Circleback answers `429 Too Many Requests`, instead of failing every remaining meeting in the run.
-- File messages to Tasks or Kata from the reader, and see linked work together under **Tasks**.
+### Upgrade notes
 
+- `[telemetry] enabled = false` is now ignored. To keep [usage telemetry](configuration.md#usage-reporting) off, set `MSGVAULT_TELEMETRY_ENABLED=0` instead.
+- **The archive upgrades to schema 49 on first start.** 0.25.0 archives are at
+  schema 42. The upgrade also fills in the outcome of earlier fact decisions
+  where their history shows it; decisions it can't settle show
+  **Result unavailable** in Facts.
+- **Review some CardDAV cards again.** People whose names, contact points, or
+  postal addresses came from extraction or enrichment, including earlier MCP
+  profile writes, are not republished until you
+  [review their cards](usage/people-carddav.md#review-inferred-changes-before-they-are-exported).
+- **Upgrade servers before clients.** `export-messages` against a remote needs
+  server API schema 5.19.0. An older server makes the CLI stop and ask you to
+  upgrade the server.
+
+### New features
+
+- Import a LinkedIn member data export with
+  [`import-linkedin`](usage/linkedin.md). DMs, your posts, and your own
+  comments become searchable conversations. `--me` takes your profile URL and
+  ties the source to it.
+- Import a TikTok **Download your data** export with
+  [`import-tiktok`](usage/tiktok-export.md). DMs and the comments you wrote
+  become searchable. Include Profile Information in the export so your own
+  messages count as sent by you.
+- Calendar invites in archived email appear in `calendar events` as one event
+  per meeting, with updates and cancellations applied. Only invites sent by the
+  meeting's organizer count. Import `.ics` files with
+  [`import-ics`](cli-reference.md#import-ics). Mail you already archived gets
+  its invites on the next re-derivation, which `msgvault repair-derived` runs.
+- Reach several servers from one config. Add
+  [`[remotes.<name>]`](configuration.md#remotesname) tables and pick one per
+  command with `--remote <name>`; `[remote]` stays the default.
+- A remote can get short-lived bearers from a local
+  [credential helper](configuration.md#credential-helper) instead of an API
+  key. Set `credential_provider` and the approved `delegation`. Such a remote
+  serves `list-accounts`, `stats`, keyword `search`, `show-message`,
+  `show-thread`, and `export-messages`. `stats` counts only the sources the
+  host allows and reports scope kind `authorized_sources`.
+- Run [`export-messages`](cli-reference.md#export-messages) against a remote,
+  including with a
+  [read-only client key](guides/remote-deployment.md#read-only-remote-clients).
+  The server streams the same JSONL as a local export.
+- Apps that embed msgvault's archive server and limit callers with
+  `archive.WithSourceScope` can serve the same CLI read commands to those
+  callers, each covering only its authorized sources. See
+  [Restrict reads to authorized sources](guides/embedding.md#restrict-reads-to-authorized-sources).
+- [Save someone you have never messaged](usage/people.md#create-a-person) with
+  `msgvault person create`, `POST /api/v1/people/create`, or the MCP
+  `create_person` tool. Creation refuses an email or phone msgvault already
+  knows and names the match. The MCP tool needs `--allow-profile-writes`.
+- Find recordings by meaning with
+  [`media search --mode semantic`](usage/searching.md#search-spoken-words), or
+  `--mode hybrid` for meaning and keywords. Set
+  `recording_search_profile` under `[integrations.docbank]` to the profile
+  that embedded your transcripts. Older Docbank servers report recording
+  search as unavailable.
+- Find Beeper voice memos with ordinary keyword search by the words in
+  Docbank's generated transcripts. Set `voice_transcript_search = true` under
+  `[integrations.docbank]` and restart the daemon; see
+  [Send audio to Docbank](usage/beeper.md#send-audio-to-docbank).
+- List Gmail downloads, processing steps, and file saves that sync still
+  retries with
+  [`msgvault diagnose-acquisition --source-id N`](cli-reference.md#diagnose-acquisition).
+  `--all` adds failures that were fixed, retired, or are unknown. An empty list
+  doesn't prove the archive is complete.
+- Describe a task to find the command for it with
+  [`msgvault cli search`](cli-reference.md#cli-search), for example
+  `msgvault cli search "find email by sender"`. It runs locally and needs no
+  archive or daemon.
+- [Facts](web-ui.md#saved-profiles-and-possible-duplicates) shows each field's
+  saved value above its claims, where each claim came from, and why a claim
+  wasn't used.
+- MCP `get_message` segments recognize Thunderbird reply and forward markers
+  in Spanish, Italian, and Portuguese. `segments_version` is now `seg-v2`;
+  refresh any cached `seg-v1` ranges.
+- File messages to Tasks or Kata from the reader, and see linked work together under **Tasks**.
 - Archive [Bland calls](usage/meetings.md#bland) as meetings with their summaries, retained transcripts and recordings saved locally, up to 1 GiB each by default (`max_media_mb`).
 - Filter the message change feed by person, source, conversation, or incoming direction, and read it from an owner MCP agent with `list_changes`.
 - Contact lists turn `contact_frequency` into a reach-out queue. `msgvault person attributes set <id> contact_frequency --list A` sets the 21/60/180/365-day A/B/C/D presets, and `person directory --cadence overdue|due|no_list|unknown` with `--sort most_overdue|next_due` lists who is due. MCP `list_directory_people` takes the same filters, and `set_person_contact_list` sets a list after confirmation. See [contact lists](usage/people.md#keep-in-touch-with-contact-lists).
-
 - Start bounded Gmail or IMAP historical imports through MCP with `--allow-import-writes`, and follow their durable job status.
 - MCP clients can list and read msgvault's bundled guides with `msgvault.skills`: the MCP quickstart as `workflow` and every [agent skill](guides/agent-skills.md#skills-and-the-mcp-server). Delegated sessions can use it too.
-
-- Count linked transcripts once in People and Relationships, including when a source or date filter selects only one copy.
-
 - Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose.
-
 - Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.
   With `--allow-curated-writes` and explicit client confirmation, it can apply
   atomic profile patches. The client is responsible for obtaining user approval.
-
-- Incomplete open-loop lists continue checking history in the background.
-
 - Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
-
-- Account matching recovers after identity changes. Explore refreshes pending counts and lets you retry matching for each source.
-- MCP operation tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unusable. This replaces `operation_response_limit_exceeded`, `operation_response_failed`, and `invalid_operation_response` for those write receipts. Read current state before retrying.
-
-- Join or separate archived meeting copies with `meetings link` and `meetings unlink`, the API, or MCP. Choices survive sync and rebuilds. `meetings reset-link` restores automatic matching. Requires HTTP API schema 5.10.0; existing archives upgrade to schema 47.
-
+- Join or separate archived meeting copies with `meetings link` and `meetings unlink`, the API, or MCP. Choices survive sync and rebuilds. `meetings reset-link` restores automatic matching. Requires HTTP API schema 5.10.0.
 - Open linked calendar copies and notes with `msgvault meetings links`,
   `GET /api/v1/meetings/record`, or MCP `get_meeting_record`. Copy an
   occurrence reference from `msgvault calendar events` to select a specific
   week.
-
 - New Messenger and Instagram inbox messages, including the ones the Page or
   account sends, are archived as they arrive when the
   [Meta webhook receiver](usage/meta-webhooks.md#inbox-messages) gets the
@@ -77,12 +136,39 @@ All notable changes to msgvault, grouped by release.
 - Instagram comment sync can also archive comments on the account's ads that
   its media list leaves out. Set `ad_account_id` and `ad_token_env` on the
   profile; see [Include ad media](usage/instagram-comments.md#include-ad-media).
-
-- An interrupted `sync-full` prints a command to run again with the same account, filters, configuration, and logging flags. It exits with status 130; on Windows, run the command in PowerShell 7.3 or later.
-
-- Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
 - Use `msgvault family show <id>`, the MCP tool `get_email_family`, or the family read endpoint to find an email's archived copies, replies and forwards across accounts. Results identify the evidence connecting each copy and report when the lookup is incomplete. These reads are available to the archive owner.
 - Open **Related copies** beside an email to find copies in other accounts and conversations. The panel loads when opened and leaves out messages already shown in the conversation.
+
+### Improvements
+
+- Incomplete open-loop lists continue checking history in the background.
+- MCP operation tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unusable. This replaces `operation_response_limit_exceeded`, `operation_response_failed`, and `invalid_operation_response` for those write receipts. Read current state before retrying.
+- An interrupted `sync-full` prints a command to run again with the same account, filters, configuration, and logging flags. It exits with status 130; on Windows, run the command in PowerShell 7.3 or later.
+- Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
+
+### Bug fixes
+
+- Circleback syncs wait and retry when Circleback answers `429 Too Many Requests`, instead of failing every remaining meeting in the run.
+- Count linked transcripts once in People and Relationships, including when a source or date filter selects only one copy.
+- Account matching recovers after identity changes. Explore refreshes pending counts and lets you retry matching for each source.
+- A message you restore from Trash in Gmail or IMAP returns to search after the
+  next sync. If you restored a Gmail message earlier and it is still hidden,
+  run `msgvault sync-full you@example.com`.
+- An unfiltered Gmail `sync-full` no longer skips label changes and deletions
+  that were waiting in Gmail's history; the next incremental sync applies them.
+- `msgvault message-tags` reads a source-deleted message's current tags when
+  the provider still has the message. Editing its tags is still refused.
+- When an identity change saves but its cache refresh fails, **Retry**
+  refreshes the related views without repeating the change, and the warning
+  stays while you move between views.
+- Scheduled Beeper imports stop between members of a large group chat when
+  their time runs out, so other sources no longer wait on them. Imported
+  messages are kept and the roster work finishes on a later run.
+- An IMAP sync no longer crashes when the server drops the connection and
+  reconnecting fails, as DavMail does when it restarts. The mailbox is skipped
+  or the run ends with an error.
+- Scheduled person enrichment no longer stops when a request or cost budget
+  runs out at UTC midnight.
 
 ## 0.25.0
 <small>2026-11-14</small>
