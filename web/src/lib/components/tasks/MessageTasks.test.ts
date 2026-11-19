@@ -27,16 +27,8 @@ describe('Message task list', () => {
     } finally { view.unmount(); readiness.dispose(); }
   });
 
-  it('keeps the partial index notice inside the Tasks group', async () => {
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: 'ready', project: 'example' }
-      : { state: 'partial', complete: false, tasks: [], outbound_metadata: taskOutboundMetadata }));
-    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
-    expect(await screen.findByText('Some linked tasks may be missing.')).toBeDefined();
-    expect(screen.getByRole('region', { name: 'Tasks' }).textContent).toContain('Some linked tasks may be missing.');
-  });
-
   it.each([
+    { name: 'partial index', status: 'ready', lookup: { state: 'partial', complete: false, tasks: [] }, notice: 'Some linked tasks may be missing.' },
     { name: 'session-only index', status: 'ready', lookup: { state: 'ready', reason: 'cache_persistence_unsupported', tasks: [] }, notice: 'Linked-task index updates are available for this session' },
     { name: 'lookup error', status: 'ready', lookup: null, notice: 'Lookup failed' },
     { name: 'unavailable service', status: 'unavailable', lookup: { state: 'unavailable', tasks: [] }, notice: 'Task integration unavailable' },
@@ -93,7 +85,7 @@ describe('Message task list', () => {
     const client = createAPIClient(async (input) => {
       const request = input as Request;
       requests.push(request);
-      return Response.json(request.url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title }], outbound_metadata: taskOutboundMetadata });
+      return Response.json(request.url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title }], outbound_metadata: {} });
     });
     const view = render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
     expect(await screen.findByText('Review notes')).toBeDefined();

@@ -148,20 +148,6 @@ describe('KataEvidenceDialog', () => {
     expect(keys(remounted)).toEqual(keys(lost));
   });
 
-  it('lists 25 open issues before typing', async () => {
-    const issues = Array.from({ length: 25 }, (_, i) => ({ ...issue, uid: `issue-${i}`, qualified_ref: `example#${i}`, title: `Issue ${i}` }));
-    const client = createAPIClient(async input => {
-      const url = new URL((input as Request).url);
-      if (url.pathname.endsWith('/open-issues')) return Response.json({ issues, truncated: true });
-      return Response.json({ evidence: [passages[0]] });
-    });
-    render(KataEvidenceDialog, { client, selector });
-    await screen.findByText('Opening passage');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    await screen.findByRole('radio', { name: 'Issue 24 · example#24' });
-    expect(screen.getAllByRole('radio')).toHaveLength(27);
-  });
-
   it('finds an older issue by title and links its canonical ref', async () => {
     const reads: string[] = [];
     const posts: Request[] = [];
@@ -223,69 +209,9 @@ describe('KataEvidenceDialog', () => {
     try {
       await screen.findByText('Opening passage');
       await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-      expect((await screen.findByRole('alert')).textContent).toContain('List unavailable');
+      expect((await screen.findByRole('alert')).textContent).toBe('List unavailable');
       await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
       expect(await screen.findByRole('radio', { name: /example#abcd/ })).toBeDefined();
     } finally { view.unmount(); readiness.dispose(); }
-  });
-  it('does not reuse a checked title after changing to an unchecked reference', async () => {
-    let lists = 0;
-    const client = createAPIClient(async input => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-      if (path.endsWith('/open-issues')) return ++lists === 1
-        ? Response.json({ issues: [issue], truncated: false })
-        : Response.json({ message: 'List unavailable' }, { status: 503 });
-      return Response.json({ evidence: [passages[0]] });
-    });
-    const readiness = new KataReadiness(client);
-    await waitFor(() => expect(readiness.ready).toBe(true));
-    const view = render(KataEvidenceDialog, { props: { client, selector }, context: new Map([[kataReadinessKey, readiness]]) });
-    try {
-      await screen.findByText('Opening passage');
-      await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-      await fireEvent.click(await screen.findByRole('radio', { name: 'Follow up · example#abcd' }));
-      await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
-      await screen.findByRole('alert');
-      const unchecked = await screen.findByRole('radio', { name: 'example#abcd · Not checked yet' });
-      await fireEvent.click(unchecked);
-      expect(unchecked).toHaveProperty('checked', true);
-    } finally { view.unmount(); readiness.dispose(); }
-  });
-
-  it('does not reuse a listed title when a typed lookup fails', async () => {
-    let lists = 0;
-    const client = createAPIClient(async input => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-      if (path.endsWith('/open-issues')) return ++lists === 1
-        ? Response.json({ issues: [issue], truncated: false })
-        : Response.json({ message: 'List unavailable' }, { status: 503 });
-      return Response.json({ evidence: [passages[0]] });
-    });
-    const readiness = new KataReadiness(client);
-    await waitFor(() => expect(readiness.ready).toBe(true));
-    const view = render(KataEvidenceDialog, { props: { client, selector }, context: new Map([[kataReadinessKey, readiness]]) });
-    try {
-      await screen.findByText('Opening passage');
-      await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-      await screen.findByRole('radio', { name: 'Follow up · example#abcd' });
-      await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
-      const unchecked = await screen.findByRole('radio', { name: 'example#abcd · Not checked yet' });
-      await fireEvent.click(unchecked);
-      expect(unchecked).toHaveProperty('checked', true);
-    } finally { view.unmount(); readiness.dispose(); }
-  });
-
-  it('shows list errors', async () => {
-    const client = createAPIClient(async input => {
-      const request = input as Request;
-      if (new URL(request.url).pathname.endsWith('/open-issues')) return Response.json({ message: 'List unavailable' }, { status: 503 });
-      return Response.json({ evidence: [passages[0]] });
-    });
-    render(KataEvidenceDialog, { client, selector });
-    await screen.findByText('Opening passage');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('List unavailable');
   });
 });

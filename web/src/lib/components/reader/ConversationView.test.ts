@@ -156,7 +156,7 @@ describe('ConversationView', () => {
         return Response.json({ state, message: state === 'disabled' ? 'Task integration is disabled.' : 'Task service is unreachable.' });
       }
       const taskMessage = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
-      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: state === 'unreachable' ? 'unavailable' : state, complete: false, tasks: cached ? [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }] : [], outbound_metadata: { ...taskOutboundMetadata, message_id: Number(taskMessage[1]) } }); }
+      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: state === 'unreachable' ? 'unavailable' : state, complete: false, tasks: cached ? [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }] : [], outbound_metadata: {} }); }
       return Response.json({
         id: 7, anchor_id: 2, messages: [message(1), message(2)],
         has_before: false, has_after: false, total: 2

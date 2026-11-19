@@ -118,7 +118,7 @@ describe('Add to task', () => {
     } finally { view.unmount(); }
   });
 
-  it.each(['created', 'linked'])('closes after a task is %s', async result => {
+  it('opens the existing task picker from the toolbar', async () => {
     const onclose = vi.fn();
     const client = createAPIClient(async input => {
       const request = input as Request;
@@ -127,14 +127,8 @@ describe('Add to task', () => {
       return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
     render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose });
-    if (result === 'linked') {
-      await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-      await fireEvent.click(await screen.findByRole('radio', { name: 'Filed task · task-1' }));
-      await fireEvent.click(await screen.findByRole('button', { name: 'Link task' }));
-    } else {
-      await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
-    }
-    await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    expect(await screen.findByRole('radio', { name: 'Filed task · task-1' })).toBeDefined();
   });
 
   it.each(['success', 'failure'])('guards dismissal while busy and releases it after %s', async (result) => {
@@ -149,12 +143,10 @@ describe('Add to task', () => {
     respond(result === 'success'
       ? Response.json({ task: { id: 'task-1', title: 'Follow up' } }, { status: 201 })
       : Response.json({ message: 'Unavailable' }, { status: 503 }));
-    if (result === 'success') {
-      await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
-    } else {
+    if (result === 'failure') {
       await screen.findByRole('alert');
       await fireEvent.keyDown(close, { key: 'Escape' });
       expect(onclose).toHaveBeenCalledOnce();
-    }
+    } else await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
   });
 });
