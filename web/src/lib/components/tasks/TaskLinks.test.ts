@@ -154,8 +154,8 @@ describe('TaskLinks', () => {
         ? { state: 'ready', project: 'example' }
         : { state: 'authentication_required', message: 'Task service authentication is required.' });
       return Response.json(path.endsWith('/messages/42/tasks')
-        ? { state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Earlier cached task' }], outbound_metadata: {} }
-        : { state: 'authentication_required', complete: false, tasks: [], outbound_metadata: {} });
+        ? taskLookup({ tasks: [{ id: 'task-1', title: 'Earlier cached task' }] })
+        : taskLookup({ state: 'authentication_required', complete: false }));
     });
     const statuses = new SvelteMap<string, ConversationTaskStatus['latest']>();
     const shared: ConversationTaskStatus = {
@@ -234,12 +234,12 @@ describe('TaskLinks', () => {
     ['disabled', 'disabled'],
     ['not_found', 'not found'],
     ['wrong_project', 'wrong project']
-  ])('renders the %s state without claiming there are no links', async (state, copy) => {
+  ])('renders the %s state notice', async (state, copy) => {
     render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       return request.url.endsWith('/integrations/tasks/status')
         ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
-        : Response.json({ state, complete: false, reason: state, last_scan: '2026-07-19T01:00:00Z', tasks: [] });
+        : Response.json(taskLookup({ state, complete: false, reason: state, last_scan: '2026-07-19T01:00:00Z' }));
     })), messageId: 42, title: 'Synthetic', showSetup: false });
     expect((await screen.findByRole('alert')).textContent?.toLowerCase()).toContain(copy.toLowerCase());
   });

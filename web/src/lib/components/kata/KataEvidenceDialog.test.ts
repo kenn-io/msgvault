@@ -43,7 +43,6 @@ describe('KataEvidenceDialog', () => {
     const h = harness();
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up' });
     expect(await screen.findByText('Opening passage')).toBeDefined();
-    expect(screen.getByText('The quote, title, and description are sent; attachments stay out.')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Earlier passage' })).toHaveProperty('disabled', true);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Later passage' }));
@@ -182,9 +181,11 @@ describe('KataEvidenceDialog', () => {
     const h = harness(async () => Response.json({ issue, replayed: false }));
     render(KataEvidenceDialog, { client: h.client, selector });
     await screen.findByText('Opening passage');
+    expect(screen.getByText('The quote, title, and description are sent; attachments stay out.')).toBeDefined();
     await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Brief draft' } });
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    expect(screen.getByText('Only the quote is sent; attachments stay out.')).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
     expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
     expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Brief draft');
