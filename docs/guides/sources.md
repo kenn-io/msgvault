@@ -47,6 +47,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Matrix | [Matrix sync](../usage/matrix.md) | Joined-room history on any homeserver, with encrypted messages recovered from the account's key backup |
 | WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger, Telegram, X DMs | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
 | TikTok data export | [TikTok export import](../usage/tiktok-export.md) | Local ZIP or extracted folder; DMs, your own comments, and profile identity; unreleased |
+| LinkedIn member export | [LinkedIn import](../usage/linkedin.md) | Local ZIP or extracted folder; DMs, your own posts and comments, and optional connection identities; unreleased |
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
 | RSS, Atom, or JSON feeds | [Feeds](../usage/feeds.md) | Followed feeds fetched on a schedule; each item archived once |
 | Another source, such as tool notifications | [Messages from any source](../usage/message-import.md) | Provider-neutral ingestion keyed by source and external message ID |

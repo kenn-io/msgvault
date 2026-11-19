@@ -20,7 +20,8 @@ const SOURCE_TYPES: Readonly<Record<string, string>> = {
   facebook_comments: 'Facebook Page comments',
   instagram_comments: 'Instagram comments',
   'google-groups': 'Google Groups',
-  tiktok_export: 'TikTok export'
+  tiktok_export: 'TikTok export',
+  linkedin_export: 'LinkedIn export'
 };
 export function sourceTypeLabel(code: string): string {
   return Object.hasOwn(SOURCE_TYPES, code) ? SOURCE_TYPES[code]! : sentenceCase(code);

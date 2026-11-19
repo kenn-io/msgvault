@@ -114,6 +114,7 @@ var topLevelCommandGroups = map[string]string{
 	"import-pst":              helpGroupImport,
 	"import-slackdump":        helpGroupImport,
 	"import-discord-package":  helpGroupImport,
+	"import-linkedin":         helpGroupImport,
 	"import-telegram":         helpGroupImport,
 	"import-tiktok":           helpGroupImport,
 	"import-x":                helpGroupImport,
