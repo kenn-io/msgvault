@@ -179,7 +179,9 @@ limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.20.0**.
+it is separate from the binary release version. The current schema is **5.25.0**.
+
+Schema 5.25.0 allows `diagnose-gmail-inventory` through the daemon command interface.
 
 Schema 5.20.0 adds `message_type` to file details.
 

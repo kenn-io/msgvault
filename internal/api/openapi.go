@@ -438,7 +438,8 @@ import (
 // 5.22.0 adds person attribute value selection by ordinal.
 // 5.23.0 rejects invalid person display names with a client error.
 // 5.24.0 adds CardDAV participant binding preview, reconciliation, undo, and sync conflict counts to run history.
-const APISchemaVersion = "5.24.0"
+// 5.25.0 admits read-only Gmail inventory diagnostics through the generic CLI runner.
+const APISchemaVersion = "5.25.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
