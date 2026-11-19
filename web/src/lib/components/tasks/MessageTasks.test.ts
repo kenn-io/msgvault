@@ -56,7 +56,7 @@ describe('Message task list', () => {
     expect(requests).toHaveLength(0);
   });
 
-  it('shows linked Kata issues and refreshes them after the task dialog closes', async () => {
+  it('updates linked Kata issues, notices, and errors across refreshes and message changes', async () => {
     let title = 'Send notes';
     let truncated = false;
     let empty = false;
@@ -105,7 +105,7 @@ describe('Message task list', () => {
     await waitFor(() => expect(held).toBeDefined());
     expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();
     held!(Response.json({ issues: [], truncated: false }));
-    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
     expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();
     hold = false;
     fail = true;
