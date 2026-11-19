@@ -657,7 +657,7 @@ test('aligns the Kata link with the issue title', async ({ page }) => {
   await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [{ ...entry(42), title: 'Garden plans', conversation_id: 7, anchor_message_id: 42 }], total_count: 1, cache_revision: 'fixture', search_provenance: {} } }));
   await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: { id: 7, messages: [message], anchor_id: 42, has_before: false, has_after: false, total: 1 } }));
   await page.route('**/api/v1/integrations/kata/status', route => route.fulfill({ json: { state: 'ready', project: 'example' } }));
-  await page.route('**/api/v1/integrations/kata/issues?*', route => route.fulfill({ json: { truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }] } }));
+  await page.route('**/api/v1/integrations/kata/issues?*', route => route.fulfill({ json: { truncated: false, issues: [{ uid: 'issue-1', project: 'example', ref: 'abcd', revision: '1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }] } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
   await page.getByRole('grid', { name: 'Messages results' }).getByText('Garden plans', { exact: true }).click();
   const link = page.getByRole('link', { name: 'Open Send revised notes (example#abcd) in Kata' });

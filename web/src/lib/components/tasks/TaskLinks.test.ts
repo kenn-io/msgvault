@@ -385,6 +385,13 @@ describe('TaskLinks', () => {
     });
     render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic', oncomplete });
     expect(await screen.findByRole('radio', { name: 'Synthetic result · task-1' })).toBeDefined();
+    const existing = within(screen.getByRole('region', { name: 'Linked tasks' }));
+    await fireEvent.click(existing.getByText("What's sent"));
+    expect(existing.getByText('archive-a')).toBeTruthy();
+    expect(existing.getByText('source-42')).toBeTruthy();
+    expect(existing.getByText('Follow up')).toBeTruthy();
+    expect(existing.getByText('sender@example.com')).toBeTruthy();
+    expect(existing.getByText('When linked')).toBeTruthy();
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic result · task-2' }));
     const search = requests.find(request => new URL(request.url).pathname.endsWith('/integrations/tasks/search'))!;
     expect(new URL(search.url).searchParams.has('q')).toBe(false);
