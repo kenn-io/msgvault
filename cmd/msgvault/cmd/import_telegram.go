@@ -60,7 +60,7 @@ Examples:
 	cmd.Flags().StringVar(&opts.Me, "me", "", "your numeric Telegram user ID (overrides the export's owner)")
 	cmd.Flags().IntVar(&opts.Limit, "limit", 0, "maximum messages to add (0 imports all)")
 	cmd.Flags().BoolVar(&opts.NoDefaultIdentity, "no-default-identity", false, noDefaultIdentityHelp)
-	cmd.Flags().BoolVar(&opts.Batch, "batch", false, "experimental: persist up to "+strconv.Itoa(telegram.BatchSize)+" messages per transaction to cut disk writes")
+	cmd.Flags().BoolVar(&opts.Batch, "batch", false, "experimental: save up to "+strconv.Itoa(telegram.BatchSize)+" messages at once to reduce disk writes")
 	cmd.Flags().BoolVar(&opts.NoResume, "no-resume", false, "ignore any existing checkpoint and start fresh")
 	return cmd
 }
