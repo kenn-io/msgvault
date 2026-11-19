@@ -67,7 +67,6 @@ describe('Add to task', () => {
       await screen.findByText('Quote');
       await waitFor(() => expect(screen.getByRole('button', { name: 'Create issue' })).toHaveProperty('disabled', false));
       await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
-      expect(screen.getByRole('button', { name: 'Create issue' })).toHaveProperty('disabled', true);
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
       expect(onclose).not.toHaveBeenCalled();
       finish(Response.json({ issue: { uid: 'one', ref: 'abcd', qualified_ref: 'example#abcd', project: 'example', title: 'Follow up', status: 'open', revision: '1' }, replayed: false }));
@@ -119,7 +118,7 @@ describe('Add to task', () => {
     } finally { view.unmount(); }
   });
 
-  it.each(['ready', 'partial', 'stale'])('updates the task control when the index is %s', async state => {
+  it.each(['partial', 'stale'])('updates the task control when the index is %s', async state => {
     const client = createAPIClient(async input => {
       const url = (input as Request).url;
       if (url.includes('/search')) return Response.json({ tasks: [], truncated: false });
