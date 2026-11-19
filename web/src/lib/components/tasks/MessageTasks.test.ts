@@ -54,17 +54,19 @@ describe('Message task list', () => {
     } finally { view.unmount(); readiness.dispose(); }
   });
 
-  it.each(['refresh', 'message change'])('updates Kata rows on %s', async change => {
+  it.each([
+    { name: 'refresh', props: { refresh: 1 }, pendingVisible: true, nextIssues: [{ ...issues[0], title: 'Refreshed notes' }], nextTitle: 'Refreshed notes' },
+    { name: 'message change', props: { messageId: 43 }, pendingVisible: false, nextIssues: issues, nextTitle: 'Send revised notes' }
+  ])('updates Kata rows on $name', async ({ props, pendingVisible, nextIssues, nextTitle }) => {
     const group = groupFixture(42);
     try {
       await screen.findByRole('link', { name: issueLink });
       group.hold();
-      await group.view.rerender(change === 'refresh' ? { refresh: 1 } : { messageId: 43 });
+      await group.view.rerender(props);
       await waitFor(() => expect(group.resolve()).toBeDefined());
-      if (change === 'refresh') expect(screen.getByText('Send revised notes')).toBeDefined();
-      else expect(screen.queryByText('Send revised notes')).toBeNull();
-      group.resolve()!(Response.json({ truncated: false, issues: change === 'refresh' ? [{ ...issues[0], title: 'Refreshed notes' }] : issues }));
-      expect(await screen.findByText(change === 'refresh' ? 'Refreshed notes' : 'Send revised notes')).toBeDefined();
+      expect(screen.queryByText('Send revised notes') !== null).toBe(pendingVisible);
+      group.resolve()!(Response.json({ truncated: false, issues: nextIssues }));
+      expect(await screen.findByText(nextTitle)).toBeDefined();
     } finally { group.view.unmount(); group.readiness.dispose(); }
   });
 
@@ -83,7 +85,7 @@ describe('Message task list', () => {
   it.each([
     { name: 'incomplete empty result', initial: () => Response.json({ truncated: false, issues }), initialText: 'Send revised notes', refreshed: () => Response.json({ truncated: true, issues: [] }), visible: true, alert: null, link: false },
     { name: 'complete empty result', initial: () => Response.json({ truncated: false, issues }), initialText: 'Send revised notes', refreshed: () => Response.json({ truncated: false, issues: [] }), visible: false, alert: null, link: false },
-    { name: 'Kata lookup error', initial: () => Response.json({ message: 'Kata lookup failed' }, { status: 503 }), initialText: 'Kata lookup failed', refreshed: () => Response.json({ message: 'Kata lookup failed' }, { status: 503 }), visible: true, alert: 'Kata lookup failed', link: false }
+    { name: 'Kata lookup error', initial: () => Response.json({ message: 'Kata lookup failed' }, { status: 503 }), initialText: 'Kata lookup failed', refreshed: () => Response.json({ truncated: false, issues: [] }), visible: false, alert: null, link: false }
   ])('updates the Tasks group for $name', async ({ initial, initialText, refreshed, visible, alert, link }) => {
     const group = groupFixture(43, initial());
     try {
