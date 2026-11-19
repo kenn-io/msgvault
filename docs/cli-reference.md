@@ -3564,17 +3564,18 @@ JSON always includes these integer counts, even when zero:
 The CLI's `total_messages` includes active and source-deleted messages. The
 daemon HTTP API retains its legacy active-only `total_messages` for compatibility.
 
-The `scope` object identifies `kind` as `archive`, `account`, `collection`, or
-`agent_grant`. Its `source_count` equals `total_accounts`; both count source
+The `scope` object identifies `kind` as `archive`, `account`, `collection`,
+`agent_grant`, or `authorized_sources`. Its `source_count` equals `total_accounts`; both count source
 records, including associated calendar sources and sources with no messages.
 One account can span multiple source records. Scoped results include a `label`
 when available. Without an explicit account or collection, delegated reads use
 `agent_grant` and count only granted sources, including a zero count when none
-remain.
+remain. A remote whose host limits it to some sources, such as one that uses a
+credential helper, reports `authorized_sources` and counts only those sources.
 
 Owner reads include `database_size_bytes`, even when zero, with
 `database_size_scope: "global"`. Size remains global with `--account` or
-`--collection`. Delegated reads omit both size fields. JSON contains no database
+`--collection`. Delegated and source-limited reads omit both size fields. JSON contains no database
 path or server URL. `--json=false` selects text output.
 
 For custom structured counts, use:
