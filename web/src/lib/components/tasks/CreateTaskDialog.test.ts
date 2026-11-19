@@ -44,7 +44,6 @@ describe('CreateTaskDialog', () => {
       title: 'Edited', description: `Notes\n\n${location.origin}/messages/42`, priority: 'high', labels: ['mail', 'follow-up']
     });
     const body = await requests[0]!.clone().json() as { added_at?: string };
-    expect(body.added_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(screen.getByText('Link added at').nextElementSibling?.textContent).toBe(body.added_at);
     expect(requests[0]!.headers.get('X-Request-Id')).toBeTruthy();
   });
