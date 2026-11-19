@@ -155,7 +155,7 @@ describe('TaskLinks', () => {
         : { state: 'authentication_required', message: 'Task service authentication is required.' });
       return Response.json(path.endsWith('/messages/42/tasks')
         ? taskLookup({ tasks: [{ id: 'task-1', title: 'Earlier cached task' }] })
-        : taskLookup({ state: 'authentication_required', complete: false }));
+        : taskLookup({ state: 'authentication_required', complete: false }, 43));
     });
     const statuses = new SvelteMap<string, ConversationTaskStatus['latest']>();
     const shared: ConversationTaskStatus = {
@@ -191,7 +191,7 @@ describe('TaskLinks', () => {
     });
     await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
     expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
-    finish(Response.json(taskLookup({ state: 'unavailable', complete: false })));
+    finish(Response.json(taskLookup({ state: 'unavailable', complete: false }, 43)));
     await waitFor(() => expect(fetchFn.mock.settledResults[0]?.type).toBe('fulfilled'));
     await tick();
     expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
