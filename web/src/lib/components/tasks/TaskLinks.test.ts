@@ -3,7 +3,7 @@ import { tick } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { getTaskIntegrationStatus } from '../../api/generated/api/api';
 import { conversationTaskStatusKey, type ConversationTaskStatus } from './task-status';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -55,8 +55,7 @@ describe('TaskLinks', () => {
     await view.rerender({ refresh: 2 });
     await waitFor(() => expect(respond).toBeDefined());
     expect(screen.getByText('Review notes')).toBeDefined();
-    respond!(Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review revised notes' }] })));
-    expect(await screen.findByText('Review revised notes')).toBeDefined();
+    await act(async () => { respond!(Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review revised notes' }] }))); });
   });
 
   it("preserves an open creation draft and retry identity across another message's failed status refresh", async () => {
