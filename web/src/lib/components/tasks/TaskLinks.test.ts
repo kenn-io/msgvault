@@ -36,13 +36,10 @@ describe('TaskLinks', () => {
     await waitFor(() => expect(screen.queryByText('Second task')).toBeNull());
   });
 
-  it('clears lookup errors and keeps linked rows while refresh is pending', async () => {
-    let respond: ((response: Response) => void) | undefined;
-    let hold = false;
+  it('clears lookup errors after refresh', async () => {
     let lookups = 0;
     const client = createAPIClient(async input => {
       if ((input as Request).url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-      if (hold) return new Promise<Response>(resolve => { respond = resolve; });
       if (++lookups === 1) return Response.json({ message: 'Lookup failed' }, { status: 503 });
       return Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review notes' }] }));
     });
@@ -51,8 +48,20 @@ describe('TaskLinks', () => {
     await view.rerender({ refresh: 1 });
     await screen.findByText('Review notes');
     expect(screen.queryByText('Lookup failed')).toBeNull();
+  });
+
+  it('keeps linked rows while refresh is pending', async () => {
+    let respond: ((response: Response) => void) | undefined;
+    let hold = false;
+    const client = createAPIClient(async input => {
+      if ((input as Request).url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (hold) return new Promise<Response>(resolve => { respond = resolve; });
+      return Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review notes' }] }));
+    });
+    const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic', refresh: 0 });
+    await screen.findByText('Review notes');
     hold = true;
-    await view.rerender({ refresh: 2 });
+    await view.rerender({ refresh: 1 });
     await waitFor(() => expect(respond).toBeDefined());
     expect(screen.getByText('Review notes')).toBeDefined();
   });

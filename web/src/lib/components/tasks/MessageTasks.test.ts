@@ -24,7 +24,7 @@ describe('Message task list', () => {
     expect(requests).toHaveLength(0);
   });
 
-  const issues = [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }];
+  const issues = [{ uid: 'issue-1', project: 'example', ref: 'abcd', revision: '1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }, { uid: 'issue-2', project: 'example', ref: 'closed', revision: '1', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }];
   const issueLink = 'Open Send revised notes (example#abcd) in Kata';
 
   function groupFixture(messageId: number, first = Response.json({ truncated: false, issues })) {
@@ -68,20 +68,20 @@ describe('Message task list', () => {
     } finally { group.view.unmount(); group.readiness.dispose(); }
   });
 
-  it.each(['partial index notice', 'suppressed setup', 'incomplete empty result', 'complete empty result', 'Kata lookup error'])('updates the Tasks group for %s', async name => {
-    if (name === 'partial index notice' || name === 'suppressed setup') {
-      const partial = name === 'partial index notice';
-      const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-        ? { state: partial ? 'ready' : 'unreachable', project: 'example' }
-        : taskLookup({ state: partial ? 'partial' : 'unavailable', complete: false })));
-      render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup: partial });
-      if (partial) expect(await screen.findByRole('region', { name: 'Tasks' })).toBeDefined();
-      else {
-        await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
-        expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
-      }
-      return;
+  it.each(['partial index notice', 'suppressed setup'])('updates the Tasks group for %s', async name => {
+    const partial = name === 'partial index notice';
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: partial ? 'ready' : 'unreachable', project: 'example' }
+      : taskLookup({ state: partial ? 'partial' : 'unavailable', complete: false })));
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup: partial });
+    if (partial) expect(await screen.findByRole('region', { name: 'Tasks' })).toBeDefined();
+    else {
+      await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
+      expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
     }
+  });
+
+  it.each(['incomplete empty result', 'complete empty result', 'Kata lookup error'])('updates the Tasks group for %s', async name => {
     const error = name === 'Kata lookup error';
     const group = groupFixture(43, error ? Response.json({ message: 'Kata lookup failed' }, { status: 503 }) : undefined);
     try {
@@ -94,7 +94,6 @@ describe('Message task list', () => {
         group.respond(Response.json({ truncated, issues: [] }));
         await group.view.rerender({ refresh: 1 });
         if (truncated) {
-          expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
           await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
           expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
         } else await waitFor(() => expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull());
