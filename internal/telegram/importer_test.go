@@ -807,31 +807,54 @@ func batchExport(t *testing.T, list []batchChat, text func(chat int64, id int) s
 
 func countChatMessages(t *testing.T, st *store.Store, peer string) int {
 	var n int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE source_message_id LIKE ?", peer+":%").Scan(&n))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM messages WHERE source_message_id LIKE ?"), peer+":%").Scan(&n))
 	return n
+}
+
+func createTestTrigger(t *testing.T, st *store.Store, name, timing, table, condition, sqliteBody, postgresBody string) {
+	var err error
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION `+name+`() RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN `+postgresBody+` END $$`)
+		require.NoError(t, err)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER `+name+` `+timing+` ON `+table+`
+			FOR EACH ROW WHEN (`+condition+`) EXECUTE FUNCTION `+name+`()`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER `+name+` `+timing+` ON `+table+`
+			WHEN `+condition+` BEGIN `+sqliteBody+` END`)
+	}
+	require.NoError(t, err)
+}
+
+func dropTestTrigger(t *testing.T, st *store.Store, name, table string) {
+	drop := "DROP TRIGGER " + name
+	if st.IsPostgreSQL() {
+		drop += " ON " + table
+	}
+	_, err := st.DB().ExecContext(t.Context(), drop)
+	require.NoError(t, err)
 }
 
 func TestImportBatchRollsBackFailedBatchAndResumes(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	size := BatchSize + 10
 	root := batchExport(t, []batchChat{{2, "personal_chat", size}, {3, "personal_chat", size}}, func(chat int64, id int) string {
-		if chat == 3 && id == 2 {
+		if chat == 3 && id == BatchSize+2 {
 			return "fail-me"
 		}
 		return "m"
 	})
-	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_batch BEFORE INSERT ON messages WHEN NEW.snippet = 'fail-me' BEGIN SELECT RAISE(ABORT, 'forced failure'); END`)
-	require.NoError(t, err)
-	_, err = Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
+	createTestTrigger(t, st, "fail_batch", "BEFORE INSERT", "messages", "NEW.snippet = 'fail-me'",
+		"SELECT RAISE(ABORT, 'forced failure');", "RAISE EXCEPTION 'forced failure';")
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
 	require.ErrorContains(t, err, "forced failure")
 	assert.Equal(t, size, countChatMessages(t, st, "user2"))
-	assert.Equal(t, 0, countChatMessages(t, st, "user3"))
-	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_batch`)
-	require.NoError(t, err)
+	assert.Equal(t, BatchSize, countChatMessages(t, st, "user3"))
+	dropTestTrigger(t, st, "fail_batch", "messages")
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
 	require.NoError(t, err)
-	assert.EqualValues(t, size, summary.MessagesAdded)
-	assert.EqualValues(t, 0, summary.MessagesSkipped)
+	assert.EqualValues(t, size-BatchSize, summary.MessagesAdded)
+	assert.EqualValues(t, BatchSize, summary.MessagesSkipped)
 	assert.Equal(t, size, countChatMessages(t, st, "user2"))
 	assert.Equal(t, size, countChatMessages(t, st, "user3"))
 }
@@ -839,9 +862,10 @@ func TestImportBatchRollsBackFailedBatchAndResumes(t *testing.T) {
 func TestImportBatchStopsWhenRunSuperseded(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := batchExport(t, []batchChat{{2, "private_group", 3}, {3, "private_group", 3}}, func(int64, int) string { return "m" })
-	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER supersede_run AFTER INSERT ON conversations WHEN NEW.source_conversation_id = 'chat3' BEGIN UPDATE sync_runs SET status = 'failed' WHERE status = 'running'; END`)
-	require.NoError(t, err)
-	_, err = Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
+	createTestTrigger(t, st, "supersede_run", "AFTER INSERT", "conversations", "NEW.source_conversation_id = 'chat3'",
+		"UPDATE sync_runs SET status = 'failed' WHERE status = 'running';",
+		"UPDATE sync_runs SET status = 'failed' WHERE status = 'running'; RETURN NULL;")
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
 	require.ErrorIs(t, err, store.ErrSyncRunSuperseded)
 	assert.Equal(t, 3, countChatMessages(t, st, "chat2"))
 	assert.Equal(t, 0, countChatMessages(t, st, "chat3"))
