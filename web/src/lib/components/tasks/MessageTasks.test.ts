@@ -106,7 +106,7 @@ describe('Message task list', () => {
     expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();
     held!(Response.json({ issues: [], truncated: false }));
     await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
-    expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
     hold = false;
     fail = true;
     await view.rerender({ refresh: 5 });

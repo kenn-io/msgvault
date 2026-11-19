@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
+import { formatShortDate } from '../../util/format';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import CreateTaskDialog from './CreateTaskDialog.svelte';
 
@@ -33,7 +34,7 @@ describe('CreateTaskDialog', () => {
     expect(screen.getByText("What's sent")).toBeDefined();
     expect(screen.getByText(`${location.origin}/messages/42`)).toBeDefined();
     expect(screen.getByText('Message')).toBeDefined();
-    expect(screen.getByText('Synthetic subject · sender@example.com · Jul 18, 2020')).toBeDefined();
+    expect(screen.getByText(`Synthetic subject · sender@example.com · ${formatShortDate(sentAt)}`)).toBeDefined();
     expect(screen.getByText(/Bodies and attachments are never sent/i).closest('details')).toBeNull();
     await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Edited' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Notes' } });

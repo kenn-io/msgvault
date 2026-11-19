@@ -325,7 +325,6 @@ it('refreshes links on close after a Kata comment fails after saving evidence', 
   const readiness = new KataReadiness(client);
   const view = render(MessageCard, { props: { message: detail({ messageType: 'email' }), expanded: true, client }, context: new Map([[kataReadinessKey, readiness]]) });
   try {
-    await screen.findByRole('button', { name: /^More actions for .+ on / });
     await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
