@@ -31,7 +31,6 @@ describe('CreateTaskDialog', () => {
       expect(screen.getByText(label).nextElementSibling?.textContent).toBe(value);
     }
     expect(screen.getByText('Sent at').nextElementSibling?.textContent).toBe('2026-07-18T12:00:37Z');
-    expect(screen.getByText('Link added at').nextElementSibling?.textContent).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(screen.getByLabelText('Description')).toHaveProperty('value', '');
     expect(screen.getByText(`Synthetic subject · sender@example.com · ${formatShortDate(sentAt)}`)).toBeDefined();
     expect(screen.getByText(/Bodies and attachments are never sent/i).closest('details')).toBeNull();
@@ -46,6 +45,7 @@ describe('CreateTaskDialog', () => {
     });
     const body = await requests[0]!.clone().json() as { added_at?: string };
     expect(body.added_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(screen.getByText('Link added at').nextElementSibling?.textContent).toBe(body.added_at);
     expect(requests[0]!.headers.get('X-Request-Id')).toBeTruthy();
   });
 
