@@ -7,35 +7,35 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
-  it.each(['partial', 'suppressed', 'linked', 'error', 'truncated'])('sets Tasks group visibility for %s', async scenario => {
+  it.each(['partial', 'suppressed', 'linked', 'error'])('sets Tasks group visibility for %s', async scenario => {
+    let bodyRead = false;
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const url = (input as Request).url;
       if (url.endsWith('/status')) return Response.json({ state: scenario === 'suppressed' ? 'unavailable' : 'ready', project: 'example' });
       if (url.includes('/kata/')) return scenario === 'error'
         ? Response.json({ message: 'Kata lookup failed' }, { status: 503 })
-        : scenario === 'truncated' ? Response.json({ issues: [], truncated: true })
         : Response.json({ issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Kata work', status: 'open', web_url: 'https://example.org/issue' }], truncated: false });
-      return Response.json(taskLookup(scenario === 'partial'
+      const response = Response.json(taskLookup(scenario === 'partial'
         ? { state: 'partial', complete: false }
         : scenario === 'suppressed'
           ? { state: 'unavailable', complete: false }
           : { tasks: [{ id: 'task-1', title: 'Task work' }] }));
+      const read = response.text.bind(response);
+      response.text = async () => { const body = await read(); bodyRead = true; return body; };
+      return response;
     });
     const client = createAPIClient(fetchFn);
-    const readiness = scenario === 'linked' || scenario === 'error' || scenario === 'truncated' ? new KataReadiness(client) : undefined;
+    const readiness = scenario === 'linked' || scenario === 'error' ? new KataReadiness(client) : undefined;
     const view = render(MessageTasks, {
-      props: { client, messageId: 42, title: 'Synthetic', email: scenario !== 'error' && scenario !== 'truncated', showSetup: scenario !== 'suppressed' },
+      props: { client, messageId: 42, title: 'Synthetic', email: scenario !== 'error', showSetup: scenario !== 'suppressed' },
       context: readiness ? new Map([[kataReadinessKey, readiness]]) : new Map(),
     });
     try {
       if (scenario === 'partial') {
         expect(await screen.findByRole('region', { name: 'Tasks' })).toBeDefined();
       } else if (scenario === 'suppressed') {
-        await waitFor(() => {
-          const index = fetchFn.mock.calls.findIndex(([input]) => (input as Request).url.endsWith('/messages/42/tasks'));
-          expect(index).toBeGreaterThanOrEqual(0);
-          expect(fetchFn.mock.settledResults[index]?.type).toBe('fulfilled');
-        });
+        await waitFor(() => expect(bodyRead).toBe(true));
+        await new Promise(resolve => setTimeout(resolve, 0));
         await tick();
         expect(screen.queryByRole('status')).toBeNull();
         expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
@@ -43,9 +43,6 @@ describe('Message task list', () => {
         await screen.findByText('Task work');
         await screen.findByText('Kata work');
         expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
-      } else if (scenario === 'truncated') {
-        await screen.findByText('Linked Kata issues are incomplete.');
-        expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
       } else {
         await screen.findByText('Kata lookup failed');
         expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
@@ -112,6 +109,7 @@ describe('Message task list', () => {
     await view.rerender({ refresh: 3 });
     await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
     expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
+    expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
     hold = true;
     await view.rerender({ refresh: 4 });
     await waitFor(() => expect(held).toBeDefined());

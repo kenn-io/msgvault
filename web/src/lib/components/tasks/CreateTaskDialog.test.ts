@@ -6,7 +6,7 @@ import { chooseSelectOption } from '../../../test/kit-ui';
 import CreateTaskDialog from './CreateTaskDialog.svelte';
 
 describe('CreateTaskDialog', () => {
-  it('fixes the project and sends task fields with message context', async () => {
+  it('sends task fields and shows message context or the default title', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       requests.push(input instanceof Request ? input : new Request(input));

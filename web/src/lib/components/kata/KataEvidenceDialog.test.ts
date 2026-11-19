@@ -114,6 +114,7 @@ describe('KataEvidenceDialog', () => {
     expect(within(await screen.findByRole(role)).getByText(says)).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'File as a new issue' }));
     expect((await screen.findByText('example#efgh')).closest('p')?.textContent).toBe('Kata · example#efgh');
+    expect(within(screen.getByRole('status')).getByText('Saved.')).toBeDefined();
     const keys = h.posted('/integrations/kata/issues').map((posted) => posted.headers.get('Idempotency-Key'));
     expect(keys).toHaveLength(2);
     expect(keys[1]).not.toBe(keys[0]);
