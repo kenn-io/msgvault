@@ -121,7 +121,10 @@ describe('Add to task', () => {
 
   it('shows the existing task picker only when the toolbar is ready', async () => {
     const view = render(AddToTaskDialog, { client: taskCreationClient(), messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    const existing = await screen.findByRole('radio', { name: 'Existing' });
+    expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
+    expect(screen.queryByText('Task')).toBeNull();
+    await fireEvent.click(existing);
     expect(await screen.findByText('No tasks in example yet.')).toBeDefined();
     view.unmount();
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
