@@ -65,7 +65,9 @@ describe('Add to task', () => {
     try {
       await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
       await screen.findByText('Quote');
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Create issue' })).toHaveProperty('disabled', false));
       await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
+      expect(screen.getByRole('button', { name: 'Create issue' })).toHaveProperty('disabled', true);
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
       expect(onclose).not.toHaveBeenCalled();
       finish(Response.json({ issue: { uid: 'one', ref: 'abcd', qualified_ref: 'example#abcd', project: 'example', title: 'Follow up', status: 'open', revision: '1' }, replayed: false }));
