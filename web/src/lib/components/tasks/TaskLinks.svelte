@@ -314,7 +314,7 @@
       from={outboundMetadata.from}
       sentAt={outboundMetadata.sent_at}
       onclose={oncancel}
-      oncreated={oncomplete}
+      oncreated={() => oncomplete?.()}
     />
   </div>
 {/if}

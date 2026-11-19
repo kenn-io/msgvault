@@ -215,24 +215,6 @@
   </form>
 
 <style>
-  form :global(.kit-disclosure) { color: var(--text-muted); font-size: var(--font-size-xs); }
-  dl {
-    display: grid;
-    gap: var(--space-1);
-  }
-  dl div {
-    display: grid;
-    grid-template-columns: 8rem minmax(0, 1fr);
-    gap: var(--space-2);
-  }
-  dt {
-    color: var(--text-muted);
-  }
-  dd {
-    margin: 0;
-    overflow-wrap: anywhere;
-    color: var(--text-primary);
-  }
   .message { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; justify-items: start; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
   form {
     --field-text-size: 16px;
@@ -260,9 +242,26 @@
     color: var(--text-primary);
   }
   .project { display: flex; justify-content: space-between; margin: 0; }
-  .project span {
+  .project span, form :global(.kit-disclosure) {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
+  }
+  dl {
+    display: grid;
+    gap: var(--space-1);
+  }
+  dl div {
+    display: grid;
+    grid-template-columns: 8rem minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+  dt {
+    color: var(--text-muted);
+  }
+  dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    color: var(--text-primary);
   }
   .actions {
     display: flex;

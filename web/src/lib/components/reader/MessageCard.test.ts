@@ -1,4 +1,4 @@
-import { taskLookup, taskOutboundMetadata } from '../tasks/fixtures.test-support';
+import { disabledTaskLookup, taskOutboundMetadata } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -340,7 +340,7 @@ it('refreshes links on close after a Kata comment fails after saving evidence', 
 });
 
 it('clears a download error when its menu reopens', async () => {
-  const client = createAPIClient(async (input) => (input as Request).url.includes('/cli/message/raw') ? Response.json({}, { status: 404 }) : Response.json(taskLookup({ state: 'disabled', complete: false })));
+  const client = createAPIClient(async (input) => (input as Request).url.includes('/cli/message/raw') ? Response.json({}, { status: 404 }) : Response.json(disabledTaskLookup()));
   render(MessageCard, { message: detail(), expanded: true, client });
   await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
   await fireEvent.click(screen.getByRole('menuitem', { name: 'Download original' }));
