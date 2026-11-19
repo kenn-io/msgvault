@@ -80,23 +80,22 @@ describe('Message task list', () => {
     expect(screen.queryByRole('region', { name: 'Tasks' }) !== null).toBe(visible);
   });
 
-  it.each(['incomplete empty result', 'complete empty result', 'Kata lookup error'])('updates the Tasks group for %s', async name => {
-    const error = name === 'Kata lookup error';
-    const group = groupFixture(43, error ? Response.json({ message: 'Kata lookup failed' }, { status: 503 }) : undefined);
+  it.each([
+    { name: 'incomplete empty result', initial: () => Response.json({ truncated: false, issues }), initialText: 'Send revised notes', refreshed: () => Response.json({ truncated: true, issues: [] }), visible: true, alert: null, link: false },
+    { name: 'complete empty result', initial: () => Response.json({ truncated: false, issues }), initialText: 'Send revised notes', refreshed: () => Response.json({ truncated: false, issues: [] }), visible: false, alert: null, link: false },
+    { name: 'Kata lookup error', initial: () => Response.json({ message: 'Kata lookup failed' }, { status: 503 }), initialText: 'Kata lookup failed', refreshed: () => Response.json({ message: 'Kata lookup failed' }, { status: 503 }), visible: true, alert: 'Kata lookup failed', link: false }
+  ])('updates the Tasks group for $name', async ({ initial, initialText, refreshed, visible, alert, link }) => {
+    const group = groupFixture(43, initial());
     try {
-      if (error) {
-        expect(await screen.findByText('Kata lookup failed')).toBeDefined();
-        expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
-      } else {
-        await screen.findByRole('link', { name: issueLink });
-        const truncated = name === 'incomplete empty result';
-        group.respond(Response.json({ truncated, issues: [] }));
-        await group.view.rerender({ refresh: 1 });
-        if (truncated) {
-          await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
-          expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
-        } else await waitFor(() => expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull());
-      }
+      await screen.findByText(initialText);
+      group.respond(refreshed());
+      await group.view.rerender({ refresh: 1 });
+      await waitFor(() => {
+        expect(screen.queryByText('Loading linked Kata issues…')).toBeNull();
+        expect(screen.queryByRole('region', { name: 'Tasks' }) !== null).toBe(visible);
+        expect(screen.queryByText('Kata lookup failed')?.textContent ?? null).toBe(alert);
+        expect(screen.queryByRole('link', { name: issueLink }) !== null).toBe(link);
+      });
     } finally { group.view.unmount(); group.readiness.dispose(); }
   });
 
