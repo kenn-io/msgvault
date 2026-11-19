@@ -146,9 +146,14 @@ export function groupedByLabel(dimensions: readonly string[]): string {
 
 export function fileTypeLabel(
   mimeType: string | undefined,
-  family: string | undefined
+  family: string | undefined,
+  filename?: string
 ): string {
   const mime = mimeType?.toLowerCase().split(';')[0]?.trim() ?? '';
+  if (mime === '' || mime === 'application/octet-stream') {
+    const extension = filename?.match(/^[^.].*\.([a-z0-9]+)$/i)?.[1];
+    if (extension) return extension.toUpperCase();
+  }
   const known = KNOWN_MIME[mime];
   if (known) return known;
   const [kind, subtype] = mime.split('/');
@@ -157,7 +162,7 @@ export function fileTypeLabel(
   }
   return family && Object.hasOwn(FAMILY_SINGULAR, family)
     ? FAMILY_SINGULAR[family as FileMIMEFamily]
-    : 'Unknown type';
+    : 'File';
 }
 
 export function preflightReasonLabel(action: string, reason: string): string {

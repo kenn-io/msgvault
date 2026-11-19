@@ -5517,6 +5517,7 @@ type FileMetadataResponse struct {
 	Filename       *string                          `json:"filename" validate:"required"`
 	ID             int64                            `json:"id"`
 	MessageID      int64                            `json:"message_id"`
+	MessageType    string                           `json:"message_type" validate:"required"`
 	MimeType       *string                          `json:"mime_type" validate:"required"`
 	SizeBytes      int64                            `json:"size_bytes"`
 	URL            *string                          `json:"url,omitzero"`
@@ -5541,6 +5542,9 @@ func (f FileMetadataResponse) Validate() error {
 	}
 	if err := typesValidator.Var(f.Filename, "required"); err != nil {
 		errors = errors.Append("Filename", err)
+	}
+	if err := typesValidator.Var(f.MessageType, "required"); err != nil {
+		errors = errors.Append("MessageType", err)
 	}
 	if err := typesValidator.Var(f.MimeType, "required"); err != nil {
 		errors = errors.Append("MimeType", err)

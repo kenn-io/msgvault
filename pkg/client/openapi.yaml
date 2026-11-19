@@ -5726,6 +5726,8 @@ components:
         message_id:
           format: int64
           type: integer
+        message_type:
+          type: string
         mime_type:
           nullable: true
           type: string
@@ -5737,6 +5739,7 @@ components:
       required:
         - id
         - message_id
+        - message_type
         - conversation_id
         - entry_key
         - filename
@@ -17306,7 +17309,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.19.0
+  version: 5.20.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
