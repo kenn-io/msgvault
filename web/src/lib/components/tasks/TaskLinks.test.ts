@@ -3,7 +3,7 @@ import { tick } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { getTaskIntegrationStatus } from '../../api/generated/api/api';
 import { conversationTaskStatusKey, type ConversationTaskStatus } from './task-status';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -36,7 +36,7 @@ describe('TaskLinks', () => {
     await waitFor(() => expect(screen.queryByText('Second task')).toBeNull());
   });
 
-  it('clears lookup errors and keeps linked rows during refresh', async () => {
+  it('clears lookup errors and keeps linked rows while refresh is pending', async () => {
     let respond: ((response: Response) => void) | undefined;
     let hold = false;
     let lookups = 0;
@@ -55,7 +55,6 @@ describe('TaskLinks', () => {
     await view.rerender({ refresh: 2 });
     await waitFor(() => expect(respond).toBeDefined());
     expect(screen.getByText('Review notes')).toBeDefined();
-    await act(async () => { respond!(Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review revised notes' }] }))); });
   });
 
   it("preserves an open creation draft and retry identity across another message's failed status refresh", async () => {

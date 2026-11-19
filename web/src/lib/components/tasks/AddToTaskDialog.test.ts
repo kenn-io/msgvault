@@ -24,7 +24,7 @@ describe('Add to task', () => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (path.endsWith('/prepare')) return Response.json({ evidence: [{ id: 'one', passage: 'one', reference: { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, source_type: 'email', source_identifier: 'example', source_message_id: '42', message: { body_sha256: 'a'.repeat(64), start_rune: 0, end_rune: 5 } }, excerpt: 'Quote', display: {}, content_trust: 'untrusted' }] });
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+      return Response.json(taskLookup());
     });
     const readiness = new KataReadiness(client);
     let view: ReturnType<typeof render> | undefined;
@@ -56,7 +56,7 @@ describe('Add to task', () => {
       if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (path.endsWith('/prepare')) return Response.json({ evidence: [{ id: 'one', passage: 'one', reference, excerpt: 'Quote', display: {}, content_trust: 'untrusted' }] });
       if (request.method === 'POST') return pending;
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+      return Response.json(taskLookup());
     });
     const readiness = new KataReadiness(client);
     await waitFor(() => expect(readiness.ready).toBe(true));

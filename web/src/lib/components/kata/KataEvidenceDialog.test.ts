@@ -180,26 +180,18 @@ describe('KataEvidenceDialog', () => {
     expect(await posts[0].json()).toEqual({ evidence: [passages[0].reference] });
   });
 
-  it('keeps the draft across modes', async () => {
+  it('keeps the draft and updates the disclosure across modes', async () => {
     const h = harness(async () => Response.json({ issue, replayed: false }));
     render(KataEvidenceDialog, { client: h.client, selector });
     await screen.findByText('Opening passage');
     await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Brief draft' } });
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
-    expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
-    expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Brief draft');
-  });
-
-  it('updates the disclosure across modes', async () => {
-    const h = harness(async () => Response.json({ issue, replayed: false }));
-    render(KataEvidenceDialog, { client: h.client, selector });
-    await screen.findByText('Opening passage');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     expect(screen.getByText(/only.*quote.*sent.*attachments.*out/i)).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
     expect(screen.getByText(/quote.*title.*description.*sent.*attachments.*out/i)).toBeDefined();
+    expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
+    expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Brief draft');
   });
 
   it('offers a typed ref from the configured project when issue lookup fails', async () => {

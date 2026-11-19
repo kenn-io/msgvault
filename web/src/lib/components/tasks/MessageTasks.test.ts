@@ -84,10 +84,10 @@ describe('Message task list', () => {
   });
 
   it.each([
-    { truncated: true, empty: true, reload: false },
-    { truncated: false, empty: true, reload: false },
-    { truncated: true, empty: false, reload: true }
-  ])('updates the group for truncated=$truncated empty=$empty reload=$reload', async ({ truncated, empty, reload }) => {
+    { name: 'incomplete empty result', truncated: true, empty: true, reload: false },
+    { name: 'complete empty result', truncated: false, empty: true, reload: false },
+    { name: 'recovery from incomplete result', truncated: true, empty: false, reload: true }
+  ])('updates the group for $name', async ({ truncated, empty, reload }) => {
     const group = groupFixture(43);
     try {
       await screen.findByRole('link', { name: issueLink });
