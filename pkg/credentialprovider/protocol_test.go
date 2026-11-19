@@ -171,3 +171,54 @@ func TestRenewalAndReleaseContract(t *testing.T) {
 	_, err = credentialprovider.DecodeRequest(bytes.NewReader(data))
 	assertions.ErrorIs(err, credentialprovider.ErrInvalidRequest)
 }
+
+const httpRequestJSON = `{"version":1,"operation":"authorize","request_id":"11111111-1111-4111-8111-111111111111","endpoint":"https://archive.example.org/messages","archive_id":"archive-a","client_id":"22222222-2222-4222-8222-222222222222","delegation_id":"33333333-3333-4333-8333-333333333333","source_ids":["17"],"operations":["getHealth","searchCLI"]}`
+
+const httpReadyJSON = `{"version":1,"operation":"authorize","request_id":"11111111-1111-4111-8111-111111111111","status":"ready","endpoint":"https://archive.example.org/messages","archive_id":"archive-a","client_id":"22222222-2222-4222-8222-222222222222","delegation_id":"33333333-3333-4333-8333-333333333333","source_ids":["17"],"operations":["getHealth","searchCLI"],"credential_id":"44444444-4444-4444-8444-444444444444","credential_generation":1,"issued_at":"2026-10-24T15:00:00Z","expires_at":"2026-10-24T15:15:00Z","credential":{"type":"bearer","token":"synthetic-token"}}`
+
+func TestHTTPReadProfileNamesExactOperations(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	r, err := credentialprovider.DecodeRequest(strings.NewReader(httpRequestJSON))
+	requirements.NoError(err)
+	assertions.Equal([]string{"getHealth", "searchCLI"}, r.Operations)
+	assertions.Empty(r.Tools)
+	all := r
+	all.Operations = credentialprovider.ReadOperations()
+	data, err := json.Marshal(all)
+	requirements.NoError(err)
+	_, err = credentialprovider.DecodeRequest(bytes.NewReader(data))
+	requirements.NoError(err, "every read operation can be requested")
+	for name, input := range map[string]string{
+		"no operations":         strings.Replace(httpRequestJSON, `["getHealth","searchCLI"]`, `[]`, 1),
+		"unadmitted operation":  strings.Replace(httpRequestJSON, `searchCLI`, `runCLICommand`, 1),
+		"duplicate operation":   strings.Replace(httpRequestJSON, `searchCLI`, `getHealth`, 1),
+		"tools and operations":  strings.Replace(httpRequestJSON, `"operations"`, `"tools":["get_stats"],"operations"`, 1),
+		"empty tools beside":    strings.Replace(httpRequestJSON, `"operations"`, `"tools":[],"operations"`, 1),
+		"mcp tool as operation": strings.Replace(httpRequestJSON, `searchCLI`, `get_stats`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := credentialprovider.DecodeRequest(strings.NewReader(input))
+			assert.ErrorIs(t, err, credentialprovider.ErrInvalidRequest)
+		})
+	}
+
+	response, err := credentialprovider.DecodeResponse(strings.NewReader(httpReadyJSON), r)
+	requirements.NoError(err)
+	assertions.Equal("synthetic-token", response.Credential.Token)
+	for name, input := range map[string]string{
+		"fewer operations":        strings.Replace(httpReadyJSON, `["getHealth","searchCLI"]`, `["getHealth"]`, 1),
+		"reordered operations":    strings.Replace(httpReadyJSON, `["getHealth","searchCLI"]`, `["searchCLI","getHealth"]`, 1),
+		"tools instead":           strings.Replace(httpReadyJSON, `"operations":["getHealth","searchCLI"]`, `"tools":["get_stats"]`, 1),
+		"missing operations":      strings.Replace(httpReadyJSON, `"operations":["getHealth","searchCLI"],`, ``, 1),
+		"refusal with operations": `{"version":1,"operation":"authorize","request_id":"11111111-1111-4111-8111-111111111111","status":"sign_in_required","reason":"no_current_sign_in","operations":["getHealth"]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := credentialprovider.DecodeResponse(strings.NewReader(input), r)
+			assert.ErrorIs(t, err, credentialprovider.ErrInvalidResponse)
+		})
+	}
+	refusal, err := credentialprovider.DecodeResponse(strings.NewReader(`{"version":1,"operation":"authorize","request_id":"11111111-1111-4111-8111-111111111111","status":"sign_in_required","reason":"no_current_sign_in"}`), r)
+	requirements.NoError(err)
+	assertions.Equal(credentialprovider.StatusSignInRequired, refusal.Status)
+}

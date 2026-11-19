@@ -31,9 +31,13 @@ const (
 
 // Config holds configuration for creating a daemon HTTP client.
 type Config struct {
-	URL              string
-	APIKey           string
-	AgentToken       string
+	URL        string
+	APIKey     string
+	AgentToken string
+	// Credential returns the bearer for each request, such as one a credential
+	// helper issued. It excludes APIKey and AgentToken, and the client then
+	// refuses redirects so the bearer reaches only URL.
+	Credential       func(context.Context) (string, error)
 	LocalDaemonToken string
 	AllowInsecure    bool
 	Timeout          time.Duration
@@ -47,6 +51,7 @@ type Client struct {
 	baseURL          string
 	apiKey           string
 	agentToken       string
+	credential       func(context.Context) (string, error)
 	httpClient       *http.Client
 	typedClient      *apiclient.Client
 	busyNotify       func(message string)
@@ -95,6 +100,9 @@ func New(cfg Config) (*Client, error) {
 	}
 	if cfg.APIKey != "" && cfg.AgentToken != "" {
 		return nil, errors.New("APIKey and AgentToken are mutually exclusive")
+	}
+	if cfg.Credential != nil && (cfg.APIKey != "" || cfg.AgentToken != "") {
+		return nil, errors.New("a credential excludes APIKey and AgentToken")
 	}
 
 	parsedURL, err := url.Parse(cfg.URL)
@@ -148,11 +156,17 @@ func New(cfg Config) (*Client, error) {
 			return errors.New("agent token client does not follow redirects")
 		}
 	}
+	if cfg.Credential != nil {
+		httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("credential helper client does not follow redirects")
+		}
+	}
 
 	c := &Client{
 		baseURL:          strings.TrimSuffix(cfg.URL, "/"),
 		apiKey:           cfg.APIKey,
 		agentToken:       cfg.AgentToken,
+		credential:       cfg.Credential,
 		httpClient:       httpClient,
 		rootContext:      rootContext,
 		requestMode:      cfg.RequestMode,
@@ -215,7 +229,7 @@ func (c *Client) GeneratedClient() (*apiclient.Client, error) {
 			client:      c.httpClient,
 			rootContext: c.requestContext(),
 		}),
-		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.agentToken, c.requestMode, c.localDaemonToken)),
+		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.agentToken, c.credential, c.requestMode, c.localDaemonToken)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create generated API client: %w", err)
@@ -400,9 +414,15 @@ func (b *cancelOnCloseBody) Close() error {
 
 type grantDecisionContextKey struct{}
 
-func requestEditor(apiKey, agentToken string, mode RequestMode, localDaemonToken string) apiclient.RequestEditorFn {
+func requestEditor(apiKey, agentToken string, credential func(context.Context) (string, error), mode RequestMode, localDaemonToken string) apiclient.RequestEditorFn {
 	return func(ctx context.Context, req *http.Request) error {
-		if agentToken != "" {
+		if credential != nil {
+			bearer, err := credential(ctx)
+			if err != nil {
+				return err
+			}
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		} else if agentToken != "" {
 			// #nosec G101 -- this is a header value set from the configured agent
 			// token, not a hardcoded credential.
 			req.Header.Set(apiprotocol.AgentTokenHeader, agentToken)
