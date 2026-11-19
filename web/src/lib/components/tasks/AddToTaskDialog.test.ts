@@ -117,26 +117,25 @@ describe('Add to task', () => {
     } finally { view.unmount(); }
   });
 
-  it.each(['ready', 'stale'])('updates the task control when the index is %s', async state => {
-    const client = createAPIClient(async input => {
-      const url = (input as Request).url;
-      if (url.includes('/search')) return Response.json({ tasks: [], truncated: false });
-      return Response.json(url.endsWith('/status')
-        ? { state: 'ready', project: 'example' }
-        : taskLookup({ state, complete: state === 'ready' }));
-    });
+  it('shows the task control when the index is ready', async () => {
+    const view = render(AddToTaskDialog, { client: taskCreationClient(), messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
+    try {
+      const existing = await screen.findByRole('radio', { name: 'Existing' });
+      expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
+      expect(screen.queryByText('Task')).toBeNull();
+      await fireEvent.click(existing);
+      expect(await screen.findByRole('searchbox', { name: 'Filter tasks' })).toBeDefined();
+    } finally { view.unmount(); }
+  });
+
+  it('hides the task control when the index is stale', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'ready', project: 'example' }
+      : taskLookup({ state: 'stale', complete: false })));
     const view = render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
     try {
-      if (state === 'ready') {
-        const existing = await screen.findByRole('radio', { name: 'Existing' });
-        expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
-        expect(screen.queryByText('Task')).toBeNull();
-        await fireEvent.click(existing);
-        expect(await screen.findByRole('searchbox', { name: 'Filter tasks' })).toBeDefined();
-      } else {
-        await screen.findByRole('alert');
-        expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
-      }
+      await screen.findByRole('alert');
+      expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
     } finally { view.unmount(); }
   });
 
