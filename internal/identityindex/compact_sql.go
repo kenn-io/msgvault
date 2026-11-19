@@ -16,21 +16,11 @@ func buildMeetingPeopleCTE(groups string) string {
 	return `
 WITH logical_people AS (
 	SELECT l.entry_key, l.source_id, l.source_type, l.occurred_at, l.message_type, l.attachment_count,
-	       l.canonical_id, l.anchor_message_id, coalesce(g.group_id, l.anchor_message_id) AS meeting_group,
-	       row_number() OVER (PARTITION BY l.canonical_id, coalesce(g.group_id, l.anchor_message_id)
-	                          ORDER BY l.deleted_from_source, l.occurred_at, l.anchor_message_id) AS meeting_order
+	       l.canonical_id, l.anchor_message_id, coalesce(g.group_id, l.anchor_message_id) AS meeting_group
 	FROM ` + logicalBuildRelation + ` l
 	LEFT JOIN ` + groups + ` g ON g.message_id = l.anchor_message_id
 	WHERE l.relation_kind = 1
 )`
-}
-
-// A meeting is counted at its owning transcript; filtered views count it only when that transcript matches the filter.
-// Live copies come first, then the earliest time and lowest message ID.
-func buildMeetingOwnersSQL(groups string) string {
-	return buildMeetingPeopleCTE(groups) + `
-SELECT canonical_id::BIGINT AS canonical_id, anchor_message_id::BIGINT AS message_id
-FROM logical_people WHERE message_type = 'meeting_transcript' AND meeting_order = 1`
 }
 
 func buildRelationshipPeopleSQL(effectiveAt time.Time, groups string) string {
@@ -46,7 +36,7 @@ func buildRelationshipPeopleSQL(effectiveAt time.Time, groups string) string {
 ), source_rows AS (
 	SELECT canonical_id, source_id, source_type,
 	       count(*)::BIGINT AS activity_count,
-	       count(*) FILTER (WHERE message_type = 'meeting_transcript' AND meeting_order = 1)::BIGINT AS meeting_count,
+	       coalesce(list(DISTINCT meeting_group ORDER BY meeting_group) FILTER (WHERE message_type = 'meeting_transcript'), []::BIGINT[]) AS meeting_groups,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -69,7 +59,7 @@ func buildRelationshipPeopleSQL(effectiveAt time.Time, groups string) string {
 		       source_id := source_id,
 		       source_type := source_type,
 		       activity_count := activity_count,
-		       meeting_count := meeting_count,
+		       meeting_groups := meeting_groups,
 		       file_count := file_count,
 		       first_at := first_at,
 		       last_at := last_at
@@ -152,13 +142,28 @@ LEFT JOIN domain_people p USING (domain)
 ORDER BY t.domain`
 }
 
-func buildRelationshipDailySQL() string {
+// MeetingCopyRank selects a transcript within each person's meeting group.
+func MeetingCopyRank(person, message, messageType, occurredAt string) string {
+	return `row_number() OVER (PARTITION BY ` + person + `, coalesce(g.group_id, ` + message + `) ORDER BY (` + messageType + ` <> 'meeting_transcript'), ` + occurredAt + `, ` + message + `)`
+}
+
+func buildRelationshipDailySQL(groups string) string {
 	return fmt.Sprintf(`
-WITH logical_people AS (
-	SELECT entry_key, occurred_at, entry_kind, is_from_me, canonical_id,
-	       is_author, is_owner, with_owner
-	FROM `+logicalBuildRelation+`
-	WHERE relation_kind = 1
+WITH meeting_owners AS (
+	SELECT coalesce(g.group_id, l.anchor_message_id) AS meeting_group
+	FROM `+logicalBuildRelation+` l
+	LEFT JOIN `+groups+` g ON g.message_id = l.anchor_message_id
+	WHERE l.relation_kind = 1 AND l.message_type = 'meeting_transcript' AND l.with_owner
+	GROUP BY meeting_group
+), logical_people AS (
+	SELECT l.*, `+MeetingCopyRank("l.canonical_id", "l.anchor_message_id", "l.message_type", "l.occurred_at")+` AS meeting_rank
+	FROM `+logicalBuildRelation+` l
+	LEFT JOIN `+groups+` g ON g.message_id = l.anchor_message_id
+	WHERE l.relation_kind = 1 AND NOT l.is_owner
+	  AND (l.entry_kind NOT IN ('event','meeting')
+	      OR (l.message_type = 'meeting_transcript'
+	          AND EXISTS (SELECT 1 FROM meeting_owners o WHERE o.meeting_group = coalesce(g.group_id, l.anchor_message_id)))
+	      OR (l.message_type <> 'meeting_transcript' AND l.with_owner))
 ), interactions AS (
 	SELECT p.*,
 	       CASE WHEN p.is_from_me
@@ -168,17 +173,16 @@ WITH logical_people AS (
 	                 AND (p.entry_kind = 'conversation'
 	                      OR (p.entry_kind IN ('email','item') AND p.is_author))
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS received_units,
-	       CASE WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
+	       CASE WHEN p.entry_kind IN ('event','meeting') AND p.meeting_rank = 1
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS meeting_units,
 	       CASE
-	           WHEN p.entry_kind IN ('event','meeting') AND p.with_owner THEN %d::UTINYINT
+	           WHEN p.entry_kind IN ('event','meeting') AND p.meeting_rank = 1 THEN %d::UTINYINT
 	           WHEN p.entry_kind = 'conversation' THEN %d::UTINYINT
 	           WHEN p.entry_kind IN ('email','item') THEN %d::UTINYINT
 	           ELSE 0::UTINYINT
 	       END AS modality_mask
 	FROM logical_people p
-	WHERE NOT p.is_owner
-	  AND NOT (p.entry_kind IN ('event','meeting') AND NOT p.with_owner)
+	WHERE p.entry_kind NOT IN ('event','meeting') OR p.meeting_rank = 1
 )
 SELECT canonical_id,
        occurred_at::DATE AS event_date,

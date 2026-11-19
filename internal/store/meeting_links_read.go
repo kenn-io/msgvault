@@ -118,14 +118,14 @@ func (s *Store) meetingRowsForKey(ctx context.Context, key meetingLinkKey, budge
 	return s.meetingEventRows(ctx, `e.ical_uid = ? AND (e.kind <> 'exception' OR (`+window+`))`, append([]any{key[2]}, args...), budget)
 }
 
-func (s *Store) meetingRelatedEventRows(ctx context.Context, sourceID int64, id string, at time.Time, budget *int) ([]CalendarEventRow, error) {
-	window, args := calendarExceptionWindow(s.dialect, at.Add(-calendarCandidateMargin), at.Add(time.Second+calendarCandidateMargin))
+func (s *Store) meetingRelatedEventRows(ctx context.Context, sourceID int64, id string, from, to time.Time, budget *int) ([]CalendarEventRow, error) {
+	window, args := calendarExceptionWindow(s.dialect, from.Add(-calendarCandidateMargin), to.Add(calendarCandidateMargin))
 	predicate := `m.source_id = ? AND (e.provider_event_id = ? OR e.series_provider_id = ?) AND (e.kind <> 'exception' OR (` + window + `))`
 	return s.meetingEventRows(ctx, predicate, append([]any{sourceID, id, id}, args...), budget)
 }
 
 // Include each candidate's series and exceptions in the shared expansion.
-func (s *Store) meetingRelatedRows(ctx context.Context, seeds []CalendarEventRow, at time.Time, budget *int) ([]CalendarEventRow, error) {
+func (s *Store) meetingRelatedRows(ctx context.Context, seeds []CalendarEventRow, from, to time.Time, budget *int) ([]CalendarEventRow, error) {
 	all := make(map[int64]CalendarEventRow, len(seeds))
 	seen := make(map[string]bool)
 	for _, row := range seeds {
@@ -144,7 +144,7 @@ func (s *Store) meetingRelatedRows(ctx context.Context, seeds []CalendarEventRow
 			continue
 		}
 		seen[group] = true
-		rows, err := s.meetingRelatedEventRows(ctx, row.SourceID, id, at, budget)
+		rows, err := s.meetingRelatedEventRows(ctx, row.SourceID, id, from, to, budget)
 		if err != nil {
 			return nil, err
 		}
@@ -159,23 +159,8 @@ func (s *Store) meetingRelatedRows(ctx context.Context, seeds []CalendarEventRow
 	return rows, nil
 }
 
-func (s *Store) meetingExpand(ctx context.Context, rows []CalendarEventRow, at time.Time, budget *int) (CalendarOccurrencePage, error) {
-	rows, err := s.meetingRelatedRows(ctx, rows, at, budget)
-	if err != nil {
-		return CalendarOccurrencePage{}, err
-	}
-	page, err := s.expandCalendarRows(ctx, rows, at, at.Add(time.Second), false, budget)
-	if err != nil {
-		return page, err
-	}
-	if *budget < 0 {
-		return CalendarOccurrencePage{}, calendarRecurrenceBudgetError()
-	}
-	return page, nil
-}
-
 func (s *Store) meetingOccurrencesForKeys(ctx context.Context, keys []meetingLinkKey, budget *int, unexpandable *[]CalendarUnexpandable) (map[meetingLinkKey][]CalendarOccurrence, error) {
-	groups := make(map[time.Time]map[int64]CalendarEventRow)
+	groups := meetingSeriesWindows{}
 	wanted := make(map[meetingLinkKey]bool, len(keys))
 	matches := make(map[meetingLinkKey][]CalendarOccurrence)
 	for _, key := range keys {
@@ -223,22 +208,10 @@ func (s *Store) meetingOccurrencesForKeys(ctx context.Context, keys []meetingLin
 			if at.IsZero() {
 				continue
 			}
-			at = at.UTC()
-			if groups[at] == nil {
-				groups[at] = make(map[int64]CalendarEventRow)
-			}
-			groups[at][row.MessageID] = row
+			groups.add(row, at.UTC())
 		}
 	}
-	for at, group := range groups {
-		rows := make([]CalendarEventRow, 0, len(group))
-		for _, row := range group {
-			rows = append(rows, row)
-		}
-		page, err := s.meetingExpand(ctx, rows, at, budget)
-		if err != nil {
-			return nil, err
-		}
+	err := groups.expand(ctx, s, budget, func(page CalendarOccurrencePage) {
 		*unexpandable = append(*unexpandable, page.Unexpandable...)
 		for _, occurrence := range page.Occurrences {
 			for _, key := range occurrenceKeys(occurrence) {
@@ -247,6 +220,9 @@ func (s *Store) meetingOccurrencesForKeys(ctx context.Context, keys []meetingLin
 				}
 			}
 		}
+	})
+	if err != nil {
+		return nil, err
 	}
 	return matches, nil
 }
@@ -352,16 +328,7 @@ func (s *Store) meetingAutomaticRecord(ctx context.Context, ref MeetingLinkRef, 
 		if row.Event.Kind == calendarSeriesKind && ref.Identity == (calrecur.Identity{}) {
 			return record, ErrMeetingOccurrenceRequired
 		}
-		var at time.Time
-		if ref.Identity != (calrecur.Identity{}) {
-			at, err = meetingIdentityTime(ref.Identity)
-		} else if row.Event.Original != nil {
-			at, err = meetingIdentityTime(*row.Event.Original)
-		} else if row.Event.Start != nil {
-			at = *row.Event.Start
-		} else if row.Event.End != nil {
-			at = *row.Event.End
-		}
+		at, err := meetingReferenceTime(row, ref.Identity)
 		if err != nil {
 			return record, fmt.Errorf("parse meeting occurrence reference: %w", err)
 		}

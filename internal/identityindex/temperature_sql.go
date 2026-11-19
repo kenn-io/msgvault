@@ -13,11 +13,33 @@ const temperatureBuildRelation = "relationship_build_temperature_daily"
 // stays in the daily datasets.
 const relationshipTemperatureFirstYear = 1970
 
+// MeetingOwnerGroupsSQL finds owner evidence for the selected transcript groups.
+// selected must project message_id; all inputs are trusted DuckDB relations.
+func MeetingOwnerGroupsSQL(selected, ownerActivity, groups string) string {
+	return fmt.Sprintf(`
+WITH selected_meetings AS (
+	SELECT s.message_id, coalesce(g.group_id, s.message_id) AS meeting_group
+	FROM %s s
+	LEFT JOIN %s g ON g.message_id = s.message_id
+), meeting_copies AS (
+	SELECT g.message_id FROM %s g
+	WHERE EXISTS (SELECT 1 FROM selected_meetings s WHERE s.meeting_group = g.group_id)
+	UNION
+	SELECT message_id FROM selected_meetings
+)
+SELECT coalesce(g.group_id, a.message_id) AS meeting_group
+FROM %s a
+JOIN meeting_copies c ON c.message_id = a.message_id
+LEFT JOIN %s g ON g.message_id = a.message_id
+WHERE a.is_owner AND a.is_direct AND a.message_type = 'meeting_transcript' AND NOT a.unsent AND NOT a.email_invite
+GROUP BY meeting_group`, selected, groups, groups, ownerActivity, groups)
+}
+
 // RelationshipTemperatureFactsSQL selects one qualifying row per stored
-// message and canonical person. activity is a trusted DuckDB relation rendered
-// by the cache/query packages; it is not user input. The shared SQL keeps cache
-// scores and local-year calendars on one attribution contract.
-func RelationshipTemperatureFactsSQL(activity string, effectiveAt time.Time) string {
+// message and canonical person. The relations are trusted DuckDB SQL rendered
+// by the cache/query packages. ownerActivity includes meeting copies outside
+// activity's date window so the calendar retains group-level owner evidence.
+func RelationshipTemperatureFactsSQL(activity, ownerActivity, groups string, effectiveAt time.Time) string {
 	cutoff := effectiveAt.UTC().Format("2006-01-02 15:04:05.999999999")
 	return fmt.Sprintf(`
 WITH message_owner AS (
@@ -29,6 +51,7 @@ WITH message_owner AS (
 	       min(f.occurred_at)::TIMESTAMP AS occurred_at,
 	       bool_or(f.is_chat) AS is_chat,
 	       arg_min(f.entry_kind, f.occurred_at)::VARCHAR AS entry_kind,
+	       arg_min(f.message_type, f.occurred_at)::VARCHAR AS message_type,
 	       arg_min(f.conversation_type, f.occurred_at)::VARCHAR AS conversation_type,
 	       bool_or(f.is_from_me) AS is_from_me,
 	       bool_or(f.is_direct) AS is_direct,
@@ -55,11 +78,18 @@ WITH message_owner AS (
 	          AND f.is_direct AND (f.is_from_me OR f.is_author))
 	  )
 	GROUP BY f.message_id, f.canonical_id
+), meeting_owners AS (
+	%[7]s
 ), classified AS (
 	SELECT *,
 	       entry_kind IN ('event', 'meeting') AS is_meeting,
 	       CASE
-	           WHEN entry_kind IN ('event', 'meeting') THEN owner_present
+	           WHEN entry_kind IN ('event', 'meeting') THEN
+	               CASE WHEN message_type = 'meeting_transcript' THEN EXISTS (
+	                   SELECT 1 FROM meeting_owners o
+	                   LEFT JOIN %[6]s g ON g.message_id = person_messages.message_id
+	                   WHERE o.meeting_group = coalesce(g.group_id, person_messages.message_id))
+	               ELSE owner_present END
 	           WHEN is_chat AND lower(conversation_type) = 'direct_chat' THEN
 	               owner_present AND (is_conversation_member OR is_direct)
 	               AND (is_from_me OR is_author)
@@ -93,23 +123,52 @@ SELECT message_id, canonical_id, occurred_at,
 	   is_meeting AS meeting,
 	   modality_mask
 FROM qualifying
+WHERE NOT is_meeting OR message_type <> 'meeting_transcript'
+   OR (canonical_id, message_id) IN (%[8]s)
 `,
 		activity,
 		cutoff,
 		ModalityMeeting,
 		ModalityChat,
 		ModalityEmail,
+		groups,
+		MeetingOwnerGroupsSQL("(SELECT message_id FROM person_messages WHERE message_type = 'meeting_transcript')", ownerActivity, groups),
+		meetingCopyRepresentativesSQL(ownerActivity, groups, cutoff),
 	)
+}
+
+// meetingCopyRepresentativesSQL selects the transcript copy that represents
+// each linked meeting group for a person. It ranks every copy in
+// ownerActivity, not just those in activity's date window, so a windowed
+// caller keeps the representative the annual score assigns. It reads the
+// person_messages CTE of RelationshipTemperatureFactsSQL.
+func meetingCopyRepresentativesSQL(ownerActivity, groups, cutoff string) string {
+	return fmt.Sprintf(`
+SELECT canonical_id, message_id FROM (
+	SELECT c.canonical_id, c.message_id, `+MeetingCopyRank("c.canonical_id", "c.message_id", "c.message_type", "c.occurred_at")+` AS meeting_rank
+	FROM (
+		SELECT canonical_id, message_id, min(occurred_at)::TIMESTAMP AS occurred_at,
+		       any_value(message_type)::VARCHAR AS message_type
+		FROM %[1]s
+		WHERE canonical_id IN (SELECT canonical_id FROM person_messages)
+		  AND NOT is_owner AND NOT unsent AND NOT email_invite
+		  AND occurred_at <= TIMESTAMP '%[3]s'
+		  AND entry_kind IN ('event', 'meeting')
+		  AND message_type = 'meeting_transcript'
+		GROUP BY canonical_id, message_id
+	) c
+	LEFT JOIN %[2]s g ON g.message_id = c.message_id
+) WHERE meeting_rank = 1`, ownerActivity, groups, cutoff)
 }
 
 // buildRelationshipTemperatureDailySQL reduces qualifying facts to one
 // canonical-person UTC day. It deliberately does not reuse
 // relationship_daily: that dataset is logical-entry grain and collapses a
 // chat conversation to its newest event.
-func buildRelationshipTemperatureDailySQL(activity string, effectiveAt time.Time) string {
+func buildRelationshipTemperatureDailySQL(activity, groups string, effectiveAt time.Time) string {
 	return `
 WITH relationship_facts AS (
-` + RelationshipTemperatureFactsSQL(activity, effectiveAt) + `
+` + RelationshipTemperatureFactsSQL(activity, activity, groups, effectiveAt) + `
 )
 SELECT canonical_id,
 	   occurred_at::DATE AS event_date,

@@ -180,10 +180,6 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			require.NoError(err)
 			addMessage(2)
 			addMessage(3)
-			groups, fallback, err := st.MeetingTranscriptGroupsContext(t.Context(), 3)
-			require.NoError(err)
-			require.False(fallback)
-			require.Equal(map[int64]int64{1: 1, 3: 3}, groups)
 			_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = NULL WHERE id = 2`)
 			require.NoError(err)
 			if tt.repair {

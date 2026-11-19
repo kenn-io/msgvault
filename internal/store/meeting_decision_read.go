@@ -12,60 +12,45 @@ import (
 )
 
 // MeetingTranscriptGroupsContext resolves all visible transcripts in one graph.
-// When the shared read budget is exhausted, each transcript remains separate.
-func (s *Store) MeetingTranscriptGroupsContext(ctx context.Context, through int64) (map[int64]int64, bool, error) {
-	return s.meetingTranscriptGroupsContext(ctx, through, calrecur.RequestReadBudget)
-}
-
-// MeetingTranscriptGroupsSQLiteSnapshotContext resolves groups through a caller-owned SQLite snapshot.
-func MeetingTranscriptGroupsSQLiteSnapshotContext(ctx context.Context, reader SQLReader, through int64) (map[int64]int64, bool, error) {
-	dialect := &SQLiteDialect{}
-	// This store has no connection pool: all reads must use the supplied snapshot.
-	s := &Store{db: newLoggedDB(nil, dialect.Rebind), dialect: dialect}
-	ctx = WithReadSnapshotReaderContext(ctx, nil, reader)
-	return s.MeetingTranscriptGroupsContext(ctx, through)
-}
-
-func (s *Store) meetingTranscriptGroupsContext(ctx context.Context, through int64, batchBudget int) (map[int64]int64, bool, error) {
+// Cache grouping stops with an error when recurrence work exceeds the bound,
+// or when the context is canceled.
+func (s *Store) MeetingTranscriptGroupsContext(ctx context.Context, through int64) (map[int64]int64, error) {
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	defer release()
 	var seeds []meetingDecisionEndpoint
 	groups := make(map[int64]int64)
-	err = func() error {
-		rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT id FROM messages WHERE message_type = 'meeting_transcript' AND deleted_at IS NULL AND sent_at IS NOT NULL AND id <= ? ORDER BY id`, through)
-		if err != nil {
-			return err
-		}
-		defer rows.Close() //nolint:errcheck // read-only cursor
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				return err
-			}
-			seeds = append(seeds, meetingDecisionEndpoint{ID: id, Kind: meetingRefMessage})
-			groups[id] = id
-		}
-		return rows.Err()
-	}()
+	rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT id FROM messages WHERE message_type = 'meeting_transcript' AND deleted_at IS NULL AND sent_at IS NOT NULL AND id <= ? ORDER BY id`, through)
 	if err != nil {
-		return nil, false, err
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck // read-only cursor
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		seeds = append(seeds, meetingDecisionEndpoint{ID: id, Kind: meetingRefMessage})
+		groups[id] = id
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if len(seeds) == 0 {
-		return groups, false, nil
+		return groups, nil
 	}
-	budget := batchBudget * ((len(seeds) + 999) / 1000)
+	// Each transcript may account for one full series expansion; reuse keeps the load well inside it.
+	budget := len(seeds) * calrecur.SeriesReadBudget
 	graph, err := s.loadMeetingDecisionGraph(ctx, seeds, &budget, false)
-	if errors.Is(err, ErrQueryTooBroad) {
-		return groups, true, nil
-	}
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if budget <= 0 {
-		return groups, true, nil
+	for _, warning := range graph.warnings {
+		if warning.warning.Reason == calendarSeriesWorkLimitReason || warning.warning.Reason == calrecur.ErrBudgetExceeded.Error() {
+			return nil, calendarRecurrenceBudgetError()
+		}
 	}
 	root, _ := graph.reduce()
 	minimum := make(map[string]int64)
@@ -78,7 +63,16 @@ func (s *Store) meetingTranscriptGroupsContext(ctx context.Context, through int6
 	for _, seed := range seeds {
 		groups[seed.ID] = minimum[root(seed.ref())]
 	}
-	return groups, false, nil
+	return groups, nil
+}
+
+// MeetingTranscriptGroupsSQLiteSnapshotContext resolves groups through a caller-owned SQLite snapshot.
+func MeetingTranscriptGroupsSQLiteSnapshotContext(ctx context.Context, reader SQLReader, through int64) (map[int64]int64, error) {
+	dialect := &SQLiteDialect{}
+	// This store has no connection pool: all reads must use the supplied snapshot.
+	s := &Store{db: newLoggedDB(nil, dialect.Rebind), dialect: dialect}
+	ctx = WithReadSnapshotReaderContext(ctx, nil, reader)
+	return s.MeetingTranscriptGroupsContext(ctx, through)
 }
 
 type meetingDecisionEdge struct {
@@ -306,6 +300,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, no
 }
 
 func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDecisionEndpoint, budget *int, notesOnly bool) (*meetingDecisionGraph, error) {
+	ctx = withMeetingExpansions(ctx)
 	nodes := map[string]meetingDecisionNode{}
 	var queue []meetingDecisionEndpoint
 	add := func(endpoint meetingDecisionEndpoint, link *MeetingLink) {
@@ -330,6 +325,9 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 	var candidates []meetingDecisionEdge
 	resolved := map[string]bool{}
 	for len(queue) > 0 {
+		if err := s.meetingWarmExpansions(ctx, queue, budget); err != nil {
+			return nil, err
+		}
 		var pending []meetingDecisionEndpoint
 		for len(queue) > 0 {
 			endpoint := queue[0]

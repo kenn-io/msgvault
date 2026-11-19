@@ -105,35 +105,22 @@ func TestInitSchemaUnlessCurrentPostgreSQLFallsThroughToFullInitializer(t *testi
 	}
 }
 
-func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
+func TestSchemaVersionIndexUpgrade(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	if !f.Store.IsPostgreSQL() {
-		t.Skip("PostgreSQL index check")
+	index := "idx_calendar_events_series_id"
+	query := `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_calendar_events_series_id'`
+	if f.Store.IsPostgreSQL() {
+		index = "idx_identity_match_candidates_right"
+		query = `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`
 	}
-	_, err := f.Store.DB().ExecContext(t.Context(), "DROP INDEX idx_identity_match_candidates_right")
+	_, err := f.Store.DB().ExecContext(t.Context(), "DROP INDEX "+index)
 	require.NoError(err)
 	require.NoError(f.Store.InitSchemaContext(t.Context()))
 	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
 	var count int
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`).Scan(&count))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), query).Scan(&count))
 	assert.Equal(t, 1, count)
-}
-
-func TestCalendarSeriesIndexRecreated(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	if f.Store.IsPostgreSQL() {
-		t.Skip("SQLite index check")
-	}
-	ctx := t.Context()
-	_, err := f.Store.DB().ExecContext(ctx, `DROP INDEX IF EXISTS idx_calendar_events_series_id`)
-	require.NoError(err)
-	require.NoError(f.Store.InitSchemaContext(ctx))
-	query := `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_calendar_events_series_id'`
-	var count int
-	require.NoError(f.Store.DB().QueryRowContext(ctx, query).Scan(&count))
-	require.Equal(1, count)
 }
 
 func TestSchemaVersionMeetingDecisionsPreviousUpgrade(t *testing.T) {

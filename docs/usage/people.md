@@ -101,6 +101,11 @@ older than API schema 5.16.0. It records every value with enrichment
 provenance, like other MCP profile writes, so CardDAV publication requires
 review. It never publishes.
 
+People and Relationships count a meeting once for a person with a transcript;
+linked calendar events add no separate count. Filters count each meeting with a
+matching transcript, and saved link changes take effect after the next cache refresh.
+Calendar events without a transcript add no meeting count or relationship signal.
+
 Each saved profile also has a vCard UID. A new profile imported from a subscribed
 CardDAV book adopts the card's UID when it is a UUID that no other profile uses
 or has used. Existing profiles keep their UID. Use

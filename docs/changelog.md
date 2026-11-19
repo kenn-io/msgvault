@@ -16,6 +16,8 @@ All notable changes to msgvault, grouped by release.
 - Start bounded Gmail or IMAP historical imports through MCP with `--allow-import-writes`, and follow their durable job status.
 - MCP clients can list and read msgvault's bundled guides with `msgvault.skills`: the MCP quickstart as `workflow` and every [agent skill](guides/agent-skills.md#skills-and-the-mcp-server). Delegated sessions can use it too.
 
+- Count linked transcripts once in People and Relationships, including when a source or date filter selects only one copy.
+
 - Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose.
 
 - Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.

@@ -71,6 +71,13 @@ type sqlExecutor interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+func (b builder) meetingGroups() string {
+	if b.opts.MeetingGroups == "" {
+		return "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)"
+	}
+	return b.opts.MeetingGroups
+}
+
 // Build derives the relationship datasets from schema-correct base Parquet.
 // Incremental mode writes an activity delta, merges compact contributions,
 // and refreshes the published summaries from those compact grains.
@@ -155,14 +162,8 @@ func Build(
 		"SELECT * FROM "+logicalBuildRelation); err != nil {
 		return BuildResult{}, err
 	}
-	groups := opts.MeetingGroups
-	if groups == "" {
-		groups = "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)"
-	}
+	groups := b.meetingGroups()
 	if err := b.copyDataset(ctx, DatasetMeetingGroups, "SELECT message_id::BIGINT AS message_id, group_id::BIGINT AS group_id FROM "+groups); err != nil {
-		return BuildResult{}, err
-	}
-	if err := b.copyDataset(ctx, DatasetMeetingOwners, buildMeetingOwnersSQL(groups)); err != nil {
 		return BuildResult{}, err
 	}
 	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt, groups)); err != nil {
@@ -171,7 +172,7 @@ func Build(
 	if err := b.copyDataset(ctx, DatasetDomains, buildRelationshipDomainsSQL()); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(ctx, DatasetRelationshipDaily, buildRelationshipDailySQL()); err != nil {
+	if err := b.copyDataset(ctx, DatasetRelationshipDaily, buildRelationshipDailySQL(groups)); err != nil {
 		return BuildResult{}, err
 	}
 	validationActivity := activity

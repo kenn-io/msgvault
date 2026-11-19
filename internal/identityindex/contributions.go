@@ -29,14 +29,15 @@ func (b builder) materializeContributions(ctx context.Context, activity string, 
 		}
 		activity = "(SELECT * FROM " + activityBuildRelation + ")"
 	}
-	temperatureSQL := buildRelationshipTemperatureDailySQL(activity, effectiveAt)
+	groups := b.meetingGroups()
+	temperatureSQL := buildRelationshipTemperatureDailySQL(activity, groups, effectiveAt)
 	logicalSQL := buildLogicalActivityMaterializationSQL(activity)
 	if reuseContributions {
 		delta := "(SELECT * FROM " + deltaActivityBuildRelation + ")"
 		if reuseTemperature {
 			temperatureSQL = mergeTemperatureContributionsSQL(
 				b.committed(DatasetTemperatureContributions),
-				buildRelationshipTemperatureDailySQL(delta, effectiveAt),
+				buildRelationshipTemperatureDailySQL(delta, groups, effectiveAt),
 			)
 		}
 		logicalSQL = mergeLogicalContributionsSQL(
@@ -79,7 +80,25 @@ func (b builder) canReuseTemperatureContributions(ctx context.Context, effective
 	if err := b.db.QueryRowContext(ctx, query, priorCutoff.Time, effectiveAt).Scan(&newlyEligible); err != nil {
 		return false, fmt.Errorf("inspect newly eligible relationship messages: %w", err)
 	}
-	return !newlyEligible, nil
+	if newlyEligible {
+		return false, nil
+	}
+	groups := b.meetingGroups()
+	oldGroups := "read_parquet('" + quoteSQLString(b.committed(DatasetMeetingGroups)) + "')"
+	query = `SELECT EXISTS (
+		SELECT 1 FROM ` + oldGroups + ` old
+		LEFT JOIN ` + groups + ` current USING (message_id)
+		WHERE current.group_id IS DISTINCT FROM old.group_id
+		UNION ALL
+		SELECT 1 FROM ` + groups + ` current
+		JOIN ` + oldGroups + ` old ON old.group_id = current.group_id
+		WHERE NOT EXISTS (SELECT 1 FROM ` + oldGroups + ` prior WHERE prior.message_id = current.message_id)
+	)`
+	var changed bool
+	if err := b.db.QueryRowContext(ctx, query).Scan(&changed); err != nil {
+		return false, fmt.Errorf("inspect relationship meeting groups: %w", err)
+	}
+	return !changed, nil
 }
 
 func mergeTemperatureContributionsSQL(committed, delta string) string {

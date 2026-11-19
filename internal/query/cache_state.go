@@ -49,13 +49,13 @@ import (
 // Version 36 rebuilds sender projections for relayed authors.
 // Version 37 retains email invitation edges while marking them as non-activity.
 // Version 38 stores resolved meeting groups and each person's owning transcript for meeting counts.
-const CacheSchemaVersion = 38
+// Version 39 groups attendance after filtering and rebuilds relationship counts.
+const CacheSchemaVersion = 39
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only
 // describe the Parquet snapshot that readers may use.
 type CacheSyncState struct {
-	MeetingGroupsFallback  bool      `json:"meeting_groups_fallback,omitzero"`
 	LastMessageID          int64     `json:"last_message_id"`
 	LastSyncAt             time.Time `json:"last_sync_at"`
 	SchemaVersion          int       `json:"schema_version,omitzero"`

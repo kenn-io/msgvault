@@ -201,6 +201,28 @@ func TestDerivedOnlyRefreshWithNoChangesIsANoOp(t *testing.T) {
 		"a no-op refresh must leave every cache byte (including the marker) intact")
 }
 
+func TestMeetingGroupingFailurePreservesCache(t *testing.T) {
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
+	require.NoError(t, err)
+	before := snapshotCacheBytes(t, analyticsDir)
+	groupingError := errors.New("meeting grouping failed")
+	resolveCacheMeetingGroups = func(context.Context, store.SQLReader, int64) (map[int64]int64, error) {
+		return nil, groupingError
+	}
+	t.Cleanup(func() { resolveCacheMeetingGroups = store.MeetingTranscriptGroupsSQLiteSnapshotContext })
+	for _, build := range []func() error{
+		func() error { _, err := buildCache(t.Context(), dbPath, analyticsDir, true); return err },
+		func() error { _, err := buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir); return err },
+	} {
+		require.ErrorIs(t, build(), groupingError)
+		assert.Equal(t, before, snapshotCacheBytes(t, analyticsDir))
+		assert.Equal(t, query.CacheReady, mustInspectCacheReadiness(t, analyticsDir))
+	}
+}
+
 func TestDerivedOnlyFailurePreservesMarkerAndLeavesDetectableDrift(t *testing.T) {
 	requirementsForTest := require.New(t)
 	tmp := setupTestSQLite(t)

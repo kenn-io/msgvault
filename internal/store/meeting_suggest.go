@@ -370,7 +370,8 @@ func (s *Store) suggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 		graph.candidates = append(graph.candidates, meetingDecisionEdge{id: int64(^uint64(0) >> 1), a: a, b: b, decision: "link"})
-		if _, conflict := meetingDecisionConflict(graph, a, b, true, active); conflict {
+		_, conflict := meetingDecisionConflict(graph, a, b, true, active)
+		if conflict {
 			continue
 		}
 		key := root(partner.ref())

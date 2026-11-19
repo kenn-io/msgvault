@@ -268,7 +268,7 @@ func TestMCPGetPersonRelationshipReturnsSummaryAndOptionalCalendar(t *testing.T)
 	}
 	calendar := &query.RelationshipCalendarResponse{
 		CanonicalID: 7, Year: 2025, Timezone: "America/New_York",
-		Days:            []query.RelationshipCalendarDay{{Date: "2025-01-02", Total: 4}},
+		Days:            []query.RelationshipCalendarDay{{Date: "2025-01-02", Meetings: 1, Total: 4}},
 		PeakTemperature: 87, PeakYear: 2018, ScoringTimezone: "UTC",
 		ScoreVersion: 1, EffectiveDate: "2026-08-22", CacheRevision: "cache-8", IdentityRevision: 12,
 	}
@@ -293,6 +293,11 @@ func TestMCPGetPersonRelationshipReturnsSummaryAndOptionalCalendar(t *testing.T)
 	assert.InDelta(float64(12), structured["identity_revision"], 0)
 	assert.InDelta(float64(2025), structured["year"], 0)
 	assert.Len(structured["days"], 1)
+	days, ok := structured["days"].([]any)
+	require.True(t, ok)
+	day, ok := days[0].(map[string]any)
+	require.True(t, ok)
+	assert.InDelta(float64(1), day["meetings"], 0)
 
 	backend.calendarRequest = peoplebrowser.CalendarRequest{}
 	result = rawCallTool(t, peopleToolOptions(backend), ToolGetPersonRelationship, map[string]any{
