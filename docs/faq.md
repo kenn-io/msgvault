@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-18"
+last_edited: "2026-11-19"
 title: Frequently Asked Questions
 description: Common questions about msgvault, Gmail API safety, and what the tool can and cannot do.
 ---
@@ -44,6 +44,8 @@ profile automation, and external enrichment can send selected data to your
 configured providers. A supported local embedding endpoint keeps that embedding
 work local; it does not automatically change the providers used by other
 features. See [recommended configuration](usage/recommended-configuration.md).
+If you have opted in, msgvault also sends anonymous
+[usage telemetry](configuration.md#usage-reporting).
 
 <p class="faq-question">Why is a documented feature missing from my binary?</p>
 
