@@ -23,6 +23,7 @@ func TestImportTelegramEndToEnd(t *testing.T) {
 }
 
 func testImportTelegramEndToEnd(t *testing.T, extra []string) {
+	t.Helper()
 	assert := assert.New(t)
 	require := require.New(t)
 	markDaemonCLISubprocessForTest(t)

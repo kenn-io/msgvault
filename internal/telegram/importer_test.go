@@ -222,6 +222,7 @@ func TestImportRepeatedLimitAdvances(t *testing.T) {
 }
 
 func testImportRepeatedLimitAdvances(t *testing.T, batch int) {
+	t.Helper()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -262,6 +263,7 @@ func TestImportFullAndAppendOnly(t *testing.T) {
 }
 
 func testImportFullAndAppendOnly(t *testing.T, batch int) {
+	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -792,6 +794,7 @@ type batchChat struct {
 }
 
 func batchExport(t *testing.T, list []batchChat, text func(chat int64, id int) string) string {
+	t.Helper()
 	var chats []string
 	for _, c := range list {
 		var msgs []string
@@ -806,12 +809,14 @@ func batchExport(t *testing.T, list []batchChat, text func(chat int64, id int) s
 }
 
 func countChatMessages(t *testing.T, st *store.Store, peer string) int {
+	t.Helper()
 	var n int
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM messages WHERE source_message_id LIKE ?"), peer+":%").Scan(&n))
 	return n
 }
 
 func createTestTrigger(t *testing.T, st *store.Store, name, timing, table, condition, sqliteBody, postgresBody string) {
+	t.Helper()
 	var err error
 	if st.IsPostgreSQL() {
 		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION `+name+`() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -827,6 +832,7 @@ func createTestTrigger(t *testing.T, st *store.Store, name, timing, table, condi
 }
 
 func dropTestTrigger(t *testing.T, st *store.Store, name, table string) {
+	t.Helper()
 	drop := "DROP TRIGGER " + name
 	if st.IsPostgreSQL() {
 		drop += " ON " + table
@@ -848,7 +854,7 @@ func TestImportBatchRollsBackFailedBatchAndResumes(t *testing.T) {
 		"SELECT RAISE(ABORT, 'forced failure');", "RAISE EXCEPTION 'forced failure';")
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
 	require.ErrorContains(t, err, "forced failure")
-	assert.ErrorContains(t, err, "persist message user3:"+strconv.Itoa(BatchSize+2)+":")
+	require.ErrorContains(t, err, "persist message user3:"+strconv.Itoa(BatchSize+2)+":")
 	assert.Equal(t, size, countChatMessages(t, st, "user2"))
 	assert.Equal(t, BatchSize, countChatMessages(t, st, "user3"))
 	dropTestTrigger(t, st, "fail_batch", "messages")
