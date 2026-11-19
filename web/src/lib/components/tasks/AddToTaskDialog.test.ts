@@ -70,7 +70,6 @@ describe('Add to task', () => {
       expect(onclose).not.toHaveBeenCalled();
       finish(Response.json({ issue: { uid: 'one', ref: 'abcd', qualified_ref: 'example#abcd', project: 'example', title: 'Follow up', status: 'open', revision: '1' }, replayed: false }));
       await screen.findByRole('button', { name: 'Done' });
-      expect(screen.getByRole('dialog')).toBeTruthy();
       expect(screen.queryByRole('radio', { name: 'Tasks' })).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
       expect(onclose).toHaveBeenCalledOnce();

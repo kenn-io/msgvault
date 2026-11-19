@@ -7,7 +7,7 @@ export function taskLookup(overrides: Partial<TaskLinkLookupResponse> = {}, mess
 }
 
 export function disabledTaskLookup(messageId = 42, conversationId = 7): TaskLinkLookupResponse {
-  return { state: 'disabled', complete: false, last_scan: '', tasks: [], outbound_metadata: { ...taskOutboundMetadata, message_id: messageId, conversation_id: conversationId } };
+  return taskLookup({ state: 'disabled', complete: false }, messageId, conversationId);
 }
 
 export function taskCreationClient(requests: Request[] = []) {
@@ -18,6 +18,6 @@ export function taskCreationClient(requests: Request[] = []) {
     if (request.url.includes('/search')) return Response.json({ tasks: [], truncated: false });
     return Response.json(request.url.endsWith('/status')
       ? { state: 'ready', project: 'example' }
-      : { state: 'ready', complete: true, last_scan: '', tasks: [], outbound_metadata: taskOutboundMetadata });
+      : taskLookup());
   });
 }

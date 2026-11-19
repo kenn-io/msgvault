@@ -295,6 +295,7 @@ describe('TaskLinks', () => {
       expect(alert.textContent?.toLowerCase()).toContain(copy.toLowerCase());
       if (state === 'unavailable') expect(alert.textContent).toContain('The task service is unavailable; safe cached links may be shown.');
       expect(screen.queryByText('Cached task') !== null).toBe(state !== 'authentication_required');
+      if (state !== 'authentication_required') expect(screen.getByRole('button', { name: 'Unlink Cached task' })).toHaveProperty('disabled', true);
       await view.rerender({ mode: 'add' });
       expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
     }
