@@ -1,4 +1,4 @@
-import { disabledTaskLookup } from '../../src/lib/components/tasks/fixtures.test-support';
+import { taskLookup } from '../../src/lib/components/tasks/fixtures.test-support';
 import { row } from '../archive-layout';
 import { expect, test } from '@playwright/test';
 
@@ -20,7 +20,7 @@ for (const messageType of ['email', 'whatsapp']) {
       if (url.pathname === '/api/v1/telemetry/events') return route.fulfill({ status: 202, json: { status: 'disabled' } });
       if (url.pathname === '/api/v1/integrations/kata/status') return route.fulfill({ json: { state: 'disabled', project: '' } });
       if (url.pathname === '/api/v1/integrations/tasks/status') return route.fulfill({ json: { state: 'disabled', message: 'Tasks disabled.' } });
-      if (url.pathname === '/api/v1/messages/42001/tasks') return route.fulfill({ json: disabledTaskLookup(42001, 71) });
+      if (url.pathname === '/api/v1/messages/42001/tasks') return route.fulfill({ json: taskLookup({ state: 'disabled', complete: false }, 42001, 71) });
       if (url.pathname === '/api/v1/explore') {
         return route.fulfill({ json: {
           rows: Array.from({ length: 100 }, (_, index) => ({
