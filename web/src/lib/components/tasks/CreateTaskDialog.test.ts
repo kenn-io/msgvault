@@ -23,12 +23,16 @@ describe('CreateTaskDialog', () => {
     });
 
     expect(screen.getByText('project')).toBeDefined();
-    for (const value of ['archive-a', '42', '7', 'gmail', 'archive@example.com', 'source-42', 'Synthetic subject', 'sender@example.com']) {
-      expect(screen.getByText(value)).toBeDefined();
+    for (const [label, value] of [
+      ['Message URL', `${location.origin}/messages/42`], ['Archive UID', 'archive-a'], ['Message ID', '42'],
+      ['Conversation ID', '7'], ['Source type', 'gmail'], ['Source identifier', 'archive@example.com'],
+      ['Source message ID', 'source-42'], ['Subject snapshot', 'Synthetic subject'], ['Sender snapshot', 'sender@example.com'],
+    ]) {
+      expect(screen.getByText(label).nextElementSibling?.textContent).toBe(value);
     }
     expect(screen.getByText('Sent at').nextElementSibling?.textContent).toBe(formatShortDateTime(sentAt));
+    expect(screen.getByText('Link added at').nextElementSibling?.textContent).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(screen.getByLabelText('Description')).toHaveProperty('value', '');
-    expect(screen.getByText(`${location.origin}/messages/42`)).toBeDefined();
     expect(screen.getByText(`Synthetic subject · sender@example.com · ${formatShortDate(sentAt)}`)).toBeDefined();
     expect(screen.getByText(/Bodies and attachments are never sent/i).closest('details')).toBeNull();
     await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Edited' } });
