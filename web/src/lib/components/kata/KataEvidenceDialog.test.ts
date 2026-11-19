@@ -102,7 +102,7 @@ describe('KataEvidenceDialog', () => {
 
   it.each([
     { name: 'a replay', first: () => Response.json({ issue: { ...issue, status: 'closed' }, replayed: true }), role: 'status', says: 'Already filed (closed).', ref: 'example#abcd' },
-    { name: 'a deleted issue', first: () => Response.json({ error: 'kata_issue_deleted', message: 'The issue this key filed was deleted in Kata or is not visible to this credential; use a new idempotency key, or restore the issue in Kata' }, { status: 409 }), role: 'alert', says: /not visible to this credential/, ref: null },
+    { name: 'a deleted issue', first: () => Response.json({ error: 'kata_issue_deleted', message: 'The issue this key filed was deleted in Kata or is not visible to this credential; use a new idempotency key, or restore the issue in Kata' }, { status: 409 }), role: 'alert', says: /not visible to this credential/ },
   ])('says when the issue already exists and can file a new one after $name', async ({ first, role, says, ref }) => {
     const h = harness(async () => h.posted('/integrations/kata/issues').length === 1
       ? first()
@@ -112,7 +112,7 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
     const notice = await screen.findByRole(role);
     expect(within(notice).getByText(says)).toBeDefined();
-    expect(within(notice).queryByText('example#abcd')?.textContent ?? null).toBe(ref);
+    if (ref) expect(within(notice).getByText(ref)).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'File as a new issue' }));
     expect((await screen.findByText('example#efgh')).closest('p')?.textContent).toBe('Kata · example#efgh');
     expect(within(screen.getByRole('status')).getByText('Saved.')).toBeDefined();

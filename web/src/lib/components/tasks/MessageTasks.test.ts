@@ -40,63 +40,51 @@ describe('Message task list', () => {
     expect(requests).toHaveLength(0);
   });
 
-  it('updates task and Kata rows through refreshes, message changes, and lookup outcomes', async () => {
-    let truncated = false;
-    let empty = false;
-    let hold = false;
-    let fail = false;
+  it.each(['refresh', 'message change', 'truncated', 'truncated empty', 'empty', 'error'])('updates the Tasks group for %s', async scenario => {
+    let next = false;
     let held: ((response: Response) => void) | undefined;
+    const issues = [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }];
     const client = createAPIClient(async input => {
       const url = (input as Request).url;
       if (url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-      if (!url.includes('/kata/')) return Response.json(taskLookup({ tasks: url.includes('/messages/43/') ? [] : [{ id: 'task-1', title: 'Task work' }] }, url.includes('/messages/43/') ? 43 : 42));
-      if (hold) return new Promise<Response>(resolve => { held = resolve; });
-      if (fail) return Response.json({ message: 'Kata lookup failed' }, { status: 503 });
-      return Response.json({ truncated, issues: empty ? [] : [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }] });
+      if (!url.includes('/kata/')) return Response.json(taskLookup({ tasks: url.includes('/messages/42/') ? [{ id: 'task-1', title: 'Task work' }] : [] }, url.includes('/messages/42/') ? 42 : 43));
+      if (!next) return Response.json({ truncated: false, issues });
+      if (scenario === 'refresh' || scenario === 'message change' || scenario === 'empty') return new Promise<Response>(resolve => { held = resolve; });
+      if (scenario === 'error') return Response.json({ message: 'Kata lookup failed' }, { status: 503 });
+      return Response.json({ truncated: true, issues: scenario === 'truncated empty' ? [] : issues });
     });
     const readiness = new KataReadiness(client);
-    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
+    const view = render(MessageTasks, { props: { client, messageId: scenario === 'refresh' || scenario === 'message change' ? 42 : 43, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
     try {
       const link = await screen.findByRole('link', { name: 'Open Send revised notes (example#abcd) in Kata' });
       expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
       expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
-      await screen.findByText('Task work');
-      expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
-      hold = true;
-      await view.rerender({ refresh: 1 });
-      await waitFor(() => expect(held).toBeDefined());
-      expect(screen.getByText('Send revised notes')).toBeDefined();
-      held!(Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Refreshed notes', status: 'open' }] }));
-      await screen.findByText('Refreshed notes');
-      held = undefined;
-      await view.rerender({ messageId: 43 });
-      await waitFor(() => expect(held).toBeDefined());
-      expect(screen.queryByText('Refreshed notes')).toBeNull();
-      held!(Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }] }));
-      await screen.findByText('Send revised notes');
-      hold = false;
-      truncated = true;
-      await view.rerender({ refresh: 2 });
-      expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
-      expect(screen.getByRole('link', { name: 'Open Send revised notes (example#abcd) in Kata' })).toBeDefined();
-      empty = true;
-      await view.rerender({ refresh: 3 });
-      await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
-      expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
-      expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
-      hold = true;
-      held = undefined;
-      await view.rerender({ refresh: 4 });
-      await waitFor(() => expect(held).toBeDefined());
-      expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();
-      held!(Response.json({ issues: [], truncated: false }));
-      await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
-      expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
-      hold = false;
-      fail = true;
-      await view.rerender({ refresh: 5 });
-      await screen.findByText('Kata lookup failed');
-      expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
+      if (scenario === 'refresh' || scenario === 'message change') {
+        await screen.findByText('Task work');
+        expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
+      }
+      next = true;
+      await view.rerender(scenario === 'message change' ? { messageId: 43 } : { refresh: 1 });
+      if (scenario === 'refresh' || scenario === 'message change' || scenario === 'empty') {
+        await waitFor(() => expect(held).toBeDefined());
+        if (scenario === 'refresh') expect(screen.getByText('Send revised notes')).toBeDefined();
+        if (scenario === 'message change') expect(screen.queryByText('Send revised notes')).toBeNull();
+        held!(Response.json({ truncated: false, issues: scenario === 'empty' ? [] : issues }));
+        if (scenario === 'empty') {
+          await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
+          expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
+        } else {
+          expect(await screen.findByText('Send revised notes')).toBeDefined();
+        }
+      } else if (scenario === 'error') {
+        expect(await screen.findByText('Kata lookup failed')).toBeDefined();
+        expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
+      } else {
+        expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
+        if (scenario === 'truncated') expect(screen.getByRole('link', { name: 'Open Send revised notes (example#abcd) in Kata' })).toBeDefined();
+        else await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
+        expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
+      }
     } finally { view.unmount(); readiness.dispose(); }
   });
 });

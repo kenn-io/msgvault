@@ -107,7 +107,7 @@ describe('Add to task', () => {
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
-  it('shows the picker when ready and closes its single dialog on cancel', async () => {
+  it('shows the ready picker, hides it when stale, and closes on cancel', async () => {
     const onclose = vi.fn();
     const view = render(AddToTaskDialog, { client: taskCreationClient(), messageId: 42, title: 'Follow up', email: true, onclose });
     try {
