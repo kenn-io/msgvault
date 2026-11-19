@@ -1,10 +1,17 @@
 import { formatDate } from './format';
-import { describe, expect, it } from 'vitest';
-import { formatBytes, formatDateTime, formatRelativeTime } from './format';
+import { describe, expect, it, vi } from 'vitest';
+import { formatBytes, formatDateTime, formatRelativeTime, formatShortDateTime } from './format';
 
 describe('format', () => {
   it.each([[120, '120 B'], [3 * 1024, '3 KB'], [1.5 * 1024 * 1024, '1.5 MB']])('formats %d bytes', (value, want) => {
     expect(formatBytes(value)).toBe(want);
+  });
+  it('includes the time in a short date and time', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-17T12:00:00Z'));
+    try {
+      expect(formatShortDateTime('2026-07-18T12:00:00')).toBe('Jul 18, 12:00 PM');
+    } finally { vi.useRealTimers(); }
   });
   it('names missing and unparseable times', () => {
     expect(formatDateTime(undefined)).toBe('Not available');
