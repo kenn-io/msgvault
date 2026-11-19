@@ -14,9 +14,14 @@ func sourceScopedOperation(r *http.Request, operation Operation) bool {
 	if operation.Method != http.MethodGet {
 		return false
 	}
+	if _, ok := hostScopedCLIReads[operation.ID]; ok {
+		return true
+	}
 	switch operation.ID {
 	case "listMessages", "getMessage", "getConversation", "getAttachment", "listCLIAccounts", "getMeetingRecord", "suggestMeetingLinks":
 		return true
+	case "getHealth":
+		return true // It reports the server, not archive content.
 	case "searchMessages":
 		mode := r.URL.Query().Get("mode")
 		return mode == "" || mode == "fts"

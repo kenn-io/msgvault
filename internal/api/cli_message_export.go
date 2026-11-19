@@ -47,6 +47,9 @@ func (s *Server) handleCLIMessageExport(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	if agentReadScoped(r) {
+		request.Scope = agentReadSourceIDs(r)
+	}
 	messages, err := open(r.Context(), request)
 	if err != nil {
 		if errors.Is(err, export.ErrMessageSourceNotFound) {
@@ -58,6 +61,8 @@ func (s *Server) handleCLIMessageExport(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer messages.Close()
+	// The stream reads from the scoped snapshot after its header is written.
+	holdReadSnapshot(r)
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.WriteHeader(http.StatusOK)
 	if err := messages.Write(w, s.daemonVersion); err != nil {
