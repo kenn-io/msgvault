@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-18"
+last_edited: "2026-11-19"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -2607,6 +2607,21 @@ MSGVAULT_HOME=/data MSGVAULT_BIND_ADDR=0.0.0.0 MSGVAULT_API_PORT=8080 msgvault s
 Persist `/data` across restarts so the archive and generated key survive. The
 published stock image is `ghcr.io/kenn-io/msgvault`; it runs as UID/GID `1000`
 and stores its home at `/data`. No startup hook or entrypoint wrapper is required.
+
+## Usage reporting
+
+msgvault can send general, anonymous usage telemetry. Usage telemetry is off
+unless you have opted in or set `TELEMETRY_ENABLED=1`.
+
+Any of these turns it off, even after you opted in:
+
+- `MSGVAULT_TELEMETRY_ENABLED=0`
+- `TELEMETRY_ENABLED=0`
+- `DO_NOT_TRACK` set to any value except `0` or `false`
+- `CI` set to any value
+
+Set these where `msgvault serve` starts, then restart a running daemon.
+Development builds never send it.
 
 ## File Locations
 
