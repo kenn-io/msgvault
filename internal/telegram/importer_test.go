@@ -848,6 +848,7 @@ func TestImportBatchRollsBackFailedBatchAndResumes(t *testing.T) {
 		"SELECT RAISE(ABORT, 'forced failure');", "RAISE EXCEPTION 'forced failure';")
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
 	require.ErrorContains(t, err, "forced failure")
+	assert.ErrorContains(t, err, "persist message user3:"+strconv.Itoa(BatchSize+2)+":")
 	assert.Equal(t, size, countChatMessages(t, st, "user2"))
 	assert.Equal(t, BatchSize, countChatMessages(t, st, "user3"))
 	dropTestTrigger(t, st, "fail_batch", "messages")

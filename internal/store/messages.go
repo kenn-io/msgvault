@@ -2236,7 +2236,7 @@ func (s *Store) PersistMessagesContext(ctx context.Context, batch []*MessagePers
 				ctx, tx, nil, nil, func([]int64) *MessagePersistData { return data }, nil, s.persistMessageSnapshotAfter,
 			)
 			if err != nil {
-				return err
+				return fmt.Errorf("persist message %s: %w", data.Message.SourceMessageID, err)
 			}
 			ids[i] = id
 			if IsEmailMessageType(data.Message.MessageType) && (data.RawFormat == "" || data.RawFormat == emailLinkageRawFormat) && hasCalendarToken(data.RawMIME) {
