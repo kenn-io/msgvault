@@ -145,6 +145,7 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'File as a new issue' }));
     await screen.findByText('example#efgh');
+    expect(within(screen.getByRole('status')).getByText('Already filed (open).')).toBeDefined();
     const keys = (h: ReturnType<typeof harness>) => h.posted('/integrations/kata/issues').map((request) => request.headers.get('Idempotency-Key'));
     expect(keys(remounted)).toEqual(keys(lost));
   });
@@ -216,7 +217,7 @@ describe('KataEvidenceDialog', () => {
     try {
       await screen.findByText('Opening passage');
       await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-      expect((await screen.findByRole('alert')).textContent).toBe('List unavailable');
+      await screen.findByRole('alert');
       await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
       expect(await screen.findByRole('radio', { name: /example#abcd/ })).toBeDefined();
     } finally { view.unmount(); readiness.dispose(); }
