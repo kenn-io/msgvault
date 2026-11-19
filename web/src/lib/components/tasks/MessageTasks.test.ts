@@ -6,13 +6,12 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
-  it.each(['partial', 'suppressed', 'linked', 'error', 'truncated'])('sets Tasks group visibility for %s', async scenario => {
+  it.each(['partial', 'suppressed', 'linked', 'error'])('sets Tasks group visibility for %s', async scenario => {
     const client = createAPIClient(async input => {
       const url = (input as Request).url;
       if (url.endsWith('/status')) return Response.json({ state: scenario === 'suppressed' ? 'unavailable' : 'ready', project: 'example' });
       if (url.includes('/kata/')) return scenario === 'error'
         ? Response.json({ message: 'Kata lookup failed' }, { status: 503 })
-        : scenario === 'truncated' ? Response.json({ issues: [], truncated: true })
         : Response.json({ issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Kata work', status: 'open', web_url: 'https://example.org/issue' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }], truncated: false });
       return Response.json(taskLookup(scenario === 'partial'
         ? { state: 'partial', complete: false }
@@ -22,8 +21,8 @@ describe('Message task list', () => {
     });
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, {
-      props: { client, messageId: 42, title: 'Synthetic', email: scenario !== 'error' && scenario !== 'truncated', showSetup: scenario !== 'suppressed' },
-      context: scenario === 'linked' || scenario === 'error' || scenario === 'truncated' ? new Map([[kataReadinessKey, readiness]]) : new Map(),
+      props: { client, messageId: 42, title: 'Synthetic', email: scenario !== 'error', showSetup: scenario !== 'suppressed' },
+      context: scenario === 'linked' || scenario === 'error' ? new Map([[kataReadinessKey, readiness]]) : new Map(),
     });
     try {
       if (scenario === 'partial') {
@@ -36,9 +35,6 @@ describe('Message task list', () => {
         await screen.findByText('Kata work');
         expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
         expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
-      } else if (scenario === 'truncated') {
-        await screen.findByText('Linked Kata issues are incomplete.');
-        expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
       } else {
         await screen.findByText('Kata lookup failed');
         expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
@@ -104,9 +100,11 @@ describe('Message task list', () => {
     await view.rerender({ refresh: 3 });
     await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
     expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
+    expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
     hold = true;
     await view.rerender({ refresh: 4 });
     await waitFor(() => expect(held).toBeDefined());
+    expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();
     held!(Response.json({ issues: [], truncated: false }));
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
     expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();

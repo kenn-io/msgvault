@@ -1,4 +1,4 @@
-import { taskCreationClient, taskOutboundMetadata } from './fixtures.test-support';
+import { taskCreationClient, taskLookup, taskOutboundMetadata } from './fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -122,6 +122,15 @@ describe('Add to task', () => {
     render(AddToTaskDialog, { client: taskCreationClient(), messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
     expect(await screen.findByText('No tasks in example yet.')).toBeDefined();
+  });
+
+  it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project', 'authentication_required'])('hides the task toolbar when the index is %s', async state => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'ready', project: 'example' }
+      : taskLookup({ state, complete: false, reason: state })));
+    render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
+    await screen.findByRole('alert');
+    expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
   });
 
   it.each(['success', 'failure'])('guards dismissal while busy and releases it after %s', async (result) => {

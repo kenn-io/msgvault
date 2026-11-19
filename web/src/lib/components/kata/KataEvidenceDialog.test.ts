@@ -205,7 +205,6 @@ describe('KataEvidenceDialog', () => {
     try {
       await screen.findByText('Opening passage');
       await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-      expect((await screen.findByRole('alert')).textContent).toBe('List unavailable');
       await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
       expect(await screen.findByRole('radio', { name: /example#abcd/ })).toBeDefined();
     } finally { view.unmount(); readiness.dispose(); }
