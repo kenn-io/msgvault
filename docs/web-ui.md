@@ -261,7 +261,7 @@ availability. Archived images, PDFs, text, CSV/TSV, and audio open in the file v
 Use Previous/Next or the ←/→ keys to move through the current results.
 The list marks file contents as not checked when the archive records a hash. Opening a file checks whether its storage can be opened; reading its bytes can still fail. The viewer distinguishes missing files, open errors, metadata-only files, unsupported files, and previewable content.
 From a file, navigate to its containing item and then its email or chat
-conversation.
+conversation. Choose **⋯ → Add to task…** to file the file's message to Tasks or Kata.
 
 Files uses the same toolbar as Messages, with **Show as** set to Files. Choose Table
 or Timeline there to return to Messages. **Sort** offers Newest first, Oldest

@@ -5726,6 +5726,8 @@ components:
         message_id:
           format: int64
           type: integer
+        message_type:
+          type: string
         mime_type:
           nullable: true
           type: string
@@ -5737,6 +5739,7 @@ components:
       required:
         - id
         - message_id
+        - message_type
         - conversation_id
         - entry_key
         - filename

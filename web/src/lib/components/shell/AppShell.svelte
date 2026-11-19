@@ -1499,6 +1499,7 @@
             />
           {:else}
             <FilesWorkspace
+              onOpenTaskSettings={() => commitNavigation(tasksSettingsDestination())}
               bind:this={filesPage}
               onConfigureVisualSearch={openVisualAttachmentSettings}
               bind:submitted={loader.submitted}
@@ -1679,6 +1680,7 @@
   <FileViewer
     {client}
     file={contextualViewerFile}
+    onOpenTaskSettings={() => { contextualViewerFile = undefined; commitNavigation(tasksSettingsDestination()); }}
     returnFocus={contextualViewerReturnFocus}
     onClose={() => {
       void closeContextualViewer();

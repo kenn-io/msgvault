@@ -181,6 +181,8 @@ validation as the CLI flags. Bad filters return `400` and an unknown source
 returns `404` before any output; a failure while streaming ends the stream
 without its completion record. Read-only remote client keys may call it.
 
+Schema 5.19.0 adds `message_type` to file details.
+
 Schema 5.18.0 adds Directory cadence to `GET /api/v1/people/directory`: the `cadence` filter (`overdue`, `due`, `no_list`, `unknown`), `due_within_days`, the `most_overdue` and `next_due` sorts, a `cadence` object and `last_contact_channel` on each person, and page-level `cadence_presets` and `cadence_coverage`. `expected_value_id` 0 on attribute writes requires that no current value exists. CLI and MCP cadence lookups require a daemon supporting this schema.
 
 Schema 5.17.0 adds person, source, conversation and incoming filters to the

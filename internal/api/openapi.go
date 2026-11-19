@@ -433,6 +433,7 @@ import (
 // 5.17.0 adds person, source, conversation and incoming filters to the message change feed.
 // 5.18.0 adds Directory cadence filters, ordering, presets and coverage.
 // 5.19.0 adds message export at GET /api/v1/cli/messages/export.
+// 5.19.0 adds message_type to file details.
 const APISchemaVersion = "5.19.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

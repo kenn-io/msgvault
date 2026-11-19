@@ -656,19 +656,19 @@ func TestGeneratedCLIAccountsRequireAliasPresenceButAcceptEmptyStrings(t *testin
 	}
 }
 
-func TestGeneratedFileMetadataRequiresPresenceButAcceptsEmptyLegacyStrings(t *testing.T) {
+func TestGeneratedFileMetadataRequiresFilenameAndMIMETypeButAcceptsEmptyStrings(t *testing.T) {
 	t.Run("metadata response", func(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
 		var present generated.FileMetadataResponse
 		requirements.NoError(json.Unmarshal([]byte(
-			`{"content_state":"metadata_only","entry_key":"source:1:message:m1","filename":"","mime_type":""}`,
+			`{"content_state":"metadata_only","entry_key":"source:1:message:m1","filename":"","message_type":"email","mime_type":""}`,
 		), &present))
 		requirements.NotNil(present.Filename)
 		requirements.NotNil(present.MimeType)
 		assertions.Empty(*present.Filename)
 		assertions.Empty(*present.MimeType)
-		requirements.NoError(present.Validate(), "present empty strings are legitimate legacy metadata")
+		requirements.NoError(present.Validate(), "empty filename and MIME type are legitimate legacy metadata")
 
 		missingFilename := present
 		missingFilename.Filename = nil
