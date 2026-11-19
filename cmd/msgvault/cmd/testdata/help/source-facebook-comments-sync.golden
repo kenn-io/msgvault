@@ -10,4 +10,4 @@ Flags:
       --max-requests int              maximum API reads per Page, including identity checks (default 1000)
       --no-build-cache[=true|false]   skip analytics cache refresh after this sync
 
-Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, --remote, -v/--verbose (see 'msgvault --help')
