@@ -20,7 +20,7 @@ describe('CreateTaskDialog', () => {
       sourceMessageId: 'source-42', subject: 'Synthetic subject', from: 'sender@example.com', sentAt,
       oncreated, onclose: vi.fn()
     };
-    render(CreateTaskDialog, props);
+    const view = render(CreateTaskDialog, props);
 
     expect(screen.getByText('project')).toBeDefined();
     for (const value of ['archive-a', '42', '7', 'gmail', 'archive@example.com', 'source-42', 'Synthetic subject', 'sender@example.com', sentAt]) {
@@ -44,14 +44,8 @@ describe('CreateTaskDialog', () => {
     const body = await requests[0]!.clone().json() as { added_at?: string };
     expect(body.added_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(requests[0]!.headers.get('X-Request-Id')).toBeTruthy();
-  });
-
-  it('shows the default title when message context is empty', () => {
-    render(CreateTaskDialog, {
-      client: createAPIClient(vi.fn()), messageId: 42, project: 'project', defaultTitle: 'Synthetic subject',
-      archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
-      sourceMessageId: 'source-42', subject: '', from: '', sentAt: ''
-    });
+    view.unmount();
+    render(CreateTaskDialog, { ...props, subject: '', from: '', sentAt: '' });
     expect(screen.getByText('Synthetic subject')).toBeDefined();
   });
 

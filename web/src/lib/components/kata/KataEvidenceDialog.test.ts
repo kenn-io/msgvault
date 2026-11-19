@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import { createAPIClient } from '../../api/client';
@@ -111,8 +111,7 @@ describe('KataEvidenceDialog', () => {
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up' });
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
-    await screen.findByRole(role);
-    expect(screen.getByText(says)).toBeDefined();
+    expect(within(await screen.findByRole(role)).getByText(says)).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'File as a new issue' }));
     expect((await screen.findByText('example#efgh')).closest('p')?.textContent).toBe('Kata · example#efgh');
     const keys = h.posted('/integrations/kata/issues').map((posted) => posted.headers.get('Idempotency-Key'));
