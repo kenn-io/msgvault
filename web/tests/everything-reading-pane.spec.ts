@@ -652,7 +652,7 @@ test('keeps the message time clear of the menu beside a long sender on a phone',
 
 test('aligns the Kata link with the issue title', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 844 });
-  const message = { ...recordingMessage, id: 42, conversation_id: 7, subject: 'Garden plans', body: 'Revised budget', message_type: 'email', has_attachments: false, attachments: [] };
+  const message = { ...recordingMessage, id: 42, conversation_id: 7, subject: 'Garden plans', body: 'Revised budget', message_type: 'chat', has_attachments: false, attachments: [] };
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [{ ...entry(42), title: 'Garden plans', conversation_id: 7, anchor_message_id: 42 }], total_count: 1, cache_revision: 'fixture', search_provenance: {} } }));
   await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: { id: 7, messages: [message], anchor_id: 42, has_before: false, has_after: false, total: 1 } }));

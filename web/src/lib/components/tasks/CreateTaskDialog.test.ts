@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import { formatShortDate } from '../../util/format';
+import { formatShortDate, formatShortDateTime } from '../../util/format';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import CreateTaskDialog from './CreateTaskDialog.svelte';
 
@@ -26,10 +26,7 @@ describe('CreateTaskDialog', () => {
     for (const value of ['archive-a', '42', '7', 'gmail', 'archive@example.com', 'source-42', 'Synthetic subject', 'sender@example.com']) {
       expect(screen.getByText(value)).toBeDefined();
     }
-    const sentDate = new Date(sentAt);
-    const date = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: sentDate.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' }).format(sentDate);
-    const time = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(sentDate);
-    expect(screen.getByText('Sent at').nextElementSibling?.textContent).toBe(`${date}, ${time}`);
+    expect(screen.getByText('Sent at').nextElementSibling?.textContent).toBe(formatShortDateTime(sentAt));
     expect(screen.getByLabelText('Description')).toHaveProperty('value', '');
     expect(screen.getByText(`${location.origin}/messages/42`)).toBeDefined();
     expect(screen.getByText(`Synthetic subject · sender@example.com · ${formatShortDate(sentAt)}`)).toBeDefined();

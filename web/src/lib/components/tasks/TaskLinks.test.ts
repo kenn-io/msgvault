@@ -373,7 +373,7 @@ describe('TaskLinks', () => {
     expect(requests.filter((request) => request.method === 'GET' && request.url.includes('/messages/42/tasks'))).toHaveLength(1);
   });
 
-  it('links a selected task through the typed route', async () => {
+  it('shows metadata and links a selected task', async () => {
     const requests: Request[] = [];
     const oncomplete = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
