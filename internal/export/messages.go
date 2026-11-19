@@ -95,9 +95,10 @@ func OpenMessages(ctx context.Context, st *store.Store, request MessagesRequest)
 		case err == nil:
 			scope = &resolved.Scope
 			personID = &resolved.PersonID
-		case request.Scope != nil && errors.Is(err, store.ErrPersonNotFound):
+		case request.Scope != nil && (errors.Is(err, store.ErrPersonNotFound) || errors.Is(err, personresolver.ErrEmptyPopulation)):
 			// People are archive-wide. A scoped caller gets the same empty
-			// export for a missing person as for one outside its sources.
+			// export for a missing person, or one with no messages anywhere,
+			// as for one outside its sources.
 			empty = true
 		default:
 			release()

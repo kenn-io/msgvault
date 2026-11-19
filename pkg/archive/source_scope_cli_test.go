@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/archive"
 )
 
@@ -127,12 +128,20 @@ func TestLibrarySourceScopeCLIReads(t *testing.T) {
 		require.NoError(t, err)
 		person, _, err := st.CreatePersonFromParticipant(participant)
 		require.NoError(t, err)
-		existing := fmt.Sprintf("/api/v1/cli/messages/export?%s&person_id=%d", window, person.ID)
-		missing := fmt.Sprintf("/api/v1/cli/messages/export?%s&person_id=%d", window, person.ID+1000)
+		contactOnly, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+			Name: "Contact Only", Emails: []store.PersonCreateContact{{Value: "contact@example.org", Type: "work"}},
+		})
+		require.NoError(t, err)
+		standalone, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{Name: "Name Only"})
+		require.NoError(t, err)
+		path := func(id int64) string {
+			return fmt.Sprintf("/api/v1/cli/messages/export?%s&person_id=%d", window, id)
+		}
+		existing, missing := path(person.ID), path(person.ID+1000)
 		code, body := get(unscoped, missing)
 		assert.NotEqual(t, http.StatusOK, code, "an unscoped caller learns the person is missing: %s", body)
 		for _, ctx := range []context.Context{scoped, nothing} {
-			for _, path := range []string{existing, missing} {
+			for _, path := range []string{existing, missing, path(contactOnly.ID), path(standalone.ID)} {
 				code, body := get(ctx, path)
 				require.Equal(t, http.StatusOK, code, "a scoped caller cannot tell a missing person from an inaccessible one: %s", body)
 				assert.Equal(t, 0, exportedMessages(t, body))
