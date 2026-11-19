@@ -190,11 +190,11 @@ describe('TaskLinks', () => {
       context: new Map([[conversationTaskStatusKey, shared]]),
     });
     await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
-    expect(screen.queryByRole('status')).toBeNull();
-    finish(Response.json({ state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} }));
+    expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
+    finish(Response.json(taskLookup({ state: 'unavailable', complete: false })));
     await waitFor(() => expect(fetchFn.mock.settledResults[0]?.type).toBe('fulfilled'));
     await tick();
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
   });
 
   it('shows the project once above distinct linked tasks', async () => {

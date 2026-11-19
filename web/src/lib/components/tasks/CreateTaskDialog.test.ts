@@ -16,13 +16,13 @@ describe('CreateTaskDialog', () => {
     const props = {
       client: createAPIClient(fetchFn), messageId: 42, project: 'project', defaultTitle: 'Synthetic subject',
       archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
-      sourceMessageId: 'source-42', subject: 'Synthetic subject', from: 'sender@example.com', sentAt: '2020-07-18T12:00:00Z',
+      sourceMessageId: 'source-42', subject: 'Synthetic subject', from: 'sender@example.com', sentAt: '2020-07-18T12:00:00',
       oncreated, onclose: vi.fn()
     };
     const view = render(CreateTaskDialog, props);
 
     expect(screen.getByText('project')).toBeDefined();
-    for (const value of ['archive-a', '42', '7', 'gmail', 'archive@example.com', 'source-42', 'Synthetic subject', 'sender@example.com', '2020-07-18T12:00:00Z']) {
+    for (const value of ['archive-a', '42', '7', 'gmail', 'archive@example.com', 'source-42', 'Synthetic subject', 'sender@example.com', '2020-07-18T12:00:00']) {
       expect(screen.getByText(value)).toBeDefined();
     }
     expect(screen.getByLabelText('Description')).toHaveProperty('value', '');
