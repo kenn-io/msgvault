@@ -179,7 +179,7 @@ describe('KataEvidenceDialog', () => {
     expect(await posts[0].json()).toEqual({ evidence: [passages[0].reference] });
   });
 
-  it('keeps a new issue draft across modes', async () => {
+  it('keeps a new issue draft and shows disclosures across modes', async () => {
     const h = harness(async () => Response.json({ issue, replayed: false }));
     render(KataEvidenceDialog, { client: h.client, selector });
     await screen.findByText('Opening passage');
