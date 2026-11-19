@@ -16,7 +16,29 @@ import (
 var canonicalUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var bearerToken = regexp.MustCompile(`^[A-Za-z0-9._~+/-]+=*$`)
 
-var scopeFields = []string{"endpoint", "archive_id", "client_id", "delegation_id", "source_ids", "tools"}
+var scopeFields = []string{"endpoint", "archive_id", "client_id", "delegation_id", "source_ids"}
+
+// readOperations are the msgvault HTTP operations the CLI's read commands
+// call against a remote: list-accounts, stats, search, show-message,
+// show-thread, and export-messages, plus the health probe that checks the
+// API schema version first.
+var readOperations = []string{
+	"getHealth", "listCLIAccounts", "getCLIStats", "searchCLI",
+	"getCLIMessage", "getCLIMessageThread", "exportCLIMessages",
+}
+
+// ReadOperations returns the operation IDs an HTTP read scope may name. New
+// msgvault operations do not join an existing approval.
+func ReadOperations() []string { return slices.Clone(readOperations) }
+
+// scopeFieldsPresent checks the shared scope fields and the field of the
+// profile s names: a request's own profile, or the profile a response echoes.
+func scopeFieldsPresent(fields map[string]jsontext.Value, s Scope, want bool) bool {
+	return fieldsPresent(fields, scopeFields, want) &&
+		fieldsPresent(fields, []string{"tools"}, want && len(s.Tools) > 0) &&
+		fieldsPresent(fields, []string{"operations"}, want && len(s.Operations) > 0)
+}
+
 var predecessorFields = []string{"previous_request_id", "credential_id", "expected_generation"}
 var resultFields = []string{"credential_id", "credential_generation", "issued_at", "expires_at"}
 
@@ -56,7 +78,7 @@ func fieldsPresent(fields map[string]jsontext.Value, names []string, want bool) 
 func decodeRequest(data []byte) (Request, error) {
 	var r Request
 	fields, ok := decodeDocument(data, &r)
-	if !ok || !validRequest(r) || !fieldsPresent(fields, scopeFields, true) ||
+	if !ok || !validRequest(r) || !scopeFieldsPresent(fields, r.Scope, true) ||
 		!fieldsPresent(fields, predecessorFields, r.Operation == "renew" || r.Operation == "replace") ||
 		!fieldsPresent(fields, []string{"authorization_request_id"}, r.Operation == "release") {
 		return Request{}, ErrInvalidRequest
@@ -85,7 +107,7 @@ func validScope(s Scope) bool {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(s.Endpoint, "#") {
 		return false
 	}
-	if s.ArchiveID == "" || strings.ContainsFunc(s.ArchiveID, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) || s.ClientID == uuid.Nil() || s.DelegationID == uuid.Nil() || len(s.SourceIDs) == 0 || len(s.Tools) == 0 {
+	if s.ArchiveID == "" || strings.ContainsFunc(s.ArchiveID, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) || s.ClientID == uuid.Nil() || s.DelegationID == uuid.Nil() || len(s.SourceIDs) == 0 || (len(s.Tools) == 0) == (len(s.Operations) == 0) {
 		return false
 	}
 	var previous int64
@@ -106,6 +128,11 @@ func validScope(s Scope) bool {
 			return false
 		}
 	}
+	for i, operation := range s.Operations {
+		if !slices.Contains(readOperations, operation) || slices.Contains(s.Operations[:i], operation) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -116,13 +143,13 @@ func decodeResponse(data []byte, request Request) (Response, error) {
 		return Response{}, ErrInvalidResponse
 	}
 	issued := r.Status == StatusReady || r.Status == StatusAlreadyIssued || r.Status == StatusReplacementRequired
-	if !fieldsPresent(fields, scopeFields, issued) || !fieldsPresent(fields, resultFields, issued) ||
+	if !scopeFieldsPresent(fields, request.Scope, issued) || !fieldsPresent(fields, resultFields, issued) ||
 		!fieldsPresent(fields, []string{"credential"}, r.Status == StatusReady) ||
 		!fieldsPresent(fields, []string{"reason"}, !issued && r.Status != StatusReleased) {
 		return Response{}, ErrInvalidResponse
 	}
 	if issued {
-		if request.Operation == "release" || r.Endpoint != request.Endpoint || r.ArchiveID != request.ArchiveID || r.ClientID != request.ClientID || r.DelegationID != request.DelegationID || !slices.Equal(r.SourceIDs, request.SourceIDs) || !slices.Equal(r.Tools, request.Tools) || r.CredentialID == uuid.Nil() || r.CredentialGeneration <= 0 || r.IssuedAt.IsZero() || !r.ExpiresAt.After(r.IssuedAt) {
+		if request.Operation == "release" || r.Endpoint != request.Endpoint || r.ArchiveID != request.ArchiveID || r.ClientID != request.ClientID || r.DelegationID != request.DelegationID || !slices.Equal(r.SourceIDs, request.SourceIDs) || !slices.Equal(r.Tools, request.Tools) || !slices.Equal(r.Operations, request.Operations) || r.CredentialID == uuid.Nil() || r.CredentialGeneration <= 0 || r.IssuedAt.IsZero() || !r.ExpiresAt.After(r.IssuedAt) {
 			return Response{}, ErrInvalidResponse
 		}
 		if (request.Operation == "renew" || request.Operation == "replace") && (r.CredentialGeneration <= request.ExpectedGeneration || r.CredentialID == request.CredentialID) {
