@@ -181,7 +181,7 @@ describe('TaskLinks', () => {
     });
     await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
     expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
-    finish(Response.json({ state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} }));
+    finish(Response.json(taskLookup({ state: 'unavailable', complete: false }, 43)));
     await waitFor(() => expect(fetchFn.mock.settledResults[0]?.type).toBe('fulfilled'));
     await tick();
     expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
@@ -288,7 +288,7 @@ describe('TaskLinks', () => {
         const request = input instanceof Request ? input : new Request(input);
         return request.url.endsWith('/integrations/tasks/status')
           ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
-          : Response.json({ state, complete: false, tasks: state === 'authentication_required' ? [] : [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
+          : Response.json(taskLookup({ state, complete: false, tasks: state === 'authentication_required' ? [] : [{ id: 'task-1', title: 'Cached task' }] }));
       })), mode: 'list', messageId: 42, title: 'Synthetic' });
 
       const alert = await screen.findByRole('alert');

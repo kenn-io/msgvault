@@ -14,10 +14,11 @@ describe('CreateTaskDialog', () => {
       return Response.json({ task: { id: 'task-1', project: 'project', title: 'Edited', revision: 'r1' } }, { status: 201 });
     });
     const oncreated = vi.fn();
+    const sentAt = '2026-07-18T12:00:00Z';
     render(CreateTaskDialog, {
       client: createAPIClient(fetchFn), messageId: 42, project: 'project', defaultTitle: 'Synthetic subject',
       archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
-      sourceMessageId: 'source-42', subject: 'Synthetic subject', from: 'sender@example.com', sentAt: '2026-07-18T12:00:00Z',
+      sourceMessageId: 'source-42', subject: 'Synthetic subject', from: 'sender@example.com', sentAt,
       oncreated, onclose: vi.fn()
     });
 
@@ -27,6 +28,7 @@ describe('CreateTaskDialog', () => {
     }
     expect(screen.getByLabelText('Description')).toHaveProperty('value', '');
     expect(screen.getByText(`${location.origin}/messages/42`)).toBeDefined();
+    expect(screen.getByText(`Synthetic subject · sender@example.com · ${formatShortDate(sentAt)}`)).toBeDefined();
     expect(screen.getByText(/Bodies and attachments are never sent/i).closest('details')).toBeNull();
     await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Edited' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Notes' } });
@@ -42,14 +44,13 @@ describe('CreateTaskDialog', () => {
     expect(requests[0]!.headers.get('X-Request-Id')).toBeTruthy();
   });
 
-  it.each(['full', 'empty'])('shows the %s message context', context => {
-    const sentAt = new Date(2020, 6, 18, 12).toISOString();
+  it('uses the default title when message context is empty', () => {
     render(CreateTaskDialog, {
       client: createAPIClient(async () => Response.json({})), messageId: 42, project: 'project', defaultTitle: 'Synthetic subject',
       archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
-      sourceMessageId: 'source-42', subject: context === 'full' ? 'Synthetic subject' : '', from: context === 'full' ? 'sender@example.com' : '', sentAt: context === 'full' ? sentAt : '', oncreated: vi.fn(), onclose: vi.fn()
+      sourceMessageId: 'source-42', subject: '', from: '', sentAt: '', oncreated: vi.fn(), onclose: vi.fn()
     });
-    expect(screen.getByText(context === 'full' ? `Synthetic subject · sender@example.com · ${formatShortDate(sentAt)}` : 'Synthetic subject')).toBeDefined();
+    expect(screen.getByText('Synthetic subject')).toBeDefined();
   });
 
   it('keeps the request ID and added_at stable across a failed browser retry', async () => {

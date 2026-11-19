@@ -117,7 +117,7 @@ describe('Add to task', () => {
     } finally { view.unmount(); }
   });
 
-  it.each(['ready', 'stale'])('updates the task control when the index is %s', async state => {
+  it.each(['ready', 'partial', 'stale'])('updates the task control when the index is %s', async state => {
     const client = createAPIClient(async input => {
       const url = (input as Request).url;
       if (url.includes('/search')) return Response.json({ tasks: [], truncated: false });
@@ -125,7 +125,7 @@ describe('Add to task', () => {
     });
     const view = render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
     try {
-      if (state === 'ready') {
+      if (state !== 'stale') {
         const existing = await screen.findByRole('radio', { name: 'Existing' });
         expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
         expect(screen.queryByText('Task')).toBeNull();
