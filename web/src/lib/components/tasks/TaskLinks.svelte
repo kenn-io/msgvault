@@ -328,7 +328,6 @@
   .task-links.add { padding: 0; gap: var(--space-6); }
   .task-project { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .disclosure { color: var(--text-secondary); font-size: 12px; }
-  .task-links.add > :global(.kit-segmented) { justify-self: start; }
   .actions { display: flex; justify-content: flex-end; gap: var(--space-4); }
   p {
     margin: 0;
