@@ -1,8 +1,9 @@
 <script lang="ts">
   import { createBrowserRequestID } from '../../api/request-id';
   import { createOrLinkMessageTask as generatedCreateOrLinkMessageTask } from '../../api/generated/api/api';
-  import { Chip, Button, Disclosure, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Chip, Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
+  import TaskMetadataDisclosure from './TaskMetadataDisclosure.svelte';
   import { formatShortDate } from '../../util/format';
   import type { APIClient } from '../../api/client';
   let {
@@ -158,54 +159,7 @@
         block
       /></label
     >
-    <Disclosure variant="plain">{#snippet summary()}What's sent{/snippet}
-      <dl>
-        <div>
-          <dt>Message URL</dt>
-          <dd>{messageURL}</dd>
-        </div>
-        <div>
-          <dt>Archive UID</dt>
-          <dd>{archiveUID}</dd>
-        </div>
-        <div>
-          <dt>Message ID</dt>
-          <dd>{messageId}</dd>
-        </div>
-        <div>
-          <dt>Conversation ID</dt>
-          <dd>{conversationId}</dd>
-        </div>
-        <div>
-          <dt>Source type</dt>
-          <dd>{sourceType}</dd>
-        </div>
-        <div>
-          <dt>Source identifier</dt>
-          <dd>{sourceIdentifier}</dd>
-        </div>
-        <div>
-          <dt>Source message ID</dt>
-          <dd>{sourceMessageId}</dd>
-        </div>
-        <div>
-          <dt>Subject snapshot</dt>
-          <dd>{subject}</dd>
-        </div>
-        <div>
-          <dt>Sender snapshot</dt>
-          <dd>{from}</dd>
-        </div>
-        <div>
-          <dt>Sent at</dt>
-          <dd>{sentAt}</dd>
-        </div>
-        <div>
-          <dt>Link added at</dt>
-          <dd>{addedAt}</dd>
-        </div>
-      </dl>
-    </Disclosure>
+    <TaskMetadataDisclosure {messageURL} {addedAt} {archiveUID} {messageId} {conversationId} {sourceType} {sourceIdentifier} {sourceMessageId} {subject} {from} {sentAt} />
     <p class="disclosure">Bodies and attachments are never sent.</p>
     {#if error}<p role="alert">{error}</p>{/if}
     <div class="actions">
@@ -241,28 +195,8 @@
     background: var(--bg-canvas);
     color: var(--text-primary);
   }
-  .project { display: flex; justify-content: space-between; margin: 0; }
-  .project span, form :global(.kit-disclosure) {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-  dl {
-    display: grid;
-    gap: var(--space-1);
-  }
-  dl div {
-    display: grid;
-    grid-template-columns: 8rem minmax(0, 1fr);
-    gap: var(--space-2);
-  }
-  dt {
-    color: var(--text-muted);
-  }
-  dd {
-    margin: 0;
-    overflow-wrap: anywhere;
-    color: var(--text-primary);
-  }
+  .project { display: grid; gap: var(--space-2); margin: 0; }
+  .project span { color: var(--text-secondary); font-size: var(--font-size-sm); }
   .actions {
     display: flex;
     justify-content: flex-end;

@@ -14,7 +14,7 @@ describe('CreateTaskDialog', () => {
       return Response.json({ task: { id: 'task-1', project: 'project', title: 'Edited', revision: 'r1' } }, { status: 201 });
     });
     const oncreated = vi.fn();
-    const sentAt = '2026-07-18T12:00:00Z';
+    const sentAt = '2026-07-18T12:00:37Z';
     render(CreateTaskDialog, {
       client: createAPIClient(fetchFn), messageId: 42, project: 'project', defaultTitle: 'Synthetic subject',
       archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
@@ -23,11 +23,15 @@ describe('CreateTaskDialog', () => {
     });
 
     expect(screen.getByText('project')).toBeDefined();
-    for (const value of ['archive-a', '42', '7', 'gmail', 'archive@example.com', 'source-42', 'Synthetic subject', 'sender@example.com', '2026-07-18T12:00:00Z']) {
-      expect(screen.getByText(value)).toBeDefined();
+    for (const [label, value] of [
+      ['Message URL', `${location.origin}/messages/42`], ['Archive UID', 'archive-a'], ['Message ID', '42'],
+      ['Conversation ID', '7'], ['Source type', 'gmail'], ['Source identifier', 'archive@example.com'],
+      ['Source message ID', 'source-42'], ['Subject snapshot', 'Synthetic subject'], ['Sender snapshot', 'sender@example.com'],
+    ]) {
+      expect(screen.getByText(label).nextElementSibling?.textContent).toBe(value);
     }
+    expect(screen.getByText('Sent at').nextElementSibling?.textContent).toBe('2026-07-18T12:00:37Z');
     expect(screen.getByLabelText('Description')).toHaveProperty('value', '');
-    expect(screen.getByText(`${location.origin}/messages/42`)).toBeDefined();
     expect(screen.getByText(`Synthetic subject · sender@example.com · ${formatShortDate(sentAt)}`)).toBeDefined();
     expect(screen.getByText(/Bodies and attachments are never sent/i).closest('details')).toBeNull();
     await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Edited' } });
@@ -40,7 +44,7 @@ describe('CreateTaskDialog', () => {
       title: 'Edited', description: `Notes\n\n${location.origin}/messages/42`, priority: 'high', labels: ['mail', 'follow-up']
     });
     const body = await requests[0]!.clone().json() as { added_at?: string };
-    expect(body.added_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(screen.getByText('Link added at').nextElementSibling?.textContent).toBe(body.added_at);
     expect(requests[0]!.headers.get('X-Request-Id')).toBeTruthy();
   });
 

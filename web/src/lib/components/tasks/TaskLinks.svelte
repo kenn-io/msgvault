@@ -18,6 +18,7 @@
   } from '../../api/generated/models';
   import TaskIssuePicker from '../common/TaskIssuePicker.svelte';
   import CreateTaskDialog from './CreateTaskDialog.svelte';
+  import TaskMetadataDisclosure from './TaskMetadataDisclosure.svelte';
   import DetailRow from '../people/DetailRow.svelte';
   import InlineNotice from '../common/InlineNotice.svelte';
   type Lookup = GeneratedTaskLinkLookupResponse;
@@ -284,6 +285,7 @@
       {#if action !== 'create'}
       <TaskIssuePicker load={loadTasks} noun="tasks" moreNote="Showing the first 25 tasks. Type to search the rest." empty={`No tasks in ${project} yet.`} disabled={busy} bind:selected />
       {#if error}<p role="alert">{error}</p>{/if}
+      {#if outboundMetadata}<TaskMetadataDisclosure {messageId} archiveUID={outboundMetadata.archive_uid} conversationId={outboundMetadata.conversation_id} sourceType={outboundMetadata.source_type} sourceIdentifier={outboundMetadata.source_identifier} sourceMessageId={outboundMetadata.source_message_id} subject={outboundMetadata.subject} from={outboundMetadata.from} sentAt={outboundMetadata.sent_at} />{/if}
       <p class="disclosure">Bodies and attachments are never sent.</p>
       <div class="actions">
         <Button surface="soft" label="Cancel" disabled={busy} onclick={oncancel} />

@@ -65,6 +65,7 @@ describe('Add to task', () => {
     try {
       await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
       await screen.findByText('Quote');
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Create issue' })).toHaveProperty('disabled', false));
       await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
       expect(onclose).not.toHaveBeenCalled();

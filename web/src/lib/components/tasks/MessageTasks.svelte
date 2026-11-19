@@ -60,6 +60,7 @@
 <style>
   .task-group { display: grid; gap: var(--space-2); padding: 0 var(--pane-pad-x) var(--space-4); }
   .kata-links { display: grid; gap: var(--space-2); }
+  .kata-links a { display: inline-flex; align-items: center; min-height: var(--control-h); }
   .task-group :global(.task-links) { padding: 0; }
   h2, p { margin: 0; font-size: var(--font-size-sm); }
 </style>

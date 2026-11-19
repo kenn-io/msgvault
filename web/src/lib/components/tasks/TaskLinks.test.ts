@@ -1,4 +1,4 @@
-import { taskCreationClient, taskLookup } from './fixtures.test-support';
+import { taskCreationClient, taskLookup, taskOutboundMetadata } from './fixtures.test-support';
 import { tick } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { getTaskIntegrationStatus } from '../../api/generated/api/api';
@@ -373,7 +373,7 @@ describe('TaskLinks', () => {
     expect(requests.filter((request) => request.method === 'GET' && request.url.includes('/messages/42/tasks'))).toHaveLength(1);
   });
 
-  it('links a selected task through the typed route', async () => {
+  it('provides existing-task metadata and links a selected task', async () => {
     const requests: Request[] = [];
     const oncomplete = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -381,10 +381,14 @@ describe('TaskLinks', () => {
       if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
       if (request.url.includes('/integrations/tasks/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Synthetic result', revision: 'r1' }, { id: 'task-2', title: 'Synthetic result', revision: 'r2' }], truncated: false });
       if (request.method === 'POST') return Response.json({ task: { id: 'task-1', project: 'project', title: 'Linked', revision: 'r1' } }, { status: 201 });
-      return Response.json(taskLookup({ last_scan: '2026-07-19T01:00:00Z' }));
+      return Response.json(taskLookup({ last_scan: '2026-07-19T01:00:00Z', outbound_metadata: { ...taskOutboundMetadata, sent_at: '2026-07-18T12:00:37Z' } }));
     });
     render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic', oncomplete });
     expect(await screen.findByRole('radio', { name: 'Synthetic result · task-1' })).toBeDefined();
+    const existing = within(screen.getByRole('region', { name: 'Linked tasks' }));
+    expect(existing.getByText('archive-a')).toBeTruthy();
+    expect(existing.getByText('Sent at').nextElementSibling?.textContent).toBe('2026-07-18T12:00:37Z');
+    expect(existing.getByText('When linked')).toBeTruthy();
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic result · task-2' }));
     const search = requests.find(request => new URL(request.url).pathname.endsWith('/integrations/tasks/search'))!;
     expect(new URL(search.url).searchParams.has('q')).toBe(false);
