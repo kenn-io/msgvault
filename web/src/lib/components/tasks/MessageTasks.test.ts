@@ -48,7 +48,7 @@ describe('Message task list', () => {
       if (url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (!url.includes('/kata/')) return Response.json(taskLookup({ tasks: [{ id: 'task-1', title: 'Task work' }] }, url.includes('/messages/43/') ? 43 : 42));
       if (hold) return new Promise<Response>(resolve => { held = resolve; });
-      return Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }] });
+      return Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }] });
     });
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });

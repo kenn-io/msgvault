@@ -121,18 +121,21 @@ describe('Add to task', () => {
 
   it('shows the existing task picker only when the toolbar is ready', async () => {
     const view = render(AddToTaskDialog, { client: taskCreationClient(), messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
-    const existing = await screen.findByRole('radio', { name: 'Existing' });
-    expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
-    expect(screen.queryByText('Task')).toBeNull();
-    await fireEvent.click(existing);
-    expect(await screen.findByText('No tasks in example yet.')).toBeDefined();
-    view.unmount();
+    try {
+      const existing = await screen.findByRole('radio', { name: 'Existing' });
+      expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
+      expect(screen.queryByText('Task')).toBeNull();
+      await fireEvent.click(existing);
+      expect(await screen.findByText('No tasks in example yet.')).toBeDefined();
+    } finally { view.unmount(); }
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
       ? { state: 'ready', project: 'example' }
       : taskLookup({ state: 'stale', complete: false })));
-    render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
-    await screen.findByRole('alert');
-    expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
+    const staleView = render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
+    try {
+      await screen.findByRole('alert');
+      expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
+    } finally { staleView.unmount(); }
   });
 
   it.each(['success', 'failure'])('guards dismissal while busy and releases it after %s', async (result) => {
