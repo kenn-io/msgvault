@@ -221,7 +221,11 @@ describe('TaskLinks', () => {
     expect(screen.getByRole('alert').textContent).toContain('Some linked tasks may be missing');
     expect(screen.getByRole('alert').textContent).toContain('2026');
     expect(screen.getByRole('button', { name: 'Unlink Follow up' })).toHaveProperty('disabled', false);
-    await view.rerender({ mode: 'add' });
+    view.unmount();
+    const addClient = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'ready', project: 'project', message: 'Ready' }
+      : taskLookup({ state: 'partial', complete: false, last_scan: '2026-07-19T01:00:00Z', remote_revision: 'remote-1', reason: 'safety_limit', tasks: [{ id: 'task-1', title: 'Follow up', revision: 'r1' }] })));
+    render(TaskLinks, { client: addClient, mode: 'add', messageId: 42, title: 'Synthetic' });
     expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
   });
 
@@ -291,18 +295,21 @@ describe('TaskLinks', () => {
   ])(
     'keeps cached tasks visible but disables mutations when the index state is %s even with a ready integration',
     async (state, copy) => {
-      const view = render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
+      const client = createAPIClient(vi.fn(async (input) => {
         const request = input instanceof Request ? input : new Request(input);
         return request.url.endsWith('/integrations/tasks/status')
           ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
           : Response.json(taskLookup({ state, complete: false, tasks: state === 'authentication_required' ? [] : [{ id: 'task-1', title: 'Cached task' }] }));
-      })), mode: 'list', messageId: 42, title: 'Synthetic' });
+      }));
+      const view = render(TaskLinks, { client, mode: 'list', messageId: 42, title: 'Synthetic' });
 
       const alert = await screen.findByRole('alert');
       expect(alert.textContent?.toLowerCase()).toContain(copy.toLowerCase());
       expect(screen.queryByText('Cached task') !== null).toBe(state !== 'authentication_required');
       if (state !== 'authentication_required') expect(screen.getByRole('button', { name: 'Unlink Cached task' })).toHaveProperty('disabled', true);
-      await view.rerender({ mode: 'add' });
+      view.unmount();
+      render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Synthetic' });
+      await screen.findByRole('alert');
       expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
     }
   );
