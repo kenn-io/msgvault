@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-19"
 title: Importing Local Email
 description: Bring local email archives into msgvault, or backfill older Gmail and IMAP messages.
 ---
@@ -20,6 +20,8 @@ labels where the format provides them.
 | Calendar `.ics` file | [`import-ics`](../cli-reference.md#import-ics) |
 | Older messages still in Gmail or IMAP | [Historical import jobs](#historical-import-jobs) |
 | Chat database or export | [Text messages](/docs/usage/text-messages/) or [Slackdump](/docs/usage/slack/#import-a-slackdump-export) |
+| LinkedIn member data export | [LinkedIn](/docs/usage/linkedin/) |
+| TikTok **Download your data** export | [TikTok](/docs/usage/tiktok-export/) |
 | RSS, Atom, or JSON feeds | [Feeds](/docs/usage/feeds/) |
 | Messages from a source without a connector, such as tool notifications | [Messages from any source](/docs/usage/message-import/) |
 

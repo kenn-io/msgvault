@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-18"
+last_edited: "2026-11-19"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -1029,6 +1029,7 @@ require `--allow-profile-writes` and the HTTP opt-in when applicable.
 | Tool | Effect | Parameters |
 |---|---|---|
 | `promote_person` | Create a saved profile from an observed contact; repeated promotion preserves the existing name. | `participant_id` (int, required); optional `display_name` when supported |
+| `create_person` | Create a saved profile for someone with no archived messages. Refuses an email or phone msgvault already knows and names the match. Values are recorded as enrichment, so CardDAV publishes the person only after [review](people-carddav.md#review-inferred-changes-before-they-are-exported). Requires API schema 5.16.0 or newer. See [Create a person](people.md#create-a-person). | `name` (required); optional `emails` and `phones` (arrays of `{value, type}`), `org`, `title` (requires `org`), `address`, `note` |
 | `get_person_edit_context` | Read a saved profile's display name, revision, and ETag. | `person_id` (int, required) |
 | `set_person_display_name` | Set or clear a saved display name; requires confirmation. | `person_id` (int, required), `etag` (required), `display_name` (string, required) |
 | `update_person_notes` | Append or replace private Notes with `enrichment` provenance. | `person_id` (int, required), `text` (required), `mode` (`append` by default, or `replace`), `expected_value_id` |

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-18"
+last_edited: "2026-11-19"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -188,6 +188,10 @@ Schema 5.17.0 adds person, source, conversation and incoming filters to the
 
 Schema 5.16.0 adds `POST /api/v1/people/create` for standalone curated
 profiles. The MCP `create_person` tool requires this schema version or newer.
+
+Schema 5.15.0 applies the `mode` of [media search](#media-transcript-search)
+to recordings as well as attachments, and adds `actual_mode` and
+`degradations` to recording results.
 
 Schema 5.14.0 adds each fact decision's submitted claim value.
 
