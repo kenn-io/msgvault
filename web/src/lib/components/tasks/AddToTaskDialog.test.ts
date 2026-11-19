@@ -1,4 +1,4 @@
-import { taskCreationClient, taskLookup } from './fixtures.test-support';
+import { taskCreationClient, taskLookup, taskOutboundMetadata } from './fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -12,7 +12,7 @@ function pendingCreate() {
   const client = createAPIClient(async (input) => {
     const request = input as Request;
     if (request.method === 'POST') return response;
-    return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : taskLookup());
+    return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
   });
   render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose });
   return { respond, onclose };
@@ -24,7 +24,7 @@ describe('Add to task', () => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (path.endsWith('/prepare')) return Response.json({ evidence: [{ id: 'one', passage: 'one', reference: { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, source_type: 'email', source_identifier: 'example', source_message_id: '42', message: { body_sha256: 'a'.repeat(64), start_rune: 0, end_rune: 5 } }, excerpt: 'Quote', display: {}, content_trust: 'untrusted' }] });
-      return Response.json(taskLookup());
+      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
     const readiness = new KataReadiness(client);
     let view: ReturnType<typeof render> | undefined;
@@ -56,7 +56,7 @@ describe('Add to task', () => {
       if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (path.endsWith('/prepare')) return Response.json({ evidence: [{ id: 'one', passage: 'one', reference, excerpt: 'Quote', display: {}, content_trust: 'untrusted' }] });
       if (request.method === 'POST') return pending;
-      return Response.json(taskLookup());
+      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
     const readiness = new KataReadiness(client);
     await waitFor(() => expect(readiness.ready).toBe(true));
@@ -80,7 +80,7 @@ describe('Add to task', () => {
     const client = createAPIClient(async (input) => {
       const request = input as Request;
       return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' }
-        : taskLookup());
+        : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
     const readiness = new KataReadiness(client);
     let view: ReturnType<typeof render> | undefined;
@@ -94,11 +94,11 @@ describe('Add to task', () => {
       await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Draft notes' } });
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Issue title' }), { target: { value: 'Kata draft' } });
+      await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
       await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Brief draft' } });
       await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
-      expect(screen.getByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Kata draft');
+      expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
       expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', 'Brief draft');
       await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
       expect(await screen.findByRole('textbox', { name: 'Task title' })).toHaveProperty('value', 'Revised follow up');
