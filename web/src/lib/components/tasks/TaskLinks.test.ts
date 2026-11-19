@@ -287,7 +287,7 @@ describe('TaskLinks', () => {
         requests.push(request);
         return request.url.endsWith('/integrations/tasks/status')
           ? Response.json({ state: integrationState, project: 'project', message: `Integration reason: ${integrationState}` })
-          : Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
+          : Response.json(taskLookup({ tasks: [{ id: 'task-1', title: 'Cached task' }] }));
       })), messageId: 42, title: 'Synthetic', onsettings });
 
       expect(await screen.findByText('Cached task')).toBeDefined();
@@ -343,10 +343,7 @@ describe('TaskLinks', () => {
       const request = input instanceof Request ? input : new Request(input);
       return request.url.endsWith('/integrations/tasks/status')
         ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
-        : Response.json({
-          state: 'ready', complete: true, reason: 'cache_persistence_unsupported',
-          tasks: [{ id: 'task-1', title: 'Current-session task' }], outbound_metadata: {}
-        });
+        : Response.json(taskLookup({ reason: 'cache_persistence_unsupported', tasks: [{ id: 'task-1', title: 'Current-session task' }] }));
     })), messageId: 42, title: 'Synthetic' });
 
     expect(await screen.findByText('Current-session task')).toBeDefined();
@@ -367,9 +364,9 @@ describe('TaskLinks', () => {
     await view.rerender({ client: createAPIClient(fetchFn), messageId: 43, title: 'Message B' });
     expect(screen.queryByText('Task A')).toBeNull();
     await waitFor(() => expect(responses.has(43)).toBe(true));
-    responses.get(43)!(Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-b', title: 'Task B' }], outbound_metadata: {} }));
+    responses.get(43)!(Response.json(taskLookup({ tasks: [{ id: 'task-b', title: 'Task B' }] }, 43)));
     expect(await screen.findByText('Task B')).toBeDefined();
-    responses.get(42)!(Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-a', title: 'Task A' }], outbound_metadata: {} }));
+    responses.get(42)!(Response.json(taskLookup({ tasks: [{ id: 'task-a', title: 'Task A' }] })));
     await Promise.resolve();
     expect(screen.queryByText('Task A')).toBeNull();
     expect(screen.getByText('Task B')).toBeDefined();
@@ -384,7 +381,7 @@ describe('TaskLinks', () => {
       if (request.url.endsWith('/integrations/tasks/status')) return Promise.resolve(Response.json({ state: 'ready', project: 'project', message: 'Ready' }));
       if (request.method === 'DELETE') return new Promise((resolve) => { resolveDelete = resolve; });
       const id = Number(request.url.match(/messages\/(\d+)\/tasks/)?.[1]);
-      return Promise.resolve(Response.json({ state: 'ready', complete: true, tasks: [{ id: `task-${id}`, title: `Task ${id}` }], outbound_metadata: {} }));
+      return Promise.resolve(Response.json(taskLookup({ tasks: [{ id: `task-${id}`, title: `Task ${id}` }] }, id)));
     });
     const client = createAPIClient(fetchFn);
     const view = render(TaskLinks, { client, messageId: 42, title: 'Message A' });
