@@ -1,4 +1,4 @@
-import { taskCreationClient, taskLookup, taskOutboundMetadata } from './fixtures.test-support';
+import { taskCreationClient, taskLookup } from './fixtures.test-support';
 import { tick } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { getTaskIntegrationStatus } from '../../api/generated/api/api';
@@ -74,7 +74,7 @@ describe('TaskLinks', () => {
           ? Response.json({ message: 'Create response unavailable' }, { status: 503 })
           : Response.json({ task: { id: 'task-1', title: 'Draft title' } }, { status: 201 });
       }
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+      return Response.json(taskLookup());
     });
     const statuses = new SvelteMap<string, ConversationTaskStatus['latest']>();
     const shared: ConversationTaskStatus = {
@@ -116,7 +116,7 @@ describe('TaskLinks', () => {
     await expect(requests[1]!.clone().text()).resolves.toBe(await requests[0]!.clone().text());
   });
 
-  it('preserves a creation draft when switching between New and Existing', async () => {
+  it('keeps the create form mounted while action is not create', async () => {
     const props = { client: taskCreationClient(), mode: 'add' as const, messageId: 42, title: 'Follow up' };
     const view = render(TaskLinks, { ...props, action: 'create' });
     await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Revised follow up' } });
@@ -175,16 +175,16 @@ describe('TaskLinks', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => lookup);
     const status = { state: 'unreachable' as const, message: 'Task service is unreachable.' };
     const shared: ConversationTaskStatus = { latest: status, load: async () => ({ data: status, response: Response.json(status) }) };
-    render(TaskLinks, {
+    const view = render(TaskLinks, {
       props: { client: createAPIClient(fetchFn), messageId: 43, title: 'Later email', showSetup: false },
       context: new Map([[conversationTaskStatusKey, shared]]),
     });
     await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
-    expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
+    expect(view.container.querySelector('.task-links')).toBeNull();
     finish(Response.json(taskLookup({ state: 'unavailable', complete: false }, 43)));
     await waitFor(() => expect(fetchFn.mock.settledResults[0]?.type).toBe('fulfilled'));
     await tick();
-    expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
+    expect(view.container.querySelector('.task-links')).toBeNull();
   });
 
   it('shows the project once above distinct linked tasks', async () => {
@@ -209,28 +209,10 @@ describe('TaskLinks', () => {
     render(TaskLinks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic' });
     expect(screen.getByRole('status').textContent).toContain('Loading linked tasks');
     await waitFor(() => expect(resolve).toBeTypeOf('function'));
-    resolve(Response.json({ state: 'partial', complete: false, last_scan: '2026-07-19T01:00:00Z', remote_revision: 'remote-1', reason: 'safety_limit', tasks: [{ id: 'task-1', title: 'Follow up', revision: 'r1' }] }));
+    resolve(Response.json(taskLookup({ state: 'partial', complete: false, last_scan: '2026-07-19T01:00:00Z', remote_revision: 'remote-1', reason: 'safety_limit', tasks: [{ id: 'task-1', title: 'Follow up', revision: 'r1' }] })));
     expect(await screen.findByText('Follow up')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('Some linked tasks may be missing');
     expect(screen.getByRole('alert').textContent).toContain('2026');
-  });
-
-  it.each([
-    ['authentication_required', 'Authentication is required'],
-    ['incompatible', 'incompatible'],
-    ['unavailable', 'unavailable'],
-    ['stale', 'stale'],
-    ['disabled', 'disabled'],
-    ['not_found', 'not found'],
-    ['wrong_project', 'wrong project']
-  ])('renders the %s state notice', async (state, copy) => {
-    render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      return request.url.endsWith('/integrations/tasks/status')
-        ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
-        : Response.json(taskLookup({ state, complete: false, reason: state, last_scan: '2026-07-19T01:00:00Z' }));
-    })), messageId: 42, title: 'Synthetic', showSetup: false });
-    expect((await screen.findByRole('alert')).textContent?.toLowerCase()).toContain(copy.toLowerCase());
   });
 
   it('requests linked tasks without waiting for integration status', async () => {
@@ -243,7 +225,7 @@ describe('TaskLinks', () => {
         return new Promise((done) => { resolveStatus = done; });
       }
       requested.push('tasks');
-      return Promise.resolve(Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Parallel task' }] }));
+      return Promise.resolve(Response.json(taskLookup({ tasks: [{ id: 'task-1', title: 'Parallel task' }] })));
     });
     render(TaskLinks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic' });
     await waitFor(() => expect(requested).toEqual(['status', 'tasks']));
@@ -257,9 +239,7 @@ describe('TaskLinks', () => {
       const request = input instanceof Request ? input : new Request(input);
       return request.url.endsWith('/integrations/tasks/status')
         ? Response.json({ message: 'Status temporarily unavailable' }, { status: 503 })
-        : Response.json({ state: 'unavailable', complete: false, reason: 'daemon_unavailable', tasks: [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {
-          archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z'
-        } });
+        : Response.json(taskLookup({ state: 'unavailable', complete: false, reason: 'daemon_unavailable', tasks: [{ id: 'task-1', title: 'Cached task' }] }));
     })), messageId: 42, title: 'Synthetic' });
     expect(await screen.findByText('Cached task')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('unavailable');
@@ -294,10 +274,7 @@ describe('TaskLinks', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
-      return Response.json({
-        state: 'partial', complete: false, reason: 'safety_limit', last_scan: '2026-07-19T01:00:00Z',
-        tasks: [{ id: 'task-1', title: 'Partial task' }], outbound_metadata: taskOutboundMetadata
-      });
+      return Response.json(taskLookup({ state: 'partial', complete: false, reason: 'safety_limit', last_scan: '2026-07-19T01:00:00Z', tasks: [{ id: 'task-1', title: 'Partial task' }] }));
     });
     const client = createAPIClient(fetchFn);
     const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
@@ -308,17 +285,26 @@ describe('TaskLinks', () => {
     expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
   });
 
-  it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project', 'authentication_required'])(
+  it.each([
+    ['authentication_required', 'Authentication is required'],
+    ['incompatible', 'incompatible'],
+    ['unavailable', 'unavailable'],
+    ['stale', 'stale'],
+    ['disabled', 'disabled'],
+    ['not_found', 'not found'],
+    ['wrong_project', 'wrong project']
+  ])(
     'keeps cached tasks visible but disables mutations when the index state is %s even with a ready integration',
-    async (state) => {
+    async (state, copy) => {
       const view = render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
         const request = input instanceof Request ? input : new Request(input);
         return request.url.endsWith('/integrations/tasks/status')
           ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
-          : Response.json({ state, complete: false, reason: state, tasks: state === 'authentication_required' ? [] : [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: taskOutboundMetadata });
+          : Response.json(taskLookup({ state, complete: false, tasks: state === 'authentication_required' ? [] : [{ id: 'task-1', title: 'Cached task' }] }));
       })), mode: 'list', messageId: 42, title: 'Synthetic' });
 
       const alert = await screen.findByRole('alert');
+      expect(alert.textContent?.toLowerCase()).toContain(copy.toLowerCase());
       if (state === 'unavailable') expect(alert.textContent).toContain('The task service is unavailable; safe cached links may be shown.');
       expect(screen.queryByText('Cached task') !== null).toBe(state !== 'authentication_required');
       await view.rerender({ mode: 'add' });
@@ -393,9 +379,7 @@ describe('TaskLinks', () => {
       if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
       if (request.url.includes('/integrations/tasks/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Synthetic result', revision: 'r1' }, { id: 'task-2', title: 'Synthetic result', revision: 'r2' }], truncated: false });
       if (request.method === 'POST') return Response.json({ task: { id: 'task-1', project: 'project', title: 'Linked', revision: 'r1' } }, { status: 201 });
-      return Response.json({ state: 'ready', complete: true, last_scan: '2026-07-19T01:00:00Z', tasks: [], outbound_metadata: {
-        archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z'
-      } });
+      return Response.json(taskLookup({ last_scan: '2026-07-19T01:00:00Z' }));
     });
     render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic', oncomplete });
     expect(await screen.findByRole('radio', { name: 'Synthetic result · task-1' })).toBeDefined();
@@ -424,7 +408,7 @@ describe('TaskLinks', () => {
         if (posts.length === 1) return Response.json({ message: 'Unavailable' }, { status: 503 });
         return Response.json({ task: { id: 'task-1', project: 'project', title: 'Linked', revision: 'r2' } }, { status: 201 });
       }
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+      return Response.json(taskLookup());
     });
     render(TaskLinks, {
       client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic',

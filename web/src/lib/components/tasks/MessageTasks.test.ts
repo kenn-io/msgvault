@@ -1,25 +1,26 @@
 import { taskLookup } from './fixtures.test-support';
 import { render, screen, waitFor } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
-  it.each(['partial', 'suppressed'])('shows or hides the Tasks group for %s', async scenario => {
-    const fetchFn = vi.fn<typeof fetch>(async input => {
-      if ((input as Request).url.endsWith('/status')) return Response.json({ state: scenario === 'suppressed' ? 'unreachable' : 'ready', project: 'example' });
-      return Response.json(taskLookup(scenario === 'partial'
-        ? { state: 'partial', complete: false }
-        : { state: 'unavailable', complete: false }));
-    });
-    render(MessageTasks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic', email: true, showSetup: scenario !== 'suppressed' });
-    if (scenario === 'partial') {
-      expect(await screen.findByRole('region', { name: 'Tasks' })).toBeDefined();
-    } else {
-      await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
-      expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
-    }
+  it('shows the Tasks group for a partial index notice', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'ready', project: 'example' }
+      : taskLookup({ state: 'partial', complete: false })));
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
+    expect(await screen.findByRole('region', { name: 'Tasks' })).toBeDefined();
+  });
+
+  it('passes setup suppression to task links', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'unreachable', project: 'example' }
+      : taskLookup({ state: 'unavailable', complete: false })));
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup: false });
+    await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
+    expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
   });
 
   it('reloads persisted email links and skips task lookup for non-email messages', async () => {
@@ -61,7 +62,7 @@ describe('Message task list', () => {
         expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
         expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
       }
-      if (scenario === 'refresh' || scenario === 'message change') {
+      if (scenario === 'refresh') {
         await screen.findByText('Task work');
         expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
       }

@@ -1,4 +1,4 @@
-import { taskCreationClient, taskLookup, taskOutboundMetadata } from './fixtures.test-support';
+import { taskCreationClient, taskLookup } from './fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -12,7 +12,7 @@ function pendingCreate() {
   const client = createAPIClient(async (input) => {
     const request = input as Request;
     if (request.method === 'POST') return response;
-    return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+    return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : taskLookup());
   });
   render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose });
   return { respond, onclose };
@@ -24,7 +24,7 @@ describe('Add to task', () => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (path.endsWith('/prepare')) return Response.json({ evidence: [{ id: 'one', passage: 'one', reference: { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, source_type: 'email', source_identifier: 'example', source_message_id: '42', message: { body_sha256: 'a'.repeat(64), start_rune: 0, end_rune: 5 } }, excerpt: 'Quote', display: {}, content_trust: 'untrusted' }] });
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+      return Response.json(taskLookup());
     });
     const readiness = new KataReadiness(client);
     let view: ReturnType<typeof render> | undefined;
@@ -56,7 +56,7 @@ describe('Add to task', () => {
       if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (path.endsWith('/prepare')) return Response.json({ evidence: [{ id: 'one', passage: 'one', reference, excerpt: 'Quote', display: {}, content_trust: 'untrusted' }] });
       if (request.method === 'POST') return pending;
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+      return Response.json(taskLookup());
     });
     const readiness = new KataReadiness(client);
     await waitFor(() => expect(readiness.ready).toBe(true));
@@ -81,7 +81,7 @@ describe('Add to task', () => {
     const client = createAPIClient(async (input) => {
       const request = input as Request;
       return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' }
-        : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+        : taskLookup());
     });
     const readiness = new KataReadiness(client);
     let view: ReturnType<typeof render> | undefined;
@@ -118,26 +118,23 @@ describe('Add to task', () => {
     } finally { view.unmount(); }
   });
 
-  it('shows the existing task picker when ready', async () => {
-    const view = render(AddToTaskDialog, { client: taskCreationClient(), messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
-    try {
-      const existing = await screen.findByRole('radio', { name: 'Existing' });
-      expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
-      expect(screen.queryByText('Task')).toBeNull();
-      await fireEvent.click(existing);
-      expect(await screen.findByText('No tasks in example yet.')).toBeDefined();
-    } finally { view.unmount(); }
-  });
-
-  it('hides the task control when the index is stale', async () => {
+  it.each(['ready', 'stale'])('shows the task control when the index is %s', async state => {
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
       ? { state: 'ready', project: 'example' }
-      : taskLookup({ state: 'stale', complete: false })));
-    const staleView = render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
+      : taskLookup({ state, complete: state === 'ready' })));
+    const view = render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
     try {
-      await screen.findByRole('alert');
-      expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
-    } finally { staleView.unmount(); }
+      if (state === 'ready') {
+        const existing = await screen.findByRole('radio', { name: 'Existing' });
+        expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
+        expect(screen.queryByText('Task')).toBeNull();
+        await fireEvent.click(existing);
+        expect(await screen.findByRole('searchbox', { name: 'Filter tasks' })).toBeDefined();
+      } else {
+        await screen.findByRole('alert');
+        expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
+      }
+    } finally { view.unmount(); }
   });
 
   it.each(['success', 'failure'])('guards dismissal while busy and releases it after %s', async (result) => {

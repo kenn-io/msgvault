@@ -1,4 +1,4 @@
-import { taskLookup, taskOutboundMetadata } from '../tasks/fixtures.test-support';
+import { taskLookup } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -193,7 +193,7 @@ describe('ConversationView', () => {
         return Response.json({ message: 'Tasks status could not be read.' }, { status: 500 });
       }
       const lookup = /messages\/(\d+)\/tasks$/.exec(path);
-      if (lookup) return Response.json({ state: recovered && lookup[1] === '1' ? 'unavailable' : 'ready', complete: !recovered, tasks: [{ id: `task-${lookup[1]}`, title: `Cached task ${lookup[1]}` }], outbound_metadata: { ...taskOutboundMetadata, message_id: Number(lookup[1]) } });
+      if (lookup) return Response.json(taskLookup({ state: recovered && lookup[1] === '1' ? 'unavailable' : 'ready', complete: !recovered, tasks: [{ id: `task-${lookup[1]}`, title: `Cached task ${lookup[1]}` }] }, Number(lookup[1])));
       return Response.json({ id: 7, anchor_id: 1, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
     }, telemetryEvents, telemetryRequests);
     render(ConversationView, { client, conversationId: 7, anchorId: 1 });
