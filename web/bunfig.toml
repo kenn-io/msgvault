@@ -1,0 +1,4 @@
+[install]
+# Bun installs only versions published at least 7 days ago (604800 seconds),
+# matching the shared Renovate release-age preset in kenn-io/actions.
+minimumReleaseAge = 604800
