@@ -83,31 +83,33 @@ describe('Message task list', () => {
     } finally { group.view.unmount(); group.readiness.dispose(); }
   });
 
-  it.each([false, true])('shows an incomplete notice with empty=%s', async empty => {
+  it.each([
+    { truncated: true, empty: false, reload: false },
+    { truncated: true, empty: true, reload: false },
+    { truncated: false, empty: true, reload: false },
+    { truncated: true, empty: false, reload: true }
+  ])('updates the group for truncated=$truncated empty=$empty reload=$reload', async ({ truncated, empty, reload }) => {
     const group = groupFixture(43);
     try {
       await screen.findByRole('link', { name: issueLink });
-      group.respond(Response.json({ truncated: true, issues: empty ? [] : issues }));
+      group.respond(Response.json({ truncated, issues: empty ? [] : issues }));
       await group.view.rerender({ refresh: 1 });
-      expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
-      if (!empty) expect(screen.getByRole('link', { name: issueLink })).toBeDefined();
-      else {
-        await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
-        expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
+      if (truncated) {
+        expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
+        if (!empty) expect(screen.getByRole('link', { name: issueLink })).toBeDefined();
+        else {
+          await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
+          expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
+        }
+      } else {
+        await waitFor(() => expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull());
       }
-    } finally { group.view.unmount(); group.readiness.dispose(); }
-  });
-
-  it('hides the group after an empty Kata result', async () => {
-    const group = groupFixture(43);
-    try {
-      await screen.findByRole('link', { name: issueLink });
-      group.hold();
-      await group.view.rerender({ refresh: 1 });
-      await waitFor(() => expect(group.resolve()).toBeDefined());
-      group.resolve()!(Response.json({ truncated: false, issues: [] }));
-      await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
-      expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
+      if (reload) {
+        group.respond(Response.json({ truncated: false, issues }));
+        await group.view.rerender({ refresh: 2 });
+        await waitFor(() => expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull());
+        expect(screen.getByRole('link', { name: issueLink })).toBeDefined();
+      }
     } finally { group.view.unmount(); group.readiness.dispose(); }
   });
 
