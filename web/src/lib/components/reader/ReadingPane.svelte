@@ -28,7 +28,7 @@
 </script>
 
 <script lang="ts">
-  import { formatDate } from '../../util/format';
+  import { formatShortDate } from '../../util/format';
   import GroupOverview from './GroupOverview.svelte';
   import { groupedByLabel } from '../../explore/labels';
   import { messageTitle } from '../../archive/message-title';
@@ -118,9 +118,9 @@
   const threadAnchorId = $derived(conversationAnchorId ?? archiveMessage?.id ?? conversationRow?.anchor_message_id);
   const metaStrip = $derived.by((): string => {
     if (!selection) return '';
-    if (selection.kind === 'archive') return `${entryKindPresentation('', selection.message.message_type).name} · ${formatDate(selection.message.sent_at)}`;
+    if (selection.kind === 'archive') return `${entryKindPresentation('', selection.message.message_type).name} · ${formatShortDate(selection.message.sent_at)}`;
     if (selection.kind === 'entry') {
-      const { row } = selection, parts = [entryKindPresentation(row.kind, row.message_type).name, row.source_identifier, formatDate(row.occurred_at)];
+      const { row } = selection, parts = [entryKindPresentation(row.kind, row.message_type).name, row.source_identifier, formatShortDate(row.occurred_at)];
       if (row.message_count > 1) parts.push(`${row.message_count.toLocaleString()} items`);
       if (row.attachment_count > 0) parts.push(`${row.attachment_count.toLocaleString()} ${row.attachment_count === 1 ? 'file' : 'files'}`);
       return parts.filter(Boolean).join(' · ');

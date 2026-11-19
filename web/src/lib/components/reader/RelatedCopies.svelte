@@ -5,7 +5,7 @@
   import type { EmailFamily, EmailFamilyMember } from '../../api/generated/models';
   import { createStaleRequestGuard } from '../../archive/stale-request';
   import { sourceTypeLabel } from '../../sources/labels';
-  import { formatDateTime } from '../../util/format';
+  import { formatShortDateTime } from '../../util/format';
 
   // loadedIDs are the messages the conversation view already shows; those have no row here.
   let { client, messageID, loadedIDs = [] }: { client: APIClient; messageID: number; loadedIDs?: number[] } = $props();
@@ -185,7 +185,7 @@
               <li>
                 <div class="row">
                   <a class="subject" href={`/messages/${member.message_id}`}>{member.subject || '(no subject)'}</a>
-                  {#if member.sent_at}<time datetime={member.sent_at} data-mono>{formatDateTime(member.sent_at)}</time>{/if}
+                  {#if member.sent_at}<time datetime={member.sent_at} data-mono>{formatShortDateTime(member.sent_at)}</time>{/if}
                   {#if direction(member)}<Chip size="xs" tone="neutral" uppercase={false}>{direction(member)}</Chip>{/if}
                   {#if evidenceLabels[member.evidence]}
                     <Chip size="xs" tone="info" uppercase={false}>{evidenceLabels[member.evidence]}</Chip>

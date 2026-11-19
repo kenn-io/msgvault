@@ -9,6 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Circleback syncs wait and retry when Circleback answers `429 Too Many Requests`, instead of failing every remaining meeting in the run.
+- File messages to Tasks or Kata from the reader, and see linked work together under **Tasks**.
 
 - Archive [Bland calls](usage/meetings.md#bland) as meetings with their summaries, retained transcripts and recordings saved locally, up to 1 GiB each by default (`max_media_mb`).
 - Filter the message change feed by person, source, conversation, or incoming direction, and read it from an owner MCP agent with `list_changes`.

@@ -18,7 +18,7 @@ configured project must already exist.
 Msgvault attributes its writes to the actor of the Kata credential. A static
 Kata token has no actor, so msgvault writes as `msgvault`.
 
-The reader lists Kata issues and linked tasks under each message. Linked tasks use the separate `[integrations.tasks]` connection.
+The reader groups linked Tasks and Kata issues under a **Tasks** heading on each message. Linked Tasks use the separate `[integrations.tasks]` connection.
 
 ## Check before asking the owner again
 
@@ -65,9 +65,9 @@ profile and Notes read surfaces.
 
 ## In the Web UI
 
-Expand a chat message or meeting transcript and choose **⋯ → Add to task…** to
-open its quote editor. For email, choose **Kata** under **Send to** in the same
-dialog. Choose **New** to create an issue. The dialog shows the passage
+Expand a message and choose **⋯ → Add to task…**. For email, choose **Kata**
+under **Send to** when both destinations are available. Choose **New** to create
+an issue or **Existing** to add a quote to one. The dialog shows the passage
 that will be saved, up to 1,000 characters. Use **Earlier passage** and **Later
 passage** to move through a long message or transcript; each step moves half a
 window, so neighbouring passages overlap. The text in the

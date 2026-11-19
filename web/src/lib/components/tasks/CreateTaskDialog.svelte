@@ -1,8 +1,9 @@
 <script lang="ts">
   import { createBrowserRequestID } from '../../api/request-id';
   import { createOrLinkMessageTask as generatedCreateOrLinkMessageTask } from '../../api/generated/api/api';
-  import { Disclosure, Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Chip, Button, Disclosure, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
+  import { formatShortDate } from '../../util/format';
   import type { APIClient } from '../../api/client';
   let {
     client,
@@ -40,15 +41,18 @@
     onclose?: () => void;
   } = $props();
   let title = $state(untrack(() => defaultTitle));
-  let description = $state(untrack(() => `${location.origin}/messages/${messageId}`));
+  let description = $state('');
   let priority = $state('');
   let labels = $state('');
   let error = $state('');
   let browserRequestID = createBrowserRequestID();
   let addedAt = $state(new Date().toISOString());
   let lastAttemptFingerprint = $state<string>();
+  const messageURL = $derived(`${location.origin}/messages/${messageId}`);
+  const contextParts = $derived([subject.trim(), from.trim(), sentAt.trim() ? formatShortDate(sentAt) : ''].filter(Boolean));
+  const fullContext = $derived(contextParts.join(' · ') || defaultTitle);
   const priorityOptions = [
-    { value: '', label: 'Default' },
+    { value: '', label: 'No priority' },
     { value: 'low', label: 'Low' },
     { value: 'normal', label: 'Normal' },
     { value: 'high', label: 'High' },
@@ -108,7 +112,7 @@
     const normalizedLabels = parsedLabels();
     return {
       title: title.trim(),
-      ...(description.trim() ? { description: description.trim() } : {}),
+      description: [description.trim(), messageURL].filter(Boolean).join('\n\n'),
       ...(priority ? { priority } : {}),
       ...(normalizedLabels.length ? { labels: normalizedLabels } : {}),
     };
@@ -132,6 +136,7 @@
     }}
   >
     <p class="project"><span>Project</span><strong>{project}</strong></p>
+    <div class="message"><span>Message</span><Chip tone="neutral" uppercase={false} ariaLabel={fullContext} title={fullContext}><span class="context">{fullContext}</span></Chip></div>
     <label>Task title<TextInput ariaLabel="Task title" bind:value={title} autocomplete="off" block /></label>
     <label>Description<textarea aria-label="Description" bind:value={description}></textarea></label>
     <label
@@ -153,8 +158,12 @@
         block
       /></label
     >
-    <Disclosure variant="plain">{#snippet summary()}Metadata leaving the archive{/snippet}
+    <Disclosure variant="plain">{#snippet summary()}What's sent{/snippet}
       <dl>
+        <div>
+          <dt>Message URL</dt>
+          <dd>{messageURL}</dd>
+        </div>
         <div>
           <dt>Archive UID</dt>
           <dd>{archiveUID}</dd>
@@ -206,12 +215,15 @@
   </form>
 
 <style>
+  .message { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; justify-items: start; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
   form {
     --field-text-size: 16px;
     display: grid;
     gap: var(--space-6);
     min-width: 0;
   }
+  form :global(.kit-chip) { justify-self: start; max-width: 100%; font-weight: 400; line-height: var(--type-meta-line); }
+  .context { display: block; line-height: var(--type-meta-line); white-space: normal; overflow-wrap: anywhere; }
   .disclosure { margin: 0; color: var(--text-secondary); font-size: 12px; }
   label {
     display: grid;
