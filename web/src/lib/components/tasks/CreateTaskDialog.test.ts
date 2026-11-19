@@ -7,7 +7,7 @@ import { chooseSelectOption } from '../../../test/kit-ui';
 import CreateTaskDialog from './CreateTaskDialog.svelte';
 
 describe('CreateTaskDialog', () => {
-  it('sends task fields, discloses metadata, and shows message context', async () => {
+  it('sends task fields and discloses metadata', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       requests.push(input instanceof Request ? input : new Request(input));
@@ -29,7 +29,6 @@ describe('CreateTaskDialog', () => {
     }
     expect(screen.getByLabelText('Description')).toHaveProperty('value', '');
     expect(screen.getByText(`${location.origin}/messages/42`)).toBeDefined();
-    expect(screen.getByText(`Synthetic subject · sender@example.com · ${formatShortDate(sentAt)}`)).toBeDefined();
     expect(screen.getByText(/Bodies and attachments are never sent/i).closest('details')).toBeNull();
     await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Edited' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Notes' } });
@@ -45,13 +44,14 @@ describe('CreateTaskDialog', () => {
     expect(requests[0]!.headers.get('X-Request-Id')).toBeTruthy();
   });
 
-  it('uses the default title when message context is empty', () => {
+  it.each(['full', 'empty'])('shows the %s message context', context => {
+    const sentAt = new Date(2020, 6, 18, 12).toISOString();
     render(CreateTaskDialog, {
       client: createAPIClient(async () => Response.json({})), messageId: 42, project: 'project', defaultTitle: 'Synthetic subject',
       archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
-      sourceMessageId: 'source-42', subject: '', from: '', sentAt: '', oncreated: vi.fn(), onclose: vi.fn()
+      sourceMessageId: 'source-42', subject: context === 'full' ? 'Synthetic subject' : '', from: context === 'full' ? 'sender@example.com' : '', sentAt: context === 'full' ? sentAt : '', oncreated: vi.fn(), onclose: vi.fn()
     });
-    expect(screen.getByText('Synthetic subject')).toBeDefined();
+    expect(screen.getByText(context === 'full' ? `Synthetic subject · sender@example.com · ${formatShortDate(sentAt)}` : 'Synthetic subject')).toBeDefined();
   });
 
   it('keeps the request ID and added_at stable across a failed browser retry', async () => {

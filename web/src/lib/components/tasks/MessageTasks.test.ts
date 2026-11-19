@@ -6,16 +6,19 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
-  it.each(['partial', 'suppressed'])('shows or hides the Tasks group for %s', async scenario => {
+  it('shows the Tasks group for a partial index notice', async () => {
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: scenario === 'partial' ? 'ready' : 'unreachable', project: 'example' }
-      : taskLookup({ state: scenario === 'partial' ? 'partial' : 'unavailable', complete: false })));
-    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup: scenario === 'partial' });
-    if (scenario === 'partial') expect(await screen.findByRole('region', { name: 'Tasks' })).toBeDefined();
-    else {
-      await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
-      expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
-    }
+      ? { state: 'ready', project: 'example' } : taskLookup({ state: 'partial', complete: false })));
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
+    expect(await screen.findByRole('region', { name: 'Tasks' })).toBeDefined();
+  });
+
+  it('hides the Tasks group when setup is suppressed', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'unreachable', project: 'example' } : taskLookup({ state: 'unavailable', complete: false })));
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup: false });
+    await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
+    expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
   });
 
   it('reloads persisted email links and skips task lookup for non-email messages', async () => {
@@ -41,18 +44,6 @@ describe('Message task list', () => {
 
   function groupFixture(messageId: number, first = Response.json({ truncated: false, issues })) {
     let response = first;
-    const client = createAPIClient(async input => {
-      const url = (input as Request).url;
-      if (url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-      if (!url.includes('/kata/')) return Response.json(taskLookup({ tasks: url.includes('/messages/42/') ? [{ id: 'task-1', title: 'Task work' }] : [] }, url.includes('/messages/42/') ? 42 : 43));
-      return response.clone();
-    });
-    const readiness = new KataReadiness(client);
-    const view = render(MessageTasks, { props: { client, messageId, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
-    return { view, readiness, respond: (next: Response) => { response = next; } };
-  }
-
-  function heldGroup(messageId: number) {
     let hold = false;
     let resolve: ((response: Response) => void) | undefined;
     const client = createAPIClient(async input => {
@@ -60,11 +51,11 @@ describe('Message task list', () => {
       if (url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (!url.includes('/kata/')) return Response.json(taskLookup({ tasks: url.includes('/messages/42/') ? [{ id: 'task-1', title: 'Task work' }] : [] }, url.includes('/messages/42/') ? 42 : 43));
       if (hold) return new Promise<Response>(done => { resolve = done; });
-      return Response.json({ truncated: false, issues });
+      return response.clone();
     });
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, { props: { client, messageId, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
-    return { view, readiness, hold: () => { hold = true; }, resolve: () => resolve };
+    return { view, readiness, respond: (next: Response) => { response = next; }, hold: () => { hold = true; }, resolve: () => resolve };
   }
 
   it('groups task and Kata rows under one heading', async () => {
@@ -78,29 +69,17 @@ describe('Message task list', () => {
     } finally { view.unmount(); readiness.dispose(); }
   });
 
-  it('keeps Kata rows during refresh and displays the new result', async () => {
-    const group = heldGroup(42);
+  it.each(['refresh', 'message change'])('updates Kata rows on %s', async change => {
+    const group = groupFixture(42);
     try {
       await screen.findByRole('link', { name: issueLink });
       group.hold();
-      await group.view.rerender({ refresh: 1 });
+      await group.view.rerender(change === 'refresh' ? { refresh: 1 } : { messageId: 43 });
       await waitFor(() => expect(group.resolve()).toBeDefined());
-      expect(screen.getByText('Send revised notes')).toBeDefined();
-      group.resolve()!(Response.json({ truncated: false, issues: [{ ...issues[0], title: 'Refreshed notes' }] }));
-      expect(await screen.findByText('Refreshed notes')).toBeDefined();
-    } finally { group.view.unmount(); group.readiness.dispose(); }
-  });
-
-  it('clears Kata rows on a message change and displays the new result', async () => {
-    const group = heldGroup(42);
-    try {
-      await screen.findByRole('link', { name: issueLink });
-      group.hold();
-      await group.view.rerender({ messageId: 43 });
-      await waitFor(() => expect(group.resolve()).toBeDefined());
-      expect(screen.queryByText('Send revised notes')).toBeNull();
-      group.resolve()!(Response.json({ truncated: false, issues }));
-      expect(await screen.findByText('Send revised notes')).toBeDefined();
+      if (change === 'refresh') expect(screen.getByText('Send revised notes')).toBeDefined();
+      else expect(screen.queryByText('Send revised notes')).toBeNull();
+      group.resolve()!(Response.json({ truncated: false, issues: change === 'refresh' ? [{ ...issues[0], title: 'Refreshed notes' }] : issues }));
+      expect(await screen.findByText(change === 'refresh' ? 'Refreshed notes' : 'Send revised notes')).toBeDefined();
     } finally { group.view.unmount(); group.readiness.dispose(); }
   });
 
@@ -120,7 +99,7 @@ describe('Message task list', () => {
   });
 
   it('hides the group after an empty Kata result', async () => {
-    const group = heldGroup(43);
+    const group = groupFixture(43);
     try {
       await screen.findByRole('link', { name: issueLink });
       group.hold();
