@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Disclosure } from '@kenn-io/kit-ui';
+  import { formatShortDateTime } from '../../util/format';
   let { messageURL = '', addedAt = '', archiveUID, messageId, conversationId, sourceType, sourceIdentifier, sourceMessageId, subject, from, sentAt }: {
     messageURL?: string; addedAt?: string; archiveUID: string; messageId: number; conversationId: number; sourceType: string; sourceIdentifier: string; sourceMessageId: string; subject: string; from: string; sentAt: string;
   } = $props();
@@ -46,7 +47,7 @@
         </div>
         <div>
           <dt>Sent at</dt>
-          <dd>{sentAt}</dd>
+          <dd>{formatShortDateTime(sentAt)}</dd>
         </div>
         <div>
           <dt>Link added at</dt>
@@ -78,7 +79,7 @@
     color: var(--text-primary);
   }
   @media (max-width: 480px) {
-    .metadata :global(.kit-disclosure--plain > .kit-disclosure__content) { padding-left: 0; }
+    .metadata :global(.kit-disclosure--plain > .kit-disclosure__summary) { font-size: 12px; }
     dl { grid-template-columns: max-content minmax(0, 1fr); column-gap: var(--space-5); font-size: 12px; }
     dl div { display: contents; }
     dt { white-space: nowrap; }
