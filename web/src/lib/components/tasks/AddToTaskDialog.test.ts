@@ -119,9 +119,13 @@ describe('Add to task', () => {
   });
 
   it.each(['ready', 'stale'])('shows the task control when the index is %s', async state => {
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: 'ready', project: 'example' }
-      : taskLookup({ state, complete: state === 'ready' })));
+    const client = createAPIClient(async input => {
+      const url = (input as Request).url;
+      if (url.includes('/search')) return Response.json({ tasks: [], truncated: false });
+      return Response.json(url.endsWith('/status')
+        ? { state: 'ready', project: 'example' }
+        : taskLookup({ state, complete: state === 'ready' }));
+    });
     const view = render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
     try {
       if (state === 'ready') {
