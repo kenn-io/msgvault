@@ -311,7 +311,7 @@ Give a laptop or another person read access without handing out the owner `api_k
 
 Reach the server over the same private network as the owner key, such as Tailscale. If you put an HTTPS reverse proxy on that network in front of the main listener, forward the `X-Api-Key` header unchanged. A reader key still reads the whole archive, so the advice in [Security Notes](#security-notes) about not exposing the server to the internet applies to it too.
 
-A remote client key can search, show messages and whole threads, export original or raw MIME and attachments, and list accounts, collections, identities, and stats. With `collections_write = true` it can also create, edit, and delete collections. Aggregate views aren't available, so `list-senders`, `list-domains`, `list-labels`, `query`, vector search, `tui`, and `mcp` fail with a remote client key. Every other request gets HTTP 403, including settings, token upload, SQL queries, sync, backups, agent tokens, the Web UI, `/openapi.json`, and `/debug/pprof/`.
+A remote client key can search, show messages and whole threads, run `export-messages`, export original or raw MIME and attachments, and list accounts, collections, identities, and stats. With `collections_write = true` it can also create, edit, and delete collections. Aggregate views aren't available, so `list-senders`, `list-domains`, `list-labels`, `query`, vector search, `tui`, and `mcp` fail with a remote client key. Every other request gets HTTP 403, including settings, token upload, SQL queries, sync, backups, agent tokens, the Web UI, `/openapi.json`, and `/debug/pprof/`.
 
 Direct connections retain [API rate limiting](/docs/api-server/#rate-limiting), so a throttled thread export keeps files completed before the failed request.
 

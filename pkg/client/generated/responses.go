@@ -669,6 +669,22 @@ type GetCLIMessageThreadErrorResponseJSON503 = ErrorResponse
 
 type GetCLIMessageThreadErrorResponseJSONDefault = ErrorResponse
 
+type ExportCLIMessagesResponse = []byte
+
+type ExportCLIMessagesErrorResponse = ErrorResponse
+
+type ExportCLIMessagesErrorResponseJSON = ErrorResponse
+
+type ExportCLIMessagesErrorResponseJSON403 = ErrorResponse
+
+type ExportCLIMessagesErrorResponseJSON404 = ErrorResponse
+
+type ExportCLIMessagesErrorResponseJSON500 = ErrorResponse
+
+type ExportCLIMessagesErrorResponseJSON503 = ErrorResponse
+
+type ExportCLIMessagesErrorResponseJSONDefault = ErrorResponse
+
 type RebuildCLIFTSResponse = []byte
 
 type RebuildCLIFTSErrorResponse = ErrorResponse
@@ -5069,6 +5085,19 @@ type GetCLIMessageThreadResp struct {
 	JSON413      *GetCLIMessageThreadErrorResponseJSON413
 	JSON503      *GetCLIMessageThreadErrorResponseJSON503
 	JSONDefault  *GetCLIMessageThreadErrorResponseJSONDefault
+}
+
+type ExportCLIMessagesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *ExportCLIMessagesErrorResponse
+	JSON401      *ExportCLIMessagesErrorResponseJSON
+	JSON403      *ExportCLIMessagesErrorResponseJSON403
+	JSON404      *ExportCLIMessagesErrorResponseJSON404
+	JSON500      *ExportCLIMessagesErrorResponseJSON500
+	JSON503      *ExportCLIMessagesErrorResponseJSON503
+	JSONDefault  *ExportCLIMessagesErrorResponseJSONDefault
 }
 
 type RebuildCLIFTSResp struct {
