@@ -241,8 +241,9 @@
     background: var(--bg-canvas);
     color: var(--text-primary);
   }
-  .project { display: flex; justify-content: space-between; margin: 0; }
-  .project span, form :global(.kit-disclosure) {
+  .project { display: grid; gap: var(--space-2); margin: 0; }
+  .project span { color: var(--text-secondary); font-size: var(--font-size-sm); }
+  form :global(.kit-disclosure) {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }

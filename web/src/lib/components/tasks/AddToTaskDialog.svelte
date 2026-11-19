@@ -34,7 +34,7 @@
           <div class="provider"><span>Send to</span><SegmentedControl variant="borderless" ariaLabel="Send to" disabled={busy || kataBusy} {options} value={provider} onchange={(value) => { provider = value; if (value === 'kata') kataInitialized = true; }} /></div>
         {/if}
         {#if provider === 'tasks' && taskReady}
-          <SegmentedControl variant="borderless" disabled={busy} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={taskAction} onchange={(value) => taskAction = value} />
+          <div class="task-mode"><span>Task</span><SegmentedControl variant="borderless" disabled={busy} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={taskAction} onchange={(value) => taskAction = value} /></div>
         {/if}
       </div>
     {/if}
@@ -50,6 +50,7 @@
 <style>
   .task-dialog { display: grid; min-width: 0; gap: var(--space-6); }
   .task-surface:not([hidden]) { display: grid; gap: var(--space-6); }
-  .toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-4); }
+  .toolbar { display: grid; gap: var(--space-4); }
   .provider { display: flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .task-mode { display: grid; justify-items: start; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
 </style>
