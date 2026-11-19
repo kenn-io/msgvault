@@ -36,37 +36,27 @@ describe('TaskLinks', () => {
     await waitFor(() => expect(screen.queryByText('Second task')).toBeNull());
   });
 
-  it('keeps linked rows visible while a refresh is pending', async () => {
+  it('clears lookup errors and keeps linked rows during refresh', async () => {
     let respond: ((response: Response) => void) | undefined;
     let hold = false;
+    let lookups = 0;
     const client = createAPIClient(async input => {
       if ((input as Request).url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (hold) return new Promise<Response>(resolve => { respond = resolve; });
-      return Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review notes' }] }));
-    });
-    const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic', refresh: 0 });
-    await screen.findByText('Review notes');
-    hold = true;
-    await view.rerender({ refresh: 1 });
-    await waitFor(() => expect(respond).toBeDefined());
-    expect(screen.getByText('Review notes')).toBeDefined();
-    respond!(Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review revised notes' }] })));
-    expect(await screen.findByText('Review revised notes')).toBeDefined();
-  });
-
-  it('clears a lookup error after a later refresh succeeds', async () => {
-    let lookups = 0;
-    const client = createAPIClient(async input => {
-      const request = input as Request;
-      if (request.url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (++lookups === 1) return Response.json({ message: 'Lookup failed' }, { status: 503 });
-      return Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Recovered task' }] }));
+      return Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review notes' }] }));
     });
     const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic', refresh: 0 });
     await screen.findByText('Lookup failed');
     await view.rerender({ refresh: 1 });
-    await screen.findByText('Recovered task');
+    await screen.findByText('Review notes');
     expect(screen.queryByText('Lookup failed')).toBeNull();
+    hold = true;
+    await view.rerender({ refresh: 2 });
+    await waitFor(() => expect(respond).toBeDefined());
+    expect(screen.getByText('Review notes')).toBeDefined();
+    respond!(Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review revised notes' }] })));
+    expect(await screen.findByText('Review revised notes')).toBeDefined();
   });
 
   it("preserves an open creation draft and retry identity across another message's failed status refresh", async () => {

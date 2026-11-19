@@ -107,26 +107,18 @@ describe('Add to task', () => {
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
-  it('closes its single dialog after cancel', async () => {
+  it('shows the picker when ready and closes its single dialog on cancel', async () => {
     const onclose = vi.fn();
-    const client = taskCreationClient();
-    const view = render(AddToTaskDialog, { props: { client, messageId: 42, title: 'Follow up', email: true, onclose } });
-    try {
-      await screen.findByRole('button', { name: 'Cancel' });
-      expect(screen.getAllByRole('dialog')).toHaveLength(1);
-      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-      await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
-    } finally { view.unmount(); }
-  });
-
-  it('shows the existing task picker only when the toolbar is ready', async () => {
-    const view = render(AddToTaskDialog, { client: taskCreationClient(), messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
+    const view = render(AddToTaskDialog, { client: taskCreationClient(), messageId: 42, title: 'Follow up', email: true, onclose });
     try {
       const existing = await screen.findByRole('radio', { name: 'Existing' });
       expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
       expect(screen.queryByText('Task')).toBeNull();
       await fireEvent.click(existing);
       expect(await screen.findByText('No tasks in example yet.')).toBeDefined();
+      expect(screen.getAllByRole('dialog')).toHaveLength(1);
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
     } finally { view.unmount(); }
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
       ? { state: 'ready', project: 'example' }
