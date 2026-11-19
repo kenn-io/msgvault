@@ -6,10 +6,6 @@ export function taskLookup(overrides: Partial<TaskLinkLookupResponse> = {}, mess
   return { state: 'ready', complete: true, last_scan: '', tasks: [], outbound_metadata: { ...taskOutboundMetadata, message_id: messageId, conversation_id: conversationId }, ...overrides };
 }
 
-export function disabledTaskLookup(messageId = 42, conversationId = 7): TaskLinkLookupResponse {
-  return { state: 'disabled', complete: false, last_scan: '', tasks: [], outbound_metadata: { ...taskOutboundMetadata, message_id: messageId, conversation_id: conversationId } };
-}
-
 export function taskCreationClient(requests: Request[] = []) {
   return createAPIClient(async (input) => {
     const request = input as Request;

@@ -1,4 +1,4 @@
-import { disabledTaskLookup, taskLookup, taskOutboundMetadata } from '../tasks/fixtures.test-support';
+import { taskLookup, taskOutboundMetadata } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,7 +14,7 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
   const path = new URL((input as Request).url).pathname;
   if (path === '/api/v1/integrations/tasks/status') return Response.json({ state: 'disabled', message: 'Task integration is disabled.' });
   const lookup = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
-  if (lookup) return Response.json(disabledTaskLookup(Number(lookup[1])));
+  if (lookup) return Response.json(taskLookup({ state: 'disabled', complete: false }, Number(lookup[1])));
   return fetchFn(input, init);
 }, telemetryEvents, telemetryRequests);
 function message(id: number, type = 'email') {
