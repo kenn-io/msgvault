@@ -89,14 +89,25 @@ func OpenMessages(ctx context.Context, st *store.Store, request MessagesRequest)
 	}
 	var scope *personscope.Scope
 	var personID *int64
-	if request.PersonID != nil {
+	if request.PersonID != nil && !empty {
 		resolved, err := personresolver.Resolve(ctx, st, personresolver.Reference{Kind: personresolver.ReferencePerson, ID: *request.PersonID}, nil)
-		if err != nil {
+		switch {
+		case err == nil:
+			scope = &resolved.Scope
+			personID = &resolved.PersonID
+		case request.Scope != nil && errors.Is(err, store.ErrPersonNotFound):
+			// People are archive-wide. A scoped caller gets the same empty
+			// export for a missing person as for one outside its sources.
+			empty = true
+		default:
 			release()
 			return nil, fmt.Errorf("resolve --person-id: %w", err)
 		}
-		scope = &resolved.Scope
-		personID = &resolved.PersonID
+	}
+	if request.Scope != nil {
+		// A merged person resolves to another ID, which a scoped caller
+		// must not learn.
+		personID = request.PersonID
 	}
 	return &MessagesExport{
 		ctx:     ctx,

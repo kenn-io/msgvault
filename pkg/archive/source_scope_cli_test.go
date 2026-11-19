@@ -38,7 +38,7 @@ func exportedMessages(t *testing.T, body string) int {
 // host can serve list-accounts, stats, search, show-message, show-thread, and
 // export-messages to a caller limited to some sources.
 func TestLibrarySourceScopeCLIReads(t *testing.T) {
-	_, _, handler, sources := newSourceScopeFixture(t)
+	st, _, handler, sources := newSourceScopeFixture(t)
 	allowed, other := sources[0], sources[1]
 	unscoped := t.Context()
 	scoped := archive.WithSourceScope(t.Context(), []int64{allowed.source.ID})
@@ -120,5 +120,23 @@ func TestLibrarySourceScopeCLIReads(t *testing.T) {
 		assert.Equal(t, 2, exportedMessages(t, body))
 		code, body = get(scoped, "/api/v1/cli/messages/export?"+window+"&source=gmail:"+other.source.Identifier)
 		assert.Equal(t, http.StatusNotFound, code, "a source outside the scope reads as missing: %s", body)
+	})
+
+	t.Run("export person", func(t *testing.T) {
+		participant, err := st.EnsureParticipant("outsider@example.com", "Outsider", "example.com")
+		require.NoError(t, err)
+		person, _, err := st.CreatePersonFromParticipant(participant)
+		require.NoError(t, err)
+		existing := fmt.Sprintf("/api/v1/cli/messages/export?%s&person_id=%d", window, person.ID)
+		missing := fmt.Sprintf("/api/v1/cli/messages/export?%s&person_id=%d", window, person.ID+1000)
+		code, body := get(unscoped, missing)
+		assert.NotEqual(t, http.StatusOK, code, "an unscoped caller learns the person is missing: %s", body)
+		for _, ctx := range []context.Context{scoped, nothing} {
+			for _, path := range []string{existing, missing} {
+				code, body := get(ctx, path)
+				require.Equal(t, http.StatusOK, code, "a scoped caller cannot tell a missing person from an inaccessible one: %s", body)
+				assert.Equal(t, 0, exportedMessages(t, body))
+			}
+		}
 	})
 }
