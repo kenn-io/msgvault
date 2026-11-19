@@ -1,5 +1,5 @@
 import { taskCreationClient, taskLookup } from './fixtures.test-support';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
@@ -19,6 +19,16 @@ function pendingCreate() {
 }
 
 describe('Add to task', () => {
+  it('shows the metadata sent when linking an existing task', async () => {
+    render(AddToTaskDialog, { client: taskCreationClient(), messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    const existing = within(screen.getByRole('region', { name: 'Linked tasks' }));
+    await fireEvent.click(existing.getByText("What's sent"));
+    expect(existing.getByText('archive-a')).toBeTruthy();
+    expect(existing.getByText('source-42')).toBeTruthy();
+    expect(existing.getByText('When linked')).toBeTruthy();
+  });
+
   it.each([false, true])('opens Kata evidence for email=%s when Kata is ready', async (email) => {
     const client = createAPIClient(async (input) => {
       const path = new URL((input as Request).url).pathname;
@@ -122,7 +132,7 @@ describe('Add to task', () => {
     const client = createAPIClient(async input => {
       const url = (input as Request).url;
       if (url.includes('/search')) return Response.json({ tasks: [], truncated: false });
-      return Response.json(url.endsWith('/status') ? { state: 'ready', project: 'example' } : taskLookup({ state, complete: state === 'ready' }));
+      return Response.json(url.endsWith('/status') ? { state: 'ready', project: 'example' } : taskLookup({ state, complete: false }));
     });
     const view = render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
     try {

@@ -313,7 +313,7 @@ it('refreshes links on close after a Kata comment fails after saving evidence', 
     const request = input as Request;
     const path = new URL(request.url).pathname;
     if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-    if (path.endsWith('/messages/42/tasks')) { return Response.json({ state: 'ready', complete: true, tasks: saved ? [{ id: 'task-1', title: 'Linked task' }] : [], outbound_metadata: taskOutboundMetadata }); }
+    if (path.endsWith('/messages/42/tasks')) return Response.json({ state: 'ready', complete: true, tasks: saved ? [{ id: 'task-1', title: 'Linked task' }] : [], outbound_metadata: taskOutboundMetadata });
     if (path.endsWith('/kata/open-issues')) return Response.json({ issues: [issue], truncated: false });
     if (path.endsWith('/kata/issues')) { if (collectingInitial && request.method === 'GET') initialKataLookups++; return Response.json({ issues: saved ? [issue] : [], truncated: false }); }
     if (path.endsWith('/evidence/prepare')) return Response.json({ evidence: [{ id: 'evidence-1', passage: 'passage-1', reference, excerpt: 'Opening passage', display: { containing_title: 'Synthetic message' }, content_trust: 'untrusted' }] });
