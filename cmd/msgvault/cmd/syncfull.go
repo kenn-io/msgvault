@@ -15,7 +15,6 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gmail"
 	imaplib "go.kenn.io/msgvault/internal/imap"
@@ -72,11 +71,6 @@ Examples:
 
 func validateSyncFullFlags(cmd *cobra.Command) error {
 	if syncRefreshLabels {
-		if flag := cmd.Flags().Lookup("source-id"); flag != nil {
-			if value, ok := flag.Value.(*fullSyncFlagValue); ok && value.repeated {
-				return usageErr(cmd, errors.New("--refresh-labels requires --source-id to appear once"))
-			}
-		}
 		for _, name := range []string{"query", "before", "after", "folder", "skip-folder"} {
 			if cmd.Flags().Changed(name) {
 				return usageErr(cmd, fmt.Errorf("--refresh-labels cannot be combined with --%s", name))
@@ -1075,45 +1069,11 @@ func init() {
 	_ = syncFullCmd.Flags().MarkHidden("sync-operation-id")
 	syncFullCmd.Flags().StringVar(&syncQuery, "query", "", "Gmail search query")
 	syncFullCmd.Flags().BoolVar(&syncNoResume, "noresume", false, "Force fresh sync (don't resume; re-enumerates all IMAP folders)")
-	addGmailLabelRefreshFlag(syncFullCmd)
+	syncFullCmd.Flags().BoolVar(&syncRefreshLabels, "refresh-labels", false, "Refresh archived labels for one unrestricted Gmail source")
 	syncFullCmd.Flags().StringVar(&syncBefore, "before", "", "Only messages before this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().StringVar(&syncAfter, "after", "", "Only messages after this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().IntVar(&syncLimit, "limit", 0, "Limit number of messages (for testing)")
 	syncFullCmd.Flags().StringArrayVar(&syncFolders, "folder", []string{}, "IMAP folder to scan; either folder flag replaces saved exclusions for this run (repeatable)")
 	syncFullCmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folder", []string{}, "IMAP folder to skip; either folder flag replaces saved exclusions for this run (repeatable)")
 	rootCmd.AddCommand(addManualSyncCacheFlags(syncFullCmd))
-}
-
-// Keep scalar flag types for help and interruption commands. Label refresh
-// rejects repeated selectors; ordinary sync retains Cobra's last-value behavior.
-type fullSyncFlagValue struct {
-	pflag.Value
-
-	flag     *pflag.Flag
-	single   bool
-	repeated bool
-}
-
-func (v *fullSyncFlagValue) Set(value string) error {
-	if v.flag.Changed {
-		if v.single {
-			return fmt.Errorf("--%s must appear once", v.flag.Name)
-		}
-		v.repeated = true
-	} else {
-		v.repeated = false
-	}
-	if err := v.Value.Set(value); err != nil {
-		return fmt.Errorf("set --%s: %w", v.flag.Name, err)
-	}
-	return nil
-}
-
-func addGmailLabelRefreshFlag(cmd *cobra.Command) {
-	cmd.Flags().BoolVar(&syncRefreshLabels, "refresh-labels", false, "Refresh archived labels for one unrestricted Gmail source")
-	flag := cmd.Flags().Lookup("refresh-labels")
-	flag.Value = &fullSyncFlagValue{Value: flag.Value, flag: flag, single: true}
-	if sourceID := cmd.Flags().Lookup("source-id"); sourceID != nil {
-		sourceID.Value = &fullSyncFlagValue{Value: sourceID.Value, flag: sourceID}
-	}
 }

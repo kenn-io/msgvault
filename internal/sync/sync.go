@@ -749,6 +749,15 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	var labelRefreshIDs []string
 	var existingCount int
 	inconclusiveRefreshes := make(map[string]inconclusiveLabelRefresh)
+	// A label refresh covers the archive only. Mail the archive never held,
+	// such as mail outside an earlier date filter, is left for ordinary sync.
+	var archivedRows map[string]int64
+	if s.opts.RefreshLabels {
+		archivedRows, err = s.store.MessageExistsBatchContext(ctx, sourceID, messageIDs)
+		if err != nil {
+			return nil, fmt.Errorf("check archived messages: %w", err)
+		}
+	}
 	for _, id := range messageIDs {
 		if existing, exists := existingMap[id]; exists &&
 			(s.relocationCompositeProtected(id) ||
@@ -764,6 +773,11 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			continue
 		}
 		if _, exists := existingMap[id]; !exists {
+			_, archived := archivedRows[id]
+			_, pending := s.pendingAcquisitions[id]
+			if s.opts.RefreshLabels && !archived && !pending {
+				continue
+			}
 			fetchIDs = append(fetchIDs, id)
 			continue
 		}
@@ -825,7 +839,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				continue
 			}
 			labelResult := labelResults[i]
-			if _, gone := messageGoneKind(labelResult.Err); gone && !s.opts.RefreshLabels {
+			if _, gone := messageGoneKind(labelResult.Err); gone {
 				// The message left the mailbox mid-run. Deletion detection
 				// retires it; acknowledging here is what lets the folder keep
 				// its high water mark instead of re-enumerating next run.
@@ -1302,7 +1316,7 @@ func (s *Syncer) validateRefreshLabelCatalog(labelIDs []string, labelMap map[str
 	if s.opts.RefreshLabels {
 		for _, id := range labelIDs {
 			if _, exists := labelMap[id]; !exists {
-				return errors.New("provider label absent from the startup catalog; rerun label refresh with a current catalog")
+				return fmt.Errorf("gmail returned label %q, which was created after this refresh started; run sync-full --refresh-labels again to continue", id)
 			}
 		}
 	}

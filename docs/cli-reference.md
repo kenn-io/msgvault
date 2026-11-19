@@ -935,22 +935,26 @@ Select exactly one configured Gmail source. An ambiguous account name requires
 `--source-id`. The option rejects query, date and folder filters, and any
 positive `--limit`. Explicitly supplied empty filters are also rejected.
 
-The scan replaces archived memberships from lightweight provider metadata,
-including an empty label set. Healthy archived originals are kept without
-downloading them again. New messages and missing originals follow ordinary
-full-sync acquisition. The usual post-sync cache refresh publishes label changes;
-`--no-build-cache` still skips that refresh.
+The scan replaces the labels of archived messages from lightweight provider
+metadata, including an empty label set. It does not download archived
+originals again. It downloads only archived messages whose original is missing
+and messages whose earlier download failed. Mail the archive never held, such
+as mail outside an earlier `--after` filter, is skipped; run `sync-full`
+without `--refresh-labels` to archive it. The usual post-sync cache refresh
+publishes label changes; `--no-build-cache` still skips that refresh.
 
 The scan preserves the consumed History cursor. It does not consume History or
 infer deletion from absence. Later ordinary sync replays available changes from
-that cursor, including changes made during the scan. Observations are collected
-per message, rather than as one atomic mailbox snapshot.
+that cursor, including new mail and deletions during the scan. A message
+deleted from Gmail while the scan runs keeps its archived labels until that
+later sync processes the deletion.
+Labels are read message by message, not as one atomic mailbox snapshot.
 
-Metadata errors, a listed archived message disappearing, an unknown catalog
-label, or a failed label/checkpoint save stop the scan and leave it retryable.
-Earlier successful rows may already have changed. Rerun the command to retry
-with a fresh label catalog; `--noresume` starts the refresh from the beginning.
-Resuming an earlier ordinary full sync still checks archived labels.
+Metadata errors, a label created in Gmail after the scan started, or a failed
+label or checkpoint save stop the scan. Labels already saved stay saved. Run
+the same command again to continue from the failed page with Gmail's current
+labels; `--noresume` starts the refresh from the beginning. A refresh never
+resumes an interrupted ordinary `sync-full`; it starts its own scan.
 
 Already-pending History recovery takes precedence and is reported in the sync
 log. It retains its broader recovery phases, including absence reconciliation

@@ -30,7 +30,7 @@ func labelRefreshTestCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringArrayVar(&syncFolders, "folder", nil, "")
 	cmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folder", nil, "")
 	cmd.Flags().BoolVar(&syncNoResume, "noresume", false, "")
-	addGmailLabelRefreshFlag(cmd)
+	cmd.Flags().BoolVar(&syncRefreshLabels, "refresh-labels", false, "")
 	return cmd
 }
 
@@ -38,8 +38,6 @@ func TestSyncFullLabelRefreshRejectsInvalidFlagsBeforeHTTP(t *testing.T) {
 	for _, flags := range [][]string{
 		{"--refresh-labels"},
 		{"--refresh-labels=maybe", "reader@example.test"},
-		{"--refresh-labels", "--refresh-labels=false", "reader@example.test"},
-		{"--refresh-labels=false", "--refresh-labels=false", "reader@example.test"},
 		{"--refresh-labels", "--query=", "reader@example.test"},
 		{"--refresh-labels", "--before=", "reader@example.test"},
 		{"--refresh-labels", "--after=2026-01-01", "reader@example.test"},
@@ -47,9 +45,6 @@ func TestSyncFullLabelRefreshRejectsInvalidFlagsBeforeHTTP(t *testing.T) {
 		{"--refresh-labels", "--skip-folder=Trash", "reader@example.test"},
 		{"--refresh-labels", "--limit=1", "reader@example.test"},
 		{"--refresh-labels", "--source-id=42", "reader@example.test"},
-		{"--refresh-labels", "--source-id=42", "--source-id=43"},
-		{"--source-id=42", "--source-id=43", "--refresh-labels"},
-		{"--refresh-labels", "--source-id=42", "--source-id=42"},
 	} {
 		t.Run(strings.Join(flags, " "), func(t *testing.T) {
 			resetSyncFullFlagsForTest(t)
