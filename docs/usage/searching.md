@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-11"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -234,6 +234,43 @@ msgvault search "conversation_id:123 budget"
 `conversation_id:` takes the positive local conversation ID shown in message
 metadata, not the provider's thread or room ID. It works with keyword, vector,
 and hybrid search. Vector and hybrid queries still need free text.
+
+### Search one copy of overlapping chats
+
+If you imported a Telegram Desktop export and also sync Telegram through
+Beeper, search returns both archived copies of most messages. msgvault does
+not merge the two copies.
+
+To search only one source, pass its identifier or display name from
+`msgvault list-accounts` to the
+[`--account` filter](#account-and-collection-filters).
+
+To pick one copy of particular chats:
+
+1. Find the candidates:
+
+   ```bash
+   msgvault find-chat "Example Group" --json
+   ```
+
+   Each result has a `conversation_id`, plus `source_type` and
+   `source_identifier` to tell you which source it came from. A matching
+   title doesn't prove two results are the same chat, so check their messages
+   if you're unsure. If `has_more` is true, raise `--limit` (up to 100),
+   narrow the name, or pass `--source-id`.
+
+2. Search the copies you chose. Repeated `conversation_id:` filters match any
+   of the listed conversations:
+
+   ```bash
+   msgvault search 'conversation_id:41 conversation_id:52 budget' --mode fts --json
+   ```
+
+   With `|`, repeat the filters in each alternative, because an alternative
+   without them searches the whole archive.
+
+Choosing the export leaves out newer messages that only Beeper has, and
+choosing Beeper leaves out older history that only the export has.
 
 ## Repairing Existing Archives
 

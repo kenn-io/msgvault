@@ -317,34 +317,6 @@ func TestMeetingExploreMetricsApplyResolvedDeletionToCurrentStoreSnapshot(t *tes
 		"the active cache selection must stay active-only in the current Store snapshot")
 }
 
-func TestMeetingExploreContextExportsGroupedTranscripts(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	messages := strings.Replace(exploreFixtureDefaultMessages, "'email', NULL::VARCHAR", "'meeting_transcript', NULL::VARCHAR", 2)
-	engine, _ := newExploreDuckDBFixtureWithClusters(t, messages, exploreFixtureDefaultRecipients, "", 3, identityCacheFixtureOptions{
-		meetingGroups: "(SELECT 1::BIGINT AS message_id, 1::BIGINT AS group_id UNION ALL SELECT 2, 1)",
-	})
-	selection, err := engine.ResolveExploreMeetings(t.Context(), query.ExploreSelectionRequest{}, meetingContextMaxIDs)
-	requirements.NoError(err)
-	st := &meetingRouteStore{
-		mockStore:     &mockStore{},
-		contextResult: &meetingcontent.PacketResult{SchemaVersion: 1, Format: meetingcontent.FormatJSON, Content: "{}", ContentBytes: 2, OmittedMessageIDs: []int64{}},
-	}
-	srv := newMeetingRouteTestServer(t, st, engine)
-	body := fmt.Sprintf(`{"selection":{"mode":"explicit","predicate":{},"row_keys":["source:1:message:m1","source:1:message:m2"],"cache_revision":%q,"search_provenance":{}}}`, selection.CacheRevision)
-	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", body))
-	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
-	assertions.Equal([]int64{1, 2}, st.contextIDs)
-
-	mixed := fmt.Sprintf(`{"selection":{"mode":"explicit","predicate":{},"row_keys":["source:1:message:m1","source:2:message:m3"],"cache_revision":%q,"search_provenance":{}}}`, selection.CacheRevision)
-	response = httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", mixed))
-	assertions.Equal(http.StatusBadRequest, response.Code, response.Body.String())
-	assertions.Contains(response.Body.String(), "selection_not_all_meetings")
-	assertions.Equal(1, st.contextCalls)
-}
-
 func TestMeetingExploreContextRechecksSourceDeletion(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -542,6 +514,7 @@ func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *test
 	requirements := require.New(t)
 	st := &meetingRouteStore{
 		mockStore:     &mockStore{},
+		contextResult: &meetingcontent.PacketResult{SchemaVersion: 1, Format: meetingcontent.FormatJSON, Content: "{}", ContentBytes: 2, OmittedMessageIDs: []int64{}},
 		actionsResult: &meetingcontent.ActionsPage{Rows: []meetingcontent.ActionRow{}},
 	}
 	engine := &meetingRouteEngine{MockEngine: &querytest.MockEngine{}, result: &query.ExploreMeetingSelection{
@@ -557,6 +530,15 @@ func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *test
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &failure))
 	assertions.Equal("selection_not_all_meetings", failure.Error)
 	assertions.Zero(st.contextCalls)
+
+	engine.result = &query.ExploreMeetingSelection{
+		SelectedCount: 2, MeetingCount: 1, MessageIDs: []int64{41, 42}, CacheRevision: "cache-r1",
+	}
+	explicit := `{"selection":{"mode":"explicit","predicate":{},"row_keys":["source:1:message:41","source:1:message:42"],"cache_revision":"cache-r1","search_provenance":{}}}`
+	response = httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", explicit))
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Equal([]int64{41, 42}, st.contextIDs)
 
 	engine.result = &query.ExploreMeetingSelection{
 		SelectedCount: 1, MeetingCount: 1, MessageIDs: []int64{41}, CacheRevision: "cache-r1",

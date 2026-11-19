@@ -1686,7 +1686,6 @@ func buildCacheLockedAttempt(
 	// Save sync state using the pre-export watermark so any deletion
 	// that occurs during or after the build is detected as stale.
 	state := syncState{
-		MeetingGroupsFallback:               sourceSnapshot.meetingGroupsFallback,
 		LastMessageID:                       maxID,
 		LastSyncAt:                          cacheWatermark,
 		SchemaVersion:                       cacheSchemaVersion,
@@ -1917,7 +1916,6 @@ func writeCacheStatsLine(w io.Writer, format string, args ...any) error {
 // transaction directly. The fallback exports every table from one go-sqlite3
 // transaction before DuckDB reads the resulting static CSV files.
 type cacheSourceSnapshot struct {
-	meetingGroupsFallback       bool
 	duckDB                      *sql.DB
 	duckTx                      *sql.Tx
 	sqliteDB                    *sql.DB
@@ -2050,15 +2048,13 @@ func sqliteQueryArgs(args []any) []any {
 	return result
 }
 
+var resolveCacheMeetingGroups = store.MeetingTranscriptGroupsSQLiteSnapshotContext
+
 func stageMeetingGroups(ctx context.Context, snapshot *cacheSourceSnapshot, through int64) error {
-	groups, fallback, err := store.MeetingTranscriptGroupsSQLiteSnapshotContext(ctx, snapshot, through)
+	groups, err := resolveCacheMeetingGroups(ctx, snapshot, through)
 	if err != nil {
 		return fmt.Errorf("resolve meeting groups: %w", err)
 	}
-	if fallback {
-		slog.Warn("meeting grouping exceeded read budget; counting transcripts individually")
-	}
-	snapshot.meetingGroupsFallback = fallback
 	db := snapshot.DuckDB()
 	if _, err := db.ExecContext(ctx, "CREATE TEMP TABLE tmp_meeting_groups (message_id BIGINT, group_id BIGINT)"); err != nil {
 		return fmt.Errorf("create meeting groups: %w", err)

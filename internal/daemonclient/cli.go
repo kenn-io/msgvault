@@ -509,7 +509,7 @@ func (c *Client) RunCLISync(
 
 // RefreshLabelsMinAPISchemaVersion prevents older daemons from silently
 // ignoring the label-refresh option and running acquire-only full sync.
-const RefreshLabelsMinAPISchemaVersion = "5.18.0"
+const RefreshLabelsMinAPISchemaVersion = "5.19.0"
 
 const (
 	sourceIDSyncMinAPISchemaVersion    = "2.4.0"

@@ -16,7 +16,6 @@ const (
 	DatasetLogicalContributions     = "relationship_logical_contributions"
 	DatasetTemperatureContributions = "relationship_temperature_contributions"
 	DatasetMeetingGroups            = "meeting_groups"
-	DatasetMeetingOwners            = "meeting_owners"
 
 	ModalityEmail   uint8 = 1
 	ModalityChat    uint8 = 2
@@ -30,6 +29,8 @@ var (
 	TextMessageTypes = []string{
 		"google_chat", "whatsapp", "imessage", "sms", "mms", "rcs",
 		"google_voice_text", "teams", "discord", "beeper", "slack", "inline", "fbmessenger", "matrix", "chatwoot", "telegram", "x_dm", "facebook_comments", "instagram_comments", "instagram_mentions", "facebook_messages", "instagram_messages",
+		"tiktok_export",
+		"linkedin",
 	}
 	ChatFallbackMessageTypes = []string{"", "chat", "text"}
 	ChatConversationTypes    = []string{"direct_chat", "group_chat", "channel", "chat"}
@@ -42,7 +43,6 @@ var (
 		DatasetLogicalContributions,
 		DatasetTemperatureContributions,
 		DatasetMeetingGroups,
-		DatasetMeetingOwners,
 	}
 )
 

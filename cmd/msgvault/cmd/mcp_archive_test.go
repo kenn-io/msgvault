@@ -52,6 +52,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		noDrafts     bool
 	}{
 		{"mbox", "get_meeting_record", false}, {"ics", "get_meeting_record", false}, {"gcal", "get_meeting_record", false},
+		{"gmail", "get_meeting_record", false}, {"imap", "get_meeting_record", false}, {"eml", "get_meeting_record", false}, {"emlx", "get_meeting_record", false}, {"maildir", "get_meeting_record", false}, {"pst", "get_meeting_record", false}, {"o365", "get_meeting_record", false}, {"msmail", "get_meeting_record", false}, {"hey", "get_meeting_record", false}, {"apple-mail", "get_meeting_record", false}, {"google-groups", "get_meeting_record", false},
 		{"mbox", "link_meeting", false}, {"ics", "link_meeting", false}, {"gcal", "link_meeting", false},
 		{"granola", "get_meeting_context", false}, {"chatwoot", "get_meeting_context", false},
 		{"circleback", "get_meeting_context", false}, {"pocket", "get_meeting_context", false},
@@ -66,6 +67,8 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		{"whatsapp", "find_chat", false}, {"telegram", "find_chat", false}, {"matrix", "find_chat", false},
 		{"apple_messages", "find_chat", false}, {"synctech_sms", "find_chat", false}, {"imazing_csv", "find_chat", false},
 		{"facebook_messenger", "find_chat", false}, {"discord_package", "find_chat", true},
+		{"tiktok_export", "find_chat", true},
+		{"linkedin_export", "find_chat", true},
 		{"inline", "find_chat", false}, {"google_voice", "find_chat", false}, {"gmail", "find_chat", false},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
@@ -105,7 +108,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 				assert.NotContains(names, "list_meeting_action_items")
 				assert.NotContains(names, "get_meeting_metrics")
 			}
-			if tc.source == "ics" {
+			if tc.tool == "get_meeting_record" && tc.source != "gcal" {
 				assert.NotContains(names, "calendar_freebusy")
 			}
 			if tc.source == "mbox" {
@@ -251,7 +254,6 @@ func TestMCPMeetingRecordDelegated(t *testing.T) {
 		available     bool
 	}{
 		{"current", api.APISchemaVersion, []string{"message.read"}, true},
-		{"older daemon", "5.3.0", []string{"message.read"}, false},
 		{"schema 5.8", "5.8.0", []string{"message.read"}, false},
 		{"without message access", api.APISchemaVersion, []string{"search.read"}, false},
 	} {
@@ -274,29 +276,14 @@ func TestMCPMeetingRecordDelegated(t *testing.T) {
 	}
 }
 
-func TestMCPMeetingRecordCalendarSources(t *testing.T) {
-	for _, kind := range []string{"ics", "mbox", "gmail", "imap", "eml", "emlx", "maildir", "pst", "o365", "msmail", "hey", "apple-mail", "google-groups"} {
-		t.Run(kind, func(t *testing.T) {
-			st := testutil.NewTestStore(t)
-			source, err := st.GetOrCreateSource(kind, "owner@example.com")
-			require.NoError(t, err)
-			server := mcpDraftTestDaemon(t, &storeAPIAdapter{store: st}, nil)
-			session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, []string{"message.read"}), t)
-			names := mcpDraftToolNames(t, session)
-			assert.Contains(t, names, "get_meeting_record")
-			assert.NotContains(t, names, "calendar_freebusy")
-		})
-	}
-}
-
 func TestMCPArchiveCatalogBudgets(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		kinds  []string
 		budget int
 	}{
-		{"mail only", []string{"mbox"}, 220_424},
-		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 273_074},
+		{"mail only", []string{"mbox"}, 221_834},
+		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 274_484},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)

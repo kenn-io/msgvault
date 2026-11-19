@@ -48,7 +48,9 @@ Run `msgvault agent setup` to connect Claude Code and Codex.
 - [IMAP Mail](https://msgvault.io/docs/usage/imap.md): sync folders and prepare, edit, recover, or delete managed reply drafts
 - [Local Email](https://msgvault.io/docs/usage/importing.md)
 - [Remote Email Images](https://msgvault.io/docs/usage/remote-images.md): opt-in downloads and offline display
+- [LinkedIn Export](https://msgvault.io/docs/usage/linkedin.md)
 - [Text Messages](https://msgvault.io/docs/usage/text-messages.md)
+- [TikTok Export](https://msgvault.io/docs/usage/tiktok-export.md): unreleased local DM and own-comment imports
 - [Google Calendar](https://msgvault.io/docs/usage/calendar.md)
 - [Microsoft Teams](https://msgvault.io/docs/usage/teams.md)
 - [Discord](https://msgvault.io/docs/usage/discord.md)

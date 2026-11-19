@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-11-11"
 title: Beeper
 description: Archive every chat network connected to Beeper Desktop via its local API.
 ---
@@ -451,6 +451,10 @@ participants still unify across archives via phone-number and email matching
 resolving to the same person).
 
 Telegram users also link to [Telegram Desktop imports](text-messages.md#import-telegram) by numeric user ID when a sync revisits their chat; `sync-beeper --full` covers quiet chats.
+
+Linking users doesn't merge their messages, so a chat archived from both
+sources appears twice in search. To search one copy, see
+[Search one copy of overlapping chats](searching.md#search-one-copy-of-overlapping-chats).
 
 ## Caveats
 

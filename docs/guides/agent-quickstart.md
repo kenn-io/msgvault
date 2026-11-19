@@ -252,6 +252,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `merge_person` | person_merge | `--allow-person-merges` | owner-only |
 | `create_person` | profile_write | `--allow-profile-writes` | owner-only |
 | `promote_person` | profile_write | `--allow-profile-writes` | owner-only |
+| `set_person_contact_list` | profile_write | `--allow-profile-writes` | owner-only |
 | `set_person_display_name` | profile_write | `--allow-profile-writes` | owner-only |
 | `update_person_notes` | profile_write | `--allow-profile-writes` | owner-only |
 | `aggregate` | read | — | search.read |

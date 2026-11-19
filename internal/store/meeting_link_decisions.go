@@ -389,7 +389,8 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			if err != nil {
 				return err
 			}
-			if conflict, found := meetingDecisionConflict(graph, ca, cb, state == "link", active); found {
+			conflict, found := meetingDecisionConflict(graph, ca, cb, state == "link", active)
+			if found {
 				root, _ := graph.reduce()
 				for _, edge := range graph.candidates {
 					if edge.id != insertedID && edge.decision == "split" && ((root(edge.a.ref()) == root(conflict.a.ref()) && root(edge.b.ref()) == root(conflict.b.ref())) || (root(edge.b.ref()) == root(conflict.a.ref()) && root(edge.a.ref()) == root(conflict.b.ref()))) {

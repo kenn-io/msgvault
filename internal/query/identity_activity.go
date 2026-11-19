@@ -591,16 +591,17 @@ func (e *DuckDBEngine) filteredPeopleSQL(logicalSQL, order string) string {
 person_stats AS (
 	SELECT p.canonical_id, p.source_type,
 	       count(*)::BIGINT AS source_count,
-	       count(*) FILTER (WHERE p.message_type = 'meeting_transcript' AND (p.canonical_id, p.entry_num) IN (SELECT canonical_id, message_id FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingOwners)) + `')))::BIGINT AS meeting_count,
+	       coalesce(list(DISTINCT coalesce(g.group_id, p.entry_num)) FILTER (WHERE p.message_type = 'meeting_transcript'), []::BIGINT[]) AS meeting_groups,
 	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
 	       min(p.occurred_at)::TIMESTAMP AS first_at,
 	       max(p.occurred_at)::TIMESTAMP AS last_at
 	FROM person_flags p
+	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = p.entry_num
 	GROUP BY p.canonical_id, p.source_type
 ), person_totals AS (
 	SELECT canonical_id,
 	       sum(source_count)::BIGINT AS activity_count,
-	       sum(meeting_count)::BIGINT AS meeting_count,
+	       len(list_distinct(flatten(list(meeting_groups))))::BIGINT AS meeting_count,
 	       sum(file_count)::BIGINT AS file_count,
 	       min(first_at)::TIMESTAMP AS first_at,
 	       max(last_at)::TIMESTAMP AS last_at
@@ -642,7 +643,7 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 	SELECT c.canonical_id,
 	       item.source_type,
 	       item.activity_count,
-	       item.meeting_count,
+	       item.meeting_groups,
 	       item.file_count,
 	       item.first_at,
 	       item.last_at
@@ -652,7 +653,7 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 ), person_totals AS (
 	SELECT canonical_id,
 	       sum(activity_count)::BIGINT AS activity_count,
-	       sum(meeting_count)::BIGINT AS meeting_count,
+	       len(list_distinct(flatten(list(meeting_groups))))::BIGINT AS meeting_count,
 	       sum(file_count)::BIGINT AS file_count,
 	       min(first_at)::TIMESTAMP AS first_at,
 	       max(last_at)::TIMESTAMP AS last_at

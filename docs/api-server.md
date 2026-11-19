@@ -172,9 +172,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.18.0**.
+it is separate from the binary release version. The current schema is **5.19.0**.
 
-Schema 5.18.0 adds the `refresh_labels` option to CLI full sync.
+Schema 5.19.0 adds the `refresh_labels` option to CLI full sync.
+
+Schema 5.18.0 adds Directory cadence to `GET /api/v1/people/directory`: the `cadence` filter (`overdue`, `due`, `no_list`, `unknown`), `due_within_days`, the `most_overdue` and `next_due` sorts, a `cadence` object and `last_contact_channel` on each person, and page-level `cadence_presets` and `cadence_coverage`. `expected_value_id` 0 on attribute writes requires that no current value exists. CLI and MCP cadence lookups require a daemon supporting this schema.
 
 Schema 5.17.0 adds person, source, conversation and incoming filters to the
 [message change feed](#get-apiv1messageschanges).

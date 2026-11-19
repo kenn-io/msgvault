@@ -264,7 +264,7 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		strings.Join(canonicalIDs, ","),
 		request.CanonicalID, strings.Join(years, ","),
 	)
-	facts := identityindex.RelationshipTemperatureFactsSQL(activity, cutoff)
+	facts := identityindex.RelationshipTemperatureFactsSQL(activity, "relationship_activity_expanded", "read_parquet('"+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups))+"')", cutoff)
 	rows, err := e.db.QueryContext(ctx, `
 		WITH relationship_facts AS (
 		`+facts+`

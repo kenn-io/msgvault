@@ -95,6 +95,7 @@ describe('entryKindPresentation', () => {
     ['facebook_messages', 'Conversation'],
     ['instagram_messages', 'Conversation'],
     ['fbmessenger', 'Conversation'],
+    ['linkedin', 'Conversation'],
     ['matrix', 'Conversation'],
     ['telegram', 'Conversation'],
     ['x_dm', 'Conversation'],

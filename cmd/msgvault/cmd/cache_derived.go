@@ -247,7 +247,7 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 
-	if !repairRelated && !meetingGroupsChanged && sourceSnapshot.meetingGroupsFallback == state.MeetingGroupsFallback && identityRevision == state.IdentityRevision &&
+	if !repairRelated && !meetingGroupsChanged && identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
 		personDisplayNameRevision == state.PersonDisplayNameRevision &&
@@ -260,7 +260,7 @@ func refreshDerivedDatasetsOnly(
 		// it active pagination cursors — for no analytical difference.
 		return &buildResult{OutputDir: analyticsDir, IdentityOnly: true, Skipped: true}, nil
 	}
-	if repairRelated && !meetingGroupsChanged && sourceSnapshot.meetingGroupsFallback == state.MeetingGroupsFallback && !relatedKinds.recipients &&
+	if repairRelated && !meetingGroupsChanged && !relatedKinds.recipients &&
 		identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
@@ -384,7 +384,6 @@ func refreshDerivedDatasetsOnly(
 	}
 
 	state.IdentityRevision = identityRevision
-	state.MeetingGroupsFallback = sourceSnapshot.meetingGroupsFallback
 	if repairRelated {
 		state.DerivedDataRevision = derivedDataRevision
 	}
@@ -565,7 +564,6 @@ func derivedCachePublishPlan(
 		identityindex.DatasetLogicalContributions,
 		identityindex.DatasetTemperatureContributions,
 		identityindex.DatasetMeetingGroups,
-		identityindex.DatasetMeetingOwners,
 	} {
 		plan.Replace[dataset] = true
 	}

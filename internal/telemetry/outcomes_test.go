@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -107,7 +106,7 @@ func TestSyncFailureRegisteredSourceTypes(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	enableTelemetryEnv(t)
 	stub := newWireStub(t)
-	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir()}, testAPIKey, stub.server.URL, slog.Default())
+	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir()}, testAPIKey, stub.server.URL)
 	defer func() { require.NoError(reporter.Close()) }()
 	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, pocket.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, bland.SourceType, chatwoot.SourceType, "facebook_comments", "instagram_comments"} {
 		properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})

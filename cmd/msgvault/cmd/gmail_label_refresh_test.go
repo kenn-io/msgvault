@@ -82,7 +82,7 @@ func TestSyncFullLabelRefreshDaemonJourney(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/api/v1/health":
-					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "5.18.0"}))
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "5.19.0"}))
 				case "/api/v1/cli/accounts":
 					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"accounts": accounts}))
 				case "/api/v1/cli/sync-full":
