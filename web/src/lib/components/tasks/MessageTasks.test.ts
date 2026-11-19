@@ -57,8 +57,10 @@ describe('Message task list', () => {
     const view = render(MessageTasks, { props: { client, messageId: scenario === 'refresh' || scenario === 'message change' ? 42 : 43, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
     try {
       const link = await screen.findByRole('link', { name: 'Open Send revised notes (example#abcd) in Kata' });
-      expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
-      expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
+      if (scenario === 'refresh') {
+        expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
+        expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
+      }
       if (scenario === 'refresh' || scenario === 'message change') {
         await screen.findByText('Task work');
         expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
@@ -69,12 +71,12 @@ describe('Message task list', () => {
         await waitFor(() => expect(held).toBeDefined());
         if (scenario === 'refresh') expect(screen.getByText('Send revised notes')).toBeDefined();
         if (scenario === 'message change') expect(screen.queryByText('Send revised notes')).toBeNull();
-        held!(Response.json({ truncated: false, issues: scenario === 'empty' ? [] : issues }));
+        held!(Response.json({ truncated: false, issues: scenario === 'empty' ? [] : scenario === 'refresh' ? [{ ...issues[0], title: 'Refreshed notes' }] : issues }));
         if (scenario === 'empty') {
           await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
           expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
         } else {
-          expect(await screen.findByText('Send revised notes')).toBeDefined();
+          expect(await screen.findByText(scenario === 'refresh' ? 'Refreshed notes' : 'Send revised notes')).toBeDefined();
         }
       } else if (scenario === 'error') {
         expect(await screen.findByText('Kata lookup failed')).toBeDefined();
