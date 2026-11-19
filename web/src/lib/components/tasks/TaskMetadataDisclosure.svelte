@@ -58,9 +58,11 @@
 
 <style>
   .metadata :global(.kit-disclosure) { color: var(--text-muted); font-size: var(--font-size-xs); }
+  .metadata :global(.kit-disclosure--plain > .kit-disclosure__content) { padding-bottom: 0; }
   dl {
     display: grid;
     gap: var(--space-1);
+    margin-bottom: 0;
   }
   dl div {
     display: grid;
@@ -74,5 +76,11 @@
     margin: 0;
     overflow-wrap: anywhere;
     color: var(--text-primary);
+  }
+  @media (max-width: 480px) {
+    .metadata :global(.kit-disclosure--plain > .kit-disclosure__content) { padding-left: 0; }
+    dl { grid-template-columns: max-content minmax(0, 1fr); column-gap: var(--space-2); font-size: 12px; }
+    dl div { display: contents; }
+    dt { white-space: nowrap; }
   }
 </style>

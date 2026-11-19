@@ -118,7 +118,7 @@ describe('Add to task', () => {
     } finally { view.unmount(); }
   });
 
-  it.each(['ready', 'stale'])('shows the task control only when mutation is ready (index: %s)', async state => {
+  it.each(['ready', 'partial', 'stale'])('shows the task control only when mutation is ready (index: %s)', async state => {
     const client = createAPIClient(async input => {
       const url = (input as Request).url;
       if (url.includes('/search')) return Response.json({ tasks: [], truncated: false });

@@ -1,16 +1,21 @@
 import { formatDate } from './format';
 import { describe, expect, it, vi } from 'vitest';
-import { formatBytes, formatDateTime, formatRelativeTime, formatShortDateTime } from './format';
+import { formatBytes, formatDateTime, formatRelativeTime, formatShortDate, formatShortDateTime } from './format';
 
 describe('format', () => {
   it.each([[120, '120 B'], [3 * 1024, '3 KB'], [1.5 * 1024 * 1024, '1.5 MB']])('formats %d bytes', (value, want) => {
     expect(formatBytes(value)).toBe(want);
   });
-  it('includes the time in a short date and time', () => {
+  it('formats short dates and date times', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-11-17T12:00:00Z'));
     try {
-      expect(formatShortDateTime('2026-07-18T12:00:00')).toBe('Jul 18, 12:00 PM');
+      const current = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date('2026-07-18T12:00:00'));
+      const earlier = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date('2025-07-18T12:00:00'));
+      const time = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(new Date('2026-07-18T12:00:00'));
+      expect(formatShortDate('2026-07-18T12:00:00')).toBe(current);
+      expect(formatShortDate('2025-07-18T12:00:00')).toBe(earlier);
+      expect(formatShortDateTime('2026-07-18T12:00:00')).toBe(`${current}, ${time}`);
     } finally { vi.useRealTimers(); }
   });
   it('names missing and unparseable times', () => {
