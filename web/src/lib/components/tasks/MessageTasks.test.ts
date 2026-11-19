@@ -6,7 +6,7 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
-  it.each(['partial', 'suppressed'])('sets Tasks group visibility for %s', async scenario => {
+  it.each(['partial', 'suppressed'])('shows or hides the Tasks group for %s', async scenario => {
     const fetchFn = vi.fn<typeof fetch>(async input => {
       if ((input as Request).url.endsWith('/status')) return Response.json({ state: scenario === 'suppressed' ? 'unavailable' : 'ready', project: 'example' });
       return Response.json(taskLookup(scenario === 'partial'
@@ -53,11 +53,9 @@ describe('Message task list', () => {
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
     try {
-      const link = await screen.findByRole('link', { name: 'Open Send notes (example#abcd) in Kata' });
-      expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
-      await screen.findByRole('button', { name: 'Unlink Task work' });
+      await screen.findByText('Send notes');
+      await screen.findByText('Task work');
       expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
-      expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
       hold = true;
       await view.rerender(change === 'refresh' ? { refresh: 1 } : { messageId: 43 });
       await waitFor(() => expect(held).toBeDefined());
@@ -78,12 +76,14 @@ describe('Message task list', () => {
       if ((input as Request).url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (hold) return new Promise<Response>(resolve => { held = resolve; });
       if (fail) return Response.json({ message: 'Kata lookup failed' }, { status: 503 });
-      return Response.json({ truncated, issues: empty ? [] : [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }] });
+      return Response.json({ truncated, issues: empty ? [] : [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }] });
     });
     const readiness = new KataReadiness(client);
     const view = render(MessageTasks, { props: { client, messageId: 43, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
     try {
-      await screen.findByText('Send revised notes');
+      const link = await screen.findByRole('link', { name: 'Open Send revised notes (example#abcd) in Kata' });
+      expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
+      expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
       truncated = true;
       await view.rerender({ refresh: 2 });
       expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();

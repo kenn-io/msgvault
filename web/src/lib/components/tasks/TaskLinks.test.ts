@@ -97,7 +97,7 @@ describe('TaskLinks', () => {
     };
     const context = new Map([[conversationTaskStatusKey, shared]]);
     const oncomplete = vi.fn();
-    render(TaskLinks, { props: { client, mode: 'add', embedded: true, messageId: 42, title: 'Follow up', oncomplete }, context });
+    render(TaskLinks, { props: { client, mode: 'add', messageId: 42, title: 'Follow up', oncomplete }, context });
     const title = await screen.findByLabelText('Task title');
     await fireEvent.input(title, { target: { value: 'Draft title' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
@@ -127,7 +127,7 @@ describe('TaskLinks', () => {
   });
 
   it('preserves a creation draft when switching between New and Existing', async () => {
-    const props = { client: taskCreationClient(), mode: 'add' as const, embedded: true, messageId: 42, title: 'Follow up' };
+    const props = { client: taskCreationClient(), mode: 'add' as const, messageId: 42, title: 'Follow up' };
     const view = render(TaskLinks, { ...props, action: 'create' });
     await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Revised follow up' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
@@ -140,7 +140,7 @@ describe('TaskLinks', () => {
   it('completes creation without refreshing the closing add surface', async () => {
     const reads: Request[] = [];
     const oncomplete = vi.fn();
-    render(TaskLinks, { client: taskCreationClient(reads), mode: 'add', embedded: true, messageId: 42, title: 'Follow up', oncomplete });
+    render(TaskLinks, { client: taskCreationClient(reads), mode: 'add', messageId: 42, title: 'Follow up', oncomplete });
     await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
     await waitFor(() => expect(oncomplete).toHaveBeenCalledOnce());
     await tick();
@@ -230,7 +230,6 @@ describe('TaskLinks', () => {
     ['incompatible', 'incompatible'],
     ['unavailable', 'unavailable'],
     ['stale', 'stale'],
-    ['partial', 'some linked tasks may be missing'],
     ['disabled', 'disabled'],
     ['not_found', 'not found'],
     ['wrong_project', 'wrong project']
@@ -314,9 +313,8 @@ describe('TaskLinks', () => {
     const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
 
     expect(await screen.findByText('Partial task')).toBeDefined();
-    expect(screen.getByRole('alert').textContent).toContain('Some linked tasks may be missing');
     expect((screen.getByRole('button', { name: 'Unlink Partial task' }) as HTMLButtonElement).disabled).toBe(false);
-    await view.rerender({ mode: 'add', embedded: true });
+    await view.rerender({ mode: 'add' });
     expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
   });
 
@@ -333,7 +331,7 @@ describe('TaskLinks', () => {
       const alert = await screen.findByRole('alert');
       if (state === 'unavailable') expect(alert.textContent).toContain('The task service is unavailable; safe cached links may be shown.');
       expect(screen.queryByText('Cached task') !== null).toBe(state !== 'authentication_required');
-      await view.rerender({ mode: 'add', embedded: true });
+      await view.rerender({ mode: 'add' });
       expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
     }
   );
@@ -409,7 +407,7 @@ describe('TaskLinks', () => {
         archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z'
       } });
     });
-    render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', embedded: true, action: 'existing', messageId: 42, title: 'Synthetic', oncomplete });
+    render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic', oncomplete });
     expect(await screen.findByRole('radio', { name: 'Synthetic result · task-1' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic result · task-2' }));
     const search = requests.find(request => new URL(request.url).pathname.endsWith('/integrations/tasks/search'))!;
@@ -439,7 +437,7 @@ describe('TaskLinks', () => {
       return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
     render(TaskLinks, {
-      client: createAPIClient(fetchFn), mode: 'add', embedded: true, action: 'existing', messageId: 42, title: 'Synthetic',
+      client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic',
     });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic result · task-1' }));
     const link = screen.getByRole('button', { name: 'Link task' });

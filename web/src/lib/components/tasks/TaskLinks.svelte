@@ -9,7 +9,7 @@
     searchIntegrationTasks as generatedSearchIntegrationTasks,
     unlinkMessageTask as generatedUnlinkMessageTask,
   } from '../../api/generated/api/api';
-  import { Button, SegmentedControl } from '@kenn-io/kit-ui';
+  import { Button } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type {
     TaskLinkLookupResponse as GeneratedTaskLinkLookupResponse,
@@ -28,7 +28,6 @@
     mode = 'list',
     showSetup = true,
     refresh = 0,
-    embedded = false,
     action = $bindable('create'),
     actionReady = $bindable(false),
     present = $bindable(false),
@@ -43,7 +42,6 @@
     mode?: 'list' | 'add';
     showSetup?: boolean;
     refresh?: number;
-    embedded?: boolean;
     action?: string;
     actionReady?: boolean;
     present?: boolean;
@@ -264,7 +262,7 @@
   );
 </script>
 
-{#if (loading && (showSetup || integrationState === 'ready' || integrationState === 'loading')) || rowsVisible || (!loading && noticeVisible) || (mode === 'add' && mutationReady && (!embedded || action !== 'create'))}
+{#if (loading && (showSetup || integrationState === 'ready' || integrationState === 'loading')) || rowsVisible || (!loading && noticeVisible) || (mode === 'add' && mutationReady && action !== 'create')}
 <section class="task-links" class:add={mode === 'add'} aria-label="Linked tasks">
   {#if loading && !rowsVisible}<p role="status">Loading linked tasks…</p>
   {:else}
@@ -283,7 +281,6 @@
       {/each}
     {/if}
     {#if mutationReady && mode === 'add'}
-      {#if !embedded}<SegmentedControl variant="borderless" disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />{/if}
       {#if action !== 'create'}
       <TaskIssuePicker load={loadTasks} noun="tasks" moreNote="Showing the first 25 tasks. Type to search the rest." empty={`No tasks in ${project} yet.`} disabled={busy} bind:selected />
       {#if error}<p role="alert">{error}</p>{/if}
