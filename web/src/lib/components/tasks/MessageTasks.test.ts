@@ -8,7 +8,7 @@ import MessageTasks from './MessageTasks.svelte';
 describe('Message task list', () => {
   it.each(['partial', 'suppressed'])('shows or hides the Tasks group for %s', async scenario => {
     const fetchFn = vi.fn<typeof fetch>(async input => {
-      if ((input as Request).url.endsWith('/status')) return Response.json({ state: scenario === 'suppressed' ? 'unavailable' : 'ready', project: 'example' });
+      if ((input as Request).url.endsWith('/status')) return Response.json({ state: scenario === 'suppressed' ? 'unreachable' : 'ready', project: 'example' });
       return Response.json(taskLookup(scenario === 'partial'
         ? { state: 'partial', complete: false }
         : { state: 'unavailable', complete: false }));
@@ -40,50 +40,45 @@ describe('Message task list', () => {
     expect(requests).toHaveLength(0);
   });
 
-  it.each(['refresh', 'message change'])('keeps or clears Kata rows on %s', async change => {
-    let held: ((response: Response) => void) | undefined;
-    let hold = false;
-    const client = createAPIClient(async input => {
-      const url = (input as Request).url;
-      if (url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-      if (!url.includes('/kata/')) return Response.json(taskLookup({ tasks: [{ id: 'task-1', title: 'Task work' }] }, url.includes('/messages/43/') ? 43 : 42));
-      if (hold) return new Promise<Response>(resolve => { held = resolve; });
-      return Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }] });
-    });
-    const readiness = new KataReadiness(client);
-    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
-    try {
-      await screen.findByText('Send notes');
-      await screen.findByText('Task work');
-      expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
-      hold = true;
-      await view.rerender(change === 'refresh' ? { refresh: 1 } : { messageId: 43 });
-      await waitFor(() => expect(held).toBeDefined());
-      if (change === 'refresh') expect(screen.getByText('Send notes')).toBeDefined();
-      else expect(screen.queryByText('Send notes')).toBeNull();
-      held!(Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }] }));
-      expect(await screen.findByText('Send revised notes')).toBeDefined();
-    } finally { view.unmount(); readiness.dispose(); }
-  });
-
-  it('updates the group for incomplete, empty, and failed Kata lookups', async () => {
+  it('updates task and Kata rows through refreshes, message changes, and lookup outcomes', async () => {
     let truncated = false;
     let empty = false;
     let hold = false;
     let fail = false;
     let held: ((response: Response) => void) | undefined;
     const client = createAPIClient(async input => {
-      if ((input as Request).url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      const url = (input as Request).url;
+      if (url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (!url.includes('/kata/')) return Response.json(taskLookup({ tasks: [{ id: 'task-1', title: 'Task work' }] }, url.includes('/messages/43/') ? 43 : 42));
       if (hold) return new Promise<Response>(resolve => { held = resolve; });
       if (fail) return Response.json({ message: 'Kata lookup failed' }, { status: 503 });
       return Response.json({ truncated, issues: empty ? [] : [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }] });
     });
     const readiness = new KataReadiness(client);
-    const view = render(MessageTasks, { props: { client, messageId: 43, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
+    let view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
     try {
       const link = await screen.findByRole('link', { name: 'Open Send revised notes (example#abcd) in Kata' });
       expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
       expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
+      await screen.findByText('Task work');
+      expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
+      hold = true;
+      await view.rerender({ refresh: 1 });
+      await waitFor(() => expect(held).toBeDefined());
+      expect(screen.getByText('Send revised notes')).toBeDefined();
+      held!(Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Refreshed notes', status: 'open' }] }));
+      await screen.findByText('Refreshed notes');
+      held = undefined;
+      await view.rerender({ messageId: 43, email: false });
+      await waitFor(() => expect(held).toBeDefined());
+      expect(screen.queryByText('Refreshed notes')).toBeNull();
+      held!(Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }] }));
+      await screen.findByText('Send revised notes');
+      hold = false;
+      held = undefined;
+      view.unmount();
+      view = render(MessageTasks, { props: { client, messageId: 43, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
+      await screen.findByText('Send revised notes');
       truncated = true;
       await view.rerender({ refresh: 2 });
       expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
@@ -94,6 +89,7 @@ describe('Message task list', () => {
       expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
       expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
       hold = true;
+      held = undefined;
       await view.rerender({ refresh: 4 });
       await waitFor(() => expect(held).toBeDefined());
       expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull();
