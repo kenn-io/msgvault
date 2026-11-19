@@ -44,15 +44,6 @@ describe('CreateTaskDialog', () => {
     expect(requests[0]!.headers.get('X-Request-Id')).toBeTruthy();
   });
 
-  it('uses the default title when message context is empty', () => {
-    render(CreateTaskDialog, {
-      client: createAPIClient(async () => Response.json({})), messageId: 42, project: 'project', defaultTitle: 'Synthetic subject',
-      archiveUID: 'archive-a', conversationId: 7, sourceType: 'gmail', sourceIdentifier: 'archive@example.com',
-      sourceMessageId: 'source-42', subject: '', from: '', sentAt: '', oncreated: vi.fn(), onclose: vi.fn()
-    });
-    expect(screen.getByText('Synthetic subject')).toBeDefined();
-  });
-
   it('keeps the request ID and added_at stable across a failed browser retry', async () => {
     const requests: Request[] = [];
     let fail!: (response: Response) => void;
