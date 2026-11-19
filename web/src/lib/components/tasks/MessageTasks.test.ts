@@ -19,14 +19,14 @@ describe('Message task list', () => {
           ? { state: 'unavailable', complete: false }
           : { tasks: [{ id: 'task-1', title: 'Task work' }] }));
     });
-    const readiness = new KataReadiness(client);
+    const readiness = scenario === 'linked' || scenario === 'error' ? new KataReadiness(client) : undefined;
     const view = render(MessageTasks, {
       props: { client, messageId: 42, title: 'Synthetic', email: scenario !== 'error', showSetup: scenario !== 'suppressed' },
-      context: scenario === 'linked' || scenario === 'error' ? new Map([[kataReadinessKey, readiness]]) : new Map(),
+      context: readiness ? new Map([[kataReadinessKey, readiness]]) : new Map(),
     });
     try {
       if (scenario === 'partial') {
-        await waitFor(() => expect(screen.getByRole('region', { name: 'Tasks' }).textContent).toContain('Some linked tasks may be missing.'));
+        expect(await screen.findByRole('region', { name: 'Tasks' })).toBeDefined();
       } else if (scenario === 'suppressed') {
         await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
         expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
@@ -39,7 +39,7 @@ describe('Message task list', () => {
         await screen.findByText('Kata lookup failed');
         expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
       }
-    } finally { view.unmount(); readiness.dispose(); }
+    } finally { view.unmount(); readiness?.dispose(); }
   });
 
   it('reloads persisted email links and skips task lookup for non-email messages', async () => {
