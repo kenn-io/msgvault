@@ -18,10 +18,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -69,7 +73,7 @@ func TestExportMessagesCommandWritesContractOrderAndCounts(t *testing.T) {
 		"manifest", "source", "conversation", "message", "complete",
 	}, exportMessageRecordTypes(records))
 
-	assert.Equal(messageExportSchema, records[0]["schema"])
+	assert.Equal(export.MessageSchema, records[0]["schema"])
 	assert.NotContains(records[0]["filters"], "person_id")
 	assert.Equal(Version, records[0]["msgvault_version"])
 	window, ok := records[0]["window"].(map[string]any)
@@ -148,6 +152,13 @@ func TestExportMessagesCommandRejectsPreflightErrorsWithoutOutput(t *testing.T) 
 			name: "invalid bounds",
 			args: []string{
 				"--start", "2026-07-21T00:00:00Z",
+				"--end", "2026-07-20T00:00:00Z",
+			},
+		},
+		{
+			name: "zero start",
+			args: []string{
+				"--start", "0001-01-01T00:00:00Z",
 				"--end", "2026-07-20T00:00:00Z",
 			},
 		},
@@ -252,40 +263,89 @@ func TestExportMessagesCommandOmitsCompletionAfterStreamFailure(t *testing.T) {
 const exportCompleteEvents = "{\"type\":\"stdout\",\"data\":\"{\\\"record_type\\\":\\\"complete\\\"}\\n\"}\n" +
 	"{\"type\":\"complete\"}"
 
-func TestExportMessagesCommandRoutesThroughDaemon(t *testing.T) {
+func TestExportMessagesStreamsFromRemoteServer(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	server, requests := newDaemonCLIRunnerTestServer(
-		t,
-		func(req daemonCLIRunTestRequest) {
-			assert.Equal([]string{
-				"export-messages",
-				"--end=2026-07-21T00:00:00Z",
-				"--message-type=email",
-				"--source=text:archive",
-				"--start=2026-07-20T00:00:00Z",
-			}, req.Args)
-		},
-		exportCompleteEvents,
-	)
-	testCtx := configureRemoteDaemonForTest(t, server.URL)
-	_ = testCtx
-	t.Setenv(daemonCLISubprocessEnv, "")
-
-	cmd := newExportMessagesCmd(exportMessagesDeps{})
-	cmd.SetContext(testCtx)
-	var output bytes.Buffer
-	cmd.SetOut(&output)
-	cmd.SetErr(io.Discard)
-	cmd.SetArgs([]string{
-		"--start", "2026-07-20T00:00:00Z",
-		"--end", "2026-07-21T00:00:00Z",
-		"--source", "text:archive",
-		"--message-type", "email",
+	root := t.TempDir()
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(root, "msgvault.db"))
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	for _, identifier := range []string{"archive", "other"} {
+		source, err := st.GetOrCreateSource("text", identifier)
+		require.NoError(err)
+		conversationID := insertExportMessagesConversation(t, st, source.ID, identifier+"-conversation", identifier)
+		insertExportMessagesMessage(t, st, source.ID, conversationID, identifier+"-message", start, identifier+" body")
+	}
+	cfg := &config.Config{HomeDir: root, Server: config.ServerConfig{
+		APIKey:        "synthetic-owner-key",
+		RemoteClients: []config.RemoteClientConfig{{ClientID: "reader", APIKey: "synthetic-reader-key"}},
+	}}
+	cfg.Data.DataDir = root
+	logger := slog.New(slog.DiscardHandler)
+	server := api.NewServerWithOptions(api.ServerOptions{
+		Config:        cfg,
+		Store:         &storeAPIAdapter{store: st, config: cfg, logger: logger},
+		Engine:        query.NewSQLiteEngine(st.DB()),
+		Logger:        logger,
+		DaemonVersion: Version,
 	})
-	require.NoError(cmd.Execute())
-	assert.Equal(1, int(requests.Load()))
-	assert.JSONEq("{\"record_type\":\"complete\"}", output.String())
+	// An export starting on 2026-07-19 ends after its first record, as a
+	// server does when it fails mid-stream.
+	router := server.Router()
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/cli/messages/export" && strings.HasPrefix(r.URL.Query().Get("start"), "2026-07-19") {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_, _ = io.WriteString(w, `{"record_type":"manifest"}`+"\n")
+			return
+		}
+		router.ServeHTTP(w, r)
+	}))
+	t.Cleanup(httpServer.Close)
+	t.Cleanup(func() { require.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Setenv(daemonCLISubprocessEnv, "")
+	window := []string{"--start", "2026-07-20T00:00:00Z", "--end", "2026-07-21T00:00:00Z"}
+
+	run := func(cmd *cobra.Command, ctx context.Context, args ...string) (string, error) {
+		var output bytes.Buffer
+		cmd.SetOut(&output)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs(args)
+		err := cmd.ExecuteContext(ctx)
+		return output.String(), err
+	}
+	remote := func(args ...string) (string, error) {
+		ctx := configureRemoteDaemonForTest(t, httpServer.URL, &config.Config{
+			HomeDir: t.TempDir(),
+			Remote:  config.RemoteConfig{APIKey: "synthetic-reader-key"},
+		})
+		return run(newExportMessagesCmd(exportMessagesDeps{}), ctx, args...)
+	}
+
+	selected := append(append([]string(nil), window...), "--source", "text:archive")
+	remoteOutput, err := remote(selected...)
+	require.NoError(err, "a read-only remote client key can export")
+	localOutput, err := run(newExportMessagesLocalCmd(exportMessagesDeps{
+		openStore: func(context.Context) (*store.Store, func(), error) { return st, func() {}, nil },
+	}), t.Context(), selected...)
+	require.NoError(err)
+	assert.Equal(localOutput, remoteOutput, "remote export matches local export byte for byte")
+
+	records := decodeExportMessageRecords(t, []byte(remoteOutput))
+	assert.Equal([]string{"manifest", "source", "conversation", "message", "complete"}, exportMessageRecordTypes(records))
+	assert.Equal("archive", records[1]["identifier"], "the source selector excludes other sources")
+	assert.Equal("archive body", records[3]["text"])
+
+	_, err = remote(append(append([]string(nil), window...), "--source", "text:missing")...)
+	require.ErrorContains(err, "source text:missing not found")
+
+	output, err := remote("--start", "2026-07-20T00:00:00Z", "--end", "2026-07-20T00:00:00.5Z", "--source", "text:archive")
+	require.NoError(err, "a sub-second window reaches the server intact")
+	assert.Equal([]string{"manifest", "source", "conversation", "message", "complete"},
+		exportMessageRecordTypes(decodeExportMessageRecords(t, []byte(output))))
+
+	output, err = remote("--start", "2026-07-19T00:00:00Z", "--end", "2026-07-21T00:00:00Z")
+	require.ErrorContains(err, "without its completion record")
+	assert.Equal([]string{"manifest"}, exportMessageRecordTypes(decodeExportMessageRecords(t, []byte(output))),
+		"the received records still reach stdout")
 }
 
 func decodeExportMessageRecords(t *testing.T, data []byte) []map[string]any {

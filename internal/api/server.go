@@ -1316,6 +1316,7 @@ func isLongDaemonRequest(path string) bool {
 		muesliImportEndpointPath,
 		muesliRecordingEndpointPath,
 		"/api/v1/cli/identities/discover",
+		"/api/v1/cli/messages/export",
 		"/api/v1/cli/rebuild-fts",
 		"/api/v1/cli/repair-encoding",
 		"/api/v1/cli/repair-message",

@@ -1264,6 +1264,8 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	}))
 
 	longPath := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/sync-full", nil)
+	messageExport := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/messages/export", nil)
+	messageExport.Header.Set("X-Api-Key", apiKey)
 	marked := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/stats", nil)
 	marked.RemoteAddr = "127.0.0.1:4242"
 	marked.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
@@ -1292,6 +1294,7 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 		wantContextDeadline bool
 	}{
 		{name: "unmarked long path", request: longPath, wantWriteClear: true},
+		{name: "unmarked message export", request: messageExport, wantWriteClear: true},
 		{name: "marked request", request: marked, wantReadClear: true, wantWriteClear: true},
 		{
 			name:           "marked atomic dedup deletion",

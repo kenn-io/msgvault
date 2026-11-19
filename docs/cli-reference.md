@@ -3330,7 +3330,9 @@ msgvault export-messages \
 | `--format` | `jsonl` | Output format; v1 accepts only `jsonl` |
 
 `--start` and `--end` are required. Missing bounds fail before contacting the
-daemon. For an account selector, combine its `type` and `email` from
+daemon. Against a remote, the export streams from the server and needs server
+schema 5.19.0 or later; it works with [read-only remote
+client](guides/remote-deployment.md#read-only-remote-clients) keys. For an account selector, combine its `type` and `email` from
 `msgvault list-accounts --json`, for example `--source mbox:you@example.com`.
 
 Use `--person-id N` to export messages involving a durable person's bound
@@ -3341,7 +3343,8 @@ keeping the address unchanged.
 The stream schema is `msgvault-message-export/1`. Records appear as one
 manifest, all sources, all conversations, all messages, and one completion
 record with counts. A missing completion record means the stream is partial
-and must be rejected. Stdout contains JSONL only; diagnostics use stderr.
+and must be rejected; the command then exits nonzero. Stdout contains JSONL
+only; diagnostics use stderr.
 
 See [Exporting Data](/docs/usage/exporting/) for the full record, identity, ordering,
 and validation contract.
