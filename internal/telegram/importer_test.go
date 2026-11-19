@@ -213,14 +213,22 @@ func TestImportMediaFilenameContainsWarningWords(t *testing.T) {
 	assert.Equal(1, n)
 }
 
+var testBatchSizes = []int{0, BatchSize}
+
 func TestImportRepeatedLimitAdvances(t *testing.T) {
+	for _, batch := range testBatchSizes {
+		t.Run("batch="+strconv.Itoa(batch), func(t *testing.T) { testImportRepeatedLimitAdvances(t, batch) })
+	}
+}
+
+func testImportRepeatedLimitAdvances(t *testing.T, batch int) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""},{"id":2,"type":"message","date_unixtime":"1610909872","text":""},{"id":3,"type":"message","date_unixtime":"1610909872","text":""}]}`))
 	for i := range 3 {
-		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", Limit: 1})
+		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", Limit: 1, BatchSize: batch})
 		require.NoError(err)
 		assert.EqualValues(1, summary.MessagesAdded)
 		assert.Equal(i < 2, summary.LimitReached)
@@ -230,7 +238,30 @@ func TestImportRepeatedLimitAdvances(t *testing.T) {
 	assert.Equal(3, n)
 }
 
+func TestImportDuplicateMessageIDInChat(t *testing.T) {
+	for _, batch := range testBatchSizes {
+		t.Run("batch="+strconv.Itoa(batch), func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first"},{"id":1,"type":"message","date_unixtime":"1","text":"again"},{"id":2,"type":"message","date_unixtime":"2","text":"second"}]}`))
+			summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", BatchSize: batch})
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, summary.MessagesAdded)
+			assert.EqualValues(t, 1, summary.MessagesSkipped)
+			var n int
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
+			assert.Equal(t, 2, n)
+		})
+	}
+}
+
 func TestImportFullAndAppendOnly(t *testing.T) {
+	for _, batch := range testBatchSizes {
+		t.Run("batch="+strconv.Itoa(batch), func(t *testing.T) { testImportFullAndAppendOnly(t, batch) })
+	}
+}
+
+func testImportFullAndAppendOnly(t *testing.T, batch int) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -273,7 +304,7 @@ func TestImportFullAndAppendOnly(t *testing.T) {
 		require.NoError(os.MkdirAll(filepath.Dir(dest), 0700))
 		require.NoError(os.WriteFile(dest, []byte(path), 0600))
 	}
-	opts := ImportOptions{RootDir: root, AttachmentsDir: t.TempDir()}
+	opts := ImportOptions{RootDir: root, AttachmentsDir: t.TempDir(), BatchSize: batch}
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
 	assert.EqualValues(14, summary.MessagesAdded)

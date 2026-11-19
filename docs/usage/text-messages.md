@@ -509,6 +509,8 @@ Every exported chat becomes a conversation, even one with no messages. Each impo
 
 An interrupted import resumes after the last completed chat when `result.json` in the same directory has the same size and modification time. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.
 
+The experimental `--batch` flag persists up to 50 messages per transaction instead of one. A batch never spans two chats, so resume works as before.
+
 ## import-x
 
 Import supplied direct and group DMs from an

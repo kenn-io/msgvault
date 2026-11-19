@@ -2199,19 +2199,61 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	return s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
 		nil, nil, func([]int64) *MessagePersistData { return data }, nil,
-		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
-			q := boundQuerier{ctx: ctx, q: tx}
-			if data.MIMEAttachmentReplacement != nil {
-				if err := s.persistAttachmentSnapshotWith(q, id, data.MIMEAttachmentReplacement); err != nil {
-					return err
-				}
-			}
-			if data.Edited {
-				return setMessageEditedStateWith(q, id, true)
-			}
-			return nil
-		},
+		s.persistMessageSnapshotAfter,
 	)
+}
+
+func (s *Store) persistMessageSnapshotAfter(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
+	q := boundQuerier{ctx: ctx, q: tx}
+	if data.MIMEAttachmentReplacement != nil {
+		if err := s.persistAttachmentSnapshotWith(q, id, data.MIMEAttachmentReplacement); err != nil {
+			return err
+		}
+	}
+	if data.Edited {
+		return setMessageEditedStateWith(q, id, true)
+	}
+	return nil
+}
+
+func (s *Store) PersistMessagesContext(ctx context.Context, batch []*MessagePersistData) ([]int64, error) {
+	if len(batch) == 0 {
+		return nil, nil
+	}
+	var lock attributionLock
+	for _, data := range batch {
+		if data == nil || data.Message == nil {
+			return nil, errors.New("persist messages requires messages")
+		}
+		lock.Sources = append(lock.Sources, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType).Sources...)
+	}
+	ids := make([]int64, len(batch))
+	calendarRaw := make([][]byte, len(batch))
+	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
+		clear(calendarRaw)
+		for i, data := range batch {
+			id, err := s.persistMessageWithParticipantsTx(
+				ctx, tx, nil, nil, func([]int64) *MessagePersistData { return data }, nil, s.persistMessageSnapshotAfter,
+			)
+			if err != nil {
+				return err
+			}
+			ids[i] = id
+			if IsEmailMessageType(data.Message.MessageType) && (data.RawFormat == "" || data.RawFormat == emailLinkageRawFormat) && hasCalendarToken(data.RawMIME) {
+				calendarRaw[i] = data.RawMIME
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for i, raw := range calendarRaw {
+		if raw != nil {
+			s.deriveEmailCalendarAfterCommit(ctx, ids[i], raw)
+		}
+	}
+	return ids, nil
 }
 
 // RelayedFromRecipient preserves the transport sender for an attributed author.

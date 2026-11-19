@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -16,6 +17,12 @@ import (
 )
 
 func TestImportTelegramEndToEnd(t *testing.T) {
+	for _, extra := range [][]string{nil, {"--batch"}} {
+		t.Run(strings.Join(append([]string{"flags"}, extra...), " "), func(t *testing.T) { testImportTelegramEndToEnd(t, extra) })
+	}
+}
+
+func testImportTelegramEndToEnd(t *testing.T, extra []string) {
 	assert := assert.New(t)
 	require := require.New(t)
 	markDaemonCLISubprocessForTest(t)
@@ -39,7 +46,7 @@ func TestImportTelegramEndToEnd(t *testing.T) {
 	var stdout bytes.Buffer
 	rootCmd.SetOut(&stdout)
 	rootCmd.SetErr(io.Discard)
-	rootCmd.SetArgs([]string{"--home", tmp, "import-telegram", "--limit", "3", fixture})
+	rootCmd.SetArgs(append(append([]string{"--home", tmp, "import-telegram", "--limit", "3"}, extra...), fixture))
 	require.NoError(rootCmd.ExecuteContext(t.Context()))
 	assert.Contains(stdout.String(), "Import paused at --limit. More messages remain; re-run to continue.")
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))

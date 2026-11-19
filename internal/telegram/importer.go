@@ -34,7 +34,59 @@ type ImportOptions struct {
 	AttachmentsDir string
 	Limit          int
 	NoResume       bool
+	BatchSize      int
 	Logger         *slog.Logger
+}
+
+const BatchSize = 50
+
+type pendingMessage struct {
+	key  string
+	data *store.MessagePersistData
+}
+
+type messageBatch struct {
+	st      *store.Store
+	size    int
+	pending []pendingMessage
+	keys    map[string]bool
+}
+
+func newMessageBatch(st *store.Store, size int) *messageBatch {
+	if size <= 1 {
+		return nil
+	}
+	return &messageBatch{st: st, size: size, keys: map[string]bool{}}
+}
+
+func (b *messageBatch) add(ctx context.Context, key string, data *store.MessagePersistData, existing map[string]int64, summary *ImportSummary) error {
+	b.pending = append(b.pending, pendingMessage{key: key, data: data})
+	b.keys[key] = true
+	if len(b.pending) >= b.size {
+		return b.flush(ctx, existing, summary)
+	}
+	return nil
+}
+
+func (b *messageBatch) flush(ctx context.Context, existing map[string]int64, summary *ImportSummary) error {
+	if len(b.pending) == 0 {
+		return nil
+	}
+	batch := make([]*store.MessagePersistData, len(b.pending))
+	for i, p := range b.pending {
+		batch[i] = p.data
+	}
+	ids, err := b.st.PersistMessagesContext(ctx, batch)
+	if err != nil {
+		return fmt.Errorf("telegram: persist batch of %d starting at %s: %w", len(batch), b.pending[0].key, err)
+	}
+	for i, p := range b.pending {
+		existing[p.key] = ids[i]
+	}
+	summary.MessagesAdded += int64(len(b.pending))
+	b.pending = b.pending[:0]
+	clear(b.keys)
+	return nil
 }
 
 type ImportSummary struct {
@@ -62,6 +114,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	batch := newMessageBatch(st, opts.BatchSize)
 	root, err := filepath.Abs(opts.RootDir)
 	if err != nil {
 		return summary, err
@@ -182,7 +235,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			summary.ChatsSkipped++
 			logger.Warn("telegram: skipping unknown chat type", "type", chat.Type)
 		} else {
-			if err := importChat(ctx, st, resolve, source.ID, ownerPID, ownerName, chat, opts, summary); err != nil {
+			if err := importChat(ctx, st, resolve, source.ID, ownerPID, ownerName, chat, opts, batch, summary); err != nil {
 				return err
 			}
 			logger.Info("telegram: chat imported", "peer", chat.PeerKey())
@@ -206,7 +259,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 
 var errLimitReached = errors.New("telegram: import limit reached")
 
-func importChat(ctx context.Context, st *store.Store, resolve func(string, string) (int64, error), sourceID, ownerPID int64, ownerName string, chat *Chat, opts ImportOptions, summary *ImportSummary) error {
+func importChat(ctx context.Context, st *store.Store, resolve func(string, string) (int64, error), sourceID, ownerPID int64, ownerName string, chat *Chat, opts ImportOptions, batch *messageBatch, summary *ImportSummary) error {
 	peer := chat.PeerKey()
 	summary.ChatsProcessed++
 	direct := chat.Type == "personal_chat" || chat.Type == "bot_chat"
@@ -214,6 +267,12 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 	existing, err := prepareChat(ctx, st, sourceID, peer, chat)
 	if err != nil {
 		return err
+	}
+	pending := func() int64 {
+		if batch == nil {
+			return 0
+		}
+		return int64(len(batch.pending))
 	}
 	for i := range chat.Messages {
 		if err := ctx.Err(); err != nil {
@@ -228,7 +287,12 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			summary.UnsupportedEntriesSkipped++
 			continue
 		}
-		if opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) {
+		if opts.Limit > 0 && summary.MessagesAdded+pending() >= int64(opts.Limit) {
+			if batch != nil {
+				if err := batch.flush(ctx, existing, summary); err != nil {
+					return err
+				}
+			}
 			return errLimitReached
 		}
 		sender, err := resolve(m.FromID, m.FromName)
@@ -242,6 +306,11 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			}
 		}
 		key := fmt.Sprintf("%s:%d", peer, m.ID)
+		if batch != nil && batch.keys[key] {
+			if err := batch.flush(ctx, existing, summary); err != nil {
+				return err
+			}
+		}
 		if id, ok := existing[key]; ok {
 			writes, err := mediaWrites(ctx, st, id, m, opts, summary)
 			if err != nil {
@@ -294,17 +363,27 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			return err
 		}
 		snippet := textutil.PrefixRunes(strings.TrimSpace(m.Text), 200)
-		id, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
+		data := &store.MessagePersistData{
 			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: MessageType, SentAt: sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: fromMe, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(m.Text))},
 			Conversation: &store.ConversationPersistData{SourceConversationID: peer, ConversationType: chat.ConvType(), Title: chat.Name, Participants: members, PreserveExistingParticipants: true},
 			Edited:       m.Edited != "" || m.EditedUnixtime != "",
 			BodyText:     sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(encoded), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: replacement(writes), FTS: &store.FTSDoc{Body: m.Text},
-		})
+		}
+		if batch != nil {
+			if err := batch.add(ctx, key, data, existing, summary); err != nil {
+				return err
+			}
+			continue
+		}
+		id, err := st.PersistMessageContext(ctx, data)
 		if err != nil {
 			return fmt.Errorf("telegram: persist %s: %w", key, err)
 		}
 		existing[key] = id
 		summary.MessagesAdded++
+	}
+	if batch != nil {
+		return batch.flush(ctx, existing, summary)
 	}
 	return nil
 }

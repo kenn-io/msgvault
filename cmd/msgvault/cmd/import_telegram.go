@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -17,6 +18,7 @@ type telegramCLIOptions struct {
 	Limit             int
 	NoResume          bool
 	NoDefaultIdentity bool
+	Batch             bool
 }
 
 func newImportTelegramCmd() *cobra.Command {
@@ -42,6 +44,7 @@ Examples:
   msgvault import-telegram ~/Downloads/TelegramExport
   msgvault import-telegram --me 482111 ./export
   msgvault import-telegram --limit 100 ./export
+  msgvault import-telegram --batch ./export
 `,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -57,6 +60,7 @@ Examples:
 	cmd.Flags().StringVar(&opts.Me, "me", "", "your numeric Telegram user ID (overrides the export's owner)")
 	cmd.Flags().IntVar(&opts.Limit, "limit", 0, "maximum messages to add (0 imports all)")
 	cmd.Flags().BoolVar(&opts.NoDefaultIdentity, "no-default-identity", false, noDefaultIdentityHelp)
+	cmd.Flags().BoolVar(&opts.Batch, "batch", false, "experimental: persist up to "+strconv.Itoa(telegram.BatchSize)+" messages per transaction to cut disk writes")
 	cmd.Flags().BoolVar(&opts.NoResume, "no-resume", false, "ignore any existing checkpoint and start fresh")
 	return cmd
 }
@@ -96,6 +100,7 @@ func runImportTelegram(cmd *cobra.Command, exportDir string, opts telegramCLIOpt
 		AttachmentsDir: cfg.AttachmentsDir(),
 		Limit:          opts.Limit,
 		NoResume:       opts.NoResume,
+		BatchSize:      batchSize(opts.Batch),
 		Logger:         state.logger,
 	})
 	err = errors.Join(err, runExportPostImportMigrations(ctx, cmd.OutOrStdout(), s, summary.SourceID, opts.NoDefaultIdentity, state))
@@ -133,4 +138,11 @@ func runImportTelegram(cmd *cobra.Command, exportDir string, opts telegramCLIOpt
 
 func init() {
 	rootCmd.AddCommand(newImportTelegramCmd())
+}
+
+func batchSize(enabled bool) int {
+	if enabled {
+		return telegram.BatchSize
+	}
+	return 0
 }
