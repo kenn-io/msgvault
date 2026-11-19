@@ -1,4 +1,4 @@
-import { taskOutboundMetadata } from './fixtures.test-support';
+import { taskLookup } from './fixtures.test-support';
 import { render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -6,49 +6,40 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
-  it('shows a task notice inside the Tasks group', async () => {
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: 'ready', project: 'example' }
-      : { state: 'partial', complete: false, tasks: [], outbound_metadata: taskOutboundMetadata }));
-    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
-    await waitFor(() => expect(screen.getByRole('region', { name: 'Tasks' }).textContent).toContain('Some linked tasks may be missing.'));
-  });
-
-  it('hides an unavailable service when setup is suppressed', async () => {
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: 'unavailable' }
-      : { state: 'unavailable', complete: false, tasks: [], outbound_metadata: taskOutboundMetadata }));
-    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup: false });
-    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
-    expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
-  });
-
-  it('groups task and Kata links under one Tasks heading', async () => {
+  it.each(['partial', 'suppressed', 'linked', 'error'])('sets Tasks group visibility for %s', async scenario => {
     const client = createAPIClient(async input => {
       const url = (input as Request).url;
-      if (url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-      if (url.includes('/kata/')) return Response.json({ issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Kata work', status: 'open', web_url: 'https://example.org/issue' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }], truncated: false });
-      return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Task work' }], outbound_metadata: taskOutboundMetadata });
+      if (url.endsWith('/status')) return Response.json({ state: scenario === 'suppressed' ? 'unavailable' : 'ready', project: 'example' });
+      if (url.includes('/kata/')) return scenario === 'error'
+        ? Response.json({ message: 'Kata lookup failed' }, { status: 503 })
+        : Response.json({ issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Kata work', status: 'open', web_url: 'https://example.org/issue' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }], truncated: false });
+      return Response.json(taskLookup(scenario === 'partial'
+        ? { state: 'partial', complete: false }
+        : scenario === 'suppressed'
+          ? { state: 'unavailable', complete: false }
+          : { tasks: [{ id: 'task-1', title: 'Task work' }] }));
     });
     const readiness = new KataReadiness(client);
-    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
+    const view = render(MessageTasks, {
+      props: { client, messageId: 42, title: 'Synthetic', email: scenario !== 'error', showSetup: scenario !== 'suppressed' },
+      context: scenario === 'linked' || scenario === 'error' ? new Map([[kataReadinessKey, readiness]]) : new Map(),
+    });
     try {
-      await screen.findByText('Task work');
-      await screen.findByText('Kata work');
-      expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
-      expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
+      if (scenario === 'partial') {
+        await waitFor(() => expect(screen.getByRole('region', { name: 'Tasks' }).textContent).toContain('Some linked tasks may be missing.'));
+      } else if (scenario === 'suppressed') {
+        await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+        expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
+      } else if (scenario === 'linked') {
+        await screen.findByText('Task work');
+        await screen.findByText('Kata work');
+        expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
+        expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
+      } else {
+        await screen.findByText('Kata lookup failed');
+        expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
+      }
     } finally { view.unmount(); readiness.dispose(); }
-  });
-  it('shows the Tasks group for a Kata error without rows', async () => {
-    const client = createAPIClient(async input => (input as Request).url.endsWith('/status') ? Response.json({ state: 'ready' })
-      : Response.json({ message: 'Kata lookup failed' }, { status: 503 }));
-    const readiness = new KataReadiness(client);
-    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic' }, context: new Map([[kataReadinessKey, readiness]]) });
-    try {
-      await screen.findByText('Kata lookup failed');
-      expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
-    }
-    finally { view.unmount(); readiness.dispose(); }
   });
 
   it('reloads persisted email links and skips task lookup for non-email messages', async () => {
@@ -57,7 +48,7 @@ describe('Message task list', () => {
     const client = createAPIClient(async (input) => {
       const request = input as Request;
       requests.push(request);
-      return Response.json(request.url.endsWith('/status') ? { state: 'ready' } : { state: 'ready', complete: true, tasks: [{ id: 'task-1', title }], outbound_metadata: taskOutboundMetadata });
+      return Response.json(request.url.endsWith('/status') ? { state: 'ready' } : taskLookup({ tasks: [{ id: 'task-1', title }] }));
     });
     const view = render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
     expect(await screen.findByText('Review notes')).toBeDefined();

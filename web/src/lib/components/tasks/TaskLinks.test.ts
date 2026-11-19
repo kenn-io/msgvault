@@ -1,4 +1,4 @@
-import { taskCreationClient, taskOutboundMetadata } from './fixtures.test-support';
+import { taskCreationClient, taskLookup, taskOutboundMetadata } from './fixtures.test-support';
 import { tick } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { getTaskIntegrationStatus } from '../../api/generated/api/api';
@@ -25,7 +25,7 @@ describe('TaskLinks', () => {
         tasks = tasks.filter(task => !request.url.endsWith(`/${task.id}`));
         return Response.json({ task: { id: 'removed', title: 'Removed' } });
       }
-      return Response.json({ state: 'ready', complete: true, tasks, outbound_metadata: taskOutboundMetadata });
+      return Response.json(taskLookup({ tasks }));
     });
     render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
     await fireEvent.click(await screen.findByRole('button', { name: 'Unlink First task' }));
@@ -42,7 +42,7 @@ describe('TaskLinks', () => {
     const client = createAPIClient(async input => {
       if ((input as Request).url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (hold) return new Promise<Response>(resolve => { respond = resolve; });
-      return Response.json({ state: 'ready', tasks: [{ id: 'one', title: 'Review notes' }], outbound_metadata: taskOutboundMetadata });
+      return Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review notes' }] }));
     });
     const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic', refresh: 0 });
     await screen.findByText('Review notes');
@@ -50,7 +50,7 @@ describe('TaskLinks', () => {
     await view.rerender({ refresh: 1 });
     await waitFor(() => expect(respond).toBeDefined());
     expect(screen.getByText('Review notes')).toBeDefined();
-    respond!(Response.json({ state: 'ready', tasks: [{ id: 'one', title: 'Review revised notes' }], outbound_metadata: taskOutboundMetadata }));
+    respond!(Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review revised notes' }] })));
     expect(await screen.findByText('Review revised notes')).toBeDefined();
   });
 
@@ -60,7 +60,7 @@ describe('TaskLinks', () => {
       const request = input as Request;
       if (request.url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (++lookups === 1) return Response.json({ message: 'Lookup failed' }, { status: 503 });
-      return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'one', title: 'Recovered task' }], outbound_metadata: taskOutboundMetadata });
+      return Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Recovered task' }] }));
     });
     const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic', refresh: 0 });
     await screen.findByText('Lookup failed');
