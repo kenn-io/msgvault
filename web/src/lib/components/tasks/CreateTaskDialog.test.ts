@@ -20,7 +20,10 @@ describe('CreateTaskDialog', () => {
       sourceMessageId: 'source-42', subject: 'Synthetic subject', from: 'sender@example.com', sentAt,
       oncreated, onclose: vi.fn()
     };
-    const view = render(CreateTaskDialog, props);
+    const fallback = render(CreateTaskDialog, { ...props, subject: '', from: '', sentAt: '' });
+    expect(screen.getByText('Synthetic subject')).toBeDefined();
+    fallback.unmount();
+    render(CreateTaskDialog, props);
 
     expect(screen.getByText('project')).toBeDefined();
     for (const value of ['archive-a', '42', '7', 'gmail', 'archive@example.com', 'source-42', 'Synthetic subject', 'sender@example.com', sentAt]) {
@@ -44,9 +47,6 @@ describe('CreateTaskDialog', () => {
     const body = await requests[0]!.clone().json() as { added_at?: string };
     expect(body.added_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(requests[0]!.headers.get('X-Request-Id')).toBeTruthy();
-    view.unmount();
-    render(CreateTaskDialog, { ...props, subject: '', from: '', sentAt: '' });
-    expect(screen.getByText('Synthetic subject')).toBeDefined();
   });
 
   it('keeps the request ID and added_at stable across a failed browser retry', async () => {
