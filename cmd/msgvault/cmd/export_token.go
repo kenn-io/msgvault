@@ -224,6 +224,12 @@ func runExportTokenWithClient(cmd *cobra.Command, args []string, client *http.Cl
 	if remoteURL == "" {
 		remoteURL = cfg.Remote.URL
 	}
+	// A credential helper issues read-only bearers, which cannot receive a
+	// token. Uploading then needs an owner key for a server named explicitly.
+	helperRemote := len(cfg.Remote.CredentialProvider) > 0
+	if helperRemote && (exportTokenTo == "" || exportTokenAPIKey == "") {
+		return errors.New("the remote uses a credential_provider, which cannot upload tokens; pass --to and --api-key for the server's owner key")
+	}
 	apiKey := exportTokenAPIKey
 	persistInlineKey := apiKey != ""
 	if !persistInlineKey {
@@ -264,7 +270,8 @@ func runExportTokenWithClient(cmd *cobra.Command, args []string, client *http.Cl
 	// Persist explicit choices even when they equal runtime overrides. Editing
 	// the file preserves unrelated configuration and leaves environment-only
 	// values and mounted credentials out of saved configuration. These edits
-	// target [remote], so a run under --remote saves nothing.
+	// target [remote], so a run under --remote or with a helper-backed
+	// [remote] saves nothing.
 	var edits []config.Edit
 	if exportTokenTo != "" {
 		edits = append(edits, config.Edit{Key: "remote.url", Value: result.remoteURL})
@@ -275,7 +282,7 @@ func runExportTokenWithClient(cmd *cobra.Command, args []string, client *http.Cl
 	if cmd.Flags().Changed("allow-insecure") {
 		edits = append(edits, config.Edit{Key: "remote.allow_insecure", Value: result.allowInsecure})
 	}
-	if state.options.remoteName != "" {
+	if state.options.remoteName != "" || helperRemote {
 		edits = nil
 	}
 	if len(edits) > 0 {

@@ -1330,7 +1330,9 @@ source_ids = [17, 23]
 read operations that `list-accounts`, `stats`, `search`, `show-message`,
 `show-thread`, and `export-messages` call, and sends it only to `url`. The
 bearer stays in memory and is renewed before it expires. If the helper fails
-or refuses, the command fails; it never falls back to an API key. msgvault
+or refuses, the command fails; it never falls back to an API key. `search`
+supports `--mode fts` only, and `export-token` needs `--to` and `--api-key`
+for a server where you hold the owner key. msgvault
 keeps a journal of requests, without credentials, in `remote-credentials/`
 under the msgvault home so an interrupted request can be resumed. The
 [credential provider guide](guides/credential-providers.md#read-a-remote-through-a-helper)

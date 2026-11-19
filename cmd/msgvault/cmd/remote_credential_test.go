@@ -220,20 +220,26 @@ func TestCredentialHelperRemoteRunsReadCommands(t *testing.T) { //nolint:paralle
 		{[]string{"search", "glacier", "--json"}, "glacier"},
 		{[]string{"show-message", messageID, "--json"}, "synthetic body"},
 		{[]string{"show-thread", messageID, "--json"}, "synthetic body"},
+		{[]string{"export-messages", "--start", "1970-01-02T00:00:00Z", "--end", "2200-01-01T00:00:00Z"}, `"record_type":"complete"`},
 	} {
 		output, err := runHostedCommand(t, home, tc.args...)
 		require.NoError(err, "%s", tc.args[0])
 		assert.Contains(output, tc.want, "%s", tc.args[0])
 	}
 
+	for _, mode := range []string{"vector", "hybrid"} {
+		_, err := runHostedCommand(t, home, "search", "glacier", "--mode", mode)
+		require.ErrorContains(err, "use --mode=fts", "semantic search is outside the helper's operations")
+	}
+
 	operations, apiKeys := remote.seen()
 	assert.Empty(apiKeys, "a helper-backed remote never sends an API key")
 	slices.Sort(operations)
-	assert.Equal([]string{"getCLIMessage", "getCLIMessageThread", "getCLIStats", "getHealth", "listCLIAccounts", "searchCLI"}, slices.Compact(operations),
+	assert.Equal([]string{"exportCLIMessages", "getCLIMessage", "getCLIMessageThread", "getCLIStats", "getHealth", "listCLIAccounts", "searchCLI"}, slices.Compact(operations),
 		"the read commands call only admitted operations")
 
 	requests := readHelperRequests(t, helperDir)
-	require.Len(requests, 5, "each command asks the helper once")
+	require.Len(requests, 6, "each read command asks the helper once; refused searches do not")
 	assert.Equal("authorize", requests[0].Operation)
 	for i, request := range requests {
 		assert.Equal(remote.URL+hostedMount, request.Endpoint)
@@ -269,6 +275,13 @@ func TestCredentialHelperRemoteNeverFallsBackToAnAPIKey(t *testing.T) { //nolint
 	_, err = runHostedCommand(t, home, "list-accounts")
 	require.ErrorContains(err, "cannot also set api_key")
 	assert.Len(readHelperRequests(t, helperDir), 1, "a conflicting config never starts the helper")
+
+	writeHostedRemoteConfig(t, home, remote.URL, helperDir, 17, "")
+	_, err = runHostedCommand(t, home, "export-token", "reader@example.test")
+	require.ErrorContains(err, "pass --to and --api-key", "export-token never picks up the environment's key")
+	operations, apiKeys = remote.seen()
+	assert.Empty(operations)
+	assert.Empty(apiKeys)
 }
 
 // TestRemoteCredentialHelperProcess is the hosted remote's credential helper.

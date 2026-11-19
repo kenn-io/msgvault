@@ -43,6 +43,6 @@ func TestCredentialBearerReachesOnlyTheConfiguredServer(t *testing.T) {
 	require.ErrorIs(err, refused)
 	assert.Zero(elsewhere.Load(), "a failed credential sends no request")
 
-	_, err = New(Config{URL: other.URL, APIKey: "synthetic-key", Credential: func(context.Context) (string, error) { return "", nil }})
-	require.Error(err, "a credential excludes an API key")
+	_, err = New(Config{URL: other.URL, AllowInsecure: true, APIKey: "synthetic-key", Credential: func(context.Context) (string, error) { return "", nil }})
+	require.EqualError(err, "a credential excludes APIKey and AgentToken")
 }
