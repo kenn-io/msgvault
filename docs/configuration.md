@@ -1295,8 +1295,9 @@ msgvault --remote work search "quarterly plan"
 `[remote]` stays the default when `--remote` is absent. `--remote` replaces the
 whole `[remote]` destination for that run, including `MSGVAULT_REMOTE_URL` and
 `MSGVAULT_REMOTE_API_KEY`. A relative `api_key_file` resolves next to the
-config file. `--remote` cannot be combined with `--local` or agent-delegated
-mode, and an unknown name fails the command.
+config file. `export-token --remote <name>` uploads to the named server and saves
+no settings to `[remote]`. `--remote` cannot be combined with `--local` or
+agent-delegated mode, and an unknown name fails the command.
 
 ### `[[accounts]]`
 

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
@@ -82,6 +83,8 @@ allow_insecure = true
 
 	_, err = runRootForTest(t, home, "--local", "--remote", "work", "cache-stats")
 	require.ErrorContains(err, "--local and --remote are incompatible")
+	_, err = runRootForTest(t, home, "--remote", "work", "tui", "--local")
+	require.ErrorContains(err, "--local and --remote are incompatible", "the terminal interface's own --local conflicts too")
 	assert.Len(workRemote.requestKeys(), 1, "rejected invocations send nothing")
 }
 
@@ -108,4 +111,58 @@ api_key_file = "work.key"
 	require.Equal("https://archive.example.com", saved.Remote.URL)
 	require.Empty(saved.Remote.APIKeyFile)
 	require.Equal(config.RemoteConfig{URL: "https://work.example.com", APIKeyFile: "work.key"}, saved.Remotes["work"])
+}
+
+func TestExportTokenUploadsOnlyToTheNamedRemote(t *testing.T) { //nolint:paralleltest // command flags are legacy globals
+	assert := assert.New(t)
+	require := require.New(t)
+	previousURL, previousKey := exportTokenTo, exportTokenAPIKey
+	t.Cleanup(func() { exportTokenTo, exportTokenAPIKey = previousURL, previousKey })
+	exportTokenTo, exportTokenAPIKey = "", ""
+
+	var mu sync.Mutex
+	received := map[string][]string{}
+	tokenServer := func(name string) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			received[name] = append(received[name], r.Header.Get("X-Api-Key"))
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	envRemote, workRemote := tokenServer("environment"), tokenServer("work")
+
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	require.NoError(fileutil.SecureWriteFile(filepath.Join(home, "work.key"), []byte("work-remote-key\n"), 0o600))
+	body := `[remote]
+url = "https://archive.example.com"
+
+[remotes.work]
+url = ` + strconv.Quote(workRemote.URL) + `
+api_key_file = "work.key"
+allow_insecure = true
+`
+	require.NoError(fileutil.SecureWriteFile(path, []byte(body), 0o600))
+	t.Setenv("MSGVAULT_REMOTE_URL", envRemote.URL)
+	t.Setenv("MSGVAULT_REMOTE_API_KEY", "environment-key")
+	cfg, err := config.Load(path, home)
+	require.NoError(err)
+	require.NoError(cfg.SelectRemote("work"))
+	require.NoError(os.MkdirAll(cfg.TokensDir(), 0o700))
+	require.NoError(fileutil.SecureWriteFile(filepath.Join(cfg.TokensDir(), "account@example.test.json"), []byte(`{"access_token":"synthetic-access-token"}`), 0o600))
+
+	command := &cobra.Command{}
+	command.Flags().String("api-key", "", "")
+	command.Flags().Bool("allow-insecure", false, "")
+	command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{remoteName: "work"}))
+	require.NoError(runExportTokenWithClient(command, []string{"account@example.test"}, http.DefaultClient))
+
+	assert.Empty(received["environment"], "the environment's server receives nothing under --remote")
+	assert.Equal([]string{"work-remote-key", "work-remote-key"}, received["work"], "token upload and account registration")
+	saved, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Equal(body, string(saved), "[remote] keeps its loaded values")
 }

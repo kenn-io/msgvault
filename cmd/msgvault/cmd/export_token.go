@@ -218,8 +218,12 @@ func runExportTokenWithClient(cmd *cobra.Command, args []string, client *http.Cl
 	cfg := state.cfg
 	email := args[0]
 
-	// Resolution order: flag > env var > config file
-	remoteURL := resolveParam(exportTokenTo, "MSGVAULT_REMOTE_URL", cfg.Remote.URL)
+	// --to wins. Otherwise use the selected remote: config loading already
+	// applied MSGVAULT_REMOTE_URL to [remote], and --remote replaces both.
+	remoteURL := exportTokenTo
+	if remoteURL == "" {
+		remoteURL = cfg.Remote.URL
+	}
 	apiKey := exportTokenAPIKey
 	persistInlineKey := apiKey != ""
 	if !persistInlineKey {
@@ -259,7 +263,8 @@ func runExportTokenWithClient(cmd *cobra.Command, args []string, client *http.Cl
 
 	// Persist explicit choices even when they equal runtime overrides. Editing
 	// the file preserves unrelated configuration and leaves environment-only
-	// values and mounted credentials out of saved configuration.
+	// values and mounted credentials out of saved configuration. These edits
+	// target [remote], so a run under --remote saves nothing.
 	var edits []config.Edit
 	if exportTokenTo != "" {
 		edits = append(edits, config.Edit{Key: "remote.url", Value: result.remoteURL})
@@ -269,6 +274,9 @@ func runExportTokenWithClient(cmd *cobra.Command, args []string, client *http.Cl
 	}
 	if cmd.Flags().Changed("allow-insecure") {
 		edits = append(edits, config.Edit{Key: "remote.allow_insecure", Value: result.allowInsecure})
+	}
+	if state.options.remoteName != "" {
+		edits = nil
 	}
 	if len(edits) > 0 {
 		snapshot, err := config.ReadConfigFile(cfg.ConfigFilePath())
@@ -294,17 +302,6 @@ func runExportTokenWithClient(cmd *cobra.Command, args []string, client *http.Cl
 	}
 
 	return nil
-}
-
-// resolveParam returns the first non-empty value from: flag, env var, config.
-func resolveParam(flag, envKey, configVal string) string {
-	if flag != "" {
-		return flag
-	}
-	if v := os.Getenv(envKey); v != "" {
-		return v
-	}
-	return configVal
 }
 
 // validateExportEmail checks that an email address is well-formed
