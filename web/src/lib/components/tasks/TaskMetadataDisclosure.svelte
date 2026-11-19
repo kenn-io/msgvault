@@ -77,7 +77,7 @@
     overflow-wrap: anywhere;
     color: var(--text-primary);
   }
-  @media (max-width: 480px) {
+  @media (max-width: 640px) {
     .metadata :global(.kit-disclosure--plain > .kit-disclosure__summary) { font-size: 12px; }
     dl { grid-template-columns: max-content minmax(0, 1fr); column-gap: var(--space-5); font-size: 12px; }
     dl div { display: contents; }
