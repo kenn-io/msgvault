@@ -373,7 +373,7 @@ describe('TaskLinks', () => {
     expect(requests.filter((request) => request.method === 'GET' && request.url.includes('/messages/42/tasks'))).toHaveLength(1);
   });
 
-  it('shows metadata and links a selected task', async () => {
+  it('provides existing-task metadata and links a selected task', async () => {
     const requests: Request[] = [];
     const oncomplete = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -386,7 +386,6 @@ describe('TaskLinks', () => {
     render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic', oncomplete });
     expect(await screen.findByRole('radio', { name: 'Synthetic result · task-1' })).toBeDefined();
     const existing = within(screen.getByRole('region', { name: 'Linked tasks' }));
-    await fireEvent.click(existing.getByText("What's sent"));
     expect(existing.getByText('archive-a')).toBeTruthy();
     expect(existing.getByText('When linked')).toBeTruthy();
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic result · task-2' }));
