@@ -199,7 +199,7 @@ describe('TaskLinks', () => {
     expect(projects[0].compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('shows loading, linked tasks, and honest partial authority', async () => {
+  it('shows partial index status and permits create and unlink', async () => {
     let resolve!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>((input) => {
       const request = input instanceof Request ? input : new Request(input);
