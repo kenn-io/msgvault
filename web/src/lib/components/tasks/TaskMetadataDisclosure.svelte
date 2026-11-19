@@ -79,7 +79,7 @@
   }
   @media (max-width: 480px) {
     .metadata :global(.kit-disclosure--plain > .kit-disclosure__content) { padding-left: 0; }
-    dl { grid-template-columns: max-content minmax(0, 1fr); column-gap: var(--space-2); font-size: 12px; }
+    dl { grid-template-columns: max-content minmax(0, 1fr); column-gap: var(--space-5); font-size: 12px; }
     dl div { display: contents; }
     dt { white-space: nowrap; }
   }
