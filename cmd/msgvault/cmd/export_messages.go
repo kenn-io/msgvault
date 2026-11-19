@@ -165,7 +165,7 @@ func runExportMessagesHTTP(cmd *cobra.Command, request export.MessagesRequest) e
 		RecordType string `json:"record_type"`
 	}
 	if json.Unmarshal(out.last, &last) != nil || last.RecordType != "complete" {
-		return errors.New("message export ended without its completion record; the server stopped mid-stream, so the output is incomplete")
+		return errors.New("message export ended without its completion record; the output is incomplete")
 	}
 	return nil
 }
