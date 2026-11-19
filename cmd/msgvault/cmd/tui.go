@@ -372,6 +372,9 @@ func openTUIBackendWithLocal(ctx context.Context, forceLocal bool) (*tuiBackend,
 		if inv == nil {
 			return nil, errors.New("configuration is unavailable")
 		}
+		if inv.options.remoteName != "" {
+			return nil, errors.New("--local and --remote are incompatible")
+		}
 		local := *inv
 		local.options.useLocal = true
 		ctx = withInvocation(ctx, &local)
