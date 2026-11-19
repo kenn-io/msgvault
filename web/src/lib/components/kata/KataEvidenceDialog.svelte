@@ -151,7 +151,7 @@
     {:else}
       <form onsubmit={(event) => { event.preventDefault(); void submit(); }} aria-busy={busy}>
         <section aria-label="Quoted passage">
-          <p class="disclosure">Quote saved in Kata</p>
+          <p class="disclosure">Message quote</p>
           {#if loading}<p role="status">Preparing the passage…</p>{/if}
           {#if preview}<pre bind:this={excerptElement}>{preview.excerpt}</pre>{/if}
           {#if windowed}
