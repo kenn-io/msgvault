@@ -1,4 +1,4 @@
-import { taskCreationClient, taskLookup, taskOutboundMetadata } from './fixtures.test-support';
+import { taskCreationClient, taskLookup } from './fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -80,7 +80,7 @@ describe('Add to task', () => {
     const client = createAPIClient(async (input) => {
       const request = input as Request;
       return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' }
-        : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+        : taskLookup());
     });
     const readiness = new KataReadiness(client);
     let view: ReturnType<typeof render> | undefined;
