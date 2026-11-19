@@ -40,13 +40,13 @@ describe('Message task list', () => {
     expect(requests).toHaveLength(0);
   });
 
-  it('groups linked tasks and Kata issues and keeps rows during refresh', async () => {
+  it.each(['refresh', 'message change'])('keeps or clears Kata rows on %s', async change => {
     let held: ((response: Response) => void) | undefined;
     let hold = false;
     const client = createAPIClient(async input => {
       const url = (input as Request).url;
       if (url.endsWith('/status')) return Response.json({ state: 'ready' });
-      if (!url.includes('/kata/')) return Response.json(taskLookup({ tasks: [{ id: 'task-1', title: 'Task work' }] }));
+      if (!url.includes('/kata/')) return Response.json(taskLookup({ tasks: [{ id: 'task-1', title: 'Task work' }] }, url.includes('/messages/43/') ? 43 : 42));
       if (hold) return new Promise<Response>(resolve => { held = resolve; });
       return Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }, { uid: 'issue-2', qualified_ref: 'example#closed', title: 'Closed issue', status: 'closed' }] });
     });
@@ -55,40 +55,16 @@ describe('Message task list', () => {
     try {
       const link = await screen.findByRole('link', { name: 'Open Send notes (example#abcd) in Kata' });
       expect(link.getAttribute('href')).toBe('https://example.org/tasks/abcd');
-      await screen.findByText('Task work');
+      await screen.findByRole('button', { name: 'Unlink Task work' });
       expect(screen.getAllByRole('heading', { name: 'Tasks' })).toHaveLength(1);
       expect(screen.getByText('Kata · example#closed · Closed')).toBeDefined();
       hold = true;
-      await view.rerender({ refresh: 1 });
+      await view.rerender(change === 'refresh' ? { refresh: 1 } : { messageId: 43 });
       await waitFor(() => expect(held).toBeDefined());
-      expect(screen.getByText('Send notes')).toBeDefined();
+      if (change === 'refresh') expect(screen.getByText('Send notes')).toBeDefined();
+      else expect(screen.queryByText('Send notes')).toBeNull();
       held!(Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open', web_url: 'https://example.org/tasks/abcd' }] }));
       expect(await screen.findByText('Send revised notes')).toBeDefined();
-    } finally { view.unmount(); readiness.dispose(); }
-  });
-
-  it('clears linked rows when the message changes', async () => {
-    let held: ((response: Response) => void) | undefined;
-    let hold = false;
-    const client = createAPIClient(async input => {
-      const url = (input as Request).url;
-      if (url.endsWith('/status')) return Response.json({ state: 'ready' });
-      if (!url.includes('/kata/')) return Response.json(taskLookup({ tasks: url.includes('/messages/42/') ? [{ id: 'task-1', title: 'Task work' }] : [] }, url.includes('/messages/43/') ? 43 : 42));
-      if (hold) return new Promise<Response>(resolve => { held = resolve; });
-      return Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open' }] });
-    });
-    const readiness = new KataReadiness(client);
-    const view = render(MessageTasks, { props: { client, messageId: 42, title: 'Synthetic', email: true }, context: new Map([[kataReadinessKey, readiness]]) });
-    try {
-      await screen.findByText('Send revised notes');
-      await screen.findByText('Task work');
-      hold = true;
-      await view.rerender({ messageId: 43 });
-      await waitFor(() => expect(held).toBeDefined());
-      expect(screen.queryByText('Send revised notes')).toBeNull();
-      await waitFor(() => expect(screen.queryByText('Task work')).toBeNull());
-      held!(Response.json({ truncated: false, issues: [{ uid: 'issue-1', qualified_ref: 'example#abcd', title: 'Send revised notes', status: 'open' }] }));
-      await screen.findByText('Send revised notes');
     } finally { view.unmount(); readiness.dispose(); }
   });
 

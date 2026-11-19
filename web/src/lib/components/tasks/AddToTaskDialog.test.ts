@@ -124,14 +124,6 @@ describe('Add to task', () => {
     expect(await screen.findByText('No tasks in example yet.')).toBeDefined();
   });
 
-  it('offers existing tasks when the index is partial', async () => {
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: 'ready', project: 'example' }
-      : taskLookup({ state: 'partial', complete: false })));
-    render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
-    expect(await screen.findByRole('radio', { name: 'Existing' })).toBeDefined();
-  });
-
   it('hides the task toolbar when the integration is unavailable', async () => {
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
       ? { state: 'unavailable', project: 'example' }

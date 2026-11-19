@@ -111,7 +111,9 @@ describe('KataEvidenceDialog', () => {
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up' });
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
-    expect(within(await screen.findByRole(role)).getByText(says)).toBeDefined();
+    const notice = await screen.findByRole(role);
+    expect(within(notice).getByText(says)).toBeDefined();
+    if (role === 'status') expect(within(notice).getByText('example#abcd')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'File as a new issue' }));
     expect((await screen.findByText('example#efgh')).closest('p')?.textContent).toBe('Kata · example#efgh');
     expect(within(screen.getByRole('status')).getByText('Saved.')).toBeDefined();
