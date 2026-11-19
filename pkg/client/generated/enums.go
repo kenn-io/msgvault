@@ -3077,7 +3077,7 @@ func (t TaskIntegrationStatusResponseState) Validate() error {
 	}
 }
 
-// TelemetryEventResponseStatus queued when accepted, including suppressed daily screen_viewed and message_opened duplicates or invalid screen names; disabled when telemetry is off
+// TelemetryEventResponseStatus queued when accepted; disabled otherwise
 type TelemetryEventResponseStatus string
 
 const (

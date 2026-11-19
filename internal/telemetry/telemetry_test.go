@@ -1,11 +1,9 @@
 package telemetry
 
 import (
-	"bytes"
 	"encoding/json/v2"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -46,11 +44,9 @@ func TestNewReporterOrDisabledFallsBackWhenInstallFails(t *testing.T) {
 	enableTelemetryEnv(t)
 	notDir := filepath.Join(t.TempDir(), "data")
 	require.NoError(t, os.WriteFile(notDir, []byte("x"), 0o600))
-	var logs bytes.Buffer
 
-	reporter := NewReporterOrDisabled(Options{DataDir: notDir}, slog.New(slog.NewTextHandler(&logs, nil)))
+	reporter := NewReporterOrDisabled(Options{DataDir: notDir})
 	assert.False(reporter.Enabled())
-	assert.Contains(logs.String(), "telemetry disabled")
 }
 
 // TestEnabledReporterWireHelper runs only inside the helper process the wire tests start.
@@ -68,7 +64,7 @@ func TestEnabledReporterWireHelper(t *testing.T) {
 		exerciseDailyViewRollover(t, opts)
 		return
 	}
-	reporter := newReporterOrDisabled(opts, testAPIKey, stub, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	reporter := newReporterOrDisabled(opts, testAPIKey, stub)
 	require.True(reporter.EventAllowed(EventAppOpened), "an opted-out reporter keeps the allowlist")
 	if os.Getenv("MSGVAULT_OUTCOMES_TEST") != "" {
 		exerciseOutcomes(t, CaptureHandler(reporter, opts.DataDir), reporter)
