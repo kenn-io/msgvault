@@ -6,21 +6,6 @@ import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import MessageTasks from './MessageTasks.svelte';
 
 describe('Message task list', () => {
-  it.each([
-    { name: 'partial index notice', partial: true },
-    { name: 'suppressed setup', partial: false }
-  ])('updates the Tasks group for $name', async ({ partial }) => {
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
-      ? { state: partial ? 'ready' : 'unreachable', project: 'example' }
-      : taskLookup({ state: partial ? 'partial' : 'unavailable', complete: false })));
-    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup: partial });
-    if (partial) expect(await screen.findByRole('region', { name: 'Tasks' })).toBeDefined();
-    else {
-      await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
-      expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
-    }
-  });
-
   it('reloads persisted email links and skips task lookup for non-email messages', async () => {
     const requests: Request[] = [];
     let title = 'Review notes';
@@ -83,40 +68,52 @@ describe('Message task list', () => {
     } finally { group.view.unmount(); group.readiness.dispose(); }
   });
 
-  it.each([
-    { name: 'incomplete empty result', truncated: true, empty: true, reload: false },
-    { name: 'complete empty result', truncated: false, empty: true, reload: false },
-    { name: 'recovery from incomplete result', truncated: true, empty: false, reload: true }
-  ])('updates the group for $name', async ({ truncated, empty, reload }) => {
-    const group = groupFixture(43);
+  it.each(['partial index notice', 'suppressed setup', 'incomplete empty result', 'complete empty result', 'Kata lookup error'])('updates the Tasks group for %s', async name => {
+    if (name === 'partial index notice' || name === 'suppressed setup') {
+      const partial = name === 'partial index notice';
+      const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+        ? { state: partial ? 'ready' : 'unreachable', project: 'example' }
+        : taskLookup({ state: partial ? 'partial' : 'unavailable', complete: false })));
+      render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup: partial });
+      if (partial) expect(await screen.findByRole('region', { name: 'Tasks' })).toBeDefined();
+      else {
+        await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
+        expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull();
+      }
+      return;
+    }
+    const error = name === 'Kata lookup error';
+    const group = groupFixture(43, error ? Response.json({ message: 'Kata lookup failed' }, { status: 503 }) : undefined);
     try {
-      await screen.findByRole('link', { name: issueLink });
-      group.respond(Response.json({ truncated, issues: empty ? [] : issues }));
-      await group.view.rerender({ refresh: 1 });
-      if (truncated) {
-        expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
-        if (!empty) expect(screen.getByRole('link', { name: issueLink })).toBeDefined();
-        else {
+      if (error) {
+        expect(await screen.findByText('Kata lookup failed')).toBeDefined();
+        expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
+      } else {
+        await screen.findByRole('link', { name: issueLink });
+        const truncated = name === 'incomplete empty result';
+        group.respond(Response.json({ truncated, issues: [] }));
+        await group.view.rerender({ refresh: 1 });
+        if (truncated) {
+          expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
           await waitFor(() => expect(screen.queryByRole('link')).toBeNull());
           expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
-        }
-      } else {
-        await waitFor(() => expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull());
-      }
-      if (reload) {
-        group.respond(Response.json({ truncated: false, issues }));
-        await group.view.rerender({ refresh: 2 });
-        await waitFor(() => expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull());
-        expect(screen.getByRole('link', { name: issueLink })).toBeDefined();
+        } else await waitFor(() => expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull());
       }
     } finally { group.view.unmount(); group.readiness.dispose(); }
   });
 
-  it('shows the group for a Kata lookup error', async () => {
-    const group = groupFixture(43, Response.json({ message: 'Kata lookup failed' }, { status: 503 }));
+  it('clears the incomplete notice after a clean reload', async () => {
+    const group = groupFixture(43);
     try {
-      expect(await screen.findByText('Kata lookup failed')).toBeDefined();
-      expect(screen.getByRole('region', { name: 'Tasks' })).toBeDefined();
+      await screen.findByRole('link', { name: issueLink });
+      group.respond(Response.json({ truncated: true, issues }));
+      await group.view.rerender({ refresh: 1 });
+      expect(await screen.findByText('Linked Kata issues are incomplete.')).toBeDefined();
+      expect(screen.getByRole('link', { name: issueLink })).toBeDefined();
+      group.respond(Response.json({ truncated: false, issues }));
+      await group.view.rerender({ refresh: 2 });
+      await waitFor(() => expect(screen.queryByText('Linked Kata issues are incomplete.')).toBeNull());
+      expect(screen.getByRole('link', { name: issueLink })).toBeDefined();
     } finally { group.view.unmount(); group.readiness.dispose(); }
   });
 });
