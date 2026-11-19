@@ -53,6 +53,10 @@ type Options struct {
 	// NoResume forces a fresh sync even if a checkpoint exists
 	NoResume bool
 
+	// RefreshLabels also replaces archived Gmail memberships from metadata.
+	// It requires an unrestricted full sync and preserves the consumed History cursor.
+	RefreshLabels bool
+
 	// BatchSize is the number of messages to fetch in parallel (default: 10)
 	BatchSize int
 
@@ -106,7 +110,7 @@ type Syncer struct {
 	// Syncer copy a single full() run uses and never persists.
 	failedRelocationGuards *failedRelocationGuards
 
-	// Recovery must refresh existing memberships before advancing its page.
+	// Required label observations must complete before advancing the page.
 	requireLabelRefresh bool
 }
 
@@ -494,6 +498,11 @@ func (s *Syncer) fullSyncRequestFingerprint() string {
 		// Checkpoints from before the History boundary was saved must restart.
 		version = "full:v3-history-boundary"
 	}
+	if s.opts.RefreshLabels {
+		// Acquire-only prefixes have not observed archived memberships.
+		request += "\x00refresh-labels:v1"
+		version += ":refresh-labels:v1"
+	}
 	return fmt.Sprintf("%s:%x", version, sha256.Sum256([]byte(request)))
 }
 
@@ -730,9 +739,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	snapshotComplete := s.labelsSnapshotComplete()
 	labelReader, hasLabelReader := s.client.(messageLabelBatchReader)
 	refreshAllExistingLabels := hasLabelReader
-	// Ordinary Gmail full scans keep the existing-RAW shortcut. Recovery
-	// instead establishes a fresh membership snapshot after lost History. A
-	// marked Gmail message always gets a current label snapshot on either path.
+	// Ordinary Gmail full scans keep the existing-RAW shortcut. Recovery and
+	// explicit refreshes establish current memberships; marked messages also
+	// need current labels to detect a confirmed restore.
 	if s.opts.SourceType != sourceTypeIMAP && !s.requireLabelRefresh {
 		refreshAllExistingLabels = false
 	}
@@ -740,6 +749,15 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	var labelRefreshIDs []string
 	var existingCount int
 	inconclusiveRefreshes := make(map[string]inconclusiveLabelRefresh)
+	// A label refresh covers the archive only. Mail the archive never held,
+	// such as mail outside an earlier date filter, is left for ordinary sync.
+	var archivedRows map[string]int64
+	if s.opts.RefreshLabels {
+		archivedRows, err = s.store.MessageExistsBatchContext(ctx, sourceID, messageIDs)
+		if err != nil {
+			return nil, fmt.Errorf("check archived messages: %w", err)
+		}
+	}
 	for _, id := range messageIDs {
 		if existing, exists := existingMap[id]; exists &&
 			(s.relocationCompositeProtected(id) ||
@@ -755,6 +773,11 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			continue
 		}
 		if _, exists := existingMap[id]; !exists {
+			_, archived := archivedRows[id]
+			_, pending := s.pendingAcquisitions[id]
+			if s.opts.RefreshLabels && !archived && !pending {
+				continue
+			}
 			fetchIDs = append(fetchIDs, id)
 			continue
 		}
@@ -792,7 +815,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 		labelResults, err := labelReader.GetMessageLabelsBatch(ctx, labelRefreshIDs)
 		if err != nil {
 			if s.requireLabelRefresh {
-				return nil, fmt.Errorf("fetch recovery message labels: %w", err)
+				return nil, fmt.Errorf("fetch required message labels: %w", err)
 			}
 			for _, id := range labelRefreshIDs {
 				s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, err)
@@ -838,6 +861,10 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			}
 
 			existing := existingMap[sourceMessageID]
+			if err := s.validateRefreshLabelCatalog(labelResult.LabelIDs, labelMap); err != nil {
+				checkpoint.MessagesUpdated += result.updated
+				return nil, fmt.Errorf("refresh labels for %s: %w", sourceMessageID, err)
+			}
 			labelIDs := labelIDsFor(labelResult.LabelIDs, labelMap)
 			if s.opts.SourceType == sourceTypeIMAP {
 				matcher, ok := s.client.(fetchedSourceMessageMatcher)
@@ -1000,6 +1027,10 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				}
 				checkpoint.ErrorsCount++
 				continue
+			}
+			if err := s.validateRefreshLabelCatalog(raw.LabelIDs, labelMap); err != nil {
+				checkpoint.MessagesUpdated += result.updated
+				return nil, fmt.Errorf("refresh labels for %s: %w", sourceMessageID, err)
 			}
 			if needsRawComparison && raw.Raw == nil {
 				err := errors.New(
@@ -1209,6 +1240,9 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 	if sourceType == "" {
 		sourceType = sourceTypeGmail
 	}
+	if err := s.validateLabelRefreshOptions(sourceType); err != nil {
+		return nil, err
+	}
 	source, err := s.store.GetOrCreateSource(sourceType, email)
 	if err != nil {
 		return nil, fmt.Errorf("get/create source: %w", err)
@@ -1233,6 +1267,9 @@ func (s *Syncer) FullWithFinalizer(
 		sourceType = sourceTypeGmail
 		resolvedSource.SourceType = sourceType
 	}
+	if err := s.validateLabelRefreshOptions(sourceType); err != nil {
+		return nil, err
+	}
 	return s.runWithSyncExecution(ctx, resolvedSource.ID, func(execution *store.SyncExecution) (*gmail.SyncSummary, error) {
 		if sourceType == sourceTypeGmail {
 			prior, priorErr := s.store.GetLatestCheckpointedSync(resolvedSource.ID)
@@ -1240,6 +1277,9 @@ func (s *Syncer) FullWithFinalizer(
 				return nil, fmt.Errorf("check checkpointed history recovery: %w", priorErr)
 			}
 			if isPinnedHistoryRecovery(prior) {
+				if s.opts.RefreshLabels {
+					s.logger.Warn("resuming pending Gmail History recovery; this also reconciles missing messages")
+				}
 				return s.recoverExpiredHistory(ctx, &resolvedSource, execution)
 			}
 		}
@@ -1254,6 +1294,33 @@ func (s *Syncer) FullWithFinalizer(
 		}
 		return summary, nil
 	})
+}
+
+func (s *Syncer) validateLabelRefreshOptions(sourceType string) error {
+	if !s.opts.RefreshLabels {
+		return nil
+	}
+	if sourceType != sourceTypeGmail || (s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail) {
+		return errors.New("label refresh requires a Gmail source")
+	}
+	if s.opts.Query != "" || s.opts.Limit != 0 {
+		return errors.New("label refresh requires an unfiltered, unlimited full sync")
+	}
+	if _, ok := s.client.(messageLabelBatchReader); !ok || !s.labelsSnapshotComplete() {
+		return errors.New("label refresh requires complete Gmail label metadata")
+	}
+	return nil
+}
+
+func (s *Syncer) validateRefreshLabelCatalog(labelIDs []string, labelMap map[string]int64) error {
+	if s.opts.RefreshLabels {
+		for _, id := range labelIDs {
+			if _, exists := labelMap[id]; !exists {
+				return fmt.Errorf("gmail returned label %q, which was created after this refresh started; run sync-full --refresh-labels again to continue", id)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Syncer) runWithSyncExecution(
@@ -1369,6 +1436,9 @@ func (s *Syncer) IncrementalWithHistoryRecovery(
 	if source == nil {
 		return nil, errors.New("no source provided - run full sync first")
 	}
+	if s.opts.RefreshLabels {
+		return nil, errors.New("label refresh requires a full sync")
+	}
 	return s.runWithSyncExecution(ctx, source.ID, func(execution *store.SyncExecution) (*gmail.SyncSummary, error) {
 		return s.incrementalWithHistoryRecovery(ctx, source, onRecovery, execution)
 	})
@@ -1427,7 +1497,14 @@ func (s *Syncer) full(
 	scoped := *s
 	scoped.store = s.store.ScopedToSync(source.ID, state.syncID)
 	scoped.failedRelocationGuards = newFailedRelocationGuards()
-	scoped.requireLabelRefresh = reconcilePresence
+	scoped.requireLabelRefresh = reconcilePresence || s.opts.RefreshLabels
+	if reconcilePresence && s.opts.RefreshLabels {
+		// Already-pinned recovery retains its existing observation and retry
+		// policy; the new flag only changes ordinary full acquisition.
+		opts := *s.opts
+		opts.RefreshLabels = false
+		scoped.opts = &opts
+	}
 	s = &scoped
 	summary.SyncRunID = state.syncID
 
@@ -1520,7 +1597,7 @@ func (s *Syncer) full(
 			// An empty Gmail listing saves no page checkpoint, so record
 			// replay failures in the stored run before enumeration.
 			if err := s.saveFullCheckpoint(ctx, state); err != nil {
-				if reconcilePresence {
+				if s.requireLabelRefresh {
 					s.failStoppedSync(state.syncID, err)
 					return nil, fmt.Errorf("save local replay checkpoint: %w", err)
 				}
@@ -1610,9 +1687,9 @@ func (s *Syncer) full(
 			state.checkpoint.PageToken = ""
 		}
 		if err := s.saveFullCheckpoint(ctx, state); err != nil {
-			if reconcilePresence {
+			if s.requireLabelRefresh {
 				s.failStoppedSync(state.syncID, err)
-				return nil, fmt.Errorf("save Gmail recovery page: %w", err)
+				return nil, fmt.Errorf("save Gmail full-sync page: %w", err)
 			}
 			s.logger.Warn("failed to save checkpoint", "error", err)
 		}
@@ -1669,9 +1746,9 @@ func (s *Syncer) full(
 		s.drainIdentityDiscoveryBacklog(ctx, source.ID)
 	}
 
-	// A full backfill does not consume History or refresh every archived row.
-	// Preserve the saved cursor so the next incremental still sees pending
-	// label changes and deletions, including those before this scan started.
+	// A full scan does not consume History. Even a label refresh is a sequence
+	// of per-message observations, so preserve the consumed cursor until an
+	// incremental replays pending changes and deletions.
 	// A first full sync seeds its starting cursor. Recovery publishes after catch-up.
 	completionHistoryID := handoffHistoryID
 	if !reconcilePresence && isUnrestrictedGmailFull {

@@ -2583,6 +2583,9 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 		if req.NoResume {
 			args = append(args, "--noresume")
 		}
+		if req.RefreshLabels {
+			args = append(args, "--refresh-labels")
+		}
 		if req.Before != "" {
 			args = append(args, "--before", req.Before)
 		}

@@ -44,23 +44,27 @@ func runSyncFullHTTP(cmd *cobra.Command, args []string) error {
 	if flagErr != nil {
 		return usageErr(cmd, flagErr)
 	}
-	selector, _, err := syncSourceSelector(cmd, args)
+	selector, selectorSet, err := syncSourceSelector(cmd, args)
 	if err != nil {
 		return usageErr(cmd, err)
 	}
+	if syncRefreshLabels && !selectorSet {
+		return usageErr(cmd, errors.New("--refresh-labels requires one explicit Gmail account or --source-id"))
+	}
 	req := daemonclient.CLISyncRequest{
-		BuildCache:   force,
-		NoBuildCache: skip,
-		Full:         true,
-		Query:        syncQuery,
-		NoResume:     syncNoResume,
-		Before:       syncBefore,
-		After:        syncAfter,
-		Limit:        syncLimit,
-		Folders:      parseFolderFilter(syncFolders),
-		SkipFolders:  parseFolderFilter(syncSkipFolders),
-		SourceID:     selector.SourceID,
-		SourceIDSet:  selector.SourceIDSet,
+		BuildCache:    force,
+		NoBuildCache:  skip,
+		Full:          true,
+		Query:         syncQuery,
+		NoResume:      syncNoResume,
+		RefreshLabels: syncRefreshLabels,
+		Before:        syncBefore,
+		After:         syncAfter,
+		Limit:         syncLimit,
+		Folders:       parseFolderFilter(syncFolders),
+		SkipFolders:   parseFolderFilter(syncSkipFolders),
+		SourceID:      selector.SourceID,
+		SourceIDSet:   selector.SourceIDSet,
 	}
 	if len(args) == 1 {
 		req.Email = selector.Account
@@ -90,7 +94,11 @@ func runSyncFullWithHint(cmd *cobra.Command, resume string, noResume bool, run f
 	}
 	cmd.SilenceErrors = true
 	if noResume {
-		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "With --noresume, the sync starts over and skips already-imported messages."); err != nil {
+		explanation := "With --noresume, the sync starts over and skips already-imported messages."
+		if syncRefreshLabels {
+			explanation = "With --noresume, the sync starts over and refreshes archived labels again."
+		}
+		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), explanation); err != nil {
 			writeErr = errors.Join(writeErr, fmt.Errorf("write sync restart explanation: %w", err))
 		}
 	}
@@ -138,11 +146,28 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 }
 
 func runSyncHTTPWithOutcome(cmd *cobra.Command, req daemonclient.CLISyncRequest) (bool, error) {
-	st, info, err := OpenHTTPStore(cmd.Context())
+	var minimumSchema []string
+	if req.RefreshLabels {
+		minimumSchema = []string{daemonclient.RefreshLabelsMinAPISchemaVersion}
+	}
+	st, info, err := OpenHTTPStore(cmd.Context(), minimumSchema...)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = st.Close() }()
+	if req.RefreshLabels {
+		accounts, _, err := st.GetCLIAccounts(cmd.Context())
+		if err != nil {
+			return false, fmt.Errorf("resolve Gmail label-refresh source: %w", err)
+		}
+		sourceID, err := gmailLabelRefreshSourceID(accounts, req)
+		if err != nil {
+			return false, err
+		}
+		// Pin account-name selection to the validated identity before reauth
+		// and execution, even if an alias changes while the request is sent.
+		req.Email, req.SourceID, req.SourceIDSet = "", sourceID, true
+	}
 
 	if err := preflightReauth(cmd.Context(), buildSyncPreflight(st, info, invocationFromCommand(cmd)), req.Email, req.SourceID); err != nil {
 		return false, err
@@ -168,6 +193,31 @@ func runSyncHTTPWithOutcome(cmd *cobra.Command, req daemonclient.CLISyncRequest)
 		reportCLISyncFinished(cmd, st)
 	}
 	return interrupted, err
+}
+
+func gmailLabelRefreshSourceID(accounts []daemonclient.CLIAccount, req daemonclient.CLISyncRequest) (int64, error) {
+	var candidates []preflightAccount
+	types := make(map[int64]string)
+	for _, account := range accounts {
+		if account.MergedIntoSourceID != 0 || (account.Type != sourceTypeGmail && account.Type != sourceTypeIMAP && account.Type != "") {
+			continue
+		}
+		types[account.ID] = account.Type
+		candidates = append(candidates, preflightAccount{
+			ID: account.ID, Email: account.Email, Alias: account.Alias, DisplayName: account.DisplayName,
+		})
+	}
+	if req.SourceIDSet {
+		candidates = filterPreflightAccountsByID(candidates, req.SourceID)
+	} else if req.Email != "" {
+		candidates = filterPreflightAccounts(candidates, req.Email)
+	} else {
+		candidates = nil
+	}
+	if len(candidates) != 1 || types[candidates[0].ID] != sourceTypeGmail {
+		return 0, errors.New("--refresh-labels requires exactly one configured Gmail source; use --source-id for ambiguous accounts")
+	}
+	return candidates[0].ID, nil
 }
 
 // preflightReauthManager is the subset of oauth.Manager the sync preflight

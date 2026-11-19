@@ -975,6 +975,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("before", "Only messages before this YYYY-MM-DD date", false),
 			queryIntegerParam(limitParam, "Maximum messages to sync"),
 			queryBooleanParam("noresume", "Ignore checkpoints and start fresh"),
+			queryBooleanParam("refresh_labels", "Refresh archived labels for one unrestricted Gmail source"),
 			queryRefArrayParam("folder", "IMAP folder names to include (repeatable)"),
 			queryRefArrayParam("skip-folder", "IMAP folder names to exclude (repeatable)"),
 		}

@@ -472,20 +472,21 @@ type CLICacheBuildEvent struct {
 }
 
 type CLISyncRequest struct {
-	Full         bool
-	BuildCache   bool
-	NoBuildCache bool
-	Email        string
-	SourceID     int64
-	SourceIDSet  bool
-	Query        string
-	NoResume     bool
-	Before       string
-	After        string
-	Limit        int
-	OperationID  string
-	Folders      []string
-	SkipFolders  []string
+	Full          bool
+	BuildCache    bool
+	NoBuildCache  bool
+	Email         string
+	SourceID      int64
+	SourceIDSet   bool
+	Query         string
+	NoResume      bool
+	RefreshLabels bool
+	Before        string
+	After         string
+	Limit         int
+	OperationID   string
+	Folders       []string
+	SkipFolders   []string
 }
 
 type CLISyncEvent struct {
@@ -1238,6 +1239,30 @@ func parseCLISyncRequest(r *http.Request, full bool) (CLISyncRequest, *apiHTTPEr
 			)
 		}
 		req.Limit = limit
+	}
+	if raw, present := values["refresh_labels"]; present {
+		if len(raw) != 1 {
+			return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_refresh_labels", "refresh_labels must appear once")
+		}
+		refresh, err := strconv.ParseBool(raw[0])
+		if err != nil {
+			return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_refresh_labels", "refresh_labels must be a boolean")
+		}
+		req.RefreshLabels = refresh
+	}
+	if req.RefreshLabels {
+		if !full {
+			return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_refresh_labels", "label refresh requires sync-full")
+		}
+		if (strings.TrimSpace(req.Email) == "" && !req.SourceIDSet) || len(values["email"]) > 1 || (req.SourceIDSet && values.Has("email")) {
+			return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_source_selector", "label refresh requires one explicit Gmail account or source_id")
+		}
+		if slices.ContainsFunc([]string{"query", "before", "after", "folder", "skip-folder"}, values.Has) {
+			return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_refresh_labels", "label refresh requires an unfiltered full sync")
+		}
+		if raw, present := values["limit"]; present && (len(raw) != 1 || raw[0] == "" || req.Limit != 0) {
+			return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_refresh_labels", "label refresh requires an unlimited full sync")
+		}
 	}
 	return req, nil
 }

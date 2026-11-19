@@ -26,6 +26,9 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 	if source == nil {
 		return nil, errors.New("no source provided - run full sync first")
 	}
+	if s.opts.RefreshLabels {
+		return nil, errors.New("label refresh requires a full sync")
+	}
 	return s.runWithSyncExecution(ctx, source.ID, func(execution *store.SyncExecution) (*gmail.SyncSummary, error) {
 		prior, err := s.store.GetLatestCheckpointedSync(source.ID)
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {

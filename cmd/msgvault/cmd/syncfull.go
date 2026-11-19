@@ -25,14 +25,15 @@ import (
 )
 
 var (
-	syncQuery       string
-	syncNoResume    bool
-	syncBefore      string
-	syncAfter       string
-	syncLimit       int
-	syncOperationID string
-	syncFolders     []string // folder names to include (from --folder flag)
-	syncSkipFolders []string // folder names to exclude (from --skip-folder flag)
+	syncQuery         string
+	syncNoResume      bool
+	syncRefreshLabels bool
+	syncBefore        string
+	syncAfter         string
+	syncLimit         int
+	syncOperationID   string
+	syncFolders       []string // folder names to include (from --folder flag)
+	syncSkipFolders   []string // folder names to exclude (from --skip-folder flag)
 )
 
 var syncFullCmd = &cobra.Command{
@@ -54,6 +55,7 @@ Examples:
   msgvault sync-full you@gmail.com
   msgvault sync-full you@gmail.com --after 2024-01-01
   msgvault sync-full you@gmail.com --query "from:someone@example.com"
+  msgvault sync-full you@gmail.com --refresh-labels  # Refresh archived memberships
   msgvault sync-full you@gmail.com --noresume    # Force fresh sync`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -68,6 +70,16 @@ Examples:
 }
 
 func validateSyncFullFlags(cmd *cobra.Command) error {
+	if syncRefreshLabels {
+		for _, name := range []string{"query", "before", "after", "folder", "skip-folder"} {
+			if cmd.Flags().Changed(name) {
+				return usageErr(cmd, fmt.Errorf("--refresh-labels cannot be combined with --%s", name))
+			}
+		}
+		if syncLimit != 0 {
+			return usageErr(cmd, errors.New("--refresh-labels requires an unlimited full sync"))
+		}
+	}
 	if syncLimit < 0 {
 		return usageErr(cmd, errors.New("--limit must be a non-negative number"))
 	}
@@ -100,6 +112,9 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return usageErr(cmd, err)
 	}
+	if syncRefreshLabels && !selectorSet {
+		return usageErr(cmd, errors.New("--refresh-labels requires one explicit Gmail account or --source-id"))
+	}
 	s, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
@@ -127,6 +142,11 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		for _, src := range activeSyncSources(allMatches) {
 			if src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP || src.SourceType == "" {
 				sources = append(sources, src)
+			}
+		}
+		if syncRefreshLabels {
+			if len(sources) != 1 || sources[0].SourceType != sourceTypeGmail {
+				return errors.New("--refresh-labels requires exactly one configured Gmail source; use --source-id for ambiguous accounts")
 			}
 		}
 		if len(sources) == 0 {
@@ -638,6 +658,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 	opts.SourceType = src.SourceType
 	opts.Query = query
 	opts.NoResume = syncNoResume
+	opts.RefreshLabels = syncRefreshLabels
 	opts.Limit = syncLimit
 	opts.OperationID = syncOperationID
 	opts.AttachmentsDir = cfg.AttachmentsDir()
@@ -1048,6 +1069,7 @@ func init() {
 	_ = syncFullCmd.Flags().MarkHidden("sync-operation-id")
 	syncFullCmd.Flags().StringVar(&syncQuery, "query", "", "Gmail search query")
 	syncFullCmd.Flags().BoolVar(&syncNoResume, "noresume", false, "Force fresh sync (don't resume; re-enumerates all IMAP folders)")
+	syncFullCmd.Flags().BoolVar(&syncRefreshLabels, "refresh-labels", false, "Refresh archived labels for one unrestricted Gmail source")
 	syncFullCmd.Flags().StringVar(&syncBefore, "before", "", "Only messages before this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().StringVar(&syncAfter, "after", "", "Only messages after this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().IntVar(&syncLimit, "limit", 0, "Limit number of messages (for testing)")

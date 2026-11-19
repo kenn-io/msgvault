@@ -2644,9 +2644,13 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 		rawMissing        bool
 		attachmentFailure bool
 		rawFailure        bool
+		refreshLabels     bool
 	}{
 		{name: "label read failure and retry", labels: []string{"INBOX"}, labelFailure: true},
 		{name: "still in Trash", labels: []string{"INBOX", "TRASH"}, wantMark: true},
+		{name: "refresh restored", labels: []string{"INBOX"}, refreshLabels: true},
+		{name: "refresh still in Trash", labels: []string{"INBOX", "TRASH"}, wantMark: true, refreshLabels: true},
+		{name: "refresh restore failure and retry", labels: []string{"INBOX"}, labelFailure: true, refreshLabels: true},
 		{name: "unchanged labels", labels: []string{"INBOX"}, unchanged: true},
 		{name: "raw missing restored", labels: []string{"INBOX"}, rawMissing: true},
 		{name: "raw missing still in Trash", labels: []string{"INBOX", "TRASH"}, wantMark: true, rawMissing: true},
@@ -2684,11 +2688,11 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 			env.Mock.Messages["msg1"].LabelIDs = append([]string(nil), tc.labels...)
 			env.Mock.Profile.HistoryID = 12341
 			api := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true, labelErrors: map[string]error{}}
-			var opts *Options
+			opts := &Options{RefreshLabels: tc.refreshLabels}
 			if tc.attachmentFailure {
 				blocked := filepath.Join(t.TempDir(), "blocked")
 				require.NoError(os.WriteFile(blocked, []byte("not a directory"), 0600))
-				opts = &Options{AttachmentsDir: blocked}
+				opts.AttachmentsDir = blocked
 			}
 			env.Syncer = New(api, env.Store, opts)
 			if tc.rawFailure {
