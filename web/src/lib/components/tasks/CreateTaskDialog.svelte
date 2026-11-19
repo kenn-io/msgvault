@@ -178,7 +178,7 @@
   }
   form :global(.kit-chip) { justify-self: start; max-width: 100%; font-weight: 400; line-height: var(--type-meta-line); }
   .context { display: block; line-height: var(--type-meta-line); white-space: normal; overflow-wrap: anywhere; }
-  .disclosure { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .disclosure { margin: 0; color: var(--text-secondary); font-size: 12px; }
   label {
     display: grid;
     gap: var(--space-2);

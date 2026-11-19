@@ -132,7 +132,7 @@ describe('Add to task', () => {
       } else {
         const existing = await screen.findByRole('radio', { name: 'Existing' });
         expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
-        expect(screen.getByText('Task')).toBeTruthy();
+        expect(screen.queryByText('Task')).toBeNull();
         await fireEvent.click(existing);
         expect(await screen.findByRole('searchbox', { name: 'Filter tasks' })).toBeDefined();
       }
