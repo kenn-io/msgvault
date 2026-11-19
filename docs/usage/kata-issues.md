@@ -73,7 +73,6 @@ passage** to move through a long message or transcript; each step moves half a
 window, so neighbouring passages overlap. The text in the
 preview is exactly what the issue quotes. To quote less, select part of the
 passage and choose **Quote selection**; **Whole passage** goes back.
-After filing, choose **Done** on the receipt.
 
 Choose **Existing** to list the 25 most recently updated open issues in the configured project.
 Search open issue text by whole word or enter an exact `project#ref` to find an open or closed issue, pick an issue, and choose **Add quote**.
