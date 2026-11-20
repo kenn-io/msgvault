@@ -985,6 +985,12 @@ describe('AppShell', () => {
       await waitFor(() => expect(document.title).toBe('Loading meeting · Messages · msgvault'));
       finish(Response.json({ id: 42, conversation_id: 8, subject, conversation_title: '', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', labels: [], attachments: [], has_attachments: false, hidden_text_present: false, size_bytes: 10, snippet: 'Transcript' }));
       await waitFor(() => expect(document.title).toBe(`${expected} · Messages · msgvault`));
+      if (subject === 'Planning meeting') {
+        state.commitNavigation({ operationHistory: true });
+        await waitFor(() => expect(document.title).toBe('Past runs · Messages · msgvault'));
+        state.commitNavigation({ operationHistory: false });
+        await waitFor(() => expect(document.title).toBe('Planning meeting · Messages · msgvault'));
+      }
     });
 
     it('names the browser tab when an archived meeting is unavailable', async () => {
@@ -998,6 +1004,23 @@ describe('AppShell', () => {
       render(AppShell, { client, state });
       await screen.findByRole('alert');
       await waitFor(() => expect(document.title).toBe('Meeting unavailable · Messages · msgvault'));
+    });
+
+    it('names the browser tab for a contextual attachment as metadata loads', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'attachment:5' });
+      let finish!: (response: Response) => void;
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/files/5')) return await new Promise<Response>(resolve => { finish = resolve; });
+        return Response.json(exploreResponse());
+      });
+      render(AppShell, { client, state });
+      await waitFor(() => expect(finish).toBeTypeOf('function'));
+      await waitFor(() => expect(document.title).toBe('attachment 5 · Messages · msgvault'));
+      finish(Response.json({ id: 5, message_id: 1, conversation_id: 11, filename: 'report.pdf', mime_type: 'application/pdf', size_bytes: 2048, content_state: 'missing_blob', content_available: false }));
+      await screen.findByRole('dialog', { name: 'View report.pdf' });
+      await waitFor(() => expect(document.title).toBe('report.pdf · Messages · msgvault'));
     });
 
     it.each([
