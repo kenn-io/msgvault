@@ -728,17 +728,8 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 			if table == "participant_links" {
 				condition = "TRUE"
 			}
-			if st.IsPostgreSQL() {
-				_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_telegram_identity() RETURNS trigger LANGUAGE plpgsql AS $$
-					BEGIN RAISE EXCEPTION 'forced identity failure'; END $$`)
-				require.NoError(err)
-				_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_telegram_identity BEFORE INSERT ON `+table+`
-					FOR EACH ROW WHEN (`+condition+`) EXECUTE FUNCTION fail_telegram_identity()`)
-			} else {
-				_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_telegram_identity BEFORE INSERT ON `+table+`
-					WHEN `+condition+` BEGIN SELECT RAISE(ABORT, 'forced identity failure'); END`)
-			}
-			require.NoError(err)
+			createTestTrigger(t, st, "fail_telegram_identity", "BEFORE INSERT", table, condition,
+				"SELECT RAISE(ABORT, 'forced identity failure');", "RAISE EXCEPTION 'forced identity failure';")
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"user2","date_unixtime":"1610909872","text":"hello"}]}]}}`))
 			summary, err := Import(ctx, st, ImportOptions{RootDir: root})
@@ -751,12 +742,7 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 			require.NoError(err)
 			assert.NotContains(members, bridge)
 
-			drop := "DROP TRIGGER fail_telegram_identity"
-			if st.IsPostgreSQL() {
-				drop += " ON " + table
-			}
-			_, err = st.DB().ExecContext(t.Context(), drop)
-			require.NoError(err)
+			dropTestTrigger(t, st, "fail_telegram_identity", table)
 			summary, err = Import(ctx, st, ImportOptions{RootDir: root})
 			require.NoError(err)
 			assert.EqualValues(1, summary.MessagesAdded)
