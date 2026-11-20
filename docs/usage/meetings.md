@@ -821,12 +821,8 @@ msgvault sync-notion-meetings notion-personal --probe
 
 Both commands print capability and result-count diagnostics without printing
 meeting titles, notes, transcripts, attendee details, block IDs, page URLs, or
-the tokens. Probe reports query-verified credentials, Meeting Notes query access,
-and hydration of one sampled meeting separately. It reads that meeting's current
-summary, notes, and transcript block IDs. Probe checks the
-optional users token on one attendee from the refreshed meeting and reports
-whether that attendee has a verified email. Optional user lookup failures do
-not prevent content access.
+the tokens. Probe output checks the optional users token on one sampled attendee
+and reports whether that attendee has a verified email.
 
 ### Notion attendee emails
 
@@ -834,10 +830,9 @@ The users token retrieves known attendee IDs directly, including workspace
 members and guests. Only users with `person.email_verified = true` and a usable
 email become anchored participants. Healthy unverified users stay display-only.
 
-Optional user lookups for each meeting share a 10-second budget, including
-retries. If less time remains in the sync, they use at most half of it, leaving
-time to archive the meeting. Successful responses and missing IDs are cached
-for the run.
+Each optional user lookup has a 60-second timeout, including retries. Healthy
+lookups can continue throughout the sync. Successful responses and missing IDs
+are cached for the run.
 Invalid credentials, missing User Information capability, provider retry
 exhaustion, and transport failures stop further uncached lookups for that sync.
 Previously verified attendees survive failed or skipped lookups. The next sync
@@ -870,7 +865,7 @@ It still cannot discover history beyond the visible window.
 
 - `--after` filters meetings returned by Notion locally and implies `--full`.
 - `--limit` caps the visible meetings fetched and checked.
-- Due transcript retries run in addition to that limit.
+- Due meeting retries run in addition to that limit.
 
 Meetings under data sources import their summary, notes, and transcript from
 their referenced section blocks. When a page meeting has no transcript section
@@ -906,23 +901,9 @@ meetings written earlier in that failed run remain safe and idempotent.
 Each meeting-note block becomes one `meeting_transcript` message in a
 `meeting` conversation. Its block ID identifies the meeting on later syncs.
 The body includes title, time, attendees, summary, notes, and transcript
-sections. Hydration reads the meeting block and its current section subtrees.
-Meetings can have a page or data source parent. Hydration excludes nested meeting blocks so a second meeting cannot supply this
-meeting's transcript. When a page-parented meeting has no structured transcript,
-msgvault reads its page Markdown for a transcript if that page has only one meeting.
-
-New raw archives (`notion_meeting_json`, snapshot version 2) contain the refreshed
-meeting header, admitted section blocks, attendee labels, resolved user details,
-and section coverage. They omit parent-page content and unfiltered child-list
-responses. Metadata preserves creator and editor IDs, actual attendee IDs,
-parent kind and ID, lifecycle and recording times, and source flags when exposed.
-
-Incomplete refreshes preserve previously archived meeting-owned sections with
-their original provenance. Older version 1 snapshots remain readable. When an
-old transcript came only from page Markdown or a stored body, an incomplete
-refresh keeps the entire old snapshot unchanged and reports `legacy_unscoped`.
-A successful fresh section fetch is needed before that content can become a
-meeting-scoped version 2 snapshot.
+sections. The raw archive (`notion_meeting_json`) keeps the source meeting
+object, note blocks, Markdown, attendee labels, resolved user details, and
+warnings for later inspection.
 
 Notion's `created_by` user is stored as creator metadata and is never assumed
 to be the organizer. Only attendees with provider-verified email addresses

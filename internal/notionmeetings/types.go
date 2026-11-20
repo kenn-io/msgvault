@@ -6,8 +6,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"strings"
-
-	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
 const (
@@ -29,9 +27,8 @@ type UserRef struct {
 }
 
 type Parent struct {
-	Type         string `json:"type"`
-	PageID       string `json:"page_id,omitempty"`
-	DataSourceID string `json:"data_source_id,omitempty"`
+	Type   string `json:"type"`
+	PageID string `json:"page_id"`
 }
 
 type MeetingChildren struct {
@@ -41,7 +38,6 @@ type MeetingChildren struct {
 }
 
 type MeetingCalendarEvent struct {
-	EventID   string   `json:"event_id,omitempty"`
 	StartTime string   `json:"start_time"`
 	EndTime   string   `json:"end_time"`
 	Attendees []string `json:"attendees"`
@@ -53,7 +49,6 @@ type MeetingRecording struct {
 }
 
 type MeetingNotesData struct {
-	IsFullPage    *bool                `json:"is_full_page,omitzero"`
 	Title         []RichText           `json:"title"`
 	Status        string               `json:"status"`
 	Children      MeetingChildren      `json:"children"`
@@ -61,10 +56,7 @@ type MeetingNotesData struct {
 	Recording     MeetingRecording     `json:"recording"`
 }
 
-const meetingNotesType = "meeting_notes"
-
 type MeetingNote struct {
-	URL            string                    `json:"url,omitempty"`
 	Object         string                    `json:"object"`
 	ID             string                    `json:"id"`
 	Type           string                    `json:"type"`
@@ -75,7 +67,6 @@ type MeetingNote struct {
 	LastEditedBy   UserRef                   `json:"last_edited_by"`
 	Parent         Parent                    `json:"parent"`
 	HasChildren    bool                      `json:"has_children"`
-	Archived       bool                      `json:"archived,omitzero"`
 	InTrash        bool                      `json:"in_trash"`
 	Extra          map[string]jsontext.Value `json:"-"`
 	Raw            jsontext.Value            `json:"-"`
@@ -92,9 +83,9 @@ func (m *MeetingNote) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	for _, key := range []string{
-		"object", "id", "type", meetingNotesType, "created_time",
+		"object", "id", "type", "meeting_notes", "created_time",
 		"last_edited_time", "created_by", "last_edited_by", "parent",
-		"has_children", "in_trash", "archived", "url",
+		"has_children", "in_trash",
 	} {
 		delete(extra, key)
 	}
@@ -171,7 +162,71 @@ func (b *Block) UnmarshalJSON(data []byte) error {
 }
 
 func (b Block) PlainText() string {
-	return meetingcontent.NotionBlockPlainText(b.Raw)
+	var parts []RichText
+	switch b.Type {
+	case "paragraph":
+		parts = b.Paragraph.RichText
+	case "heading_1":
+		parts = b.Heading1.RichText
+	case "heading_2":
+		parts = b.Heading2.RichText
+	case "heading_3":
+		parts = b.Heading3.RichText
+	case "bulleted_list_item":
+		parts = b.BulletedListItem.RichText
+	case "numbered_list_item":
+		parts = b.NumberedListItem.RichText
+	case "quote":
+		parts = b.Quote.RichText
+	case "callout":
+		parts = b.Callout.RichText
+	case "toggle":
+		parts = b.Toggle.RichText
+	case "to_do":
+		parts = b.ToDo.RichText
+	default:
+		return b.content.plainText()
+	}
+	return richTextPlainText(parts)
+}
+
+func (c blockContent) plainText() string {
+	lines := make([]string, 0, 2+len(c.Cells))
+	appendRichText := func(parts []RichText) {
+		if text := richTextPlainText(parts); text != "" {
+			lines = append(lines, text)
+		}
+	}
+	appendRichText(c.RichText)
+	appendRichText(c.Caption)
+	if len(c.Title) > 0 {
+		var title string
+		if json.Unmarshal(c.Title, &title) == nil {
+			if title = strings.TrimSpace(title); title != "" {
+				lines = append(lines, title)
+			}
+		} else {
+			var titleParts []RichText
+			if json.Unmarshal(c.Title, &titleParts) == nil {
+				appendRichText(titleParts)
+			}
+		}
+	}
+	if expression := strings.TrimSpace(c.Expression); expression != "" {
+		lines = append(lines, expression)
+	}
+	for _, cell := range c.Cells {
+		appendRichText(cell)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func richTextPlainText(parts []RichText) string {
+	var text strings.Builder
+	for _, part := range parts {
+		text.WriteString(part.PlainText)
+	}
+	return text.String()
 }
 
 type BlockPage struct {
