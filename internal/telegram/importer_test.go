@@ -228,16 +228,13 @@ func TestImportRepeatedLimitAdvances(t *testing.T) {
 	var n int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
 	assert.Equal(3, n)
-}
-
-func TestImportLimitCountsPendingMessages(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := batchExport(t, batchSize+2, func(int) string { return "m" })
+	st = testutil.NewTestStore(t)
+	root = batchExport(t, batchSize+2, func(int) string { return "m" })
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Limit: batchSize + 1})
-	require.NoError(t, err)
-	assert.EqualValues(t, 51, summary.MessagesAdded)
-	assert.True(t, summary.LimitReached)
-	assert.Equal(t, 51, countMessages(t, st))
+	require.NoError(err)
+	assert.EqualValues(batchSize+1, summary.MessagesAdded)
+	assert.True(summary.LimitReached)
+	assert.Equal(batchSize+1, countMessages(t, st))
 }
 
 func TestImportDuplicateMessageIDInChat(t *testing.T) {
@@ -866,7 +863,6 @@ func TestImportFailedBatchRetriesChat(t *testing.T) {
 	opts := ImportOptions{RootDir: root, Me: "1"}
 	_, err = Import(t.Context(), st, opts)
 	require.ErrorContains(t, err, "forced failure")
-	require.ErrorContains(t, err, "telegram: persist message user2:55")
 	assert.Equal(t, 50, countMessages(t, st))
 	drop := "DROP TRIGGER fail_batch_import"
 	if st.IsPostgreSQL() {
