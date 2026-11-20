@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"sync"
@@ -105,7 +106,9 @@ func init() {
 				sessions[request.dbURL] = session
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			_ = dropOwnedDatabaseOn(ctx, session, request.name)
+			if err := dropOwnedDatabaseOn(ctx, session, request.name); err != nil {
+				slog.Warn("drop PostgreSQL test clone", "database", request.name, "error", err)
+			}
 			cancel()
 		}
 	}()

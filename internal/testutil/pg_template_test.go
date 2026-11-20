@@ -1,10 +1,13 @@
 package testutil
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -186,6 +189,48 @@ func TestPostgresCloneDropsRecoverFromStalledHandshake(t *testing.T) {
 		}
 		return true
 	}, time.Minute, 100*time.Millisecond, "worker must drop healthy clones after the stalled handshake")
+}
+
+func TestCloneDropFailureIsLogged(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	reader, writer := io.Pipe()
+	logged := make(chan string, 1)
+	done := make(chan struct{})
+	name := "msgvault_tc_12345678_1234567890abcdef_1234567890abcdef"
+	go func() {
+		defer close(done)
+		scanner := bufio.NewScanner(reader)
+		for scanner.Scan() {
+			if strings.Contains(scanner.Text(), name) {
+				logged <- scanner.Text()
+				return
+			}
+		}
+	}()
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(writer, nil)))
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+		_ = writer.Close()
+		<-done
+		_ = reader.Close()
+	})
+
+	cloneDrops <- cloneDrop{dbURL: "postgres://test@" + address + "/test?sslmode=disable", name: name}
+	select {
+	case line := <-logged:
+		var record map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		assert.Equal(t, "WARN", record["level"])
+		assert.Equal(t, name, record["database"])
+		assert.NotEmpty(t, record["error"])
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "failed clone drop was not logged")
+	}
 }
 
 // TestPostgresFixtureIssuesNoDDLOnceTemplateExists is the invariant that
