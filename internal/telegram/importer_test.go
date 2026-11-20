@@ -242,6 +242,19 @@ func TestImportLimitCountsPendingMessages(t *testing.T) {
 	}
 }
 
+func TestImportDuplicateMessageIDInChat(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first"},{"id":1,"type":"message","date_unixtime":"1","text":"again"},{"id":2,"type":"message","date_unixtime":"2","text":"second"}]}`))
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.MessagesAdded)
+	assert.EqualValues(t, 1, summary.MessagesSkipped)
+	var snippet string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT snippet FROM messages WHERE source_message_id = 'user2:1'`).Scan(&snippet))
+	assert.Equal(t, "first", snippet)
+}
+
 func TestImportFullAndAppendOnly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
