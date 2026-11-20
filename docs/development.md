@@ -661,8 +661,9 @@ walks the registered client OpenAPI document, including hidden CLI routes, and
 rejects missing or stale entries.
 
 The classification describes an operation; credential-specific flags and
-resource handlers authorize requests. `AgentReadPermission` selects an existing grant-aware read path. `Delegated`
-admits other grant-aware handlers, which still check their selected resources.
+resource handlers authorize requests. `AgentReadPermission` selects an existing
+grant-aware read path. `Delegated` admits other grant-aware handlers, which
+still check their selected resources.
 The remote-client fields preserve the remote CLI contract. A capability alone
 does not admit either credential class.
 
