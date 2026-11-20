@@ -118,6 +118,47 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 	}
 }
 
+type noContentReceipt struct{}
+
+func (noContentReceipt) Validate() error {
+	return errors.New("unexpected receipt validation")
+}
+
+func TestMCPOperationNoContent(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		success   int
+		wantError bool
+	}{
+		{name: "accepted", success: http.StatusNoContent},
+		{name: "unlisted", success: http.StatusOK, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodDelete, r.Method)
+				assert.Equal(t, "/api/v1/example", r.URL.Path)
+				w.Header().Set("ETag", `"revision"`)
+				w.WriteHeader(http.StatusNoContent)
+			})
+			result, err := readMCPOperationJSON[noContentReceipt](t.Context(), client, http.MethodDelete, "/api/v1/example", nil, tc.success)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			if tc.wantError {
+				assert.True(t, result.IsError)
+				encoded, err := json.Marshal(result.Output)
+				require.NoError(t, err)
+				assert.JSONEq(t, `{"error":"operation_refused","operation_may_have_completed":true}`, string(encoded))
+				return
+			}
+			assert.False(t, result.IsError)
+			assert.Nil(t, result.Output)
+			assert.Equal(t, `"revision"`, result.ETag)
+		})
+	}
+}
+
 func TestDaemonMCPLaunchDiscoversRealOperationalTools(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
