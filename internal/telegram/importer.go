@@ -263,6 +263,12 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 	if err != nil {
 		return err
 	}
+	flushOnError := func(err error) error {
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return errors.Join(err, batch.flush(ctx, existing, summary))
+	}
 	for i := range chat.Messages {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -284,12 +290,12 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		}
 		sender, err := resolve(m.FromID, m.FromName)
 		if err != nil {
-			return err
+			return flushOnError(err)
 		}
 		if direct && peerPID == 0 {
 			peerPID, err = resolve(peer, chat.Name)
 			if err != nil {
-				return err
+				return flushOnError(err)
 			}
 		}
 		key := fmt.Sprintf("%s:%d", peer, m.ID)
@@ -301,11 +307,11 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		if id, ok := existing[key]; ok {
 			writes, err := mediaWrites(ctx, st, id, m, opts, summary)
 			if err != nil {
-				return err
+				return flushOnError(err)
 			}
 			for _, write := range writes {
 				if err := st.UpsertAttachmentRecordWithStats(ctx, id, write, true); err != nil {
-					return err
+					return flushOnError(err)
 				}
 			}
 			summary.MessagesSkipped++
@@ -343,11 +349,11 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		}
 		encoded, err := json.Marshal(metadata)
 		if err != nil {
-			return err
+			return flushOnError(err)
 		}
 		writes, err := mediaWrites(ctx, st, 0, m, opts, summary)
 		if err != nil {
-			return err
+			return flushOnError(err)
 		}
 		snippet := textutil.PrefixRunes(strings.TrimSpace(m.Text), 200)
 		data := &store.MessagePersistData{

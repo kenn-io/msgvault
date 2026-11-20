@@ -2221,20 +2221,16 @@ func (s *Store) PersistTelegramMessagesContext(ctx context.Context, batch []*Mes
 	if len(batch) == 0 {
 		return nil, nil
 	}
-	var lock attributionLock
-	for _, data := range batch {
-		if data == nil || data.Message == nil {
-			return nil, errors.New("persist messages requires messages")
-		}
-		lock.Sources = append(lock.Sources, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType).Sources...)
-	}
 	ids := make([]int64, len(batch))
-	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
+	err := s.withAttributionTxContext(ctx, attributionLock{}, func(tx *loggedTx) error {
 		for i, data := range batch {
 			id, err := s.persistMessageWithParticipantsTx(
 				ctx, tx, nil, nil, func([]int64) *MessagePersistData { return data }, nil, s.persistMessageSnapshotAfter,
 			)
 			if err != nil {
+				if data == nil || data.Message == nil {
+					return fmt.Errorf("persist message %d: %w", i, err)
+				}
 				return fmt.Errorf("persist message %s: %w", data.Message.SourceMessageID, err)
 			}
 			ids[i] = id

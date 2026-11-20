@@ -767,6 +767,28 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 	}
 }
 
+func TestImportPreservesPendingMessagesAfterIdentityFailure(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	participant, err := st.EnsureParticipantByIdentifier("telegram", "user9", "")
+	require.NoError(t, err)
+	createTestTrigger(t, st, "fail_pending_identity", "BEFORE INSERT", "participant_contact_observations", "NEW.participant_id = "+strconv.FormatInt(participant, 10),
+		"SELECT RAISE(ABORT, 'forced identity failure');", "RAISE EXCEPTION 'forced identity failure';")
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"private_group","messages":[{"id":1,"type":"message","from_id":"user1","date_unixtime":"1","text":"first chat"}]},{"id":3,"type":"private_group","messages":[{"id":1,"type":"message","from_id":"user1","date_unixtime":"1","text":"before failure"},{"id":2,"type":"message","from_id":"user9","date_unixtime":"2","text":"after failure"}]}]}}`))
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
+	require.ErrorContains(t, err, "forced identity failure")
+	assert.EqualValues(t, 2, summary.MessagesAdded)
+	assert.Equal(t, 1, countChatMessages(t, st, "chat2"))
+	assert.Equal(t, 1, countChatMessages(t, st, "chat3"))
+	dropTestTrigger(t, st, "fail_pending_identity", "participant_contact_observations")
+	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root})
+	require.NoError(t, err)
+	assert.True(t, summary.WasResumed)
+	assert.EqualValues(t, 1, summary.MessagesAdded)
+	assert.EqualValues(t, 1, summary.MessagesSkipped)
+	assert.Equal(t, 2, countChatMessages(t, st, "chat3"))
+}
+
 type batchChat struct {
 	id   int64
 	kind string
