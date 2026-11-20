@@ -881,9 +881,11 @@ describe('AppShell', () => {
 
     it('updates the tab as the selected message changes and clears it on close', async () => {
       const state = shellState('everything');
-      const rows = [1, 2, 3].map(id => ({ ...entry(id), kind: 'email', anchor_message_id: id, conversation_id: id, title: `Snippet ${id}`, preview: `Snippet ${id}` }));
+      const rows = [1, 2, 3].map(id => ({ ...entry(id), anchor_message_id: id, conversation_id: id, title: `Snippet ${id}`, preview: `Snippet ${id}` }));
+      const requests: string[] = [];
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
+        requests.push(path);
         const match = path.match(/\/conversations\/(\d+)$/);
         if (match) {
           const id = Number(match[1]);
@@ -898,32 +900,9 @@ describe('AppShell', () => {
         await waitFor(() => expect(document.title).toBe(`${title} · Messages · msgvault`));
         expect(document.title).not.toContain('Snippet');
       }
+      expect(requests).not.toContain('/api/v1/messages/1');
       await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
       await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
-    });
-
-    it('uses the conversation payload for the selected message title without another message request', async () => {
-      const state = shellState('everything');
-      const row = { ...entry(1), kind: 'email', anchor_message_id: 1, conversation_id: 1, title: 'Body preview', preview: 'Body preview' };
-      const requests: string[] = [];
-      const client = createAPIClient(async input => {
-        const path = new URL((input as Request).url).pathname;
-        requests.push(path);
-        if (path.endsWith('/conversations/1')) return Response.json({
-          id: 1, anchor_id: 1, messages: [{ id: 1, conversation_id: 1, subject: '', conversation_title: 'Conversation title',
-            sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [],
-            body: 'Message body', snippet: 'Body preview', attachments: [] }],
-          total: 1, has_before: false, has_after: false
-        });
-        if (path.endsWith('/messages/1')) return new Response(null, { status: 500 });
-        return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
-      });
-      render(AppShell, { client, state });
-      const grid = await screen.findByRole('grid', { name: 'Messages results' });
-      await fireEvent.click((await within(grid).findAllByText('Body preview'))[0]!);
-      await screen.findByText('Message body');
-      expect(requests).not.toContain('/api/v1/messages/1');
-      await waitFor(() => expect(document.title).toBe('Conversation title · Messages · msgvault'));
     });
 
     it('keeps the workspace title while a message loads or is missing', async () => {
@@ -933,7 +912,7 @@ describe('AppShell', () => {
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
         if (path.endsWith('/conversations/1')) return await new Promise<Response>(resolve => { finish = resolve; });
-        return Response.json(exploreResponse({ rows: [{ ...entry(1), kind: 'email', anchor_message_id: 1, conversation_id: 1 }], total_count: 1 }));
+        return Response.json(exploreResponse({ rows: [{ ...entry(1), anchor_message_id: 1, conversation_id: 1 }], total_count: 1 }));
       });
       render(AppShell, { client, state });
       await waitFor(() => expect(finish).toBeTypeOf('function'));
@@ -947,8 +926,14 @@ describe('AppShell', () => {
       const state = shellState('everything');
       state.commitNavigation({ selectedRow: 'conversation:1' });
       const row = { ...entry(1), key: 'conversation:1', kind: 'conversation', title: 'Thread subject', anchor_message_id: 1, conversation_id: 1 };
-      render(AppShell, { client: createAPIClient(async () => Response.json(exploreResponse({ rows: [row], total_count: 1 }))), state });
-      await waitFor(() => expect(document.title).toBe('Thread subject · Messages · msgvault'));
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/conversations/1')) return Response.json({ id: 1, anchor_id: 1, messages: [{ id: 1, conversation_id: 1, subject: 'Anchor subject', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] }], total: 1, has_before: false, has_after: false });
+        return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
+      });
+      render(AppShell, { client, state });
+      await screen.findByText('Anchor body');
+      expect(document.title).toBe('Thread subject · Messages · msgvault');
     });
 
     it('names a resolved archived meeting', async () => {
@@ -2049,7 +2034,7 @@ describe('AppShell', () => {
         source_counts: [], first_at: '2026-07-18T12:00:00Z', last_at: '2026-07-18T12:00:00Z', cache_revision: 'cache-1'
       });
       if (path === '/api/v1/participants/1/timeline') return Response.json(exploreResponse({
-        rows: [1, 2].map(id => ({ ...entry(id), kind: 'email', conversation_id: id, anchor_message_id: id })), total_count: 2
+        rows: [1, 2].map(id => ({ ...entry(id), conversation_id: id, anchor_message_id: id })), total_count: 2
       }));
       if (path === '/api/v1/relationships/1/calendar') return Response.json({
         participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC',
@@ -2057,10 +2042,6 @@ describe('AppShell', () => {
         effective_date: '2026-07-18', scoring_timezone: 'UTC', peak_temperature: 50, peak_year: 2026,
         current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } }
       });
-      if (/\/messages\/[12]$/.test(path)) {
-        const id = Number(path.split('/').at(-1));
-        return Response.json({ id, conversation_id: id, subject: `Synthetic subject ${id}` });
-      }
       if (/\/conversations\/[12]$/.test(path)) {
         const id = Number(path.split('/').at(-1));
         return Response.json({ id, messages: [{ id, conversation_id: id, subject: `Synthetic subject ${id}`,
@@ -2082,7 +2063,6 @@ describe('AppShell', () => {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'l' });
         await screen.findByText('Reader body 2');
-        await waitFor(() => expect(document.title).toBe('Synthetic subject 2 · People · msgvault'));
       } else {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'f' });

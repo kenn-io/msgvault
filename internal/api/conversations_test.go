@@ -77,24 +77,9 @@ func TestConversationWindowIsAnchoredBoundedAndChronological(t *testing.T) {
 	})
 	assert.True(response.HasBefore)
 	assert.True(response.HasAfter)
+	assert.Equal("Synthetic conversation", response.Messages[2].ConversationTitle)
 	assert.Equal("Body 03", response.Messages[2].Body)
 	assert.Equal("<p>Body 03</p>", response.Messages[2].BodyHTML)
-}
-
-func TestConversationWindowIncludesConversationTitle(t *testing.T) {
-	t.Parallel()
-	srv, conversationID, ids := seedConversation(t, "email", 1)
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
-		fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, ids[0]), nil)
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	var response ConversationResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
-	require.Len(t, response.Messages, 1)
-	assert.Equal(t, "Synthetic conversation", response.Messages[0].ConversationTitle)
 }
 
 func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
