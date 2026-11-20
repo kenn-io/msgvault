@@ -19,6 +19,17 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -v "$docs_root:/docs" -w /docs/diagrams \
     msgvault-diagrams bash build.sh
 
+echo "==> Capturing Web UI screenshots..."
+# A host web/node_modules holds host-platform binaries; install Linux ones in
+# a container-only directory instead.
+repo_root="$(cd "$docs_root/.." && pwd)"
+docker build -t msgvault-web-capture -f "$script_dir/web-capture.Dockerfile" "$script_dir"
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+    -e GOPATH=/tmp/go -e GOCACHE=/tmp/go-build -e BUN_INSTALL_CACHE_DIR=/tmp/bun-cache \
+    -v "$repo_root:/src" -w /src \
+    --tmpfs /src/web/node_modules:exec,mode=1777 \
+    msgvault-web-capture bash docs/screenshots/generate-web-fixture-screenshots.sh
+
 mkdir -p "$output/assets"
 cp -R "$generated/." "$output/assets/"
 echo "Wrote $(find "$output/assets" -type f | wc -l) files to $output/assets"
