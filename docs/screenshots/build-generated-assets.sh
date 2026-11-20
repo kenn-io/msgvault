@@ -25,7 +25,8 @@ echo "==> Capturing Web UI screenshots..."
 # was, and so host-platform web/node_modules never reaches the container.
 repo_root="$(cd "$docs_root/.." && pwd)"
 web_source="$(mktemp -d)"
-trap 'rm -rf "$web_source"' EXIT
+capture_output="$(mktemp -d)"
+trap 'rm -rf "$web_source" "$capture_output"' EXIT
 git -C "$repo_root" ls-files -z --cached --others --exclude-standard |
     while IFS= read -r -d '' path; do
         # Skip tracked files deleted from the working tree.
@@ -41,10 +42,20 @@ docker build -t msgvault-web-capture --build-arg PLAYWRIGHT_VERSION="$playwright
     -f "$script_dir/web-capture.Dockerfile" "$script_dir"
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -e GOPATH=/tmp/go -e GOCACHE=/tmp/go-build -e BUN_INSTALL_CACHE_DIR=/tmp/bun-cache \
-    -v "$web_source:/src" -w /src \
+    -e MSGVAULT_DOCS_SCREENSHOT_OUTPUT_DIR=/capture \
+    -v "$web_source:/src" -v "$capture_output:/capture" -w /src \
     msgvault-web-capture bash docs/screenshots/generate-web-fixture-screenshots.sh
+# The publisher pushes these files to a public branch. Copy only regular PNG
+# files, so a link the container left behind cannot pull in a host file.
 mkdir -p "$generated/web"
-cp "$web_source/docs/assets/generated/web/"*.png "$generated/web/"
+for capture in "$capture_output"/*; do
+    if [[ -L "$capture" || ! -f "$capture" ]] ||
+        [[ "$(head -c 8 "$capture" | od -An -tx1 | tr -d ' \n')" != 89504e470d0a1a0a ]]; then
+        printf 'Web UI capture is not a regular PNG file: %s\n' "${capture##*/}" >&2
+        exit 1
+    fi
+    cp "$capture" "$generated/web/"
+done
 
 mkdir -p "$output/assets"
 cp -R "$generated/." "$output/assets/"
