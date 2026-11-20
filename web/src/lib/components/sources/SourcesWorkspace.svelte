@@ -60,7 +60,6 @@
   let contactsRequest: AbortController | undefined;
   let selected = $state<string>();
   let adding = $state(false);
-  let addTitle = $state('');
   // The kind whose steps the dialog opens at; unset opens the choices.
   let addingKind = $state<CommandSourceKind>();
   let loading = $state(true);
@@ -97,8 +96,7 @@
       : undefined,
   );
 
-  const showAddDialog = $derived(adding && (addingKind !== undefined || sources.length > 0 || contacts.length > 0 || statusError || contactsError));
-  $effect(() => { tabTitle = showAddDialog ? addTitle : selectedSource ? selectedSource.display_name || selectedSource.identifier : selectedContact ? contactLabel(selectedContact) : ''; });
+  $effect(() => { tabTitle = selectedSource ? selectedSource.display_name || selectedSource.identifier : selectedContact ? contactLabel(selectedContact) : ''; });
 
   onMount(() => {
     const visibilityChanged = (): void => {
@@ -570,8 +568,8 @@
   />
 {/if}
 
-{#if showAddDialog}
-  <AddSourceDialog bind:tabTitle={addTitle} onback={sources.length === 0 && contacts.length === 0 ? () => (adding = false) : undefined} bind:kind={addingKind} onclose={() => (adding = false)} ondone={() => { adding = false; refresh(); }} {onOpenSettings} />
+{#if adding && (addingKind !== undefined || sources.length > 0 || contacts.length > 0 || statusError || contactsError)}
+  <AddSourceDialog onback={sources.length === 0 && contacts.length === 0 ? () => (adding = false) : undefined} bind:kind={addingKind} onclose={() => (adding = false)} ondone={() => { adding = false; refresh(); }} {onOpenSettings} />
 {/if}
 
 <style>

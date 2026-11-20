@@ -96,7 +96,7 @@
   const hasMore = $derived(Boolean(directoryMode ? directory.cursor : controller.listCursor));
   const activeKey = $derived(soloPerson !== null ? `person:${soloPerson}` : page.target);
   const hasPerson = $derived(page.target !== null || soloPerson !== null);
-  $effect(() => { pageTitle = urlState.peopleDuplicates ? 'Possible duplicates' : hasPerson ? (soloPerson !== null && directory.selectedPersonID !== soloPerson ? 'Person' : personTitle || 'Person') : facet === 'domains' ? 'Domains' : saved ? 'Saved people' : ''; });
+  $effect(() => { pageTitle = urlState.peopleDuplicates ? 'Possible duplicates' : hasPerson ? (soloPerson !== null && directory.selectedPersonID !== soloPerson ? 'Person' : personTitle || 'Person') : facet === 'domains' ? 'Domains' : ''; });
   $effect(() => {
     if (narrow && activeKey) void tick().then(() => root?.querySelector<HTMLElement>('.body > .solo-page')?.focus());
   });

@@ -5,7 +5,6 @@
   import AddSourceSteps from './AddSourceSteps.svelte';
 
   interface Props {
-    tabTitle?: string;
     /** The kind whose steps show; unset shows the choices. */
     kind?: CommandSourceKind;
     /** First run: the choices sit on the page, and a choice opens its steps through `onchoose`. */
@@ -18,9 +17,8 @@
     onOpenSettings: (category: string) => void;
   }
 
-  let { tabTitle = $bindable(''), kind = $bindable(), inline = false, onchoose, onback, onclose = () => undefined, ondone = onclose, onOpenSettings }: Props = $props();
+  let { kind = $bindable(), inline = false, onchoose, onback, onclose = () => undefined, ondone = onclose, onOpenSettings }: Props = $props();
   const items = ADD_SOURCE_KINDS.map(source => ({ id: source.id, label: source.name, detail: `${source.description}${'settings' in source ? ' · opens Settings' : ''}` }));
-  $effect(() => { tabTitle = title; });
   const title = $derived(!kind ? 'Add source' : kind.id === 'gmail' ? 'Add Gmail' : kind.id === 'microsoft' ? 'Add Microsoft account' : 'Add IMAP mailbox');
 
   function choose(id: string): void {

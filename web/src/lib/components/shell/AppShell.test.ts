@@ -905,7 +905,7 @@ describe('AppShell', () => {
       await waitFor(() => expect(document.title).toBe(`${expected} · Messages · msgvault`));
     });
 
-    it('names the browser tab for source and contact panels and setup', async () => {
+    it('names the browser tab for source and contact panels and keeps it during setup', async () => {
       const state = shellState('sources');
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
@@ -919,13 +919,12 @@ describe('AppShell', () => {
       await fireEvent.click(await screen.findByRole('button', { name: 'Details for Synthetic contacts' }));
       await waitFor(() => expect(document.title).toBe('Synthetic contacts · Sources · msgvault'));
       await fireEvent.click(screen.getByRole('button', { name: 'Add source…' }));
-      await waitFor(() => expect(document.title).toBe('Add source · Sources · msgvault'));
+      await waitFor(() => expect(document.title).toBe('Synthetic contacts · Sources · msgvault'));
     });
 
     it.each([
       [{ peopleDuplicates: true }, 'Possible duplicates'],
       [{ relationshipFacet: 'domains' }, 'Domains'],
-      [{ relationshipSaved: true }, 'Saved people'],
     ] as const)('names the browser tab for the People list mode %s', async (patch, title) => {
       const state = shellState('relationships');
       state.commitNavigation(patch);
@@ -1594,7 +1593,7 @@ describe('AppShell', () => {
 
 
 
-  it('names the browser tab for people and restores the prior Files view on Back', async () => {
+  it('starts a new person on Messages, names the tab, and restores Files on Back', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:1'
     }))}`);
@@ -1693,7 +1692,7 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('names the browser tab as contextual file metadata changes', async () => {
+  it('restores a legacy Files link and names the tab as file metadata changes', async () => {
     window.history.replaceState(null, '', `/?workspace=everything&explore=${encodeURIComponent(JSON.stringify({
       presentation: 'files', selectedRow: 'attachment:5'
     }))}`);
@@ -1736,7 +1735,7 @@ describe('AppShell', () => {
     ['Escape', async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     }]
-  ])('clears a legacy attachment browser tab title when its viewer closes with %s', async (_label, close) => {
+  ])('clears a legacy attachment selection and tab title when closed with %s', async (_label, close) => {
     window.history.replaceState(null, '', `/?workspace=everything&explore=${encodeURIComponent(JSON.stringify({
       presentation: 'files', selectedRow: 'attachment:5'
     }))}`);
@@ -2079,7 +2078,10 @@ describe('AppShell', () => {
     } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
   });
 
-  it.each(['reader next', 'Filter shortcut'])('supports %s in the person Messages table browser tab', async (control) => {
+  it.each([
+    { control: 'reader next', description: 'navigates the person reader and updates the tab title' },
+    { control: 'Filter shortcut', description: 'opens Filter from the person Messages table' },
+  ])('$description', async ({ control }) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
