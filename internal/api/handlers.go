@@ -535,6 +535,14 @@ func nullableTimePtr(value time.Time) *string {
 }
 
 func messageTabTitle(conversationType, messageType string, content verification.Content) string {
+	// Oversized bodies make the verification classifier fail closed for agent
+	// access. They cannot by themselves put their text in the tab title.
+	if len(content.Text) >= verification.MaxFieldBytes {
+		content.Text = ""
+	}
+	if len(content.HTML) >= verification.MaxFieldBytes {
+		content.HTML = ""
+	}
 	if verification.Is(content) {
 		return "Verification message"
 	}

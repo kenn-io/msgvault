@@ -108,6 +108,10 @@ func TestMessageTabTitles(t *testing.T) {
 		name, conversationType, messageType, title, subject, body, want string
 	}{
 		{"verification", "email_thread", "email", "Conversation", "Your verification code is 123456", "", "Verification message"},
+		{"verification in body", "email_thread", "email", "Conversation", "Account access", "Your verification code is 123456", "Verification message"},
+		{"large ordinary body", "email_thread", "email", "Conversation", "Quarterly update", strings.Repeat("a", 1<<20), "Quarterly update"},
+		{"large body with verification subject", "email_thread", "email", "Conversation", "Your verification code is 123456", strings.Repeat("a", 1<<20), "Verification message"},
+		{"large body with verification title", "email_thread", "email", "Your verification code is 123456", "", strings.Repeat("a", 1<<20), "Verification message"},
 		{"facebook", "public_comments", "facebook_comments", "Post text", "", "", ""},
 		{"linkedin", "public_comments", "linkedin", "Post text", "", "", ""},
 		{"tiktok", "public_comments", "tiktok_export", "https://example.com/video", "", "", "https://example.com/video"},
