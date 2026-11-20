@@ -485,7 +485,7 @@ func TestExploreFlattensTitleOnlyWhenFallenBackToSnippet(t *testing.T) {
 	b.AddFrom(same, alice, "Alice")
 	conversation := b.AddMessage(MessageOpt{SourceID: gmail, ConversationID: 801, ConversationTitle: "Thread title", Snippet: "Preview", SentAt: when.Add(-3 * time.Minute)})
 	b.AddFrom(conversation, alice, "Alice")
-	calendar := b.AddMessage(MessageOpt{SourceID: gmail, MessageType: "event", Snippet: "Private location", SentAt: when.Add(-4 * time.Minute)})
+	calendar := b.AddMessage(MessageOpt{SourceID: gmail, MessageType: messageTypeCalendar, Snippet: "Private location", SentAt: when.Add(-4 * time.Minute)})
 	b.AddFrom(calendar, alice, "Alice")
 	blank := b.AddMessage(MessageOpt{SourceID: gmail, SentAt: when.Add(-5 * time.Minute)})
 	b.messages[len(b.messages)-1].Snippet = ""

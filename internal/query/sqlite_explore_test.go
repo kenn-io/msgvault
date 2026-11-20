@@ -60,7 +60,7 @@ func liveExploreFixture(t *testing.T) sqliteExploreFixture {
 		{Subject: "Same text", Snippet: "Same text"},
 		{ConversationID: 902, ConversationTitle: "Thread title", Snippet: "Preview"},
 		{Snippet: "Private preview"},
-		{MessageType: "event", Snippet: "Private location"},
+		{MessageType: messageTypeCalendar, Snippet: "Private location"},
 		{},
 	} {
 		row.SourceID = source

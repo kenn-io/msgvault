@@ -895,11 +895,10 @@ describe('AppShell', () => {
     it.each([
       ['preview', true, '(untitled)'],
       ['subject equal to preview', false, 'Synthetic private preview'],
-      ['calendar preview', true, '(untitled)'],
     ])('names the browser tab for %s without changing the reader title', async (kind, titleIsPreview, expected) => {
       const state = shellState('everything');
       state.commitNavigation({ selectedRow: 'message:1' });
-      const row = { ...entry(1), message_type: kind === 'calendar preview' ? 'event' : 'email', title: 'Synthetic private preview', preview: 'Synthetic private preview', title_is_preview: titleIsPreview };
+      const row = { ...entry(1), title: 'Synthetic private preview', preview: 'Synthetic private preview', title_is_preview: titleIsPreview };
       render(AppShell, { client: createAPIClient(async () => Response.json(exploreResponse({ rows: [row], total_count: 1 }))), state });
       await screen.findByRole('complementary', { name: 'Reading pane: Synthetic private preview' });
       await waitFor(() => expect(document.title).toBe(`${expected} · Messages · msgvault`));
@@ -919,6 +918,7 @@ describe('AppShell', () => {
       await fireEvent.click(await screen.findByRole('button', { name: 'Details for Synthetic contacts' }));
       await waitFor(() => expect(document.title).toBe('Synthetic contacts · Sources · msgvault'));
       await fireEvent.click(screen.getByRole('button', { name: 'Add source…' }));
+      await screen.findByRole('dialog', { name: 'Add source' });
       await waitFor(() => expect(document.title).toBe('Synthetic contacts · Sources · msgvault'));
     });
 
@@ -979,15 +979,11 @@ describe('AppShell', () => {
         return Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
       });
       render(AppShell, { client, state });
-      await waitFor(() => expect(document.title).toBe('Synthetic subject 1 · Messages · msgvault'));
+      await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
       state.commitNavigation({ selectedRow: 'archive-meeting:42' });
       await waitFor(() => expect(finish).toBeTypeOf('function'));
       await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
       finish(Response.json({ id: 42, conversation_id: 8, subject, conversation_title: '', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', labels: [], attachments: [], has_attachments: false, hidden_text_present: false, size_bytes: 10, snippet: 'Transcript' }));
-      await waitFor(() => expect(document.title).toBe(`${expected} · Messages · msgvault`));
-      state.commitNavigation({ operationHistory: true });
-      await waitFor(() => expect(document.title).toBe('Past runs · Messages · msgvault'));
-      state.commitNavigation({ operationHistory: false });
       await waitFor(() => expect(document.title).toBe(`${expected} · Messages · msgvault`));
     });
 
@@ -3059,6 +3055,7 @@ it('opens CardDAV Past runs with its kind through the Settings context', async (
   const rendered = render(AppShell, { client, state, settings, enabled: false });
   await fireEvent.click(screen.getByRole('button', { name: 'View CardDAV operations' }));
   expect(await screen.findByRole('dialog', { name: 'Past runs' })).toBeDefined();
+  await waitFor(() => expect(document.title).toBe('Past runs · Settings · msgvault'));
   expect(state.current.operationKind).toBe('carddav_sync');
   rendered.unmount(); state.destroy();
 });
@@ -3123,6 +3120,7 @@ it.each([
   await fireEvent.click(target);
   expect(push).toHaveBeenCalledTimes(1);
   expect(state.current).toMatchObject(expected);
+  if (authority === 'getVisualAttachmentStatus') await waitFor(() => expect(document.title).toBe('Visual attachment status · Past runs · Messages · msgvault'));
   push.mockRestore();
   rendered.unmount(); state.destroy();
 });

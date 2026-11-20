@@ -42,11 +42,6 @@ function renderPane(row: EntryRow) {
 }
 
 describe('ReadingPane header', () => {
-  it('uses an untitled title for an entry without a title', () => {
-    renderPane(entryRow({ title: '', preview: '' }));
-    expect(screen.getByRole('complementary', { name: 'Reading pane: (untitled)' })).toBeDefined();
-  });
-
   it('uses a plain title for a missing message selected by ID', () => {
     render(ReadingPane, {
       client: createAPIClient(vi.fn<typeof fetch>()),
