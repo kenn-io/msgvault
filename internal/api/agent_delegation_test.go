@@ -34,7 +34,7 @@ type delegatedReadFixture struct {
 	permission agentgrant.Permission
 }
 
-func delegatedReads(identifier string, id, attachmentID int64, hash string) map[string]delegatedReadFixture {
+func delegatedReads(identifier string, id, note, attachmentID int64, hash string) map[string]delegatedReadFixture {
 	return map[string]delegatedReadFixture{
 		"searchCLI":               {"/api/v1/cli/search?q=glacier", identifier, agentgrant.PermissionSearchRead},
 		"searchMessages":          {"/api/v1/search?q=glacier", identifier, agentgrant.PermissionSearchRead},
@@ -45,12 +45,14 @@ func delegatedReads(identifier string, id, attachmentID int64, hash string) map[
 		"filterMessages":          {"/api/v1/messages/filter", identifier, agentgrant.PermissionSearchRead},
 		"listMessages":            {"/api/v1/messages", identifier, agentgrant.PermissionSearchRead},
 		"searchMessagesByDomains": {"/api/v1/search/domains?domains=example.test", identifier, agentgrant.PermissionSearchRead},
-		"getStats":                {"/api/v1/stats", `"total_messages":1`, agentgrant.PermissionStatsRead},
-		"getCLIStats":             {"/api/v1/cli/stats", `"total_messages":1`, agentgrant.PermissionStatsRead},
+		"getStats":                {"/api/v1/stats", `"total_messages":2`, agentgrant.PermissionStatsRead},
+		"getCLIStats":             {"/api/v1/cli/stats", `"total_messages":2`, agentgrant.PermissionStatsRead},
 		"getTotalStats":           {"/api/v1/stats/total", `"message_count":1`, agentgrant.PermissionStatsRead},
 		"getCLIMessageThread":     {fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), identifier, agentgrant.PermissionMessageRead},
 		"getMessage":              {fmt.Sprintf("/api/v1/messages/%d", id), identifier, agentgrant.PermissionMessageRead},
 		"getCLIMessage":           {fmt.Sprintf("/api/v1/cli/message?id=%d", id), identifier, agentgrant.PermissionMessageRead},
+		"getMeetingRecord":        {fmt.Sprintf("/api/v1/meetings/record?ref=msg:%d", note), fmt.Sprintf(`"message_ids":[%d]`, note), agentgrant.PermissionMessageRead},
+		"suggestMeetingLinks":     {fmt.Sprintf("/api/v1/meetings/suggestions?ref=msg:%d", note), `"suggestions":[]`, agentgrant.PermissionMessageRead},
 		"getAttachment":           {fmt.Sprintf("/api/v1/attachments/%d", attachmentID), "permitted.bin", agentgrant.PermissionAttachmentRead},
 		"getAttachmentContent":    {"/api/v1/attachments/" + hash + "/content", "permitted bytes", agentgrant.PermissionAttachmentRead},
 		"getCLIAttachment":        {"/api/v1/cli/attachment?content_hash=" + hash, "permitted bytes", agentgrant.PermissionAttachmentRead},
@@ -291,7 +293,9 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 			src, id = source, messageID
 		}
 	}
-	_, err := st.CreateCollection("Selected", "", []int64{src.ID})
+	note, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: src.ID, SourceMessageID: "meeting-note", MessageType: "meeting_transcript"}, Conversation: &store.ConversationPersistData{SourceConversationID: "meeting-note", ConversationType: "meeting"}, RawMIME: []byte(`{"summary_text":"Meeting"}`), RawFormat: "granola_json"})
+	requirements.NoError(err)
+	_, err = st.CreateCollection("Selected", "", []int64{src.ID})
 	requirements.NoError(err)
 	hash := strings.Repeat("a", 64)
 	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
@@ -305,9 +309,9 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	t.Cleanup(srv.agentGrants.Close)
-	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
+	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead, agentgrant.PermissionCalendarEventRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 	requirements.NoError(err)
-	reads := delegatedReads(src.Identifier, id, attachmentID, hash)
+	reads := delegatedReads(src.Identifier, id, note, attachmentID, hash)
 	allowed := make(map[string]bool, len(allowedDelegatedOps))
 	for _, op := range allowedDelegatedOps {
 		allowed[op] = true
@@ -368,7 +372,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	for op := range allowed {
 		assertions.True(seen[op], "missing preexisting delegated operation: "+op)
 	}
-	assertions.Len(reads, 20)
+	assertions.Len(reads, 22)
 	assertions.Equal(len(reads), testedReads)
 	assertions.Greater(denied, 10)
 }

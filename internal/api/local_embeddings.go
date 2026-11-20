@@ -76,25 +76,38 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Request) {
+	status, ok := s.startLocalEmbeddings(nil)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "Local search setup is unavailable")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, status)
+}
+
+// StartLocalEmbeddings submits startup work through the same job as Settings.
+func (s *Server) StartLocalEmbeddings(work func(context.Context, func(LocalEmbeddingsStatus)) error) {
+	s.startLocalEmbeddings(work)
+}
+
+func (s *Server) startLocalEmbeddings(work func(context.Context, func(LocalEmbeddingsStatus)) error) (LocalEmbeddingsStatus, bool) {
 	s.importMu.Lock()
 	if s.localEmbeddings == nil || s.importsClosed {
 		s.importMu.Unlock()
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "Local search setup is unavailable")
-		return
+		return LocalEmbeddingsStatus{}, false
 	}
 	if s.localSetup.Running {
 		status := s.localSetup
 		s.importMu.Unlock()
-		writeJSON(w, http.StatusAccepted, status)
-		return
+		return status, true
+	}
+	if work == nil {
+		work = s.localEmbeddings.Enable
 	}
 	finishIdle, ok := s.idleTracker.BeginWork()
 	if !ok {
 		s.importMu.Unlock()
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "The daemon is stopping")
-		return
+		return LocalEmbeddingsStatus{}, false
 	}
-	controller := s.localEmbeddings
 	s.localSetup = LocalEmbeddingsStatus{Phase: "idle", Running: true}
 	status := s.localSetup
 	s.importWG.Add(1)
@@ -108,7 +121,7 @@ func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Requ
 			s.localSetup = status
 			s.importMu.Unlock()
 		}
-		err := controller.Enable(s.importContext, report)
+		err := work(s.importContext, report)
 		s.importMu.Lock()
 		s.localSetup.Running = false
 		s.localSetup.Phase = "idle"
@@ -117,5 +130,5 @@ func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Requ
 		}
 		s.importMu.Unlock()
 	}()
-	writeJSON(w, http.StatusAccepted, status)
+	return status, true
 }

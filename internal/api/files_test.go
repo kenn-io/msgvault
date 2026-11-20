@@ -490,10 +490,10 @@ func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T
 	requirements := require.New(t)
 	hash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
-		1: {ID: 1, MessageID: 11, ConversationID: 21, Filename: "metadata.txt"},
-		2: {ID: 2, MessageID: 12, ConversationID: 22, Filename: "remote.txt", URL: "https://files.example/remote.txt"},
-		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.pdf", MimeType: "application/pdf", ContentHash: strings.Repeat("cc", 32), StoragePath: "legacy/missing.pdf"},
-		4: {ID: 4, MessageID: 14, ConversationID: 24, Filename: "local.png", MimeType: "image/png", ContentHash: hash, StoragePath: "bb/" + hash},
+		1: {ID: 1, MessageID: 11, MessageType: "email", ConversationID: 21, Filename: "metadata.txt"},
+		2: {ID: 2, MessageID: 12, MessageType: "imessage", ConversationID: 22, Filename: "remote.txt", URL: "https://files.example/remote.txt"},
+		3: {ID: 3, MessageID: 13, MessageType: "imessage", ConversationID: 23, Filename: "missing.pdf", MimeType: "application/pdf", ContentHash: strings.Repeat("cc", 32), StoragePath: "legacy/missing.pdf"},
+		4: {ID: 4, MessageID: 14, MessageType: "imessage", ConversationID: 24, Filename: "local.png", MimeType: "image/png", ContentHash: hash, StoragePath: "bb/" + hash},
 	}}
 	cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}}
 	requirements.NoError(os.MkdirAll(filepath.Join(cfg.AttachmentsDir(), "bb"), 0o700))
@@ -504,14 +504,15 @@ func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T
 	})
 
 	wants := []struct {
-		id        int
-		state     FileContentState
-		available bool
+		id          int
+		state       FileContentState
+		available   bool
+		messageType string
 	}{
-		{id: 1, state: FileContentMetadataOnly},
-		{id: 2, state: FileContentURLOnly},
-		{id: 3, state: FileContentMissingBlob},
-		{id: 4, state: FileContentLocal, available: true},
+		{id: 1, state: FileContentMetadataOnly, messageType: "email"},
+		{id: 2, state: FileContentURLOnly, messageType: "imessage"},
+		{id: 3, state: FileContentMissingBlob, messageType: "imessage"},
+		{id: 4, state: FileContentLocal, available: true, messageType: "imessage"},
 	}
 	for _, want := range wants {
 		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/"+string(rune('0'+want.id)), nil)
@@ -524,6 +525,7 @@ func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T
 		assertions.Equal(want.available, metadata.ContentAvailable)
 		assertions.Equal(int64(10+want.id), metadata.MessageID)
 		assertions.Equal(int64(20+want.id), metadata.ConversationID)
+		assertions.Equal(want.messageType, metadata.MessageType)
 	}
 }
 

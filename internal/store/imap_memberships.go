@@ -35,6 +35,7 @@ type IMAPMembershipObservation struct {
 // IMAPMailboxDelta is the durable state change collected for one mailbox.
 type IMAPMailboxDelta struct {
 	Mailbox      string
+	Trash        bool
 	State        IMAPFolderState
 	Memberships  []IMAPMembershipObservation
 	VanishedUIDs []uint32
@@ -311,8 +312,17 @@ func (s *Store) applyIMAPMailboxDeltas(
 			return err
 		}
 		currentMailboxes := make(map[string]struct{}, len(normalizedDeltas))
+		var trashArgs []any
 		for _, normalized := range normalizedDeltas {
 			currentMailboxes[normalized.mailbox] = struct{}{}
+			if normalized.delta.Trash {
+				trashArgs = append(trashArgs, normalized.mailbox)
+			}
+		}
+		trashRole := `1=0`
+		if len(trashArgs) > 0 {
+			placeholders := `?` + strings.Repeat(",?", len(trashArgs)-1)
+			trashRole = `l.source_label_id IN (` + placeholders + `)`
 		}
 		if err := retireAbsentIMAPMailboxes(
 			ctx, tx, sourceID, currentMailboxes, generations, affected,
@@ -436,6 +446,24 @@ func (s *Store) applyIMAPMailboxDeltas(
 			}
 		}
 
+		// Mailbox roles can change without a membership delta. Recheck marked
+		// messages whose saved memberships no longer include any Trash mailbox.
+		trashMembership := ""
+		if len(trashArgs) > 0 {
+			trashMembership = ` AND NOT EXISTS (
+				SELECT 1 FROM imap_message_memberships tm
+				WHERE tm.source_id = m.source_id AND tm.message_id = m.id
+				AND tm.mailbox IN (?` + strings.Repeat(",?", len(trashArgs)-1) + `))`
+		}
+		if err := captureIMAPMembershipMessageIDs(ctx, tx, affected, `
+			SELECT m.id FROM messages m
+			WHERE m.source_id = ? AND m.deleted_from_source_at IS NOT NULL
+			AND EXISTS (SELECT 1 FROM imap_message_memberships mm
+				WHERE mm.source_id = m.source_id AND mm.message_id = m.id)`+trashMembership,
+			append([]any{sourceID}, trashArgs...)...); err != nil {
+			return fmt.Errorf("capture IMAP messages outside Trash: %w", err)
+		}
+
 		for _, messageID := range sortedIMAPMessageIDs(affected) {
 			mailboxes, err := s.imapMembershipMailboxes(ctx, tx, sourceID, messageID)
 			if err != nil {
@@ -461,10 +489,11 @@ func (s *Store) applyIMAPMailboxDeltas(
 				`, s.dialect.Now()), messageID, sourceID); err != nil {
 					return fmt.Errorf("tombstone IMAP message %d: %w", messageID, err)
 				}
-			} else if _, err := tx.ExecContext(ctx, `
-				UPDATE messages SET deleted_from_source_at = NULL
-				WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NOT NULL
-			`, messageID, sourceID); err != nil {
+			} else if err := s.clearMessageDeletedFromSourceTx(ctx, tx, `
+				id = ? AND source_id = ?
+				AND NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+					WHERE ml.message_id = messages.id AND (`+trashRole+`))
+			`, append([]any{messageID, sourceID}, trashArgs...)...); err != nil {
 				return fmt.Errorf("clear IMAP tombstone for message %d: %w", messageID, err)
 			}
 		}

@@ -216,7 +216,8 @@ func (s *Store) exportMessageSources(
 
 	for _, source := range selected {
 		var completedAt *time.Time
-		run, err := s.GetLastSuccessfulSyncContext(ctx, source.id)
+		// A webhook run applies single changes, so it is no evidence of a sync.
+		run, err := s.GetLastSuccessfulSyncExcludingTypeContext(ctx, source.id, SyncTypeWebhook)
 		if err != nil && !errors.Is(err, ErrSyncRunNotFound) {
 			return fmt.Errorf("load message export source sync: %w", err)
 		}

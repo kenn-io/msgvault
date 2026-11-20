@@ -870,6 +870,20 @@ test('People calendar day survives an Action items archived-meeting round trip',
   await expect(actions.getByText('Prepare review', { exact: true })).toBeVisible();
 });
 
+test('a person Messages row at the bottom of the page opens on the first click', async ({ page }) => {
+  await prepare(page);
+  await page.goto('/?workspace=relationships');
+  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
+  await expect(page.getByRole('button', { name: '2 messages on Jul 18, 2026' }).filter({ visible: true })).toBeVisible();
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await expect(grid).toHaveAttribute('aria-busy', 'false');
+  const label = grid.getByText('Team Chat');
+  // Show the row's label at the bottom edge of the person page, with the rest of the grid below it.
+  await label.evaluate(element => element.scrollIntoView({ block: 'end' }));
+  await label.click();
+  await expect(page.getByRole('complementary', { name: 'Reading pane: Team Chat' })).toBeVisible();
+});
+
 for (const change of ['filter', 'sort', 'show-all'] as const) {
   test(`Back restores the People reader across ${change} entries`, async ({ page }) => {
     await prepare(page);

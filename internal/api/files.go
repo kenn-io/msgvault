@@ -143,6 +143,7 @@ type FileMetadataResponse struct {
 	Docbank          []store.DocbankAttachmentRef `json:"docbank,omitempty"`
 	ID               int64                        `json:"id"`
 	MessageID        int64                        `json:"message_id"`
+	MessageType      string                       `json:"message_type"`
 	ConversationID   int64                        `json:"conversation_id"`
 	EntryKey         string                       `json:"entry_key"`
 	Filename         string                       `json:"filename"`
@@ -875,7 +876,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, FileMetadataResponse{
-		ID: file.ID, MessageID: file.MessageID, ConversationID: file.ConversationID,
+		ID: file.ID, MessageID: file.MessageID, MessageType: file.MessageType, ConversationID: file.ConversationID,
 		EntryKey: fileEntryKey(*file),
 		Filename: file.Filename, MimeType: file.MimeType, Size: file.Size,
 		ContentHash: file.ContentHash, URL: file.URL, ContentState: state, ContentAvailable: available, Docbank: file.Docbank,

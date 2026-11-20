@@ -3,10 +3,10 @@ package query
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -235,24 +235,31 @@ func TestSQLiteExploreReaderLifecycle(t *testing.T) {
 		require.FailNow("cancelled Explore remained blocked on the reader")
 	}
 	release()
-	cancelled, cancel := context.WithCancel(t.Context())
-	_, end, cancelledRevision, err := live.BeginExploreSnapshot(cancelled)
-	require.NoError(err)
-	cancel()
-	// Let database/sql finish its cancellation rollback before reusing the reader.
-	require.Eventually(func() bool {
-		return errors.Is(live.exploreReader.conn.Raw(func(any) error { return nil }), sql.ErrConnDone)
-	}, 5*time.Second, time.Millisecond)
-	end()
-	result, err := live.Explore(t.Context(), ExploreRequest{})
-	require.NoError(err)
-	assert.NotEmpty(result.Rows)
-	assert.NotEqual(cancelledRevision, result.CacheRevision)
 	require.NoError(live.Close())
 	_, end, revision, err := live.BeginExploreSnapshot(t.Context())
 	require.ErrorIs(err, sql.ErrConnDone)
 	assert.Nil(end)
 	assert.Empty(revision)
+}
+
+func TestSQLiteExploreReaderCancellation(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		live := liveExploreFixture(t).live
+		cancelled, cancel := context.WithCancel(t.Context())
+		_, end, cancelledRevision, err := live.BeginExploreSnapshot(cancelled)
+		require.NoError(err)
+		cancel()
+		// Wait for database/sql's cancellation rollback to discard the reader.
+		synctest.Wait()
+		end()
+		result, err := live.Explore(t.Context(), ExploreRequest{})
+		require.NoError(err)
+		assert.NotEmpty(result.Rows)
+		assert.NotEqual(cancelledRevision, result.CacheRevision)
+	})
 }
 
 func TestSQLiteExploreRefusesCacheOperations(t *testing.T) {

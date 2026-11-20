@@ -8,9 +8,6 @@
   import DetailRow from './DetailRow.svelte';
   import DetailSection from './DetailSection.svelte';
 
-  const STALE_CACHE_MESSAGE =
-    'Identity saved; the cache refresh failed — groupings may be stale until a rebuild. Retrying is safe.';
-
   let { detail, onUnlinkParticipants, onAnnounce, listedInDetails = [] }:
     {
       detail: PersonSummary | DomainSummary | null;
@@ -19,11 +16,6 @@
       /** Details already lists this profile's own emails and phones, so they show once, there. */
       listedInDetails?: Pick<import('../../api/generated/models').PersonContactPoint, 'address_kind' | 'normalized_value'>[];
     } = $props();
-  type LinkMutation = { kind: 'unlink'; a: number; b: number };
-
-  let staleBanner = $state<'identity_cache_stale' | null>(null);
-  let lastMutation = $state<LinkMutation | null>(null);
-  let retrying = $state(false);
   let confirmingParticipantID = $state<number | null>(null);
   let unlinking = $state(false);
   let unlinkError = $state<string | null>(null);
@@ -60,7 +52,7 @@
     const listed = new Set(listedInDetails.map(point => `${point.address_kind}:${point.normalized_value}`));
     return all.filter(identifier => identifier.participant_id !== detail.id || !listed.has(`${identifier.type}:${identifier.value}`));
   });
-  const empty = $derived(identifiers.length === 0 && unrepresentedMembers.length === 0 && staleBanner === null && unlinkError === null);
+  const empty = $derived(identifiers.length === 0 && unrepresentedMembers.length === 0 && unlinkError === null);
 
   /** Evidence detail lives in the chip tooltip, in human words — internal
    * provenance identifiers never reach user-visible text. */
@@ -87,10 +79,7 @@
     onAnnounce?.(copied ? 'Copied' : "Couldn't copy.");
   }
 
-  // Navigating to a different person must not leave behind a stale banner
-  // (or its Retry) bound to the previous cluster's IDs, and must not leave
-  // a pending unlink confirm open on a chip that no longer belongs to the
-  // now-open detail.
+  // Reset a pending confirmation when the open person changes.
   let lastPersonID: number | null = null;
   $effect(() => {
     // Reloads briefly clear detail; keep the current person's UI state.
@@ -98,38 +87,9 @@
     const currentID = isPersonDetail(detail) ? detail.id : null;
     if (currentID === lastPersonID) return;
     lastPersonID = currentID;
-    staleBanner = null;
-    lastMutation = null;
     confirmingParticipantID = null;
     unlinkError = null;
   });
-
-  // ok/ready clears any earlier stale banner; ok/stale (re)raises it and
-  // remembers the mutation so Retry can safely re-invoke the identical,
-  // idempotent link/unlink call.
-  function applyOutcome(outcome: LinkOutcome, kind: 'unlink', a: number, b: number): void {
-    if (!outcome.ok) return;
-    if (outcome.cacheState === 'stale') {
-      staleBanner = 'identity_cache_stale';
-      lastMutation = { kind, a, b };
-    } else {
-      staleBanner = null;
-      lastMutation = null;
-    }
-  }
-
-  async function retryRefresh(): Promise<void> {
-    if (!lastMutation || retrying) return;
-    const id = currentPersonID();
-    retrying = true;
-    try {
-      const { kind, a, b } = lastMutation;
-      const outcome = await onUnlinkParticipants(a, b);
-      if (currentPersonID() === id) applyOutcome(outcome, kind, a, b);
-    } finally {
-      retrying = false;
-    }
-  }
 
   function startUnlink(participantID: number): void {
     confirmingParticipantID = participantID;
@@ -173,7 +133,6 @@
       for (const edge of incident) {
         const outcome = await onUnlinkParticipants(edge.participant_a, edge.participant_b);
         const stale = currentPersonID() !== id;
-        if (!stale) applyOutcome(outcome, 'unlink', edge.participant_a, edge.participant_b);
         if (!outcome.ok) {
           // A genuine failure still ends the sequence — every call is
           // idempotent, so re-confirming retries the remaining edges safely.
@@ -191,12 +150,6 @@
 {#if detail && isPersonDetail(detail) && !empty}
 <DetailSection title="Linked addresses">
   <div class="addresses" role="group" aria-label="Known addresses">
-    {#if staleBanner === 'identity_cache_stale'}
-      <section class="named-state" role="alert">
-        <span>{STALE_CACHE_MESSAGE}</span>
-        <Button label="Retry" surface="outline" size="sm" disabled={retrying} onclick={() => void retryRefresh()} />
-      </section>
-    {/if}
       {#key detail.id}
       <div class="identities">
         <div class="identifiers" role="group" aria-label="Linked identities">
@@ -272,7 +225,7 @@
   .addresses { display: grid; gap: var(--field-gap); }
   p { margin: 0; }
   .identifiers { display: grid; }
-  .named-state, .chip-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--control-gap); }
+  .chip-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--control-gap); }
   .unlink-error { color: var(--text-danger); }
   .addresses :global(.kit-disclosure p), small { color: var(--text-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 </style>

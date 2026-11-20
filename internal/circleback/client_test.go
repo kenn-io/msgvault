@@ -1,8 +1,13 @@
 package circleback
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -332,6 +337,54 @@ func TestCallToolJSON_DoesNotRetryOtherServerErrors(t *testing.T) {
 	assert.Equal(1, calls)
 	assert.Contains(err.Error(), "meeting not found")
 	assert.NotContains(err.Error(), "still rate limited")
+}
+
+// Circleback also rate limits at the HTTP layer. The MCP SDK reports a 429 as
+// a transport rejection rather than a tool result, and without a retry every
+// remaining batch of a large backfill fails immediately.
+func TestCallToolJSON_RetriesHTTPTooManyRequests(t *testing.T) {
+	require := require.New(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "fake-circleback", Version: "0.2.2"}, nil)
+	mcp.AddTool[map[string]any, any](server, &mcp.Tool{
+		Name:        toolReadMeetings,
+		Description: "HTTP rate-limit fixture",
+		InputSchema: officialCirclebackInputSchemas[toolReadMeetings],
+	}, func(_ context.Context, _ *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: `{"meetings":[{"id":"meeting-1","name":"Planning"}]}`}},
+		}, nil, nil
+	})
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+
+	var rejected atomic.Int32
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		if bytes.Contains(body, []byte(`"tools/call"`)) && rejected.Load() < 2 {
+			rejected.Add(1)
+			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
+			return
+		}
+		mcpHandler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(httpServer.Close)
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "msgvault-test", Version: "0"}, nil)
+	cs, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{
+		Endpoint:             httpServer.URL,
+		DisableStandaloneSSE: true,
+	}, nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = cs.Close() })
+
+	meetings, err := NewSessionForTesting(cs).ReadMeetings(t.Context(), []string{"meeting-1"})
+	require.NoError(err)
+	require.Len(meetings, 1)
+	require.Equal(int32(2), rejected.Load(), "both 429s should be retried on the same session")
 }
 
 func TestIsRateLimitMessage(t *testing.T) {

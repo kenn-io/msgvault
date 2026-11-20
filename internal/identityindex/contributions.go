@@ -29,14 +29,15 @@ func (b builder) materializeContributions(ctx context.Context, activity string, 
 		}
 		activity = "(SELECT * FROM " + activityBuildRelation + ")"
 	}
-	temperatureSQL := buildRelationshipTemperatureDailySQL(activity, effectiveAt)
+	groups := b.meetingGroups()
+	temperatureSQL := buildRelationshipTemperatureDailySQL(activity, groups, effectiveAt)
 	logicalSQL := buildLogicalActivityMaterializationSQL(activity)
 	if reuseContributions {
 		delta := "(SELECT * FROM " + deltaActivityBuildRelation + ")"
 		if reuseTemperature {
 			temperatureSQL = mergeTemperatureContributionsSQL(
 				b.committed(DatasetTemperatureContributions),
-				buildRelationshipTemperatureDailySQL(delta, effectiveAt),
+				buildRelationshipTemperatureDailySQL(delta, groups, effectiveAt),
 			)
 		}
 		logicalSQL = mergeLogicalContributionsSQL(
@@ -79,7 +80,25 @@ func (b builder) canReuseTemperatureContributions(ctx context.Context, effective
 	if err := b.db.QueryRowContext(ctx, query, priorCutoff.Time, effectiveAt).Scan(&newlyEligible); err != nil {
 		return false, fmt.Errorf("inspect newly eligible relationship messages: %w", err)
 	}
-	return !newlyEligible, nil
+	if newlyEligible {
+		return false, nil
+	}
+	groups := b.meetingGroups()
+	oldGroups := "read_parquet('" + quoteSQLString(b.committed(DatasetMeetingGroups)) + "')"
+	query = `SELECT EXISTS (
+		SELECT 1 FROM ` + oldGroups + ` old
+		LEFT JOIN ` + groups + ` current USING (message_id)
+		WHERE current.group_id IS DISTINCT FROM old.group_id
+		UNION ALL
+		SELECT 1 FROM ` + groups + ` current
+		JOIN ` + oldGroups + ` old ON old.group_id = current.group_id
+		WHERE NOT EXISTS (SELECT 1 FROM ` + oldGroups + ` prior WHERE prior.message_id = current.message_id)
+	)`
+	var changed bool
+	if err := b.db.QueryRowContext(ctx, query).Scan(&changed); err != nil {
+		return false, fmt.Errorf("inspect relationship meeting groups: %w", err)
+	}
+	return !changed, nil
 }
 
 func mergeTemperatureContributionsSQL(committed, delta string) string {
@@ -132,6 +151,7 @@ WITH new_rows AS (
 	       arg_max(c.message_type, struct_pack(at := c.occurred_at, id := c.anchor_message_id)) AS message_type,
 	       arg_max(c.entry_kind, struct_pack(at := c.occurred_at, id := c.anchor_message_id)) AS entry_kind,
 	       arg_max(c.is_from_me, struct_pack(at := c.occurred_at, id := c.anchor_message_id)) AS is_from_me,
+	       arg_max(c.deleted_from_source, struct_pack(at := c.occurred_at, id := c.anchor_message_id)) AS deleted_from_source,
 	       max(p.attachment_count)::BIGINT AS attachment_count,
 	       bool_or(c.is_owner) AS with_owner
 	FROM combined c
@@ -161,7 +181,8 @@ SELECT m.relation_kind, m.entry_key,
        CASE WHEN m.relation_kind = 1 THEN m.is_author ELSE NULL::BOOLEAN END AS is_author,
        CASE WHEN m.relation_kind = 1 THEN m.is_owner ELSE NULL::BOOLEAN END AS is_owner,
        CASE WHEN m.relation_kind = 1 THEN u.with_owner ELSE NULL::BOOLEAN END AS with_owner,
-       m.domain
+       m.domain,
+       CASE WHEN m.relation_kind = 3 THEN NULL::BOOLEAN ELSE u.deleted_from_source END AS deleted_from_source
 FROM merged m LEFT JOIN units u USING (entry_key)
 UNION ALL
 SELECT o.* FROM read_parquet('%[1]s') o

@@ -1,4 +1,5 @@
 import {
+  getPersonFactSummary as generatedGetPersonFactSummary,
   listPersonFactClaims as generatedListPersonFactClaims,
   listPersonFactDecisions as generatedListPersonFactDecisions,
   listPersonFactEvidence as generatedListPersonFactEvidence,
@@ -9,11 +10,14 @@ import {
 import { SvelteSet } from 'svelte/reactivity';
 import type { APIClient } from '../api/client';
 import type {
+  AttributeDefinition,
   PersonFactClaim as GeneratedPersonFactClaim,
   PersonFactDecision as GeneratedPersonFactDecision,
   PersonFactEvidence as GeneratedPersonFactEvidence,
 } from '../api/generated/models';
+import { sentenceCase } from '../explore/labels';
 import { encodeFactTargetRef } from './fact-target-ref';
+import { displayClaimValue } from '../components/directory/attribute-value';
 export const FACT_LEDGER_PAGE_LIMIT = 50;
 export type FactLedgerSection = 'evidence' | 'claims' | 'decisions' | 'pins';
 type PagedSection = Exclude<FactLedgerSection, 'pins'>;
@@ -28,6 +32,8 @@ type RawClaim = GeneratedPersonFactClaim;
 type RawDecision = GeneratedPersonFactDecision;
 export interface FactTargetOption {
   optionID: string;
+  name: string;
+  targetKey?: string;
   description: string;
   kind: string;
   valueType: string;
@@ -48,10 +54,15 @@ export interface FactEvidenceRow {
   createdAt: string;
   excerpt: string | null;
   readonly evidenceKey: string;
+  readonly evidenceID: number;
 }
 export interface FactClaimRow {
   rowToken: string;
   submittedValue: string;
+  displayValue: string;
+  parsedValue?: unknown;
+  targetKey?: string;
+  targetKind: string;
   normalizedValue: string | null;
   relation: string;
   origin: string;
@@ -60,11 +71,20 @@ export interface FactClaimRow {
   reportedScore: number;
   createdAt: string;
   readonly targetCanonical: string | undefined;
+  readonly claimKey: string;
+  readonly evidenceIDs: readonly number[];
 }
 export interface FactDecisionRow {
   rowToken: string;
+  displayValue: string;
+  parsedValue: unknown;
+  targetKind: string;
   action: string;
   reason: string;
+  outcome: string | null;
+  targetKey: string;
+  targetCanonical: string | undefined;
+  scoreMaxima: FactDecisionRow['score'] | null;
   score: {
     authority: number;
     confidence: number;
@@ -76,6 +96,7 @@ export interface FactDecisionRow {
   };
   projectionKind: string | null;
   createdAt: string;
+  readonly claimKey: string;
 }
 export interface FactPinRow {
   rowToken: string;
@@ -86,6 +107,7 @@ export interface FactPinRow {
 }
 export interface FactEvidenceStatusRow {
   supported: boolean;
+  /** The source's standing and why it changed, in words: "In the archive · imported again", "Source deleted". */
   reasonLabel: string;
   createdAt: string;
 }
@@ -124,7 +146,7 @@ export function evidenceStatusReasonLabel(reason: string): string {
 export class FactLedgerController {
   active = $state(false);
   personID = $state<number | null>(null);
-  selectedSection = $state<FactLedgerSection>('evidence');
+  selectedSection = $state<FactLedgerSection>('claims');
   selectedTargetOption = $state('all');
   targets = $state<FactTargetOption[]>([]);
   catalogLoading = $state(false);
@@ -137,6 +159,7 @@ export class FactLedgerController {
   historyOpen = $state(false);
   historyTriggerToken = $state<string | null>(null);
   focusRequest = $state<FactLedgerFocusRequest | null>(null);
+  exactFilter = $state<{ section: 'evidence' | 'decisions'; key: number | string } | null>(null);
   readonly revealedEvidence = new SvelteSet<string>();
   readonly revealedClaims = new SvelteSet<string>();
   private readonly client: APIClient;
@@ -155,6 +178,11 @@ export class FactLedgerController {
   };
   constructor(client: APIClient) {
     this.client = client;
+  }
+  async readSummary(id: number, signal: AbortSignal) {
+    const response = await generatedGetPersonFactSummary({ id }, { ...this.client, signal });
+    if (!response.data) throw new Error('Summary unavailable');
+    return response.data;
   }
   get initialLoading(): boolean {
     return (
@@ -182,10 +210,10 @@ export class FactLedgerController {
   }
   async selectSection(section: FactLedgerSection): Promise<void> {
     if (this.disposed || this.selectedSection === section) return;
+    this.exactFilter = null;
     this.selectedSection = section;
     this.clearDisclosureAndDialog();
     if (section === 'pins') {
-      this.clearPins();
       if (this.active && this.personID !== null) await this.loadPins(this.contextGeneration);
       return;
     }
@@ -195,11 +223,32 @@ export class FactLedgerController {
   async selectTarget(optionID: string): Promise<void> {
     if (optionID !== 'all' && !this.targetByOption.has(optionID)) return;
     if (this.selectedTargetOption === optionID) return;
+    this.exactFilter = null;
     this.selectedTargetOption = optionID;
     this.clearDisclosureAndDialog();
     if (this.selectedSection === 'pins') return;
     this.clearPage(this.selectedSection);
     if (this.active && this.personID !== null) await this.loadPage(this.selectedSection, 0, this.contextGeneration);
+  }
+  async showDecision(claimKey: string, targetCanonical: string | undefined): Promise<void> {
+    await this.showExact('decisions', claimKey, targetCanonical);
+  }
+  async showEvidence(evidenceID: number, targetCanonical: string | undefined): Promise<void> {
+    await this.showExact('evidence', evidenceID, targetCanonical);
+  }
+  private async showExact(section: 'evidence' | 'decisions', key: number | string, targetCanonical: string | undefined): Promise<void> {
+    if (!this.active || this.personID === null || this.disposed) return;
+    this.selectedTargetOption = this.targets.find(target => target.canonical === targetCanonical)?.optionID ?? 'all';
+    this.selectedSection = section;
+    this.clearDisclosureAndDialog(section === 'decisions' ? String(key) : undefined);
+    this.exactFilter = { section, key };
+    this.clearPage(section);
+    await this.loadPage(section, 0, this.contextGeneration);
+  }
+  async showAll(): Promise<void> {
+    const section = this.exactFilter?.section;
+    this.exactFilter = null;
+    if (section) { this.clearDisclosureAndDialog(); this.clearPage(section); await this.loadPage(section, 0, this.contextGeneration); }
   }
   hasPrevious(section: PagedSection): boolean {
     return this[section].offset > 0;
@@ -220,12 +269,6 @@ export class FactLedgerController {
     this.clearDisclosureAndDialog();
     await this.loadPage(section, Math.max(0, page.offset - FACT_LEDGER_PAGE_LIMIT), this.contextGeneration);
   }
-  async firstPage(section: PagedSection): Promise<void> {
-    const page = this[section];
-    if (!this.active || this.personID === null || page.loading || page.offset === 0) return;
-    this.clearDisclosureAndDialog();
-    await this.loadPage(section, 0, this.contextGeneration);
-  }
   async retrySection(section: FactLedgerSection): Promise<void> {
     if (!this.active || this.personID === null) return;
     if (section === 'pins') return this.loadPins(this.contextGeneration);
@@ -238,14 +281,19 @@ export class FactLedgerController {
   revealEvidence(rowToken: string): void {
     if (this.evidence.rows.some((row) => row.rowToken === rowToken)) this.revealedEvidence.add(rowToken);
   }
-  revealClaim(rowToken: string): void {
-    if (this.claims.rows.some((row) => row.rowToken === rowToken)) this.revealedClaims.add(rowToken);
+  revealClaim(claimKey: string): void {
+    if ([...this.claims.rows, ...this.decisions.rows].some((row) => row.claimKey === claimKey)) this.revealedClaims.add(claimKey);
   }
-  claimSensitivity(row: FactClaimRow): FactClaimSensitivity {
+  claimSensitivity(row: Pick<FactClaimRow, 'targetCanonical'>): FactClaimSensitivity {
     if (!row.targetCanonical) return 'unknown';
     const target = this.targets.find((candidate) => candidate.canonical === row.targetCanonical);
     if (!target) return 'unknown';
     return target.sensitive ? 'sensitive' : 'non_sensitive';
+  }
+  fieldName(row: { targetKey?: string; targetCanonical: string | undefined }, definitions: Pick<AttributeDefinition, 'universal_id' | 'label'>[] = []): string {
+    return definitions.find(definition => definition.universal_id === row.targetKey)?.label
+      ?? this.targets.find(target => target.canonical === row.targetCanonical)?.name
+      ?? (row.targetCanonical?.startsWith('employment:') ? 'Work' : 'Unknown field');
   }
   async openEvidenceHistory(rowToken: string): Promise<void> {
     const row = this.evidence.rows.find((candidate) => candidate.rowToken === rowToken);
@@ -298,9 +346,10 @@ export class FactLedgerController {
     this.resetContext();
   }
   private resetContext(): void {
+    this.exactFilter = null;
     ++this.contextGeneration;
     for (const name of Object.keys(this.lanes) as Array<keyof typeof this.lanes>) this.abortLane(name);
-    this.selectedSection = 'evidence';
+    this.selectedSection = 'claims';
     this.selectedTargetOption = 'all';
     this.targets = [];
     this.targetByOption.clear();
@@ -318,9 +367,11 @@ export class FactLedgerController {
     this.revealedEvidence.clear();
     this.revealedClaims.clear();
   }
-  private clearDisclosureAndDialog(): void {
+  private clearDisclosureAndDialog(keepClaim?: string): void {
     this.revealedEvidence.clear();
+    const keepRevealed = keepClaim !== undefined && this.revealedClaims.has(keepClaim);
     this.revealedClaims.clear();
+    if (keepRevealed) this.revealedClaims.add(keepClaim);
     if (this.historyOpen) this.closeEvidenceHistory();
     this.focusRequest = null;
   }
@@ -329,10 +380,6 @@ export class FactLedgerController {
     if (section === 'evidence') this.evidence = pageState();
     else if (section === 'claims') this.claims = pageState();
     else this.decisions = pageState();
-  }
-  private clearPins(): void {
-    this.abortLane('pins');
-    this.pins = { rows: [], loading: false, error: null };
   }
   private startLane(name: keyof typeof this.lanes): {
     abort: AbortController;
@@ -374,7 +421,7 @@ export class FactLedgerController {
       );
       if (!this.owns('catalog', abort, generation, context)) return;
       if (!response.data) {
-        this.catalogError = 'Unable to load fact targets.';
+        this.catalogError = "Couldn't load fields.";
         this.targets = [];
         return;
       }
@@ -391,6 +438,9 @@ export class FactLedgerController {
           continue;
         targets.push({
           optionID: `target-${targets.length}`,
+          // Jobs are "Work" on the person page, so Facts names them the same.
+          name: raw.kind === 'employment' ? 'Work' : sentenceCase(raw.slug),
+          targetKey: raw.key,
           description: raw.description,
           kind: raw.kind,
           valueType: raw.value_type,
@@ -406,7 +456,7 @@ export class FactLedgerController {
         description: targets.find((target) => target.canonical === pin.targetCanonical)?.description ?? pin.description,
       }));
     } catch {
-      if (this.owns('catalog', abort, generation, context)) this.catalogError = 'Unable to load fact targets.';
+      if (this.owns('catalog', abort, generation, context)) this.catalogError = "Couldn't load fields.";
     } finally {
       if (this.owns('catalog', abort, generation, context)) this.catalogLoading = false;
     }
@@ -428,7 +478,7 @@ export class FactLedgerController {
       if (!this.owns('pins', abort, generation, context)) return;
       if (!response.data) {
         this.pins.rows = [];
-        this.pins.error = 'Unable to load fact pins.';
+        this.pins.error = "Couldn't load pins.";
         return;
       }
       this.pins.rows = (response.data.pins ?? []).map((pin, index) => {
@@ -443,7 +493,7 @@ export class FactLedgerController {
         };
       });
     } catch {
-      if (this.owns('pins', abort, generation, context)) this.pins.error = 'Unable to load fact pins.';
+      if (this.owns('pins', abort, generation, context)) { this.pins.rows = []; this.pins.error = "Couldn't load pins."; }
     } finally {
       if (this.owns('pins', abort, generation, context)) this.pins.loading = false;
     }
@@ -459,6 +509,7 @@ export class FactLedgerController {
     page.retryOffset = undefined;
     const query = {
       ...(this.selectedTarget ? { target: this.selectedTarget } : {}),
+      ...(this.exactFilter?.section === section ? (section === 'evidence' ? { evidence_id: Number(this.exactFilter.key) } : { claim_key: String(this.exactFilter.key) }) : {}),
       limit: FACT_LEDGER_PAGE_LIMIT,
       offset: targetOffset,
     };
@@ -504,20 +555,23 @@ export class FactLedgerController {
       page.rows = projected as never[];
       page.offset = targetOffset;
       page.endReached = projected.length < FACT_LEDGER_PAGE_LIMIT;
-      this.revealedEvidence.clear();
-      this.revealedClaims.clear();
+      if (targetOffset === 0 && this.exactFilter?.section === section) {
+        this.requestFocus(projected.length ? `${section === 'evidence' ? 'evidence' : 'decision'}:${this.exactFilter.key}` : `${section}-section`);
+      }
+      if (section === 'evidence') this.revealedEvidence.clear();
+      if (section === 'claims') this.revealedClaims.clear();
     } catch {
       if (this.owns(section, abort, generation, context)) this.failPage(section, targetOffset);
     } finally {
       if (this.owns(section, abort, generation, context)) page.loading = false;
     }
   }
+  /** Each failure is the notice's own sentence; the server's message stays out, so no private value reaches the page. */
   private failPage(section: PagedSection, targetOffset: number): void {
     const page = this[section];
-    const label = section === 'evidence' ? 'evidence' : section === 'claims' ? 'claims' : 'decisions';
-    if (page.rows.length === 0 && page.offset === 0 && targetOffset === 0) page.error = `Unable to load fact ${label}.`;
+    if (page.rows.length === 0 && page.offset === 0 && targetOffset === 0) page.error = `Couldn't load ${section}.`;
     else {
-      page.pageError = `Unable to load the requested ${label} page.`;
+      page.pageError = `Couldn't load that page of ${section}.`;
       page.retryOffset = targetOffset;
     }
   }
@@ -596,12 +650,18 @@ function projectEvidence(row: RawEvidence, index: number): FactEvidenceRow {
     createdAt: row.created_at,
     excerpt: row.excerpt,
     evidenceKey: row.evidence_key,
+    evidenceID: row.id,
   };
 }
 function projectClaim(row: RawClaim, index: number): FactClaimRow {
+  const { parsedValue, displayValue } = claimValue(row.submitted_value, row.target.kind);
   return {
     rowToken: `claim-${index}`,
     submittedValue: row.submitted_value,
+    displayValue,
+    parsedValue,
+    targetKey: row.target.key,
+    targetKind: row.target.kind,
     normalizedValue: row.normalized_value ?? null,
     relation: row.relation,
     origin: row.origin,
@@ -610,13 +670,23 @@ function projectClaim(row: RawClaim, index: number): FactClaimRow {
     reportedScore: row.confidence.reported_score,
     createdAt: row.created_at,
     targetCanonical: encodeFactTargetRef(row.target),
+    claimKey: row.claim_key,
+    evidenceIDs: row.evidence_ids ?? [],
   };
 }
 function projectDecision(row: RawDecision, index: number): FactDecisionRow {
+  const { parsedValue, displayValue } = claimValue(row.claim_value, row.target.kind);
   return {
     rowToken: `decision-${index}`,
+    displayValue,
+    parsedValue,
+    targetKind: row.target.kind,
     action: row.action,
     reason: row.reason,
+    outcome: row.outcome,
+    targetKey: row.target.key,
+    targetCanonical: encodeFactTargetRef(row.target),
+    scoreMaxima: row.score_maxima ? { authority: row.score_maxima.authority, confidence: row.score_maxima.confidence, corroboration: row.score_maxima.corroboration, directness: row.score_maxima.directness, freshness: row.score_maxima.freshness, sourceClass: row.score_maxima.source_class, total: row.score_maxima.total } : null,
     score: {
       authority: row.score.authority,
       confidence: row.score.confidence,
@@ -628,5 +698,19 @@ function projectDecision(row: RawDecision, index: number): FactDecisionRow {
     },
     projectionKind: row.projection?.kind ?? null,
     createdAt: row.created_at,
+    claimKey: row.claim_key,
   };
+}
+
+export function claimValue(submitted: unknown, kind: string): { parsedValue: unknown; displayValue: string } {
+  let parsedValue = submitted;
+  if (typeof submitted === 'string') {
+    try { parsedValue = JSON.parse(submitted); } catch { parsedValue = submitted; }
+  }
+  const numericToken = typeof submitted === 'string' && /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(submitted.trim());
+  return { parsedValue, displayValue: numericToken ? (submitted as string).trim() : readableValue(parsedValue, kind) };
+}
+
+function readableValue(value: unknown, kind: string): string {
+  return typeof value === 'string' ? value.trim() ? value : 'Blank submission' : displayClaimValue(value, kind);
 }

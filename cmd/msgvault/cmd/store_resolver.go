@@ -12,13 +12,14 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -314,14 +315,23 @@ func openRemoteStore(ctx context.Context, state *invocation) (*daemonclient.Clie
 		return nil, errors.New("invocation state is required")
 	}
 	currentCfg := state.cfg
-	if err := currentCfg.ResolveRemoteKey(); err != nil {
-		return nil, err
-	}
-	st, err := newDaemonCLIClient(ctx, daemonclient.Config{
+	clientConfig := daemonclient.Config{
 		URL:           currentCfg.Remote.URL,
-		APIKey:        currentCfg.Remote.AuthenticationKey(),
 		AllowInsecure: currentCfg.Remote.AllowInsecure,
-	})
+	}
+	if len(currentCfg.Remote.CredentialProvider) > 0 {
+		source, err := remoteCredentialSource(currentCfg)
+		if err != nil {
+			return nil, err
+		}
+		clientConfig.Credential = source.Token
+	} else {
+		if err := currentCfg.ResolveRemoteKey(); err != nil {
+			return nil, err
+		}
+		clientConfig.APIKey = currentCfg.Remote.AuthenticationKey()
+	}
+	st, err := newDaemonCLIClient(ctx, clientConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -926,11 +936,7 @@ func truncateDaemonLogLine(line string) string {
 	if len(line) <= maxDaemonLogLineLen {
 		return line
 	}
-	cut := maxDaemonLogLineLen
-	for cut > 0 && !utf8.RuneStart(line[cut]) {
-		cut--
-	}
-	return line[:cut] + "…"
+	return textutil.PrefixBytes(line, maxDaemonLogLineLen) + "…"
 }
 
 // parseLogfmt is a tolerant parser for slog's text output: space

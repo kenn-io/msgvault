@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
 	imaplib "go.kenn.io/msgvault/internal/imap"
@@ -254,18 +255,29 @@ func TestStoreAPIAdapterDeletePersonRejectsRecordedAttemptKeyMismatch(t *testing
 	assert.NotEmpty(t, attempts)
 }
 
-// serveLifecycleTestTimeout bounds waits for daemon-startup milestones (API
-// seam entered, analytics build started, health ready). Every use is a
-// positive wait, so the value only stretches the failure path — passing runs
-// are unaffected. It must absorb a full InitSchema on the slowest CI
-// environment: the sharded Windows runner has been observed taking over two
-// minutes to execute schema.sql under filesystem load.
+// serveLifecycleTestTimeout bounds waits for daemon lifecycle milestones (API
+// seam entered, analytics build started, health ready, runServe returning
+// after cancellation). Every use is a positive wait, so the value only
+// stretches the failure path — passing runs are unaffected. It must absorb a
+// full InitSchema on the slowest CI environment: the sharded Windows runner
+// has been observed taking over two minutes to execute schema.sql under
+// filesystem load, and stalling for over five seconds between two
+// non-blocking steps of shutdown.
 const serveLifecycleTestTimeout = 180 * time.Second
 
 func TestServeOAuthValidationAllowsMicrosoftOnly(t *testing.T) {
 	assert.True(t, hasServeOAuthConfig(&config.Config{
 		Microsoft: config.MicrosoftConfig{ClientID: "azure-client-id"},
 	}))
+}
+
+func TestServeOAuthValidationAllowsNamedMicrosoftApp(t *testing.T) {
+	assert.True(t, hasServeOAuthConfig(&config.Config{Microsoft: config.MicrosoftConfig{
+		Apps: map[string]config.MicrosoftApp{"work": {ClientID: "work-client"}},
+	}}))
+	assert.False(t, hasServeOAuthConfig(&config.Config{Microsoft: config.MicrosoftConfig{
+		Apps: map[string]config.MicrosoftApp{"work": {}},
+	}}))
 }
 
 func TestServeOAuthValidationReportsNoProviders(t *testing.T) {
@@ -296,7 +308,7 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	select {
 	case err := <-errCh:
 		require.NoError(t, err, "runServe")
-	case <-time.After(5 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow(t, "runServe did not stop after context cancellation")
 	}
 }
@@ -342,7 +354,7 @@ func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
 	select {
 	case err := <-errCh:
 		require.NoError(err, "runServe")
-	case <-time.After(5 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow("runServe did not stop after context cancellation")
 	}
 }
@@ -458,7 +470,7 @@ func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 	select {
 	case err := <-errCh:
 		require.NoError(err, "runServe")
-	case <-time.After(5 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow("runServe did not stop after context cancellation")
 	}
 }
@@ -1988,14 +2000,12 @@ func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
 	assert.Equal(store.SyncStatusCompleted, got.LastSuccessfulSync.Status, "LastSuccessfulSync.Status")
 }
 
-func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) {
+func TestStoreAPIAdapterRunCLISyncDefersPacking(t *testing.T) {
 	tests := []struct {
 		name           string
 		predecessorErr error
-		wantPacked     bool
-		wantAttempts   int
 	}{
-		{name: "success", wantPacked: true, wantAttempts: 1},
+		{name: "success"},
 		{name: "failure", predecessorErr: errors.New("sync subprocess failed")},
 	}
 
@@ -2030,10 +2040,10 @@ func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) 
 				require.NoError(err)
 			}
 			assert.Equal(1, runnerCalls)
-			assert.Equal(tt.wantPacked, f.packedEntry(hash) != nil)
-			assert.Equal(tt.wantAttempts,
-				strings.Count(f.logs.String(), "automatic attachment maintenance complete"))
-			assert.Empty(events, "successful automatic maintenance writes no normal CLI output")
+			assert.Nil(f.packedEntry(hash))
+			assert.NotContains(f.logs.String(), "automatic attachment maintenance complete")
+			assert.Empty(events)
+			assert.True(f.maintenance.packPending.Load())
 		})
 	}
 }
@@ -2065,6 +2075,12 @@ func TestCLISyncSubprocessArgs(t *testing.T) {
 	)
 	assert.Equal([]string{"sync-full", "--", "-reader@example.org"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, Email: "-reader@example.org"}))
+	assert.Equal(
+		[]string{"sync-full", "--query", "label:example", "--noresume", "--before", "2024-03-01", "--after", "2024-01-01", "--limit", "2"},
+		cliSyncSubprocessArgs(api.CLISyncRequest{
+			Full: true, Query: "label:example", NoResume: true, Before: "2024-03-01", After: "2024-01-01", Limit: 2,
+		}),
+	)
 }
 
 func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {
@@ -2198,6 +2214,47 @@ func TestStoreAPIAdapterCanceledSyncOperationIsFailed(t *testing.T) {
 	assert.Empty(op.Runs)
 }
 
+func TestStoreAPIAdapterInterruptedSyncOperationIsFailed(t *testing.T) {
+	f := storetest.New(t)
+	_, err := f.Store.CreateSyncOperation(f.Source.ID, "operation-1")
+	require.NoError(t, err)
+	adapter := &storeAPIAdapter{store: f.Store}
+	var events []api.CLISyncEvent
+	err = adapter.runCLISyncOperationWithRunner(t.Context(), api.CLISyncRequest{Full: true, OperationID: "operation-1"}, func(event api.CLISyncEvent) error {
+		events = append(events, event)
+		return nil
+	}, func(_ context.Context, _ []string, emit func(string, string) error) error {
+		require.NoError(t, emit("outcome", "interrupted"))
+		return errors.New(cliSubprocessExitSentinel)
+	})
+	require.EqualError(t, err, cliSubprocessExitSentinel)
+	assert.Equal(t, []api.CLISyncEvent{{Type: "outcome", Data: "interrupted"}}, events)
+	op, err := f.Store.GetSyncOperation("operation-1")
+	require.NoError(t, err)
+	assert.Equal(t, "failed", op.Status)
+}
+
+type interruptedSyncAdapter struct{ *storeAPIAdapter }
+
+func (a interruptedSyncAdapter) RunCLISync(ctx context.Context, req api.CLISyncRequest, emit func(api.CLISyncEvent) error) error {
+	return a.runCLISyncOperationWithRunner(ctx, req, emit, func(ctx context.Context, args []string, emit func(string, string) error) error {
+		return classifyDaemonCLIWaitErr(helperProcessCommand(ctx, "interrupted").Run(), args, emit)
+	})
+}
+
+func TestInterruptedSyncStreamFailsWithoutOutcomeHandling(t *testing.T) {
+	f := storetest.New(t)
+	adapter := interruptedSyncAdapter{&storeAPIAdapter{store: f.Store}}
+	srv := api.NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, adapter, nil, slog.New(slog.DiscardHandler))
+	httpServer := httptest.NewServer(srv.Router())
+	t.Cleanup(httpServer.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: httpServer.URL, AllowInsecure: true, RequestMode: daemonclient.RequestModeCLI})
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+	err = client.RunCLISync(t.Context(), daemonclient.CLISyncRequest{Full: true}, func(string, string) error { return nil })
+	require.ErrorContains(t, err, cliSubprocessExitSentinel)
+}
+
 func TestStoreAPIAdapterFinalizesSyncOperationAfterRunnerReturns(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -2227,19 +2284,17 @@ func TestStoreAPIAdapterFinalizesSyncOperationAfterRunnerReturns(t *testing.T) {
 	assert.Equal("done", op.Status)
 }
 
-func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {
+func TestStoreAPIAdapterRunCLICommandDefersPackingForAllowlistedCommands(t *testing.T) {
 	tests := []struct {
 		name           string
 		args           []string
 		predecessorErr error
-		wantPacked     bool
-		wantAttempts   int
+		wantPending    bool
 	}{
 		{
-			name:         "allowlisted success",
-			args:         []string{importMboxCommand, "archive.mbox"},
-			wantPacked:   true,
-			wantAttempts: 1,
+			name:        "allowlisted success",
+			args:        []string{importMboxCommand, "archive.mbox"},
+			wantPending: true,
 		},
 		{
 			name: "unrelated success",
@@ -2249,6 +2304,7 @@ func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {
 			name:           "allowlisted failure",
 			args:           []string{"sync-teams", "alice@example.com"},
 			predecessorErr: errors.New("command subprocess failed"),
+			wantPending:    true,
 		},
 	}
 
@@ -2291,10 +2347,9 @@ func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {
 				require.NoError(err)
 			}
 			assert.Equal(1, runnerCalls)
-			assert.Equal(tt.wantPacked, f.packedEntry(hash) != nil)
-			assert.Equal(tt.wantAttempts,
-				strings.Count(f.logs.String(), "automatic attachment maintenance complete"))
-			assert.Empty(events, "successful automatic maintenance writes no normal CLI output")
+			assert.Nil(f.packedEntry(hash))
+			assert.Empty(events)
+			assert.Equal(tt.wantPending, f.maintenance.packPending.Load())
 		})
 	}
 }
@@ -2337,6 +2392,21 @@ func TestStoreAPIAdapterRunCLIRepairMessageUsesDedicatedLocalArgv(t *testing.T) 
 			require.NoError(t, err)
 			assert.Equal(t, test.want, gotArgs)
 			assert.Equal(t, []api.CLIRepairMessageEvent{{Type: "stdout", Data: "line\n"}}, events)
+		})
+	}
+}
+
+func TestStoreAPIAdapterRunCLIRepairMessageDefersPacking(t *testing.T) {
+	for _, audit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("audit=%v", audit), func(t *testing.T) {
+			f := newAttachmentMaintenanceFixture(t)
+			hash := f.addLoose([]byte("repair attachment"))
+			adapter := &storeAPIAdapter{attachmentMaintenance: f.maintenance}
+			err := adapter.runCLIRepairMessageWithRunner(t.Context(), api.CLIRepairMessageRequest{Audit: audit}, nil,
+				func(context.Context, []string, func(string, string) error) error { return nil })
+			require.NoError(t, err)
+			assert.Nil(t, f.packedEntry(hash))
+			assert.Equal(t, !audit, f.maintenance.packPending.Load())
 		})
 	}
 }
@@ -2596,52 +2666,6 @@ func TestStoreAPIAdapterExplicitRepackCancellationFailsFast(t *testing.T) {
 	has, getErr := f.store.HasPackRecordContext(t.Context(), oldPackID)
 	require.NoError(getErr)
 	assert.True(has, "fail-fast cancellation leaves physical inventory untouched")
-}
-
-func TestStoreAPIAdapterMaintenanceWarningStreamsWithoutChangingSuccess(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	maintenance, logs := newFailingAttachmentMaintenance(t)
-	adapter := &storeAPIAdapter{store: maintenance.store, attachmentMaintenance: maintenance}
-	var events []api.CLISyncEvent
-
-	err := adapter.runCLISyncWithRunner(
-		t.Context(),
-		api.CLISyncRequest{Email: "alice@example.com"},
-		func(event api.CLISyncEvent) error {
-			events = append(events, event)
-			return nil
-		},
-		func(context.Context, []string, func(string, string) error) error { return nil },
-	)
-
-	require.NoError(err, "automatic maintenance failure must preserve sync success")
-	require.Len(events, 1, "one concise warning event")
-	assert.Equal("stderr", events[0].Type)
-	assert.Contains(events[0].Data, "pack-attachments")
-	assert.Contains(events[0].Data, "retry")
-	assert.Contains(logs.String(), "automatic attachment maintenance failed")
-}
-
-func TestStoreAPIAdapterMaintenanceWarningStreamFailurePreservesSuccess(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	maintenance, logs := newFailingAttachmentMaintenance(t)
-	adapter := &storeAPIAdapter{store: maintenance.store, attachmentMaintenance: maintenance}
-	warningErr := errors.New("client disconnected")
-
-	err := adapter.runCLICommandWithRunner(
-		t.Context(),
-		api.CLIRunRequest{Args: []string{importMboxCommand, "archive.mbox"}},
-		func(api.CLIRunEvent) error { return warningErr },
-		func(context.Context, []string, map[string]string, string, func(string, string) error) error {
-			return nil
-		},
-	)
-
-	require.NoError(err, "warning stream failure must preserve command success")
-	assert.Contains(logs.String(), "failed to emit automatic attachment maintenance warning")
-	assert.Contains(logs.String(), warningErr.Error())
 }
 
 func TestStoreAPIAdapterServesCLIInitDB(t *testing.T) {

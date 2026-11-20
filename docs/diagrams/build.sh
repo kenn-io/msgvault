@@ -10,6 +10,7 @@
 # Requirements: Google Chrome (or Chromium) and ImageMagick (`magick`).
 # Usage:        ./build.sh            # build all diagrams
 #               CHROME=/path ./build.sh
+#               CHROME_ARGS=--no-sandbox ./build.sh  # extra Chrome flags
 #
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -42,7 +43,8 @@ for html in *-concept.html; do
 
   # Render at 2x on a tall canvas so nothing is clipped. The page paints its
   # own #0a0a0a background; the tall viewport just leaves trimmable margin.
-  "$CHROME" --headless=new --disable-gpu --hide-scrollbars \
+  # shellcheck disable=SC2086 # CHROME_ARGS holds extra flags, such as --no-sandbox in a container.
+  "$CHROME" --headless=new --disable-gpu --hide-scrollbars ${CHROME_ARGS:-} \
     --force-device-scale-factor=2 --window-size=1600,2200 \
     --default-background-color=0a0a0aff \
     --screenshot="$tmp" "file://$(pwd)/$html"

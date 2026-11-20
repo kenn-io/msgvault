@@ -53,7 +53,6 @@
   let bulkIDs = $state<number[]>([]);
   let bulkCompleted = $state(0);
   let bulkContext = $state<ReturnType<RelationshipsController['personMergeContextSnapshot']>>();
-  let staleLink = $state<{ a: number; b: number } | null>(null);
   const profileFilters = $derived(Boolean(urlState.directoryContactState || urlState.directoryCategory || urlState.directoryOrganization || urlState.directoryPrimaryChannel || urlState.directoryLastContactAfter || urlState.directoryLastContactBefore));
   const directoryMode = $derived(facet === 'people' && (saved || profileFilters));
   const rankedList = $derived(facet === 'people' && !directoryMode && sort === 'closest' && query.trim() === '');
@@ -176,14 +175,14 @@
         const next = bulkIDs[bulkCompleted + 1]!;
         const result = await controller.linkParticipants(bulkIDs[0]!, next);
         if (result.ok || result.code === 'already_linked') {
-          if (result.ok) { onDuplicatesChanged(); staleLink = result.cacheState === 'stale' ? { a: bulkIDs[0]!, b: next } : null; await directory.refreshSelectedPerson(); }
+          if (result.ok) { onDuplicatesChanged(); await directory.refreshSelectedPerson(); }
           bulkCompleted += 1; continue;
         }
         if (result.code === 'merge_required') { bulkConflict = result.conflict; return; }
         bulkMessage = `${bulkCompleted} of ${bulkIDs.length - 1} linked. ${result.message}`; return;
       }
       selection.clear();
-      bulkMessage = staleLink ? 'People linked. The identity cache needs a retry.' : 'People are now treated as the same person.';
+      bulkMessage = 'People are now treated as the same person.';
     } finally {
       bulkPending = false;
       // Linking moves activity between people, even when navigation has unmounted this workspace.
@@ -202,17 +201,12 @@
     await Promise.all([controller.reconcilePersonMerge(context), refreshProfiles()]);
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
+    controller.recordIdentityCacheState(success.result.identity_revision, success.result.cache_state);
     bulkPending = true; bulkConflict = undefined;
     if (soloPerson === success.result.merge.absorbed_person_id) onReplaceNavigation({ directoryPersonID: success.survivor.id });
     page.onAnnounce?.(`Profiles merged into ${success.survivor.display_name}.`);
     if (bulkContext) await reconcilePersonMerge(bulkContext);
     await continueBulk();
-  }
-  async function retryLink(): Promise<void> {
-    if (!staleLink || bulkPending) return;
-    bulkPending = true; const result = await controller.linkParticipants(staleLink.a, staleLink.b); bulkPending = false;
-    if (result.ok) onDuplicatesChanged();
-    if (result.ok && result.cacheState === 'ready') { staleLink = null; if (bulkCompleted === bulkIDs.length - 1) bulkMessage = 'Identity cache refreshed.'; }
   }
 </script>
 
@@ -244,7 +238,6 @@
         onLoadMore={loadMore} onRetry={() => directoryMode ? void directory.reloadFirstPage() : void controller.loadList(page.predicate)} onMerge={() => void startBulk()} />
     </div>
     {#if bulkMessage}<p role="status">{bulkMessage}</p>{/if}
-    {#if staleLink}<Button label="Retry identity cache" onclick={() => void retryLink()} />{/if}
   </div>
 {/snippet}
 {#snippet person()}

@@ -68,11 +68,12 @@ func TestOperationPolicyDefaultsDenyCapabilities(t *testing.T) {
 
 func TestLegacyOperationAdmissionIsPreserved(t *testing.T) {
 	assert := assert.New(t)
-	wantReads := delegatedReads("", 0, 0, "")
+	wantReads := delegatedReads("", 0, 0, 0, "")
 	wantRemoteRead := map[string]bool{
 		"getHealth": true, "getCLIStats": true, "searchCLI": true, "listCLIAccounts": true, "getCLICacheStats": true,
 		"getCLIMessage": true, "getCLIMessageOriginal": true, "getCLIMessageThread": true, "getCLIMessageRaw": true,
 		"getCLIAttachment": true, "listCLICollections": true, "getCLICollection": true, "listCLIIdentities": true,
+		"exportCLIMessages": true,
 	}
 	wantRemoteWrite := map[string]bool{
 		"createCLICollection": true, "addCLICollectionSources": true, "removeCLICollectionSources": true, "deleteCLICollection": true,

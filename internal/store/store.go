@@ -1174,6 +1174,8 @@ const messagesAccountPendingIndexDefinition = "ON messages(source_id, id) WHERE 
 // it holds only emails whose email_link_keys are not derived yet.
 const messagesEmailLinkagePendingIndexDefinition = "ON messages(source_id, id) WHERE " + emailLinkagePendingPredicate
 
+const messageRecipientsNormalizedEmailIndexDefinition = "ON message_recipients(LOWER(TRIM(email_address)), message_id) WHERE email_address IS NOT NULL AND TRIM(email_address) <> ''"
+
 // The first SQLite index build can take minutes, so log its start and finish.
 func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
 	const name = "idx_message_recipients_email_from"
@@ -1188,6 +1190,30 @@ func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
 	slog.Info("building index", slog.String("index", name), slog.String("table", "message_recipients"))
 	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+name+` ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'`)
+		return err
+	}); err != nil {
+		return err
+	}
+	slog.Info("built index", slog.String("index", name), slog.Duration("elapsed", time.Since(started)))
+	return nil
+}
+
+// ensureMessageRecipientsNormalizedEmailIndex supports batched lookups by the
+// immutable recipient address snapshot. The address column is added by legacy
+// migrations, so this index is created after that migration loop.
+func (s *Store) ensureMessageRecipientsNormalizedEmailIndex(ctx context.Context) error {
+	const name = "idx_message_recipients_normalized_email"
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?)`, name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	started := time.Now()
+	slog.Info("building index", slog.String("index", name), slog.String("table", "message_recipients"))
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+name+` `+messageRecipientsNormalizedEmailIndexDefinition)
 		return err
 	}); err != nil {
 		return err
@@ -1269,6 +1295,11 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_person_match_scoring_contact_lookup", "ON participant_contact_observations(address_kind, normalized_value, participant_id) WHERE active_until IS NULL AND superseded_at IS NULL"},
 		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
 		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
+		{"idx_message_recipients_normalized_email", messageRecipientsNormalizedEmailIndexDefinition},
+		{"idx_source_merge_archive_only_original", "ON source_merge_archive_only_messages(original_source_message_id)"},
+		{"idx_calendar_events_series_id", "ON calendar_events(series_provider_id, message_id)"},
+		{"idx_calendar_events_ical_uid", "ON calendar_events(ical_uid)"},
+		{"idx_meeting_details_link_key", "ON meeting_details(link_key) WHERE link_key IS NOT NULL"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -1792,12 +1823,16 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
+	if err := s.runOnceMigration(ctx, migrationPersonFactOutcomes, 1, false, s.backfillPersonFactOutcomes); err != nil {
+		return fmt.Errorf("backfill person fact outcomes: %w", err)
+	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
 	// the legacy migrations above. PostgreSQL builds them concurrently in
 	// buildLargeIndexesConcurrently.
 	if !s.IsPostgreSQL() {
 		for _, index := range []struct{ name, definition string }{
+			{"idx_meeting_details_link_key", "ON meeting_details(link_key) WHERE link_key IS NOT NULL"},
 			{"idx_messages_account", messagesAccountIndexDefinition},
 			{"idx_messages_account_pending", messagesAccountPendingIndexDefinition},
 			{"idx_messages_email_linkage_pending", messagesEmailLinkagePendingIndexDefinition},
@@ -2180,6 +2215,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	// 30s statement_timeout (finding S1). IF NOT EXISTS is idempotent per start.
 	if !s.IsPostgreSQL() {
 		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_calendar_events_ical_uid ON calendar_events(ical_uid)`); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, id)`); err != nil {
 				return err
 			}
@@ -2264,6 +2302,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 
 		if err := s.ensureFromAddressIndex(ctx); err != nil {
 			return fmt.Errorf("create identity From-envelope index: %w", err)
+		}
+		if err := s.ensureMessageRecipientsNormalizedEmailIndex(ctx); err != nil {
+			return fmt.Errorf("create normalized recipient-envelope index: %w", err)
 		}
 	}
 
@@ -2550,6 +2591,12 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 		s.backfillCardDAVInferenceExportState,
 	); err != nil {
 		return fmt.Errorf("backfill CardDAV inference export state: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationCardDAVInferenceExportStateV2, 1, false,
+		s.backfillCardDAVInferenceExportStateV2,
+	); err != nil {
+		return fmt.Errorf("backfill CardDAV inference export state for names and contacts: %w", err)
 	}
 
 	// Reconcile the system relationship type catalog on every open: insert
@@ -2950,8 +2997,8 @@ func (s *Store) NeedsFTSBackfillQuickContext(ctx context.Context) bool {
 
 // Stats holds database statistics.
 //
-// MessageCount is the count of active messages: those still present in the
-// source account (deleted_at IS NULL AND deleted_from_source_at IS NULL).
+// MessageCount counts messages not deleted from the archive or source
+// (deleted_at IS NULL AND deleted_from_source_at IS NULL).
 // SourceDeletedCount is the count of archived messages that were deleted from
 // the source account but are retained in the archive (deleted_at IS NULL AND
 // deleted_from_source_at IS NOT NULL). The archive is the system of record,

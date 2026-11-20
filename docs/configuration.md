@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-19"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -676,11 +676,13 @@ sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
 
 | Key | Default | Description |
 |---|---|---|
-| `client_id` | — | Azure AD Application (client) ID (required) |
+| `client_id` | — | Default Azure AD Application (client) ID |
 | `redirect_uri` | `http://localhost:8089/callback/microsoft` | OAuth redirect URI registered in the Azure AD app |
 | `tenant_id` | `common` | Azure AD tenant ID; `common` allows both personal and org accounts |
 
-See [OAuth Setup: Microsoft 365](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the same `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth uses `tokens/microsoft_<email>.json`.
+For a mailbox in another organization, configure a separate app under `[microsoft.apps.<name>]` with its own `client_id`, `tenant_id`, and `redirect_uri`. Omitted tenant and redirect values use the defaults in the table, independently of `[microsoft]`. Restart the daemon after changing Microsoft app settings so scheduled syncs use the updated configuration. Bind a mail source with `msgvault add-o365 user@org-b.example --oauth-app orgb`. Teams, contacts, and the Web add-source template use `[microsoft]`.
+
+See [OAuth Setup: Microsoft 365](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the default `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth with the default app uses `tokens/microsoft_<email>.json`.
 
 ### `[[fastmail]]`
 
@@ -973,7 +975,7 @@ Each `[[server.remote_clients]]` entry gives one remote CLI its own read-only ke
 
 `msgvault serve` reads these files after it settles the server key, whether that key comes from `api_key`, a file, an environment variable, or is created at startup. It fails to start if a file is missing or empty or a key repeats another. CLI commands that start a local daemon also trigger these checks. Restart to add, remove, or rotate a key.
 
-`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
+`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. An automatically started daemon does not idle out while a [Meta webhook receiver](#meta-webhooks) is listening. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
 
 Flags and environment variables can configure the server
 without `config.toml`. `serve --bind` and `serve --port` take priority over
@@ -1273,6 +1275,69 @@ destination and its secret sources. An unused destination's secret is not read.
 Runtime keys from files or environment variables are never copied into saved
 `api_key` fields by `setup` or `export-token`.
 
+### `[remotes.<name>]`
+
+Named remotes let one config reach several servers, such as a home archive in
+`[remote]` and a second archive server. Each table takes the same keys as
+`[remote]`; `url` is required. Pass `--remote <name>` to use that server for one
+command:
+
+```toml
+[remotes.work]
+url = "https://archive.example.com"
+api_key_file = "work.key"
+```
+
+```sh
+msgvault --remote work search "quarterly plan"
+```
+
+`[remote]` stays the default when `--remote` is absent. `--remote` replaces the
+whole `[remote]` destination for that run, including `MSGVAULT_REMOTE_URL` and
+`MSGVAULT_REMOTE_API_KEY`. A relative `api_key_file` resolves next to the
+config file. `export-token --remote <name>` uploads to the named server and saves
+no settings to `[remote]`. `--remote` cannot be combined with `--local` or
+agent-delegated mode, and an unknown name fails the command.
+
+#### Credential helper
+
+A hosted archive can hand out short-lived bearers instead of an API key. Set
+`credential_provider` to a trusted local helper, as a command and its
+arguments, and describe the access the hosting service approved in a
+`delegation` table. The hosting service's own setup tool usually writes both:
+
+```toml
+[remotes.hosted]
+url = "https://archive.example.org/messages"
+credential_provider = ["example-credential-helper", "--server", "work"]
+
+[remotes.hosted.delegation]
+archive_id = "archive-a"
+client_id = "22222222-2222-4222-8222-222222222222"
+delegation_id = "33333333-3333-4333-8333-333333333333"
+source_ids = [17, 23]
+```
+
+| Key | Description |
+|---|---|
+| `credential_provider` | Helper command and arguments, run without a shell. It excludes `api_key`, `api_key_file`, and `api_key_env`. |
+| `delegation.archive_id` | The hosted archive's UID |
+| `delegation.client_id` | The approved client installation |
+| `delegation.delegation_id` | The approval record |
+| `delegation.source_ids` | The approved sources |
+
+`url` must use HTTPS. Each command asks the helper for a bearer covering the
+read operations that `list-accounts`, `stats`, `search`, `show-message`,
+`show-thread`, and `export-messages` call, and sends it only to `url`. The
+bearer stays in memory and is renewed before it expires. If the helper fails
+or refuses, the command fails; it never falls back to an API key. `search`
+supports `--mode fts` only, and `export-token` needs `--to` and `--api-key`
+for a server where you hold the owner key. msgvault
+keeps a journal of requests, without credentials, in `remote-credentials/`
+under the msgvault home so an interrupted request can be resumed. The
+[credential provider guide](guides/credential-providers.md#read-a-remote-through-a-helper)
+describes the helper's side.
+
 ### `[[accounts]]`
 
 Scheduled sync sources for the web server. Each `[[accounts]]` entry defines a
@@ -1449,7 +1514,7 @@ document_profile = "documents"
 | `attachment_upload_consent` | `false` | Allow attachment bytes from all sources, including future imports, to leave msgvault. Without consent, status reports mirroring as disabled |
 | `document_profile` | Empty | Docbank profile used to process mirrored attachments and search their text |
 | `attachment_folder` | `/msgvault` | Clean absolute virtual directory path; missing directories are created in Docbank |
-| `attachment_search_profile` | `""` | On newer `main` builds, name an existing Docbank processing profile for semantic/hybrid attachment retrieval. Does not queue processing or embeddings |
+| `attachment_search_profile` | `""` | Name an existing Docbank processing profile for semantic/hybrid attachment retrieval. Does not queue processing or embeddings |
 
 Set `document_profile` to a Docbank profile with a rendition stage that extracts text. Processing covers mirrored files except declared images, audio, and video, while a live message holds them. Attachment search also includes images with text already processed in Docbank. In Docbank, run `docbank processing plan <path-or-id> --profile <name>` on one mirrored file, review the plan, then run `docbank processing build <path-or-id> --profile <name> --plan-fingerprint <fp> --consent`. This grants consent for that profile across documents. msgvault always sends `consent:false`; consent stays in Docbank.
 
@@ -1490,7 +1555,7 @@ HTTP API, and MCP expose `docbank` receipts containing `endpoint`, `folder`,
 `node_id`, `version_id`, and `blob_hash`, so callers can open the corresponding
 Docbank file. List and search views omit these receipts. URL-only attachments are excluded from discovery. Details recover a hashless Slack or Discord attachment's hash from its trusted CAS storage path. The mirror reads these aliases from loose files or retained pack entries and verifies their SHA-256. It sends attachment content and excludes thumbnails from `thumbnail_hash`. Missing or corrupt archive bytes fail only that file. Docbank processes mirrored documents and supplies their searchable text.
 
-#### Search document text through Docbank (unreleased)
+#### Search document text through Docbank
 
 Configure a Docbank rendition profile, such as a Docling profile, and set its name in `[integrations.docbank] document_profile`. Docbank's daemon must support the chosen processor. A Mistral profile needs Docbank v0.17.0 or later. Create the five seed files and run `docbank processing probe --profile <name> --seeds <dir>` to write its capability manifest, as [Docbank's Mistral OCR configuration](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#document-ocr-with-mistral) describes. It replaces `msgvault documents probe-mistral`.
 
@@ -1514,7 +1579,9 @@ enabled = true
 url = "http://127.0.0.1:8080"     # your Docbank daemon; the port is an example
 api_key_env = "DOCBANK_API_KEY"   # daemon environment variable with the key
 all_sources_upload_consent = true # allow audio from every captured source to leave msgvault
+# voice_transcript_search = true  # include generated Beeper voice transcripts in keyword search
 # asr_profile = "asr"             # optional Docbank profile for audio without source text
+# recording_search_profile = "supplied-transcript" # Docbank profile whose transcript embeddings semantic search uses
 ```
 
 | Key | Default | Description |
@@ -1525,8 +1592,10 @@ all_sources_upload_consent = true # allow audio from every captured source to le
 | `api_key_env` | — | Name of the daemon environment variable that holds the Docbank API key. It is read for each request and sent as `X-Api-Key` |
 | `api_key` | — | Inline Docbank API key; takes priority over file and environment sources |
 | `api_key_file` | — | Owner-only Docbank key file, read for each request; takes priority over `api_key_env` |
-| `all_sources_upload_consent` | `false` | Allow stored audio and explicit source transcripts from every captured source, including future providers, to be sent to `url`. Without it the job only records local state |
+| `all_sources_upload_consent` | `false` | Allow stored audio and explicit source transcripts from every captured source, including future providers, to be sent to `url`. Without it, uploads stop. If `voice_transcript_search` remains enabled, the job can still read transcripts for previously retained recordings. |
+| `voice_transcript_search` | `false` | Include generated Beeper voice memo transcripts in keyword search. Restart the daemon after changing this setting. Disabling it removes saved transcripts from search. |
 | `asr_profile` | — | Optional Docbank processing profile for stored audio without usable source text. An empty value retains audio without requesting processing. Msgvault rejects `supplied-transcript`, which Docbank reserves for supplied transcript input. |
+| `recording_search_profile` | — | Docbank processing profile whose transcript embeddings `media search --mode semantic` or `--mode hybrid` searches. Use `supplied-transcript` for supplied transcripts embedded by Docbank's `supplied_media_embedding_profile`, or your `asr_profile` for generated transcripts. Does not queue processing or embeddings. Without it, hybrid uses keyword search and semantic fails. Restart the daemon after changing it. |
 | `reference_consent` | `false` | Send Loom/Cap links from every message source and native Teams recording pointers to `url` as references. This consent is separate from audio upload consent. |
 | `reference_origins` | `[]` | Exact origins for self-hosted Cap, such as `https://cap.example.test`. Include only scheme, host and optional port. Register each origin in Docbank too. |
 
@@ -1641,7 +1710,7 @@ before choosing media caps or configuring a remote daemon.
 
 ### `[[facebook_comments]]` {#facebook-comments}
 
-Select one Facebook Page for comment ingestion (unreleased). See
+Select one Facebook Page for comment ingestion. See
 [Facebook Page comments](usage/facebook-comments.md) for token setup, coverage,
 and recovery. Tokens are read only from the named daemon environment variable.
 
@@ -1663,21 +1732,46 @@ schedule = "*/30 * * * *"
 | `token_env` | required | Explicit environment variable name on the daemon host; no token values or fallback variables |
 | `enabled` | `false` | Enable scheduled sync; manual commands remain available |
 | `schedule` | empty | Five-field cron expression; empty means manual sync only |
+| `actions` | empty | Comment changes allowed on Meta: `"hide"` (also allows unhide), `"delete"`, and `"reply"`. Empty means read only. See [Hide or delete comments](usage/facebook-comments.md#hide-or-delete-comments) and [Reply to comments](usage/facebook-comments.md#reply-to-comments) |
 
 `identifier` is trimmed and must be nonempty and unique ignoring case.
 `app_id` and `page_id` must be positive decimal IDs without leading zeros.
 Duplicate app/Page pairs, invalid environment variable names, unknown profile
-keys, and invalid schedules are rejected. The source identifier is
+keys, unknown actions, and invalid schedules are rejected. The source identifier is
 `app:<app_id>:page:<page_id>`; scheduled jobs use
 `facebook_comments:<source-identifier>`, independently of email account dispatch.
 
+### `[[facebook_messages]]` and `[[instagram_messages]]` {#meta-inboxes}
+
+Select a Page's Messenger inbox or a linked Instagram account's inbox
+(unreleased). See [Facebook and Instagram messages](usage/meta-messages.md).
+`[[facebook_messages]]` takes the keys and rules of
+[`[[facebook_comments]]`](#facebook-comments), and `[[instagram_messages]]`
+those of [`[[instagram_comments]]`](#instagram-comments), except `actions`
+and `mentions`. Scheduled jobs are
+`facebook_messages:<source-identifier>` and
+`instagram_messages:<source-identifier>`.
+
+### `[meta_webhooks]` {#meta-webhooks}
+
+Start a listener for signed Meta webhook deliveries (unreleased). See
+[Meta webhooks](usage/meta-webhooks.md) for setup. `listen_addr` is a
+`host:port` address; leave it empty to keep the receiver off. Each
+`[[meta_webhooks.apps]]` entry needs a decimal `app_id` and the names of the
+daemon environment variables that hold the app secret (`app_secret_env`) and
+the verify token (`verify_token_env`). App IDs must be unique, and a
+`listen_addr` needs at least one app. Unknown keys are rejected.
+
 ### `[[instagram_comments]]` {#instagram-comments}
 
-Select a professional Instagram account linked to an explicitly selected Page
-(unreleased). See [Instagram comments](usage/instagram-comments.md) for setup
+Select a professional Instagram account linked to an explicitly selected Page.
+See [Instagram comments](usage/instagram-comments.md) for setup
 and coverage. Each profile requires `identifier`, `app_id`, `page_id`,
 `instagram_account_id`, and `token_env`; `enabled` defaults to `false`, and
-an empty `schedule` means manual sync only.
+an empty `schedule` means manual sync only. `actions` works as in
+`[[facebook_comments]]`. Set `ad_account_id` (decimal, without `act_`) and
+`ad_token_env` together to also archive comments on the account's ads; see
+[Include ad media](usage/instagram-comments.md#include-ad-media).
 
 The label is trimmed, nonempty, and unique ignoring case. All three IDs must
 be positive decimal IDs without leading zeros. Duplicate app/Page/Instagram
@@ -1687,6 +1781,28 @@ environment variable. Renaming the label preserves archive identity.
 The canonical source identifier is
 `app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
 scheduler job is `instagram_comments:<source-identifier>`.
+
+Set `mentions = true` to also archive media in which other accounts tag the
+account, as a separate `instagram_mentions` source with the same identifier.
+It defaults to `false`. When the profile has a schedule, the scheduler job is
+`instagram_mentions:<source-identifier>`. See
+[Archive media that tags the account](usage/instagram-comments.md#archive-media-that-tags-the-account).
+
+### `[feeds]` {#feeds}
+
+Fetch the RSS, Atom, and JSON feeds followed with `msgvault source feeds add`. The
+feeds themselves are kept in the archive, not here; see [Feeds](usage/feeds.md).
+
+```toml
+[feeds]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules feed sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
 
 ### `[[chatwoot]]` {#chatwoot}
 
@@ -2116,6 +2232,31 @@ schedule = "15 */6 * * *"
 | `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-twilio --full` to fetch the skipped recordings |
 | `max_media_mb` | `1024` (1 GiB) | Per-recording size cap in MiB; `0` uses the default. Oversized recordings are skipped; raise the cap and run `sync-twilio --full` to retry |
 
+### Bland Sources
+
+Configure one `[[bland]]` entry per Bland org API key (unreleased). See the
+[Bland meeting guide](usage/meetings.md#bland) for what sync stores.
+
+```toml
+[[bland]]
+identifier = "work"
+account_email = "you@example.com"
+api_key = "your-org-api-key"
+enabled = true
+schedule = "15 */6 * * *"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | `default` (single entry) | Stable source label; required with several entries |
+| `account_email` | Required | Your primary identity; not treated as a caller |
+| `api_key` | Required | Org API key |
+| `encrypted_key` | — | Key for your own Twilio account connected to Bland. With it, Bland returns only inbound numbers associated with that account SID |
+| `enabled` | `false` | Allow daemon scheduling |
+| `schedule` | — | Five-field cron expression |
+| `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-bland --full` to fetch the skipped recordings |
+| `max_media_mb` | `1024` (1 GiB) | Per-recording size cap in MiB, shared with Twilio's default; `0` uses the default. Oversized recordings are skipped; raise the cap and run `sync-bland --full` to retry |
+
 ### Muesli Sources
 
 Muesli meeting sync uses one top-level `[[muesli]]` entry per Muesli database.
@@ -2182,8 +2323,8 @@ Text embeddings use a configured endpoint or the shared local `kennembed` server
 | `document_prefix` | `""` | Model-specific instruction prepended to every document chunk after chunking (for example, `"search_document: "` for `nomic-embed-text`). The prefix does not reduce `max_input_chars`; maximum 4096 UTF-8 bytes. |
 | `query_prefix` | `""` | Model-specific instruction prepended to every vector-search query (for example, `"search_query: "` for `nomic-embed-text`); maximum 4096 UTF-8 bytes. |
 | `api_key_env` | — | Name of an environment variable containing the API key. Omit for anonymous endpoints. |
-| `batch_size` | `32` | Embedding inputs per HTTP call. Long messages can contribute multiple chunk inputs. |
-| `timeout` | `30s` | Per-request timeout. |
+| `batch_size` | `32`, or `8` for `local_only` | Embedding inputs per HTTP call. Long messages can contribute multiple chunk inputs. |
+| `timeout` | `30s`, or `5m` for `local_only` | Per-request timeout. |
 | `max_retries` | `3` | Retries per batch on transient failures. |
 | `max_input_chars` | `32768` | Character cap per embedding chunk, counted in characters rather than tokens. Too high and chunks are rejected or silently truncated; too low and long messages split into more chunks, adding embedding overhead. For example, start around `6000` for a 2k-token model such as Ollama's `nomic-embed-text`, then check representative content. See [Matching `max_input_chars` to your embedder's context window](usage/vector-search.md#matching-max_input_chars-to-your-embedders-context-window). |
 | `eta_window` | `10` | Number of completed batches used for foreground throughput and ETA smoothing; daemon status retains at most 20. Zero or negative values use 10. |
@@ -2441,7 +2582,6 @@ ownership and permission checks to the target directory.
 | `MSGVAULT_REMOTE_API_KEY_FILE` | Mounted remote key file |
 | `MSGVAULT_REMOTE_API_KEY_ENV` | Name of the environment variable holding the remote key |
 | `MSGVAULT_REMOTE_ALLOW_INSECURE` | Allow plaintext HTTP to the remote daemon |
-| `MSGVAULT_TELEMETRY_ENABLED` | Set to `0` to turn off anonymous telemetry; any value overrides `[telemetry] enabled` ([Telemetry](#telemetry)) |
 
 Environment values
 override TOML. For each server or remote credential group, setting any of its
@@ -2468,116 +2608,20 @@ Persist `/data` across restarts so the archive and generated key survive. The
 published stock image is `ghcr.io/kenn-io/msgvault`; it runs as UID/GID `1000`
 and stores its home at `/data`. No startup hook or entrypoint wrapper is required.
 
-## Telemetry
+## Usage reporting
 
-`msgvault serve` sends anonymous usage telemetry to PostHog:
+msgvault can send general, anonymous usage telemetry. Usage telemetry is off
+unless you have opted in or set `TELEMETRY_ENABLED=1`.
 
-- `daemon_active` when the daemon starts, then once on each later UTC day
-  while it runs.
-- `app_opened` when the web UI opens, then on its first window focus on a later
-  UTC day. The browser reports it to the daemon, never to PostHog.
-- `screen_viewed` when a web or terminal screen opens, counted once per installation per
-  UTC day across both interfaces and daemon restarts. The daemon keeps daily
-  screen and message-open claims in `telemetry-screen-claims.json` and search claims in
-  `telemetry-screen-views.json` beside its install ID. On upgrade, the new daemon
-  ledger can count each screen once more and each message-open surface once more that day.
-- `search_run` after current first-page message, extracted-document, or visual-search
-  results load, including empty results, restored queries, retries, and reloads. Failed or stale
-  replies and continuation pages don't count. Each surface and search type counts once
-  per install and UTC day. Visual queries and images use `semantic`; combined searches
-  report both types. TUI fast/deep use `text`; its combined lexical/vector mode uses `hybrid`.
-  CLI recording transcript searches (`media search`) use `text`.
-- `search_empty` when a submitted search returns no results, with the same surface and search type as `search_run`. Debounced previews, reloads, sorting, and continuation pages don't count. Like `search_run`, it counts once per UTC day, surface, and search type. Messages sends no `search_empty` while recording search is unknown or set up because its archive row count excludes transcript matches.
-- `error_shown` when the web or TUI shows an error for search, archive loading, message opening, or a Sync now request on Sources that is refused or times out. TUI People readers and recording transcript hits aren't covered. A Sync now run that fails later counts through `sync_failed`. Its `kind` is `search`, `message`, `sync`, or `other`. It has no daily deduplication, so retries can send repeated events.
-- `sync_failed` when a scheduled sync or Sync now on Sources finds a source starting to fail, with its registered type as `sync_source` and `reason=auth|network|rate_limited|other`. The first observed failure counts, including the first sync attempt. Calendar outages count once per account. Repeated failures count once until recovery. State stays in memory, so a restart can count an outage again. Manual CLI syncs and Settings → Contacts Sync now neither record nor clear outages; the next successful scheduled pass clears them. Cache refresh failures don't count as source failures. Unlisted outcome values become `other`. Twenty, Plaud, Circleback, and Muesli HTTP failures always report `other` because their clients return HTTP status as text. Slack's exhausted throttling and HTTP auth failures, IMAP throttling and auth failures without an `AUTHENTICATIONFAILED` code, and Granola throttling also report `other`. A sync counts as failing when it returns an error, even if it read some messages; a sync that returns no error counts as good, even when its summary records skipped or failed items. Partial Granola and Beeper syncs report `other`.
-- `message_opened` when a selected message becomes readable in web, TUI, or CLI
-  `show-message` or a nonempty `show-thread` page, including meeting transcripts. Each surface counts once per install
-  and UTC day. Event and item readers don't count.
-- `sync_finished` after each successful manual archive sync, including no-change runs
-  and remote Muesli scans. Runs that pause for Omi cooldown or a time budget don't count
-  on any surface. The daemon reports browser-started sync completions even
-  after you leave Sources. The CLI sends its search, message-open, and sync reports
-  in the background and waits at most 50 ms in total for them at exit, so reports
-  to a slow or distant remote daemon may be lost. Delivery failures leave
-  successful commands successful. CLI actions require a terminal on stdin, stdout,
-  or stderr, so a person can pipe output while unattended runs stay excluded. Agent shells
-  (Codex, Claude Code), `--agent-url` delegated runs, daemon subprocesses, probes, hooks,
-  and watch loops don't report CLI actions. CardDAV contact
-  sync is separate.
-- `session_ended` when a browser tab closes, reloads, stays hidden for 30 minutes, or the
-  terminal UI exits normally or after an interrupt. Browser sessions add visible
-  time across tab switches;
-  terminal sessions measure UI runtime. Returning after 30 minutes hidden starts
-  a fresh browser session. Delivery is best effort; terminal exit waits at most
-  50 ms for the report, so a slow or distant remote daemon may miss it.
-  Terminal startup failures, forced termination,
-  or crashes may send nothing.
-  Time spent signed out doesn't count. Earlier signed-in time carries across
-  signing in again, and a tab that closes or expires while signed out sends nothing.
+Any of these turns it off, even after you opted in:
 
-The browser and TUI also skip daily reports the daemon has already accepted:
+- `MSGVAULT_TELEMETRY_ENABLED=0`
+- `TELEMETRY_ENABLED=0`
+- `DO_NOT_TRACK` set to any value except `0` or `false`
+- `CI` set to any value
 
-- After an accepted receipt, the client doesn't send that daily report again that
-  UTC day. Browser receipts survive reloads; TUI receipts survive restarts.
-- After a `disabled` receipt, the client stays quiet to that daemon for the rest of
-  the UTC day.
-- A failed report, including an HTTP 401, leaves its daily report free to send later.
-- TUIs running at the same time may each check permission and overwrite each
-  other's saved receipts. A later TUI may then resend a report the daemon already
-  counted, and the daemon drops it.
-- Each TUI process shares one exponential backoff across its reports and drops
-  reports that arrive during backoff. It stops reporting to that daemon after six
-  failures in a row, an HTTP 401, or another client error. The next TUI process
-  checks again.
-
-For `app_opened`, the web UI records the day it last reported in browser storage, which the
-browser keeps separately for each daemon address. With the default
-`api_port = 0`, the daemon picks a new port each time it starts, so the web UI
-reports again after a daemon restart. Tabs that open together, or a browser
-that blocks storage, can also each send one. Each event carries only:
-
-- the product name and source (`msgvault`, `daemon`)
-- on `app_opened`, the surface (`web`)
-- on core actions, `surface=web|tui|cli`; `search_run` also requires
-  `search_type=text|semantic|hybrid`. Invalid required values drop the event; extra
-  properties are stripped. Query text, message IDs, and archive content stay local.
-- on `session_ended`, the surface (`web` or `tui`) and `duration_bucket`:
-  `under_1m` below one minute, `1_to_5m` below five minutes, `5_to_30m` through
-  30 minutes, and `over_30m` above 30 minutes
-- on `screen_viewed`, the first surface (`web` or `tui`) and a fixed screen name:
-  `everything`, `directory`, `directory_review`, `files`, `operations`,
-  `relationships`, `saved_views`, `sources`, `deletions`, `settings`, `message`,
-  `email`, `texts`, or `meetings`. Unknown names are dropped.
-- the msgvault version and commit
-- the distribution channel that built the binary, such as `homebrew` or `kenn`
-  for official downloads; empty for source builds
-- the operating system and CPU architecture
-- a random install ID kept in `telemetry-install.json` in the data directory, and
-  the whole hours since it was created
-- metadata the PostHog Go library adds itself: library name and version (`$lib`,
-  `$lib_version`)
-
-Events exclude message content, contact records, account or source identifiers,
-filenames, and search text. They ask PostHog to skip person profiles and location lookup. The
-daemon queues each event and sends it in the background, so an event can be lost
-if the network is down or the daemon stops first.
-
-When telemetry is on, `msgvault serve` says so in its startup output and log.
-To turn it off, set this in `config.toml` and restart a running daemon:
-
-```toml
-[telemetry]
-enabled = false
-```
-
-`MSGVAULT_TELEMETRY_ENABLED` in the environment that starts the daemon
-overrides the config: `0`, `false`, `no` or `off` turns telemetry off, and any
-other value turns it on. `TELEMETRY_ENABLED=0` and `DO_NOT_TRACK=1` also turn
-it off, and so does running in CI. Restart the daemon after changing these. The
-CLI and terminal UI honor the same opt-outs in their own environment. A CLI
-command that starts a local daemon passes its environment to it. Only release
-builds send telemetry: they set the PostHog project key at link time. Builds
-without that key, including source builds and tests, send nothing.
+Set these where `msgvault serve` starts, then restart a running daemon.
+Development builds never send it.
 
 ## File Locations
 
@@ -2597,11 +2641,6 @@ home; `[log].dir` can override the log location.
 | `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
 | `omi/` | Omi request pacing and provider cooldowns per backend and API key, shared by scheduled and manual syncs |
-| `telemetry-install.json` | Random anonymous install ID for [telemetry](#telemetry); created unless telemetry is turned off |
-| `telemetry-screen-claims.json` | Daily screen and message-open claims; created only while telemetry is on |
-| `telemetry-screen-claims.json.lock` | Lock that serializes writers of `telemetry-screen-claims.json`; created only while telemetry is on |
-| `telemetry-screen-views.json` | Current UTC day's search claims; created only while telemetry is on |
-| `telemetry-tui-v1-*.json` | TUI's accepted daily reports and disabled receipt for one daemon and UTC day; also written when that daemon reports telemetry is off |
 
 ## Example configuration
 
@@ -2753,8 +2792,6 @@ google_account = "you@gmail.com"
 owner_phone = "+14155551234"
 schedule = "30 4 * * *"
 
-[telemetry]
-enabled = true # false turns off anonymous usage telemetry
 ```
 
 ## Sender authentication

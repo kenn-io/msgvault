@@ -9,8 +9,6 @@ Kata issue. The issue quotes the exact passage you chose and records where it
 came from, so anyone reading it in Kata sees the original words. Kata owns the
 issue after that: its title, state, and history live there.
 
-This workflow is newer than the latest release.
-
 ## Connect Kata
 
 Kata issues use the same [`[integrations.kata]`](../configuration.md#integrationskata)
@@ -20,7 +18,7 @@ configured project must already exist.
 Msgvault attributes its writes to the actor of the Kata credential. A static
 Kata token has no actor, so msgvault writes as `msgvault`.
 
-The reader lists Kata issues and linked tasks under each message. Linked tasks use the separate `[integrations.tasks]` connection.
+The reader groups linked Tasks and Kata issues under a **Tasks** heading on each message. Linked Tasks use the separate `[integrations.tasks]` connection.
 
 ## Check before asking the owner again
 
@@ -38,7 +36,7 @@ handle a person:
 3. If Kata's own MCP server is connected, use its `kata.search` tool for
    person or topic searches. Search closed issues too: a completed task may
    hold the answer. Configuring `[integrations.kata]` in msgvault does not
-   connect that separate MCP server or expose general search in msgvault.
+   connect that separate MCP server.
 4. If the available context does not answer the question, ask the owner once.
    With explicit user intent, record the answer in a Kata issue or comment
    through Kata itself. Msgvault's Kata write tools create issues from
@@ -67,17 +65,18 @@ profile and Notes read surfaces.
 
 ## In the Web UI
 
-Expand a chat message or meeting transcript and choose **⋯ → Add to task…** to
-open its quote editor. For email, select **Kata** in the provider picker and choose
-**Add quote to Kata…**. The dialog shows the passage
+Expand a message and choose **⋯ → Add to task…**. For email, choose **Kata**
+under **Send to** when both destinations are available. Choose **New** to create
+an issue or **Existing** to add a quote to one. The dialog shows the passage
 that will be saved, up to 1,000 characters. Use **Earlier passage** and **Later
 passage** to move through a long message or transcript; each step moves half a
 window, so neighbouring passages overlap. The text in the
 preview is exactly what the issue quotes. To quote less, select part of the
 passage and choose **Quote selection**; **Whole passage** goes back.
 
-Choose **Add to existing issue** to add the passage to an issue instead; it
-appears there as a comment that quotes it.
+Choose **Existing** to list the 25 most recently updated open issues in the configured project.
+Search open issue text by whole word or enter an exact `project#ref` to find an open or closed issue, pick an issue, and choose **Add quote**.
+The passage appears there as a comment that quotes it.
 
 ## From the CLI or an agent
 

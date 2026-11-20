@@ -36,6 +36,7 @@ var task5StableToolNames = []string{
 	ToolListMessages,
 	ToolListSavedViews,
 	ToolListThread,
+	ToolSkills,
 	ToolRunSavedView,
 	ToolSearchByDomains,
 	ToolSearchInMessage,
@@ -43,6 +44,7 @@ var task5StableToolNames = []string{
 	ToolSearchMessages,
 	ToolSearchMetadata,
 	ToolSearchPersonFiles,
+	ToolSearchTools,
 	ToolSemanticSearchMessages,
 	ToolStageDeletion,
 	ToolUpdateSavedView,
@@ -111,7 +113,7 @@ func (r *task5SavedViewService) GetSavedView(_ context.Context, id int64) (*stor
 }
 
 func (r *task5SavedViewService) RunSavedView(
-	_ context.Context, id int64, _ int, _ string,
+	_ context.Context, id int64, _ int, _, _ string,
 ) (*savedview.RunPage, error) {
 	if id != r.view.ID {
 		return nil, store.ErrSavedViewNotFound
@@ -347,6 +349,10 @@ func task5ExpectedTools(shape string, allowWrites bool) []string {
 
 func task5ToolArguments(name, shape, exportDir string) (map[string]any, bool) {
 	switch name {
+	case ToolSearchTools:
+		return map[string]any{"query": "read one message", "limit": 3}, true
+	case ToolSkills:
+		return map[string]any{}, true
 	case ToolCreateSavedView:
 		return map[string]any{
 			"name": "Created view", "schema_version": 1,
@@ -476,6 +482,9 @@ func task5AssertRepresentativeResult(
 	must := require.New(t)
 
 	switch toolName {
+	case ToolSearchTools:
+		value := task5StructuredAs[toolDiscoveryResponse](t, result)
+		must.NotEmpty(value.Results)
 	case ToolSearchPersonFiles:
 		value := task5StructuredAs[generated.PersonFileSearchHTTPResponse](t, result)
 		must.Len(value.Files, 1)
@@ -726,6 +735,12 @@ func TestAllAdvertisedToolOutputs(t *testing.T) {
 						text, ok := result.Content[0].(*sdkmcp.TextContent)
 						must.True(ok, "semantic unavailable content type: %T", result.Content[0])
 						checks.Contains(text.Text, "vector_not_enabled")
+						continue
+					}
+					if tool.Name == ToolSkills {
+						// Guide text is Markdown, not JSON; skills_test.go covers its content.
+						must.False(result.IsError, task5SDKResultText(result))
+						successful[tool.Name] = true
 						continue
 					}
 					task5AssertJSONParity(t, tool.Name, result)

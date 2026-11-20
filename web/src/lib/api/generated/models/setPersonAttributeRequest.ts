@@ -9,6 +9,7 @@ export interface SetPersonAttributeRequest {
   active_until?: string;
   actor?: string;
   confidence?: number;
+  /** Positive ID compares the current value; zero requires no current value */
   expected_value_id?: number;
   ordinal?: number;
   source?: SetPersonAttributeRequestSource;

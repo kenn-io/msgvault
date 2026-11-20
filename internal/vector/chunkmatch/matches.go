@@ -75,7 +75,7 @@ func Build(
 		}
 
 		match := Match{
-			Snippet: bytePrefix(chunkText, snippetBytes),
+			Snippet: textutil.PrefixBytes(chunkText, snippetBytes),
 			Score:   hit.Score,
 		}
 		if hit.ChunkCharStart >= bodyStartRune {
@@ -116,17 +116,6 @@ func subjectPrefixRuneCount(subject string) int {
 		return 0
 	}
 	return utf8.RuneCountInString("Subject: " + subject + "\n\n")
-}
-
-func bytePrefix(s string, maxBytes int) string {
-	if len(s) <= maxBytes {
-		return s
-	}
-	end := maxBytes
-	for end > 0 && !utf8.RuneStart(s[end]) {
-		end--
-	}
-	return s[:end]
 }
 
 func positionalBodyOffset(body string, startRune int, chunk string) (int, bool) {

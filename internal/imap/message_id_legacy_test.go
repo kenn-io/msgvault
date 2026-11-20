@@ -7,6 +7,9 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
+
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 func TestLegacyMessageIDPreservedAcrossIMAPFetchPaths(t *testing.T) {
@@ -97,4 +100,55 @@ func TestLegacyMessageIDSourceValidation(t *testing.T) {
 			assert.Equal(t, test.wantMatch, matches)
 		})
 	}
+}
+
+func TestPropertyMessageIDContract(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		atom := func(label, alphabet string) string {
+			return rapid.StringOfN(rapid.RuneFrom([]rune(alphabet)), 1, 8, -1).Draw(rt, label)
+		}
+		local := atom("local", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+-")
+		if rapid.Bool().Draw(rt, "dotted") {
+			local += "." + atom("local2", "abcdefghijklmnopqrstuvwxyz0123456789_+-")
+		}
+		id := local + "@" + atom("domain", "abcdefghijklmnopqrstuvwxyz0123456789") + ".example.test"
+		legacy := "[" + local + "==@example.test]"
+		digits := atom("digits", "0123456789")
+		form := rapid.IntRange(0, 9).Draw(rt, "form")
+		var header, wantIMAP, wantStorage string
+		switch form {
+		case 0:
+			header, wantIMAP, wantStorage = "<"+id+">", id, id
+		case 1:
+			header, wantIMAP, wantStorage = id, id, id
+		case 2:
+			header, wantIMAP, wantStorage = digits, digits, digits
+		case 3:
+			header, wantIMAP, wantStorage = "<"+legacy+">", legacy, legacy
+		case 4:
+			header = "<<" + id + ">>"
+		case 5:
+			header = id + ">"
+		case 6:
+			header = "<>"
+		// IMAP recovers these legacy forms; storage rejects the malformed value.
+		case 7:
+			header, wantIMAP = "<"+id, id
+		case 8:
+			header, wantIMAP = "<"+id+"> type=\"text/plain\"", id
+		case 9:
+			header, wantIMAP = "<"+id+"> (comment)", id
+		}
+		fold := rapid.SampledFrom([]string{" ", "\r\n\t"}).Draw(rt, "fold")
+		raw := []byte("Message-ID:" + fold + header + "\r\n\r\nMessage-ID: decoy@example.test\r\n")
+		if rapid.Bool().Draw(rt, "bodyOnly") {
+			raw = []byte("Subject: no identifier\r\n\r\nMessage-ID: <" + id + ">\r\n")
+			wantIMAP, wantStorage = "", ""
+		}
+		rt.Logf("form=%d raw=%q", form, raw)
+		parsed, err := mime.Parse(raw)
+		require.NoError(rt, err)
+		assert.Equal(rt, wantIMAP, rawMIMEMessageID(raw))
+		assert.Equal(rt, wantStorage, mime.NormalizeMessageID(parsed.MessageID))
+	})
 }

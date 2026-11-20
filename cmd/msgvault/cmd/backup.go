@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -44,6 +45,7 @@ var (
 	backupRestoreRepo             string
 	backupRestoreTarget           string
 	backupRestoreOverwrite        bool
+	backupRestorePermissionsOnly  bool
 	backupRestoreForceUnlock      bool
 	backupRestoreJobs             int
 	backupRestoreLooseAttachments bool
@@ -249,8 +251,32 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening backup repository: %w", err)
 	}
+	if backupRestorePermissionsOnly {
+		if backupRestoreTarget == "" {
+			return errors.New("backup: restore target directory is required")
+		}
+		for _, name := range []string{"overwrite", "jobs", "integrity-check", "loose-attachments"} {
+			if cmd.Flags().Changed(name) {
+				return fmt.Errorf("--%s cannot be used with --permissions-only", name)
+			}
+		}
+		if len(args) == 0 || args[0] == "" {
+			return errors.New("--permissions-only requires an explicit snapshot ID")
+		}
+		if runtime.GOOS != "windows" {
+			return errors.New("--permissions-only is available only on Windows")
+		}
+	}
 	if err := refuseRestoreIntoLiveDaemonHome(backupRestoreTarget, cfg); err != nil {
 		return err
+	}
+	if backupRestorePermissionsOnly {
+		count, err := secureRestoredTokens(cmd.Context(), r, args[0], backupRestoreTarget, backupRestoreForceUnlock)
+		if err != nil {
+			return fmt.Errorf("securing restored credentials: %w", err)
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "secured token files: %d\n", count)
+		return nil
 	}
 	if backupRestoreAfterDaemonPreflight != nil {
 		backupRestoreAfterDaemonPreflight()
@@ -286,6 +312,15 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	})
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
+	}
+	if _, err := secureRestoredTokens(cmd.Context(), r, res.SnapshotID, backupRestoreTarget, false); err != nil {
+		renderer.finish()
+		summaryErr := printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, looseAttachments)
+		permissionErr := fmt.Errorf("securing restored credentials failed: %w; retry in PowerShell with: msgvault backup restore %s --repo %s --target %s --permissions-only", err, escapeRestoreArg(res.SnapshotID), escapeRestoreArg(repo), escapeRestoreArg(backupRestoreTarget))
+		if summaryErr != nil {
+			permissionErr = fmt.Errorf("snapshot %s was restored to %s, but %w", res.SnapshotID, backupRestoreTarget, permissionErr)
+		}
+		return errors.Join(summaryErr, permissionErr)
 	}
 	return printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, looseAttachments)
 }
@@ -1082,6 +1117,7 @@ func init() {
 	backupRestoreCmd.Flags().StringVar(&backupRestoreRepo, "repo", "", "Backup repository directory")
 	backupRestoreCmd.Flags().StringVar(&backupRestoreTarget, "target", "", "Directory to restore into (required)")
 	_ = backupRestoreCmd.MarkFlagRequired("target")
+	backupRestoreCmd.Flags().BoolVar(&backupRestorePermissionsOnly, "permissions-only", false, "Retry credential permissions for a snapshot and report the file count (Windows only)")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreOverwrite, "overwrite", false, "Allow restoring into a non-empty target directory")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before restoring")
 	backupRestoreCmd.Flags().IntVar(&backupRestoreJobs, "jobs", 0, "Concurrent pack readers (default: one per CPU; use 1 for serial reads on spinning disks or NAS shares)")

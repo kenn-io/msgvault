@@ -262,6 +262,103 @@ func TestSearchPeopleAggregatesLinkedIdentitiesAsOneCanonicalRow(t *testing.T) {
 	assertions.Equal(int64(1), bobSearch.Rows[0].ActivityCount)
 }
 
+func TestPeopleMeetingCountsAcrossFilters(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	firstSource := b.AddSourceWithType("first@example.test", "granola")
+	secondSource := b.AddSourceWithType("second@example.test", "zoom")
+	alice := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	bob := b.AddParticipant("bob@example.test", "example.test", "Bob")
+	start := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	deleted := start.Add(time.Hour)
+	first := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: start, DeletedFromSourceAt: &deleted})
+	second := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: start.Add(2 * time.Hour)})
+	b.AddTo(first, alice, "Alice")
+	b.AddTo(second, alice, "Alice")
+	b.AddTo(second, bob, "Bob")
+	firstAfter := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "imessage", SentAt: start.Add(2 * time.Hour)})
+	b.AddTo(firstAfter, alice, "Alice")
+	secondBefore := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "imessage", SentAt: start.Add(-time.Hour)})
+	b.AddTo(secondBefore, alice, "Alice")
+	secondDeletedAt := start.Add(4 * time.Hour)
+	secondDeleted := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "imessage", SentAt: start.Add(3 * time.Hour), DeletedFromSourceAt: &secondDeletedAt})
+	b.AddTo(secondDeleted, alice, "Alice")
+	calendar := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "calendar_event", SentAt: start})
+	b.AddTo(calendar, alice, "Alice")
+	b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
+	engine := b.BuildEngine()
+	detail, err := engine.GetPerson(t.Context(), alice, Context{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, detail)
+	require.Equal(t, int64(6), detail.ActivityCount)
+	require.Equal(t, int64(1), detail.MeetingCount)
+	bobDetail, err := engine.GetPerson(t.Context(), bob, Context{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, bobDetail)
+	require.Equal(t, int64(1), bobDetail.MeetingCount)
+	cutoff := start.Add(time.Hour)
+	generation := int64(1)
+	for _, disabled := range []bool{false, true} {
+		engine.sourceRollupFastPathDisabled = disabled
+		for _, tc := range []struct {
+			name   string
+			filter Context
+			mode   SearchMode
+			want   [3]int64
+		}{
+			{"none", Context{}, SearchNone, [3]int64{1, 1, 1}},
+			{"after", Context{After: &cutoff}, SearchNone, [3]int64{0, 1, 1}},
+			{"before", Context{Before: &cutoff}, SearchNone, [3]int64{1, 0, 1}},
+			{"active", Context{Deletion: DeletionActive}, SearchNone, [3]int64{0, 1, 1}},
+			{"deleted", Context{Deletion: DeletionDeleted}, SearchNone, [3]int64{1, 0, 1}},
+			{"full text", Context{}, SearchFullText, [3]int64{1, 1, 1}},
+			{"semantic", Context{}, SearchSemantic, [3]int64{1, 1, 1}},
+			{"hybrid", Context{}, SearchHybrid, [3]int64{1, 1, 1}},
+		} {
+			t.Run(fmt.Sprintf("%s/slow=%v", tc.name, disabled), func(t *testing.T) {
+				assertions, requirements := assert.New(t), require.New(t)
+				sources := [][]int64{{firstSource}, {secondSource}, {firstSource, secondSource}}
+				counts := [3][3]int64{}
+				for i, sourceIDs := range sources {
+					filter := tc.filter
+					filter.SourceIDs = sourceIDs
+					search := SearchSpec{Mode: tc.mode}
+					if tc.mode != SearchNone {
+						search.Query = "match"
+						search.CandidateMessageIDs = []int64{first, second}
+						if tc.mode != SearchFullText && i < 2 {
+							search.CandidateMessageIDs = []int64{[]int64{first, second}[i]}
+						}
+						if tc.mode != SearchSemantic {
+							search.LexicalIndexRevision = "fts5:test"
+						}
+						if tc.mode != SearchFullText {
+							search.VectorGeneration = &generation
+						}
+					}
+					explore := ExploreRequest{Context: filter, Search: search}
+					request := PersonSearchRequest{Query: "Alice", Explore: explore}
+					indexed, err := engine.SearchPeople(t.Context(), request)
+					requirements.NoError(err)
+					requirements.Len(indexed.Rows, 1)
+					counts[0][i] = indexed.Rows[0].MeetingCount
+					summary, err := engine.GetPersonSummary(t.Context(), alice, explore, nil)
+					requirements.NoError(err)
+					requirements.Len(summary.Rows, 1)
+					counts[1][i] = summary.Rows[0].MeetingCount
+					detail, err := engine.GetPerson(t.Context(), alice, filter, nil)
+					requirements.NoError(err)
+					requirements.NotNil(detail)
+					counts[2][i] = detail.MeetingCount
+				}
+				for method, count := range counts {
+					assertions.Equal(tc.want, count, "%s method %d", tc.name, method)
+				}
+			})
+		}
+	}
+	t.Run("retained cache membership", testPersonMeetingCountsUseLiveMembershipWithRetainedCache)
+}
+
 func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
@@ -411,6 +508,81 @@ func linkedPeopleFixture(t *testing.T) (*TestDataBuilder, int64, int64, int64, i
 	b.AddTo(bothMail, alicePrimary, "Alice Example")
 	b.AddTo(bothMail, aliceAlias, "")
 	return b, source, alicePrimary, aliceAlias, bob, start
+}
+
+func testPersonMeetingCountsUseLiveMembershipWithRetainedCache(t *testing.T) {
+	for _, linkedAtBuild := range []bool{false, true} {
+		t.Run(fmt.Sprintf("linked_at_build=%v", linkedAtBuild), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			b := NewTestDataBuilder(t)
+			firstSource := b.AddSourceWithType("first@example.test", "granola")
+			secondSource := b.AddSourceWithType("second@example.test", "zoom")
+			primary := b.AddParticipant("primary@example.test", "example.test", "Primary")
+			alias := b.AddParticipant("alias@example.test", "example.test", "Alias")
+			if linkedAtBuild {
+				b.LinkCluster(primary, alias)
+			}
+			start := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+			first := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: start})
+			second := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: start.Add(2 * time.Hour)})
+			other := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: start.Add(3 * time.Hour)})
+			firstActivity := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "imessage", SentAt: start.Add(30 * time.Minute)})
+			deletedAt := start.Add(5 * time.Hour)
+			deletedActivity := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "imessage", SentAt: start.Add(4 * time.Hour), DeletedFromSourceAt: &deletedAt})
+			b.AddTo(first, primary, "Primary")
+			b.AddTo(second, alias, "Alias")
+			b.AddTo(second, primary, "Primary")
+			b.AddTo(other, alias, "Alias")
+			b.AddTo(firstActivity, alias, "Alias")
+			b.AddTo(deletedActivity, alias, "Alias")
+			b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
+			engine := b.BuildEngine()
+			members := []int64{primary, alias}
+			if linkedAtBuild {
+				members = nil // The cache still contains the link that was removed.
+			}
+			firstWant, secondWant := int64(1), int64(2)
+			if linkedAtBuild {
+				firstWant, secondWant = 0, 2
+			}
+			cutoff := start.Add(time.Hour)
+			for _, tc := range []struct {
+				name   string
+				filter Context
+				want   int64
+			}{
+				{"all", Context{}, 2},
+				{"first source", Context{SourceIDs: []int64{firstSource}}, firstWant},
+				{"second source", Context{SourceIDs: []int64{secondSource}}, secondWant},
+				{"before", Context{Before: &cutoff}, firstWant},
+				{"after", Context{After: &cutoff}, secondWant},
+				{"active", Context{Deletion: DeletionActive}, 2},
+				{"deleted", Context{Deletion: DeletionDeleted}, 0},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					assertions, requirements := assert.New(t), require.New(t)
+					detail, err := engine.GetPerson(t.Context(), alias, tc.filter, members)
+					requirements.NoError(err)
+					requirements.NotNil(detail)
+					assertions.Equal(tc.want, detail.MeetingCount)
+					summary, err := engine.GetPersonSummary(t.Context(), alias, ExploreRequest{Context: tc.filter}, members)
+					requirements.NoError(err)
+					requirements.Len(summary.Rows, 1)
+					assertions.Equal(tc.want, summary.Rows[0].MeetingCount)
+				})
+			}
+			searchCases := []struct{ id, want int64 }{{second, 1}}
+			if !linkedAtBuild {
+				searchCases = append(searchCases, struct{ id, want int64 }{first, firstWant})
+			}
+			for _, tc := range searchCases {
+				summary, err := engine.GetPersonSummary(t.Context(), alias, ExploreRequest{Search: SearchSpec{Mode: SearchFullText, Query: "meeting", CandidateMessageIDs: []int64{tc.id}, LexicalIndexRevision: "fts5:test"}}, members)
+				requirements.NoError(err)
+				requirements.Len(summary.Rows, 1)
+				assertions.Equal(tc.want, summary.Rows[0].MeetingCount)
+			}
+		})
+	}
 }
 
 func TestGetPersonUsesLiveMembershipAfterUnlinkWithRetainedCache(t *testing.T) {

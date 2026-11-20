@@ -505,6 +505,8 @@ func TestIncremental_PersistErrorDoesNotAdvanceCursor(t *testing.T) {
 
 	// Force a persist failure during the incremental: drop a table the ingest
 	// path writes to, so the new event's UpsertMessageRawWithFormat errors.
+	_, err = st.DB().ExecContext(t.Context(), "DROP TABLE email_calendar_pending")
+	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), "DROP TABLE message_raw")
 	require.NoError(err)
 

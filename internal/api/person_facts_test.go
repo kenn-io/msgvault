@@ -120,6 +120,27 @@ func TestPersonFactHistoryHTTPIsBoundedNewestFirstNonNullAndNoStore(t *testing.T
 	assertions.Equal(strings.Repeat("a", 64), claimBody.Claims[0]["program_fingerprint"])
 }
 
+func TestPersonFactEvidenceHTTPFiltersByID(t *testing.T) {
+	t.Parallel()
+	srv, st, personID, targets := newPersonFactAPIFixture(t)
+	target := targets[store.AttributeSlugPrimaryChannel]
+	applyPersonFactAPIGeneration(t, st, personID, target, "second", `"phone"`)
+	rows, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	base := fmt.Sprintf("/api/v1/people/%d/fact-evidence?evidence_id=%d", personID, rows[1].ID)
+	response := doRequest(t, srv.Router(), http.MethodGet, base, nil, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var body PersonFactEvidenceResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(t, body.Evidence, 1)
+	assert.Equal(t, rows[1].ID, body.Evidence[0].ID)
+	for _, value := range []string{"abc", "0", "-1"} {
+		response := doRequest(t, srv.Router(), http.MethodGet, fmt.Sprintf("/api/v1/people/%d/fact-evidence?evidence_id=%s", personID, value), nil, nil)
+		assert.Equal(t, http.StatusBadRequest, response.Code)
+	}
+}
+
 func TestPersonFactHistoryHTTPFiltersRealEmploymentTargetWithColonKey(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
@@ -451,4 +472,48 @@ func mapKeysAny(values map[string]any) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func TestPersonFactSummaryAndFilteredDecisionsHTTP(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st, personID, targets := newPersonFactAPIFixtureWithoutClaims(t)
+	path := fmt.Sprintf("/api/v1/people/%d", personID)
+	response := doRequest(t, srv.Router(), http.MethodGet, path+"/fact-summary", nil, nil)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	assert.JSONEq(`{"claimed_fields":0,"latest_claim_at":null,"has_values":false,"has_fact_history":false}`, response.Body.String())
+
+	target := targets[store.AttributeSlugPrimaryChannel]
+	applyPersonFactAPIGeneration(t, st, personID, target, "first-summary", `"chat"`)
+	claims, err := st.ListPersonFactClaimsContext(t.Context(), personID, personfacts.ClaimFilter{})
+	require.NoError(err)
+	require.Len(claims, 1)
+	claimKey := claims[0].ClaimKey
+	applyPersonFactAPIGeneration(t, st, personID, targets[store.AttributeSlugAskMeAbout], "second-summary", `"books"`)
+
+	response = doRequest(t, srv.Router(), http.MethodGet, path+"/fact-decisions?limit=1&claim_key="+url.QueryEscape(claimKey), nil, nil)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var decisions PersonFactDecisionsResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &decisions))
+	require.Len(decisions.Decisions, 1)
+	decision := decisions.Decisions[0]
+	assert.Equal(claimKey, decision.ClaimKey)
+	require.NotNil(decision.ScoreMaxima)
+	assert.Equal(PersonFactScoreBreakdown(*personfacts.ScoreMaxima(personfacts.ResolverVersionV1)), *decision.ScoreMaxima)
+	var decisionValues struct {
+		Decisions []struct {
+			ClaimValue string `json:"claim_value"`
+		} `json:"decisions"`
+	}
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &decisionValues))
+	require.Len(decisionValues.Decisions, 1)
+	assert.Equal(`"chat"`, decisionValues.Decisions[0].ClaimValue)
+
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_fact_decisions SET outcome = NULL WHERE id = ?`), decision.ID)
+	require.NoError(err)
+	response = doRequest(t, srv.Router(), http.MethodGet, path+"/fact-decisions?claim_key="+url.QueryEscape(claimKey), nil, nil)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &decisions))
+	require.Len(decisions.Decisions, 1)
+	assert.Contains(response.Body.String(), `"outcome":null`)
 }

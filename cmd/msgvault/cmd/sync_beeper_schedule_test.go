@@ -180,3 +180,31 @@ func TestScheduledBeeperSyncMergedIntoYieldFollowUpStartsNewPass(t *testing.T) {
 	require.NoError(t, runScheduledBeeperAttempts(t.Context(), accounts, rotation, nil, visit(&manual), func() error { return nil }))
 	assert.Equal([]string{"small", "large"}, manual, "a requested sync reaches the account the yield interrupted")
 }
+
+// The scheduler can ask a run to yield after the run last checked, just as it
+// finishes the pass. The follow-up has nothing left to resume and must not
+// start another pass before the next trigger.
+func TestScheduledBeeperYieldFollowUpAfterFinishedPassDefers(t *testing.T) {
+	assert := assert.New(t)
+	rotation := &beeperAccountRotation{}
+	accounts := []string{"large", "small"}
+	var visited []string
+	visit := func(id string) (bool, error) {
+		visited = append(visited, id)
+		return false, nil
+	}
+
+	require.NoError(t, runScheduledBeeperAttempts(t.Context(), accounts, rotation, nil, visit, func() error { return nil }))
+	assert.Equal(accounts, visited)
+
+	visited = nil
+	rebuilds := 0
+	err := runScheduledBeeperAttempts(jobctx.WithContinuation(t.Context()), accounts, rotation, nil, visit,
+		func() error { rebuilds++; return nil })
+	assert.Same(scheduler.ErrDeferUntilNextTrigger, err, "only a bare deferral ends the chain cleanly")
+	assert.Empty(visited, "the finished pass has no accounts left to resume")
+	assert.Zero(rebuilds)
+
+	require.NoError(t, runScheduledBeeperAttempts(t.Context(), accounts, rotation, nil, visit, func() error { return nil }))
+	assert.Equal(accounts, visited, "the next trigger starts a new pass")
+}

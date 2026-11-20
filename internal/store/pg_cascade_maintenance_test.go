@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
+	"pgregory.net/rapid"
 )
 
 func cascadeMaintenanceFixture(t *testing.T) (*Store, int64, int64, int64) {
@@ -288,9 +288,9 @@ func TestAttachmentInvalidationDrainsBeforeMaintenance(t *testing.T) {
 
 func TestRecordingBatchDrainsBeforeMaintenanceProperty(t *testing.T) {
 	skipUnlessPostgresInternal(t)
-	hegel.Test(t, func(ht *hegel.T) {
-		count := hegel.Draw(ht, hegel.Integers(1, 8))
-		salt := hegel.Draw(ht, hegel.Integers(uint64(0), ^uint64(0)))
+	rapid.Check(t, func(rt *rapid.T) {
+		count := rapid.IntRange(1, 8).Draw(rt, "count")
+		salt := rapid.Uint64().Draw(rt, "salt")
 		refs := make([]RecordingReferenceInput, count)
 		for i := range refs {
 			refs[i] = RecordingReferenceInput{
@@ -298,12 +298,12 @@ func TestRecordingBatchDrainsBeforeMaintenanceProperty(t *testing.T) {
 				RefSHA256: fmt.Sprintf("hash-%x", salt), OccurrenceJSON: `{}`,
 			}
 		}
-		st, sourceID, messageID, _ := cascadeMaintenanceFixture(ht.T)
-		recordingBatchDrainsBeforeMaintenance(ht, st, sourceID, messageID, refs)
-	}, hegel.WithTestCases(8), hegel.WithDatabase(""))
+		st, sourceID, messageID, _ := cascadeMaintenanceFixture(t)
+		recordingBatchDrainsBeforeMaintenance(rt, st, sourceID, messageID, refs)
+	})
 }
 
-func recordingBatchDrainsBeforeMaintenance(tb testing.TB, st *Store, sourceID, messageID int64, refs []RecordingReferenceInput) {
+func recordingBatchDrainsBeforeMaintenance(tb propertyTB, st *Store, sourceID, messageID int64, refs []RecordingReferenceInput) {
 	tb.Helper()
 	require := require.New(tb)
 	assert := assert.New(tb)

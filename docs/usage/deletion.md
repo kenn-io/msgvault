@@ -96,7 +96,7 @@ You can also stage deletions through the [MCP server](/docs/usage/chat/) by aski
 - *"Stage all messages from noreply@linkedin.com for deletion"*
 - *"Stage all promotional emails older than 2024-01-01"*
 
-The MCP `stage_deletion` tool creates a manifest through the selected daemon, the same format as TUI-staged deletions. Nothing is deleted until you run `msgvault delete-staged` from the CLI. See [MCP Server](/docs/usage/chat/#staged-deletion-via-mcp) for details.
+Owner MCP sessions can also list batches and read lifecycle receipts without enabling writes. The MCP `stage_deletion` tool creates a manifest through the selected daemon, the same format as TUI-staged deletions. Nothing is deleted until you run `msgvault delete-staged` from the CLI. See [staged deletion via MCP](chat.md#staged-deletion-via-mcp) for details.
 
 ## Staging via HTTP API
 
@@ -159,7 +159,11 @@ server's discovered Trash folder, falling back to a folder named `Trash`.
 If that move fails, the batch records the failure rather than switching to
 permanent deletion. Microsoft Graph mail moves messages to Deleted Items, where
 you can restore them in Outlook. A later sync keeps them marked as deleted
-while they stay in Deleted Items.
+while they stay in Deleted Items. Gmail and IMAP follow the same rule: sync
+clears the mark when it confirms the message outside Trash.
+
+For IMAP messages without a Message-ID, a restored copy is ingested as a new
+message and the original remains marked.
 
 `--permanent` requests irreversible deletion: Gmail uses its batch API; IMAP
 uses `UID STORE \Deleted` followed by `UID EXPUNGE` for each message. Permanent

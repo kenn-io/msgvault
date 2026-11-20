@@ -233,6 +233,7 @@ func TestGmailRecoveryRepeatedHandoffExpirationIsBounded(t *testing.T) {
 	api := &recoveryProfileSequenceAPI{MockAPI: e.Mock, historyIDs: []uint64{20000, 21000, 22000, 23000}}
 	_, err := New(api, e.Store, nil).Full(t.Context(), testEmail)
 	require.ErrorIs(err, ErrHistoryExpired)
+	require.ErrorContains(err, "retry sync")
 	assert.Equal([]uint64{15000, 22000}, e.Mock.HistoryCalls)
 	assert.Equal("1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 	prior, err := e.Store.GetLatestCheckpointedSync(gmailCoverageSource(t.Context(), t, e).ID)

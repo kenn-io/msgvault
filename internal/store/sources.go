@@ -343,6 +343,10 @@ func (s *Store) RemoveSourceSerialized(
 		return hadActiveSync, 0, err
 	}
 
+	ctx = context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, reader: conn})
+	if err := s.preservePurgedMeetingDecisionsWith(ctx, conn, `source_id = ?`, sourceID); err != nil {
+		return hadActiveSync, 0, fmt.Errorf("preserve meeting decisions: %w", err)
+	}
 	res, err := conn.ExecContext(
 		ctx, s.dialect.Rebind(`DELETE FROM sources WHERE id = ?`), sourceID,
 	)
@@ -453,6 +457,9 @@ func (s *Store) removeSourceExec(
 	}
 	if err := s.deleteSourceRepairMigrationsContext(ctx, tx.ExecContext, sourceID); err != nil {
 		return err
+	}
+	if err := s.preservePurgedMeetingDecisions(ctx, tx, `source_id = ?`, sourceID); err != nil {
+		return fmt.Errorf("preserve meeting decisions: %w", err)
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM sources WHERE id = ?`, sourceID)
 	if err != nil {

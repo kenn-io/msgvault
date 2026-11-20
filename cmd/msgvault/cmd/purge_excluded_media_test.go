@@ -183,6 +183,11 @@ func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
 	policy, ok = mediaPolicyForAttachment(current, store.AttachmentPolicyCandidate{SourceType: "twilio", SourceIdentifier: "work"})
 	require.True(ok)
 	assert.Equal(int64(1)<<20, policy.MaxBytes)
+
+	current.Bland = []config.BlandSource{{Identifier: "work", MaxMediaMB: 2}}
+	policy, ok = mediaPolicyForAttachment(current, store.AttachmentPolicyCandidate{SourceType: "bland", SourceIdentifier: "work"})
+	require.True(ok)
+	assert.Equal(int64(2)<<20, policy.MaxBytes)
 }
 
 func TestMediaPolicyForMatrixUsesAccountConfig(t *testing.T) {

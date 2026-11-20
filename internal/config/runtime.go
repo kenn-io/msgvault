@@ -96,6 +96,7 @@ func (v *runtimeSaveStrings) restore(target *[]string) {
 // make them permanent. A field changed after loading remains saveable.
 type runtimeConfigState struct {
 	flags               RuntimeOverrides
+	selectedRemote      *RemoteConfig // [remote] as loaded, while --remote selects another
 	bindAddr            runtimeSaveValue[string]
 	apiPort             runtimeSaveValue[int]
 	backupRepo          runtimeSaveValue[string]
@@ -111,6 +112,9 @@ type runtimeConfigState struct {
 }
 
 func (s runtimeConfigState) restore(c *Config) {
+	if s.selectedRemote != nil {
+		c.Remote = *s.selectedRemote
+	}
 	s.bindAddr.restore(&c.Server.BindAddr)
 	s.apiPort.restore(&c.Server.APIPort)
 	s.backupRepo.restore(&c.Backup.Repo)
@@ -372,6 +376,25 @@ func (c *Config) loadRemoteClientKeys() error {
 		seen[key] = "remote client " + client.ClientID
 		client.APIKey = key
 	}
+	return nil
+}
+
+// SelectRemote makes the named [remotes.<name>] table the remote for this run.
+// Saving the config keeps [remote] as it was loaded.
+func (c *Config) SelectRemote(name string) error {
+	remote, ok := c.Remotes[name]
+	if !ok {
+		return fmt.Errorf("remote %q is not configured; add a [remotes.%s] table to %s", name, name, c.ConfigFilePath())
+	}
+	if strings.TrimSpace(remote.URL) == "" {
+		return fmt.Errorf("[remotes.%s] url is required", name)
+	}
+	if c.runtimeConfigState.selectedRemote == nil {
+		loaded := c.Remote
+		c.runtimeConfigState.selectedRemote = &loaded
+	}
+	remote.APIKeyFile = c.credentialPath(remote.APIKeyFile)
+	c.Remote = remote
 	return nil
 }
 

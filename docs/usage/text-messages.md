@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-11"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
@@ -20,7 +20,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
-| [X DMs](#import-x) | Extracted X account archive (unreleased on `main`) |
+| [X DMs](#import-x) | Extracted X account archive |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
 | [Slackdump](/docs/usage/slack/#import-a-slackdump-export) | Export directory or ZIP |
@@ -503,13 +503,15 @@ Messages include senders, replies, edit markers, and available media. Service me
 
 A later or overlapping export adds new messages and fills media slots that still lack bytes. Archived messages keep their original text, sender, timestamp, and edit flag. Media already stored stays unchanged. Replies link when their parent arrives in a later export. Telegram export users link to Beeper users with the same numeric Telegram user ID; for Beeper users already archived, the link appears when a sync revisits their chat (`sync-beeper --full` covers quiet chats).
 
+If you also sync Telegram through Beeper, [choose which copy of each chat to search](searching.md#search-one-copy-of-overlapping-chats).
+
 Every exported chat becomes a conversation, even one with no messages. Each import replaces the conversation title with the export's chat name when that name is non-empty.
 
 An interrupted import resumes after the last completed chat when `result.json` in the same directory has the same size and modification time. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.
 
 ## import-x
 
-Available on `main`, unreleased. Import supplied direct and group DMs from an
+Import supplied direct and group DMs from an
 extracted [X account archive](https://help.x.com/en/managing-your-account/how-to-download-your-x-archive):
 
 ```bash

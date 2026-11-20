@@ -8,12 +8,12 @@ import (
 	"math"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // defaultMaxMediaBytes caps individual attachment downloads (config
@@ -102,18 +102,9 @@ type attachmentMetadata struct {
 }
 
 func truncateUTF8(s string, maxBytes int) (string, bool) {
-	if maxBytes <= 0 {
-		return "", len(s) > 0
-	}
 	s = strings.ToValidUTF8(s, "\uFFFD")
-	if len(s) <= maxBytes {
-		return s, false
-	}
-	cut := maxBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut], true
+	prefix := textutil.PrefixBytes(s, maxBytes)
+	return prefix, len(prefix) < len(s)
 }
 
 func attachmentMetadataJSON(m *Message, att *Attachment) string {
@@ -516,7 +507,10 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	// Import loads its cursor_after as the resume baseline — so carry the
 	// existing sync state forward verbatim or the next sync would restart
 	// from scratch.
-	state := imp.loadResumeState(ctx, src.ID)
+	state, err := imp.loadResumeState(ctx, src.ID, false)
+	if err != nil {
+		return nil, err
+	}
 	syncID, err := imp.store.StartSync(src.ID, "beeper_media")
 	if err != nil {
 		return nil, err

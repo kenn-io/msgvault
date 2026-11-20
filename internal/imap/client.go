@@ -116,6 +116,7 @@ type Client struct {
 	selectedNumMessages         uint32               // EXISTS count from the last SELECT
 	mailboxCache                []string             // cached list of selectable mailboxes
 	messageListCache            []gmailapi.MessageID // full message ID list, built once per session
+	trashMailboxes              map[string]bool      // LIST-advertised \Trash mailboxes, or the fallback Trash
 	trashMailbox                string               // cached trash mailbox name
 	junkMailbox                 string               // cached junk/spam mailbox name
 	allMailFolder               string               // mailbox with \All attribute (empty if not detected)
@@ -361,6 +362,30 @@ func (c *Client) connect(ctx context.Context) error {
 		}); err != nil {
 			_ = conn.Close()
 			return fmt.Errorf("IMAP login: %w", err)
+		}
+	}
+
+	// go-imap sends UTF-8 mailbox names when IMAP4rev2 is advertised. A
+	// server advertising both revisions still uses rev1 mailbox syntax until
+	// ENABLE IMAP4rev2 (RFC 9051 section 6.1.1), so negotiate it before any
+	// mailbox command. Otherwise LIST succeeds but STATUS/SELECT of non-ASCII
+	// names can fail, preventing a complete incremental baseline.
+	if caps := conn.Caps(); caps.Has(imap.CapIMAP4rev1) && caps.Has(imap.CapIMAP4rev2) {
+		if err := waitAuthenticationContext(ctx, conn, func() error {
+			if err := c.waitCommand(ctx); err != nil {
+				return err
+			}
+			data, err := conn.Enable(imap.CapIMAP4rev2).Wait()
+			if err != nil {
+				return fmt.Errorf("ENABLE IMAP4rev2: %w", err)
+			}
+			if data == nil || !data.Caps.Has(imap.CapIMAP4rev2) {
+				return errors.New("server did not enable IMAP4rev2")
+			}
+			return nil
+		}); err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("enable IMAP4rev2 mailbox encoding: %w", err)
 		}
 	}
 
@@ -620,7 +645,7 @@ func (c *Client) selectMailbox(ctx context.Context, mailbox string) error {
 // server advertises support. Sending extended LIST options to legacy servers
 // can make otherwise valid mailbox enumeration fail.
 func (c *Client) listOptionsLocked() *imap.ListOptions {
-	if !c.conn.Caps().Has(imap.CapSpecialUse) {
+	if !c.connCaps().Has(imap.CapSpecialUse) {
 		return nil
 	}
 	return &imap.ListOptions{ReturnSpecialUse: true}
@@ -689,8 +714,14 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 				}
 			}
 		}
-		if c.trashMailbox == "" && hasAttr(item.Attrs, imap.MailboxAttrTrash) {
-			c.trashMailbox = item.Mailbox
+		if hasAttr(item.Attrs, imap.MailboxAttrTrash) {
+			if c.trashMailboxes == nil {
+				c.trashMailboxes = make(map[string]bool)
+			}
+			c.trashMailboxes[item.Mailbox] = true
+			if c.trashMailbox == "" {
+				c.trashMailbox = item.Mailbox
+			}
 		}
 		if c.allMailFolder == "" && hasAttr(item.Attrs, imap.MailboxAttrAll) {
 			c.allMailFolder = item.Mailbox
@@ -724,6 +755,7 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 			for _, mb := range names {
 				if strings.EqualFold(mb, candidate) {
 					c.trashMailbox = mb
+					c.trashMailboxes = map[string]bool{mb: true}
 					break
 				}
 			}
@@ -744,6 +776,7 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 func (c *Client) clearMailboxDiscoveryLocked() {
 	c.mailboxCache = nil
 	c.trashMailbox = ""
+	c.trashMailboxes = nil
 	c.junkMailbox = ""
 	c.allMailFolder = ""
 	c.advertisedOutgoingMailboxes = nil
