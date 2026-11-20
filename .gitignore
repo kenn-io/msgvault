@@ -77,6 +77,7 @@ docs/.zensical-build.*
 docs/assets/static/
 docs/assets/generated/
 docs/screenshots/demo-data/
+docs/screenshots/web-capture.*/
 .docs-fixture-staging/
 .kata.local.toml
 /contextual-retrieval-eval
