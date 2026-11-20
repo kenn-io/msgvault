@@ -25,10 +25,10 @@ attributes, which is not a promise that the assistant cannot access private
 archive content.
 
 MCP can stage a deletion manifest, but it cannot execute remote deletion or send
-mail. Executing a staged mail deletion remains a separate CLI step. Write
-operations are opt-in: source sync requires `--allow-source-writes`, and bounded
-historical Gmail or IMAP imports require `--allow-import-writes`, with client
-confirmation required for each call. Optional profile writes require
+mail. Executing a staged mail deletion remains a separate CLI step. Source sync
+requires `--allow-source-writes`, and bounded historical Gmail or IMAP imports
+require `--allow-import-writes`; each of those calls requires client
+confirmation. Optional profile writes require
 `--allow-profile-writes`, calendar event mutations require
 `--allow-calendar-writes` along with explicit per-operation approval in an MCP
 client that supports elicitation, and Kata issues that quote archive text
