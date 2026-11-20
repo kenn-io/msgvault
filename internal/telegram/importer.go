@@ -266,14 +266,14 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			return errLimitReached
 		}
 		sender, err := resolve(m.FromID, m.FromName)
-		if err != nil {
-			return err
-		}
-		if direct && peerPID == 0 {
+		if err == nil && direct && peerPID == 0 {
 			peerPID, err = resolve(peer, chat.Name)
-			if err != nil {
+		}
+		if err != nil {
+			if ctx.Err() != nil {
 				return err
 			}
+			return errors.Join(err, flush())
 		}
 		key := fmt.Sprintf("%s:%d", peer, m.ID)
 		if queued[key] {

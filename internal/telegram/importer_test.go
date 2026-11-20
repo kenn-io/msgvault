@@ -798,13 +798,13 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 			}
 			require.NoError(err)
 			root := t.TempDir()
-			testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"user2","date_unixtime":"1610909872","text":"hello"}]}]}}`))
+			testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"private_group","messages":[{"id":1,"type":"message","from_id":"user1","date_unixtime":"1610909871","text":"earlier"},{"id":2,"type":"message","from_id":"user2","date_unixtime":"1610909872","text":"hello"}]}]}}`))
 			summary, err := Import(ctx, st, ImportOptions{RootDir: root})
 			require.ErrorContains(err, "forced identity failure")
-			assert.Zero(summary.MessagesAdded)
+			assert.EqualValues(1, summary.MessagesAdded)
 			var count int
 			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&count))
-			assert.Zero(count)
+			assert.Equal(1, count)
 			members, err := st.ClusterMembers(participant)
 			require.NoError(err)
 			assert.NotContains(members, bridge)
