@@ -10,6 +10,7 @@
   import type { MessageDetail as GeneratedMessageDetail } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail } from '../../archive/types';
+  import { ArchiveMessageLoader } from '../../archive/message-loader.svelte';
   import type { MessageViewMode } from '../../archive/types';
   import { isEmailMessageType } from '../../explore/models';
   import MessageCard from './MessageCard.svelte';
@@ -94,22 +95,36 @@
   // window, the message the thread opened at names it instead, and the title
   // then stays put while other messages expand.
   let titleKey = '';
+  let titleRequestKey = '';
+  const titleLoader = new ArchiveMessageLoader();
+  let windowAnchorId = $state(0);
   let openedAnchorId = 0;
   let openedTitle = '';
   $effect(() => {
     const key = `${conversationId}:${titleAnchorId}`;
     if (key !== titleKey) {
+      titleLoader.cancel();
       titleKey = key;
+      titleRequestKey = '';
       openedAnchorId = untrack(() => anchorId);
       openedTitle = '';
     }
     const anchor = messages.find((message) => message.id === titleAnchorId) ??
       messages.find((message) => message.id === openedAnchorId);
-    if (anchor?.id === titleAnchorId && anchor.body_omitted) untrack(() => ensureBody(anchor.id));
-    if (anchor) openedTitle = anchor.tab_title || '(untitled)';
+    if (anchor?.id === titleAnchorId && anchor.id !== windowAnchorId) {
+      const requestKey = `${key}:${windowAnchorId}`;
+      if (requestKey !== titleRequestKey) {
+        titleRequestKey = requestKey;
+        untrack(() => { void titleLoader.load(apiClient, anchor.id); });
+      }
+      const detail = titleLoader.detail;
+      openedTitle = detail?.id === anchor.id ? detail.tab_title || '(untitled)' : '';
+    } else if (anchor) {
+      openedTitle = anchor.tab_title || '(untitled)';
+    }
     anchorTitle = openedTitle;
   });
-  onDestroy(() => { anchorTitle = ''; });
+  onDestroy(() => { titleLoader.cancel(); anchorTitle = ''; });
   let loading = $state(true);
   let error = $state('');
   let hasBefore = $state(false);
@@ -215,6 +230,7 @@
         return;
       }
       messages = data.messages ?? [];
+      windowAnchorId = data.anchor_id;
       activeAnchor = data.anchor_id;
       hasBefore = data.has_before;
       hasAfter = data.has_after;

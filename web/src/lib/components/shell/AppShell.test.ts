@@ -955,6 +955,7 @@ describe('AppShell', () => {
       }));
       const client = createAPIClient(async input => {
         const url = new URL((input as Request).url);
+        if (url.pathname.endsWith('/messages/2')) return Response.json({ id: 2, conversation_id: 9, subject: 'Thread subject', tab_title: 'Thread subject', message_type: 'email', sent_at: '2026-07-18T12:00:00Z', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] });
         if (url.pathname.endsWith('/conversations/9')) {
           const anchor = Number(url.searchParams.get('anchor'));
           return Response.json({ id: 9, anchor_id: anchor, messages: [
@@ -995,27 +996,30 @@ describe('AppShell', () => {
       expect(document.title).toBe('Opened from file · Messages · msgvault');
     });
 
-    it.each(['Selected subject', 'Verification message'])('names a collapsed selected message after loading: %s', async (title) => {
+    it.each(['Selected subject', 'Verification message', 'failure'])('loads the selected non-anchor title without expanding it: %s', async (title) => {
       const state = shellState('everything');
       state.commitNavigation({ selectedRow: 'source:1:message:2', conversationAnchor: '1' });
       const row = { ...entry(2), key: 'source:1:message:2', kind: 'email', anchor_message_id: 2, conversation_id: 9, message_count: 2 };
       let resolveDetail!: (response: Response) => void;
+      let detailReturned = false;
       const detail = new Promise<Response>((resolve) => { resolveDetail = resolve; });
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
-        if (path.endsWith('/messages/2')) return detail;
+        if (path.endsWith('/messages/2')) { const response = await detail; detailReturned = true; return response; }
         if (path.endsWith('/conversations/9')) return Response.json({ id: 9, anchor_id: 1, messages: [
           { id: 1, conversation_id: 9, subject: 'Anchor', tab_title: 'Anchor', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
-          { id: 2, conversation_id: 9, subject: 'Sensitive subject', tab_title: '', body_omitted: true, sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: '', attachments: [] },
+          { id: 2, conversation_id: 9, subject: 'Sensitive subject', tab_title: '', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Body 2', attachments: [] },
         ], total: 2, has_before: false, has_after: false });
         return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
       });
       render(AppShell, { client, state });
       await screen.findByText('Anchor body');
-      await waitFor(() => expect(document.title).toBe('(untitled) · Messages · msgvault'));
+      await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
       expect(screen.getByRole('button', { name: /Expand message 2/ })).toBeTruthy();
-      resolveDetail(Response.json({ id: 2, conversation_id: 9, subject: title === 'Verification message' ? 'Your verification code is 123456' : title, tab_title: title, message_type: 'email', sent_at: '2026-07-18T12:00:00Z', from: 'sender@example.com', to: [], body: title === 'Verification message' ? 'Your verification code is 123456' : 'Message body', attachments: [] }));
-      await waitFor(() => expect(document.title).toBe(`${title} · Messages · msgvault`));
+      resolveDetail(title === 'failure' ? Response.json({ message: 'Unavailable' }, { status: 503 }) : Response.json({ id: 2, conversation_id: 9, subject: title === 'Verification message' ? 'Your verification code is 123456' : title, tab_title: title, message_type: 'email', sent_at: '2026-07-18T12:00:00Z', from: 'sender@example.com', to: [], body: title === 'Verification message' ? 'Your verification code is 123456' : 'Message body', attachments: [] }));
+      await waitFor(() => expect(detailReturned).toBe(true));
+      await tick();
+      await waitFor(() => expect(document.title).toBe(title === 'failure' ? 'Messages · msgvault' : `${title} · Messages · msgvault`));
       expect(screen.getByRole('button', { name: /Expand message 2/ })).toBeTruthy();
     });
 

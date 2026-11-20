@@ -78,7 +78,6 @@ func TestConversationWindowIsAnchoredBoundedAndChronological(t *testing.T) {
 	})
 	assert.True(response.HasBefore)
 	assert.True(response.HasAfter)
-	assert.Equal("Synthetic conversation", response.Messages[2].ConversationTitle)
 	assert.Equal("Body 03", response.Messages[2].Body)
 	assert.Equal("<p>Body 03</p>", response.Messages[2].BodyHTML)
 }
@@ -101,6 +100,23 @@ func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 	assert.Equal("imessage", response.Messages[0].MessageType)
 	assert.True(response.Messages[1].IsFromMe)
 	assert.Equal(ids[1], response.AnchorID)
+}
+
+func TestConversationWindowOnlyTitlesAnchor(t *testing.T) {
+	srv, conversationID, ids := seedConversation(t, "email", 3)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, ids[1]), nil)
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var response ConversationResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	require.Len(t, response.Messages, 3)
+	assert.Empty(t, response.Messages[0].TabTitle)
+	assert.Equal(t, "Message 01", response.Messages[1].TabTitle)
+	assert.Empty(t, response.Messages[2].TabTitle)
+	for _, message := range response.Messages {
+		assert.Empty(t, message.ConversationTitle)
+	}
 }
 
 func TestMessageTabTitles(t *testing.T) {
@@ -150,7 +166,11 @@ func TestMessageTabTitles(t *testing.T) {
 						raw = messages[0].(map[string]any)
 					}
 					assert.Equal(t, tc.want, raw["tab_title"], "engine=%t path=%s", engine, path)
-					assert.Equal(t, tc.title, raw["conversation_title"], "engine=%t path=%s", engine, path)
+					if strings.Contains(path, "/conversations/") {
+						assert.NotContains(t, raw, "conversation_title", "engine=%t path=%s", engine, path)
+					} else {
+						assert.Equal(t, tc.title, raw["conversation_title"], "engine=%t path=%s", engine, path)
+					}
 					assert.Equal(t, tc.subject, raw["subject"], "engine=%t path=%s", engine, path)
 				}
 			}
