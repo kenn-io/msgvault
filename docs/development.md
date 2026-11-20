@@ -278,10 +278,9 @@ each template clone. Each database is private to its test and produced by the
 same `InitSchema()` path. Template clones send no schema statements through a
 store connection; PostgreSQL clone drops run in the background on a session of
 their own.
-A PostgreSQL template is owned through a session advisory lock the
-server releases when the binary exits. An exit can leave up to 17 pending drops
-(one active and 16 queued). Failed drops can leave additional clones. The next
-same-scope template build reclaims these databases.
+A PostgreSQL template is owned through a session advisory lock the server releases
+when the binary exits; the next same-scope template build reclaims clones left
+by queued, overflowed, and failed drops.
 A role without `CREATEDB` falls back to a private schema in the configured database.
 
 `dbtest.NewTestDB` copies an in-memory `schema.sql` template per test with
