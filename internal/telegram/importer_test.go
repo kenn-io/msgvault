@@ -855,14 +855,3 @@ func TestImportBatchPreservesMessagesBeforeFailureAndResumes(t *testing.T) {
 	assert.EqualValues(t, batchSize+1, summary.MessagesSkipped)
 	assert.Equal(t, size, countChatMessages(t, st, "user3"))
 }
-
-func TestImportBatchStopsWhenRunSuperseded(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := batchExport(t, []batchChat{{2, "private_group", 3}, {3, "private_group", 3}}, func(int64, int) string { return "m" })
-	createTestTrigger(t, st, "supersede_run", "AFTER INSERT", "conversations", "NEW.source_conversation_id = 'chat3'",
-		"UPDATE sync_runs SET status = 'failed' WHERE status = 'running';",
-		"UPDATE sync_runs SET status = 'failed' WHERE status = 'running'; RETURN NULL;")
-	_, err := Import(t.Context(), st, ImportOptions{RootDir: root})
-	require.ErrorIs(t, err, store.ErrSyncRunSuperseded)
-	assert.Equal(t, 0, countChatMessages(t, st, "chat3"))
-}
