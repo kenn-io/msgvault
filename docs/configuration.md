@@ -2760,12 +2760,12 @@ as `[vector.embed.scope]`, and `[vector.multimodal.schedule]` accepts the same
 
 ### `[activity]`
 
-Configure the dated activity projection and per-person contact state (first and
-last contact, inbound and outbound counts, interaction count, and inferred
-channel). This deterministic projection powers "when did we last talk" for
-every person and runs hourly by default inside `msgvault serve`. To run it
-manually, use `msgvault activity build` (add `--backstop` to rescan the entire
-archive).
+Configure the dated activity projection and per-person contact state, which
+stores first and last contact, last inbound and last outbound contact,
+interaction count, and inferred channel. This deterministic projection powers
+"when did we last talk" for every person and runs hourly by default inside
+`msgvault serve`. To run it manually, use `msgvault activity build` (add
+`--backstop` to rescan the entire archive).
 
 Scheduled projection commits up to ten batches per pass, stops after the
 current batch if other scheduled work has waited for a minute, and always stops
