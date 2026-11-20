@@ -879,15 +879,15 @@ describe('AppShell', () => {
       await waitFor(() => expect(document.title).toBe('People · msgvault'));
     });
 
-    it('uses message detail for the tab as selection changes and clears it on close', async () => {
+    it('updates the tab as the selected message changes and clears it on close', async () => {
       const state = shellState('everything');
       const rows = [1, 2, 3].map(id => ({ ...entry(id), kind: 'email', anchor_message_id: id, conversation_id: id, title: `Snippet ${id}`, preview: `Snippet ${id}` }));
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
-        const match = path.match(/\/messages\/(\d+)$/);
+        const match = path.match(/\/conversations\/(\d+)$/);
         if (match) {
           const id = Number(match[1]);
-          return Response.json({ id, conversation_id: id, subject: id === 1 ? 'Subject' : '', conversation_title: id === 2 ? 'Conv title' : '', snippet: `Snippet ${id}` });
+          return Response.json({ id, anchor_id: id, messages: [{ id, conversation_id: id, subject: id === 1 ? 'Subject' : '', conversation_title: id === 2 ? 'Conv title' : '', snippet: `Snippet ${id}`, sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: `Body ${id}`, attachments: [] }], total: 1, has_before: false, has_after: false });
         }
         return Response.json(exploreResponse({ rows, total_count: 3 }));
       });
@@ -932,14 +932,15 @@ describe('AppShell', () => {
       let finish!: (response: Response) => void;
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
-        if (path.endsWith('/messages/1')) return await new Promise<Response>(resolve => { finish = resolve; });
+        if (path.endsWith('/conversations/1')) return await new Promise<Response>(resolve => { finish = resolve; });
         return Response.json(exploreResponse({ rows: [{ ...entry(1), kind: 'email', anchor_message_id: 1, conversation_id: 1 }], total_count: 1 }));
       });
       render(AppShell, { client, state });
       await waitFor(() => expect(finish).toBeTypeOf('function'));
       expect(document.title).toBe('Messages · msgvault');
-      finish(new Response(null, { status: 404 }));
-      await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
+      finish(Response.json({ message: 'Conversation unavailable' }, { status: 404 }));
+      await screen.findByText('Conversation unavailable');
+      expect(document.title).toBe('Messages · msgvault');
     });
 
     it('uses the conversation row title for a thread', async () => {
