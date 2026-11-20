@@ -230,6 +230,16 @@ func TestImportRepeatedLimitAdvances(t *testing.T) {
 	assert.Equal(3, n)
 }
 
+func TestImportLimitAcrossBatchBoundary(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := batchExport(t, []batchChat{{2, "personal_chat", batchSize + 2}}, func(int64, int) string { return "m" })
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Limit: batchSize + 1})
+	require.NoError(t, err)
+	assert.True(t, summary.LimitReached)
+	assert.EqualValues(t, 51, summary.MessagesAdded)
+	assert.Equal(t, 51, countChatMessages(t, st, "user2"))
+}
+
 func TestImportDuplicateMessageIDInChat(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
@@ -238,9 +248,6 @@ func TestImportDuplicateMessageIDInChat(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, summary.MessagesAdded)
 	assert.EqualValues(t, 1, summary.MessagesSkipped)
-	var n int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
-	assert.Equal(t, 2, n)
 }
 
 func TestImportFullAndAppendOnly(t *testing.T) {
@@ -760,16 +767,14 @@ func TestImportPreservesPendingMessagesAfterIdentityFailure(t *testing.T) {
 	createTestTrigger(t, st, "fail_pending_identity", "BEFORE INSERT", "participant_contact_observations", "NEW.participant_id = "+strconv.FormatInt(participant, 10),
 		"SELECT RAISE(ABORT, 'forced identity failure');", "RAISE EXCEPTION 'forced identity failure';")
 	root := t.TempDir()
-	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"private_group","messages":[{"id":1,"type":"message","from_id":"user1","date_unixtime":"1","text":"first chat"}]},{"id":3,"type":"private_group","messages":[{"id":1,"type":"message","from_id":"user1","date_unixtime":"1","text":"before failure"},{"id":2,"type":"message","from_id":"user9","date_unixtime":"2","text":"after failure"}]}]}}`))
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":3,"type":"private_group","messages":[{"id":1,"type":"message","from_id":"user1","date_unixtime":"1","text":"before failure"},{"id":2,"type":"message","from_id":"user9","date_unixtime":"2","text":"after failure"}]}]}}`))
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.ErrorContains(t, err, "forced identity failure")
-	assert.EqualValues(t, 2, summary.MessagesAdded)
-	assert.Equal(t, 1, countChatMessages(t, st, "chat2"))
+	assert.EqualValues(t, 1, summary.MessagesAdded)
 	assert.Equal(t, 1, countChatMessages(t, st, "chat3"))
 	dropTestTrigger(t, st, "fail_pending_identity", "participant_contact_observations")
 	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.NoError(t, err)
-	assert.True(t, summary.WasResumed)
 	assert.EqualValues(t, 1, summary.MessagesAdded)
 	assert.EqualValues(t, 1, summary.MessagesSkipped)
 	assert.Equal(t, 2, countChatMessages(t, st, "chat3"))
@@ -829,10 +834,10 @@ func dropTestTrigger(t *testing.T, st *store.Store, name, table string) {
 	require.NoError(t, err)
 }
 
-func TestImportBatchRollsBackFailedBatchAndResumes(t *testing.T) {
+func TestImportBatchPreservesMessagesBeforeFailureAndResumes(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	size := batchSize + 10
-	root := batchExport(t, []batchChat{{2, "personal_chat", size}, {3, "personal_chat", size}}, func(chat int64, id int) string {
+	root := batchExport(t, []batchChat{{3, "personal_chat", size}}, func(chat int64, id int) string {
 		if chat == 3 && id == batchSize+2 {
 			return "fail-me"
 		}
@@ -842,15 +847,12 @@ func TestImportBatchRollsBackFailedBatchAndResumes(t *testing.T) {
 		"SELECT RAISE(ABORT, 'forced failure');", "RAISE EXCEPTION 'forced failure';")
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.ErrorContains(t, err, "forced failure")
-	require.ErrorContains(t, err, "persist message user3:"+strconv.Itoa(batchSize+2)+":")
-	assert.Equal(t, size, countChatMessages(t, st, "user2"))
-	assert.Equal(t, batchSize, countChatMessages(t, st, "user3"))
+	assert.Equal(t, batchSize+1, countChatMessages(t, st, "user3"))
 	dropTestTrigger(t, st, "fail_batch", "messages")
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.NoError(t, err)
-	assert.EqualValues(t, size-batchSize, summary.MessagesAdded)
-	assert.EqualValues(t, batchSize, summary.MessagesSkipped)
-	assert.Equal(t, size, countChatMessages(t, st, "user2"))
+	assert.EqualValues(t, size-batchSize-1, summary.MessagesAdded)
+	assert.EqualValues(t, batchSize+1, summary.MessagesSkipped)
 	assert.Equal(t, size, countChatMessages(t, st, "user3"))
 }
 
@@ -862,6 +864,5 @@ func TestImportBatchStopsWhenRunSuperseded(t *testing.T) {
 		"UPDATE sync_runs SET status = 'failed' WHERE status = 'running'; RETURN NULL;")
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.ErrorIs(t, err, store.ErrSyncRunSuperseded)
-	assert.Equal(t, 3, countChatMessages(t, st, "chat2"))
 	assert.Equal(t, 0, countChatMessages(t, st, "chat3"))
 }

@@ -73,15 +73,33 @@ func (b *messageBatch) flush(ctx context.Context, existing map[string]int64, sum
 	}
 	ids, err := b.st.PersistTelegramMessagesContext(ctx, batch)
 	if err != nil {
-		return fmt.Errorf("telegram: persist batch of %d starting at %s: %w", len(batch), b.pending[0].key, err)
+		ids, err = b.persistBeforeFailure(ctx, batch)
 	}
-	for i, p := range b.pending {
-		existing[p.key] = ids[i]
+	for i, id := range ids {
+		existing[b.pending[i].key] = id
 	}
-	summary.MessagesAdded += int64(len(b.pending))
+	summary.MessagesAdded += int64(len(ids))
+	if err != nil {
+		return fmt.Errorf("telegram: persist %s: %w", b.pending[len(ids)].key, err)
+	}
 	b.pending = b.pending[:0]
 	clear(b.keys)
 	return nil
+}
+
+// persistBeforeFailure runs after a batch transaction rolled back. It persists
+// the messages one at a time so those before the failing one stay archived,
+// and returns the failing write's error, or nil if every write succeeds.
+func (b *messageBatch) persistBeforeFailure(ctx context.Context, batch []*store.MessagePersistData) ([]int64, error) {
+	var ids []int64
+	for i := range batch {
+		one, err := b.st.PersistTelegramMessagesContext(ctx, batch[i:i+1])
+		if err != nil {
+			return ids, err
+		}
+		ids = append(ids, one...)
+	}
+	return ids, nil
 }
 
 type ImportSummary struct {
@@ -164,7 +182,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		return summary, err
 	}
 	st = st.ScopedToSync(source.ID, syncID)
-	batch := newMessageBatch(st)
 	defer func() {
 		cleanup := context.WithoutCancel(ctx)
 		retErr = errors.Join(retErr, st.ResolveDeferredMessageRepliesContext(cleanup, source.ID, MessageType, 500), st.RecomputeConversationStatsContext(cleanup, source.ID))
@@ -230,7 +247,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			summary.ChatsSkipped++
 			logger.Warn("telegram: skipping unknown chat type", "type", chat.Type)
 		} else {
-			if err := importChat(ctx, st, resolve, source.ID, ownerPID, ownerName, chat, opts, batch, summary); err != nil {
+			if err := importChat(ctx, st, resolve, source.ID, ownerPID, ownerName, chat, opts, summary); err != nil {
 				return err
 			}
 			logger.Info("telegram: chat imported", "peer", chat.PeerKey())
@@ -254,7 +271,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 
 var errLimitReached = errors.New("telegram: import limit reached")
 
-func importChat(ctx context.Context, st *store.Store, resolve func(string, string) (int64, error), sourceID, ownerPID int64, ownerName string, chat *Chat, opts ImportOptions, batch *messageBatch, summary *ImportSummary) error {
+func importChat(ctx context.Context, st *store.Store, resolve func(string, string) (int64, error), sourceID, ownerPID int64, ownerName string, chat *Chat, opts ImportOptions, summary *ImportSummary) error {
 	peer := chat.PeerKey()
 	summary.ChatsProcessed++
 	direct := chat.Type == "personal_chat" || chat.Type == "bot_chat"
@@ -263,14 +280,13 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 	if err != nil {
 		return err
 	}
+	batch := newMessageBatch(st)
 	flushOnError := func(err error) error {
-		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return err
-		}
 		return errors.Join(err, batch.flush(ctx, existing, summary))
 	}
 	for i := range chat.Messages {
 		if err := ctx.Err(); err != nil {
+			// A later import replays this chat and skips messages already committed.
 			return err
 		}
 		m := &chat.Messages[i]

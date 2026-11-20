@@ -2218,9 +2218,6 @@ func (s *Store) persistMessageSnapshotAfter(ctx context.Context, tx *loggedTx, d
 
 // PersistTelegramMessagesContext persists Telegram snapshots in one transaction.
 func (s *Store) PersistTelegramMessagesContext(ctx context.Context, batch []*MessagePersistData) ([]int64, error) {
-	if len(batch) == 0 {
-		return nil, nil
-	}
 	ids := make([]int64, len(batch))
 	err := s.withAttributionTxContext(ctx, attributionLock{}, func(tx *loggedTx) error {
 		for i, data := range batch {
@@ -2228,10 +2225,7 @@ func (s *Store) PersistTelegramMessagesContext(ctx context.Context, batch []*Mes
 				ctx, tx, nil, nil, func([]int64) *MessagePersistData { return data }, nil, s.persistMessageSnapshotAfter,
 			)
 			if err != nil {
-				if data == nil || data.Message == nil {
-					return fmt.Errorf("persist message %d: %w", i, err)
-				}
-				return fmt.Errorf("persist message %s: %w", data.Message.SourceMessageID, err)
+				return err
 			}
 			ids[i] = id
 		}
