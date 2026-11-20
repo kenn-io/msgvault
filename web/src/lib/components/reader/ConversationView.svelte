@@ -105,6 +105,7 @@
     }
     const anchor = messages.find((message) => message.id === titleAnchorId) ??
       messages.find((message) => message.id === openedAnchorId);
+    if (anchor?.id === titleAnchorId && anchor.body_omitted) untrack(() => ensureBody(anchor.id));
     if (anchor) openedTitle = anchor.tab_title || '(untitled)';
     anchorTitle = openedTitle;
   });

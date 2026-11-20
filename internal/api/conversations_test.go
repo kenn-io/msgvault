@@ -106,16 +106,21 @@ func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 func TestMessageTabTitles(t *testing.T) {
 	for _, tc := range []struct {
 		name, conversationType, messageType, title, subject, body, want string
+		html                                                            bool
 	}{
-		{"verification", "email_thread", "email", "Conversation", "Your verification code is 123456", "", "Verification message"},
-		{"verification in body", "email_thread", "email", "Conversation", "Account access", "Your verification code is 123456", "Verification message"},
-		{"large ordinary body", "email_thread", "email", "Conversation", "Quarterly update", strings.Repeat("a", 1<<20), "Quarterly update"},
-		{"large body with verification subject", "email_thread", "email", "Conversation", "Your verification code is 123456", strings.Repeat("a", 1<<20), "Verification message"},
-		{"large body with verification title", "email_thread", "email", "Your verification code is 123456", "", strings.Repeat("a", 1<<20), "Verification message"},
-		{"facebook", "public_comments", "facebook_comments", "Post text", "", "", ""},
-		{"linkedin", "public_comments", "linkedin", "Post text", "", "", ""},
-		{"tiktok", "public_comments", "tiktok_export", "https://example.com/video", "", "", "https://example.com/video"},
-		{"chat", "direct_chat", "linkedin", "Chat title", "", "", "Chat title"},
+		{"verification", "email_thread", "email", "Conversation", "Your verification code is 123456", "", "Verification message", false},
+		{"verification in body", "email_thread", "email", "Conversation", "Account access", "Your verification code is 123456", "Verification message", false},
+		{"large ordinary body", "email_thread", "email", "Conversation", "Quarterly update", strings.Repeat("a", 1<<20), "Quarterly update", false},
+		{"large body with code cue", "email_thread", "email", "Conversation", "482913", strings.Repeat("a", 1<<20) + " Your verification code", "Verification message", false},
+		{"large body with verification subject", "email_thread", "email", "Conversation", "Your verification code is 123456", strings.Repeat("a", 1<<20), "Verification message", false},
+		{"large body with verification title", "email_thread", "email", "Your verification code is 123456", "", strings.Repeat("a", 1<<20), "Verification message", false},
+		{"facebook", "public_comments", "facebook_comments", "Post text", "", "", "", false},
+		{"linkedin", "public_comments", "linkedin", "Post text", "", "", "", false},
+		{"tiktok", "public_comments", "tiktok_export", "https://example.com/video", "", "", "https://example.com/video", false},
+		{"chat", "direct_chat", "linkedin", "Chat title", "", "", "Chat title", false},
+		{"large body with code title", "email_thread", "email", "482913", "", strings.Repeat("a", 1<<20) + " Your verification code", "Verification message", false},
+		{"large HTML with code subject", "email_thread", "email", "Conversation", "482913", strings.Repeat("a", 1<<20) + " Your verification code", "Verification message", true},
+		{"large ordinary HTML", "email_thread", "email", "Conversation", "Quarterly update", strings.Repeat("a", 1<<20), "Quarterly update", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
@@ -125,7 +130,11 @@ func TestMessageTabTitles(t *testing.T) {
 			require.NoError(t, err)
 			id, err := st.UpsertMessage(&store.Message{ConversationID: conversationID, SourceID: source.ID, SourceMessageID: "message", MessageType: tc.messageType, Subject: sql.NullString{String: tc.subject, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
 			require.NoError(t, err)
-			require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: tc.body, Valid: true}, sql.NullString{}))
+			text, html := sql.NullString{String: tc.body, Valid: true}, sql.NullString{}
+			if tc.html {
+				text, html = html, text
+			}
+			require.NoError(t, st.UpsertMessageBody(id, text, html))
 			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
 			for _, engine := range []bool{false, true} {
 				if engine {

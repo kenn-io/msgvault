@@ -41,6 +41,20 @@ function omittedMessage(id: number) {
 }
 
 describe('ConversationView', () => {
+  it('loads the selected omitted message while it stays collapsed', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path === '/api/v1/messages/1') return Response.json({ ...message(1), tab_title: 'Selected title' });
+      return Response.json({ id: 7, anchor_id: 2, messages: [omittedMessage(1), message(2), omittedMessage(3)], has_before: false, has_after: false, total: 3 });
+    });
+    render(ConversationView, { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 1 });
+    await screen.findByRole('article', { name: 'Message 2' });
+    await waitFor(() => expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname === '/api/v1/messages/1')).toBe(true));
+    expect(screen.getByRole('button', { name: /Expand message 1/ })).toBeTruthy();
+    expect(screen.queryByRole('article', { name: 'Message 1' })).toBeNull();
+    expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname === '/api/v1/messages/3')).toBe(false);
+  });
+
   it('loads the thread with the anchor expanded and the rest as one-line collapsed cards', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

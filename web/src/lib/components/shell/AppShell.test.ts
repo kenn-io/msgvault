@@ -995,7 +995,7 @@ describe('AppShell', () => {
       expect(document.title).toBe('Opened from file · Messages · msgvault');
     });
 
-    it('waits for an omitted message to load before naming the tab', async () => {
+    it.each(['Selected subject', 'Verification message'])('names a collapsed selected message after loading: %s', async (title) => {
       const state = shellState('everything');
       state.commitNavigation({ selectedRow: 'source:1:message:2', conversationAnchor: '1' });
       const row = { ...entry(2), key: 'source:1:message:2', kind: 'email', anchor_message_id: 2, conversation_id: 9, message_count: 2 };
@@ -1013,10 +1013,10 @@ describe('AppShell', () => {
       render(AppShell, { client, state });
       await screen.findByText('Anchor body');
       await waitFor(() => expect(document.title).toBe('(untitled) · Messages · msgvault'));
-      await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
-      expect(document.title).toBe('(untitled) · Messages · msgvault');
-      resolveDetail(Response.json({ id: 2, conversation_id: 9, subject: 'Sensitive subject', tab_title: 'Verification message', message_type: 'email', sent_at: '2026-07-18T12:00:00Z', from: 'sender@example.com', to: [], body: 'Your verification code is 123456', attachments: [] }));
-      await waitFor(() => expect(document.title).toBe('Verification message · Messages · msgvault'));
+      expect(screen.getByRole('button', { name: /Expand message 2/ })).toBeTruthy();
+      resolveDetail(Response.json({ id: 2, conversation_id: 9, subject: title === 'Verification message' ? 'Your verification code is 123456' : title, tab_title: title, message_type: 'email', sent_at: '2026-07-18T12:00:00Z', from: 'sender@example.com', to: [], body: title === 'Verification message' ? 'Your verification code is 123456' : 'Message body', attachments: [] }));
+      await waitFor(() => expect(document.title).toBe(`${title} · Messages · msgvault`));
+      expect(screen.getByRole('button', { name: /Expand message 2/ })).toBeTruthy();
     });
 
     it('uses the anchor subject when a conversation has no title', async () => {
