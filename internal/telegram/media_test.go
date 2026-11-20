@@ -18,7 +18,7 @@ func TestMediaWritesCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	summary := &ImportSummary{}
-	writes, err := mediaWrites(ctx, nil, 0, &Message{Photo: "photo.jpg"}, ImportOptions{RootDir: root, AttachmentsDir: attachments}, summary, func() error { return nil })
+	writes, err := mediaWrites(ctx, nil, 0, &Message{Photo: "photo.jpg"}, ImportOptions{RootDir: root, AttachmentsDir: attachments}, summary)
 	require.ErrorIs(err, context.Canceled)
 	assert.Empty(writes)
 	assert.Zero(summary.AttachmentsStored)

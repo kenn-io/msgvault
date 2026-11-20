@@ -395,54 +395,6 @@ func TestImportFillsMissingMediaSlots(t *testing.T) {
 	}
 }
 
-func TestImportFailedPendingMessageBeforeExistingMedia(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root, attachments := t.TempDir(), t.TempDir()
-	opts := ImportOptions{RootDir: root, AttachmentsDir: attachments, Me: "1"}
-	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":2,"type":"message","date_unixtime":"1","text":"old","photo":"photo.jpg"}]}`))
-	_, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("uncorrected"), 0600))
-	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"fail-me"},{"id":2,"type":"message","date_unixtime":"1","text":"old","photo":"photo.jpg"}]}`))
-	if st.IsPostgreSQL() {
-		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_pending_media() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced failure'; END $$`)
-		require.NoError(t, err)
-		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_pending_media BEFORE INSERT ON messages FOR EACH ROW WHEN (NEW.snippet = 'fail-me') EXECUTE FUNCTION fail_pending_media()`)
-	} else {
-		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_pending_media BEFORE INSERT ON messages WHEN NEW.snippet = 'fail-me' BEGIN SELECT RAISE(ABORT, 'forced failure'); END`)
-	}
-	require.NoError(t, err)
-	_, err = Import(t.Context(), st, opts)
-	require.ErrorContains(t, err, "forced failure")
-	var hash string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(content_hash, '') FROM attachments WHERE source_part_key = 'photo'`).Scan(&hash))
-	assert.Empty(t, hash)
-}
-
-func TestImportFlushesTextAndBatchesPhotos(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root, attachments := t.TempDir(), t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "first.jpg"), []byte("first photo"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "second.jpg"), []byte("second photo"), 0600))
-	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"text"},{"id":2,"type":"message","date_unixtime":"1","text":"first","photo":"first.jpg"},{"id":3,"type":"message","date_unixtime":"1","text":"second","photo":"second.jpg"}]}`))
-	var err error
-	if st.IsPostgreSQL() {
-		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_second_photo() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced failure'; END $$`)
-		require.NoError(t, err)
-		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_second_photo BEFORE INSERT ON messages FOR EACH ROW WHEN (NEW.snippet = 'second') EXECUTE FUNCTION fail_second_photo()`)
-	} else {
-		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_second_photo BEFORE INSERT ON messages WHEN NEW.snippet = 'second' BEGIN SELECT RAISE(ABORT, 'forced failure'); END`)
-	}
-	require.NoError(t, err)
-	opts := ImportOptions{RootDir: root, AttachmentsDir: attachments, Me: "1"}
-	_, err = Import(t.Context(), st, opts)
-	require.ErrorContains(t, err, "forced failure")
-	assert.Equal(t, 1, countMessages(t, st))
-	var snippet string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT snippet FROM messages`).Scan(&snippet))
-	assert.Equal(t, "text", snippet)
-}
-
 func TestImportMediaFailureIsRetryable(t *testing.T) {
 	for _, kind := range []string{"directory", "symlink", "storage", "escape", "absolute"} {
 		t.Run(kind, func(t *testing.T) {
@@ -798,10 +750,10 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 			testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"private_group","messages":[{"id":1,"type":"message","from_id":"user1","date_unixtime":"1610909871","text":"earlier"},{"id":2,"type":"message","from_id":"user2","date_unixtime":"1610909872","text":"hello"}]}]}}`))
 			summary, err := Import(ctx, st, ImportOptions{RootDir: root})
 			require.ErrorContains(err, "forced identity failure")
-			assert.EqualValues(1, summary.MessagesAdded)
+			assert.Zero(summary.MessagesAdded)
 			var count int
 			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&count))
-			assert.Equal(1, count)
+			assert.Zero(count)
 			members, err := st.ClusterMembers(participant)
 			require.NoError(err)
 			assert.NotContains(members, bridge)
@@ -814,7 +766,7 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 			require.NoError(err)
 			summary, err = Import(ctx, st, ImportOptions{RootDir: root})
 			require.NoError(err)
-			assert.EqualValues(1, summary.MessagesAdded)
+			assert.EqualValues(2, summary.MessagesAdded)
 			members, err = st.ClusterMembers(participant)
 			require.NoError(err)
 			assert.ElementsMatch([]int64{participant, bridge}, members)
@@ -872,6 +824,7 @@ func TestImportFailedBatchRetriesChat(t *testing.T) {
 	require.NoError(t, err)
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
+	assert.True(t, summary.WasResumed)
 	assert.EqualValues(t, 10, summary.MessagesAdded)
 	assert.EqualValues(t, 50, summary.MessagesSkipped)
 	assert.Equal(t, 60, countMessages(t, st))
