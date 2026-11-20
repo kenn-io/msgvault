@@ -932,12 +932,21 @@ describe('AppShell', () => {
       await waitFor(() => expect(document.title).toBe(`${title} · People · msgvault`));
     });
 
-    it('keeps the browser tab at the workspace while a message is unresolved', async () => {
+    it('names the browser tab while a message loads and is unavailable', async () => {
       const state = shellState('everything');
       state.commitNavigation({ selectedRow: 'message:99' });
-      render(AppShell, { client: exploreClient(), state });
+      let finish!: (response: Response) => void;
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/explore')) return await new Promise<Response>(resolve => { finish = resolve; });
+        return Response.json(exploreResponse());
+      });
+      render(AppShell, { client, state });
       await screen.findByRole('complementary', { name: 'Reading pane: message:99' });
-      await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
+      await waitFor(() => expect(document.title).toBe('Loading message · Messages · msgvault'));
+      await waitFor(() => expect(finish).toBeDefined());
+      finish(Response.json(exploreResponse()));
+      await waitFor(() => expect(document.title).toBe('Message unavailable · Messages · msgvault'));
     });
 
     it('names the browser tab for a Settings category', async () => {

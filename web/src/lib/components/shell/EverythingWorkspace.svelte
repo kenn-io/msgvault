@@ -247,8 +247,6 @@
       : undefined;
   });
 
-  $effect(() => { readingTitle = readingSelection ? readingSelectionTabTitle(readingSelection) : ''; });
-
   const readingState = $derived.by(
     (): {
       status: ReadingPaneStatus;
@@ -282,6 +280,13 @@
       };
     },
   );
+
+  $effect(() => {
+    if (readingSelection) readingTitle = readingSelectionTabTitle(readingSelection);
+    else if (!readingTargetKey) readingTitle = '';
+    else if (parseGroupSelection(readingTargetKey)) readingTitle = readingState.status === 'loading' ? 'Loading group' : 'Group unavailable';
+    else readingTitle = readingState.status === 'loading' ? 'Loading message' : 'Message unavailable';
+  });
 
   const readingPredicateFingerprint = $derived(predicateFingerprint(exploreState.predicate()));
 
