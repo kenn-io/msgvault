@@ -127,6 +127,22 @@ func TestPostgresFixtureDatabaseDroppedAfterCleanup(t *testing.T) {
 		err := adminDB.QueryRowContext(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", database).Scan(&exists)
 		return err == nil && !exists
 	}, time.Minute, 100*time.Millisecond, "clone is gone after the owning test's cleanup")
+
+	// The worker captured the original channel before dropping the first clone.
+	originalDrops := cloneDrops
+	fullDrops := make(chan cloneDrop, cap(originalDrops))
+	for range cap(fullDrops) {
+		fullDrops <- cloneDrop{}
+	}
+	cloneDrops = fullDrops
+	t.Cleanup(func() { cloneDrops = originalDrops })
+	t.Run("full queue", func(sub *testing.T) {
+		database = currentDatabaseOf(sub, NewTestStore(sub))
+	})
+	cloneDrops = originalDrops
+	require.NotEmpty(database)
+	t.Cleanup(func() { dropOwnedDatabase(context.WithoutCancel(t.Context()), adminDB, database) })
+	require.True(databaseExists(t, adminDB, database), "overflow clone remains for the next sweep")
 }
 
 func TestPostgresCloneDropsRecoverFromStalledHandshake(t *testing.T) {
@@ -152,8 +168,6 @@ func TestPostgresCloneDropsRecoverFromStalledHandshake(t *testing.T) {
 		}
 	}()
 	t.Cleanup(func() { _ = listener.Close() })
-	// Once the worker has received this request, it has captured the original
-	// channel. A separate full channel makes overflow independent of timing.
 	cloneDrops <- cloneDrop{dbURL: "postgres://test@" + listener.Addr().String() + "/test?sslmode=disable", name: "msgvault_tc_12345678_1234567890abcdef_1234567890abcdef"}
 	select {
 	case conn := <-accepted:
@@ -161,29 +175,32 @@ func TestPostgresCloneDropsRecoverFromStalledHandshake(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		require.FailNow(t, "worker did not connect")
 	}
-	originalDrops := cloneDrops
-	fullDrops := make(chan cloneDrop, cap(originalDrops))
-	for range cap(fullDrops) {
-		fullDrops <- cloneDrop{dbURL: ":invalid"}
-	}
-	cloneDrops = fullDrops
-	t.Cleanup(func() { cloneDrops = originalDrops })
-	var database string
-	t.Run("owner", func(sub *testing.T) {
-		database = currentDatabaseOf(sub, NewTestStore(sub))
-	})
-	cloneDrops = originalDrops
+	next, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = next.Close() })
+	nextAccepted := make(chan struct{})
+	go func() {
+		conn, err := next.Accept()
+		if err == nil {
+			_ = conn.Close()
+			close(nextAccepted)
+		}
+	}()
+	cloneDrops <- cloneDrop{dbURL: "postgres://test@" + next.Addr().String() + "/test?sslmode=disable", name: "msgvault_tc_12345678_1234567890abcdef_1234567890abcdef"}
 	for _, name := range clones {
 		cloneDrops <- cloneDrop{dbURL: dbURL, name: name}
 	}
-	require.NotEmpty(t, database)
-	// The full queue leaves this clone for the next sweep.
-	t.Cleanup(func() { dropOwnedDatabase(context.WithoutCancel(t.Context()), admin, database) })
-	assert.True(t, databaseExists(t, admin, database))
+	select {
+	case <-nextAccepted:
+	case <-time.After(20 * time.Second):
+		require.FailNow(t, "worker did not advance after the stalled handshake")
+	}
 	// The server side of the stalled handshake stays open during recovery.
 	require.Eventually(t, func() bool {
 		for _, name := range clones {
-			if databaseExists(t, admin, name) {
+			var exists bool
+			err := admin.QueryRowContext(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", name).Scan(&exists)
+			if err != nil || exists {
 				return false
 			}
 		}
@@ -200,7 +217,7 @@ func TestCloneDropFailureIsLogged(t *testing.T) {
 	reader, writer := io.Pipe()
 	logged := make(chan string, 1)
 	done := make(chan struct{})
-	name := "msgvault_tc_12345678_1234567890abcdef_1234567890abcdef"
+	name := "msgvault_tc_87654321_fedcba0987654321_fedcba0987654321"
 	go func() {
 		defer close(done)
 		scanner := bufio.NewScanner(reader)
