@@ -535,17 +535,12 @@ func nullableTimePtr(value time.Time) *string {
 }
 
 func messageTabTitle(conversationType, messageType string, content verification.Content) string {
-	// Oversized bodies fail closed for agent access. Keep tab classification
-	// bounded while treating code-shaped titles as sensitive without the body.
-	oversized := len(content.Text) >= verification.MaxFieldBytes || len(content.HTML) >= verification.MaxFieldBytes
+	// Classify a bounded prefix without the fail-closed agent-access policy.
 	if len(content.Text) >= verification.MaxFieldBytes {
-		content.Text = ""
+		content.Text = content.Text[:verification.MaxFieldBytes-1]
 	}
 	if len(content.HTML) >= verification.MaxFieldBytes {
-		content.HTML = ""
-	}
-	if oversized {
-		content.Filenames = append(slices.Clone(content.Filenames), "verification code")
+		content.HTML = content.HTML[:verification.MaxFieldBytes-1]
 	}
 	if verification.Is(content) {
 		return "Verification message"

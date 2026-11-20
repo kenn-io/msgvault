@@ -1027,11 +1027,13 @@ describe('AppShell', () => {
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
         if (path.endsWith('/messages/42')) return Response.json({ id: 42, conversation_id: 8, subject: 'Planning meeting', tab_title: 'Planning meeting', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', labels: [], attachments: [] });
+        if (path.endsWith('/conversations/8')) return Response.json({ id: 8, anchor_id: 42, messages: [{ id: 42, conversation_id: 8, subject: 'Planning meeting', tab_title: 'Planning meeting', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', attachments: [] }], total: 1, has_before: false, has_after: false });
         if (path.endsWith('/meetings/metrics')) return Response.json(meetingMetrics({ totals: { meeting_count: 1, known_duration_count: 0, unknown_duration_count: 1, total_known_seconds: 0, average_known_seconds: null } }));
-        return Response.json(exploreResponse());
+        return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
       });
       render(AppShell, { client, state });
       state.commitNavigation({ selectedRow: 'archive-meeting:42' });
+      await screen.findByText('Transcript');
       await waitFor(() => expect(document.title).toBe('Planning meeting · Messages · msgvault'));
     });
 
