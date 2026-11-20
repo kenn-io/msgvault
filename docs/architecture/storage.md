@@ -374,7 +374,7 @@ durable reason explaining how it arose; do not infer its history from the
 vector alone. The terminal check tests only an empty vector and current
 version, not a separately persisted overflow cause.
 
-The read-only [FTS diagnostic](../cli-reference.md#diagnose-fts) compares saved
+The read-only [FTS diagnostic](../cli-reference.md#doctor-fts) compares saved
 search documents with stored message text, subjects, senders, recipient search
 fields and saved voice transcripts. It also checks the extra data PostgreSQL v3
 uses for phrase searches.

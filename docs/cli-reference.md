@@ -19,7 +19,7 @@ explains their defaults. Flags a parent command defines, such as
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full), [source feeds add](#source-feeds-add) |
 | Import local exports | [import-ics](#import-ics), [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-linkedin](#import-linkedin), [import-tiktok](#import-tiktok), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
-| Check search representations | [diagnose-fts](#diagnose-fts) |
+| Check search representations | [doctor fts](#doctor-fts) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Find a partial address | [address](#address) |
@@ -4912,9 +4912,13 @@ under `[activity]`.
 
 ---
 
-## diagnose-fts
+## doctor
 
 Not in the latest release yet.
+
+Run read-only health checks on the archive. Each check is a subcommand.
+
+### doctor fts
 
 Compare a bounded page of search documents with stored message text, subjects,
 senders, recipient search fields and saved voice transcripts, through the
@@ -4925,8 +4929,8 @@ Daemon startup and scheduled work keep their normal lifecycle effects; use an
 isolated copy with scheduled work disabled for operator verification.
 
 ```bash
-msgvault diagnose-fts --limit 100 --timeout 30s --json
-msgvault diagnose-fts --cursor '<next_cursor>' --json
+msgvault doctor fts --limit 100 --timeout 30s --json
+msgvault doctor fts --cursor '<next_cursor>' --json
 ```
 
 | Flag | Default | Meaning |
@@ -5002,7 +5006,7 @@ Cancellation, timeout and SQL failure leave the interrupted row eligible in
 retry the original cursor; repeating observations is safe. No checkpoint is
 written to the archive.
 
-Older daemons reject `diagnose-fts` through the CLI runner's command allowlist.
+Older daemons reject `doctor fts` through the CLI runner's command allowlist.
 An API version shared with another feature does not establish command support.
 Use a CLI and daemon that both contain this command.
 

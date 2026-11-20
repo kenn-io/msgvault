@@ -18,11 +18,11 @@ func TestDiagnoseFTSRunnerAdmissionAndReadOnlyGate(t *testing.T) {
 	called := false
 	st := &mockStore{runFunc: func(_ context.Context, req CLIRunRequest, emit func(CLIRunEvent) error) error {
 		called = true
-		assert.Equal([]string{"diagnose-fts", "--limit=2", "--json"}, req.Args)
+		assert.Equal([]string{"doctor", "fts", "--limit=2", "--json"}, req.Args)
 		return emit(CLIRunEvent{Type: "stdout", Data: `{"outcome":"incomplete"}`})
 	}}
 	srv := newCLIHandlerTestServer(st)
-	body := `{"args":["diagnose-fts","--limit=2","--json"]}`
+	body := `{"args":["doctor","fts","--limit=2","--json"]}`
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
 	_, skip, err := cliRunGateDecision(req, requestAuthentication{})
 	require.NoError(err)
@@ -33,4 +33,5 @@ func TestDiagnoseFTSRunnerAdmissionAndReadOnlyGate(t *testing.T) {
 	assert.Equal(http.StatusOK, resp.Code)
 	assert.True(called)
 	assert.Contains(resp.Body.String(), "incomplete")
+	assert.False(cliRunCommandAllowed([]string{"doctor"}), "the doctor group alone runs no check")
 }

@@ -11,11 +11,11 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func newDiagnoseFTSCmd() *cobra.Command {
+func newDoctorFTSCmd() *cobra.Command {
 	var opts store.FTSDiagnosticOptions
 	var jsonOut bool
 	command := &cobra.Command{
-		Use:   "diagnose-fts",
+		Use:   "fts [--cursor CURSOR]",
 		Short: "Check search documents against stored messages",
 		Long: `Compare search documents with stored message text, subjects, senders, recipient
 search fields and saved voice transcripts. Leaves the archive unchanged and
@@ -138,7 +138,7 @@ func writeFTSDiagnostic(w io.Writer, r store.FTSDiagnosticReport, jsonOut bool) 
 		}
 	}
 	if r.NextCursor != "" {
-		if _, err := fmt.Fprintf(w, "Continue: msgvault diagnose-fts --cursor %s\n", r.NextCursor); err != nil {
+		if _, err := fmt.Fprintf(w, "Continue: msgvault doctor fts --cursor %s\n", r.NextCursor); err != nil {
 			return fmt.Errorf("write FTS diagnostic: %w", err)
 		}
 	}
@@ -179,5 +179,3 @@ func ftsDiagnosticDescription(code string) string {
 		return code
 	}
 }
-
-func init() { rootCmd.AddCommand(newDiagnoseFTSCmd()) }
