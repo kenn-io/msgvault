@@ -1,17 +1,17 @@
 ---
 last_edited: "2026-11-19"
-title: Choose a Source
+title: Choose a source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
 
-Bring a live account or a local export into the same archive. **Sync** contacts
-a service to collect new and changed records. **Import** reads an export you
-already have. Available history and attachments depend on the service's access
-rules and what the export contains.
+You can bring live accounts and local exports into the same archive. **Sync**
+connects to a service to pull in new and changed records, while **import** reads
+an export you already have. The history and attachments you get depend on
+each service's access rules and what the export includes.
 
-Install msgvault with the [setup guide](../setup.md), then choose a source below.
-You do not need Google OAuth credentials to import local files or use a
-non-Google provider.
+Start by installing msgvault with the [setup guide](../setup.md), then pick a
+source below. You do not need Google OAuth credentials for local imports or
+non-Google providers.
 
 ## Email
 
@@ -24,10 +24,10 @@ non-Google provider.
 | MailMate-style `.mailbox` directories | [EML import](../usage/importing.md) | A `.mailbox` tree containing `.eml` files and an archive identifier |
 | MBOX, Apple Mail, or Outlook PST | [Local email import](../usage/importing.md) | An exported mailbox or readable local mail directory |
 
-Sync preserves mail in the archive without sending or replying to messages.
-[Removing mail from a provider](../usage/deletion.md) is a separate, explicitly
-authorized operation. [Remote image archiving](../usage/remote-images.md) is
-also a separate opt-in because downloading an image can activate email tracking.
+Syncing only saves mail to your archive and never sends or replies to messages.
+[Removing mail from a provider](../usage/deletion.md) is a separate step that
+requires explicit authorization. [Remote image archiving](../usage/remote-images.md)
+is also a separate opt-in, because downloading an image can trigger email tracking.
 
 ## Chat and text messages
 
@@ -52,11 +52,13 @@ also a separate opt-in because downloading an image can activate email tracking.
 | RSS, Atom, or JSON feeds | [Feeds](../usage/feeds.md) | Followed feeds fetched on a schedule; each item archived once |
 | Another source, such as tool notifications | [Messages from any source](../usage/message-import.md) | Provider-neutral ingestion keyed by source and external message ID |
 
-Some chat providers apply size and room-participant limits to media. A message can be archived
-without all its media. Review [media policy](../configuration.md#media-policy)
-before a large sync. Providers with a backfill command use it to retry eligible
-missing downloads. [Chatwoot](chatwoot.md) retries recent `--no-media` downloads
-through normal sync; use `--full` after raising a size cap or to retry older quiet files.
+Some chat providers apply size and room-participant limits to media, and a
+message can be archived without all of its media. Before you run a
+large sync, check the [media policy](../configuration.md#media-policy). For
+providers that offer a backfill command, run it to retry eligible missing
+downloads. [Chatwoot](chatwoot.md) retries recent `--no-media` downloads during
+normal sync; pass `--full` after raising a size cap or to retry older quiet
+files.
 
 ## Meetings, calendars, and contacts
 
@@ -68,23 +70,26 @@ through normal sync; use `--full` after raising a size cap or to retry older qui
 | Calendar `.ics` file | [Calendar import](../cli-reference.md#import-ics) | Events, organizers, attendees, recurrence, and cancellation state |
 | CardDAV address book | [CardDAV contacts](../usage/people-carddav.md) | Imported contacts and explicit publication of curated profiles |
 
-Meeting and calendar sync reads source data. CardDAV can also write to address
-books when you select a publication role and explicitly publish a person;
-review its conflict and consent workflow before enabling that direction.
+Meeting and calendar sync only reads from the source. CardDAV can also write
+back to your address books if you pick a publication role and explicitly publish
+a person. Before you turn on writing, read through its conflict and consent
+workflow.
 
 ## After the first import or sync
 
-1. Open the [Web UI](../web-ui.md) or [TUI](../usage/tui.md) and inspect a small
-   sample, including attachments and dates.
+1. Open the [Web UI](../web-ui.md) or [TUI](../usage/tui.md) and check a small
+   sample of messages, including attachments and dates.
 2. Confirm [which identifiers mean you](../usage/people.md) so sent/received
-   classification and contact activity have the right starting point.
-3. Set a provider schedule if you want ongoing sync. Local export imports remain
-   separate commands; see each guide for repeat-import behavior.
-4. Create a [backup](../usage/backup.md). Add more sources and
-   [organize accounts into collections](../usage/multi-account.md) as needed.
+   classification and contact activity start from the right identity.
+3. If you want ongoing sync, set a provider schedule. Local export imports
+   remain separate commands; check each guide for how repeat imports behave.
+4. Create a [backup](../usage/backup.md), then add more sources and
+   [organize accounts into collections](../usage/multi-account.md) as you need
+   them.
 
-For records already stored, keyword search and analytics use the archive.
-Optional [semantic search and profile automation](../usage/recommended-configuration.md)
-have their own provider configuration. Message embeddings are enabled through
-configuration; people, visual, and document features also require their stated
+Keyword search and analytics work directly on the records already in your
+archive. Optional
+[semantic search and profile automation](../usage/recommended-configuration.md)
+need their own provider configuration. You turn on message embeddings in your
+config, while people, visual, and document features also require their stated
 consent steps.
