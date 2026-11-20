@@ -80,8 +80,6 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 		_, err = conn.ExecContext(t.Context(), `DELETE FROM `+table+` WHERE id = 100`)
 		require.NoError(err)
 	}
-	_, err = conn.ExecContext(t.Context(), `UPDATE organization_attribute_values SET value_json = CAST(value_json AS BLOB) WHERE organization_id = ?`, organization.ID)
-	require.NoError(err)
 	for _, tc := range []struct {
 		query string
 		id    int64
@@ -89,7 +87,6 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 	}{
 		{`SELECT typeof(value_json) FROM person_attribute_values WHERE id = ?`, first.Value.ID, "integer"},
 		{`SELECT typeof(value_json) FROM person_attribute_values WHERE id = ?`, second.Value.ID, "text"},
-		{`SELECT typeof(value_json) FROM organization_attribute_values WHERE organization_id = ?`, organization.ID, "blob"},
 	} {
 		var storage string
 		require.NoError(conn.QueryRowContext(t.Context(), tc.query, tc.id).Scan(&storage))

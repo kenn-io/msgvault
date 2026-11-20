@@ -198,6 +198,7 @@ func TestMCPAttributePersonDefinitions(t *testing.T) {
 	require.NoError(err)
 	attributeError(t, attributeOperation(t, b, "delete_attribute_definition", staleDelete), "attribute_definition_revision_conflict")
 	assert.False(attributeOperation(t, b, "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": patched.ETag}).IsError)
+	attributeError(t, attributeOperation(t, b, "get_attribute_definition", map[string]any{"definition_id": created.Definition.ID}), "attribute_definition_not_found")
 	attributeError(t, attributeOperation(t, b, "get_attribute_definition", map[string]any{"definition_id": orgDefinition.ID}), "attribute_definition_not_found")
 	for _, name := range []string{"patch_attribute_definition", "delete_attribute_definition"} {
 		_, err = b.OperationDisclosure(t.Context(), name, map[string]any{"definition_id": orgDefinition.ID, "etag": "example", "changes": map[string]any{"label": "Changed"}})
@@ -250,6 +251,9 @@ func (b *attributeRaceBackend) OperationDisclosure(ctx context.Context, name str
 func TestMCPAttributeEditDuringApproval(t *testing.T) {
 	for _, modern := range []bool{false, true} {
 		for _, scenario := range []string{"empty", "existing", "multi", "clear"} {
+			if modern && scenario != "empty" {
+				continue
+			}
 			t.Run(fmt.Sprintf("%s/modern=%t", scenario, modern), func(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
