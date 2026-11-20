@@ -93,6 +93,11 @@ func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Messa
 			source := filepath.Join(opts.RootDir, slot.path)
 			file, err := export.OpenAttachmentSource(source, 0)
 			if err == nil {
+				if messageID == 0 {
+					if err := beforeCopy(); err != nil {
+						return nil, errors.Join(err, file.Close())
+					}
+				}
 				write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentStream(ctx, opts.AttachmentsDir, file, 0)
 				err = errors.Join(err, file.Close())
 			}

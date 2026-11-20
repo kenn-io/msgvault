@@ -219,6 +219,7 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 	}
 	pending := make([]*store.MessagePersistData, 0, batchSize)
 	queued := make(map[string]bool)
+	mediaCopied := false
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
@@ -233,6 +234,16 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		summary.MessagesAdded += int64(len(ids))
 		pending = pending[:0]
 		clear(queued)
+		mediaCopied = false
+		return nil
+	}
+	beforeNewMedia := func() error {
+		if !mediaCopied {
+			if err := flush(); err != nil {
+				return err
+			}
+			mediaCopied = true
+		}
 		return nil
 	}
 	for i := range chat.Messages {
@@ -317,7 +328,7 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		if err != nil {
 			return err
 		}
-		writes, err := mediaWrites(ctx, st, 0, m, opts, summary, flush)
+		writes, err := mediaWrites(ctx, st, 0, m, opts, summary, beforeNewMedia)
 		if err != nil {
 			return err
 		}

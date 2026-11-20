@@ -441,7 +441,7 @@ func TestImportMediaMessagesShareBatch(t *testing.T) {
 	root, attachments := t.TempDir(), t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "first.jpg"), []byte("first photo"), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "second.jpg"), []byte("second photo"), 0600))
-	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first","photo":"first.jpg"},{"id":2,"type":"message","date_unixtime":"1","text":"second","photo":"second.jpg"}]}`))
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"text"},{"id":2,"type":"message","date_unixtime":"1","text":"first","photo":"first.jpg"},{"id":3,"type":"message","date_unixtime":"1","text":"second","photo":"second.jpg"}]}`))
 	var err error
 	if st.IsPostgreSQL() {
 		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_second_photo() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced failure'; END $$`)
@@ -454,7 +454,10 @@ func TestImportMediaMessagesShareBatch(t *testing.T) {
 	opts := ImportOptions{RootDir: root, AttachmentsDir: attachments, Me: "1"}
 	_, err = Import(t.Context(), st, opts)
 	require.ErrorContains(t, err, "forced failure")
-	assert.Zero(t, countMessages(t, st))
+	assert.Equal(t, 1, countMessages(t, st))
+	var snippet string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT snippet FROM messages`).Scan(&snippet))
+	assert.Equal(t, "text", snippet)
 	drop := "DROP TRIGGER fail_second_photo"
 	if st.IsPostgreSQL() {
 		drop += " ON messages"
