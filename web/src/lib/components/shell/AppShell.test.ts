@@ -881,7 +881,7 @@ describe('AppShell', () => {
 
     it('updates the tab as the selected message changes and clears it on close', async () => {
       const state = shellState('everything');
-      const rows = [1, 2, 3].map(id => ({ ...entry(id), anchor_message_id: id, conversation_id: id, title: `Snippet ${id}`, preview: `Snippet ${id}` }));
+      const rows = [1, 2, 3].map(id => ({ ...entry(id), key: `source:1:message:${id}`, kind: 'email', anchor_message_id: id, conversation_id: id, title: `Snippet ${id}`, preview: `Snippet ${id}` }));
       const requests: string[] = [];
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
@@ -907,12 +907,12 @@ describe('AppShell', () => {
 
     it('keeps the workspace title while a message loads or is missing', async () => {
       const state = shellState('everything');
-      state.commitNavigation({ selectedRow: 'message:1' });
+      state.commitNavigation({ selectedRow: 'source:1:message:1' });
       let finish!: (response: Response) => void;
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
         if (path.endsWith('/conversations/1')) return await new Promise<Response>(resolve => { finish = resolve; });
-        return Response.json(exploreResponse({ rows: [{ ...entry(1), anchor_message_id: 1, conversation_id: 1 }], total_count: 1 }));
+        return Response.json(exploreResponse({ rows: [{ ...entry(1), key: 'source:1:message:1', kind: 'email', anchor_message_id: 1, conversation_id: 1 }], total_count: 1 }));
       });
       render(AppShell, { client, state });
       await waitFor(() => expect(finish).toBeTypeOf('function'));
@@ -941,15 +941,49 @@ describe('AppShell', () => {
       expect(document.title).toBe('Thread subject · Messages · msgvault');
     });
 
+    it('updates the tab when another item in the same thread opens', async () => {
+      const state = shellState('everything');
+      const rows = [1, 2].map(id => ({
+        ...entry(id),
+        key: `source:1:message:${id}`,
+        kind: 'email',
+        anchor_message_id: id,
+        conversation_id: 9,
+        conversation_type: 'email_thread',
+        message_count: 2,
+        title: `Message subject ${id}`,
+      }));
+      const client = createAPIClient(async input => {
+        const url = new URL((input as Request).url);
+        if (url.pathname.endsWith('/conversations/9')) {
+          const anchor = Number(url.searchParams.get('anchor'));
+          return Response.json({ id: 9, anchor_id: anchor, messages: [
+            { id: 1, conversation_id: 9, subject: 'Earlier message subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Earlier body', attachments: [] },
+            { id: 2, conversation_id: 9, subject: 'Thread subject', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
+          ], total: 2, has_before: true, has_after: false });
+        }
+        return Response.json(exploreResponse({ rows, total_count: 2 }));
+      });
+      render(AppShell, { client, state });
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await fireEvent.click((await within(grid).findAllByText('Synthetic excerpt 1'))[0]!);
+      await waitFor(() => expect(document.title).toBe('Earlier message subject · Messages · msgvault'));
+      await fireEvent.click((await within(grid).findAllByText('Synthetic excerpt 2'))[0]!);
+      await waitFor(() => expect(document.title).toBe('Thread subject · Messages · msgvault'));
+      await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
+      await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+      expect(document.title).toBe('Thread subject · Messages · msgvault');
+    });
+
     it('uses the anchor subject when a conversation has no title', async () => {
       const state = shellState('everything');
       state.commitNavigation({ selectedRow: 'source:1:conversation:9' });
-      const row = { ...entry(1), key: 'source:1:conversation:9', kind: 'conversation', message_type: 'whatsapp', conversation_type: 'group_chat', title: 'Conversation', anchor_message_id: 2, conversation_id: 9, message_count: 2 };
+      const row = { ...entry(1), key: 'source:1:conversation:9', kind: 'conversation', message_type: 'email', conversation_type: 'email_thread', title: 'Conversation', anchor_message_id: 2, conversation_id: 9, message_count: 2 };
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
         if (path.endsWith('/conversations/9')) return Response.json({ id: 9, anchor_id: 2, messages: [
-          { id: 1, conversation_id: 9, subject: 'Earlier message subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'whatsapp', from: 'sender@example.com', to: [], body: 'Earlier body', attachments: [] },
-          { id: 2, conversation_id: 9, subject: 'Thread subject', sent_at: '2026-07-18T12:00:00Z', message_type: 'whatsapp', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
+          { id: 1, conversation_id: 9, subject: 'Earlier message subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Earlier body', attachments: [] },
+          { id: 2, conversation_id: 9, subject: 'Thread subject', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
         ], total: 2, has_before: true, has_after: false });
         return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
       });
@@ -2058,7 +2092,7 @@ describe('AppShell', () => {
         source_counts: [], first_at: '2026-07-18T12:00:00Z', last_at: '2026-07-18T12:00:00Z', cache_revision: 'cache-1'
       });
       if (path === '/api/v1/participants/1/timeline') return Response.json(exploreResponse({
-        rows: [1, 2].map(id => ({ ...entry(id), conversation_id: id, anchor_message_id: id })), total_count: 2
+        rows: [1, 2].map(id => ({ ...entry(id), key: `source:1:message:${id}`, kind: 'email', conversation_id: id, anchor_message_id: id })), total_count: 2
       }));
       if (path === '/api/v1/relationships/1/calendar') return Response.json({
         participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC',

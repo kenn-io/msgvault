@@ -23,6 +23,7 @@
     client,
     conversationId,
     anchorId,
+    titleAnchorId = undefined,
     anchorTitle = $bindable(''),
     onAnchorChange = undefined,
     start = undefined,
@@ -37,7 +38,9 @@
     onOpenMeeting?: (meeting: import('../../api/generated/models').MeetingRef) => void;
     conversationId: number;
     anchorId: number;
-    /** Title of the loaded anchor message; empty until the window loads. */
+    /** Stable message ID whose title names the selected thread. */
+    titleAnchorId?: number;
+    /** Title of the selected message; empty until the window loads. */
     anchorTitle?: string;
     onAnchorChange?: (anchorId: number) => void;
     /** Lower UTC bound (RFC3339, inclusive) restricting the window — e.g. a
@@ -89,8 +92,8 @@
     };
   });
   $effect(() => {
-    const anchor = messages.find((message) => message.id === anchorId);
-    anchorTitle = anchor ? untrack(() => anchorTitle) || messageTitle(anchor.subject, anchor.conversation_title) || '(untitled)' : '';
+    const anchor = messages.find((message) => message.id === (titleAnchorId ?? anchorId));
+    anchorTitle = anchor ? messageTitle(anchor.subject, anchor.conversation_title) || '(untitled)' : '';
   });
   onDestroy(() => { anchorTitle = ''; });
   let loading = $state(true);

@@ -231,6 +231,7 @@
         {client}
         conversationId={conversationID}
         anchorId={threadAnchorId}
+        titleAnchorId={archiveMessage?.id ?? conversationRow?.anchor_message_id ?? threadAnchorId}
         bind:anchorTitle
         start={conversationStart}
         end={conversationEnd}

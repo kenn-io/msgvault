@@ -134,6 +134,16 @@ func TestConversationWindowOmitsPublicPostBodyAsConversationTitle(t *testing.T) 
 	require.NoError(json.NewDecoder(w.Body).Decode(&response))
 	require.Len(response.Messages, 1)
 	assert.Empty(response.Messages[0].ConversationTitle)
+
+	req = httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		fmt.Sprintf("/api/v1/messages/%d", messageID), nil)
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var detail MessageDetail
+	require.NoError(json.NewDecoder(w.Body).Decode(&detail))
+	assert.Empty(detail.ConversationTitle)
 }
 
 func TestConversationWindowCapsInlineBodiesAndServesOmittedBodiesByID(t *testing.T) {
