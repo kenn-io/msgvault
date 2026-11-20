@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"maps"
-	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -91,23 +90,6 @@ func attributeRefusal(code string) bool {
 	return false
 }
 
-// unsafeAttributeJSON rejects integers that may have been rounded by the MCP JSON decoder.
-func unsafeAttributeJSON(value any) bool {
-	switch v := value.(type) {
-	case float64:
-		return math.Trunc(v) == v && math.Abs(v) > maxJSONSafeInteger
-	case []any:
-		return slices.ContainsFunc(v, unsafeAttributeJSON)
-	case map[string]any:
-		for _, item := range v {
-			if unsafeAttributeJSON(item) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func attributeRequest(name string, args map[string]any) (string, string, runtime.RequestOptions, bool) {
 	switch name {
 	case "list_person_attributes":
@@ -118,8 +100,7 @@ func attributeRequest(name string, args map[string]any) (string, string, runtime
 		return http.MethodGet, "/api/v1/people/{id}/attributes", &generated.ListPersonAttributesRequestOptions{PathParams: &generated.ListPersonAttributesPath{ID: in.PersonID}, Query: &generated.ListPersonAttributesQuery{History: in.History, Slug: in.Slug, UniversalID: in.UniversalID}}, true
 	case attributeSetOperation:
 		in, err := decodeMCPOperationArguments[attributeSetArgs](args)
-		value, _ := args["value"].(map[string]any)
-		if err != nil || in.PersonID <= 0 || store.ValidateAttributeSlug(in.Slug) != nil || unsafeAttributeJSON(value["json"]) {
+		if err != nil || in.PersonID <= 0 || store.ValidateAttributeSlug(in.Slug) != nil {
 			return "", "", nil, false
 		}
 		if in.Source == nil || strings.TrimSpace(string(*in.Source)) == "" {
@@ -185,10 +166,7 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 	case "list_attribute_definitions":
 		result, err = readMCPOperationJSONWithClassifier[generated.AttributeDefinitionsResponse](ctx, b.client, method, path, options, attributeRefusal, http.StatusOK)
 	case "delete_attribute_definition":
-		result, err = readMCPOperationJSONWithClassifier[mcpserver.AttributeDefinitionDeleted](ctx, b.client, method, path, options, attributeRefusal, http.StatusNoContent)
-		if result != nil && !result.IsError {
-			result.Output = mcpserver.AttributeDefinitionDeleted{Deleted: true}
-		}
+		result, err = readMCPOperationJSONWithClassifier[struct{}](ctx, b.client, method, path, options, attributeRefusal, http.StatusNoContent)
 	default:
 		result, err = readMCPOperationJSONWithClassifier[generated.AttributeDefinition](ctx, b.client, method, path, options, attributeRefusal, http.StatusOK, http.StatusCreated)
 		if result != nil && !result.IsError {

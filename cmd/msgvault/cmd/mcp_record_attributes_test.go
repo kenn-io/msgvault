@@ -197,7 +197,7 @@ func TestMCPAttributePersonDefinitions(t *testing.T) {
 	_, err = b.OperationDisclosure(t.Context(), "delete_attribute_definition", staleDelete)
 	require.NoError(err)
 	attributeError(t, attributeOperation(t, b, "delete_attribute_definition", staleDelete), "attribute_definition_revision_conflict")
-	assert.True(operationOutput[mcpserver.AttributeDefinitionDeleted](t, attributeOperation(t, b, "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": patched.ETag})).Deleted)
+	assert.False(attributeOperation(t, b, "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": patched.ETag}).IsError)
 	attributeError(t, attributeOperation(t, b, "get_attribute_definition", map[string]any{"definition_id": orgDefinition.ID}), "attribute_definition_not_found")
 	for _, name := range []string{"patch_attribute_definition", "delete_attribute_definition"} {
 		_, err = b.OperationDisclosure(t.Context(), name, map[string]any{"definition_id": orgDefinition.ID, "etag": "example", "changes": map[string]any{"label": "Changed"}})

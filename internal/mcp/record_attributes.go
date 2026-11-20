@@ -11,9 +11,6 @@ type AttributeDefinitionReceipt struct {
 	ETag       string                        `json:"etag"`
 	Definition generated.AttributeDefinition `json:"definition"`
 }
-type AttributeDefinitionDeleted struct {
-	Deleted bool `json:"deleted"`
-}
 
 // jsontext.Value carries arbitrary JSON on the wire; reflection sees its bytes.
 func attributeValueOutputSchema(write bool) *jsonschema.Schema {
@@ -60,22 +57,15 @@ func recordAttributeDefinitions() []operationalDefinition {
 	set := attributeInputSchema[generated.SetPersonAttributeRequest]()
 	set.Properties["person_id"], set.Properties["slug"], set.Properties["dry_run"] = id(), slug, boolField()
 	set.Required = append(set.Required, "person_id", "slug")
-	set.Properties["ordinal"] = boundedIntegerSchema("Ordinal", 0, maxJSONSafeInteger)
-	set.Properties["expected_value_id"] = id()
 	value := set.Properties["value"]
 	value.Properties["json"] = &jsonschema.Schema{}
-	value.Properties["integer"] = boundedIntegerSchema("Integer value", -maxJSONSafeInteger, maxJSONSafeInteger)
-	value.Properties["record_id"] = id()
 	create := attributeInputSchema[generated.CreateAttributeDefinitionRequest]()
 	create.Schema = ""
 	delete(create.Properties, "object_type")
 	create.Required = slices.DeleteFunc(create.Required, func(name string) bool { return name == "object_type" })
 	create.Properties["cardinality"] = stringSchema("Cardinality", "single", "multi")
-	create.Properties["display_order"] = boundedIntegerSchema("Display order", -maxJSONSafeInteger, maxJSONSafeInteger)
-	create.Properties["options"].Properties["max_length"] = boundedIntegerSchema("Maximum length", 0, maxJSONSafeInteger)
 	patch := attributeInputSchema[generated.PatchAttributeDefinitionRequest]()
 	patch.Schema = ""
-	patch.Properties["display_order"] = boundedIntegerSchema("Display order", -maxJSONSafeInteger, maxJSONSafeInteger)
 	patch.Properties["description"] = &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Type: "string"}, {Type: "null"}}}
 	list := attributeInputSchema[generated.ListAttributeDefinitionsQuery]()
 	delete(list.Properties, "object_type")
@@ -103,7 +93,7 @@ func recordAttributeDefinitions() []operationalDefinition {
 		newOperationalDefinition("get_attribute_definition", "Read one attribute definition and its exact revision ETag.", OperationFamilyAttributes, get, outputSchemaFor[AttributeDefinitionReceipt](), false),
 		newOperationalDefinition("create_attribute_definition", "Create a user attribute definition. Requires confirmation.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"definition": create}, "definition"), outputSchemaFor[AttributeDefinitionReceipt](), true),
 		newOperationalDefinition("patch_attribute_definition", "Update mutable definition fields using its exact ETag; null clears description. Requires confirmation.", OperationFamilyAttributes, patchInput, outputSchemaFor[AttributeDefinitionReceipt](), true),
-		newOperationalDefinition("delete_attribute_definition", "Delete a user definition with its exact ETag. Native seeded and stored-value guards apply. Requires confirmation.", OperationFamilyAttributes, deleteInput, outputSchemaFor[AttributeDefinitionDeleted](), true),
+		newOperationalDefinition("delete_attribute_definition", "Delete a user definition with its exact ETag. Native seeded and stored-value guards apply. Requires confirmation.", OperationFamilyAttributes, deleteInput, closedObject(nil), true),
 	}
 	for i := range definitions {
 		definitions[i].definition.annotations.DestructiveHint = new(slices.Contains([]string{"clear_person_attribute", "patch_attribute_definition", "delete_attribute_definition"}, definitions[i].definition.name))
