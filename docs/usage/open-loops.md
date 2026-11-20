@@ -7,8 +7,7 @@ description: See which conversations still wait on your reply, and which replies
 Open loops show who is waiting on a reply from you, and who you are waiting
 on, across email and direct chats. msgvault works them out from your archive
 each time you ask, so a reply that just synced clears its loop on the next
-list. There is nothing to turn on. No model is called, and nothing changes at
-your email provider.
+list. Reply loops are available immediately. They use local wording rules and leave your email provider unchanged.
 
 ## See your open loops
 
@@ -117,7 +116,7 @@ msgvault loops done 4521 --questions 4521,4530
 
 Decisions follow their questions when duplicates or accounts are merged. If
 two copies of a question carry different decisions, done wins over snooze,
-and the later of two snoozes wins.
+and the later of two snoozes wins. Promise decisions for the absorbed person do not move to the survivor.
 
 ## Use loops from an assistant
 
@@ -153,3 +152,29 @@ Only the owner can use loops. Delegated agent tokens and remote clients can't.
   something starts a loop. Mark it done.
 - **Email threads and direct chats only.** Group chats, channels, and meetings
   are skipped.
+
+## See cited commitments
+
+Commitments are optional and require daemon API schema 5.22.0 or newer.
+Enable `[people.sweep.commitments]` in [configuration](../configuration.md#commitment-extraction).
+Use `msgvault person provider consent --commitments` to see the provider,
+source dates, and what the request discloses. Repeat with `--yes` to consent
+to sending conversation text from both sides of verified direct chats and
+email. The request includes the full eligible message text within the configured byte limit, after leading quoted history and whitespace are removed and embedded quoted history is masked. Messages that exceed the byte limit are skipped until they fit within the configured limit. Each cited quote is limited to 2,000 runes.
+Changing provider source dates or the commitment window restarts recent discovery while keeping saved decisions. Raising the byte limit retries skipped messages without rechecking messages already processed.
+The profile must allow sensitive `conversation_text` sources. Check the grant
+with `msgvault person provider status`. Use `msgvault person provider revoke`
+to revoke both the ordinary inference and commitment grants for the profile.
+Revoking commitment consent stops future extraction; saved promises remain available to the owner.
+
+Cited promises appear under **Promises you made** and **Promises to you**.
+Each row links to the quoted message. See the [person facts CLI reference](../cli-reference.md#person-track-tiers-provider-sweep-and-facts) for claim kinds
+and freshness. A due date is a calendar date in the configured activity timezone. Open promises remain visible as their evidence ages; evidence older than 90 days is marked stale. Unsupported claims leave the list. If a message edit changes a quote so it can't be matched to the original, rediscovery can list it as a new open promise.
+
+The same message can anchor multiple promises and a reply loop. Run `msgvault loops list --include-closed --limit 200` to find done or snoozed promises that you can reopen.
+
+```bash
+msgvault loops done c12
+msgvault loops snooze c12 --until 48h
+msgvault loops reopen c12
+```

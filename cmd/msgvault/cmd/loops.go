@@ -17,7 +17,10 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-const loopsMinAPISchemaVersion = "3.44.0"
+const (
+	loopsMinAPISchemaVersion      = "3.44.0"
+	commitmentMinAPISchemaVersion = "5.22.0"
+)
 
 func init() {
 	rootCmd.AddCommand(newLoopsCommand())
@@ -48,7 +51,8 @@ func newLoopsListCommand() *cobra.Command {
   msgvault loops list --limit 10 --json
   msgvault loops list --person 42`,
 	}
-	command.Flags().IntVar(&opts.Limit, "limit", loops.DefaultLimit, "Maximum loops (1 through 200)")
+	command.Flags().IntVar(&opts.Limit, "limit", loops.DefaultLimit, "Limit for loops and for promises (1 through 200 each)")
+	command.Flags().BoolVar(&opts.IncludeClosed, "include-closed", false, "Include done and snoozed commitments")
 	command.Flags().Int64Var(&opts.PersonID, "person", 0, "Show loops with this person ID")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -58,10 +62,19 @@ func newLoopsListCommand() *cobra.Command {
 		if opts.Limit < 1 || opts.Limit > loops.MaxLimit {
 			return usageErr(cmd, fmt.Errorf("--limit must be from 1 through %d", loops.MaxLimit))
 		}
-		return withLoopsClient(cmd, func(client *daemonclient.Client) error {
+		version := loopsMinAPISchemaVersion
+		if opts.IncludeClosed {
+			version = commitmentMinAPISchemaVersion
+		}
+		return withLoopsClientVersion(cmd, version, func(client *daemonclient.Client, version string) error {
 			result, err := client.ListLoops(cmd.Context(), opts)
 			if err != nil {
 				return err
+			}
+			if !daemonclient.APISchemaVersionAtLeast(version, commitmentMinAPISchemaVersion) {
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "This daemon (API %s) does not report promises; upgrade and restart it to see them.\n", version); err != nil {
+					return fmt.Errorf("write daemon warning: %w", err)
+				}
 			}
 			if jsonOutput {
 				return writeJSONOutput(cmd, result)
@@ -75,7 +88,7 @@ func newLoopsListCommand() *cobra.Command {
 func newLoopsDoneCommand() *cobra.Command {
 	var questions []int64
 	command := &cobra.Command{
-		Use:   "done <message-id>",
+		Use:   "done <message-id|commitment-id>",
 		Short: "Mark a loop done",
 		Long: `The message ID is the last column of 'msgvault loops list'.
 A distinct question can list again, whatever its message date.`,
@@ -83,6 +96,9 @@ A distinct question can list again, whatever its message date.`,
 	}
 	addLoopQuestionsFlag(command, &questions)
 	command.RunE = func(cmd *cobra.Command, args []string) error {
+		if strings.HasPrefix(args[0], "c") {
+			return runCommitmentDecision(cmd, args[0], "done", nil)
+		}
 		id, err := positivePersonCLIArg(cmd, args[0], "message")
 		if err != nil {
 			return err
@@ -119,7 +135,7 @@ func checkLoopQuestionsFlag(cmd *cobra.Command, questions []int64) error {
 func newLoopsSnoozeCommand() *cobra.Command {
 	var until string
 	command := &cobra.Command{
-		Use:   "snooze <message-id> --until <when>",
+		Use:   "snooze <message-id|commitment-id> --until <when>",
 		Short: "Hide a loop until a later time",
 		Long: `A distinct question can make the loop return before the snooze
 expires. Decisions apply to this person's
@@ -133,6 +149,13 @@ currently open questions. Use the current message ID from loops list.`,
 	var questions []int64
 	addLoopQuestionsFlag(command, &questions)
 	command.RunE = func(cmd *cobra.Command, args []string) error {
+		if strings.HasPrefix(args[0], "c") {
+			at, err := loops.ParseSnoozeUntil(until, time.Now())
+			if err != nil {
+				return usageErr(cmd, err)
+			}
+			return runCommitmentDecision(cmd, args[0], "snoozed", &at)
+		}
 		id, err := positivePersonCLIArg(cmd, args[0], "message")
 		if err != nil {
 			return err
@@ -164,11 +187,14 @@ currently open questions. Use the current message ID from loops list.`,
 
 func newLoopsReopenCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "reopen <message-id>",
+		Use:   "reopen <message-id|commitment-id>",
 		Short: "Clear a done or snooze decision",
 		Long:  "Clear the done or snooze decision for one exact question. The message ID is the last column of 'msgvault loops list'.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.HasPrefix(args[0], "c") {
+				return runCommitmentDecision(cmd, args[0], "open", nil)
+			}
 			id, err := positivePersonCLIArg(cmd, args[0], "message")
 			if err != nil {
 				return err
@@ -189,6 +215,25 @@ func newLoopsReopenCommand() *cobra.Command {
 	}
 }
 
+func runCommitmentDecision(cmd *cobra.Command, id, state string, until *time.Time) error {
+	if _, err := loops.ParseCommitmentID(id); err != nil {
+		return usageErr(cmd, err)
+	}
+	if cmd.Flags().Changed("questions") {
+		return usageErr(cmd, errors.New("--questions is available only for reply loops"))
+	}
+	return withLoopsClientVersion(cmd, commitmentMinAPISchemaVersion, func(client *daemonclient.Client, _ string) error {
+		decision, err := client.SetCommitmentDecision(cmd.Context(), id, state, until)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s is %s.\n", id, decision.State); err != nil {
+			return fmt.Errorf("write commitment decision: %w", err)
+		}
+		return nil
+	})
+}
+
 func loopActionError(id int64, err error) error {
 	if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Code == daemonclient.LoopNotFoundCode {
 		return errors.New(strconv.FormatInt(id, 10) + " isn't an open loop.")
@@ -198,6 +243,10 @@ func loopActionError(id int64, err error) error {
 
 // withLoopsClient opens the daemon and refuses one that predates the loop routes.
 func withLoopsClient(cmd *cobra.Command, run func(*daemonclient.Client) error) error {
+	return withLoopsClientVersion(cmd, loopsMinAPISchemaVersion, func(client *daemonclient.Client, _ string) error { return run(client) })
+}
+
+func withLoopsClientVersion(cmd *cobra.Command, minimum string, run func(*daemonclient.Client, string) error) error {
 	client, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
@@ -207,11 +256,11 @@ func withLoopsClient(cmd *cobra.Command, run func(*daemonclient.Client) error) e
 	if err != nil {
 		return fmt.Errorf("check daemon open loops capability: %w", err)
 	}
-	if !daemonclient.APISchemaVersionAtLeast(version, loopsMinAPISchemaVersion) {
+	if !daemonclient.APISchemaVersionAtLeast(version, minimum) {
 		return fmt.Errorf("open loops require daemon API schema %s or newer (daemon reports %q); upgrade and restart the daemon",
-			loopsMinAPISchemaVersion, version)
+			minimum, version)
 	}
-	return run(client)
+	return run(client, version)
 }
 
 type loopRow struct{ age, with, subject, id string }
@@ -221,9 +270,14 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 		title, kind string
 		rows        []loopRow
 	}{{title: "Waiting on you", kind: loops.ReplyOwed}, {title: "Waiting on them", kind: loops.AwaitingReply}}
-	if len(result.Items) == 0 {
+	if len(result.Items) == 0 && len(result.Commitments) == 0 {
 		var sb strings.Builder
-		sb.WriteString("No open loops.\n")
+		if result.CommitmentsComplete != nil && !*result.CommitmentsComplete {
+			sb.WriteString("No open reply loops.\n")
+		} else {
+			sb.WriteString("No open loops.\n")
+		}
+		writeCommitmentWindow(&sb, result)
 		writeLoopWarnings(&sb, result.SkippedUnparseable, result.CoverageIncomplete)
 		if _, err := io.WriteString(w, sb.String()); err != nil {
 			return fmt.Errorf("write loops: %w", err)
@@ -259,12 +313,14 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 			fmt.Fprintf(&sb, "  %s   %s   %s   %s\n", pad(row.age, ageWidth), pad(row.with, withWidth), pad(row.subject, subjectWidth), row.id)
 		}
 	}
+	writeLoopCommitments(&sb, result.Commitments)
+	writeCommitmentWindow(&sb, result)
 	var notes strings.Builder
 	if result.Truncated {
 		if limit < loops.MaxLimit {
-			fmt.Fprintf(&notes, "Showing the oldest %d. Use --limit up to %d to see more.\n", limit, loops.MaxLimit)
+			fmt.Fprintf(&notes, "Showing up to %d reply loops and %d cited promises. Use --limit up to %d to see more.\n", limit, limit, loops.MaxLimit)
 		} else {
-			fmt.Fprintf(&notes, "Showing the oldest %d; more loops remain.\n", limit)
+			fmt.Fprintf(&notes, "Showing up to %d reply loops and %d cited promises; more remain.\n", limit, limit)
 		}
 	}
 	writeLoopWarnings(&notes, result.SkippedUnparseable, result.CoverageIncomplete)
@@ -275,6 +331,54 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 		return fmt.Errorf("write loops: %w", err)
 	}
 	return nil
+}
+
+func writeLoopCommitments(sb *strings.Builder, commitments []generated.LoopCommitment) {
+	for _, group := range []struct{ title, direction, freshness string }{
+		{"Promises you made", "owed_by", "fresh"}, {"Promises to you", "owed_to", "fresh"},
+		{"Stale promises you made", "owed_by", "stale"}, {"Stale promises to you", "owed_to", "stale"},
+	} {
+		printedHeading := false
+		for _, item := range commitments {
+			if string(item.Direction) != group.direction || string(item.Freshness) != group.freshness {
+				continue
+			}
+			if !printedHeading {
+				sb.WriteString(group.title + "\n")
+				printedHeading = true
+			}
+			fmt.Fprintf(sb, "  %s   person %d", item.ID, item.PersonID)
+			if state := string(item.State); state != "" && state != "open" {
+				fmt.Fprintf(sb, " (%s)", state)
+			}
+			if item.DueOn != nil {
+				fmt.Fprintf(sb, "   due %s", *item.DueOn)
+			}
+			fmt.Fprintf(sb, "\n    message %d: %s\n", item.Promise.MessageID, textutil.SanitizeTerminal(item.Promise.Text))
+		}
+	}
+}
+
+func writeCommitmentWindow(sb *strings.Builder, result generated.LoopListResponse) {
+	if result.CommitmentsSince == nil {
+		if result.CommitmentsComplete != nil && !*result.CommitmentsComplete {
+			fmt.Fprintln(sb, "Promise discovery has not started.")
+		}
+		return
+	}
+	if result.CommitmentsUntil != nil && result.CommitmentsUntil.Format(time.DateOnly) < result.CommitmentsSince.Format(time.DateOnly) {
+		fmt.Fprintln(sb, "No messages were eligible for promise discovery in the current window.")
+		return
+	}
+	window := "since " + result.CommitmentsSince.Format(time.DateOnly)
+	if result.CommitmentsUntil != nil {
+		window = "from " + result.CommitmentsSince.Format(time.DateOnly) + " through " + result.CommitmentsUntil.Format(time.DateOnly)
+	}
+	if result.CommitmentsComplete != nil && !*result.CommitmentsComplete {
+		fmt.Fprintf(sb, "Promise discovery %s is incomplete.\n", window)
+	} else {
+		fmt.Fprintf(sb, "Promises checked %s.\n", window)
+	}
 }
 
 // writeLoopWarnings reports unreadable originals and incomplete archive scans.

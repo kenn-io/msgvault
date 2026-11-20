@@ -111,6 +111,7 @@ type Config struct {
 	RetryBase            time.Duration             `toml:"retry_base"`
 	RetryMax             time.Duration             `toml:"retry_max"`
 	Budgets              BudgetConfig              `toml:"budgets"`
+	Commitments          CommitmentConfig          `toml:"commitments"`
 	Brief                BriefConfig               `toml:"brief"`
 	Provider             ProviderSelection         `toml:"provider"`
 	Providers            map[string]ProviderConfig `toml:"providers"`
@@ -239,6 +240,7 @@ type ProviderProfile struct {
 
 // ApplyDefaults fills operational defaults without enabling inference.
 func (c *Config) ApplyDefaults() {
+	c.Commitments.applyDefaults()
 	setDefaultString(&c.Schedule, "15 2 * * *")
 	setDefaultInt(&c.WorkBatchSize, 25)
 	setDefaultInt(&c.ChangeBatchSize, 256)
@@ -458,6 +460,9 @@ func (c Config) validateOperationalConfig() error {
 	}
 	if c.Budgets.MaxOutputTokensPerPerson < extractionMaxOutputTokens {
 		return fmt.Errorf("invalid [people.sweep.budgets] max_output_tokens_per_person: must be at least %d", extractionMaxOutputTokens)
+	}
+	if err := c.Commitments.Validate(c.Budgets); err != nil {
+		return err
 	}
 	if err := c.Brief.validate(c.Budgets); err != nil {
 		return err

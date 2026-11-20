@@ -84,8 +84,9 @@ sending. These contact tools require daemon API schema 3.20.0 or newer.
 
 To see who is waiting on a reply, and whose reply the owner awaits, use
 `list_open_loops`, optionally with a `person_id`. Each item names the message
-that started the wait. Marking a loop done or snoozing it changes the archive,
-so it needs `--allow-loop-writes` and the owner's approval for each call; see
+that started the wait. The response also lists cited open promises; use the
+CLI to decide one. Marking a loop done or snoozing it changes the archive, so
+it needs `--allow-loop-writes` and the owner's approval for each call; see
 [Open loops](../usage/chat.md#open-loops). Owner clients only.
 
 Use `list_thread` with exactly one of `id`, `source_message_id`, or `thread_id`

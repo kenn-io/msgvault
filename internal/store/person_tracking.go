@@ -137,6 +137,9 @@ func (s *Store) setPersonTrackingTx(
 				WHERE person_id = ?`, time.Now().UTC(), personID)
 		}
 		if err == nil && inserted == 1 {
+			_, err = tx.ExecContext(ctx, `DELETE FROM person_commitment_frontiers WHERE person_id = ?`, personID)
+		}
+		if err == nil && inserted == 1 {
 			var highWater int64
 			err = tx.QueryRowContext(ctx, `
 				SELECT sequence FROM person_sweep_change_clock WHERE singleton = TRUE`,

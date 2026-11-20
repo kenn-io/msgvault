@@ -41,10 +41,10 @@ func (s *Store) migratePersonFactClaimOriginBrief(ctx context.Context) error {
 			return nil
 		})
 	}
-	return s.migratePersonFactClaimOriginBriefSQLite(ctx)
+	return s.migratePersonFactClaimOriginSQLite(ctx, personFactClaimOriginCheck, "'brief'")
 }
 
-// migratePersonFactClaimOriginBriefSQLite follows SQLite's documented procedure
+// migratePersonFactClaimOriginSQLite follows SQLite's documented procedure
 // for an arbitrary schema change: rebuild the table inside a transaction on a
 // connection whose foreign keys are disabled. Foreign keys must be off because
 // person_fact_claim_evidence, person_fact_resolutions, and
@@ -53,13 +53,13 @@ func (s *Store) migratePersonFactClaimOriginBrief(ctx context.Context) error {
 // otherwise fire those actions and destroy the ledger. The pragma is
 // connection-scoped and cannot change inside a transaction, so this runs on a
 // dedicated pooled connection rather than through runMaintenance.
-func (s *Store) migratePersonFactClaimOriginBriefSQLite(ctx context.Context) (err error) {
+func (s *Store) migratePersonFactClaimOriginSQLite(ctx context.Context, check, marker string) (err error) {
 	var definition string
 	if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master
 		WHERE type = 'table' AND name = 'person_fact_claims'`).Scan(&definition); err != nil {
 		return fmt.Errorf("inspect person fact claim origins: %w", err)
 	}
-	if strings.Contains(definition, "'brief'") {
+	if strings.Contains(definition, marker) {
 		return nil
 	}
 	conn, err := s.db.Conn(ctx)
@@ -97,6 +97,7 @@ func (s *Store) migratePersonFactClaimOriginBriefSQLite(ctx context.Context) (er
 		return err
 	}
 	for _, statement := range personFactClaimOriginRebuildStatements() {
+		statement = strings.ReplaceAll(statement, personFactClaimOriginCheck, check)
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("rebuild person fact claim origins: %w", err)
 		}

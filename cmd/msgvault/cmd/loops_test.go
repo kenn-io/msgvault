@@ -121,24 +121,72 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 	require.Error(err)
 }
 
-func TestLoopsRequireDaemonSchema(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var loopRequests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.23.0"}`))
-			return
-		}
-		loopRequests++
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
-	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	_, err := runLoops(ctx, t, "list")
-	require.ErrorContains(err, "require daemon API schema 3.44.0")
-	require.ErrorContains(err, `daemon reports "3.23.0"`)
-	assert.Zero(loopRequests)
+func TestLoopsDaemonVersions(t *testing.T) {
+	for _, tc := range []struct {
+		name, version, minimum, path, method, response, output, state string
+		args                                                          []string
+		closed, warning                                               bool
+	}{
+		{name: "old_reply_loop_daemon", version: "3.23.0", minimum: "3.44.0", args: []string{"list", "--json"}},
+		{name: "old_closed_commitment_daemon", version: "5.21.0", minimum: "5.22.0", args: []string{"list", "--json", "--include-closed"}},
+		{name: "older_commitment_daemon", version: "5.21.0", minimum: "5.22.0", args: []string{"done", "c12"}},
+		{name: "compatible_closed_commitment_daemon", version: "5.22.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"truncated":false,"coverage_incomplete":false,"skipped_unparseable":0}`, args: []string{"list", "--json", "--include-closed"}, closed: true},
+		{name: "commitment", version: "5.22.0", path: "/api/v1/loops/commitments/c12/decision", method: http.MethodPost, response: `{"id":"c12","state":"done"}`, output: "c12 is done.\n", args: []string{"done", "c12"}, state: "done"},
+		{name: "existing_reply_loop", version: "3.44.0", path: "/api/v1/loops/42/done", method: http.MethodPost, response: `{"anchor_message_id":42,"state":"done"}`, args: []string{"done", "42"}},
+		{name: "old_daemon_warning", version: "5.21.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[{"kind":"reply_owed","anchor_message_id":42,"question_message_ids":[42],"conversation_id":1,"source_id":1,"channel":"email","counterparty":{"participant_id":1,"display_name":"Sam Example","address":"sam@example.test"},"summary":"Reply needed","owed_since_at":"2026-11-10T12:00:00Z","last_activity_at":"2026-11-10T12:00:00Z"}],"truncated":false,"coverage_incomplete":false,"skipped_unparseable":0}`, args: []string{"list", "--json"}, warning: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if req.URL.Path == "/api/v1/health" {
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": tc.version}))
+					return
+				}
+				requests++
+				assert.Equal(t, tc.path, req.URL.Path)
+				assert.Equal(t, tc.method, req.Method)
+				if tc.closed {
+					assert.Equal(t, "true", req.URL.Query().Get("include_closed"))
+				}
+				if tc.state != "" {
+					var body map[string]string
+					assert.NoError(t, json.NewDecoder(req.Body).Decode(&body))
+					assert.Equal(t, tc.state, body["state"])
+				}
+				_, err := w.Write([]byte(tc.response))
+				assert.NoError(t, err)
+			}))
+			t.Cleanup(server.Close)
+			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+			command := newLoopsCommand()
+			var stdout, stderr bytes.Buffer
+			command.SetOut(&stdout)
+			command.SetErr(&stderr)
+			command.SetArgs(tc.args)
+			command.SetContext(ctx)
+			err := command.Execute()
+			if tc.minimum != "" {
+				require.ErrorContains(t, err, "require daemon API schema "+tc.minimum)
+				require.ErrorContains(t, err, fmt.Sprintf("daemon reports %q", tc.version))
+				assert.Zero(t, requests)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, 1, requests)
+			if tc.output != "" {
+				assert.Equal(t, tc.output, stdout.String())
+			}
+			if tc.warning {
+				var result map[string]any
+				require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
+				assert.Contains(t, stdout.String(), "Reply needed")
+				assert.Contains(t, stderr.String(), "does not report promises; upgrade and restart it")
+			} else {
+				assert.Empty(t, stderr.String())
+			}
+		})
+	}
 }
 
 func TestWriteLoopsLayout(t *testing.T) {
@@ -162,14 +210,14 @@ func TestWriteLoopsLayout(t *testing.T) {
 Waiting on them
   5d   Sam Rivera                         Lunch Friday?    4380
 
-Showing the oldest 50. Use --limit up to 200 to see more.
+Showing up to 50 reply loops and 50 cited promises. Use --limit up to 200 to see more.
 `, out.String(), "a truncated page does not claim totals")
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{Truncated: true, Items: []generated.LoopItem{
 		item("awaiting_reply", "email", "Lunch Friday?", 120*time.Hour, "Sam Rivera", "", 4380),
 	}}, loops.MaxLimit, now))
-	assert.Contains(out.String(), "Showing the oldest 200; more loops remain.\n")
+	assert.Contains(out.String(), "Showing up to 200 reply loops and 200 cited promises; more remain.\n")
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{SkippedUnparseable: 2, Items: []generated.LoopItem{
@@ -192,6 +240,20 @@ Showing the oldest 50. Use --limit up to 200 to see more.
 	assert.Equal("No open loops.\n", out.String(), "no line about unreadable messages when there are none")
 
 	out.Reset()
+	incomplete := false
+	require.NoError(writeLoops(&out, generated.LoopListResponse{CommitmentsComplete: &incomplete}, 50, now))
+	assert.Equal("No open reply loops.\nPromise discovery has not started.\n", out.String())
+
+	out.Reset()
+	require.NoError(writeLoops(&out, generated.LoopListResponse{CommitmentsSince: &now, CommitmentsComplete: &incomplete}, 50, now))
+	assert.Contains(out.String(), "Promise discovery since 2026-10-19 is incomplete.")
+
+	out.Reset()
+	until := now.AddDate(0, 0, -1)
+	require.NoError(writeLoops(&out, generated.LoopListResponse{CommitmentsSince: &now, CommitmentsUntil: &until, CommitmentsComplete: &incomplete}, 50, now))
+	assert.Contains(out.String(), "No messages were eligible for promise discovery in the current window.")
+
+	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{SkippedUnparseable: 1}, 50, now))
 	assert.Equal("No open loops.\n1 stored message could not be read, so a reply in it may have settled a loop.\n", out.String())
 
@@ -205,6 +267,17 @@ Showing the oldest 50. Use --limit up to 200 to see more.
 	}}, 50, now))
 	assert.Contains(out.String(), "(unknown)   (no subject)")
 	assert.NotContains(out.String(), "Waiting on you")
+
+	out.Reset()
+	const promise = "I will send the draft."
+	require.NoError(writeLoops(&out, generated.LoopListResponse{Commitments: []generated.LoopCommitment{{
+		ID: "c12", PersonID: 7, Direction: "owed_to", Freshness: "fresh", State: "done", Summary: "Send the draft",
+		Promise: generated.CommitmentQuote{MessageID: 19, Text: promise, Start: 0, End: int64(len(promise))},
+	}}}, 50, now))
+	assert.Contains(out.String(), "c12   person 7 (done)")
+	assert.Contains(out.String(), "message 19: "+promise)
+	assert.NotContains(out.String(), "Send the draft")
+	assert.Equal(1, strings.Count(out.String(), promise), "the exact quote appears once")
 }
 
 func TestLoopsReopenClearsDecision(t *testing.T) {

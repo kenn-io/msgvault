@@ -38,6 +38,8 @@ func NormalizeClaimValue(
 	var canonical []byte
 	var err error
 	switch {
+	case target.Kind == TargetCommitment && target.ValueType == ValueCommitment:
+		canonical, err = normalizeCommitmentValue(submitted)
 	case target.Kind == TargetEmployment && target.ValueType == ValueEmployment:
 		canonical, err = normalizeEmploymentValue(submitted)
 	case target.Kind == TargetAttribute && supportedGenericValueType(target.ValueType):
@@ -148,6 +150,18 @@ func normalizeGenericValue(valueType ValueType, submitted jsontext.Value) ([]byt
 	default:
 		return nil, fmt.Errorf("unsupported generic value type %s", valueType)
 	}
+}
+
+func normalizeCommitmentValue(submitted jsontext.Value) ([]byte, error) {
+	if err := jsonexact.Validate(submitted, CommitmentValue{}); err != nil {
+		return nil, fmt.Errorf("validate commitment fields: %w", err)
+	}
+	var value CommitmentValue
+	if err := decodeJSONValue(submitted, &value); err != nil {
+		return nil, fmt.Errorf("decode commitment: %w", err)
+	}
+	value.Summary = strings.TrimSpace(value.Summary)
+	return json.Marshal(value, json.Deterministic(true))
 }
 
 func normalizeEmploymentValue(submitted jsontext.Value) ([]byte, error) {

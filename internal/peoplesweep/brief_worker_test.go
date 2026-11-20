@@ -120,8 +120,9 @@ type briefWorkerCase struct {
 	runRequest *RunRequest
 	// leaseHeld makes the store refuse every claim, which is how another
 	// worker holding the person's lease looks to this one.
-	leaseHeld  bool
-	gapResults []GapResult
+	leaseHeld      bool
+	gapResults     []GapResult
+	commitmentOnly bool
 }
 
 type briefWorkerOutcome struct {
@@ -182,6 +183,11 @@ func runBriefWorkerCase(t *testing.T, testCase briefWorkerCase) briefWorkerOutco
 		Brief:  testCase.brief, Archive: archive,
 		Catalog: workerFailureCatalog{catalog: catalog}, Clock: func() time.Time { return now },
 		NewID: func() string { return "attempt-brief" }, WorkerID: "worker-fixture"}
+
+	if testCase.commitmentOnly {
+		worker.Config.Commitments.Enabled = true
+		worker.Runner = commitmentOnlyRunner{}
+	}
 
 	outcome := briefWorkerOutcome{store: store, driver: driver, sink: sink,
 		archive: archive, brief: testCase.brief}
@@ -938,6 +944,11 @@ func TestPersonSweepWorkerRefusesAForcedBriefTheLaneOrPolicyRulesOut(t *testing.
 				provider: func(provider *ProviderConfig) { provider.AllowSensitive = false },
 			},
 			want: ErrPersonBriefPolicyRefused,
+		},
+		{
+			name:     "ordinary inference revoked",
+			testCase: briefWorkerCase{commitmentOnly: true},
+			want:     ErrPersonBriefPolicyRefused,
 		},
 		{
 			name: "the profile allows only the meeting lane",

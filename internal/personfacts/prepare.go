@@ -289,6 +289,7 @@ func submittedEvidenceFingerprint(input EvidenceInput) (string, error) {
 
 func supportedClaimTarget(target TargetDescriptor) bool {
 	return target.Kind == TargetEmployment && target.ValueType == ValueEmployment ||
+		target.Kind == TargetCommitment && target.ValueType == ValueCommitment ||
 		target.Kind == TargetAttribute && supportedGenericValueType(target.ValueType)
 }
 
@@ -330,7 +331,7 @@ func validateClaimEnvelope(
 // first-class origin rather than a second write path.
 func validClaimOrigin(origin ClaimOrigin) bool {
 	switch origin {
-	case OriginExtraction, OriginEnrichment, OriginBrief, OriginSystem:
+	case OriginExtraction, OriginEnrichment, OriginBrief, OriginCommitment, OriginSystem:
 		return true
 	default:
 		return false

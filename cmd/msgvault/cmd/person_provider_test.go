@@ -899,6 +899,46 @@ func TestPersonProviderRevokeIsIdempotent(t *testing.T) {
 	assert.Equal(firstStatus.Consent.LastRevoked.ID, secondStatus.Consent.LastRevoked.ID)
 }
 
+func TestPersonProviderCommitmentConsent(t *testing.T) {
+	must, check := require.New(t), assert.New(t)
+	cfg := personProviderTestConfig()
+	provider := cfg.Providers["default"]
+	provider.AllowSensitive = true
+	cfg.Providers["default"] = provider
+	profile, err := cfg.Profile()
+	must.NoError(err)
+	st := testutil.NewSQLiteTestStore(t)
+	deps := localPersonProviderDeps(cfg, st, nil)
+	disclosure, err := executePersonProviderCommand(t, deps, "consent", "--commitments")
+	must.ErrorContains(err, "--yes")
+	check.Contains(disclosure, "written by you and the other person")
+	check.Contains(disclosure, fmt.Sprintf("up to %d bytes of message text per request", cfg.Commitments.MaxBytes))
+	check.Contains(disclosure, "full message after quoted history is removed or masked")
+	command := &cobra.Command{}
+	command.SetContext(t.Context())
+	command.SetOut(failingSearchWriter{})
+	must.ErrorIs(runPersonCommitmentConsent(command, deps, true, false), io.ErrClosedPipe)
+	active, err := st.HasActivePersonCommitmentConsent(t.Context(), profile.Fingerprint)
+	must.NoError(err)
+	check.False(active)
+	output, err := executePersonProviderCommand(t, deps, "consent", "--commitments", "--yes", "--json")
+	must.NoError(err)
+	var status personProviderStatusOutput
+	must.NoError(json.Unmarshal([]byte(output), &status))
+	must.NotNil(status.CommitmentsConsent)
+	check.True(*status.CommitmentsConsent)
+	check.Equal(profile.Fingerprint, status.Profile.Fingerprint)
+	must.ErrorIs(runPersonCommitmentRevoke(command, deps, false), io.ErrClosedPipe)
+	active, err = st.HasActivePersonCommitmentConsent(t.Context(), profile.Fingerprint)
+	must.NoError(err)
+	check.False(active)
+	_, err = executePersonProviderCommand(t, deps, "consent", "--commitments", "--yes", "--json")
+	must.NoError(err)
+	output, err = executePersonProviderCommand(t, deps, "revoke", "--commitments", "--json")
+	must.NoError(err)
+	check.Contains(output, `"revoked":true`)
+}
+
 func TestPersonProviderListsAndRevokesAllGrantsWhenConfigIsDisabled(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

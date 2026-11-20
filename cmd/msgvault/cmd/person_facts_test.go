@@ -139,7 +139,7 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 			}]}`))
 		case "/api/v1/people/7/fact-claims":
 			_, _ = w.Write([]byte(`{"claims":[{
-				"id":8,"generation_id":6,"claim_key":"claim-key",
+				"id":8,"generation_id":6,"claim_key":"claim-key","kind":"fact","status":"fresh","latest_supported_at":"2026-08-21T12:00:00Z",
 				"program_id":"fixture-program","program_version":"v1",
 				"program_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				"target":{"kind":"attribute","key":"target-key","revision":"` + personFactTestRevision + `"},
@@ -171,17 +171,17 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 	})
 	for _, test := range []struct {
 		command string
-		header  string
+		pattern string
 		path    string
 	}{
-		{command: "evidence", header: "EVIDENCE KEY", path: "/api/v1/people/7/fact-evidence"},
-		{command: "claims", header: "CLAIM KEY", path: "/api/v1/people/7/fact-claims"},
-		{command: "decisions", header: "ACTION", path: "/api/v1/people/7/fact-decisions"},
+		{command: "evidence", pattern: "EVIDENCE KEY", path: "/api/v1/people/7/fact-evidence"},
+		{command: "claims", pattern: `(?s)KIND\s+STATUS.*CLAIM KEY.*fact\s+fresh`, path: "/api/v1/people/7/fact-claims"},
+		{command: "decisions", pattern: "ACTION", path: "/api/v1/people/7/fact-decisions"},
 	} {
 		output, err := runPersonFactsCommand(testCtx, t, test.command, "7",
 			"--target", personFactEmploymentTarget, "--limit", "4", "--offset", "2")
 		requirements.NoError(err)
-		assertions.Contains(output, test.header)
+		assertions.Regexp(test.pattern, output)
 		query := requests[test.path]
 		assertions.Equal(personFactEmploymentTarget, query.Get("target"))
 		assertions.Equal("4", query.Get("limit"))
@@ -197,7 +197,7 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 	jsonOutput, err := runPersonFactsCommand(testCtx, t, "claims", "7", "--json")
 	requirements.NoError(err)
 	assertions.JSONEq(`[{
-		"id":8,"generation_id":6,"claim_key":"claim-key",
+		"id":8,"generation_id":6,"claim_key":"claim-key","kind":"fact","status":"fresh","latest_supported_at":"2026-08-21T12:00:00Z",
 		"program_id":"fixture-program","program_version":"v1",
 		"program_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"target":{"kind":"attribute","key":"target-key","revision":"`+personFactTestRevision+`"},
@@ -216,7 +216,7 @@ func TestPersonFactsClaimsTableRetainsMalformedPersistedTargets(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, err := w.Write([]byte(`{"claims":[
 			{
-				"id":8,"generation_id":6,"claim_key":"legacy-claim",
+				"id":8,"generation_id":6,"claim_key":"legacy-claim","kind":"fact","status":"stale",
 				"program_id":"fixture-program","program_version":"v1",
 				"program_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				"target":{"kind":"candidate","key":"legacy:key","revision":"legacy-revision"},
@@ -225,7 +225,7 @@ func TestPersonFactsClaimsTableRetainsMalformedPersistedTargets(t *testing.T) {
 				"confidence":{"reported_score":400},"created_at":"2026-08-22T12:00:00Z"
 			},
 			{
-				"id":9,"generation_id":6,"claim_key":"valid-claim",
+				"id":9,"generation_id":6,"claim_key":"valid-claim","kind":"fact","status":"stale",
 				"program_id":"fixture-program","program_version":"v1",
 				"program_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				"target":{"kind":"attribute","key":"target-key","revision":"` + personFactTestRevision + `"},

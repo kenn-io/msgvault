@@ -22,6 +22,10 @@ function loop(id = 42, kind = "reply_owed", summary = "Review the draft?") {
   };
 }
 
+function promise(id: number, text = `Promise ${id}`, messageID = id) {
+  return { id: `c${id}`, person_id: 7, summary: text, state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: messageID, start: 0, end: [...text].length, text }, promised_at: "2026-10-12T12:00:00Z" };
+}
+
 function clientFor(
   items: ReturnType<typeof loop>[],
   truncated = false,
@@ -66,6 +70,32 @@ describe("PersonOpenLoops", () => {
     expect(url.pathname).toBe("/api/v1/loops");
     expect(url.searchParams.get("person_id")).toBe("7");
     expect(url.searchParams.get("limit")).toBe("5");
+  });
+
+  it("shows fresh and stale cited promises and includes them in the count", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 0, 15, 12));
+    try {
+      const fetcher = vi.fn<typeof fetch>(async () => Response.json({
+        items: [loop(42), loop(43), loop(44), loop(45), loop(46)],
+        truncated: true,
+        commitments: [
+          { ...promise(12, "I will send the draft.", 52), summary: "Send the draft", promised_at: "2026-01-14T12:00:00Z", due_on: "2026-01-20" },
+          { ...promise(13, "I will check the venue.", 53), summary: "Check the venue", direction: "owed_to", freshness: "stale", promised_at: "2026-01-14T12:00:00Z", due_on: "2026-01-15", overdue: true },
+        ],
+      }));
+      render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+      const cite = await screen.findByRole("link", { name: "“I will send the draft.”" });
+      expect(cite.getAttribute("href")).toBe("/messages/52");
+      expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
+      expect(screen.getByRole("heading", { name: "Stale promises to you" })).toBeDefined();
+      const stale = screen.getByRole("link", { name: "“I will check the venue.”" });
+      expect(stale.getAttribute("href")).toBe("/messages/53");
+      expect(await screen.findByText("7+ open")).toBeDefined();
+      expect(cite.closest("li")?.textContent).toContain("due Jan 20");
+      expect(cite.closest("li")?.textContent).toMatch(/made \d+[dhm] ago/);
+      expect(stale.closest("li")?.textContent).toContain("overdue Jan 15");
+    } finally { vi.useRealTimers(); }
   });
 
   it("shows a plus when more loops are open than the card lists", async () => {
@@ -117,6 +147,7 @@ describe("PersonOpenLoops", () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({
         items: [loop()],
+        commitments: [promise(1)],
         truncated: false,
         skipped_unparseable: 0,
         coverage_incomplete: true,
@@ -124,6 +155,7 @@ describe("PersonOpenLoops", () => {
       .mockRejectedValueOnce(new Error("temporary failure"))
       .mockResolvedValueOnce(Response.json({
         items: [loop(), loop(43, "awaiting_reply", "Can you review this?")],
+        commitments: [promise(2)],
         truncated: false,
         skipped_unparseable: 0,
         coverage_incomplete: false,
@@ -132,6 +164,7 @@ describe("PersonOpenLoops", () => {
 
     const button = await screen.findByRole("button", { name: "Check more" });
     expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("link", { name: "“Promise 1”" })).toBeDefined();
     button.click();
 
     expect((await screen.findByRole("alert")).textContent).toContain(
@@ -143,8 +176,40 @@ describe("PersonOpenLoops", () => {
 
     expect(await screen.findByRole("link", { name: "Can you review this?" }))
       .toBeDefined();
+    expect(await screen.findByRole("link", { name: "“Promise 2”" })).toBeDefined();
+    expect(screen.queryByRole("link", { name: "“Promise 1”" })).toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(3);
     expect(screen.queryByRole("button", { name: "Check more" })).toBeNull();
+  });
+
+  it("shows incomplete promise discovery instead of implying everything was checked", async () => {
+    const respond = (body: object) => createAPIClient(vi.fn<typeof fetch>(async () =>
+      Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, ...body })));
+    const view = render(PersonOpenLoops, {
+      client: respond({ commitments_complete: false, commitments_since: "2000-10-01T00:00:00Z" }),
+      personID: 7,
+    });
+    expect(await screen.findByText("Promises since Oct 1, 2000 · still searching")).toBeDefined();
+    expect(screen.queryByText("Nothing open with this person.")).toBeNull();
+    view.unmount();
+
+    const withLoops = render(PersonOpenLoops, {
+      client: respond({ items: [loop()], commitments_complete: false, commitments_since: "2000-10-01T00:00:00Z", commitments_until: "2000-10-31T00:00:00Z" }),
+      personID: 7,
+    });
+    expect(await screen.findByText("Promises from Oct 1, 2000 through Oct 31, 2000 · still searching")).toBeDefined();
+    expect(screen.getByRole("link", { name: "Review the draft?" })).toBeDefined();
+    withLoops.unmount();
+
+    const notStarted = render(PersonOpenLoops, { client: respond({ commitments_complete: false }), personID: 7 });
+    expect(await screen.findByText("Promise discovery has not started.")).toBeDefined();
+    expect(screen.queryByText("Nothing open with this person.")).toBeNull();
+    notStarted.unmount();
+    render(PersonOpenLoops, { client: respond({
+      commitments_complete: true,
+      commitments_since: "2000-10-01T00:00:00Z", commitments_until: "2000-10-31T00:00:00Z",
+    }), personID: 7 });
+    expect(await screen.findByText("Promises from Oct 1, 2000 through Oct 31, 2000")).toBeDefined();
   });
 
   it("shows an error", async () => {

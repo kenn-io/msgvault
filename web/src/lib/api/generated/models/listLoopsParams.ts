@@ -8,7 +8,11 @@ export type ListLoopsParams = {
    */
   person_id?: number;
   /**
-   * Maximum loops to return
+   * Include done and snoozed commitments
+   */
+  include_closed?: boolean;
+  /**
+   * Maximum loops and commitments to return per collection
    * @minimum 1
    * @maximum 200
    */
