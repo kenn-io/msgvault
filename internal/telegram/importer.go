@@ -271,7 +271,7 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			}
 		}
 		if id, ok := existing[key]; ok {
-			writes, err := mediaWrites(ctx, st, id, m, opts, summary)
+			writes, err := mediaWrites(ctx, st, id, m, opts, summary, flush)
 			if err != nil {
 				return err
 			}
@@ -317,7 +317,7 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		if err != nil {
 			return err
 		}
-		writes, err := mediaWrites(ctx, st, 0, m, opts, summary)
+		writes, err := mediaWrites(ctx, st, 0, m, opts, summary, flush)
 		if err != nil {
 			return err
 		}

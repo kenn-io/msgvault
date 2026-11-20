@@ -213,33 +213,31 @@ func TestImportMediaFilenameContainsWarningWords(t *testing.T) {
 	assert.Equal(1, n)
 }
 
-func TestImportLimitCountsPendingMessages(t *testing.T) {
-	for _, tc := range []struct {
-		name          string
-		limit         int
-		total         int
-		runs          int
-		addedPerRun   int64
-		limitReached  []bool
-		savedMessages int
-	}{
-		{name: "repeated calls", limit: 1, total: 3, runs: 3, addedPerRun: 1, limitReached: []bool{true, true, false}, savedMessages: 3},
-		{name: "batch boundary", limit: batchSize + 1, total: batchSize + 2, runs: 1, addedPerRun: batchSize + 1, limitReached: []bool{true}, savedMessages: batchSize + 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st := testutil.NewTestStore(t)
-			root := batchExport(t, tc.total, func(int) string { return "m" })
-			for i := range tc.runs {
-				summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Limit: tc.limit})
-				require.NoError(err)
-				assert.Equal(tc.addedPerRun, summary.MessagesAdded)
-				assert.Equal(tc.limitReached[i], summary.LimitReached)
-			}
-			assert.Equal(tc.savedMessages, countMessages(t, st))
-		})
+func TestImportRepeatedLimitAdvances(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""},{"id":2,"type":"message","date_unixtime":"1610909872","text":""},{"id":3,"type":"message","date_unixtime":"1610909872","text":""}]}`))
+	for i := range 3 {
+		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", Limit: 1})
+		require.NoError(err)
+		assert.EqualValues(1, summary.MessagesAdded)
+		assert.Equal(i < 2, summary.LimitReached)
 	}
+	var n int
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
+	assert.Equal(3, n)
+}
+
+func TestImportLimitCountsPendingMessages(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := batchExport(t, batchSize+2, func(int) string { return "m" })
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Limit: batchSize + 1})
+	require.NoError(t, err)
+	assert.EqualValues(t, 51, summary.MessagesAdded)
+	assert.True(t, summary.LimitReached)
+	assert.Equal(t, 51, countMessages(t, st))
 }
 
 func TestImportDuplicateMessageIDInChat(t *testing.T) {
@@ -398,6 +396,56 @@ func TestImportFillsMissingMediaSlots(t *testing.T) {
 			assert.Zero(summary.AttachmentsStored)
 		})
 	}
+}
+
+func TestImportFailedPendingMessageBeforeExistingMedia(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root, attachments := t.TempDir(), t.TempDir()
+	opts := ImportOptions{RootDir: root, AttachmentsDir: attachments, Me: "1"}
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":2,"type":"message","date_unixtime":"1","text":"old","photo":"photo.jpg"}]}`))
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("uncorrected"), 0600))
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"fail-me"},{"id":2,"type":"message","date_unixtime":"1","text":"old","photo":"photo.jpg"}]}`))
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_pending_media() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced failure'; END $$`)
+		require.NoError(t, err)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_pending_media BEFORE INSERT ON messages FOR EACH ROW WHEN (NEW.snippet = 'fail-me') EXECUTE FUNCTION fail_pending_media()`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_pending_media BEFORE INSERT ON messages WHEN NEW.snippet = 'fail-me' BEGIN SELECT RAISE(ABORT, 'forced failure'); END`)
+	}
+	require.NoError(t, err)
+	_, err = Import(t.Context(), st, opts)
+	require.ErrorContains(t, err, "forced failure")
+	var hash string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(content_hash, '') FROM attachments WHERE source_part_key = 'photo'`).Scan(&hash))
+	assert.Empty(t, hash)
+	drop := "DROP TRIGGER fail_pending_media"
+	if st.IsPostgreSQL() {
+		drop += " ON messages"
+	}
+	_, err = st.DB().ExecContext(t.Context(), drop)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("corrected"), 0600))
+	_, err = Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	var path string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT storage_path FROM attachments WHERE source_part_key = 'photo'`).Scan(&path))
+	data, err := os.ReadFile(filepath.Join(attachments, path))
+	require.NoError(t, err)
+	assert.Equal(t, "corrected", string(data))
+}
+
+func TestImportCommitsPendingMessagesBeforeMediaCopy(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	attachments := filepath.Join(t.TempDir(), "blocked")
+	require.NoError(t, os.WriteFile(attachments, []byte("blocked"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("photo"), 0600))
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first"},{"id":2,"type":"message","date_unixtime":"1","text":"second"},{"id":3,"type":"message","date_unixtime":"1","text":"photo","photo":"photo.jpg"}]}`))
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, AttachmentsDir: attachments, Me: "1"})
+	require.ErrorContains(t, err, "store media")
+	assert.Equal(t, 2, countMessages(t, st))
 }
 
 func TestImportMediaFailureIsRetryable(t *testing.T) {
