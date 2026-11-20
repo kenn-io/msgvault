@@ -2146,7 +2146,7 @@ describe('AppShell', () => {
       });
       if (/\/conversations\/[12]$/.test(path)) {
         const id = Number(path.split('/').at(-1));
-        return Response.json({ id, messages: [{ id, conversation_id: id, subject: `Synthetic subject ${id}`,
+        return Response.json({ id, messages: [{ id, conversation_id: id, subject: `Synthetic subject ${id}`, tab_title: `Synthetic subject ${id}`,
           sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [],
           body: `Reader body ${id}`, snippet: `Reader body ${id}`, attachments: [] }],
           anchor_id: id, total: 1, has_before: false, has_after: false });
