@@ -11,6 +11,7 @@
   import { mediaReadiness } from '../../search/media-ready.svelte';
   import { reportError } from '../../telemetry/actions';
   import { ArchiveMessageLoader } from '../../archive/message-loader.svelte';
+  import { messageTitle } from '../../archive/message-title';
   import { parseRecordingSelection } from '../../archive/recording-selection';
   import type {
     MeetingRef,
@@ -44,7 +45,7 @@
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
   import TranscriptHits from '../search/TranscriptHits.svelte';
-  import ReadingPane, { readingSelectionTitle, type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
+  import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
   import MessageMeetingSummary from '../meetings/MessageMeetingSummary.svelte';
   import {
@@ -281,11 +282,18 @@
     },
   );
 
+  const titleMessage = new ArchiveMessageLoader();
   $effect(() => {
-    if (readingSelection) readingTitle = readingSelectionTitle(readingSelection);
-    else if (!readingTargetKey) readingTitle = '';
-    else if (parseGroupSelection(readingTargetKey)) readingTitle = readingState.status === 'loading' ? 'Loading group' : 'Group unavailable';
-    else readingTitle = readingState.status === 'loading' ? 'Loading message' : 'Message unavailable';
+    const row = readingSelection?.kind === 'entry' ? readingSelection.row : undefined;
+    void titleMessage.load(client, row && row.kind !== 'conversation' ? row.anchor_message_id : undefined);
+    return () => titleMessage.cancel();
+  });
+  $effect(() => {
+    const selected = readingSelection;
+    const message = selected?.kind === 'archive' ? selected.message :
+      selected?.kind === 'entry' && selected.row.kind !== 'conversation' && titleMessage.detail?.id === selected.row.anchor_message_id ? titleMessage.detail : undefined;
+    readingTitle = message ? messageTitle(message.subject, message.conversation_title) || '(untitled)' :
+      selected?.kind === 'entry' && selected.row.kind === 'conversation' ? selected.row.title : '';
   });
 
   const readingPredicateFingerprint = $derived(predicateFingerprint(exploreState.predicate()));

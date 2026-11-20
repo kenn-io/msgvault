@@ -1,7 +1,7 @@
 <script lang="ts">
   import { appShortcuts, ROOT_SCOPE, Button, Modal, PageHeader, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
   import { deletePerson } from '../../api/generated/api/api';
-  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import type { RelationshipsController, RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DirectoryController } from '../../directory/controller.svelte';
   import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatDay } from '../../directory/labels';
@@ -19,9 +19,9 @@
   import { RELATIONSHIP_DAY_HISTORY_KEY, relationshipDayHistory } from '../../relationships/reader-history';
   import type { ComponentProps } from 'svelte';
 
-  type PageProps = Omit<ComponentProps<typeof PersonPage>, 'directory' | 'onRecordDeleted' | 'onSplitCommitted' | 'onIdentityChange' | 'onBack' | 'onReconcilePersonMerge' | 'details' | 'selectedDate' | 'domainYear' | 'sort' | 'filenameQuery' | 'mimeFamilies' | 'pageTitle'>;
-  let { pageTitle = $bindable(''), reviews, onDuplicatesChanged, directory, urlState, restorationEpoch = 0, onNavigate, onReplaceNavigation, onDraftNavigation, onShowAllChange, ...page }:
-    PageProps & { pageTitle?: string; reviews: DirectoryReviewController; onDuplicatesChanged: () => void; directory: DirectoryController; urlState: ExploreURLState; restorationEpoch?: number; onReplaceNavigation: (patch: Partial<ExploreURLState>) => void;
+  type PageProps = Omit<ComponentProps<typeof PersonPage>, 'directory' | 'onRecordDeleted' | 'onSplitCommitted' | 'onIdentityChange' | 'onBack' | 'onReconcilePersonMerge' | 'details' | 'selectedDate' | 'domainYear' | 'sort' | 'filenameQuery' | 'mimeFamilies'>;
+  let { reviews, onDuplicatesChanged, directory, urlState, restorationEpoch = 0, onNavigate, onReplaceNavigation, onDraftNavigation, onShowAllChange, ...page }:
+    PageProps & { reviews: DirectoryReviewController; onDuplicatesChanged: () => void; directory: DirectoryController; urlState: ExploreURLState; restorationEpoch?: number; onReplaceNavigation: (patch: Partial<ExploreURLState>) => void;
       onNavigate: (patch: Partial<ExploreURLState>) => void; onDraftNavigation: (patch: Partial<ExploreURLState>) => void; onShowAllChange: (value: boolean) => void } = $props();
   const query = $derived(urlState.identityQuery ?? '');
   const controller = $derived(page.controller);
@@ -31,7 +31,6 @@
   let root = $state<HTMLElement>();
   let narrow = $state(false);
   let details = $state(false);
-  let personTitle = $state('');
   let selectedDate = $state<string | null>(null);
   let domainYear = $state<number | null>(null);
   let fileSort = $state<FileSearchSort>({ field: 'occurred_at', direction: 'desc' });
@@ -96,11 +95,9 @@
   const hasMore = $derived(Boolean(directoryMode ? directory.cursor : controller.listCursor));
   const activeKey = $derived(soloPerson !== null ? `person:${soloPerson}` : page.target);
   const hasPerson = $derived(page.target !== null || soloPerson !== null);
-  $effect(() => { pageTitle = urlState.peopleDuplicates ? 'Possible duplicates' : hasPerson ? (soloPerson !== null && directory.selectedPersonID !== soloPerson ? 'Person' : personTitle || 'Person') : facet === 'domains' ? 'Domains' : ''; });
   $effect(() => {
     if (narrow && activeKey) void tick().then(() => root?.querySelector<HTMLElement>('.body > .solo-page')?.focus());
   });
-  onDestroy(() => { pageTitle = ''; });
   const selectedProfileID = $derived(soloPerson ?? (controller.target === target && controller.detail && 'identifiers' in controller.detail ? (controller.detail as PersonSummary).profile?.id ?? null : null));
   $effect(() => {
     const id = selectedProfileID;
@@ -247,7 +244,7 @@
   {#if soloPerson !== null && directory.selectedPersonID !== soloPerson}
     <section class="solo"><p role="status">Loading person…</p><Button label="Back to People" onclick={close} /></section>
   {:else}
-  <PersonPage {...page} bind:pageTitle={personTitle} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
+  <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
     onRecordDeleted={(deletedID) => void peopleDeleted([deletedID])}
     onSplitCommitted={async (context) => { onDuplicatesChanged(); onReplaceNavigation({ directoryPersonID: context.sourcePersonID }); await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
     onReconcilePersonMerge={(context, participantsLinked, success) => participantsLinked ? refreshProfiles() : reconcilePersonMerge(context, success)}

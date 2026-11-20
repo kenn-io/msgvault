@@ -1,5 +1,4 @@
 <script module lang="ts">
-  import { messageTitle } from '../../archive/message-title';
   import type { MeetingExploreScope, MessageDetail } from "../../api/generated/models";
   import type {
     EntryRow,
@@ -24,10 +23,6 @@
         meetingScope?: MeetingExploreScope;
       };
 
-  export function readingSelectionTitle(selection: ReadingPaneSelection): string {
-    return selection.kind === 'entry' ? selection.row.title || '(untitled)' : selection.kind === 'archive' ? messageTitle(selection.message.subject, selection.message.conversation_title) || '(untitled)' : selection.label;
-  }
-
   export type ReadingPaneStatus = 'ready' | 'loading' | 'missing' | 'error' | 'unavailable';
 
 </script>
@@ -36,6 +31,7 @@
   import { formatShortDate } from '../../util/format';
   import GroupOverview from './GroupOverview.svelte';
   import { groupedByLabel } from '../../explore/labels';
+  import { messageTitle } from '../../archive/message-title';
   import { parseRecordingSelection } from '../../archive/recording-selection';
   import { Button, EmptyState, IconButton } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
@@ -108,7 +104,7 @@
   let requestGeneration = 0;
   let requestController: AbortController | undefined;
   const title = $derived(selection
-    ? readingSelectionTitle(selection)
+    ? selection.kind === 'entry' ? selection.row.title || '(untitled)' : selection.kind === 'archive' ? messageTitle(selection.message.subject, selection.message.conversation_title) || '(untitled)' : selection.label
     : parseRecordingSelection(targetKey) !== undefined ? 'Message' : targetKey || 'Selected result');
   const showFiles = $derived(selection?.kind === 'group' &&
     (selection.dimension === 'participant' || selection.dimension === 'domain'));

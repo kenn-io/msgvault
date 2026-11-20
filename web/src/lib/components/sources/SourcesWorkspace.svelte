@@ -29,7 +29,6 @@
   // Re-read idle scheduled sources to observe queued syncs.
   const IDLE_POLL_MS = 30_000;
   let {
-    tabTitle = $bindable(''),
     client,
     requestTimeoutMs = 20_000,
     maxAwaitingPolls = 6,
@@ -38,7 +37,6 @@
     onStatusChange = () => undefined,
     onOpenSettings = () => undefined,
   }: {
-    tabTitle?: string;
     client: APIClient;
     onOpenOperations?: () => void;
     onStatusChange?: () => void;
@@ -96,8 +94,6 @@
       : undefined,
   );
 
-  $effect(() => { tabTitle = selectedSource ? selectedSource.display_name || selectedSource.identifier : selectedContact ? contactLabel(selectedContact) : ''; });
-
   onMount(() => {
     const visibilityChanged = (): void => {
       if (document.hidden) {
@@ -115,7 +111,6 @@
     return () => document.removeEventListener('visibilitychange', visibilityChanged);
   });
   onDestroy(() => {
-    tabTitle = '';
     disposed = true;
     stopPolling();
     contactsRequest?.abort();
