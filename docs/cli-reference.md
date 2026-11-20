@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-18"
+last_edited: "2026-11-19"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1302,8 +1302,8 @@ paused and prints the command that continues it. See the
 
 ## add-bland
 
-Check a configured Bland account's access and register it as a meeting source
-(unreleased). Nothing about individual calls is printed.
+Check a configured Bland account's access and register it as a meeting source.
+Nothing about individual calls is printed.
 
 ```bash
 msgvault add-bland [identifier]
@@ -1315,7 +1315,7 @@ With one `[[bland]]` entry, omit the identifier. See
 ## sync-bland
 
 Archive every listed Bland call, ended or not, with its summary, retained
-transcript and recording as a meeting (unreleased). Without an identifier, sync
+transcript and recording as a meeting. Without an identifier, sync
 every configured source. Run `add-bland` first.
 
 ```bash
@@ -1750,8 +1750,8 @@ resuming, and coverage limits. These commands do not send replies.
 
 ## source facebook-messages add
 
-Register the Messenger inbox of the Page in a `[[facebook_messages]]` profile
-(unreleased). No identifier selects every profile.
+Register the Messenger inbox of the Page in a `[[facebook_messages]]` profile.
+No identifier selects every profile.
 
 ```bash
 msgvault source facebook-messages add [identifier]
@@ -1760,7 +1760,7 @@ msgvault source facebook-messages add [identifier]
 ## source facebook-messages sync
 
 Archive the Page's Messenger conversations as chats, with up to the 20 most
-recent messages of each (unreleased). `--full` restarts from the most recent
+recent messages of each. `--full` restarts from the most recent
 conversations.
 
 ```bash
@@ -1770,7 +1770,7 @@ msgvault source facebook-messages sync [identifier] [--max-requests 1000] [--ful
 ## source instagram-messages add
 
 Register the inbox of the Instagram account in an `[[instagram_messages]]`
-profile (unreleased). No identifier selects every profile.
+profile. No identifier selects every profile.
 
 ```bash
 msgvault source instagram-messages add [identifier]
@@ -1779,7 +1779,7 @@ msgvault source instagram-messages add [identifier]
 ## source instagram-messages sync
 
 Archive the account's Instagram conversations as chats, with up to the 20 most
-recent messages of each (unreleased). Flags match `source facebook-messages sync`.
+recent messages of each. Flags match `source facebook-messages sync`.
 
 ```bash
 msgvault source instagram-messages sync [identifier] [--max-requests 1000] [--full]
@@ -1790,7 +1790,7 @@ See [Facebook and Instagram messages](usage/meta-messages.md) for setup and limi
 ## source instagram-mentions add
 
 Register the mentions source for `[[instagram_comments]]` profiles that set
-`mentions = true` (unreleased). No identifier selects every such profile.
+`mentions = true`. No identifier selects every such profile.
 
 ```bash
 msgvault source instagram-mentions add [identifier]
@@ -1798,7 +1798,7 @@ msgvault source instagram-mentions add [identifier]
 
 ## source instagram-mentions sync
 
-Archive media in which other accounts tag the linked account (unreleased). An
+Archive media in which other accounts tag the linked account. An
 unfinished run resumes next time; `--full` restarts from the newest tagged
 media without deleting rows.
 
@@ -1810,7 +1810,7 @@ See [Archive media that tags the account](usage/instagram-comments.md#archive-me
 ## comment moderate
 
 Hide, unhide, or delete an archived Facebook Page or Instagram comment on Meta,
-then record the change in the archive (unreleased). The comment's profile must
+then record the change in the archive. The comment's profile must
 allow the action in [`actions`](configuration.md#facebook-comments).
 
 ```bash
@@ -1831,7 +1831,7 @@ Choose exactly one of `--hide`, `--unhide`, or `--delete`. See
 ## comment reply
 
 Post a public reply to an archived Facebook Page or Instagram comment, then
-archive the reply (unreleased). The comment's profile must list `"reply"` in
+archive the reply. The comment's profile must list `"reply"` in
 [`actions`](configuration.md#facebook-comments). msgvault refuses to send the
 same text to the same comment twice.
 
@@ -2408,7 +2408,7 @@ receipts. Reconcile the reported event; do not repeat a completed mutation.
 
 ## import-ics
 
-On unreleased `main`, import a local iCalendar file as separate calendar event
+Import a local iCalendar file as separate calendar event
 messages:
 
 ```bash
@@ -2431,7 +2431,7 @@ raw iCalendar data, and only marks it cancelled.
 
 ### Invitations in email
 
-On unreleased `main`, archiving email extracts decoded `text/calendar` and `application/ics` MIME
+Archiving email extracts decoded `text/calendar` and `application/ics` MIME
 parts into event messages in the same source. Attached forwarded emails and iTIP messages with the
 REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored. ADD is unsupported; the email is kept and a warning is logged.
 Attendee RSVPs come from the invitation snapshot; Google Calendar sync supplies provider-reported RSVPs.
@@ -3985,7 +3985,7 @@ with daemon API schema 5.7.0 or newer. JSON includes the appearance reference, `
 [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance)
 for evidence rules and limitations.
 
-`create` is available on `main` after the latest release. It creates a profile
+`create` creates a profile
 with a new vCard UID and no participants. Optional flags are repeatable
 `--email <value[:type]>`, repeatable `--phone <value[:type]>`, `--org`, `--title`,
 `--address`, `--note`, `--json`, and `--publish`. `--title` requires `--org`.
@@ -5002,7 +5002,7 @@ msgvault mcp [flags]
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
 | `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Profile, source, calendar, identity, CardDAV, and Kata writes also need their separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
-| `--allow-curated-writes` | `false` | On unreleased `main`, expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-curated-writes` | `false` | Expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--confirm-sensitive-drafts` | `false` | Require client confirmation before creating or editing drafts with detected sensitive content. Grants no tools; HTTP writes still require `--http-allow-writes`. |
 | `--allow-import-writes` | `false` | Expose bounded historical import creation with per-call confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
@@ -5122,7 +5122,7 @@ with the configured owner bearer key. Native MCP never permits keyless access.
 |---|---|---|
 | `--mcp-allow-writes` | `false` | Enable the independent `/mcp/writes` catalog; `/mcp` stays read-only. |
 | `--mcp-allow-profile-writes` | `false` | Enable profile promotion, display-name and Notes writes. |
-| `--mcp-allow-curated-writes` | `false` | On unreleased `main`, enable structured person profile patches requiring explicit client confirmation; the client is responsible for obtaining user approval. |
+| `--mcp-allow-curated-writes` | `false` | Enable structured person profile patches requiring explicit client confirmation; the client is responsible for obtaining user approval. |
 | `--mcp-allow-identity-decisions` | `false` | Enable confirmed identity match accept/reject calls. |
 | `--mcp-allow-identity-scoring` | `false` | Enable confirmed manual scoring using the fixed Jev provider. |
 | `--mcp-allow-person-merges` | `false` | Enable confirmed local person merges. |

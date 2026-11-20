@@ -5,7 +5,7 @@ last_edited: "2026-11-18"
 ---
 
 Import a TikTok **Download your data** ZIP or extracted folder to search your
-DMs and the comments you wrote. This importer is unreleased. Its synthetic
+DMs and the comments you wrote. Its synthetic
 fixtures use the fields in TikTok's [published export documentation](https://developers.tiktok.com/docs/en/data-portability-data-types).
 The precise JSON and TXT layouts below have not been checked against a real
 export. No live API access was tested or is needed for this command.

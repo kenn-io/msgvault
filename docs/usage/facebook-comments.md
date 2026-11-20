@@ -1,13 +1,14 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-19"
 title: Facebook Page Comments
 description: Archive comments on a selected Facebook Page and link commenters to existing people.
 ---
 
 Connect a selected Facebook Page to search its returned posts, comments, and
 nested replies in msgvault. This integration reads public comment
-conversations. It does not send private messages. Hiding, deleting, and
-publicly replying to comments you choose are not released yet.
+conversations. It does not send private messages. You can also
+[hide or delete](#hide-or-delete-comments) comments you choose and
+[reply publicly](#reply-to-comments).
 
 ## Connect a Page
 

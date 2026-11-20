@@ -1,13 +1,13 @@
 ---
-last_edited: "2026-11-12"
+last_edited: "2026-11-19"
 title: Instagram Comments
 description: Archive a linked professional Instagram account's media comments and replies.
 ---
 
 Search returned Instagram media captions, comments, and replies beside your
 other communications, and link commenters with existing person tools. This
-integration reads comments; it does not send messages. Hiding, deleting, and
-publicly replying to comments you choose are not released yet.
+integration reads comments and does not send private messages. You can also
+[hide, delete, or reply to](#hide-delete-or-reply-to-comments) comments you choose.
 
 ## Connect a professional account
 
