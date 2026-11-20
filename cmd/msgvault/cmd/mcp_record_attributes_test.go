@@ -27,7 +27,7 @@ import (
 func recordAttributesFixture(t *testing.T) (*daemonMCPOperations, *store.Store, int64) {
 	t.Helper()
 	st := testutil.NewTestStore(t)
-	participant, err := st.EnsureParticipant("attribute@example.test", "Synthetic Person", "example.test")
+	participant, err := st.EnsureParticipant("attribute@example.com", "Synthetic Person", "example.com")
 	require.NoError(t, err)
 	person, _, err := st.CreatePersonFromParticipant(participant)
 	require.NoError(t, err)
