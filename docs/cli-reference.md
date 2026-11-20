@@ -5072,9 +5072,9 @@ backend must support orphan pruning.
 
 ## multimodal
 
-Build, inspect, and search the optional visual attachment index. Before running
-these commands, configure `[vector.multimodal]`, generate a probed capability
-manifest, and record explicit consent for hosted processing. See
+Build, inspect, and search the optional visual attachment index. The workflow
+requires `[vector.multimodal]` configuration, a probed capability manifest,
+and explicit consent for hosted processing. See
 [Visual attachment search](usage/vector-search.md#visual-attachment-search).
 
 | Subcommand | Purpose |
