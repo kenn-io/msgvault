@@ -422,7 +422,7 @@ func TestImportFailedPendingMessageBeforeExistingMedia(t *testing.T) {
 	assert.Empty(t, hash)
 }
 
-func TestImportSavesTextBeforeFirstMediaCopy(t *testing.T) {
+func TestImportFlushesTextAndBatchesPhotos(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root, attachments := t.TempDir(), t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "first.jpg"), []byte("first photo"), 0600))
