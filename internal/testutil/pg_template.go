@@ -81,38 +81,23 @@ var (
 
 type cloneDrop struct {
 	dbURL, name string
-	done        chan struct{}
 }
 
 var cloneDrops = make(chan cloneDrop, 16)
 
 func init() {
 	// Start outside any synctest bubble so database calls and timeouts use real time.
-	go runCloneDrops(cloneDrops, func(dbURL, name string) {
-		admin, err := pgAdminDB(dbURL)
-		if err != nil {
-			return
+	go func() {
+		for request := range cloneDrops {
+			admin, err := pgAdminDB(request.dbURL)
+			if err != nil {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			dropOwnedDatabase(ctx, admin, request.name)
+			cancel()
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		dropOwnedDatabase(ctx, admin, name)
-	})
-}
-
-func runCloneDrops(requests <-chan cloneDrop, drop func(string, string)) {
-	for request := range requests {
-		if request.done != nil {
-			close(request.done)
-		} else {
-			drop(request.dbURL, request.name)
-		}
-	}
-}
-
-func waitForCloneDrops() {
-	done := make(chan struct{})
-	cloneDrops <- cloneDrop{done: done}
-	<-done
+	}()
 }
 
 var (

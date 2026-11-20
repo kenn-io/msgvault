@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,7 +106,6 @@ func TestPostgresFixturesGetPrivateEmptyDatabases(t *testing.T) {
 // removal of the clone it was handed.
 func TestPostgresFixtureDatabaseDroppedAfterCleanup(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	dbURL := requirePostgresTestURL(t)
 	requireTemplate(t, dbURL)
 
@@ -118,35 +118,11 @@ func TestPostgresFixtureDatabaseDroppedAfterCleanup(t *testing.T) {
 	})
 
 	require.NotEmpty(database, "subtest recorded its database")
-	waitForCloneDrops()
-	assert.False(databaseExists(t, adminDB, database), "clone is gone after the owning test's cleanup")
-}
-
-func TestCloneDropQueue(t *testing.T) {
-	requests := make(chan cloneDrop, 16)
-	started := make(chan struct{})
-	release := make(chan struct{})
-	workerDone := make(chan struct{})
-	go func() {
-		defer close(workerDone)
-		runCloneDrops(requests, func(dbURL, name string) {
-			close(started)
-			<-release
-		})
-	}()
-	t.Cleanup(func() { close(requests); <-workerDone })
-
-	requests <- cloneDrop{dbURL: "test", name: "clone"}
-	<-started
-	done := make(chan struct{})
-	requests <- cloneDrop{done: done}
-	select {
-	case <-done:
-		assert.Fail(t, "barrier completed before the drop")
-	default:
-	}
-	close(release)
-	<-done
+	require.Eventually(func() bool {
+		var exists bool
+		err := adminDB.QueryRowContext(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", database).Scan(&exists)
+		return err == nil && !exists
+	}, time.Minute, 100*time.Millisecond, "clone is gone after the owning test's cleanup")
 }
 
 // TestPostgresFixtureLogsNoSchemaDDLOnceTemplateExists checks the store SQL log
