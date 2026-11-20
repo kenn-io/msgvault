@@ -249,7 +249,7 @@ func readMCPOperationResponse[T any](ctx context.Context, client *daemonclient.C
 		}
 	}
 	if response.StatusCode == http.StatusNoContent {
-		return &mcpserver.OperationResult{ETag: response.Header.Get("ETag")}, nil
+		return &mcpserver.OperationResult{Output: struct{}{}}, nil
 	}
 	var output T
 	if err := json.Unmarshal(data, &output); err != nil {

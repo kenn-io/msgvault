@@ -118,12 +118,6 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 	}
 }
 
-type noContentReceipt struct{}
-
-func (noContentReceipt) Validate() error {
-	return errors.New("unexpected receipt validation")
-}
-
 func TestMCPOperationNoContent(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -139,10 +133,9 @@ func TestMCPOperationNoContent(t *testing.T) {
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, http.MethodDelete, r.Method)
 				assert.Equal(t, "/api/v1/example", r.URL.Path)
-				w.Header().Set("ETag", `"revision"`)
 				w.WriteHeader(http.StatusNoContent)
 			})
-			result, err := readMCPOperationJSON[noContentReceipt](t.Context(), client, http.MethodDelete, "/api/v1/example", nil, tc.success)
+			result, err := readMCPOperationJSON[struct{}](t.Context(), client, http.MethodDelete, "/api/v1/example", nil, tc.success)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			if tc.wantError {
@@ -153,8 +146,7 @@ func TestMCPOperationNoContent(t *testing.T) {
 				return
 			}
 			assert.False(t, result.IsError)
-			assert.Nil(t, result.Output)
-			assert.Equal(t, `"revision"`, result.ETag)
+			assert.Equal(t, struct{}{}, result.Output)
 		})
 	}
 }
