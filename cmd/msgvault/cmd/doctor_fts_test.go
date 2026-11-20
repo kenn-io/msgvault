@@ -28,7 +28,7 @@ func TestDiagnoseFTSOutputAndExit(t *testing.T) {
 				if indexed {
 					r.NoError(f.Store.IndexStoredMessageContext(t.Context(), id))
 				}
-				cmd := &cobra.Command{Use: "diagnose-fts", SilenceUsage: true, RunE: func(cmd *cobra.Command, _ []string) error {
+				cmd := &cobra.Command{Use: "fts", SilenceUsage: true, RunE: func(cmd *cobra.Command, _ []string) error {
 					return runFTSDiagnostic(cmd, f.Store, store.FTSDiagnosticOptions{}, jsonOut)
 				}}
 				cmd.SetContext(t.Context())
@@ -84,10 +84,10 @@ func TestDiagnoseFTSInvalidFlags(t *testing.T) {
 		{name: "limit above maximum", arg: "--limit=1001", want: "--limit must be 1..1000 and --timeout must be 1s..5m"},
 		{name: "timeout below minimum", arg: "--timeout=0s", want: "--limit must be 1..1000 and --timeout must be 1s..5m"},
 		{name: "timeout above maximum", arg: "--timeout=6m", want: "--limit must be 1..1000 and --timeout must be 1s..5m"},
-		{name: "positional argument", arg: "unexpected", want: `unknown command "unexpected" for "diagnose-fts"`},
+		{name: "positional argument", arg: "unexpected", want: `unknown command "unexpected" for "fts"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := newDiagnoseFTSCmd()
+			cmd := newDoctorFTSCmd()
 			cmd.SetContext(t.Context())
 			cmd.SetOut(io.Discard)
 			cmd.SetErr(io.Discard)
@@ -124,7 +124,7 @@ func TestDiagnoseFTSComparisonFailurePrintedOnce(t *testing.T) {
 			// must return a failed check with a continuation value we can report.
 			_, err := f.Store.DB().ExecContext(t.Context(), statement)
 			r.NoError(err)
-			cmd := &cobra.Command{Use: "diagnose-fts", SilenceUsage: true, RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd := &cobra.Command{Use: "fts", SilenceUsage: true, RunE: func(cmd *cobra.Command, _ []string) error {
 				return runFTSDiagnostic(cmd, f.Store, store.FTSDiagnosticOptions{}, jsonOut)
 			}}
 			cmd.SetContext(t.Context())
@@ -145,7 +145,7 @@ func TestDiagnoseFTSComparisonFailurePrintedOnce(t *testing.T) {
 			} else {
 				a.Empty(stderr.String(), "the text report already explains why the check stopped")
 				a.Equal(1, strings.Count(strings.ToLower(output.String()+stderr.String()), "check failed; retry with --cursor"))
-				a.Equal(1, strings.Count(output.String(), "Continue: msgvault diagnose-fts --cursor "))
+				a.Equal(1, strings.Count(output.String(), "Continue: msgvault doctor fts --cursor "))
 			}
 		})
 	}
@@ -182,7 +182,7 @@ func TestDiagnoseFTSReportErrorRouting(t *testing.T) {
 				if report.Entries == nil {
 					report.Entries = []store.FTSDiagnosticEntry{}
 				}
-				cmd := &cobra.Command{Use: "diagnose-fts", SilenceUsage: true, SilenceErrors: true, RunE: func(cmd *cobra.Command, _ []string) error {
+				cmd := &cobra.Command{Use: "fts", SilenceUsage: true, SilenceErrors: true, RunE: func(cmd *cobra.Command, _ []string) error {
 					return reportFTSDiagnostic(cmd, report, tc.cause, jsonOut)
 				}}
 				cmd.SetContext(t.Context())
@@ -215,7 +215,7 @@ func TestDiagnoseFTSReportErrorRouting(t *testing.T) {
 						a.Equal(1, strings.Count(strings.ToLower(output.String()+stderr.String()), strings.ToLower(tc.explanation)))
 					}
 					if report.NextCursor != "" {
-						a.Equal(1, strings.Count(output.String(), "Continue: msgvault diagnose-fts --cursor "+report.NextCursor))
+						a.Equal(1, strings.Count(output.String(), "Continue: msgvault doctor fts --cursor "+report.NextCursor))
 					}
 				}
 			})
@@ -251,7 +251,7 @@ func TestDiagnoseFTSReportWriteErrorsRemainVisible(t *testing.T) {
 			// or claim that a partially written continuation value was delivered.
 			for _, budget := range []int{0, complete.Len() / 2, complete.Len() - 1} {
 				output := &ftsDiagnosticPartialWriter{remaining: budget}
-				cmd := &cobra.Command{Use: "diagnose-fts", SilenceUsage: true, SilenceErrors: true, RunE: func(cmd *cobra.Command, _ []string) error {
+				cmd := &cobra.Command{Use: "fts", SilenceUsage: true, SilenceErrors: true, RunE: func(cmd *cobra.Command, _ []string) error {
 					return reportFTSDiagnostic(cmd, report, errors.New("synthetic check failure"), jsonOut)
 				}}
 				cmd.SetContext(t.Context())

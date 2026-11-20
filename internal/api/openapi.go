@@ -431,7 +431,7 @@ import (
 // 5.15.0 applies media search mode to recordings and reports their actual mode and degradations.
 // 5.16.0 adds standalone person creation at POST /api/v1/people/create.
 // 5.17.0 adds person, source, conversation and incoming filters to the message change feed.
-// 5.18.0 adds the bounded read-only FTS diagnostic to the daemon CLI runner.
+// 5.18.0 adds the read-only doctor fts check to the daemon CLI runner.
 const APISchemaVersion = "5.18.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
