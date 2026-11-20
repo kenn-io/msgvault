@@ -280,7 +280,8 @@ store connection; PostgreSQL clone drops run in the background on a session of
 their own.
 A PostgreSQL template is owned through a session advisory lock the
 server releases when the binary exits. An exit can leave up to 17 pending drops
-(one active and 16 queued) for the next same-scope template build to reclaim.
+(one active and 16 queued). Failed drops can leave additional clones. The next
+same-scope template build reclaims these databases.
 A role without `CREATEDB` falls back to a private schema in the configured database.
 
 `dbtest.NewTestDB` copies an in-memory `schema.sql` template per test with

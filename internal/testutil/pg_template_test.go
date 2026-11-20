@@ -5,7 +5,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -123,6 +125,42 @@ func TestPostgresFixtureDatabaseDroppedAfterCleanup(t *testing.T) {
 		err := adminDB.QueryRowContext(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", database).Scan(&exists)
 		return err == nil && !exists
 	}, time.Minute, 100*time.Millisecond, "clone is gone after the owning test's cleanup")
+}
+
+func TestCloneDropWorkerContinuesAfterStalledHandshake(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	accepted := make(chan struct{}, 2)
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		for range 2 {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- struct{}{}
+			_, _ = io.Copy(io.Discard, conn)
+			_ = conn.Close()
+		}
+	}()
+
+	requests := make(chan cloneDrop, 2)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		runCloneDrops(requests, 100*time.Millisecond)
+	}()
+	request := cloneDrop{dbURL: "postgres://test@" + listener.Addr().String() + "/test?sslmode=disable", name: "msgvault_tc_12345678_1234567890abcdef_1234567890abcdef"}
+	requests <- request
+	requests <- request
+	close(requests)
+
+	require.Eventually(t, func() bool { return len(accepted) == 2 }, 5*time.Second, 10*time.Millisecond, "worker must attempt the next drop after a stalled handshake")
+	<-workerDone
+	<-serverDone
 }
 
 // TestPostgresFixtureLogsNoSchemaDDLOnceTemplateExists checks the store SQL log

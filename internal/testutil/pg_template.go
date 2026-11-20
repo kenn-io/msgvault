@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -89,24 +90,33 @@ func init() {
 	// time. pgx ties a connection's timers to the bubble that dialed it, so the
 	// worker dials its own session rather than reuse the owner or admin pool,
 	// either of which a fixture may have dialed inside a bubble.
-	go func() {
-		sessions := map[string]*sql.DB{}
-		for request := range cloneDrops {
-			session, ok := sessions[request.dbURL]
-			if !ok {
-				config, err := pgx.ParseConfig(request.dbURL)
-				if err != nil {
-					continue
-				}
-				// Bound a drop nobody waits on; a timeout fails only that statement.
-				config.RuntimeParams["statement_timeout"] = "30s"
-				session = stdlib.OpenDB(*config)
-				session.SetMaxOpenConns(1)
-				sessions[request.dbURL] = session
-			}
-			_ = dropOwnedDatabaseOn(context.Background(), session, request.name)
+	go runCloneDrops(cloneDrops, 30*time.Second)
+}
+
+func runCloneDrops(requests <-chan cloneDrop, timeout time.Duration) {
+	sessions := map[string]*sql.DB{}
+	defer func() {
+		for _, session := range sessions {
+			_ = session.Close()
 		}
 	}()
+	for request := range requests {
+		session, ok := sessions[request.dbURL]
+		if !ok {
+			config, err := pgx.ParseConfig(request.dbURL)
+			if err != nil {
+				continue
+			}
+			// Bound a drop nobody waits on; a timeout fails only that statement.
+			config.RuntimeParams["statement_timeout"] = "30s"
+			session = stdlib.OpenDB(*config)
+			session.SetMaxOpenConns(1)
+			sessions[request.dbURL] = session
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		_ = dropOwnedDatabaseOn(ctx, session, request.name)
+		cancel()
+	}
 }
 
 var (
