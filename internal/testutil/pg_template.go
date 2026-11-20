@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for test setup
@@ -24,7 +25,8 @@ import (
 // database and every fixture is then a CREATE DATABASE ... TEMPLATE clone —
 // a file-level copy the server makes in tens of milliseconds. Each fixture
 // still gets a private, never-used database produced by the same InitSchema()
-// path, and drops it on cleanup.
+// path. A background worker drops clones after cleanup; the next binary's
+// sweep reclaims any still queued when this binary exits.
 //
 // Ownership of a template is a session-level advisory lock held on a
 // connection pinned for the life of the binary. The server releases it the
@@ -77,6 +79,41 @@ var (
 	cloneNamePattern    = regexp.MustCompile("^" + cloneDBPrefix + "([0-9a-f]{8})_([0-9a-f]{16})_([0-9a-f]{16})$")
 )
 
+type cloneDrop struct {
+	dbURL, name string
+	done        chan struct{}
+}
+
+var cloneDrops = make(chan cloneDrop, 16)
+
+func init() {
+	go runCloneDrops(cloneDrops, func(dbURL, name string) {
+		admin, err := pgAdminDB(dbURL)
+		if err != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		dropOwnedDatabase(ctx, admin, name)
+	})
+}
+
+func runCloneDrops(requests <-chan cloneDrop, drop func(string, string)) {
+	for request := range requests {
+		if request.done != nil {
+			close(request.done)
+		} else {
+			drop(request.dbURL, request.name)
+		}
+	}
+}
+
+func waitForCloneDrops() {
+	done := make(chan struct{})
+	cloneDrops <- cloneDrop{done: done}
+	<-done
+}
+
 var (
 	adminDBMu   sync.Mutex
 	adminDBs    = map[string]*sql.DB{}
@@ -101,8 +138,8 @@ func pgAdminDB(dbURL string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(3)
-	db.SetMaxIdleConns(3)
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
 	adminDBs[dbURL] = db
 
 	return db, nil

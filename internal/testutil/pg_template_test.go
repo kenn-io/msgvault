@@ -118,7 +118,35 @@ func TestPostgresFixtureDatabaseDroppedAfterCleanup(t *testing.T) {
 	})
 
 	require.NotEmpty(database, "subtest recorded its database")
+	waitForCloneDrops()
 	assert.False(databaseExists(t, adminDB, database), "clone is gone after the owning test's cleanup")
+}
+
+func TestCloneDropQueue(t *testing.T) {
+	requests := make(chan cloneDrop, 16)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		runCloneDrops(requests, func(dbURL, name string) {
+			close(started)
+			<-release
+		})
+	}()
+	t.Cleanup(func() { close(requests); <-workerDone })
+
+	requests <- cloneDrop{dbURL: "test", name: "clone"}
+	<-started
+	done := make(chan struct{})
+	requests <- cloneDrop{done: done}
+	select {
+	case <-done:
+		assert.Fail(t, "barrier completed before the drop")
+	default:
+	}
+	close(release)
+	<-done
 }
 
 // TestPostgresFixtureIssuesNoDDLOnceTemplateExists is the invariant that

@@ -89,7 +89,8 @@ func SkipIfPostgres(t *testing.T, reason string) {
 
 // newPostgresTestStore creates an isolated PostgreSQL store for the given URL.
 // It clones the test binary's template database or, if cloning is unavailable
-// or disabled, initializes a private schema. Cleanup drops the clone or schema.
+// or disabled, initializes a private schema. Cleanup queues the clone for
+// removal or drops the schema.
 func newPostgresTestStore(t *testing.T, dbURL string) *store.Store {
 	t.Helper()
 
@@ -117,9 +118,7 @@ func cloneTestDatabase(t *testing.T, tmpl *pgTemplate) *store.Store {
 		if st != nil {
 			_ = st.Close()
 		}
-		if admin, err := pgAdminDB(tmpl.dbURL); err == nil {
-			dropOwnedDatabase(context.WithoutCancel(t.Context()), admin, name)
-		}
+		cloneDrops <- cloneDrop{dbURL: tmpl.dbURL, name: name}
 	})
 
 	st, err = store.Open(withDatabase(tmpl.dbURL, name))
