@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-const maxRawBytes = 64 << 20
+// MaxRawBytes is the largest raw meeting evidence Decode accepts.
+const MaxRawBytes = 64 << 20
 
 const reasonMissingField = "missing_field"
 const reasonInvalidSection = "invalid_section"
@@ -19,7 +20,7 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return unavailableContent("missing_raw")
 	}
-	if len(raw) > maxRawBytes {
+	if len(raw) > MaxRawBytes {
 		return unavailableContent("raw_too_large")
 	}
 	var fields map[string]jsontext.Value

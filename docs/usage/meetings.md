@@ -865,14 +865,36 @@ It still cannot discover history beyond the visible window.
 
 - `--after` filters meetings returned by Notion locally and implies `--full`.
 - `--limit` caps the visible meetings fetched and checked.
-- Due transcript retries run in addition to that limit.
+- Due meeting retries run in addition to that limit.
 
-Notion may publish notes before a transcript. Missing transcripts retry every
-six hours until seven days after the best known meeting end, or for 48 hours
-from discovery when timing is unknown. A temporary omission never erases a
-transcript already archived. Hard per-meeting failures retain the previous
-successful state; meetings written earlier in that failed run remain safe and
-idempotent.
+Meetings under data sources import their summary, notes, and transcript from
+their referenced section blocks. When a page meeting has no transcript section
+or its section reads completely empty, msgvault uses a complete transcript from
+the parent page's Markdown. An incomplete section keeps saved text for retry.
+
+Provider or network errors, incomplete pagination, and request, response-size,
+block-count, and nesting limits can leave sections incomplete. msgvault keeps
+their archived text and evidence and retries section blocks every six hours,
+even after a meeting leaves the query window. Incomplete sections stay queued
+until a complete read is saved.
+
+If page Markdown is incomplete, msgvault keeps the saved transcript and retries.
+When a transcript is missing without an incomplete section, background retries
+stop at the deadline. The sync summary reports partial coverage when a section
+is incomplete or the Notion query reports more meetings.
+
+When a transcript reference disappears without a replacement, msgvault keeps
+the saved transcript and retries. A complete empty referenced transcript section
+clears saved text when page Markdown has no replacement. Other omitted sections
+clear saved text.
+
+If combined evidence exceeds 64 MiB, msgvault keeps the last readable archive
+and reports partial coverage.
+
+A meeting whose saved evidence has a newer version keeps that evidence, and the
+sync reports an error for it. Existing `[[notion_meetings]]` settings need no
+changes. Other hard per-meeting failures retain the previous successful state;
+meetings written earlier in that failed run remain safe and idempotent.
 
 ### What gets stored (Notion)
 

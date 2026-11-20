@@ -1222,6 +1222,8 @@ See the [Pocket workflow](usage/meetings.md#pocket) for setup and limitations.
 
 Validate a configured read-only Notion integration and register its meeting
 source without printing meeting content.
+The probe checks a referenced section block. It reports when no section blocks
+are available to check.
 
 ```bash
 msgvault add-notion-meetings [identifier]
@@ -1235,6 +1237,8 @@ With one entry, the identifier may be omitted.
 ## sync-notion-meetings
 
 Sync Notion AI Meeting Notes from the attendee-visible recent window.
+The summary reports partial coverage when the query has more results or a
+meeting section could not be read completely.
 
 ```bash
 msgvault sync-notion-meetings [identifier]
