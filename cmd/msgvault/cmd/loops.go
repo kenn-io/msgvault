@@ -51,7 +51,7 @@ func newLoopsListCommand() *cobra.Command {
   msgvault loops list --limit 10 --json
   msgvault loops list --person 42`,
 	}
-	command.Flags().IntVar(&opts.Limit, "limit", loops.DefaultLimit, "Maximum entries per collection (1 through 200)")
+	command.Flags().IntVar(&opts.Limit, "limit", loops.DefaultLimit, "Limit for loops and for promises (1 through 200 each)")
 	command.Flags().BoolVar(&opts.IncludeClosed, "include-closed", false, "Include done and snoozed commitments")
 	command.Flags().Int64Var(&opts.PersonID, "person", 0, "Show loops with this person ID")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")

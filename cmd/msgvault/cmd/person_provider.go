@@ -1184,7 +1184,7 @@ func newPersonProviderConsentCommand(deps personProviderCommandDeps) *cobra.Comm
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	command.Flags().BoolVar(&semanticEmbeddings, "semantic-embeddings", false,
 		"Select the curated-person semantic embedding policy")
-	command.Flags().BoolVar(&commitments, "commitments", false, "Disclose and grant the two-sided conversation commitment policy")
+	command.Flags().BoolVar(&commitments, "commitments", false, "Review consent to scan both people's messages for promises")
 	return command
 }
 
@@ -1303,7 +1303,7 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	command.Flags().BoolVar(&semanticEmbeddings, "semantic-embeddings", false,
 		"Select the curated-person semantic embedding policy")
-	command.Flags().BoolVar(&commitments, "commitments", false, "Revoke the two-sided commitment policy")
+	command.Flags().BoolVar(&commitments, "commitments", false, "Revoke consent to scan both people's messages for promises")
 	command.Flags().StringVar(&ifFingerprint, personProviderIfFingerprintFlag, "",
 		"Require an exact provider fingerprint")
 	_ = command.Flags().MarkHidden(personProviderIfFingerprintFlag)
