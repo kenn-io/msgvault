@@ -105,13 +105,19 @@ func init() {
 				session.SetMaxOpenConns(1)
 				sessions[request.dbURL] = session
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			if err := dropOwnedDatabaseOn(ctx, session, request.name); err != nil {
-				slog.Warn("drop PostgreSQL test clone", "database", request.name, "error", err)
-			}
-			cancel()
+			dropCloneLogged(session, request.name)
 		}
 	}()
+}
+
+// dropCloneLogged drops one clone within a minute and warns when it fails, so
+// a stalled or misconfigured server is visible while tests continue.
+func dropCloneLogged(session *sql.DB, name string) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := dropOwnedDatabaseOn(ctx, session, name); err != nil {
+		slog.Warn("drop PostgreSQL test clone", "database", name, "error", err)
+	}
 }
 
 var (
