@@ -286,7 +286,7 @@
   $effect(() => {
     const selected = readingSelection;
     readingTitle = selected?.kind === 'archive' ? messageTitle(selected.message.subject, selected.message.conversation_title) || '(untitled)' :
-      selected?.kind === 'entry' ? selected.row.kind === 'conversation' ? selected.row.title : readingAnchorTitle : '';
+      selected?.kind === 'entry' ? readingAnchorTitle : '';
   });
 
   const readingPredicateFingerprint = $derived(predicateFingerprint(exploreState.predicate()));
