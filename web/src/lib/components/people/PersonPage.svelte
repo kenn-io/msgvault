@@ -27,6 +27,7 @@
     onConfigureVisualSearch, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings, sweepConfigured,
     onOpenFileItem, onOpenFileConversation, onReconcilePersonMerge, onIdentityChange, personFilePresentation = 'files', personFileDirections = ['from_person'],
     onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange, onMessagesTableChange,
+    pageTitle = $bindable(''),
     details = $bindable(false), selectedDate = $bindable<string | null>(null), domainYear = $bindable<number | null>(null),
     sort = $bindable<FileSearchSort>({ field: 'occurred_at', direction: 'desc' }), filenameQuery = $bindable(''), mimeFamilies = $bindable<FileMIMEFamily[]>([]) }:
     { client: APIClient; directory: DirectoryController; onRecordDeleted?: (personID: number) => void; onSplitCommitted?: (context: import('../../directory/person-merge-history-controller.svelte').PersonSplitCommittedContext) => void | Promise<void>; onOpenCardDAVConflict?: (id: number) => void; onOpenCardDAVSettings?: () => void; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
@@ -36,7 +37,7 @@
       sweepConfigured?: boolean; onConfigureVisualSearch?: () => void; onOpenMeeting?: (meeting: MeetingRef) => void; onOpenSettings?: (category?: string) => void; onOpenFileItem?: (key: string) => void;
       onOpenFileConversation?: (key: string, messageID: number, conversationID: number) => void;
       personFilePresentation?: 'media' | 'files'; personFileDirections?: PersonFileDirection[];
-      details?: boolean; selectedDate?: string | null; domainYear?: number | null; sort?: FileSearchSort; filenameQuery?: string; mimeFamilies?: FileMIMEFamily[];
+      pageTitle?: string; details?: boolean; selectedDate?: string | null; domainYear?: number | null; sort?: FileSearchSort; filenameQuery?: string; mimeFamilies?: FileMIMEFamily[];
       onFiltersChange: (filters: ExploreFilter[]) => void;
       onMessagesTableChange?: (table: MessagesTable | undefined) => void;
       onPersonFilePresentationChange?: (value: 'media' | 'files') => void; onPersonFileDirectionsChange?: (value: PersonFileDirection[]) => void } = $props();
@@ -60,6 +61,10 @@
     });
   });
   const name = $derived(domain ?? savedProfile?.person?.display_name ?? person?.display_label ?? 'Person');
+  let fileViewerTitle = $state('');
+  $effect(() => {
+    pageTitle = controller.detailMissing && durablePersonID === null ? 'Person or domain not found' : filesOpen && fileViewerTitle ? fileViewerTitle : [details ? 'Details' : filesOpen ? 'Files' : 'Messages', name].join(' · ');
+  });
   let saving = $state(false);
   let mergeOpen = $state(false);
   $effect(() => { void target; mergeOpen = false; });
@@ -96,7 +101,7 @@
 </script>
 
 {#snippet files()}
-  <div class="files"><FilesWorkspace {onConfigureVisualSearch} onOpenTaskSettings={() => onOpenSettings?.()} {client} embedded showHeader={false} predicate={context} identityScope={profileID === null ? scope : { kind: 'durable-person', id: profileID }} {sort} {filenameQuery} {mimeFamilies}
+  <div class="files"><FilesWorkspace bind:viewerTitle={fileViewerTitle} {onConfigureVisualSearch} onOpenTaskSettings={() => onOpenSettings?.()} {client} embedded showHeader={false} predicate={context} identityScope={profileID === null ? scope : { kind: 'durable-person', id: profileID }} {sort} {filenameQuery} {mimeFamilies}
     personPresentation={personFilePresentation} personDirections={personFileDirections} onSortChange={(value) => sort = value}
     onFilenameQueryChange={(value) => filenameQuery = value} onMIMEFamiliesChange={(value) => mimeFamilies = value}
     onPersonPresentationChange={onPersonFilePresentationChange} onPersonDirectionsChange={onPersonFileDirectionsChange}

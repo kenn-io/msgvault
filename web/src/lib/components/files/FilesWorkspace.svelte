@@ -111,6 +111,7 @@
     { value: 'files', label: 'Files' },
   ];
   interface Props {
+    viewerTitle?: string;
     submitted?: boolean;
     client: APIClient;
     predicate: ExplorePredicate;
@@ -143,6 +144,7 @@
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
   }
   let {
+    viewerTitle = $bindable(''),
     submitted = $bindable(false),
     client,
     predicate,
@@ -199,6 +201,8 @@
   let scrollTop = $state(0);
   let activeKey = $state<string | null>(untrack(() => providedActiveKey));
   let viewerFile = $state<WorkspaceFileRow>();
+  let currentViewerTitle = $state<{ id: number; name: string }>();
+  $effect(() => { viewerTitle = viewerFile && currentViewerTitle?.id === viewerFile.id ? currentViewerTitle.name : ''; });
   const viewerIndex = $derived(viewerFile ? rows.findIndex((row) => row.key === viewerFile?.key) : -1);
   let pendingViewerKey = $state<string | null>(null);
   let viewerReturnFocus = $state<HTMLElement>();
@@ -404,6 +408,7 @@
     return () => observer.disconnect();
   });
   onDestroy(() => {
+    viewerTitle = '';
     controller?.abort();
     clearCacheBuildRetry();
     geometry.destroy();
@@ -1120,6 +1125,7 @@
 
 {#if viewerFile}
   <FileViewer
+    bind:tabTitle={currentViewerTitle}
     {client}
     file={viewerFile}
     position={viewerIndex >= 0 ? { index: viewerIndex, total: totalCount } : undefined}

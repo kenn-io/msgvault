@@ -53,6 +53,11 @@ func buildFastPathEquivalenceEngine(t *testing.T) (*DuckDBEngine, fastPathFixtur
 	b.AddAttachmentWithMIME(3, emailDeleted, 9000, "archive.zip", "application/zip")
 
 	b.AddMessage(MessageOpt{Subject: "Orphan draft", SentAt: base.Add(3 * time.Hour), SourceID: gmail})
+	b.AddMessage(MessageOpt{Subject: "Same text", Snippet: "Same text", SentAt: base.Add(7 * time.Hour), SourceID: gmail})
+	b.AddMessage(MessageOpt{ConversationID: 902, ConversationTitle: "Thread title", Snippet: "Preview", SentAt: base.Add(8 * time.Hour), SourceID: gmail})
+	b.AddMessage(MessageOpt{MessageType: messageTypeCalendar, Snippet: "Private location", SentAt: base.Add(9 * time.Hour), SourceID: gmail})
+	b.AddMessage(MessageOpt{SentAt: base.Add(10 * time.Hour), SourceID: gmail})
+	b.messages[len(b.messages)-1].Snippet = ""
 
 	event := b.AddMessage(MessageOpt{
 		Subject: "Standup", MessageType: messageTypeCalendar, SentAt: base.Add(4 * time.Hour), SourceID: gmail,

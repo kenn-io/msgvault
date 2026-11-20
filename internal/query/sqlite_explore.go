@@ -236,6 +236,7 @@ func buildSQLiteExplorePageSQL(core, conditions, chat string, values []string) s
  COALESCE(m.message_type, ''), COALESCE(c.conversation_type, ''),
  CASE WHEN p.entry_kind = 'conversation' THEN COALESCE(NULLIF(c.title, ''), 'Conversation')
  ELSE COALESCE(NULLIF(m.subject, ''), NULLIF(c.title, ''), m.snippet, '') END,
+ (p.entry_kind <> 'conversation' AND COALESCE(m.subject, '') = '' AND COALESCE(c.title, '') = '' AND COALESCE(m.snippet, '') <> ''),
  COALESCE(m.snippet, ''),
  (SELECT json_group_array(participant_id) FROM (SELECT participant_id FROM links WHERE entry_key = p.entry_key ORDER BY participant_id)),
  (SELECT json_group_array(label) FROM (SELECT ` + sqlAnalyticalEntriesParticipantLabel("person") + ` AS label

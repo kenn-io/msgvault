@@ -44,7 +44,7 @@
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
   import TranscriptHits from '../search/TranscriptHits.svelte';
-  import ReadingPane, { readingSelectionTitle, type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
+  import ReadingPane, { readingSelectionTabTitle, type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
   import MessageMeetingSummary from '../meetings/MessageMeetingSummary.svelte';
   import {
@@ -247,7 +247,7 @@
       : undefined;
   });
 
-  $effect(() => { readingTitle = readingSelection ? readingSelectionTitle(readingSelection) : ''; });
+  $effect(() => { readingTitle = readingSelection ? readingSelectionTabTitle(readingSelection) : ''; });
 
   const readingState = $derived.by(
     (): {

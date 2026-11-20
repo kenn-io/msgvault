@@ -38,7 +38,9 @@
   } from '../../explore/models';
   import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
-  import { messageTitle } from '../../archive/message-title';
+  import { readingSelectionTabTitle } from '../reader/ReadingPane.svelte';
+  import { RAIL, normalizeCategory } from '../../settings/layout';
+  import { OPERATION_KIND_LABELS, RELATED_STATUS_LABELS } from '../../operations/labels';
   import { ExploreLoader, type MessagesTable } from '../../explore/loader.svelte';
   import { groupingOptions, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
@@ -289,6 +291,10 @@
   let personMessages = $state<MessagesTable>();
   let resultsWidth = $state(0);
   let readingTitle = $state('');
+  let fileTitle = $state('');
+  let contextualFileTitle = $state<{ id: number; name: string }>();
+  let peopleTitle = $state('');
+  let sourcesTitle = $state('');
   const displayState = $derived(exploreState.current.workspace === 'everything' ? exploreState : exploreState.current.workspace === 'relationships' ? personMessages?.state : undefined);
   const displayResultsWidth = $derived(exploreState.current.workspace === 'everything' ? resultsWidth : exploreState.current.workspace === 'relationships' ? personMessages?.resultsWidth ?? 0 : 0);
   const operationsController = new OperationsController(untrack(() => client));
@@ -516,9 +522,19 @@
 
   $effect(() => {
     const workspace = exploreState.current.workspace;
-    const detail = archiveMeetingID !== undefined
-      ? archivedMeeting.detail?.id === archiveMeetingID ? messageTitle(archivedMeeting.detail.subject, archivedMeeting.detail.conversation_title) : ''
-      : workspace === 'everything' ? readingTitle : workspace === 'relationships' ? personMessages?.readingTitle : '';
+    const operationDetail = runHistory?.operationStatus ? RELATED_STATUS_LABELS[runHistory.operationStatus] :
+      runHistory?.operationRunID ? (operationsController.snapshot.detail?.id === runHistory.operationRunID ? OPERATION_KIND_LABELS[operationsController.snapshot.detail.kind] : 'Run') : '';
+    const meeting = archiveMeetingID !== undefined && !runHistory && archivedMeeting.detail?.id === archiveMeetingID ?
+      readingSelectionTabTitle({ kind: 'archive', message: archivedMeeting.detail }) : '';
+    let detail = '';
+    if (contextualViewerFile) detail = contextualFileTitle?.id === contextualViewerFile.id ? contextualFileTitle.name : '';
+    else if (runHistory) detail = [operationDetail, 'Past runs'].filter(Boolean).join(' · ');
+    else if (archiveMeetingID !== undefined) detail = meeting;
+    else if (workspace === 'everything') detail = readingTitle;
+    else if (workspace === 'files') detail = fileTitle;
+    else if (workspace === 'relationships') detail = personMessages?.state.current.selectedRow ? personMessages.readingTitle ?? '' : peopleTitle;
+    else if (workspace === 'sources') detail = sourcesTitle;
+    else if (workspace === 'settings') detail = RAIL.find(category => category.id === normalizeCategory(exploreState.current.settingsCategory))?.label ?? '';
     document.title = [detail, workspaceLabel(workspace), 'msgvault'].filter(Boolean).join(' · ');
   });
 
@@ -1361,11 +1377,12 @@
           openDirectoryPerson
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
-        <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory, connection) => { cardDAVSettingsRequest = connection ? { connection, key: ++cardDAVSettingsRequestKey } : undefined; commitNavigation({ workspace: 'settings', settingsCategory, settingsAuthority: '' }); }} onOpenOperations={() => openOperations('source_sync')} />
+        <SourcesWorkspace bind:tabTitle={sourcesTitle} bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory, connection) => { cardDAVSettingsRequest = connection ? { connection, key: ++cardDAVSettingsRequestKey } : undefined; commitNavigation({ workspace: 'settings', settingsCategory, settingsAuthority: '' }); }} onOpenOperations={() => openOperations('source_sync')} />
       {:else if exploreState.current.workspace === 'deletions'}
         <DeletionsWorkspace {client} controller={shellData.deletions} onChanged={() => void shellData.refreshDeletions()} />
       {:else if exploreState.current.workspace === 'relationships'}
         <PeopleWorkspace
+          bind:pageTitle={peopleTitle}
           onMessagesTableChange={(table) => personMessages = table}
           onConfigureVisualSearch={openVisualAttachmentSettings}
           sweepConfigured={operationsController.snapshot.statusError ? undefined : operationsController.snapshot.statusLanes.flatMap(lane => lane.kinds).find(kind => kind.kind === 'person_sweep')?.configured}
@@ -1505,6 +1522,7 @@
             />
           {:else}
             <FilesWorkspace
+              bind:viewerTitle={fileTitle}
               onOpenTaskSettings={() => commitNavigation(tasksSettingsDestination())}
               bind:this={filesPage}
               onConfigureVisualSearch={openVisualAttachmentSettings}
@@ -1685,6 +1703,7 @@
 
 {#if contextualViewerFile}
   <FileViewer
+    bind:tabTitle={contextualFileTitle}
     {client}
     file={contextualViewerFile}
     onOpenTaskSettings={() => { contextualViewerFile = undefined; commitNavigation(tasksSettingsDestination()); }}

@@ -56,6 +56,18 @@ func liveExploreFixture(t *testing.T) sqliteExploreFixture {
 		}
 		b.AddMessage(opt)
 	}
+	for i, row := range []MessageOpt{
+		{Subject: "Same text", Snippet: "Same text"},
+		{ConversationID: 902, ConversationTitle: "Thread title", Snippet: "Preview"},
+		{Snippet: "Private preview"},
+		{MessageType: "event", Snippet: "Private location"},
+		{},
+	} {
+		row.SourceID = source
+		row.SentAt = base.Add(time.Duration(20+i) * time.Hour)
+		b.AddMessage(row)
+	}
+	b.messages[len(b.messages)-1].Snippet = ""
 	// Microseconds distinguish imported chat timestamps and adjacent date bounds.
 	for _, microsecond := range []int{100, 200} {
 		b.AddMessage(MessageOpt{SourceID: source, Subject: fmt.Sprintf("Precision %d", microsecond), SentAt: base.Add(10*time.Hour + time.Duration(microsecond)*time.Microsecond)})

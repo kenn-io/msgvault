@@ -892,6 +892,62 @@ describe('AppShell', () => {
       await waitFor(() => expect(document.title).toBe('Files · msgvault'));
     });
 
+    it.each([
+      ['preview', true, '(untitled)'],
+      ['subject equal to preview', false, 'Synthetic private preview'],
+      ['calendar preview', true, '(untitled)'],
+    ])('names the browser tab for %s without changing the reader title', async (kind, titleIsPreview, expected) => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'message:1' });
+      const row = { ...entry(1), message_type: kind === 'calendar preview' ? 'event' : 'email', title: 'Synthetic private preview', preview: 'Synthetic private preview', title_is_preview: titleIsPreview };
+      render(AppShell, { client: createAPIClient(async () => Response.json(exploreResponse({ rows: [row], total_count: 1 }))), state });
+      await screen.findByRole('complementary', { name: 'Reading pane: Synthetic private preview' });
+      await waitFor(() => expect(document.title).toBe(`${expected} · Messages · msgvault`));
+    });
+
+    it('names the browser tab for source and contact panels and setup', async () => {
+      const state = shellState('sources');
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/sources/status')) return Response.json({ sources: [sourceStatus({ display_name: 'Synthetic archive' })] });
+        if (path.endsWith('/carddav/connections')) return Response.json({ connections: [{ connection: 'default', status: { configured: true, available: true, credential_configured: true, account: { username: 'Synthetic contacts' } } }] });
+        return Response.json({});
+      });
+      render(AppShell, { client, state });
+      await fireEvent.click(await screen.findByRole('button', { name: 'Details for Synthetic archive' }));
+      await waitFor(() => expect(document.title).toBe('Synthetic archive · Sources · msgvault'));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Details for Synthetic contacts' }));
+      await waitFor(() => expect(document.title).toBe('Synthetic contacts · Sources · msgvault'));
+      await fireEvent.click(screen.getByRole('button', { name: 'Add source…' }));
+      await waitFor(() => expect(document.title).toBe('Add source · Sources · msgvault'));
+    });
+
+    it.each([
+      [{ peopleDuplicates: true }, 'Possible duplicates'],
+      [{ relationshipFacet: 'domains' }, 'Domains'],
+      [{ relationshipSaved: true }, 'Saved people'],
+    ] as const)('names the browser tab for the People list mode %s', async (patch, title) => {
+      const state = shellState('relationships');
+      state.commitNavigation(patch);
+      render(AppShell, { client: exploreClient(), state, enabled: false });
+      await waitFor(() => expect(document.title).toBe(`${title} · People · msgvault`));
+    });
+
+    it('keeps the browser tab at the workspace while a message is unresolved', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'message:99' });
+      render(AppShell, { client: exploreClient(), state });
+      await screen.findByRole('complementary', { name: 'Reading pane: message:99' });
+      await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
+    });
+
+    it('names the browser tab for a Settings category', async () => {
+      const state = shellState('settings');
+      state.commitNavigation({ settingsCategory: 'search' });
+      render(AppShell, { client: exploreClient(), state, enabled: false });
+      await waitFor(() => expect(document.title).toBe('Search & AI · Settings · msgvault'));
+    });
+
     it('names the browser tab for an open group', async () => {
       const state = shellState('everything');
       state.commitNavigation({ groupingChain: ['source'], selectedRow: 'group:source:7' });
@@ -904,21 +960,27 @@ describe('AppShell', () => {
       await waitFor(() => expect(document.title).toBe('Group Seven · Messages · msgvault'));
     });
 
-    it('names the browser tab after an archived meeting once loaded', async () => {
+    it.each([['Planning meeting', 'Planning meeting'], ['', '(untitled)']])('names the browser tab after an archived meeting with subject %s once loaded', async (subject, expected) => {
       const state = shellState('everything');
-      state.commitNavigation({ selectedRow: 'archive-meeting:42' });
+      state.commitNavigation({ selectedRow: 'message:1' });
       let finish!: (response: Response) => void;
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
         if (path.endsWith('/messages/42')) return await new Promise<Response>(resolve => { finish = resolve; });
         if (path.endsWith('/meetings/metrics')) return Response.json(meetingMetrics({ totals: { meeting_count: 1, known_duration_count: 0, unknown_duration_count: 1, total_known_seconds: 0, average_known_seconds: null } }));
-        return Response.json(exploreResponse());
+        return Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
       });
       render(AppShell, { client, state });
+      await waitFor(() => expect(document.title).toBe('Synthetic subject 1 · Messages · msgvault'));
+      state.commitNavigation({ selectedRow: 'archive-meeting:42' });
       await waitFor(() => expect(finish).toBeTypeOf('function'));
       await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
-      finish(Response.json({ id: 42, conversation_id: 8, subject: 'Planning meeting', conversation_title: '', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', labels: [], attachments: [], has_attachments: false, hidden_text_present: false, size_bytes: 10, snippet: 'Transcript' }));
-      await waitFor(() => expect(document.title).toBe('Planning meeting · Messages · msgvault'));
+      finish(Response.json({ id: 42, conversation_id: 8, subject, conversation_title: '', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', labels: [], attachments: [], has_attachments: false, hidden_text_present: false, size_bytes: 10, snippet: 'Transcript' }));
+      await waitFor(() => expect(document.title).toBe(`${expected} · Messages · msgvault`));
+      state.commitNavigation({ operationHistory: true });
+      await waitFor(() => expect(document.title).toBe('Past runs · Messages · msgvault'));
+      state.commitNavigation({ operationHistory: false });
+      await waitFor(() => expect(document.title).toBe(`${expected} · Messages · msgvault`));
     });
 
     it.each([
@@ -1532,11 +1594,12 @@ describe('AppShell', () => {
 
 
 
-  it('starts a newly selected person on Messages and restores the prior Files view on Back', async () => {
+  it('names the browser tab for people and restores the prior Files view on Back', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:1'
     }))}`);
     const when = '2026-07-19T10:00:00Z';
+    let finishSecond!: () => void;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
       const meetingResponse = meetingFixtureResponse(path);
@@ -1551,11 +1614,13 @@ describe('AppShell', () => {
       });
       if (path === '/api/v1/participants/1' || path === '/api/v1/participants/2') {
         const id = Number(path.at(-1));
-        return Response.json({
+        const personResponse = Response.json({
           id, display_label: id === 1 ? 'Alice Example' : 'Bob Example', partial_label: false,
           identifiers: [], activity_count: 1, meeting_count: 0, file_count: 1,
           source_counts: [], first_at: when, last_at: when, cache_revision: 'cache-rel'
         });
+        if (id === 2) return new Promise<Response>(resolve => { finishSecond = () => resolve(personResponse); });
+        return personResponse;
       }
       if (path.endsWith('/timeline')) return Response.json({
         canonical_id: Number(path.split('/')[4]), identity_revision: 1,
@@ -1570,13 +1635,21 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
     expect(await screen.findByRole('heading', { name: 'Alice Example' })).toBeDefined();
+    await waitFor(() => expect(document.title).toBe('Messages · Alice Example · People · msgvault'));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    await waitFor(() => expect(document.title).toBe('Details · Alice Example · People · msgvault'));
     await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
+    await waitFor(() => expect(document.title).toBe('Files · Alice Example · People · msgvault'));
     expect(state.current.relationshipFiles).toBe(true);
     await fireEvent.click((await screen.findByText('Bob Example')).closest('[role="row"]')!);
     await waitFor(() => expect(state.current).toMatchObject({
       relationshipTarget: 'cluster:2', relationshipFiles: false
     }));
+    await waitFor(() => expect(finishSecond).toBeTypeOf('function'));
+    await waitFor(() => expect(document.title).not.toContain('Alice Example'));
+    finishSecond();
     expect(await screen.findByRole('heading', { name: 'Bob Example' })).toBeDefined();
+    await waitFor(() => expect(document.title).toBe('Messages · Bob Example · People · msgvault'));
     expect(screen.getByRole('radio', { name: 'Messages' }).getAttribute('aria-checked')).toBe('true');
 
     window.history.back();
@@ -1620,12 +1693,14 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('opens an old Everything-as-Files link in Files with its attachment viewer', async () => {
+  it('names the browser tab as contextual file metadata changes', async () => {
     window.history.replaceState(null, '', `/?workspace=everything&explore=${encodeURIComponent(JSON.stringify({
       presentation: 'files', selectedRow: 'attachment:5'
     }))}`);
+    let finishSecond!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/files/6')) return new Promise<Response>(resolve => { finishSecond = resolve; });
       if (path.endsWith('/files/5')) return Response.json({
         id: 5, message_id: 1, conversation_id: 11, filename: 'legacy-report.pdf',
         mime_type: 'application/pdf', size_bytes: 2048,
@@ -1638,10 +1713,16 @@ describe('AppShell', () => {
     try {
       expect(await screen.findByRole('main', { name: 'Files' })).toBeDefined();
       expect(await screen.findByRole('dialog', { name: 'View legacy-report.pdf' })).toBeDefined();
+      await waitFor(() => expect(document.title).toBe('legacy-report.pdf · Files · msgvault'));
       expect(state.current).toMatchObject({
         workspace: 'files', presentation: 'files', selectedRow: 'attachment:5'
       });
       expect(window.location.search).toContain('workspace=files');
+      state.commitNavigation({ selectedRow: 'attachment:6' });
+      await waitFor(() => expect(finishSecond).toBeTypeOf('function'));
+      await waitFor(() => expect(document.title).toBe('attachment 6 · Files · msgvault'));
+      finishSecond(Response.json({ id: 6, message_id: 2, conversation_id: 12, filename: 'second.pdf', mime_type: 'application/pdf', size_bytes: 100, content_state: 'missing_blob', content_available: false }));
+      await waitFor(() => expect(document.title).toBe('second.pdf · Files · msgvault'));
     } finally {
       rendered.unmount();
       state.destroy();
@@ -1655,7 +1736,7 @@ describe('AppShell', () => {
     ['Escape', async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     }]
-  ])('clears a legacy attachment selection when its viewer closes with %s', async (_label, close) => {
+  ])('clears a legacy attachment browser tab title when its viewer closes with %s', async (_label, close) => {
     window.history.replaceState(null, '', `/?workspace=everything&explore=${encodeURIComponent(JSON.stringify({
       presentation: 'files', selectedRow: 'attachment:5'
     }))}`);
@@ -1672,7 +1753,9 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
       expect(await screen.findByRole('dialog', { name: 'View legacy-report.pdf' })).toBeDefined();
+      await waitFor(() => expect(document.title).toBe('legacy-report.pdf · Files · msgvault'));
       await close();
+      await waitFor(() => expect(document.title).toBe('Files · msgvault'));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'View legacy-report.pdf' })).toBeNull());
       expect(state.current.selectedRow).toBeNull();
       expect(new URLSearchParams(window.location.search).get('explore') ?? '').not.toContain('attachment:5');
@@ -1996,7 +2079,7 @@ describe('AppShell', () => {
     } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
   });
 
-  it.each(['reader next', 'Filter shortcut'])('supports %s in the person Messages table', async (control) => {
+  it.each(['reader next', 'Filter shortcut'])('supports %s in the person Messages table browser tab', async (control) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -2006,7 +2089,7 @@ describe('AppShell', () => {
         source_counts: [], first_at: '2026-07-18T12:00:00Z', last_at: '2026-07-18T12:00:00Z', cache_revision: 'cache-1'
       });
       if (path === '/api/v1/participants/1/timeline') return Response.json(exploreResponse({
-        rows: [1, 2].map(id => ({ ...entry(id), conversation_id: id, anchor_message_id: id })), total_count: 2
+        rows: [1, 2].map(id => ({ ...entry(id), ...(id === 1 ? { title: 'Synthetic private preview', preview: 'Synthetic private preview', title_is_preview: true } : {}), conversation_id: id, anchor_message_id: id })), total_count: 2
       }));
       if (path === '/api/v1/relationships/1/calendar') return Response.json({
         participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC',
@@ -2027,11 +2110,12 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client, state });
     try {
       const grid = await screen.findByRole('grid', { name: 'Messages results' });
-      await within(grid).findByText('Synthetic subject 1');
+      await within(grid).findAllByText('Synthetic private preview');
       if (control === 'reader next') {
-        await fireEvent.click(within(grid).getByText('Synthetic subject 1'));
+        await fireEvent.click(within(grid).getAllByText('Synthetic private preview')[0]!);
         await screen.findByText('Reader body 1');
-        await waitFor(() => expect(document.title).toBe('Synthetic subject 1 · People · msgvault'));
+        expect(screen.getByRole('complementary', { name: 'Reading pane: Synthetic private preview' })).toBeDefined();
+        await waitFor(() => expect(document.title).toBe('(untitled) · People · msgvault'));
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'l' });
         await screen.findByText('Reader body 2');

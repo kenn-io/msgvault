@@ -22,6 +22,7 @@
   import AddToTaskDialog from '../tasks/AddToTaskDialog.svelte';
   import { formatShortDate, formatBytes } from '../../util/format';
   interface Props {
+    tabTitle?: { id: number; name: string };
     client: APIClient;
     file: FileViewerTarget;
     returnFocus?: HTMLElement;
@@ -35,6 +36,7 @@
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
   }
   let {
+    tabTitle = $bindable(),
     client,
     file,
     returnFocus = undefined,
@@ -110,6 +112,7 @@
     return releaseScope;
   });
   onDestroy(() => {
+    tabTitle = undefined;
     cleanupPreview();
     releaseScope();
   });
@@ -341,8 +344,9 @@
   function namedFilename(value: string | undefined): string | undefined {
     return value?.trim() ? value : undefined;
   }
+  $effect(() => { tabTitle = { id: file.id, name: displayFilename }; });
   const displayFilename = $derived(
-    namedFilename(metadata?.filename) ?? namedFilename(file.filename) ?? `attachment ${file.id}`,
+    namedFilename(metadata?.id === file.id ? metadata.filename : undefined) ?? namedFilename(file.filename) ?? `attachment ${file.id}`,
   );
 </script>
 

@@ -28,5 +28,6 @@ export interface EntryRow {
   source_identifier: string;
   source_type: string;
   title: string;
+  title_is_preview?: boolean;
   [key: string]: unknown;
 }
