@@ -218,7 +218,6 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		return err
 	}
 	pending := make([]*store.MessagePersistData, 0, batchSize)
-	queued := make(map[string]bool)
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
@@ -232,7 +231,6 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		}
 		summary.MessagesAdded += int64(len(ids))
 		pending = pending[:0]
-		clear(queued)
 		return nil
 	}
 	for i := range chat.Messages {
@@ -265,11 +263,6 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			}
 		}
 		key := fmt.Sprintf("%s:%d", peer, m.ID)
-		if queued[key] {
-			if err := flush(); err != nil {
-				return err
-			}
-		}
 		if id, ok := existing[key]; ok {
 			writes, err := mediaWrites(ctx, st, id, m, opts, summary)
 			if err != nil {
@@ -328,7 +321,6 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			Edited:       m.Edited != "" || m.EditedUnixtime != "",
 			BodyText:     sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(encoded), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: replacement(writes), FTS: &store.FTSDoc{Body: m.Text},
 		})
-		queued[key] = true
 		if len(pending) == batchSize {
 			if err := flush(); err != nil {
 				return err

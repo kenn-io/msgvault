@@ -230,31 +230,16 @@ func TestImportLimitCountsPendingMessages(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
-			root := batchExport(t, 2, tc.total, func(int) string { return "m" })
+			root := batchExport(t, tc.total, func(int) string { return "m" })
 			for i := range tc.runs {
 				summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Limit: tc.limit})
 				require.NoError(err)
 				assert.Equal(tc.addedPerRun, summary.MessagesAdded)
 				assert.Equal(tc.limitReached[i], summary.LimitReached)
 			}
-			assert.Equal(tc.savedMessages, countChatMessages(t, st, "user2"))
+			assert.Equal(tc.savedMessages, countMessages(t, st))
 		})
 	}
-}
-
-func TestImportDuplicateMessageIDInChat(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first"},{"id":1,"type":"message","date_unixtime":"1","text":"again"},{"id":2,"type":"message","date_unixtime":"2","text":"second"}]}`))
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
-	require.NoError(err)
-	assert.EqualValues(2, summary.MessagesAdded)
-	assert.EqualValues(1, summary.MessagesSkipped)
-	var snippet string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT snippet FROM messages WHERE source_message_id = 'user2:1'`).Scan(&snippet))
-	assert.Equal("first", snippet)
 }
 
 func TestImportFullAndAppendOnly(t *testing.T) {
@@ -781,70 +766,58 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 	}
 }
 
-func batchExport(t *testing.T, chatID int64, size int, text func(id int) string) string {
+func batchExport(t *testing.T, size int, text func(id int) string) string {
 	t.Helper()
 	var msgs []string
 	for id := 1; id <= size; id++ {
 		msgs = append(msgs, `{"id":`+strconv.Itoa(id)+`,"type":"message","date_unixtime":"1","text":"`+text(id)+`"}`)
 	}
 	root := t.TempDir()
-	chat := `{"id":` + strconv.FormatInt(chatID, 10) + `,"type":"personal_chat","messages":[` + strings.Join(msgs, ",") + `]}`
-	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[`+chat+`]}}`))
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[`+strings.Join(msgs, ",")+`]}]}}`))
 	return root
 }
 
-func countChatMessages(t *testing.T, st *store.Store, peer string) int {
+func countMessages(t *testing.T, st *store.Store) int {
 	t.Helper()
 	var n int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM messages WHERE source_message_id LIKE ?"), peer+":%").Scan(&n))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
 	return n
-}
-
-func createTestTrigger(t *testing.T, st *store.Store, name, table, condition, sqliteBody, postgresBody string) {
-	t.Helper()
-	var err error
-	if st.IsPostgreSQL() {
-		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION `+name+`() RETURNS trigger LANGUAGE plpgsql AS $$
-			BEGIN `+postgresBody+` END $$`)
-		require.NoError(t, err)
-		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER `+name+` BEFORE INSERT ON `+table+`
-			FOR EACH ROW WHEN (`+condition+`) EXECUTE FUNCTION `+name+`()`)
-	} else {
-		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER `+name+` BEFORE INSERT ON `+table+`
-			WHEN `+condition+` BEGIN `+sqliteBody+` END`)
-	}
-	require.NoError(t, err)
-}
-
-func dropTestTrigger(t *testing.T, st *store.Store, name, table string) {
-	t.Helper()
-	drop := "DROP TRIGGER " + name
-	if st.IsPostgreSQL() {
-		drop += " ON " + table
-	}
-	_, err := st.DB().ExecContext(t.Context(), drop)
-	require.NoError(t, err)
 }
 
 func TestImportFailedBatchRetriesChat(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	root := batchExport(t, 3, 60, func(id int) string {
-		if id == 51 {
+	root := batchExport(t, 60, func(id int) string {
+		if id == 55 {
 			return "fail-me"
 		}
 		return "message"
 	})
-	createTestTrigger(t, st, "fail_batch_import", "messages", "NEW.snippet = 'fail-me'",
-		"SELECT RAISE(ABORT, 'forced failure');", "RAISE EXCEPTION 'forced failure';")
+	var err error
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_batch_import() RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN RAISE EXCEPTION 'forced failure'; END $$`)
+		require.NoError(t, err)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_batch_import BEFORE INSERT ON messages
+			FOR EACH ROW WHEN (NEW.snippet = 'fail-me') EXECUTE FUNCTION fail_batch_import()`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_batch_import BEFORE INSERT ON messages
+			WHEN NEW.snippet = 'fail-me' BEGIN SELECT RAISE(ABORT, 'forced failure'); END`)
+	}
+	require.NoError(t, err)
 	opts := ImportOptions{RootDir: root, Me: "1"}
-	_, err := Import(t.Context(), st, opts)
+	_, err = Import(t.Context(), st, opts)
 	require.ErrorContains(t, err, "forced failure")
-	require.ErrorContains(t, err, "user3:51")
-	assert.Equal(t, 50, countChatMessages(t, st, "user3"))
-	dropTestTrigger(t, st, "fail_batch_import", "messages")
+	require.ErrorContains(t, err, "user2:55")
+	assert.Equal(t, 50, countMessages(t, st))
+	drop := "DROP TRIGGER fail_batch_import"
+	if st.IsPostgreSQL() {
+		drop += " ON messages"
+	}
+	_, err = st.DB().ExecContext(t.Context(), drop)
+	require.NoError(t, err)
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
 	assert.EqualValues(t, 10, summary.MessagesAdded)
 	assert.EqualValues(t, 50, summary.MessagesSkipped)
-	assert.Equal(t, 60, countChatMessages(t, st, "user3"))
+	assert.Equal(t, 60, countMessages(t, st))
 }
