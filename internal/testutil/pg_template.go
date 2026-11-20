@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -98,11 +99,14 @@ func init() {
 				if err != nil {
 					continue
 				}
+				config.ConnectTimeout = 5 * time.Second
 				session = stdlib.OpenDB(*config)
 				session.SetMaxOpenConns(1)
 				sessions[request.dbURL] = session
 			}
-			_ = dropOwnedDatabaseOn(context.Background(), session, request.name)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			_ = dropOwnedDatabaseOn(ctx, session, request.name)
+			cancel()
 		}
 	}()
 }

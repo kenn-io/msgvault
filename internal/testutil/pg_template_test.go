@@ -126,11 +126,18 @@ func TestPostgresFixtureDatabaseDroppedAfterCleanup(t *testing.T) {
 	}, time.Minute, 100*time.Millisecond, "clone is gone after the owning test's cleanup")
 }
 
-func TestPostgresFixtureCleanupWhenDropQueueFull(t *testing.T) {
+func TestPostgresCloneDropsRecoverFromStalledHandshake(t *testing.T) {
 	dbURL := requirePostgresTestURL(t)
-	requireTemplate(t, dbURL)
+	tmpl := requireTemplate(t, dbURL)
 	admin, err := pgAdminDB(dbURL)
 	require.NoError(t, err)
+	var clones []string
+	for range 2 {
+		name, err := tmpl.clone(t.Context())
+		require.NoError(t, err)
+		clones = append(clones, name)
+		t.Cleanup(func() { dropOwnedDatabase(context.WithoutCancel(t.Context()), admin, name) })
+	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -142,26 +149,36 @@ func TestPostgresFixtureCleanupWhenDropQueueFull(t *testing.T) {
 		}
 	}()
 	t.Cleanup(func() { _ = listener.Close() })
-	cloneDrops <- cloneDrop{dbURL: "postgres://test@" + listener.Addr().String() + "/test?sslmode=disable", name: "msgvault_tc_12345678_1234567890abcdef_1234567890abcdef"}
-	var conn net.Conn
-	select {
-	case conn = <-accepted:
-	case <-time.After(10 * time.Second):
-		require.FailNow(t, "worker did not connect")
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-	for range cap(cloneDrops) {
-		cloneDrops <- cloneDrop{dbURL: ":invalid"}
-	}
-
 	var database string
-	t.Run("owner", func(t *testing.T) {
-		database = currentDatabaseOf(t, NewTestStore(t))
+	t.Run("owner", func(sub *testing.T) {
+		database = currentDatabaseOf(sub, NewTestStore(sub))
+		cloneDrops <- cloneDrop{dbURL: "postgres://test@" + listener.Addr().String() + "/test?sslmode=disable", name: "msgvault_tc_12345678_1234567890abcdef_1234567890abcdef"}
+		select {
+		case conn := <-accepted:
+			t.Cleanup(func() { _ = conn.Close() })
+		case <-time.After(10 * time.Second):
+			require.FailNow(sub, "worker did not connect")
+		}
+		for _, name := range clones {
+			cloneDrops <- cloneDrop{dbURL: dbURL, name: name}
+		}
+		for range cap(cloneDrops) - len(clones) {
+			cloneDrops <- cloneDrop{dbURL: ":invalid"}
+		}
 	})
 	require.NotEmpty(t, database)
 	// The full queue leaves this clone for the next sweep.
 	t.Cleanup(func() { dropOwnedDatabase(context.WithoutCancel(t.Context()), admin, database) })
 	assert.True(t, databaseExists(t, admin, database))
+	// The server side of the stalled handshake stays open during recovery.
+	require.Eventually(t, func() bool {
+		for _, name := range clones {
+			if databaseExists(t, admin, name) {
+				return false
+			}
+		}
+		return true
+	}, time.Minute, 100*time.Millisecond, "worker must drop healthy clones after the stalled handshake")
 }
 
 // TestPostgresFixtureIssuesNoDDLOnceTemplateExists is the invariant that
