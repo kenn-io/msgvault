@@ -277,8 +277,9 @@ test with `CREATE DATABASE ... TEMPLATE` (`internal/testutil/sqlite_template.go`
 every fixture. Each database is private to its test and produced by the same
 `InitSchema()` path. PostgreSQL clone drops run in the background after cleanup.
 A PostgreSQL template is owned through a session advisory lock the
-server releases when the binary exits, so the next binary reclaims whatever an
-earlier one left behind; a role without `CREATEDB` falls back to a private
+server releases when the binary exits. The next binary's first template build
+reclaims clones whose drops were still queued when the earlier binary exited;
+a role without `CREATEDB` falls back to a private
 schema in the configured database.
 
 `dbtest.NewTestDB` copies an in-memory `schema.sql` template per test with

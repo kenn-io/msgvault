@@ -149,12 +149,10 @@ func TestCloneDropQueue(t *testing.T) {
 	<-done
 }
 
-// TestPostgresFixtureIssuesNoDDLOnceTemplateExists is the invariant that
-// decides the fixture's shape. Several tests capture slog.Default() and assert
-// over the whole buffer, so once the template is built no fixture may put
-// schema statements on the wire — not in its own setup, and never while a test
-// body is running.
-func TestPostgresFixtureIssuesNoDDLOnceTemplateExists(t *testing.T) {
+// TestPostgresFixtureLogsNoSchemaDDLOnceTemplateExists checks the store SQL log
+// captured by tests that assert over slog.Default(). It covers store queries,
+// while database-level DDL through the admin handle is outside that log.
+func TestPostgresFixtureLogsNoSchemaDDLOnceTemplateExists(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	requireTemplate(t, requirePostgresTestURL(t))

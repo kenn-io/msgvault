@@ -87,6 +87,7 @@ type cloneDrop struct {
 var cloneDrops = make(chan cloneDrop, 16)
 
 func init() {
+	// Start outside any synctest bubble so database calls and timeouts use real time.
 	go runCloneDrops(cloneDrops, func(dbURL, name string) {
 		admin, err := pgAdminDB(dbURL)
 		if err != nil {
@@ -138,6 +139,8 @@ func pgAdminDB(dbURL string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The pinned owner and background drop can each occupy a connection, leaving
+	// the original two connections available for fixture and template work.
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(4)
 	adminDBs[dbURL] = db
