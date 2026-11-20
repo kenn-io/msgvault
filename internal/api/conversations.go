@@ -188,7 +188,7 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 	messages := make([]MessageDetail, 0, len(window.Messages))
 	for _, message := range window.Messages {
 		tabTitle := ""
-		if message.ID == anchorID && !message.BodyOmitted {
+		if message.ID == anchorID {
 			tabTitle = messageTabTitle(message.ConversationType, message.MessageType, messageVerificationContent(message.Subject, message.Snippet, message.ConversationTitle, message.BodyText, message.BodyHTML, len(message.Attachments), func(i int) string { return message.Attachments[i].Filename }))
 		}
 		detail := MessageDetail{

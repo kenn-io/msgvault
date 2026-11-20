@@ -996,6 +996,32 @@ describe('AppShell', () => {
       expect(document.title).toBe('Opened from file · Messages · msgvault');
     });
 
+    it('keeps the opened title when the window reloads around another message', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'source:1:message:99', conversationAnchor: '30' });
+      const row = { ...entry(99), key: 'source:1:message:99', kind: 'email', anchor_message_id: 99, conversation_id: 9, message_count: 100 };
+      const client = createAPIClient(async input => {
+        const url = new URL((input as Request).url);
+        if (url.pathname.endsWith('/conversations/9')) {
+          const anchor = Number(url.searchParams.get('anchor'));
+          // Message 31 disappears between reads, shifting 30 into the next window.
+          return Response.json({ id: 9, anchor_id: anchor, messages: Array.from({ length: 51 }, (_, index) => {
+            const id = anchor === 30 ? index + 5 : index === 0 ? 30 : index + 31;
+            const subject = id === 30 ? 'Opened from file' : `Message ${id}`;
+            return { id, conversation_id: 9, subject, tab_title: id === anchor ? subject : '', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: `Body ${id}`, attachments: [] };
+          }), total: anchor === 30 ? 100 : 99, has_before: true, has_after: true });
+        }
+        return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
+      });
+      render(AppShell, { client, state });
+      await screen.findByText('Body 30');
+      await waitFor(() => expect(document.title).toBe('Opened from file · Messages · msgvault'));
+      state.commitNavigation({ conversationAnchor: '56' });
+      await screen.findByText('Body 56');
+      await tick();
+      expect(document.title).toBe('Opened from file · Messages · msgvault');
+    });
+
     it.each(['Selected subject', 'Verification message', 'failure'])('loads the selected non-anchor title without expanding it: %s', async (title) => {
       const state = shellState('everything');
       state.commitNavigation({ selectedRow: 'source:1:message:2', conversationAnchor: '1' });

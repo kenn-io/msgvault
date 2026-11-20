@@ -61,11 +61,9 @@ var participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
-	SenderAuth        *senderauth.Verdict
-	RelatedMessageID  *int64
-	ConversationTitle string
-	// ConversationType lets API handlers drop the title after verification
-	// classification; it is not serialized.
+	SenderAuth           *senderauth.Verdict
+	RelatedMessageID     *int64
+	ConversationTitle    string
 	ConversationType     string
 	Calendar             *CalendarProjection
 	ID                   int64

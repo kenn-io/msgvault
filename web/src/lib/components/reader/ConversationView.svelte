@@ -119,7 +119,7 @@
       }
       const detail = titleLoader.detail;
       openedTitle = detail?.id === anchor.id ? detail.tab_title || '(untitled)' : '';
-    } else if (anchor) {
+    } else if (anchor?.id === windowAnchorId) {
       openedTitle = anchor.tab_title || '(untitled)';
     }
     anchorTitle = openedTitle;
@@ -304,7 +304,7 @@
         return;
       }
       messages = messages.map((entry) =>
-        entry.id === id ? { ...entry, body: data.body, body_html: data.body_html, tab_title: data.tab_title, body_omitted: false } : entry,
+        entry.id === id ? { ...entry, body: data.body, body_html: data.body_html, body_omitted: false } : entry,
       );
     } catch (requestError) {
       if (requestGeneration !== generation) return;
