@@ -2602,6 +2602,10 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("backfill CardDAV inference export state for names and contacts: %w", err)
 	}
 
+	if err := s.runOnceMigration(ctx, migrationCardDAVInferenceExportStateV3, 1, false, s.backfillCardDAVInferenceExportStateV3); err != nil {
+		return fmt.Errorf("backfill CardDAV inference export state for bound cards: %w", err)
+	}
+
 	// Reconcile the system relationship type catalog on every open: insert
 	// missing seeds, repair structural drift, and leave user-owned labels,
 	// vCard mappings, colours, icons, and descriptions alone. See

@@ -617,6 +617,73 @@ func (s *Store) backfillCardDAVInferenceExportStateV2(ctx context.Context) error
 	return s.backfillCardDAVInferenceExportStateVersion(ctx, true)
 }
 
+func (s *Store) backfillCardDAVInferenceExportStateV3(ctx context.Context) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM persons ORDER BY id`)
+		if err != nil {
+			return fmt.Errorf("list people for CardDAV inference backfill: %w", err)
+		}
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		for _, id := range ids {
+			var current, history personInferenceExportProjection
+			if err := s.loadPersonInferenceExportContactsTx(ctx, tx, id, true, false, &current); err != nil {
+				return err
+			}
+			if err := s.loadPersonInferenceExportContactsTx(ctx, tx, id, false, false, &history); err != nil {
+				return err
+			}
+			currentRows := map[string]map[int64]bool{}
+			retired := map[string]map[int64]bool{}
+			for table, components := range map[string][]personInferenceExportComponent{personNamesTableName: current.Names, personContactPointsTableName: current.ContactPoints, personAddressesTableName: current.Addresses} {
+				currentRows[table] = map[int64]bool{}
+				retired[table] = map[int64]bool{}
+				for _, c := range components {
+					if c.Inferred {
+						currentRows[table][c.RowID] = true
+					}
+				}
+			}
+			hasRetired := false
+			for table, components := range map[string][]personInferenceExportComponent{personNamesTableName: history.Names, personContactPointsTableName: history.ContactPoints, personAddressesTableName: history.Addresses} {
+				for _, c := range components {
+					if c.Inferred && !currentRows[table][c.RowID] {
+						retired[table][c.RowID] = true
+						hasRetired = true
+					}
+				}
+			}
+			if !hasRetired {
+				continue
+			}
+			matches, err := s.contactInferenceMappingsMatchTx(ctx, tx, id, retired, `EXISTS(SELECT 1 FROM carddav_resources r WHERE r.person_id=e.person_id AND r.mapping_status='mapped' AND r.governance='local' AND e.source_ref='carddav:' || CAST(r.address_book_id AS TEXT) AND e.source_resource_uid=r.href)`)
+			if err != nil {
+				return err
+			}
+			if matches {
+				if err := s.advancePersonInferenceExportRevisionTx(ctx, tx, id); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
 func (s *Store) backfillCardDAVInferenceExportStateVersion(ctx context.Context, contactsOnly bool) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT id FROM persons ORDER BY id`)
@@ -796,17 +863,20 @@ func (s *Store) personHasPublishedContactInferenceTx(ctx context.Context, tx *lo
 			}
 		}
 	}
+	return s.contactInferenceMappingsMatchTx(ctx, tx, personID, byTable, `EXISTS(SELECT 1 FROM carddav_publications p
+            WHERE p.person_id=e.person_id AND p.desired=TRUE
+              AND e.source_ref='carddav:' || CAST(p.address_book_id AS TEXT)
+              AND e.source_resource_uid=p.href)`)
+}
+
+func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedTx, personID int64, byTable map[string]map[int64]bool, predicate string) (bool, error) {
 	mappingsExpr := "json_extract(e.resource_metadata, '$.native_mappings')"
 	if s.IsPostgreSQL() {
 		mappingsExpr = "e.resource_metadata ->> 'native_mappings'"
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT `+mappingsExpr+` FROM vcard_resource_envelopes e
-        WHERE e.person_id=? AND EXISTS(SELECT 1 FROM carddav_publications p
-            WHERE p.person_id=e.person_id AND p.desired=TRUE
-              AND e.source_ref='carddav:' || CAST(p.address_book_id AS TEXT)
-              AND e.source_resource_uid=p.href)`, personID)
+	rows, err := tx.QueryContext(ctx, `SELECT `+mappingsExpr+` FROM vcard_resource_envelopes e WHERE e.person_id=? AND `+predicate, personID)
 	if err != nil {
-		return false, fmt.Errorf("load published contact inference mappings: %w", err)
+		return false, fmt.Errorf("load contact inference mappings: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -819,7 +889,7 @@ func (s *Store) personHasPublishedContactInferenceTx(ctx context.Context, tx *lo
 		}
 		var mappings []vcard.NativeMapping
 		if err := json.Unmarshal([]byte(raw.String), &mappings); err != nil {
-			return false, fmt.Errorf("decode published contact inference mappings: %w", err)
+			return false, fmt.Errorf("decode contact inference mappings: %w", err)
 		}
 		for _, mapping := range mappings {
 			if byTable[mapping.Table][mapping.RowID] {
