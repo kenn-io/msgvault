@@ -72,8 +72,6 @@ Starting in v0.20.0, remote deletion remains permanently opt-in. The invoking CL
 |---|---|
 | `MSGVAULT_IMAP_PASSWORD` | `add-imap` |
 | `MSGVAULT_BEEPER_TOKEN` | `add-beeper` |
-| `MSGVAULT_MATRIX_LOGIN_SECRET`, `MSGVAULT_MATRIX_RECOVERY_SECRET` | `add-matrix` |
-| `MSGVAULT_DISCORD_TOKEN` | `add-discord` |
 | `MSGVAULT_SLACK_TOKEN` | `add-slack` |
 | `MSGVAULT_ENABLE_REMOTE_DELETE` | One-command `delete-staged` consent; durable consent uses invoking-CLI config |
 | The variable named by `[vector.embeddings].api_key_env` | `embeddings build` / `embed` |
