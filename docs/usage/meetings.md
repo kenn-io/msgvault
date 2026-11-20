@@ -233,18 +233,18 @@ To connect a Twenty workspace:
 
 1. Create an API key in Twenty under **Settings → APIs & Webhooks**.
 2. Assign a role with read access to Call Recordings, Calendar Events, and
-   Calendar Event Participants.
+    Calendar Event Participants.
 3. Add the configuration on the host running `msgvault serve`:
 
-   ```toml
-   [[twenty]]
-   identifier = "work"
-   account_email = "you@example.com"
-   base_url = "https://api.twenty.com"
-   api_key = "YOUR_READ_ONLY_API_KEY"
-   enabled = true
-   schedule = "15 */6 * * *"
-   ```
+    ```toml
+    [[twenty]]
+    identifier = "work"
+    account_email = "you@example.com"
+    base_url = "https://api.twenty.com"
+    api_key = "YOUR_READ_ONLY_API_KEY"
+    enabled = true
+    schedule = "15 */6 * * *"
+    ```
 
 For self-hosted Twenty, set `base_url` to your instance's API origin, such as
 `https://crm.example.com`, using a root URL with no path, query, or embedded
@@ -453,35 +453,36 @@ read-only [Developer API](https://docs.omi.me/doc/developer/api/conversations).
 To connect Omi:
 
 1. Create a Developer API key with `conversations:read` in
-   **Settings → Developer** on the account and backend that hold your
-   conversations. MCP keys (`omi_mcp_…`) do not authenticate this REST API.
+    **Settings → Developer** on the account and backend that hold your
+    conversations. MCP keys (`omi_mcp_…`) do not authenticate this REST API.
 2. Add an entry to `config.toml`:
 
-   ```toml
-   [[omi]]
-   identifier = "omi-personal"
-   account_email = "you@example.com"
-   api_key = "omi_dev_..."
-   enabled = true
-   schedule = "0 */6 * * *"
-   # For a self-hosted backend, uncomment and set its root URL:
-   # base_url = "http://localhost:8000"
-   ```
+    ```toml
+    [[omi]]
+    identifier = "omi-personal"
+    account_email = "you@example.com"
+    api_key = "omi_dev_..."
+    enabled = true
+    schedule = "0 */6 * * *"
+    # For a self-hosted backend, uncomment and set its root URL:
+    # base_url = "http://localhost:8000"
+    ```
 
-   Keep the key private. For a self-hosted backend, set `base_url` to the URL
-   reachable from the msgvault daemon; a reverse-proxy path prefix is allowed,
-   and you should omit `/v1/dev`. Use HTTPS for non-loopback backends. Plain
-   HTTP is accepted only for loopback hosts such as `localhost`, `127.0.0.1`,
-   or `[::1]`. If you omit `base_url`, msgvault uses `https://api.omi.me`.
-   Hosted and self-hosted accounts can coexist as separate entries with
-   different identifiers and keys.
+    Keep the key private. For a self-hosted backend, set `base_url` to the URL
+    reachable from the msgvault daemon; a reverse-proxy path prefix is allowed,
+    and you should omit `/v1/dev`. Use HTTPS for non-loopback backends. Plain
+    HTTP is accepted only for loopback hosts such as `localhost`, `127.0.0.1`,
+    or `[::1]`. If you omit `base_url`, msgvault uses `https://api.omi.me`.
+    Hosted and self-hosted accounts can coexist as separate entries with
+    different identifiers and keys.
+
 3. Register and validate each source, then sync:
 
-   ```bash
-   msgvault add-omi omi-personal
-   msgvault sync-omi omi-personal --limit 5
-   msgvault sync-omi omi-personal
-   ```
+    ```bash
+    msgvault add-omi omi-personal
+    msgvault sync-omi omi-personal --limit 5
+    msgvault sync-omi omi-personal
+    ```
 
 Registration uses one transcript-list request and can wait for shared pacing or
 a provider cooldown.
@@ -1014,19 +1015,19 @@ download audio or change recordings in Plaud.
 
 1. Add an entry to `config.toml` on the daemon host:
 
-   ```toml
-   [[plaud]]
-   identifier = "work"
-   account_email = "you@example.com"
-   enabled = true
-   schedule = "30 */6 * * *"
-   ```
+    ```toml
+    [[plaud]]
+    identifier = "work"
+    account_email = "you@example.com"
+    enabled = true
+    schedule = "30 */6 * * *"
+    ```
 
 2. Run `msgvault add-plaud work` on that host and approve the browser request.
-   Plaud redirects to `localhost:8091/callback/plaud`. On a headless host,
-   forward that port over SSH and open the authorization URL in your local
-   browser. A configured remote refuses `add-plaud` before proxying; run
-   `msgvault --local add-plaud work` in the remote shell instead.
+    Plaud redirects to `localhost:8091/callback/plaud`. On a headless host,
+    forward that port over SSH and open the authorization URL in your local
+    browser. A configured remote refuses `add-plaud` before proxying; run
+    `msgvault --local add-plaud work` in the remote shell instead.
 
 msgvault checks the live account email before registration and on every sync,
 and it must match `account_email`. The identifier is a stable label, not an
@@ -1134,22 +1135,22 @@ OAuth with dynamic client registration. No secret lives in your config.
 
 1. Add a `[[circleback]]` entry to `config.toml`:
 
-   ```toml
-   [[circleback]]
-   identifier = "work"              # stable source label and token key
-   account_email = "you@example.com" # primary identity for organizer matching
-   schedule = "30 */6 * * *"        # optional: daemon cron schedule
-   enabled = true
-   ```
+    ```toml
+    [[circleback]]
+    identifier = "work"              # stable source label and token key
+    account_email = "you@example.com" # primary identity for organizer matching
+    schedule = "30 */6 * * *"        # optional: daemon cron schedule
+    enabled = true
+    ```
 
 2. Run the authorization command:
 
-   ```bash
-   msgvault add-circleback work
-   ```
+    ```bash
+    msgvault add-circleback work
+    ```
 
-   This opens a browser for Circleback authorization and saves the token under
-   `tokens/circleback_<identifier>.json`.
+    This opens a browser for Circleback authorization and saves the token under
+    `tokens/circleback_<identifier>.json`.
 
 Circleback OAuth uses a fixed `localhost:8090` callback. If you have a
 configured remote msgvault server, `add-circleback` fails before proxying
