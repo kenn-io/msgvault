@@ -436,16 +436,37 @@ func TestImportFailedPendingMessageBeforeExistingMedia(t *testing.T) {
 	assert.Equal(t, "corrected", string(data))
 }
 
-func TestImportCommitsPendingMessagesBeforeMediaCopy(t *testing.T) {
+func TestImportMediaMessagesShareBatch(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	attachments := filepath.Join(t.TempDir(), "blocked")
-	require.NoError(t, os.WriteFile(attachments, []byte("blocked"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("photo"), 0600))
-	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first"},{"id":2,"type":"message","date_unixtime":"1","text":"second"},{"id":3,"type":"message","date_unixtime":"1","text":"photo","photo":"photo.jpg"}]}`))
-	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, AttachmentsDir: attachments, Me: "1"})
-	require.ErrorContains(t, err, "store media")
-	assert.Equal(t, 2, countMessages(t, st))
+	root, attachments := t.TempDir(), t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "first.jpg"), []byte("first photo"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "second.jpg"), []byte("second photo"), 0600))
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first","photo":"first.jpg"},{"id":2,"type":"message","date_unixtime":"1","text":"second","photo":"second.jpg"}]}`))
+	var err error
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_second_photo() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced failure'; END $$`)
+		require.NoError(t, err)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_second_photo BEFORE INSERT ON messages FOR EACH ROW WHEN (NEW.snippet = 'second') EXECUTE FUNCTION fail_second_photo()`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_second_photo BEFORE INSERT ON messages WHEN NEW.snippet = 'second' BEGIN SELECT RAISE(ABORT, 'forced failure'); END`)
+	}
+	require.NoError(t, err)
+	opts := ImportOptions{RootDir: root, AttachmentsDir: attachments, Me: "1"}
+	_, err = Import(t.Context(), st, opts)
+	require.ErrorContains(t, err, "forced failure")
+	assert.Zero(t, countMessages(t, st))
+	drop := "DROP TRIGGER fail_second_photo"
+	if st.IsPostgreSQL() {
+		drop += " ON messages"
+	}
+	_, err = st.DB().ExecContext(t.Context(), drop)
+	require.NoError(t, err)
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.MessagesAdded)
+	var count int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments WHERE content_hash IS NOT NULL AND content_hash <> ''`).Scan(&count))
+	assert.Equal(t, 2, count)
 }
 
 func TestImportMediaFailureIsRetryable(t *testing.T) {
