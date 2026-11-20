@@ -64,7 +64,7 @@ Takes a snapshot. Flags:
 | `--force-unlock` | Override a fresh repository lock (see Locking) |
 | `--jobs N` | Concurrent attachment capture workers (default: one per CPU; use `1` for serial reads on spinning disks or NAS shares) |
 
-`backup create` always runs through the msgvault daemon, starting the local daemon if it isn't already running. The daemon briefly pauses conflicting maintenance operations while the backup pins a consistent read of the database. That pause lasts only as long as checkpointing the WAL and opening a read transaction. Normal syncing and reads continue while pages are scanned. A daemon-side watchdog guarantees that a crashed backup can never leave the daemon wedged.
+`backup create` always runs through the msgvault daemon. When `[remote].url` is set and you don't pass `--local`, it uses the configured remote daemon and doesn't start a local one. Otherwise `backup create` uses the local daemon and starts it if it isn't already running. The daemon briefly pauses conflicting maintenance operations while the backup pins a consistent read of the database. That pause lasts only as long as checkpointing the WAL and opening a read transaction. Normal syncing and reads continue while pages are scanned. A daemon-side watchdog guarantees that a crashed backup can never leave the daemon wedged.
 
 `backup create` requires a SQLite archive; PostgreSQL-backed deployments are not supported.
 
