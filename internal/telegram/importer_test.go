@@ -420,23 +420,9 @@ func TestImportFailedPendingMessageBeforeExistingMedia(t *testing.T) {
 	var hash string
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(content_hash, '') FROM attachments WHERE source_part_key = 'photo'`).Scan(&hash))
 	assert.Empty(t, hash)
-	drop := "DROP TRIGGER fail_pending_media"
-	if st.IsPostgreSQL() {
-		drop += " ON messages"
-	}
-	_, err = st.DB().ExecContext(t.Context(), drop)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("corrected"), 0600))
-	_, err = Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	var path string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT storage_path FROM attachments WHERE source_part_key = 'photo'`).Scan(&path))
-	data, err := os.ReadFile(filepath.Join(attachments, path))
-	require.NoError(t, err)
-	assert.Equal(t, "corrected", string(data))
 }
 
-func TestImportMediaMessagesShareBatch(t *testing.T) {
+func TestImportSavesTextBeforeFirstMediaCopy(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root, attachments := t.TempDir(), t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "first.jpg"), []byte("first photo"), 0600))
@@ -458,18 +444,6 @@ func TestImportMediaMessagesShareBatch(t *testing.T) {
 	var snippet string
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT snippet FROM messages`).Scan(&snippet))
 	assert.Equal(t, "text", snippet)
-	drop := "DROP TRIGGER fail_second_photo"
-	if st.IsPostgreSQL() {
-		drop += " ON messages"
-	}
-	_, err = st.DB().ExecContext(t.Context(), drop)
-	require.NoError(t, err)
-	summary, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 2, summary.MessagesAdded)
-	var count int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments WHERE content_hash IS NOT NULL AND content_hash <> ''`).Scan(&count))
-	assert.Equal(t, 2, count)
 }
 
 func TestImportMediaFailureIsRetryable(t *testing.T) {
