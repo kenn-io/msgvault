@@ -60,6 +60,12 @@ var msgvaultGeneratedAssets = []string{
 	"tui-time-monthly.svg",
 	"tui-time-yearly.svg",
 	"tui-time.svg",
+	"web/messages-dark-comfortable.png",
+	"web/messages-dark-compact.png",
+	"web/messages-light-comfortable.png",
+	"web/messages-light-compact.png",
+	"web/people-dark-comfortable.png",
+	"web/people-light-compact.png",
 }
 
 type publisherScriptCase struct {

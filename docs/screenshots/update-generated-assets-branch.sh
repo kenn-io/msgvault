@@ -9,6 +9,7 @@ assets_branch="${MSGVAULT_DOCS_GENERATED_ASSETS_BRANCH:-docs-generated-assets}"
 source_dir=""
 push=false
 generate=true
+build_output=""
 
 expected_assets=(
   "concepts/account-collection-concept.png"
@@ -37,6 +38,12 @@ expected_assets=(
   "tui-time-monthly.svg"
   "tui-time-yearly.svg"
   "tui-time.svg"
+  "web/messages-dark-comfortable.png"
+  "web/messages-dark-compact.png"
+  "web/messages-light-comfortable.png"
+  "web/messages-light-compact.png"
+  "web/people-dark-comfortable.png"
+  "web/people-light-compact.png"
 )
 
 usage() {
@@ -45,7 +52,7 @@ Usage: $(basename "$0") [--source DIR] [--push]
 
 Update the local $assets_branch branch to a single orphan commit containing
 generated docs screenshots and concept assets. By default this runs
-docs/screenshots/generate-all.sh and docs/diagrams/build.sh first.
+docs/screenshots/build-generated-assets.sh first.
 
 Pass --source DIR to publish an already generated directory without running
 generators. Pass --push to force-push the updated branch to origin.
@@ -102,21 +109,9 @@ validate_assets_branch_name() {
 validate_assets_branch_name "$assets_branch"
 
 if [[ "$generate" == true ]]; then
-  screenshots_script="$docs_root/screenshots/generate-all.sh"
-  diagrams_script="$docs_root/diagrams/build.sh"
-
-  if [[ ! -f "$screenshots_script" ]]; then
-    printf 'generated docs assets cannot be regenerated: missing %s\n' "$screenshots_script" >&2
-    exit 1
-  fi
-  if [[ ! -f "$diagrams_script" ]]; then
-    printf 'generated docs assets cannot be regenerated: missing %s\n' "$diagrams_script" >&2
-    exit 1
-  fi
-
-  rm -rf "$docs_root/assets/generated"
-  bash "$screenshots_script"
-  bash "$diagrams_script"
+  build_output="$(mktemp -d)"
+  bash "$script_dir/build-generated-assets.sh" "$build_output"
+  source_dir="$build_output/assets"
 fi
 
 if [[ -z "$source_dir" ]]; then
@@ -170,7 +165,7 @@ tmp_root="$(mktemp -d)"
 asset_repo="$tmp_root/assets-repo"
 
 cleanup() {
-  rm -rf "$tmp_root"
+  rm -rf "$tmp_root" ${build_output:+"$build_output"}
 }
 trap cleanup EXIT
 
