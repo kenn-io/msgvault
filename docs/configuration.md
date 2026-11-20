@@ -1340,8 +1340,8 @@ describes the helper's side.
 
 ### `[[accounts]]`
 
-Scheduled sync sources for the web server. Each `[[accounts]]` entry defines a
-cron schedule for automatic background syncing. Gmail, IMAP, Microsoft Teams,
+Per-account sync settings, including cron schedules for automatic background
+syncing. Gmail, IMAP, Microsoft Teams,
 and Discord sources are supported. For IMAP or Teams, use the account display
 name/email when available rather than a raw provider identifier. Discord
 schedules must use the exact guild ID because guild display names are mutable
@@ -1352,6 +1352,24 @@ and may be duplicated.
 | `email` | (required) | Account identifier/display name, or exact Discord guild ID, to sync |
 | `schedule` | — | Cron expression for sync schedule (e.g., `0 * * * *`) |
 | `enabled` | `true` | Whether scheduled sync is active for this account |
+| `gmail_skip_spam_trash` | `false` | Skip acquiring messages in Gmail Spam or Trash during full, incremental, and History recovery syncs |
+
+To exclude Spam and Trash for a Gmail account, use its account email. The
+setting also applies when the account has no schedule. Add the key to the
+existing entry if one already exists.
+
+```toml
+[[accounts]]
+email = "account@example.com"
+gmail_skip_spam_trash = true
+```
+
+Messages already in the archive stay there. When Gmail History reports a move
+to Trash, incremental sync updates the message's label. A permanent deletion
+marks it as deleted from the source. Previously skipped messages can be
+acquired when Gmail History reports that they have left Spam or Trash. To
+backfill messages still in those folders, disable the setting and run an
+unrestricted `sync-full`.
 
 For example, schedule one previously registered Discord guild independently:
 

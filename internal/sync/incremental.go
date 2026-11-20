@@ -84,7 +84,7 @@ func (s *Syncer) incrementalWithRecovery(
 	// Start sync
 	fingerprint := ""
 	if recovery {
-		fingerprint = gmailHistoryRecoveryCoverageFingerprint
+		fingerprint = s.historyRecoveryFingerprint()
 	}
 	syncID, err := s.startSync(ctx, execution, "incremental", fingerprint)
 	if err != nil {
@@ -257,10 +257,14 @@ func (s *Syncer) incrementalWithRecovery(
 					deletedSet[msg.Message.ID] = true
 				}
 				for _, item := range record.LabelsRemoved {
-					if slices.Contains(item.LabelIDs, "TRASH") {
-						if _, exists := existingMap[item.Message.ID]; exists {
-							trashRemovalIDs[item.Message.ID] = struct{}{}
-						}
+					_, exists := existingMap[item.Message.ID]
+					if exists && slices.Contains(item.LabelIDs, "TRASH") {
+						trashRemovalIDs[item.Message.ID] = struct{}{}
+					}
+					// Removing Spam or Trash can make a previously skipped
+					// message eligible. Its current labels decide at fetch time.
+					if s.opts.GmailSkipSpamTrash && !exists && hasGmailSpamOrTrash(item.LabelIDs) {
+						newMsgThreads[item.Message.ID] = item.Message.ThreadID
 					}
 				}
 			}
@@ -309,6 +313,10 @@ func (s *Syncer) incrementalWithRecovery(
 								return nil, err
 							}
 							checkpoint.ErrorsCount++
+							continue
+						}
+						if s.skipGmailAcquisition(syncID, newMsgIDs[i], raw.LabelIDs) {
+							summary.MessagesSkipped++
 							continue
 						}
 						threadID := newMsgThreads[newMsgIDs[i]]
@@ -518,6 +526,10 @@ func (s *Syncer) replayAcquisitionFailures(
 				continue
 			}
 
+			if s.skipGmailAcquisition(syncID, messageID, result.Message.LabelIDs) {
+				summary.MessagesSkipped++
+				continue
+			}
 			_, err := s.ingestMessage(ctx, sourceID, result.Message, result.Message.ThreadID, labelMap)
 			if err != nil && (errors.Is(err, store.ErrSyncRunSuperseded) || ctx.Err() != nil) {
 				return nil, err
@@ -617,6 +629,10 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 				}
 				checkpoint.ErrorsCount++
 				return false, false, err
+			}
+			if raw != nil && s.skipGmailAcquisition(syncID, messageID, raw.LabelIDs) {
+				summary.MessagesSkipped++
+				return false, false, nil
 			}
 			_, err = s.ingestMessage(
 				ctx, sourceID, raw, threadID, labelMap,

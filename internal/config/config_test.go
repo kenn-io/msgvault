@@ -647,6 +647,26 @@ enabled = false
 	assert.True(cfg.Accounts[0].Enabled)
 }
 
+func TestLoadGmailSkipSpamTrashWithoutSchedule(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+[[accounts]]
+email = "filtered@example.com"
+gmail_skip_spam_trash = true
+
+[[accounts]]
+email = "default@example.com"
+`), 0600))
+
+	cfg, err := Load(configPath, dir)
+	require.NoError(t, err)
+	assert.True(t, cfg.GmailSkipSpamTrash("filtered@example.com"))
+	assert.False(t, cfg.GmailSkipSpamTrash("default@example.com"))
+	assert.False(t, cfg.GmailSkipSpamTrash("unconfigured@example.com"))
+	assert.Empty(t, cfg.ScheduledAccounts())
+}
+
 func TestLoadWithServerDaemonIdleTimeout(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
