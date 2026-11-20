@@ -2225,7 +2225,7 @@ func (s *Store) PersistTelegramMessagesContext(ctx context.Context, batch []*Mes
 				ctx, tx, nil, nil, func([]int64) *MessagePersistData { return data }, nil, s.persistMessageSnapshotAfter,
 			)
 			if err != nil {
-				return err
+				return fmt.Errorf("persist message %s: %w", data.Message.SourceMessageID, err)
 			}
 			ids[i] = id
 		}

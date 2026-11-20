@@ -39,82 +39,6 @@ type ImportOptions struct {
 
 const batchSize = 50
 
-type pendingMessage struct {
-	key   string
-	index int
-	data  *store.MessagePersistData
-}
-
-type messageBatch struct {
-	st      *store.Store
-	pending []pendingMessage
-	keys    map[string]bool
-}
-
-func newMessageBatch(st *store.Store) *messageBatch {
-	return &messageBatch{st: st, keys: map[string]bool{}}
-}
-
-func (b *messageBatch) add(ctx context.Context, key string, index int, data *store.MessagePersistData, existing map[string]int64, summary *ImportSummary) error {
-	b.pending = append(b.pending, pendingMessage{key: key, index: index, data: data})
-	b.keys[key] = true
-	if len(b.pending) >= batchSize {
-		return b.flush(ctx, existing, summary)
-	}
-	return nil
-}
-
-func (b *messageBatch) firstUncommittedIndex(existing map[string]int64) int {
-	for _, pending := range b.pending {
-		if _, ok := existing[pending.key]; !ok {
-			return pending.index
-		}
-	}
-	if len(b.pending) == 0 {
-		return 0
-	}
-	return b.pending[len(b.pending)-1].index + 1
-}
-
-func (b *messageBatch) flush(ctx context.Context, existing map[string]int64, summary *ImportSummary) error {
-	if len(b.pending) == 0 {
-		return nil
-	}
-	batch := make([]*store.MessagePersistData, len(b.pending))
-	for i, p := range b.pending {
-		batch[i] = p.data
-	}
-	ids, err := b.st.PersistTelegramMessagesContext(ctx, batch)
-	if err != nil {
-		ids, err = b.persistBeforeFailure(ctx, batch)
-	}
-	for i, id := range ids {
-		existing[b.pending[i].key] = id
-	}
-	summary.MessagesAdded += int64(len(ids))
-	if err != nil {
-		return fmt.Errorf("telegram: persist %s: %w", b.pending[len(ids)].key, err)
-	}
-	b.pending = b.pending[:0]
-	clear(b.keys)
-	return nil
-}
-
-// persistBeforeFailure runs after a batch transaction rolled back. It persists
-// the messages one at a time so those before the failing one stay archived,
-// and returns the failing write's error, or nil if every write succeeds.
-func (b *messageBatch) persistBeforeFailure(ctx context.Context, batch []*store.MessagePersistData) ([]int64, error) {
-	var ids []int64
-	for i := range batch {
-		one, err := b.st.PersistTelegramMessagesContext(ctx, batch[i:i+1])
-		if err != nil {
-			return ids, err
-		}
-		ids = append(ids, one...)
-	}
-	return ids, nil
-}
-
 type ImportSummary struct {
 	SourceID                  int64
 	Duration                  time.Duration
@@ -293,30 +217,26 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 	if err != nil {
 		return err
 	}
-	batch := newMessageBatch(st)
-	mediaThrough := 0
-	persistMediaThrough := func(end int) error {
-		if end <= mediaThrough {
+	pending := make([]*store.MessagePersistData, 0, batchSize)
+	queued := make(map[string]bool)
+	flush := func() error {
+		if len(pending) == 0 {
 			return nil
 		}
-		if err := persistChatMedia(ctx, st, peer, chat.Messages[mediaThrough:end], existing, opts, summary); err != nil {
+		ids, err := st.PersistTelegramMessagesContext(ctx, pending)
+		if err != nil {
 			return err
 		}
-		mediaThrough = end
-		return nil
-	}
-	flushAndPersistMedia := func(end int) error {
-		if err := batch.flush(ctx, existing, summary); err != nil {
-			return errors.Join(err, persistMediaThrough(batch.firstUncommittedIndex(existing)))
+		for i, id := range ids {
+			existing[pending[i].Message.SourceMessageID] = id
 		}
-		return persistMediaThrough(end)
-	}
-	flushOnError := func(err error, end int) error {
-		return errors.Join(err, flushAndPersistMedia(end))
+		summary.MessagesAdded += int64(len(ids))
+		pending = pending[:0]
+		clear(queued)
+		return nil
 	}
 	for i := range chat.Messages {
 		if err := ctx.Err(); err != nil {
-			// A later import replays the chat, skips saved messages, and retries pending ones.
 			return err
 		}
 		m := &chat.Messages[i]
@@ -328,29 +248,38 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			summary.UnsupportedEntriesSkipped++
 			continue
 		}
-		if opts.Limit > 0 && summary.MessagesAdded+int64(len(batch.pending)) >= int64(opts.Limit) {
-			if err := flushAndPersistMedia(i); err != nil {
+		if opts.Limit > 0 && summary.MessagesAdded+int64(len(pending)) >= int64(opts.Limit) {
+			if err := flush(); err != nil {
 				return err
 			}
 			return errLimitReached
 		}
 		sender, err := resolve(m.FromID, m.FromName)
 		if err != nil {
-			return flushOnError(err, i)
+			return err
 		}
 		if direct && peerPID == 0 {
 			peerPID, err = resolve(peer, chat.Name)
 			if err != nil {
-				return flushOnError(err, i)
-			}
-		}
-		key := fmt.Sprintf("%s:%d", peer, m.ID)
-		if batch.keys[key] {
-			if err := flushAndPersistMedia(i); err != nil {
 				return err
 			}
 		}
-		if _, ok := existing[key]; ok {
+		key := fmt.Sprintf("%s:%d", peer, m.ID)
+		if queued[key] {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		if id, ok := existing[key]; ok {
+			writes, err := mediaWrites(ctx, st, id, m, opts, summary)
+			if err != nil {
+				return err
+			}
+			for _, write := range writes {
+				if err := st.UpsertAttachmentRecordWithStats(ctx, id, write, true); err != nil {
+					return err
+				}
+			}
 			summary.MessagesSkipped++
 			continue
 		}
@@ -386,52 +315,27 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		}
 		encoded, err := json.Marshal(metadata)
 		if err != nil {
-			return flushOnError(err, i)
+			return err
 		}
-		snippet := textutil.PrefixRunes(strings.TrimSpace(m.Text), 200)
-		data := &store.MessagePersistData{
-			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: MessageType, SentAt: sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: fromMe, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(m.Text))},
-			Conversation: &store.ConversationPersistData{SourceConversationID: peer, ConversationType: chat.ConvType(), Title: chat.Name, Participants: members, PreserveExistingParticipants: true},
-			Edited:       m.Edited != "" || m.EditedUnixtime != "",
-			BodyText:     sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(encoded), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: replacement(mediaPlaceholders(m)), FTS: &store.FTSDoc{Body: m.Text},
-		}
-		if err := batch.add(ctx, key, i, data, existing, summary); err != nil {
-			return errors.Join(err, persistMediaThrough(batch.firstUncommittedIndex(existing)))
-		}
-		if len(batch.pending) == 0 {
-			if err := persistMediaThrough(i + 1); err != nil {
-				return err
-			}
-		}
-	}
-	if err := flushAndPersistMedia(len(chat.Messages)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func persistChatMedia(ctx context.Context, st *store.Store, peer string, messages []Message, existing map[string]int64, opts ImportOptions, summary *ImportSummary) error {
-	for i := range messages {
-		m := &messages[i]
-		if !m.supported() || !m.hasMedia() {
-			continue
-		}
-		key := fmt.Sprintf("%s:%d", peer, m.ID)
-		id, ok := existing[key]
-		if !ok {
-			continue
-		}
-		writes, err := mediaWrites(ctx, st, id, m, opts, summary)
+		writes, err := mediaWrites(ctx, st, 0, m, opts, summary)
 		if err != nil {
 			return err
 		}
-		for _, write := range writes {
-			if err := st.UpsertAttachmentRecordWithStats(ctx, id, write, true); err != nil {
+		snippet := textutil.PrefixRunes(strings.TrimSpace(m.Text), 200)
+		pending = append(pending, &store.MessagePersistData{
+			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: MessageType, SentAt: sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: fromMe, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(m.Text))},
+			Conversation: &store.ConversationPersistData{SourceConversationID: peer, ConversationType: chat.ConvType(), Title: chat.Name, Participants: members, PreserveExistingParticipants: true},
+			Edited:       m.Edited != "" || m.EditedUnixtime != "",
+			BodyText:     sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(encoded), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: replacement(writes), FTS: &store.FTSDoc{Body: m.Text},
+		})
+		queued[key] = true
+		if len(pending) == batchSize {
+			if err := flush(); err != nil {
 				return err
 			}
 		}
 	}
-	return nil
+	return flush()
 }
 
 // prepareChat keeps a conversation for every exported chat, even one with no

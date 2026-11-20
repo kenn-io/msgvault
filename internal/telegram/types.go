@@ -85,14 +85,10 @@ func (e textEntity) String() string {
 
 func (m *Message) isMessage() bool { return m.Type == "message" && len(m.RichMessage) == 0 }
 
-func (m *Message) hasMedia() bool {
-	return m.Photo != "" || m.File != "" || m.Thumbnail != "" || m.ContactVCard != ""
-}
-
 func (m *Message) supported() bool {
 	if !m.isMessage() {
 		return false
 	}
 	structured := len(m.Poll) != 0 || len(m.LocationInformation) != 0 || len(m.ContactInformation) != 0
-	return !structured || strings.TrimSpace(m.Text) != "" || m.hasMedia()
+	return !structured || strings.TrimSpace(m.Text) != "" || m.Photo != "" || m.File != "" || m.Thumbnail != "" || m.ContactVCard != ""
 }

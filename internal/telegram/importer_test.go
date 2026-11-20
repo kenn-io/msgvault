@@ -436,6 +436,9 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 			if kind == "escape" || kind == "absolute" {
 				assert.Contains(warnings.String(), "level=WARN")
 				assert.Contains(warnings.String(), "media path must be local to the export")
+				var missing int
+				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM attachments WHERE source_part_key = 'photo' AND (content_hash IS NULL OR content_hash = '')").Scan(&missing))
+				assert.Equal(1, missing)
 			}
 			if kind == "directory" || kind == "symlink" {
 				assert.Contains(warnings.String(), "level=WARN")
@@ -451,11 +454,8 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 				require.Error(err)
 				var n int
 				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
-				assert.Equal(1, n)
+				assert.Zero(n)
 			}
-			var missing int
-			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM attachments WHERE source_part_key = 'photo' AND (content_hash IS NULL OR content_hash = '')").Scan(&missing))
-			assert.Equal(1, missing)
 			if kind == "escape" || kind == "absolute" {
 				testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","photo":"photo.jpg"}]}`))
 				require.NoError(os.WriteFile(media, []byte("photo"), 0600))
@@ -467,164 +467,12 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 			}
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(err)
-			assert.Zero(summary.MessagesAdded)
+			if sourceMissing {
+				assert.Zero(summary.MessagesAdded)
+			} else {
+				assert.EqualValues(1, summary.MessagesAdded)
+			}
 			assert.Equal(1, summary.AttachmentsStored)
-		})
-	}
-}
-
-func TestImportExistingMissingMediaAroundMessageFailure(t *testing.T) {
-	for _, tc := range []struct {
-		name               string
-		existingID         int
-		failingID          int
-		mediaBeforeFailure bool
-		initialBytes       string
-		storedBytes        string
-		storedOnRetry      int
-	}{
-		{name: "media after failed message", existingID: 2, failingID: 1, initialBytes: "uncorrected bytes", storedBytes: "corrected bytes", storedOnRetry: 1},
-		{name: "media before failed message", existingID: 1, failingID: 2, mediaBeforeFailure: true, initialBytes: "available bytes", storedBytes: "available bytes"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st := testutil.NewTestStore(t)
-			root, attachments := t.TempDir(), t.TempDir()
-			opts := ImportOptions{RootDir: root, AttachmentsDir: attachments, Me: "1"}
-			message := func(id int, text string, photo bool) string {
-				data := `{"id":` + strconv.Itoa(id) + `,"type":"message","date_unixtime":"1","text":"` + text + `"`
-				if photo {
-					data += `,"photo":"photo.jpg"`
-				}
-				return data + `}`
-			}
-			writeExport := func(messages ...string) {
-				data := `{"personal_information":{"user_id":1},"chats":{"list":[{"id":3,"type":"personal_chat","messages":[` + strings.Join(messages, ",") + `]}]}}`
-				testutil.WriteFile(t, root, "result.json", []byte(data))
-			}
-			writeExport(message(tc.existingID, "old", true))
-			summary, err := Import(t.Context(), st, opts)
-			require.NoError(err)
-			assert.Equal(1, summary.AttachmentsMissing)
-			require.NoError(os.WriteFile(filepath.Join(root, "photo.jpg"), []byte(tc.initialBytes), 0600))
-			if tc.mediaBeforeFailure {
-				writeExport(message(tc.existingID, "old", true), message(tc.failingID, "fail-me", false))
-			} else {
-				writeExport(message(tc.failingID, "fail-me", false), message(tc.existingID, "old", true))
-			}
-			createTestTrigger(t, st, "fail_media_boundary", "messages", "NEW.snippet = 'fail-me'",
-				"SELECT RAISE(ABORT, 'forced failure');", "RAISE EXCEPTION 'forced failure';")
-			_, err = Import(t.Context(), st, opts)
-			require.ErrorContains(err, "forced failure")
-			require.ErrorContains(err, "user3:"+strconv.Itoa(tc.failingID))
-			assert.Equal(1, countChatMessages(t, st, "user3"))
-
-			var missing int
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM attachments
-				WHERE message_id = (SELECT id FROM messages WHERE source_message_id = ?)
-				AND source_part_key = 'photo' AND (content_hash IS NULL OR content_hash = '')`),
-				"user3:"+strconv.Itoa(tc.existingID)).Scan(&missing))
-			if tc.mediaBeforeFailure {
-				assert.Zero(missing)
-			} else {
-				assert.Equal(1, missing)
-				entries, err := os.ReadDir(attachments)
-				require.NoError(err)
-				assert.Empty(entries)
-			}
-
-			dropTestTrigger(t, st, "fail_media_boundary", "messages")
-			if !tc.mediaBeforeFailure {
-				require.NoError(os.WriteFile(filepath.Join(root, "photo.jpg"), []byte(tc.storedBytes), 0600))
-			}
-			summary, err = Import(t.Context(), st, opts)
-			require.NoError(err)
-			assert.EqualValues(1, summary.MessagesAdded)
-			assert.EqualValues(1, summary.MessagesSkipped)
-			assert.Equal(tc.storedOnRetry, summary.AttachmentsStored)
-
-			var storagePath string
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT storage_path FROM attachments
-				WHERE message_id = (SELECT id FROM messages WHERE source_message_id = ?)
-				AND source_part_key = 'photo'`), "user3:"+strconv.Itoa(tc.existingID)).Scan(&storagePath))
-			data, err := os.ReadFile(filepath.Join(attachments, storagePath))
-			require.NoError(err)
-			assert.Equal(tc.storedBytes, string(data))
-		})
-	}
-}
-
-func TestImportBatchFailureKeepsCommittedMessagesAndMedia(t *testing.T) {
-	for _, tc := range []struct {
-		name             string
-		size             int
-		failingID        int
-		mediaID          int
-		savedBeforeRetry int
-		addedOnRetry     int64
-		skippedOnRetry   int64
-	}{
-		{name: "media before failure", size: 3, failingID: 3, mediaID: 2, savedBeforeRetry: 2, addedOnRetry: 1, skippedOnRetry: 2},
-		{name: "later batch resumes", size: batchSize + 10, failingID: batchSize + 2, savedBeforeRetry: batchSize + 1, addedOnRetry: 9, skippedOnRetry: batchSize + 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st := testutil.NewTestStore(t)
-			attachments := t.TempDir()
-			root := batchExport(t, 3, tc.size, func(id int) string {
-				if id == tc.failingID {
-					return "fail-me"
-				}
-				if id == tc.mediaID {
-					return "photo"
-				}
-				return "m"
-			})
-			if tc.mediaID != 0 {
-				require.NoError(os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("photo bytes"), 0600))
-				data, err := os.ReadFile(filepath.Join(root, "result.json"))
-				require.NoError(err)
-				data = []byte(strings.Replace(string(data), `"text":"photo"`, `"text":"photo","photo":"photo.jpg"`, 1))
-				require.NoError(os.WriteFile(filepath.Join(root, "result.json"), data, 0600))
-			}
-			createTestTrigger(t, st, "fail_batch_import", "messages", "NEW.snippet = 'fail-me'",
-				"SELECT RAISE(ABORT, 'forced failure');", "RAISE EXCEPTION 'forced failure';")
-			opts := ImportOptions{RootDir: root, AttachmentsDir: attachments, Me: "1"}
-			_, err := Import(t.Context(), st, opts)
-			require.ErrorContains(err, "forced failure")
-			require.ErrorContains(err, "user3:"+strconv.Itoa(tc.failingID))
-			assert.Equal(tc.savedBeforeRetry, countChatMessages(t, st, "user3"))
-			if tc.mediaID != 0 {
-				entries, err := os.ReadDir(attachments)
-				require.NoError(err)
-				assert.Len(entries, 1)
-				var storagePath string
-				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT storage_path FROM attachments
-					WHERE message_id = (SELECT id FROM messages WHERE source_message_id = ?)
-					AND source_part_key = 'photo'`), "user3:"+strconv.Itoa(tc.mediaID)).Scan(&storagePath))
-				data, err := os.ReadFile(filepath.Join(attachments, storagePath))
-				require.NoError(err)
-				assert.Equal("photo bytes", string(data))
-			}
-
-			dropTestTrigger(t, st, "fail_batch_import", "messages")
-			summary, err := Import(t.Context(), st, opts)
-			require.NoError(err)
-			assert.Equal(tc.addedOnRetry, summary.MessagesAdded)
-			assert.Equal(tc.skippedOnRetry, summary.MessagesSkipped)
-			assert.Equal(tc.size, countChatMessages(t, st, "user3"))
-			if tc.mediaID != 0 {
-				assert.Zero(summary.AttachmentsStored)
-				var storagePath string
-				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT storage_path FROM attachments
-					WHERE message_id = (SELECT id FROM messages WHERE source_message_id = ?)
-					AND source_part_key = 'photo'`), "user3:"+strconv.Itoa(tc.mediaID)).Scan(&storagePath))
-				data, err := os.ReadFile(filepath.Join(attachments, storagePath))
-				require.NoError(err)
-				assert.Equal("photo bytes", string(data))
-			}
 		})
 	}
 }
@@ -870,43 +718,19 @@ func TestImportLinksArchivedPeerWithoutMessages(t *testing.T) {
 }
 
 func TestImportIdentityFailureIsRetryable(t *testing.T) {
-	for _, tc := range []struct {
-		table         string
-		userID        string
-		existingMedia bool
-	}{
-		{table: "participant_contact_observations", userID: "user2"},
-		{table: "participant_links", userID: "user2"},
-		{table: "participant_links", userID: "user9", existingMedia: true},
-	} {
-		name := tc.table
-		if tc.existingMedia {
-			name += "/existing_media"
-		} else {
-			name += "/new_message"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, table := range []string{"participant_contact_observations", "participant_links"} {
+		t.Run(table, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			ctx := t.Context()
-			root, attachments := t.TempDir(), t.TempDir()
-			opts := ImportOptions{RootDir: root, AttachmentsDir: attachments, Me: "1"}
-			chatID := 2
-			if tc.existingMedia {
-				chatID = 3
-				testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"user9","date_unixtime":"1","text":"old","photo":"photo.jpg"}]}]}}`))
-				summary, err := Import(ctx, st, opts)
-				require.NoError(err)
-				assert.Equal(1, summary.AttachmentsMissing)
-			}
 			bridge, err := st.EnsureParticipantByIdentifier("beeper", "bridge-user", "Alice Example")
 			require.NoError(err)
-			participant, err := st.EnsureParticipantByIdentifier("telegram", tc.userID, "Alice Example")
+			participant, err := st.EnsureParticipantByIdentifier("telegram", "user2", "Alice Example")
 			require.NoError(err)
 			source, err := st.GetOrCreateSource("beeper", "telegram")
 			require.NoError(err)
-			key := "provider:8:telegram:7:service:0::1:" + strings.TrimPrefix(tc.userID, "user")
+			key := "provider:8:telegram:7:service:0::1:2"
 			_, err = st.RecordContactObservationContext(ctx, bridge, store.ParticipantContactObservationInput{
 				AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
 				ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID,
@@ -915,83 +739,46 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 			require.NoError(err)
 			// Fail only this sender's identity so the import reaches its message.
 			condition := "NEW.participant_id = " + strconv.FormatInt(participant, 10)
-			if tc.table == "participant_links" {
+			if table == "participant_links" {
 				condition = "TRUE"
 			}
-			createTestTrigger(t, st, "fail_telegram_identity", tc.table, condition,
-				"SELECT RAISE(ABORT, 'forced identity failure');", "RAISE EXCEPTION 'forced identity failure';")
-			if tc.existingMedia {
-				require.NoError(os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("uncorrected bytes"), 0600))
-			} else {
-				testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":`+strconv.Itoa(chatID)+`,"type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"`+tc.userID+`","date_unixtime":"1610909872","text":"hello"}]}]}}`))
-			}
-			summary, err := Import(ctx, st, opts)
-			require.ErrorContains(err, "forced identity failure")
-			if tc.existingMedia {
-				var contentHash string
-				require.NoError(st.DB().QueryRowContext(ctx, `SELECT COALESCE(content_hash, '') FROM attachments
-					WHERE message_id = (SELECT id FROM messages WHERE source_message_id = 'user3:1')
-					AND source_part_key = 'photo'`).Scan(&contentHash))
-				assert.Empty(contentHash)
-				entries, err := os.ReadDir(attachments)
+			if st.IsPostgreSQL() {
+				_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_telegram_identity() RETURNS trigger LANGUAGE plpgsql AS $$
+					BEGIN RAISE EXCEPTION 'forced identity failure'; END $$`)
 				require.NoError(err)
-				assert.Empty(entries)
+				_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_telegram_identity BEFORE INSERT ON `+table+`
+					FOR EACH ROW WHEN (`+condition+`) EXECUTE FUNCTION fail_telegram_identity()`)
 			} else {
-				assert.Zero(summary.MessagesAdded)
-				var count int
-				require.NoError(st.DB().QueryRowContext(ctx, "SELECT count(*) FROM messages").Scan(&count))
-				assert.Zero(count)
-				members, err := st.ClusterMembers(participant)
-				require.NoError(err)
-				assert.NotContains(members, bridge)
+				_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_telegram_identity BEFORE INSERT ON `+table+`
+					WHEN `+condition+` BEGIN SELECT RAISE(ABORT, 'forced identity failure'); END`)
 			}
-
-			dropTestTrigger(t, st, "fail_telegram_identity", tc.table)
-			if tc.existingMedia {
-				require.NoError(os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("corrected bytes"), 0600))
-			}
-			summary, err = Import(ctx, st, opts)
 			require.NoError(err)
-			if tc.existingMedia {
-				assert.Zero(summary.MessagesAdded)
-				assert.EqualValues(1, summary.MessagesSkipped)
-				var storagePath string
-				require.NoError(st.DB().QueryRowContext(ctx, `SELECT storage_path FROM attachments
-					WHERE message_id = (SELECT id FROM messages WHERE source_message_id = 'user3:1')
-					AND source_part_key = 'photo'`).Scan(&storagePath))
-				data, err := os.ReadFile(filepath.Join(attachments, storagePath))
-				require.NoError(err)
-				assert.Equal("corrected bytes", string(data))
-			} else {
-				assert.EqualValues(1, summary.MessagesAdded)
-				members, err := st.ClusterMembers(participant)
-				require.NoError(err)
-				assert.ElementsMatch([]int64{participant, bridge}, members)
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"user2","date_unixtime":"1610909872","text":"hello"}]}]}}`))
+			summary, err := Import(ctx, st, ImportOptions{RootDir: root})
+			require.ErrorContains(err, "forced identity failure")
+			assert.Zero(summary.MessagesAdded)
+			var count int
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&count))
+			assert.Zero(count)
+			members, err := st.ClusterMembers(participant)
+			require.NoError(err)
+			assert.NotContains(members, bridge)
+
+			drop := "DROP TRIGGER fail_telegram_identity"
+			if st.IsPostgreSQL() {
+				drop += " ON " + table
 			}
+			_, err = st.DB().ExecContext(t.Context(), drop)
+			require.NoError(err)
+			summary, err = Import(ctx, st, ImportOptions{RootDir: root})
+			require.NoError(err)
+			assert.EqualValues(1, summary.MessagesAdded)
+			members, err = st.ClusterMembers(participant)
+			require.NoError(err)
+			assert.ElementsMatch([]int64{participant, bridge}, members)
 		})
 	}
-}
-
-func TestImportPreservesPendingMessagesAfterIdentityFailure(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	participant, err := st.EnsureParticipantByIdentifier("telegram", "user9", "")
-	require.NoError(err)
-	createTestTrigger(t, st, "fail_pending_identity", "participant_contact_observations", "NEW.participant_id = "+strconv.FormatInt(participant, 10),
-		"SELECT RAISE(ABORT, 'forced identity failure');", "RAISE EXCEPTION 'forced identity failure';")
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":3,"type":"private_group","messages":[{"id":1,"type":"message","from_id":"user1","date_unixtime":"1","text":"before failure"},{"id":2,"type":"message","from_id":"user9","date_unixtime":"2","text":"after failure"}]}]}}`))
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
-	require.ErrorContains(err, "forced identity failure")
-	assert.EqualValues(1, summary.MessagesAdded)
-	assert.Equal(1, countChatMessages(t, st, "chat3"))
-	dropTestTrigger(t, st, "fail_pending_identity", "participant_contact_observations")
-	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root})
-	require.NoError(err)
-	assert.EqualValues(1, summary.MessagesAdded)
-	assert.EqualValues(1, summary.MessagesSkipped)
-	assert.Equal(2, countChatMessages(t, st, "chat3"))
 }
 
 func batchExport(t *testing.T, chatID int64, size int, text func(id int) string) string {
@@ -1037,4 +824,27 @@ func dropTestTrigger(t *testing.T, st *store.Store, name, table string) {
 	}
 	_, err := st.DB().ExecContext(t.Context(), drop)
 	require.NoError(t, err)
+}
+
+func TestImportFailedBatchRetriesChat(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := batchExport(t, 3, 60, func(id int) string {
+		if id == 51 {
+			return "fail-me"
+		}
+		return "message"
+	})
+	createTestTrigger(t, st, "fail_batch_import", "messages", "NEW.snippet = 'fail-me'",
+		"SELECT RAISE(ABORT, 'forced failure');", "RAISE EXCEPTION 'forced failure';")
+	opts := ImportOptions{RootDir: root, Me: "1"}
+	_, err := Import(t.Context(), st, opts)
+	require.ErrorContains(t, err, "forced failure")
+	require.ErrorContains(t, err, "user3:51")
+	assert.Equal(t, 50, countChatMessages(t, st, "user3"))
+	dropTestTrigger(t, st, "fail_batch_import", "messages")
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 10, summary.MessagesAdded)
+	assert.EqualValues(t, 50, summary.MessagesSkipped)
+	assert.Equal(t, 60, countChatMessages(t, st, "user3"))
 }
