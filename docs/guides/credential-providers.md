@@ -3,24 +3,25 @@ title: External credential providers
 description: Obtain scoped message MCP or HTTP read access, or source read credentials, through a trusted local helper.
 ---
 
-Applications can use `go.kenn.io/msgvault/pkg/credentialprovider` to ask a
-trusted local executable for access to a hosted message MCP endpoint or a
-hosted archive's HTTP API. The application does not need an archive-owner
-token or its own login flow. The msgvault CLI uses the HTTP profile for a
-remote with a `credential_provider`; see
-[Read a remote through a helper](#read-a-remote-through-a-helper).
-The same package also lets msgvault ask a helper for a credential to read a
-mail source through an external endpoint; see
+Use `go.kenn.io/msgvault/pkg/credentialprovider` when your application needs to
+ask a trusted local executable for access to a hosted message MCP endpoint or a
+hosted archive's HTTP API. Your application does not need an archive-owner token
+or its own login flow. The msgvault CLI uses the HTTP profile for any remote
+configured with a `credential_provider`; see
+[Read a remote through a helper](#read-a-remote-through-a-helper). The same
+package also lets msgvault ask a helper for a credential to read a mail source
+through an external endpoint; see
 [Read a source through a helper](#read-a-source-through-a-helper).
 
-This package supplies the exchange and validation contract. It does not add a
-credential issuer to `msgvault serve` or configure the MCP listener. The hosting service must implement approval,
-issuance, revocation, and scoped reads. Its access checks remain authoritative.
+This package provides the exchange and validation contract. It does not add a
+credential issuer to `msgvault serve` or configure the MCP listener. The hosting
+service still owns approval, issuance, revocation, and scoped reads, and its
+access checks remain authoritative.
 
 ## Configure a helper
 
-The consuming application owns configuration and saved operation identities.
-Use a command and argument array from trusted local configuration, for example:
+Your application owns the configuration and saved operation identities. Read the
+helper command and its arguments from trusted local configuration, for example:
 
 ```json
 {
@@ -32,26 +33,29 @@ Use a command and argument array from trusted local configuration, for example:
 }
 ```
 
-Call `Exchange(ctx, argv, request)` with that executable and its arguments. No
-shell is used. The helper inherits the application's environment; it is trusted
-code running as the same operating-system user, not a sandbox. Never accept a
-helper command from a message, remote response, or repository content. A
-provider-backed connection must not fall back to an owner token on failure.
+Pass that executable and argument list to `Exchange(ctx, argv, request)`. The
+package runs the helper directly without a shell. The helper inherits your
+application's environment and runs as trusted code under the same
+operating-system user, not in a sandbox. Never accept a helper command from a
+message, a remote response, or repository content. If a provider-backed
+connection fails, do not fall back to an owner token.
 
-The helper receives one JSON document on stdin. It reads it with `DecodeRequest`
-and writes its decision with `WriteResponse`. Each document is limited to 16 KiB,
-including whitespace: it contains operation metadata, not message content. An
-exchange lasts at most 60 seconds or the caller's shorter context deadline.
-Cancellation stops the helper and its descendants. Stderr is discarded.
+The helper receives one JSON document on stdin, reads it with `DecodeRequest`,
+and writes its decision with `WriteResponse`. Each document is capped at 16 KiB,
+including whitespace; it carries operation metadata, not message content. An
+exchange lasts at most 60 seconds, or until your context deadline if that is
+shorter. Canceling the context stops the helper and its child processes. Stderr
+is discarded.
 
-Exit 0 for a valid decision (including denial), 2 for invalid input before
-performing a remote operation, and 1 for other failures. The client discards all
-stdout on a nonzero exit. Errors omit helper output and parser details so a
-credential cannot appear in a diagnostic.
+Exit with `0` for any valid decision, including a denial. Exit with `2` for
+invalid input before performing a remote operation, and exit with `1` for other
+failures. On a nonzero exit, the client discards all stdout. Returned errors
+omit helper output and parser details so a credential cannot appear in a
+diagnostic.
 
 ## Request exactly the approved access
 
-Save the complete request before calling the helper:
+Save the complete request before you call the helper:
 
 ```json
 {
@@ -67,23 +71,24 @@ Save the complete request before calling the helper:
 }
 ```
 
-The endpoint is an exact HTTPS URL, including its mount path, without user
+`endpoint` must be an exact HTTPS URL, including its mount path, with no user
 information, query, or fragment. `archive_id` is the native archive UID, treated
-as an opaque string. The client and delegation UUIDs identify the approved
-installation and permission record; their possession does not authenticate a
-caller. The helper must independently establish current authority.
+as an opaque string. `client_id` and `delegation_id` are UUIDs that identify the
+approved installation and permission record. Holding those UUIDs does not
+authenticate a caller, and the helper must independently establish current
+authority.
 
-Source IDs are positive int64 values written as ascending, unique decimal
-strings. Empty scope and wildcards are invalid. Tool names are an explicit,
+`source_ids` holds positive `int64` values written as ascending, unique decimal
+strings; empty scopes and wildcards are invalid. `tools` is an explicit,
 duplicate-free subset of `get_message`, `list_messages`, `list_thread`,
 `search_metadata`, `search_message_bodies`, and `get_stats`. New upstream tools
-do not join an existing approval. This profile excludes attachment bytes and
-the native HTTP API, which has its own profile below.
+do not join an existing approval. This profile excludes attachment bytes and the
+native HTTP API, which has its own profile below.
 
 ## Accept a credential
 
-A first success echoes `version`, `operation`, `request_id` and all six scope
-fields exactly, and adds:
+A first success echoes `version`, `operation`, `request_id`, and all six scope
+fields exactly, and adds these fields:
 
 ```json
 {
@@ -96,25 +101,28 @@ fields exactly, and adds:
 }
 ```
 
-This fragment illustrates the added fields; the token is synthetic. The hosting
-service chooses its token format and lifetime. `DecodeResponse(reader, request)`
-checks a full response before it can be forwarded or used. Unknown fields,
-duplicate JSON keys, null fields, extra JSON documents, and mismatched targets or
-scope are rejected. A refusal must not carry scope or credentials.
+This fragment shows the added fields using a synthetic token; the hosting
+service chooses its own token format and lifetime.
+`DecodeResponse(reader, request)` validates a full response before your code forwards or uses it,
+rejecting unknown fields, duplicate JSON keys, null fields, extra JSON
+documents, and mismatched targets or scope. A refusal must not include scope or
+credentials.
 
-Keep credentials only in process memory. Never log a credential-bearing response
-or store it in configuration or an operation journal. Send it only to the exact
-validated endpoint; disable redirects. Check the credential before each MCP
-request, including requests during a long agent turn. Calculate its remaining
-lifetime from `expires_at - issued_at`, subtracting monotonic elapsed time since
-the helper started. Do not compare server expiry to the client's wall clock or
-restart the clock when replaying metadata. After suspension or an uncertain
-timer, obtain fresh authority before sending another request.
+Keep credentials in process memory only. Never log a credential-bearing response
+or store it in configuration or an operation journal. Send a credential only to
+the exact validated endpoint, with redirects disabled. Check the credential
+before every MCP request, including requests sent during a long agent turn.
+Calculate its remaining lifetime from `expires_at - issued_at`, subtracting
+monotonic elapsed time since the helper started. Do not compare server expiry
+against your client's wall clock, and do not restart the clock when replaying
+metadata. After system suspension or an uncertain timer, obtain fresh authority
+before sending another request.
 
 ## Renew and recover an interrupted exchange
 
-Save each new request before invocation. Do not retry with a different identity
-when the outcome is unknown; a failed exchange may have committed remotely.
+Save each new request before calling the helper. If an exchange fails and its
+outcome is unknown, do not retry with a different identity; the failed exchange
+may have committed remotely.
 
 | Operation | Required fields in addition to the original scope | Result |
 | --- | --- | --- |
@@ -123,21 +131,22 @@ when the outcome is unknown; a failed exchange may have committed remotely.
 | `release` | New `request_id`, `authorization_request_id` naming the original authorize | `released` after the service ends that authorization and its successors. |
 
 `already_issued` and `replacement_required` echo the same scope and credential
-metadata as a success, but never a secret. A client with a matching cached
-credential may keep it on `already_issued`, without extending its lifetime.
-Otherwise, save and send `replace` using the returned ID and generation. A client
-restart follows this same path. Renewal and replacement require current
-authority; token possession alone is insufficient.
+metadata as a success, never a secret. If your client already holds a matching
+cached credential, it can keep using it on `already_issued` without extending
+its lifetime. Otherwise, save and send `replace` using the returned ID and
+generation. A client restart follows the same path. Renewal and replacement
+require current authority; holding a token alone is not enough.
 
-Serialize exchanges for each client installation. A generation conflict is an
-explicit refusal, not permission to guess a new generation. Retain a pending
-release through failures, stop using its credential, and do not report success
-until `released`. Release before authorize must remain terminal in the provider.
-These are responsibilities of the consumer and hosting service, not a database
-implemented by this package.
+Serialize exchanges for each client installation. Treat a generation conflict as
+an explicit refusal rather than guessing a new generation. Keep a pending
+release across failures, stop using its credential, and do not report success
+until the helper returns `released`. A release before authorize must remain
+terminal in the provider. Your application and the hosting service are
+responsible for these rules; this package does not implement a database.
 
-Refusals contain only the request's `version`, `operation`, and `request_id`, plus
-one of these status/reason pairs. Clients translate the codes into their own text.
+Refusals carry only the request's `version`, `operation`, and `request_id`, plus
+one of these status and reason pairs. Clients translate the codes into their own
+text.
 
 | Status | Reason |
 | --- | --- |
@@ -147,16 +156,17 @@ one of these status/reason pairs. Clients translate the codes into their own tex
 | `conflict` | `request_mismatch`, `generation_changed`, `binding_ended` |
 | `unavailable` | `authority_unavailable` |
 
-`released` contains only the request envelope and status, with no reason, scope,
-or credential. A missing or inaccessible approval uses the same
-`approval_required` response. No helper decision grants more access than the
-service's current permission checks allow.
+`released` carries only the request envelope and status, with no reason, scope,
+or credential. Missing and inaccessible approvals both return
+`approval_required`. No helper decision grants more access than the service's
+current permission checks allow.
 
 ## Read a remote through a helper
 
-The HTTP read profile asks for access to a hosted archive's msgvault HTTP API.
-A request carries `operations` in place of `tools`; every other field, status,
-and rule above is the same. A scope names exactly one of the two.
+The HTTP read profile requests access to a hosted archive's msgvault HTTP API.
+Requests use `operations` in place of `tools`, and every other field, status,
+and rule from the MCP profile stays the same. A scope names either `tools` or
+`operations`, never both.
 
 ```json
 {
@@ -172,39 +182,40 @@ and rule above is the same. A scope names exactly one of the two.
 }
 ```
 
-`endpoint` is the archive's base URL, the prefix of every API path the client
-calls. `operations` is a duplicate-free subset of the operation IDs that
-`ReadOperations()` returns, shown in full above: the health probe and the
-operations behind `list-accounts`, `stats`, `search`, `show-message`,
-`show-thread`, and `export-messages`. The hosting service must admit only the
-operations a credential names and only within its sources. New msgvault
-operations do not join an existing approval.
+`endpoint` is the archive's base URL, which prefixes every API path the client
+calls. `operations` is a duplicate-free subset of the operation IDs returned by
+`ReadOperations()`, shown in full above: the health probe and the operations
+backing `list-accounts`, `stats`, `search`, `show-message`, `show-thread`, and
+`export-messages`. The hosting service must admit only the operations named in a
+credential and only within its sources. New msgvault operations do not join an
+existing approval.
 
 The CLI requests every read operation for the remote's configured
-[delegation](../configuration.md#credential-helper). It sends the bearer as
-`Authorization: Bearer` to the endpoint only and does not follow redirects.
-Before starting the helper, it saves the request, never a credential, to a
-journal under the msgvault home and holds a lock on it, so commands
+[delegation](../configuration.md#credential-helper). It sends the bearer token
+as `Authorization: Bearer` to that endpoint only and does not follow redirects.
+Before starting the helper, the CLI saves the request, never a credential, to a
+journal under the msgvault home directory and holds a lock on it, so commands
 exchange one at a time.
 
-- A command that ends while the helper runs leaves the request saved. The next
-  command replays it exactly.
-- Each command starts without a bearer in memory, so after the first it sends
-  `replace` naming the newest credential. An `already_issued` or
-  `replacement_required` replay is followed by one `replace`.
-- A bearer is renewed with `renew` 30 seconds before it expires, or halfway
-  through the lifetime of a bearer shorter than a minute.
+- If a command ends while the helper is running, the request remains saved and
+  the next command replays it exactly.
+- Each command starts without a bearer token in memory, so after the first
+  command it sends `replace` naming the newest credential. An `already_issued`
+  or `replacement_required` replay is followed by one `replace`.
+- A bearer token is renewed with `renew` 30 seconds before expiry, or halfway
+  through its lifetime if it lasts less than a minute.
 - A refusal ends the request. After a `conflict`, the next command sends a new
   `authorize` instead of guessing a generation.
 
 ## Read a source through a helper
 
-The inbound profile runs in the other direction. msgvault asks the helper for a
-bearer credential to read one mail account through an external endpoint, such
+The inbound profile works in the opposite direction: msgvault asks a helper for
+a bearer credential to read one mail account through an external endpoint, such
 as a read-only proxy that holds the provider's tokens. The process contract is
-the same as above: `ExchangeInbound(ctx, argv, request)` runs argv without a
-shell, the helper reads `DecodeInboundRequest` and writes `WriteInboundResponse`,
-and the size limit, time limit, and exit codes do not change.
+the same as above: `ExchangeInbound(ctx, argv, request)` runs `argv` without a
+shell, the helper reads with `DecodeInboundRequest` and writes with
+`WriteInboundResponse`, and the size limit, time limit, and exit codes do not
+change.
 
 ```json
 {
@@ -217,44 +228,44 @@ and the size limit, time limit, and exit codes do not change.
 }
 ```
 
-- `endpoint` is the exact URL that receives the credential. It is HTTPS, or
+- `endpoint` is the exact URL that receives the credential. It must be HTTPS, or
   HTTP on a loopback host, with no user information, query, or fragment.
 - `source_type` is the msgvault source type: `gmail` or `msmail`.
 - `account` is the source identifier, treated as an opaque string with no
   whitespace or control characters.
 
-A first success echoes the envelope and all three scope fields and adds the same
-`status`, `credential_id`, `credential_generation`, `issued_at`, `expires_at`,
-and bearer `credential` fields as the MCP profile. `DecodeInboundResponse`
-applies the same strict checks.
+A first success echoes the envelope and all three scope fields, and adds the
+same `status`, `credential_id`, `credential_generation`, `issued_at`,
+`expires_at`, and bearer `credential` fields as the MCP profile.
+`DecodeInboundResponse` applies the same strict validation.
 
 | Operation | Required fields in addition to the scope | Result |
 | --- | --- | --- |
 | `authorize` | New `request_id`; no predecessor fields | `ready` |
 | `renew` | New `request_id`, `previous_request_id`, `credential_id`, `expected_generation` | `ready` with a different credential ID and higher generation |
 
-There is no replay, replace, or release. msgvault keeps inbound credentials only
-in memory and does not journal requests: after a restart or a refusal it sends
-a new `authorize`. A helper must answer each request on its own and must not
-require an exact replay. A credential issued for a response msgvault never
-read goes unused until it expires.
+This profile has no replay, replace, or release. msgvault keeps inbound
+credentials in memory only and does not journal requests: after a restart or a
+refusal, it sends a new `authorize`. Your helper must answer each request on its
+own and must not require an exact replay. Any credential issued for a response
+that msgvault never reads goes unused until it expires.
 
 `InboundSource` is the client msgvault uses for one account. It serializes
-exchanges, reuses the held credential until 30 seconds before it expires (or
-half its lifetime, if shorter), and measures elapsed time on both the monotonic
+exchanges, reuses the held credential until 30 seconds before expiry, or halfway
+through its lifetime if shorter, and tracks elapsed time on both the monotonic
 and wall clocks so a host that slept renews before its next request.
 
-- A credential whose usable lifetime ends during its own exchange is not
-  returned; the call fails with `ErrCredentialExpired` and the next call renews.
+- If a credential's usable lifetime ends during its own exchange, `InboundSource`
+  does not return it; the call fails with `ErrCredentialExpired` and the next
+  call renews.
 - When the endpoint rejects a credential, `Renew` sends one `renew`. The
-  rejected credential is never returned again, even if that renewal fails or
-  is canceled.
-  Callers holding an already-replaced credential receive its successor without
-  another exchange.
+  rejected credential is never returned again, even if that renewal fails or is
+  canceled. Callers holding an already-replaced credential receive its successor
+  without another exchange.
 - A canceled caller stops waiting for another caller's exchange and never
   receives a credential.
 
-Refusals contain only the envelope and one of these status/reason pairs:
+Refusals contain only the envelope and one of these status and reason pairs:
 
 | Status | Reason |
 | --- | --- |
