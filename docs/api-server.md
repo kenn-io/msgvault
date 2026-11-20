@@ -457,9 +457,7 @@ views. Explore file responses also declare when semantic search uses only
 active messages.
 
 Participant analytics live under `/api/v1/participants/*`; durable curated
-profiles live under `/api/v1/people/*`. Person attribute sets accept
-`expected_empty: true` to reject a write when the slot already has a current
-value. Do not combine it with `expected_value_id`. CardDAV publication and conflict
+profiles live under `/api/v1/people/*`. CardDAV publication and conflict
 responses are bounded projections that omit raw vCards and resource hrefs;
 only the explicit publication preview route returns a raw vCard.
 See [release changes](changelog.md#upgrade-and-compatibility) for removed paths

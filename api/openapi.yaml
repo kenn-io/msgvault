@@ -15738,8 +15738,6 @@ components:
         confidence:
           format: double
           type: number
-        expected_empty:
-          type: boolean
         expected_value_id:
           description: Positive ID compares the current value; zero requires no current value
           format: int64

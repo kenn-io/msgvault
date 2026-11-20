@@ -57,12 +57,6 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 			path: "/api/v1/settings", status: http.StatusPreconditionFailed, read: settings,
 		},
 		{
-			name: "large pre-commit conflict", method: http.MethodPatch,
-			body: `{"error":"settings_conflict","message":"` + strings.Repeat("x", 64<<10) + `"}`,
-			want: `{"error":"settings_conflict","operation_may_have_completed":false}`,
-			path: "/api/v1/settings", status: http.StatusPreconditionFailed, read: settings,
-		},
-		{
 			name: "read failure", method: http.MethodGet,
 			body: `{"error":"credential_conflict"}`, want: `{"error":"operation_refused","operation_may_have_completed":false}`,
 			path: "/api/v1/settings", status: http.StatusPreconditionFailed, read: settings,

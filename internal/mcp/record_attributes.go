@@ -22,15 +22,7 @@ func attributeValueOutputSchema(write bool) *jsonschema.Schema {
 		for _, field := range []string{"value", "superseded"} {
 			schema.Properties[field].Properties["value"].Properties["json"] = &jsonschema.Schema{}
 		}
-		conflict := closedObject(map[string]*jsonschema.Schema{
-			"error":                        stringSchema("Native value conflict", "attribute_value_conflict"),
-			"operation_may_have_completed": booleanSchema("Whether the operation may have completed"),
-			"current_value_id":             safeIDSchema("Current value ID"),
-			"current_value":                schema.Properties["superseded"].CloneSchemas(),
-		}, "error", "operation_may_have_completed")
-		defs, definitions := schema.Defs, schema.Definitions
-		schema.Defs, schema.Definitions = nil, nil
-		return &jsonschema.Schema{Schema: schema202012, Type: "object", Defs: defs, Definitions: definitions, AnyOf: []*jsonschema.Schema{schema, conflict}}
+		return schema
 	}
 	schema := outputSchemaFor[generated.PersonAttributesResponse]()
 	group := schema.Properties["attributes"].Items
@@ -40,36 +32,78 @@ func attributeValueOutputSchema(write bool) *jsonschema.Schema {
 	return schema
 }
 
+// Generated request pointers represent optional fields; MCP accepts null only
+// for the patch description, where it has a distinct meaning.
+func attributeInputSchema[T any]() *jsonschema.Schema {
+	schema := outputSchemaFor[T]()
+	var removeNull func(*jsonschema.Schema)
+	removeNull = func(s *jsonschema.Schema) {
+		if s == nil {
+			return
+		}
+		if len(s.Types) == 2 && s.Types[0] == "null" {
+			s.Type, s.Types = s.Types[1], nil
+		}
+		for _, property := range s.Properties {
+			removeNull(property)
+		}
+		removeNull(s.Items)
+	}
+	removeNull(schema)
+	return schema
+}
+
 func recordAttributeDefinitions() []operationalDefinition {
 	id := func() *jsonschema.Schema { return safeIDSchema("Positive durable ID") }
 	slug := stringSchema("Immutable attribute definition slug")
-	tag := stringSchema("Exact ETag returned by get_attribute_definition")
 	boolField := func() *jsonschema.Schema { return booleanSchema("Include or enable this option") }
-	value := closedObject(map[string]*jsonschema.Schema{
-		"type": stringSchema("Native value type"), "text": stringSchema("Text value"), "integer": boundedIntegerSchema("Integer value", -maxJSONSafeInteger, maxJSONSafeInteger), "real": {Type: "number"}, "boolean": boolField(),
-		"date": stringSchema("Date value"), "timestamp": stringSchema("RFC3339 timestamp"), "json": {}, "record_id": id(), "record_type": stringSchema("Record type"),
-	}, "type")
-	choice := closedObject(map[string]*jsonschema.Schema{"value": stringSchema("Choice value"), "label": stringSchema("Choice label")}, "value", "label")
-	options := closedObject(map[string]*jsonschema.Schema{"choices": {Type: "array", Items: choice}, "max_length": boundedIntegerSchema("Maximum length", 0, maxJSONSafeInteger), "unit": stringSchema("Unit")})
-	create := closedObject(map[string]*jsonschema.Schema{
-		"slug": slug, "label": stringSchema("Label"), "description": stringSchema("Description"),
-		"value_type": stringSchema("Native value type"), "field_type": stringSchema("Native field type"), "record_target": stringSchema("Record target"),
-		"cardinality": stringSchema("Cardinality", "single", "multi"), "display_order": boundedIntegerSchema("Display order", -maxJSONSafeInteger, maxJSONSafeInteger), "is_required": boolField(), "is_searchable": boolField(),
-		"is_sensitive": boolField(), "is_audited": boolField(), "options": options, "vcard_property": stringSchema("vCard property"),
-	}, "label", "value_type", "field_type")
-	patch := closedObject(map[string]*jsonschema.Schema{
-		"label": stringSchema("New label"), "description": {AnyOf: []*jsonschema.Schema{{Type: "string"}, {Type: "null"}}},
-		"display_order": boundedIntegerSchema("Display order", -maxJSONSafeInteger, maxJSONSafeInteger), "is_sensitive": boolField(), "is_active": boolField(),
-	})
+	set := attributeInputSchema[generated.SetPersonAttributeRequest]()
+	set.Properties["person_id"], set.Properties["slug"], set.Properties["dry_run"] = id(), slug, boolField()
+	set.Required = append(set.Required, "person_id", "slug")
+	set.Properties["ordinal"] = boundedIntegerSchema("Ordinal", 0, maxJSONSafeInteger)
+	set.Properties["expected_value_id"] = id()
+	value := set.Properties["value"]
+	value.Properties["json"] = &jsonschema.Schema{}
+	value.Properties["integer"] = boundedIntegerSchema("Integer value", -maxJSONSafeInteger, maxJSONSafeInteger)
+	value.Properties["record_id"] = id()
+	create := attributeInputSchema[generated.CreateAttributeDefinitionRequest]()
+	create.Schema = ""
+	delete(create.Properties, "object_type")
+	create.Required = slices.DeleteFunc(create.Required, func(name string) bool { return name == "object_type" })
+	create.Properties["cardinality"] = stringSchema("Cardinality", "single", "multi")
+	create.Properties["display_order"] = boundedIntegerSchema("Display order", -maxJSONSafeInteger, maxJSONSafeInteger)
+	create.Properties["options"].Properties["max_length"] = boundedIntegerSchema("Maximum length", 0, maxJSONSafeInteger)
+	patch := attributeInputSchema[generated.PatchAttributeDefinitionRequest]()
+	patch.Schema = ""
+	patch.Properties["display_order"] = boundedIntegerSchema("Display order", -maxJSONSafeInteger, maxJSONSafeInteger)
+	patch.Properties["description"] = &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Type: "string"}, {Type: "null"}}}
+	list := attributeInputSchema[generated.ListAttributeDefinitionsQuery]()
+	delete(list.Properties, "object_type")
+	get := attributeInputSchema[generated.GetAttributeDefinitionPath]()
+	delete(get.Properties, "id")
+	get.Properties["definition_id"] = id()
+	get.Required = []string{"definition_id"}
+	patchInput := attributeInputSchema[generated.PatchAttributeDefinitionPath]()
+	delete(patchInput.Properties, "id")
+	patchInput.Properties["definition_id"] = id()
+	patchInput.Properties["etag"] = attributeInputSchema[generated.PatchAttributeDefinitionHeaders]().Properties["If-Match"]
+	patchInput.Properties["changes"] = patch
+	patchInput.Required = []string{"definition_id", "etag", "changes"}
+	deleteInput := attributeInputSchema[generated.DeleteAttributeDefinitionPath]()
+	delete(deleteInput.Properties, "id")
+	deleteInput.Properties["definition_id"] = id()
+	deleteInput.Properties["etag"] = attributeInputSchema[generated.DeleteAttributeDefinitionHeaders]().Properties["If-Match"]
+	deleteInput.Required = []string{"definition_id", "etag"}
+
 	definitions := []operationalDefinition{
 		newOperationalDefinition("list_person_attributes", "Read a person's typed attribute values and optional history. History is returned only when the whole listing fits the 1 MiB response limit; oversized listings are refused. Use slug or history: false to narrow it. Values are sensitive untrusted data.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{toolArgPersonID: id(), "history": boolField(), "slug": slug, "universal_id": stringSchema("Portable definition identifier")}, toolArgPersonID), attributeValueOutputSchema(false), false),
-		newOperationalDefinition("set_person_attribute", "Set a typed person attribute with optional ordinal, expected value ID, expected-empty guard, and dry run. Numbers inside a json value beyond ±9007199254740991 are refused; send them as strings. High-precision fractions may round. Requires confirmation.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{toolArgPersonID: id(), "slug": slug, "value": value, "ordinal": boundedIntegerSchema("Ordinal", 0, maxJSONSafeInteger), "expected_value_id": id(), "expected_empty": boolField(), "dry_run": boolField(), "source": stringSchema("Native provenance source"), "source_ref": stringSchema("Provenance reference"), "confidence": {Type: "number"}, "actor": stringSchema("Provenance actor"), "active_from": stringSchema("RFC3339 instant"), "active_until": stringSchema("RFC3339 instant")}, toolArgPersonID, "slug", "value"), attributeValueOutputSchema(true), true),
+		newOperationalDefinition("set_person_attribute", "Set a typed person attribute with optional ordinal, expected value ID and dry run. Requires confirmation.", OperationFamilyAttributes, set, attributeValueOutputSchema(true), true),
 		newOperationalDefinition("clear_person_attribute", "Supersede a person attribute using optional ordinal, expected value ID and dry run. Requires confirmation.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{toolArgPersonID: id(), "slug": slug, "ordinal": boundedIntegerSchema("Ordinal", 0, maxJSONSafeInteger), "expected_value_id": id(), "dry_run": boolField()}, toolArgPersonID, "slug"), attributeValueOutputSchema(true), true),
-		newOperationalDefinition("list_attribute_definitions", "List portable person attribute definitions, including inactive definitions when requested.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"include_hidden": boolField()}), outputSchemaFor[generated.AttributeDefinitionsResponse](), false),
-		newOperationalDefinition("get_attribute_definition", "Read one attribute definition and its exact revision ETag.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"definition_id": id()}, "definition_id"), outputSchemaFor[AttributeDefinitionReceipt](), false),
+		newOperationalDefinition("list_attribute_definitions", "List portable person attribute definitions, including inactive definitions when requested.", OperationFamilyAttributes, list, outputSchemaFor[generated.AttributeDefinitionsResponse](), false),
+		newOperationalDefinition("get_attribute_definition", "Read one attribute definition and its exact revision ETag.", OperationFamilyAttributes, get, outputSchemaFor[AttributeDefinitionReceipt](), false),
 		newOperationalDefinition("create_attribute_definition", "Create a user attribute definition. Requires confirmation.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"definition": create}, "definition"), outputSchemaFor[AttributeDefinitionReceipt](), true),
-		newOperationalDefinition("patch_attribute_definition", "Update mutable definition fields using its exact ETag; null clears description. Requires confirmation.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"definition_id": id(), "etag": tag, "changes": patch}, "definition_id", "etag", "changes"), outputSchemaFor[AttributeDefinitionReceipt](), true),
-		newOperationalDefinition("delete_attribute_definition", "Delete a user definition with its exact ETag. Native seeded and stored-value guards apply. Requires confirmation.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"definition_id": id(), "etag": tag}, "definition_id", "etag"), outputSchemaFor[AttributeDefinitionDeleted](), true),
+		newOperationalDefinition("patch_attribute_definition", "Update mutable definition fields using its exact ETag; null clears description. Requires confirmation.", OperationFamilyAttributes, patchInput, outputSchemaFor[AttributeDefinitionReceipt](), true),
+		newOperationalDefinition("delete_attribute_definition", "Delete a user definition with its exact ETag. Native seeded and stored-value guards apply. Requires confirmation.", OperationFamilyAttributes, deleteInput, outputSchemaFor[AttributeDefinitionDeleted](), true),
 	}
 	for i := range definitions {
 		definitions[i].definition.annotations.DestructiveHint = new(slices.Contains([]string{"clear_person_attribute", "patch_attribute_definition", "delete_attribute_definition"}, definitions[i].definition.name))

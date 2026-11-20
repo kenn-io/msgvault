@@ -17,12 +17,12 @@ func personExportDefinitions() []operationalDefinition {
 			"CLI failures return export_failed.",
 		OperationFamilyRecords,
 		closedObject(map[string]*jsonschema.Schema{
-			toolArgPersonID: safeIDSchema("Durable person ID"),
+			"person_id":     safeIDSchema("Durable person ID"),
 			"start":         stringSchema("Inclusive RFC3339 timestamp"),
 			"end":           stringSchema("Exclusive RFC3339 timestamp"),
 			"sources":       {Type: schemaTypeArray, Items: stringSchema("Exact source selector type:identifier")},
 			"message_types": {Type: schemaTypeArray, Items: stringSchema("Exact type, such as email, sms, whatsapp, or meeting_transcript. Unknown nonempty values match nothing.")},
-		}, toolArgPersonID, "start", "end"),
+		}, "person_id", "start", "end"),
 		outputSchemaFor[PersonExport](),
 		false,
 	)}

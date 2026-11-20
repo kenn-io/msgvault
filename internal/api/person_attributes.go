@@ -64,7 +64,6 @@ type SetPersonAttributeRequest struct {
 	ActiveFrom      *time.Time           `json:"active_from,omitempty"`
 	ActiveUntil     *time.Time           `json:"active_until,omitempty"`
 	ExpectedValueID *int64               `json:"expected_value_id,omitzero" nullable:"false" doc:"Positive ID compares the current value; zero requires no current value"`
-	ExpectedEmpty   bool                 `json:"expected_empty,omitempty"`
 }
 
 // AppendPersonNoteRequest carries one note fragment and its provenance.
@@ -267,13 +266,6 @@ func (s *Server) handleSetPersonAttribute(w http.ResponseWriter, r *http.Request
 	var request SetPersonAttributeRequest
 	if !decodeAttributeRequest(w, r, &request) {
 		return
-	}
-	if request.ExpectedEmpty && request.ExpectedValueID != nil {
-		writeError(w, http.StatusBadRequest, "invalid_expected_empty", "expected_empty cannot be combined with expected_value_id")
-		return
-	}
-	if request.ExpectedEmpty {
-		request.ExpectedValueID = new(int64)
 	}
 	if request.ExpectedValueID != nil && *request.ExpectedValueID < 0 {
 		writeError(w, http.StatusBadRequest, "invalid_expected_value_id",

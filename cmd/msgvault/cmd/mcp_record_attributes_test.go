@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 
@@ -200,8 +199,10 @@ func TestMCPAttributePersonDefinitions(t *testing.T) {
 	attributeError(t, attributeOperation(t, b, "delete_attribute_definition", staleDelete), "attribute_definition_revision_conflict")
 	assert.True(operationOutput[mcpserver.AttributeDefinitionDeleted](t, attributeOperation(t, b, "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": patched.ETag})).Deleted)
 	attributeError(t, attributeOperation(t, b, "get_attribute_definition", map[string]any{"definition_id": orgDefinition.ID}), "attribute_definition_not_found")
-	_, err = b.OperationDisclosure(t.Context(), "delete_attribute_definition", map[string]any{"definition_id": orgDefinition.ID, "etag": "example"})
-	attributeRefused(t, err, "attribute_definition_not_found")
+	for _, name := range []string{"patch_attribute_definition", "delete_attribute_definition"} {
+		_, err = b.OperationDisclosure(t.Context(), name, map[string]any{"definition_id": orgDefinition.ID, "etag": "example", "changes": map[string]any{"label": "Changed"}})
+		attributeRefused(t, err, "attribute_definition_not_found")
+	}
 }
 
 func TestMCPAttributeDefinitionMissingETagAfterWrite(t *testing.T) {
@@ -228,46 +229,6 @@ func TestMCPAttributeDefinitionMissingETagAfterWrite(t *testing.T) {
 	definition, err := st.GetAttributeDefinitionBySlugContext(t.Context(), store.AttributeObjectPerson, "favorite_tea")
 	require.NoError(err)
 	assert.Equal("Favorite tea", definition.Label)
-}
-
-func TestMCPAttributePreviewRefusals(t *testing.T) {
-	require := require.New(t)
-	b, _, person := recordAttributesFixture(t)
-	attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "metadata", "label": "Metadata", "value_type": "json", "field_type": "json"}})
-	large := jsontext.Value(`{"data":"` + strings.Repeat("x", 70<<10) + `"}`)
-	initial := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": large}}
-	written := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "set_person_attribute", initial))
-	require.NotNil(written.Value)
-	stale := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": jsontext.Value(`{"data":"replacement"}`)}, "expected_value_id": written.Value.ID + 1}
-	invalid := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}, "expected_empty": true, "expected_value_id": int64(1)}
-	for _, tc := range []struct {
-		name string
-		args map[string]any
-		code string
-	}{
-		{"large conflict", stale, "attribute_value_conflict"},
-		{"invalid expected empty", invalid, "invalid_expected_empty"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", tc.args)
-			attributeRefused(t, err, tc.code)
-		})
-	}
-}
-
-func TestMCPAttributeCapabilityRequiresExpectedEmpty(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	b, _, _ := recordAttributesFixture(t)
-	assert.Contains(b.capabilities(), "set_person_attribute")
-	capabilities, err := b.client.MCPCapabilities(t.Context())
-	require.NoError(err)
-	for i, route := range capabilities.Routes {
-		if route.OperationID == "setPersonAttribute" {
-			capabilities.Routes[i].RequestProperties = slices.DeleteFunc(slices.Clone(route.RequestProperties), func(name string) bool { return name == "expected_empty" })
-		}
-	}
-	assert.NotContains(newDaemonMCPOperations(b.client, capabilities).capabilities(), "set_person_attribute")
 }
 
 type attributeRaceBackend struct {
@@ -320,7 +281,7 @@ func TestMCPAttributeEditDuringApproval(t *testing.T) {
 				} else {
 					session := attributeSession(t, b, nil, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 						if scenario != "existing" && scenario != "clear" {
-							assert.Contains(request.Params.Message, `"expected_empty":true`)
+							assert.Contains(request.Params.Message, `"expected_value_id":0`)
 						}
 						compete()
 						return attributeAccept(), nil

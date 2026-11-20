@@ -63,12 +63,7 @@ type chunkedOperation struct {
 // Roots are built once, independent of capability combinations. Selecting any
 // subset retains pointer identity for the official SDK's shared schema cache.
 var fixedOperationalDefinitions = sync.OnceValue(func() []operationalDefinition {
-	definitions := append(sourceOperationalDefinitions(), loopOperationalDefinitions()...)
-	definitions = append(definitions, deletionReviewOperationalDefinitions()...)
-	definitions = append(definitions, personRecordDefinitions()...)
-	definitions = append(definitions, personExportDefinitions()...)
-	definitions = append(definitions, importJobDefinitions()...)
-	return append(definitions, recordAttributeDefinitions()...)
+	return append(append(append(append(append(append(sourceOperationalDefinitions(), loopOperationalDefinitions()...), deletionReviewOperationalDefinitions()...), personRecordDefinitions()...), personExportDefinitions()...), importJobDefinitions()...), recordAttributeDefinitions()...)
 })
 
 func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefinition {

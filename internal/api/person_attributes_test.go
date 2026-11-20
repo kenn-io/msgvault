@@ -379,12 +379,3 @@ func TestPersonAttributesHTTPKeepsInactiveDefinitionValuesVisibleAndClearable(t 
 	assert.False(ok,
 		"an inactive definition with no current values must drop out of the listing")
 }
-
-func TestSetPersonAttributeRejectsInvalidExpectedEmpty(t *testing.T) {
-	assert := assert.New(t)
-	srv, person := newPersonAttributeFixture(t)
-	path := personAttributesPath(person) + "/" + store.AttributeSlugPrimaryChannel
-	invalid := attributeRequest(t, srv, http.MethodPut, path, []byte(`{"value":{"type":"text","text":"email"},"expected_empty":true,"expected_value_id":1}`), "")
-	assert.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
-	assert.Contains(invalid.Body.String(), "invalid_expected_empty")
-}

@@ -12,7 +12,7 @@ func (s *Store) migrateAttributeValueJSON(ctx context.Context) error {
 	if !s.IsPostgreSQL() {
 		return s.migrateAttributeValueJSONSQLite(ctx)
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		for _, table := range []string{"person_attribute_values", "organization_attribute_values"} {
 			var isJSONB bool
 			if err := tx.QueryRowContext(ctx, `SELECT data_type = 'jsonb' FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name = 'value_json'`, table).Scan(&isJSONB); err != nil {

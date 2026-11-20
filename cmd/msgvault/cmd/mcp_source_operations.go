@@ -142,7 +142,7 @@ func decodeMCPOperationArguments[T any](args map[string]any) (T, error) {
 
 func (b *daemonMCPOperations) executeSourceOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
-		return operationFailure("invalid_arguments", false), true, nil
+		return operationFailure(invalidArguments, false), true, nil
 	}
 	var result *mcpserver.OperationResult
 	var err error
@@ -152,7 +152,7 @@ func (b *daemonMCPOperations) executeSourceOperation(ctx context.Context, name s
 		if decodeErr != nil {
 			return invalid()
 		}
-		result, err = readMCPArchivePageJSON[generated.ChangesResponse](ctx, b.client, "/api/v1/messages/changes", &generated.ListChangedMessagesRequestOptions{Query: &generated.ListChangedMessagesQuery{Cursor: input.Cursor, Limit: input.Limit, PersonID: input.PersonID, SourceID: input.SourceIDs, ConversationID: input.ConversationIDs, IncomingOnly: input.IncomingOnly}}, func(code string, _ []byte) (any, bool) { return nil, changesRefusal(code) })
+		result, err = readMCPArchivePageJSON[generated.ChangesResponse](ctx, b.client, "/api/v1/messages/changes", &generated.ListChangedMessagesRequestOptions{Query: &generated.ListChangedMessagesQuery{Cursor: input.Cursor, Limit: input.Limit, PersonID: input.PersonID, SourceID: input.SourceIDs, ConversationID: input.ConversationIDs, IncomingOnly: input.IncomingOnly}}, changesRefusal)
 	case "list_source_status":
 		input, decodeErr := decodeMCPOperationArguments[sourceStatusArguments](args)
 		if decodeErr != nil {
@@ -333,18 +333,18 @@ func (b *daemonMCPOperations) sourceOperationDisclosure(ctx context.Context, nam
 	case "update_slack_sync_policy":
 		input, err := decodeMCPOperationArguments[slackPolicyArguments](args)
 		if err != nil || input.ETag == "" {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 		}
 		updates, err := slackSettingUpdates(input)
 		if err != nil || len(updates) == 0 {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 		}
 		readName, expected, conflictCode = "get_slack_sync_policy", input.ETag, "settings_conflict"
 	case "set_person_display_name":
 		input, err := decodeMCPOperationArguments[personNameArguments](args)
 		_, present := args["display_name"]
 		if err != nil || input.PersonID <= 0 || input.ETag == "" || !present {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 		}
 		readName, readArgs, expected, conflictCode = "get_person_edit_context", map[string]any{"person_id": input.PersonID}, input.ETag, "person_revision_conflict"
 	default:

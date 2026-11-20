@@ -74,9 +74,7 @@ func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name stri
 			}
 			return &mcpserver.OperationResult{Data: data, ETag: headers.Get("ETag")}, true, nil
 		}
-		result, err := readMCPOperationJSONWithClassifier[generated.PersonProfileHistory](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, func(code string, _ []byte) (any, bool) {
-			return nil, personRecordRefusal(code)
-		}, http.StatusOK)
+		result, err := readMCPOperationJSONWithClassifier[generated.PersonProfileHistory](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, personRecordRefusal, http.StatusOK)
 		return result, true, err
 	case "patch_person_record":
 		input, err := decodeMCPOperationArguments[personPatchArgs](args)
