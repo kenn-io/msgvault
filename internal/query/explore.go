@@ -578,7 +578,6 @@ SELECT
     message_type,
     conversation_type,
     title,
-    title_is_preview,
     preview,
     CAST(COALESCE(to_json(participant_ids), '[]') AS VARCHAR) AS participant_ids,
     CAST(COALESCE(to_json(participant_labels), '[]') AS VARCHAR) AS participant_labels,
@@ -686,7 +685,6 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
             THEN COALESCE(NULLIF(c.title, ''), 'Conversation')
             ELSE COALESCE(NULLIF(m.subject, ''), NULLIF(c.title, ''), m.snippet, '')
         END AS title,
-        (k.entry_kind <> 'conversation' AND COALESCE(m.subject, '') = '' AND COALESCE(c.title, '') = '' AND COALESCE(m.snippet, '') <> '') AS title_is_preview,
         COALESCE(m.snippet, '') AS preview,
         m.is_from_me
     FROM page_keys k
@@ -768,7 +766,6 @@ SELECT
     p.message_type,
     p.conversation_type,
     p.title,
-    p.title_is_preview,
     p.preview,
     CAST(COALESCE(to_json(f.participant_ids), '[]') AS VARCHAR) AS participant_ids,
     CAST(COALESCE(to_json(f.participant_labels), '[]') AS VARCHAR) AS participant_labels,
@@ -911,7 +908,6 @@ func exploreLogicalEntriesCTE(withParticipantLists bool) string {
 		list_id,
         conversation_type,
         COALESCE(NULLIF(subject, ''), NULLIF(conversation_title, ''), snippet, '') AS title,
-        (COALESCE(subject, '') = '' AND COALESCE(conversation_title, '') = '' AND COALESCE(snippet, '') <> '') AS title_is_preview,
         snippet AS preview,` + messageLists + `
 		CASE WHEN candidate_rank IS NOT NULL THEN message_id ELSE NULL END AS strongest_matched_message_id,
 		1::BIGINT AS message_count,
@@ -941,7 +937,6 @@ func exploreLogicalEntriesCTE(withParticipantLists bool) string {
 		arg_max(list_id, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS list_id,
         arg_max(conversation_type, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS conversation_type,
         COALESCE(NULLIF(MAX(conversation_title), ''), 'Conversation') AS title,
-        false AS title_is_preview,
         arg_max(snippet, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS preview,` + conversationLists + `
 		arg_min(message_id, struct_pack(candidate_rank := candidate_rank, message_id := message_id))
 			FILTER (WHERE candidate_rank IS NOT NULL) AS strongest_matched_message_id,
@@ -1037,7 +1032,7 @@ func scanExploreRows(rows *sql.Rows, response *ExploreResponse) error {
 		if err := rows.Scan(
 			&row.Key, &row.Kind, &anchorID, &conversationID, &row.OccurredAt,
 			&row.SourceID, &row.SourceType, &row.SourceIdentifier,
-			&row.MessageType, &row.ConversationType, &row.Title, &row.TitleIsPreview, &row.Preview,
+			&row.MessageType, &row.ConversationType, &row.Title, &row.Preview,
 			&participantIDsJSON, &participantLabelsJSON, &strongestMatchedMessageID, &row.MessageCount,
 			&row.HasAttachments, &row.AttachmentCount, &row.AttachmentSize,
 			&row.DeletedFromSource, &response.TotalCount, &counterpartParticipantID, &row.SenderLabel,

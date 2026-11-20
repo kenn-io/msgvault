@@ -28,10 +28,6 @@
     return selection.kind === 'entry' ? selection.row.title || '(untitled)' : selection.kind === 'archive' ? messageTitle(selection.message.subject, selection.message.conversation_title) || '(untitled)' : selection.label;
   }
 
-  export function readingSelectionTabTitle(selection: ReadingPaneSelection): string {
-    return selection.kind === 'entry' && selection.row.title_is_preview ? '(untitled)' : readingSelectionTitle(selection);
-  }
-
   export type ReadingPaneStatus = 'ready' | 'loading' | 'missing' | 'error' | 'unavailable';
 
 </script>

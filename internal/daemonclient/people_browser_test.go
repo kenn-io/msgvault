@@ -789,7 +789,7 @@ func TestPeopleBrowserFilesAndActivityForwardCursorsAndMapRows(t *testing.T) {
 					"key":"message:89","kind":"conversation","anchor_message_id":89,"conversation_id":45,
 					"occurred_at":"2026-08-20T12:30:00Z","match":{},"source_id":4,"source_type":"whatsapp",
 					"source_identifier":"Personal","message_type":"whatsapp","conversation_type":"chat",
-					"title":"Morning","title_is_preview":true,"preview":"Hello","participant_ids":[11],"participant_labels":["Alice"],
+					"title":"Morning","preview":"Hello","participant_ids":[11],"participant_labels":["Alice"],
 					"matched_sender_identities":["alice@example.test"],"matched_recipient_identities":[],"message_count":1,
 					"has_attachments":false,"attachment_count":0,"attachment_size":0,"deleted_from_source":false
 				}],
@@ -816,7 +816,6 @@ func TestPeopleBrowserFilesAndActivityForwardCursorsAndMapRows(t *testing.T) {
 	require.NoError(err)
 	require.Len(activity.Rows, 1)
 	assert.Equal("Morning", activity.Rows[0].Title)
-	assert.True(activity.Rows[0].TitleIsPreview)
 	assert.Equal([]int64{11}, activity.Rows[0].ParticipantIDs)
 	assert.Equal("activity-next", activity.NextCursor)
 	assert.Equal(2, requests)

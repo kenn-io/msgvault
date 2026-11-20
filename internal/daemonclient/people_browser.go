@@ -838,7 +838,7 @@ func entryRowFromGenerated(row generated.EntryRow) query.EntryRow {
 		},
 		SourceID: row.SourceID, SourceType: row.SourceType,
 		SourceIdentifier: row.SourceIdentifier, MessageType: row.MessageType,
-		ConversationType: row.ConversationType, Title: row.Title, TitleIsPreview: boolValue(row.TitleIsPreview), Preview: row.Preview,
+		ConversationType: row.ConversationType, Title: row.Title, Preview: row.Preview,
 		ParticipantIDs:             append([]int64(nil), row.ParticipantIds...),
 		ParticipantLabels:          append([]string(nil), row.ParticipantLabels...),
 		SenderLabel:                stringValue(row.SenderLabel),

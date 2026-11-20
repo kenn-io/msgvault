@@ -892,16 +892,64 @@ describe('AppShell', () => {
       await waitFor(() => expect(document.title).toBe('Files · msgvault'));
     });
 
-    it.each([
-      ['preview', true, '(untitled)'],
-      ['subject equal to preview', false, 'Synthetic private preview'],
-    ])('names the browser tab for %s without changing the reader title', async (kind, titleIsPreview, expected) => {
+    it('names subjectless messages by their snippets as the selection changes', async () => {
       const state = shellState('everything');
-      state.commitNavigation({ selectedRow: 'message:1' });
-      const row = { ...entry(1), title: 'Synthetic private preview', preview: 'Synthetic private preview', title_is_preview: titleIsPreview };
-      render(AppShell, { client: createAPIClient(async () => Response.json(exploreResponse({ rows: [row], total_count: 1 }))), state });
-      await screen.findByRole('complementary', { name: 'Reading pane: Synthetic private preview' });
-      await waitFor(() => expect(document.title).toBe(`${expected} · Messages · msgvault`));
+      const rows = [1, 2].map(id => ({ ...entry(id), title: `Snippet ${id}`, preview: `Snippet ${id}` }));
+      const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({ rows, total_count: 2 })));
+      render(AppShell, { client: createAPIClient(fetchFn), state });
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await fireEvent.click((await within(grid).findAllByText('Snippet 1'))[0]!);
+      await waitFor(() => expect(document.title).toBe('Snippet 1 · Messages · msgvault'));
+      expect(fetchFn.mock.calls.some(([input]) => /\/(messages|conversations)\/2(?:\?|$)/.test(String(input instanceof Request ? input.url : input)))).toBe(false);
+      await fireEvent.click((await within(grid).findAllByText('Snippet 2'))[0]!);
+      await waitFor(() => expect(document.title).toBe('Snippet 2 · Messages · msgvault'));
+    });
+
+    it.each(['everything', 'files'] as const)('names saved views in %s and follows navigation', async workspace => {
+      window.history.replaceState(null, '', `/?workspace=${workspace}`);
+      const state = new ExploreState(window);
+      states.push(state);
+      const presentation = workspace === 'files' ? 'files' : 'table';
+      const views = [
+        { ...view(11, 'Receipts'), canonical_state: { query: 'receipts', presentation } },
+        { ...view(12, 'Travel'), canonical_state: { query: 'travel', presentation } },
+      ];
+      let delay = false;
+      let release!: (response: Response) => void;
+      const pending = new Promise<Response>(resolve => { release = resolve; });
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/saved-views')) return delay ? pending : Response.json({ saved_views: views });
+        if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'files-1', search_provenance: {} });
+        return Response.json(exploreResponse());
+      });
+      let rendered = render(AppShell, { client, state });
+      try {
+        await fireEvent.click(await screen.findByRole('button', { name: 'Receipts' }));
+        await waitFor(() => expect(state.current.query).toBe('receipts'));
+        await waitFor(() => expect(document.title).toBe(`Receipts · ${workspace === 'files' ? 'Files' : 'Messages'} · msgvault`));
+        await fireEvent.click(screen.getByRole('button', { name: 'Travel' }));
+        await waitFor(() => expect(state.current.query).toBe('travel'));
+        await waitFor(() => expect(document.title).toBe(`Travel · ${workspace === 'files' ? 'Files' : 'Messages'} · msgvault`));
+        window.history.back();
+        await waitFor(() => expect(document.title).toContain('Receipts ·'));
+        window.history.forward();
+        await waitFor(() => expect(document.title).toContain('Travel ·'));
+        rendered.unmount();
+        state.destroy();
+        delay = true;
+        const reloaded = new ExploreState(window);
+        states.push(reloaded);
+        rendered = render(AppShell, { client, state: reloaded });
+        await waitFor(() => expect(document.title).toBe(`${workspace === 'files' ? 'Files' : 'Messages'} · msgvault`));
+        release(Response.json({ saved_views: views }));
+        await waitFor(() => expect(document.title).toContain('Travel ·'));
+        reloaded.commitNavigation({ query: 'other' });
+        await waitFor(() => expect(document.title).toBe(`${workspace === 'files' ? 'Files' : 'Messages'} · msgvault`));
+      } finally {
+        release(Response.json({ saved_views: [] }));
+        rendered.unmount();
+      }
     });
 
     it('names the browser tab for source and contact panels and keeps it during setup', async () => {
@@ -2132,7 +2180,7 @@ describe('AppShell', () => {
         source_counts: [], first_at: '2026-07-18T12:00:00Z', last_at: '2026-07-18T12:00:00Z', cache_revision: 'cache-1'
       });
       if (path === '/api/v1/participants/1/timeline') return Response.json(exploreResponse({
-        rows: [1, 2].map(id => ({ ...entry(id), ...(id === 1 ? { title: 'Synthetic private preview', preview: 'Synthetic private preview', title_is_preview: true } : {}), conversation_id: id, anchor_message_id: id })), total_count: 2
+        rows: [1, 2].map(id => ({ ...entry(id), ...(id === 1 ? { title: 'Synthetic private preview', preview: 'Synthetic private preview' } : {}), conversation_id: id, anchor_message_id: id })), total_count: 2
       }));
       if (path === '/api/v1/relationships/1/calendar') return Response.json({
         participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC',
@@ -2158,7 +2206,7 @@ describe('AppShell', () => {
         await fireEvent.click(within(grid).getAllByText('Synthetic private preview')[0]!);
         await screen.findByText('Reader body 1');
         expect(screen.getByRole('complementary', { name: 'Reading pane: Synthetic private preview' })).toBeDefined();
-        await waitFor(() => expect(document.title).toBe('(untitled) · People · msgvault'));
+        await waitFor(() => expect(document.title).toBe('Synthetic private preview · People · msgvault'));
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'l' });
         await screen.findByText('Reader body 2');

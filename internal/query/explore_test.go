@@ -481,30 +481,12 @@ func TestExploreFlattensTitleOnlyWhenFallenBackToSnippet(t *testing.T) {
 	})
 	b.AddFrom(fallback, alice, "Alice")
 
-	same := b.AddMessage(MessageOpt{SourceID: gmail, Subject: "Same text", Snippet: "Same text", SentAt: when.Add(-2 * time.Minute)})
-	b.AddFrom(same, alice, "Alice")
-	conversation := b.AddMessage(MessageOpt{SourceID: gmail, ConversationID: 801, ConversationTitle: "Thread title", Snippet: "Preview", SentAt: when.Add(-3 * time.Minute)})
-	b.AddFrom(conversation, alice, "Alice")
-	calendar := b.AddMessage(MessageOpt{SourceID: gmail, MessageType: messageTypeCalendar, Snippet: "Private location", SentAt: when.Add(-4 * time.Minute)})
-	b.AddFrom(calendar, alice, "Alice")
-	blank := b.AddMessage(MessageOpt{SourceID: gmail, SentAt: when.Add(-5 * time.Minute)})
-	b.messages[len(b.messages)-1].Snippet = ""
-	b.AddFrom(blank, alice, "Alice")
-
 	engine := b.BuildEngine()
 	response, err := engine.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 20}})
 	require.NoError(err)
-	require.Len(response.Rows, 6)
-	for i, want := range []struct {
-		title   string
-		preview bool
-	}{
-		{"Re: 2 ** 3 == 8?", false}, {"Meeting notes Action item", true}, {"Same text", false},
-		{"Thread title", false}, {"Private location", true}, {"", false},
-	} {
-		assert.Equal(want.title, response.Rows[i].Title)
-		assert.Equal(want.preview, response.Rows[i].TitleIsPreview)
-	}
+	require.Len(response.Rows, 2)
+	assert.Equal("Re: 2 ** 3 == 8?", response.Rows[0].Title, "a real subject with markdown-like characters must not be altered")
+	assert.Equal("Meeting notes Action item", response.Rows[1].Title, "a title that fell back to the snippet is still flattened")
 }
 
 func TestExploreAppliesContextBeforeChatAggregation(t *testing.T) {

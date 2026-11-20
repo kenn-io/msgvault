@@ -38,7 +38,7 @@
   } from '../../explore/models';
   import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
-  import { readingSelectionTabTitle } from '../reader/ReadingPane.svelte';
+  import { readingSelectionTitle } from '../reader/ReadingPane.svelte';
   import { RAIL, normalizeCategory } from '../../settings/layout';
   import { OPERATION_KIND_LABELS, RELATED_STATUS_LABELS } from '../../operations/labels';
   import { ExploreLoader, type MessagesTable } from '../../explore/loader.svelte';
@@ -96,7 +96,7 @@
   import { EverythingSessionState } from './EverythingSessionState.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
 
-  import { ShellData, viewIncompatibility, viewState } from './shell-data.svelte';
+  import { ShellData, matchingView, viewIncompatibility, viewState } from './shell-data.svelte';
   import { readerPosition } from '../../explore/reader-position.svelte';
   import type { JobTarget } from '../../jobs/jobs';
   import type { SavedView } from '../../api/generated/models';
@@ -525,7 +525,7 @@
     const operationDetail = runHistory?.operationStatus ? RELATED_STATUS_LABELS[runHistory.operationStatus] :
       runHistory?.operationRunID ? (operationsController.snapshot.detail?.id === runHistory.operationRunID ? OPERATION_KIND_LABELS[operationsController.snapshot.detail.kind] : 'Run') : '';
     const meeting = archivedMeeting.detail?.id === archiveMeetingID && archivedMeeting.detail ?
-      readingSelectionTabTitle({ kind: 'archive', message: archivedMeeting.detail }) :
+      readingSelectionTitle({ kind: 'archive', message: archivedMeeting.detail }) :
       archivedMeeting.error ? 'Meeting unavailable' : 'Loading meeting';
     let detail = '';
     if (contextualViewerFile) detail = contextualFileTitle?.id === contextualViewerFile.id ? contextualFileTitle.name : '';
@@ -536,6 +536,7 @@
     else if (workspace === 'relationships') detail = personMessages?.state.current.selectedRow ? personMessages.readingTitle ?? '' : peopleTitle;
     else if (workspace === 'sources') detail = sourcesTitle;
     else if (workspace === 'settings') detail = RAIL.find(category => category.id === normalizeCategory(exploreState.current.settingsCategory))?.label ?? '';
+    if (!detail && (workspace === 'everything' || workspace === 'files')) detail = matchingView(shellData.views, exploreState.current)?.name ?? '';
     document.title = [detail, workspaceLabel(workspace), 'msgvault'].filter(Boolean).join(' · ');
   });
 

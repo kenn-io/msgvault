@@ -188,7 +188,6 @@ type EntryRow struct {
 	MessageType                string       `json:"message_type"`
 	ConversationType           string       `json:"conversation_type"`
 	Title                      string       `json:"title"`
-	TitleIsPreview             bool         `json:"title_is_preview,omitempty"`
 	Preview                    string       `json:"preview"`
 	ParticipantIDs             []int64      `json:"participant_ids,omitempty"`
 	ParticipantLabels          []string     `json:"participant_labels,omitempty"`

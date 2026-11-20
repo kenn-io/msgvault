@@ -9,8 +9,9 @@ import { OperationsController } from '../../operations/controller.svelte';
 import { JobsStore } from '../../jobs/jobs.svelte';
 import type { SavedView, PatchSavedViewRequest } from '../../api/generated/models';
 import type { ExploreURLState } from '../../explore/models';
-import { supportsSavedViewSchema, exploreStateFromSavedView, type CanonicalState } from '../../saved-views/canonical';
+import { canonicalSavedViewState, supportsSavedViewSchema, exploreStateFromSavedView, type CanonicalState } from '../../saved-views/canonical';
 
+import { canonicalFingerprint } from '../../explore/selection';
 import { DeletionsController } from '../../deletions/controller.svelte';
 
 const REFRESH_MS = 30_000;
@@ -23,6 +24,15 @@ export function viewIncompatibility(view: SavedView): string {
 
 export function viewState(view: SavedView): Partial<ExploreURLState> {
   return exploreStateFromSavedView(view.canonical_state as CanonicalState, view.schema_version);
+}
+
+export function matchingView(views: SavedView[], state: ExploreURLState): SavedView | undefined {
+  const current = canonicalFingerprint(canonicalSavedViewState(state));
+  return views.find(view => {
+    if (viewIncompatibility(view)) return false;
+    const saved = viewState(view);
+    return saved.workspace === state.workspace && canonicalFingerprint(canonicalSavedViewState({ ...state, ...saved })) === current;
+  });
 }
 
 /** Saved views and live jobs shown in the shell. */

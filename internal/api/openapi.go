@@ -434,8 +434,7 @@ import (
 // 5.18.0 adds Directory cadence filters, ordering, presets and coverage.
 // 5.19.0 adds message export at GET /api/v1/cli/messages/export.
 // 5.20.0 adds message_type to file details.
-// 5.21.0 adds title provenance to Explore rows.
-const APISchemaVersion = "5.21.0"
+const APISchemaVersion = "5.20.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

@@ -4578,7 +4578,6 @@ type EntryRow struct {
 	SourceIdentifier           string       `json:"source_identifier" validate:"required"`
 	SourceType                 string       `json:"source_type" validate:"required"`
 	Title                      string       `json:"title" validate:"required"`
-	TitleIsPreview             *bool        `json:"title_is_preview,omitempty"`
 }
 
 func (e EntryRow) Validate() error {
