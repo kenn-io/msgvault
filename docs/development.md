@@ -279,8 +279,9 @@ same `InitSchema()` path. Template clones send no schema statements through a
 store connection; PostgreSQL clone drops run in the background on a session of
 their own.
 A PostgreSQL template is owned through a session advisory lock the server releases
-when the binary exits; the next same-scope template build reclaims clones left
-by queued, overflowed, and failed drops.
+when the binary exits. Queued and in-flight drops are lost at exit; the next
+same-scope template build reclaims those clones and clones left by overflowed
+or failed drops.
 A role without `CREATEDB` falls back to a private schema in the configured database.
 
 `dbtest.NewTestDB` copies an in-memory `schema.sql` template per test with

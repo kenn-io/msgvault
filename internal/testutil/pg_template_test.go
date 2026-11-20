@@ -149,23 +149,30 @@ func TestPostgresCloneDropsRecoverFromStalledHandshake(t *testing.T) {
 		}
 	}()
 	t.Cleanup(func() { _ = listener.Close() })
+	// Once the worker has received this request, it has captured the original
+	// channel. A separate full channel makes overflow independent of timing.
+	cloneDrops <- cloneDrop{dbURL: "postgres://test@" + listener.Addr().String() + "/test?sslmode=disable", name: "msgvault_tc_12345678_1234567890abcdef_1234567890abcdef"}
+	select {
+	case conn := <-accepted:
+		t.Cleanup(func() { _ = conn.Close() })
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "worker did not connect")
+	}
+	originalDrops := cloneDrops
+	fullDrops := make(chan cloneDrop, cap(originalDrops))
+	for range cap(fullDrops) {
+		fullDrops <- cloneDrop{dbURL: ":invalid"}
+	}
+	cloneDrops = fullDrops
+	t.Cleanup(func() { cloneDrops = originalDrops })
 	var database string
 	t.Run("owner", func(sub *testing.T) {
 		database = currentDatabaseOf(sub, NewTestStore(sub))
-		cloneDrops <- cloneDrop{dbURL: "postgres://test@" + listener.Addr().String() + "/test?sslmode=disable", name: "msgvault_tc_12345678_1234567890abcdef_1234567890abcdef"}
-		select {
-		case conn := <-accepted:
-			t.Cleanup(func() { _ = conn.Close() })
-		case <-time.After(10 * time.Second):
-			require.FailNow(sub, "worker did not connect")
-		}
-		for _, name := range clones {
-			cloneDrops <- cloneDrop{dbURL: dbURL, name: name}
-		}
-		for range cap(cloneDrops) - len(clones) {
-			cloneDrops <- cloneDrop{dbURL: ":invalid"}
-		}
 	})
+	cloneDrops = originalDrops
+	for _, name := range clones {
+		cloneDrops <- cloneDrop{dbURL: dbURL, name: name}
+	}
 	require.NotEmpty(t, database)
 	// The full queue leaves this clone for the next sweep.
 	t.Cleanup(func() { dropOwnedDatabase(context.WithoutCancel(t.Context()), admin, database) })
