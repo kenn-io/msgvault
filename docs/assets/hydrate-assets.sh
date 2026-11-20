@@ -20,6 +20,16 @@ static_assets=(
   "oauth-multi-account.svg"
   "og-image.png"
   "og-image.svg"
+  "analytical-dark-comfortable-darwin.png"
+  "analytical-dark-comfortable-linux.png"
+  "analytical-dark-compact-darwin.png"
+  "analytical-dark-compact-linux.png"
+  "analytical-light-comfortable-darwin.png"
+  "analytical-light-comfortable-linux.png"
+  "analytical-light-compact-darwin.png"
+  "analytical-light-compact-linux.png"
+  "relationships-dark-comfortable-darwin.png"
+  "relationships-light-compact-darwin.png"
 )
 
 generated_assets=(
@@ -49,12 +59,6 @@ generated_assets=(
   "tui-time-monthly.svg"
   "tui-time-yearly.svg"
   "tui-time.svg"
-  "web/messages-dark-comfortable.png"
-  "web/messages-dark-compact.png"
-  "web/messages-light-comfortable.png"
-  "web/messages-light-compact.png"
-  "web/people-dark-comfortable.png"
-  "web/people-light-compact.png"
 )
 
 has_expected_assets() {

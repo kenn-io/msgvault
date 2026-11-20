@@ -102,9 +102,10 @@ Follow the [diagram guide](diagrams/README.md) and the scripts in
 has a narrow provenance and privacy-review exception in [AGENTS.md](../AGENTS.md);
 it does not authorize reuse in ordinary tests.
 
-`docs-assets` holds curated images: the favicon, social card, and hand-drawn
-diagrams. `docs-generated-assets` holds everything a script produces: the TUI
-and CLI SVGs, the concept images, and the Web UI captures under `web/`.
+`docs-assets` holds curated images: the favicon, social card, hand-drawn
+diagrams, and the Web UI images the pages show today. `docs-generated-assets`
+holds everything a script produces: the TUI and CLI SVGs, the concept images,
+and the Web UI captures under `web/`.
 
 `make docs-screenshots DOCS_SCREENSHOTS_OUTPUT=DIR` builds the complete
 `docs-generated-assets` tree with only Bash, Git, and Docker on the host; the
