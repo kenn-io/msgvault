@@ -226,7 +226,7 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		}
 		ids, err := st.PersistTelegramMessagesContext(ctx, pending)
 		if err != nil {
-			return err
+			return fmt.Errorf("telegram: %w", err)
 		}
 		for i, id := range ids {
 			existing[pending[i].Message.SourceMessageID] = id

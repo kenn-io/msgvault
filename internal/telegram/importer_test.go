@@ -892,7 +892,7 @@ func TestImportFailedBatchRetriesChat(t *testing.T) {
 	opts := ImportOptions{RootDir: root, Me: "1"}
 	_, err = Import(t.Context(), st, opts)
 	require.ErrorContains(t, err, "forced failure")
-	require.ErrorContains(t, err, "user2:55")
+	require.ErrorContains(t, err, "telegram: persist message user2:55")
 	assert.Equal(t, 50, countMessages(t, st))
 	drop := "DROP TRIGGER fail_batch_import"
 	if st.IsPostgreSQL() {
