@@ -19,15 +19,18 @@ import (
 type Options struct {
 	PersonID int64
 	Limit    int
+
+	IncludeClosed bool
 }
 
-// Result is the oldest-first slice of open loops. Truncated is set when more
-// than Limit loops are open. SkippedUnparseable counts the stored originals
+// Result lists reply loops and promises. Truncated is set when either
+// collection exceeds Limit. SkippedUnparseable counts the stored originals
 // the list could not read, which may hide a reply that settled a loop.
 // CoverageIncomplete is set when List stopped after MaxListEvidenceComputations
 // uncached messages; the loops come from the conversations read in full.
 type Result struct {
 	Loops              []Loop
+	Commitments        []store.PersonCommitment
 	Truncated          bool
 	SkippedUnparseable int
 	CoverageIncomplete bool
@@ -70,6 +73,10 @@ type Store interface {
 	MarkLoopDoneContext(ctx context.Context, anchorID int64, questions []store.LoopMessage) (store.LoopDecision, error)
 	SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, questions []store.LoopMessage) (store.LoopDecision, error)
 	ClearLoopDecisionContext(ctx context.Context, messageID int64) (bool, error)
+	ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]store.PersonCommitment, error)
+	DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (store.PersonCommitment, error)
+	HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error)
+	PersonCommitmentDiscoveryContext(ctx context.Context, personID int64, scopeFingerprint string) (*time.Time, bool, error)
 }
 
 type storeReader struct {
@@ -165,6 +172,22 @@ func graceElapsed(kind string, asked, now time.Time) bool {
 	return !now.Before(asked.Add(after))
 }
 
+// requestStop classifies a phase failure against the request context. A
+// deadline is incomplete coverage, a caller that left gets the context error,
+// and any other error passes through while the request is live.
+func requestStop(ctx context.Context, err error) (bool, error) {
+	if err != nil && ctx.Err() != nil {
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return false, ctx.Err()
+		}
+		err = ErrEvidenceIncomplete
+	}
+	if errors.Is(err, ErrEvidenceIncomplete) {
+		return true, nil
+	}
+	return false, err
+}
+
 // List returns unanswered questions. Decisions apply only to marked questions.
 func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, error) {
 	if opts.Limit <= 0 {
@@ -187,23 +210,42 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 			kept = kept[:min(len(kept), opts.Limit+1)]
 			return nil
 		})
-	if err != nil && ctx.Err() != nil {
-		// A request deadline returns the conversations checked in full, as
-		// when the evidence budget runs out. A caller that left gets the error.
-		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return Result{}, ctx.Err()
-		}
-		err = ErrEvidenceIncomplete
-	}
-	incomplete := errors.Is(err, ErrEvidenceIncomplete)
-	if err != nil && !incomplete {
+	incomplete, err := requestStop(ctx, err)
+	if err != nil {
 		return Result{}, err
 	}
 	result := Result{Loops: kept, SkippedUnparseable: unparsed, CoverageIncomplete: incomplete}
 	if len(kept) > opts.Limit {
 		result.Loops, result.Truncated = kept[:opts.Limit], true
 	}
+	{
+		var commitments []store.PersonCommitment
+		err := ctx.Err()
+		if err == nil {
+			commitments, err = st.ListPersonCommitmentsContext(ctx, opts.PersonID, now, min(opts.Limit, MaxLimit)+1, opts.IncludeClosed)
+		}
+		stopped, err := requestStop(ctx, err)
+		if err != nil {
+			return Result{}, err
+		}
+		result.CoverageIncomplete = result.CoverageIncomplete || stopped
+		if len(commitments) > opts.Limit {
+			commitments = commitments[:opts.Limit]
+			result.Truncated = true
+		}
+		result.Commitments = commitments
+	}
 	return result, nil
+}
+
+// WalkOpen visits all open loops without the list response limit.
+func WalkOpen(ctx context.Context, st Store, now time.Time, visit func(Loop) error) error {
+	marks, err := st.LoopMarksContext(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = find(ctx, st, store.LoopQuery{}, now, marks, visit)
+	return err
 }
 
 // openQuestions applies exact decisions before choosing the visible anchor.
@@ -227,6 +269,11 @@ func openQuestions(loop Loop, marks map[int64]store.LoopMark, now time.Time) (Lo
 
 // ErrNotOpen reports a message that does not anchor an open loop.
 var ErrNotOpen = errors.New("message does not anchor an open loop")
+
+// Open returns the loop currently anchored at messageID.
+func Open(ctx context.Context, st Store, messageID int64, now time.Time) (Loop, error) {
+	return requireAnchor(ctx, st, messageID, nil, now)
+}
 
 // Done marks the loop anchored at messageID done. A caller that listed the
 // loop passes the questions the list showed, and only those are marked, so a

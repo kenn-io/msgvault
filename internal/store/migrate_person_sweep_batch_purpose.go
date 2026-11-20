@@ -39,7 +39,18 @@ func migratePersonSweepBatchPurposeV2SQLite(ctx context.Context, tx *loggedTx) e
 	if strings.Contains(definition, "'brief_repair'") {
 		return nil
 	}
-	statements := []string{
+	for _, statement := range personSweepBatchRebuildStatements(personSweepBatchPurposeCheck) {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("rebuild person sweep call journal purposes: %w", err)
+		}
+	}
+	return nil
+}
+
+// personSweepBatchRebuildStatements rebuilds the call journal with check as
+// its coupling constraint.
+func personSweepBatchRebuildStatements(check string) []string {
+	return []string{
 		`DROP TABLE IF EXISTS person_sweep_batches_purpose_v2`,
 		`CREATE TABLE person_sweep_batches_purpose_v2 (
 			attempt_id TEXT NOT NULL REFERENCES person_sweep_attempts(id) ON DELETE CASCADE,
@@ -68,7 +79,7 @@ func migratePersonSweepBatchPurposeV2SQLite(ctx context.Context, tx *loggedTx) e
 			)),
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			completed_at TEXT,
-			CONSTRAINT person_sweep_batches_call_coordinate_check ` + personSweepBatchPurposeCheck + `,
+			CONSTRAINT person_sweep_batches_call_coordinate_check ` + check + `,
 			PRIMARY KEY (attempt_id, batch_ordinal, call_ordinal)
 		)`,
 		`INSERT INTO person_sweep_batches_purpose_v2 (
@@ -88,12 +99,6 @@ func migratePersonSweepBatchPurposeV2SQLite(ctx context.Context, tx *loggedTx) e
 		`DROP TABLE person_sweep_batches`,
 		`ALTER TABLE person_sweep_batches_purpose_v2 RENAME TO person_sweep_batches`,
 	}
-	for _, statement := range statements {
-		if _, err := tx.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("rebuild person sweep call journal purposes: %w", err)
-		}
-	}
-	return nil
 }
 
 func migratePersonSweepBatchPurposeV2PostgreSQL(ctx context.Context, tx *loggedTx) error {

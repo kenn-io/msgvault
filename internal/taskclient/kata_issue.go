@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	kata "go.kenn.io/kata/pkg/client/generated"
 )
@@ -44,6 +45,39 @@ func (c *KataClient) FindActionTask(ctx context.Context, project, action string)
 		return KataTask{}, false, err
 	}
 	return tasks[0], true, nil
+}
+
+// FindOpenMetadataTask returns the oldest filed open issue whose source predates before.
+func (c *KataClient) FindOpenMetadataTask(ctx context.Context, project, key, value string, before time.Time) (KataTask, bool, error) {
+	if key == "" || value == "" {
+		return KataTask{}, false, ErrRequestRejected
+	}
+	query := url.Values{"meta": {key + "=" + value}, "status": {"open"}, "sort": {"oldest"}, "limit": {"100"}}
+	for {
+		path, err := c.issuePath(ctx, project, "?"+query.Encode())
+		if err != nil {
+			return KataTask{}, false, err
+		}
+		transport := *c.transport
+		transport.maxResponseBytes = max(transport.maxResponseBytes, issueListMaxResponseBytes)
+		var response kata.ListIssuesResponseBody
+		if err := transport.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
+			return KataTask{}, false, err
+		}
+		for _, issue := range response.Issues {
+			stamp, _ := issue.Metadata["msgvault.source_time"].(string)
+			at, err := time.Parse(time.RFC3339Nano, stamp)
+			if err != nil || !at.Before(before) {
+				continue
+			}
+			task := taskFromListRow(project, issue.UID, issue.ShortID, issue.QualifiedID, issue.Title, issue.Body, issue.Revision, issue.Metadata, issue.Status, issue.Priority, issue.Owner, issue.Labels, issue.WebURL)
+			return task, true, nil
+		}
+		if response.NextCursor == nil || *response.NextCursor == "" {
+			return KataTask{}, false, nil
+		}
+		query.Set("cursor", *response.NextCursor)
+	}
 }
 
 // FindMetadataTasks returns up to limit open or closed issues carrying the
@@ -84,9 +118,15 @@ func (c *KataClient) listAllIssues(ctx context.Context, query string) ([]KataTas
 		if issue.UID == "" || issue.ProjectName == "" {
 			return nil, ErrInvalidResponse
 		}
-		task := taskFromKataIssue(issue.ProjectName, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, issue.Labels, issue.WebURL)
-		task.QualifiedRef = issue.QualifiedID
+		task := taskFromListRow(issue.ProjectName, issue.UID, issue.ShortID, issue.QualifiedID, issue.Title, issue.Body, issue.Revision, issue.Metadata, issue.Status, issue.Priority, issue.Owner, issue.Labels, issue.WebURL)
 		tasks = append(tasks, task)
 	}
 	return tasks, nil
+}
+
+// taskFromListRow maps the fields shared by Kata's project and global list rows.
+func taskFromListRow(project, uid, shortID, qualifiedID, title, body string, revision int64, metadata map[string]any, status string, priority *int64, owner *string, labels []string, webURL *string) KataTask {
+	task := taskFromKataIssue(project, kata.ShowIssueOut{UID: uid, ShortID: shortID, Title: title, Body: body, Revision: revision, Metadata: metadata, Status: status, Priority: priority, Owner: owner}, labels, webURL)
+	task.QualifiedRef = qualifiedID
+	return task
 }

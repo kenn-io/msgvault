@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -25,6 +27,29 @@ type loopFixture struct {
 	f      *storetest.Fixture
 	router http.Handler
 	owed   int64
+}
+
+type commitmentDiscoveryLoopStore struct {
+	*store.Store
+
+	active             bool
+	since              *time.Time
+	complete           bool
+	consentErr         error
+	discoveryErr       error
+	consentFingerprint string
+	discoveryPersonID  int64
+	discoveryScope     string
+}
+
+func (s *commitmentDiscoveryLoopStore) HasActivePersonCommitmentConsent(_ context.Context, fingerprint string) (bool, error) {
+	s.consentFingerprint = fingerprint
+	return s.active, s.consentErr
+}
+
+func (s *commitmentDiscoveryLoopStore) PersonCommitmentDiscoveryContext(_ context.Context, personID int64, scope string) (*time.Time, bool, error) {
+	s.discoveryPersonID, s.discoveryScope = personID, scope
+	return s.since, s.complete, s.discoveryErr
 }
 
 func newLoopFixture(t *testing.T) *loopFixture {
@@ -60,6 +85,21 @@ func (l *loopFixture) list(t *testing.T, query string) LoopListResponse {
 	return out
 }
 
+func TestCommitmentDecisionMapsInvalidAndUnknownIDs(t *testing.T) {
+	a := assert.New(t)
+	fixture := newLoopFixture(t)
+	for _, tc := range []struct {
+		id, request string
+		status      int
+	}{
+		{"12", `{"state":"done"}`, http.StatusBadRequest},
+		{"c12", `{"state":"done"}`, http.StatusNotFound},
+	} {
+		response := fixture.do(t, http.MethodPost, "/api/v1/loops/commitments/"+tc.id+"/decision", tc.request)
+		a.Equal(tc.status, response.Code, response.Body.String())
+	}
+}
+
 func TestListLoopsFilters(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -82,6 +122,95 @@ func TestListLoopsFilters(t *testing.T) {
 	truncated := l.list(t, "?limit=1")
 	assert.Len(truncated.Items, 1)
 	assert.True(truncated.Truncated)
+}
+
+func commitmentDiscoveryAPIConfig(t *testing.T) *config.Config {
+	t.Helper()
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.People.Sweep.Enabled = true
+	cfg.People.Sweep.Commitments.Enabled = true
+	provider := completeAPIProvider("EXAMPLE_KEY", "example-model")
+	provider.SourceUntil = "2025-06-30"
+	provider.AllowSensitive = true
+	provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceConversationText}
+	configureAPIProvider(cfg, provider)
+	cfg.People.Sweep.ApplyDefaults()
+	return cfg
+}
+
+func TestListLoopsCommitmentDiscovery(t *testing.T) {
+	since := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name                                          string
+		active                                        bool
+		consentErr, discoveryErr                      error
+		status                                        int
+		incomplete, wantSince, wantComplete, complete bool
+		byPerson                                      bool
+	}{
+		{name: "active", active: true, status: http.StatusOK, wantSince: true, wantComplete: true, complete: true, byPerson: true},
+		{name: "inactive", status: http.StatusOK, wantSince: true, wantComplete: true},
+		{name: "consent deadline", active: true, consentErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true},
+		{name: "discovery deadline", active: true, discoveryErr: context.DeadlineExceeded, status: http.StatusOK, incomplete: true, wantComplete: true},
+		{name: "consent error", consentErr: errors.New("consent read failed"), status: http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			fixture := newLoopFixture(t)
+			st := &commitmentDiscoveryLoopStore{Store: fixture.f.Store, active: tc.active, since: &since, complete: true, consentErr: tc.consentErr, discoveryErr: tc.discoveryErr}
+			if tc.discoveryErr != nil {
+				st.since = nil
+				st.complete = false
+			}
+			cfg := commitmentDiscoveryAPIConfig(t)
+			cfg.Activity.Timezone = "America/New_York"
+			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+			w := httptest.NewRecorder()
+			path := "/api/v1/loops"
+			var personID int64
+			if tc.byPerson {
+				participant := fixture.f.EnsureParticipant("alex@example.test", "", "example.test")
+				person, _, err := fixture.f.Store.CreatePersonFromParticipant(participant)
+				r.NoError(err)
+				personID = person.ID
+				path += fmt.Sprintf("?person_id=%d", personID)
+			}
+			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
+			r.Equal(tc.status, w.Code, w.Body.String())
+			if tc.status != http.StatusOK {
+				return
+			}
+			var response LoopListResponse
+			r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			a.Equal(tc.incomplete, response.CoverageIncomplete)
+			if tc.wantSince {
+				r.NotNil(response.CommitmentsSince)
+				a.True(response.CommitmentsSince.Equal(since))
+			} else {
+				a.Nil(response.CommitmentsSince)
+			}
+			if tc.wantComplete {
+				r.NotNil(response.CommitmentsComplete)
+				a.Equal(tc.complete, *response.CommitmentsComplete)
+			} else {
+				a.Nil(response.CommitmentsComplete)
+			}
+			if !tc.incomplete {
+				r.NotNil(response.CommitmentsUntil)
+				a.Equal("2025-06-30", response.CommitmentsUntil.Format(time.DateOnly))
+			}
+			if tc.byPerson {
+				profile, err := cfg.People.Sweep.Profile()
+				r.NoError(err)
+				a.Equal(profile.Fingerprint, st.consentFingerprint)
+				a.Equal(personID, st.discoveryPersonID)
+				commitments := cfg.People.Sweep.Commitments
+				commitments.Timezone = cfg.Activity.Timezone
+				a.Equal(peoplesweep.CommitmentScopeFingerprint(profile, commitments), st.discoveryScope)
+			}
+		})
+	}
 }
 
 func TestListLoopsAnswersDuringBackupFreezeWithoutWritingEvidence(t *testing.T) {
@@ -427,4 +556,64 @@ func TestLoopBackfillStopsWhenServerShutsDown(t *testing.T) {
 	assert.Equal(first, result.Items[0].AnchorMessageID)
 	assert.Equal(second, result.Items[1].AnchorMessageID)
 	assert.Equal(reads+1, st.reads.Load())
+}
+
+type commitmentListStore struct {
+	*store.Store
+
+	includeClosed bool
+	until         time.Time
+	promisedAt    time.Time
+	selectionDay  string
+}
+
+func (s *commitmentListStore) ListPersonCommitmentsContext(_ context.Context, _ int64, now time.Time, _ int, includeClosed bool) ([]store.PersonCommitment, error) {
+	s.includeClosed = includeClosed
+	s.selectionDay = now.Format(time.DateOnly)
+	now = now.UTC()
+	due := "2026-01-15"
+	until := now.Add(24 * time.Hour)
+	s.until = until
+	s.promisedAt = now
+	item := store.PersonCommitment{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Start: 0, End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: now, State: "open", DueOn: &due}
+	if includeClosed {
+		item.State, item.SnoozedUntil = "snoozed", &until
+	}
+	return []store.PersonCommitment{item}, nil
+}
+
+func TestListLoopsMapsCommitmentsAndForwardsIncludeClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name, timezone, query, day string
+		overdue, includeClosed     bool
+	}{
+		{"include closed and UTC day", "", "?include_closed=true", "2026-01-16", true, true},
+		{"activity timezone day", "America/New_York", "", "2026-01-15", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			f := storetest.New(t)
+			st := &commitmentListStore{Store: f.Store}
+			cfg := config.NewDefaultConfig()
+			cfg.HomeDir = t.TempDir()
+			if tc.timezone != "" {
+				cfg.Activity.Timezone = tc.timezone
+			}
+			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+			server.clock = func() time.Time { return time.Date(2026, 1, 16, 2, 0, 0, 0, time.UTC) }
+			w := httptest.NewRecorder()
+			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops"+tc.query, nil))
+			r.Equal(http.StatusOK, w.Code, w.Body.String())
+			a.Equal(tc.includeClosed, st.includeClosed)
+			a.Equal(tc.day, st.selectionDay)
+			var response LoopListResponse
+			r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			r.Len(response.Commitments, 1)
+			a.Equal(tc.overdue, response.Commitments[0].Overdue)
+			if tc.includeClosed {
+				due, until := "2026-01-15", st.until
+				a.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call.", Start: 0, End: 12}, PromisedAt: st.promisedAt, Freshness: "fresh", State: "snoozed", DueOn: &due, SnoozedUntil: &until, Overdue: true}, response.Commitments[0])
+			}
+		})
+	}
 }

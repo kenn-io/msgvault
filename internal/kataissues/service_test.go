@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -878,4 +879,107 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 	f.kata.Close()
 	_, _, err = service.Citing(t.Context(), kataevidence.SourceKeys(message), 10)
 	require.ErrorIs(err, taskclient.ErrUnreachable)
+}
+
+func TestCreateThreadParentAndDeadline(t *testing.T) {
+	f := newFixture(t)
+	input := kataissues.CreateInput{Title: "First obligation", Thread: "conversation-1", PersonID: new(int64(7)), SourceTime: time.Now().UTC().Add(-time.Hour), DeadlineOn: new("2026-12-01"), Evidence: []kataevidence.Reference{f.evidence(t, 0).Reference}}
+	first, err := f.service.Create(t.Context(), "thread-first", input)
+	require.NoError(t, err)
+	// Equal or earlier source times cannot make a parent; another person is isolated.
+	equal, err := f.service.Create(t.Context(), "thread-equal", input)
+	require.NoError(t, err)
+	earlier := input
+	earlier.SourceTime = input.SourceTime.Add(-time.Minute)
+	early, err := f.service.Create(t.Context(), "thread-earlier", earlier)
+	require.NoError(t, err)
+	f.service.People = people{7: {"person-uid-7"}, 8: {"person-uid-8"}}
+	other := input
+	other.PersonID = new(int64(8))
+	other.SourceTime = input.SourceTime.Add(time.Second)
+	different, err := f.service.Create(t.Context(), "thread-other", other)
+	require.NoError(t, err)
+	input.Title = "Follow up"
+	input.SourceTime = input.SourceTime.Add(time.Minute)
+	input.DeadlineOn = nil
+	second, err := f.service.Create(t.Context(), "thread-second", input)
+	require.NoError(t, err)
+	replayed, err := f.service.Create(t.Context(), "thread-second", input)
+	require.NoError(t, err)
+	assert.True(t, replayed.Replayed)
+	show := func(uid string) katagen.ShowIssueResponseBody {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%d/issues/%s", f.kata.URL, f.kata.projectID, uid), nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+katatest.Token)
+		resp, err := f.kata.Client().Do(req)
+		require.NoError(t, err)
+		defer func() { assert.NoError(t, resp.Body.Close()) }()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var body katagen.ShowIssueResponseBody
+		require.NoError(t, json.UnmarshalRead(resp.Body, &body))
+		return body
+	}
+	assert.Nil(t, show(equal.Issue.UID).Parent)
+	assert.Nil(t, show(early.Issue.UID).Parent)
+	assert.Nil(t, show(different.Issue.UID).Parent)
+	firstShow := show(first.Issue.UID)
+	require.NotNil(t, firstShow.Issue.DeadlineOnDate)
+	assert.Equal(t, "2026-12-01", *firstShow.Issue.DeadlineOnDate)
+	secondShow := show(second.Issue.UID)
+	require.NotNil(t, secondShow.Parent)
+	assert.Equal(t, first.Issue.UID, secondShow.Parent.UID)
+	f.kata.endpoint().CloseIssue(t, second.Issue.UID)
+	f.kata.endpoint().CloseIssue(t, first.Issue.UID)
+	f.kata.endpoint().CloseIssue(t, equal.Issue.UID)
+	f.kata.endpoint().CloseIssue(t, early.Issue.UID)
+	input.Title = "Later obligation"
+	third, err := f.service.Create(t.Context(), "thread-third", input)
+	require.NoError(t, err)
+	assert.Nil(t, show(third.Issue.UID).Parent)
+}
+
+func TestCreateThreadParentAfterPersonMerge(t *testing.T) {
+	f := newFixture(t)
+	f.service.People = people{7: {"uid-absorbed"}, 8: {"uid-other"}, 9: {"uid-survivor", "uid-absorbed"}}
+	input := kataissues.CreateInput{Title: "First obligation", Thread: "conversation-1", PersonID: new(int64(7)), SourceTime: time.Now().UTC().Add(-time.Hour), Evidence: []kataevidence.Reference{f.evidence(t, 0).Reference}}
+	first, err := f.service.Create(t.Context(), "merge-first", input)
+	require.NoError(t, err)
+	// After the merge, the survivor holds the absorbed person's UID as a former one.
+	input.Title, input.PersonID, input.SourceTime = "Follow up", new(int64(9)), input.SourceTime.Add(time.Minute)
+	followUp, err := f.service.Create(t.Context(), "merge-follow-up", input)
+	require.NoError(t, err)
+	input.Title, input.PersonID = "Someone else", new(int64(8))
+	unrelated, err := f.service.Create(t.Context(), "merge-unrelated", input)
+	require.NoError(t, err)
+	assert.Equal(t, first.Issue.QualifiedRef, issueParentRef(t, f, followUp.Issue.UID))
+	assert.Empty(t, issueParentRef(t, f, unrelated.Issue.UID))
+}
+
+func issueParentRef(t *testing.T, f *fixture, uid string) string {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%d/issues/%s", f.kata.URL, f.kata.projectID, uid), nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+katatest.Token)
+	resp, err := f.kata.Client().Do(req)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var body katagen.ShowIssueResponseBody
+	require.NoError(t, json.UnmarshalRead(resp.Body, &body))
+	if body.Parent == nil {
+		return ""
+	}
+	return body.Parent.QualifiedID
+}
+
+func TestCreateReplaysAcrossOriginLinks(t *testing.T) {
+	f := newFixture(t)
+	input := kataissues.CreateInput{Title: "Send the draft", Brief: "Follow up", OriginLink: "https://first.example.test/messages/1", Evidence: []kataevidence.Reference{f.evidence(t, 0).Reference}}
+	created, err := f.service.Create(t.Context(), "origin-key", input)
+	require.NoError(t, err)
+	input.OriginLink = "https://second.example.test/messages/1"
+	replay, err := f.service.Create(t.Context(), "origin-key", input)
+	require.NoError(t, err)
+	assert.True(t, replay.Replayed)
+	assert.Equal(t, created.Issue.UID, replay.Issue.UID)
 }

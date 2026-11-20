@@ -122,6 +122,74 @@ func TestListReturnsCheckedConversationsWhenTheRequestDeadlinePasses(t *testing.
 			assert.Equal(waiting, result.Loops[0].Anchor.ID)
 		})
 	}
+	t.Run("commitment phase", func(t *testing.T) {
+		readErr := errors.New("synthetic commitment database read failure")
+		for _, tc := range []struct {
+			name                       string
+			between                    bool
+			ending, readerErr, wantErr error
+		}{
+			{"deadline_inside_commitments", false, context.DeadlineExceeded, nil, nil},
+			{"cancellation_between_phases", true, context.Canceled, nil, context.Canceled},
+			{"live_database_error", false, nil, readErr, readErr},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				r, a := require.New(t), assert.New(t)
+				f := storetest.New(t)
+				waiting := f.PersistEmail(storetest.EmailSpec{Thread: "waiting", From: me, To: []string{alex},
+					Subject: "Contract review", Body: "Can you review the contract?", SentAt: ago(5 * day)})
+				ctx := &endingContext{Context: t.Context(), done: make(chan struct{}), err: tc.ending}
+				st := &commitmentPhaseEndingStore{Store: f.Store, ctx: ctx, between: tc.between, readerErr: tc.readerErr}
+				result, err := loops.List(ctx, st, loops.Options{}, now)
+				if tc.wantErr != nil {
+					r.ErrorIs(err, tc.wantErr)
+					if tc.between {
+						a.False(st.called)
+					}
+					return
+				}
+				r.NoError(err)
+				a.True(result.CoverageIncomplete, "deadline coverage includes the commitment read phase")
+				r.Len(result.Loops, 1, "checked questions survive a commitment deadline")
+				a.Equal(waiting, result.Loops[0].Anchor.ID)
+			})
+		}
+	})
+}
+
+// commitmentPhaseEndingStore places context termination at the phase boundary
+// after real question discovery, without racing a timer or replacing that read.
+type commitmentPhaseEndingStore struct {
+	*store.Store
+
+	ctx       *endingContext
+	between   bool
+	readerErr error
+	called    bool
+}
+
+func (s *commitmentPhaseEndingStore) LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error] {
+	return func(yield func(store.LoopConversation, error) bool) {
+		for conv, err := range s.Store.LoopConversationsContext(ctx, q) {
+			if !yield(conv, err) || err != nil {
+				return
+			}
+		}
+		if s.between {
+			close(s.ctx.done)
+		}
+	}
+}
+
+func (s *commitmentPhaseEndingStore) ListPersonCommitmentsContext(context.Context, int64, time.Time, int, bool) ([]store.PersonCommitment, error) {
+	s.called = true
+	if s.readerErr != nil {
+		return nil, s.readerErr
+	}
+	if !s.between {
+		close(s.ctx.done)
+	}
+	return nil, s.ctx.Err()
 }
 
 func TestListRecomputesEvidenceFromBeforeLoopTextRulesWereVersioned(t *testing.T) {
@@ -745,4 +813,38 @@ func TestListChatDoesNotReadMIMEOriginal(t *testing.T) {
 	assert.Equal(question, result.Loops[0].Anchor.ID)
 	assert.Equal(store.ChannelChat, result.Loops[0].Channel)
 	assert.Zero(counted.originals, "chat detection must skip email MIME evidence")
+}
+
+type pagingCommitmentStore struct {
+	*store.Store
+
+	limit int
+}
+
+func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit int, _ bool) ([]store.PersonCommitment, error) {
+	s.limit = limit
+	return []store.PersonCommitment{{ID: 201, PersonID: 1, Direction: "owed_to", Quote: "I will call.", Freshness: "fresh", State: "open", PromisedAt: now}, {ID: 202, PersonID: 1, Direction: "owed_to", Quote: "I will write.", Freshness: "stale", State: "open", PromisedAt: now.Add(-91 * 24 * time.Hour)}}, nil
+}
+
+func TestListPagesCommitments(t *testing.T) {
+	f := storetest.New(t)
+	st := &pagingCommitmentStore{Store: f.Store}
+	result, err := loops.List(t.Context(), st, loops.Options{Limit: 1}, now)
+	require.NoError(t, err)
+	assert.Equal(t, 2, st.limit)
+	require.Len(t, result.Commitments, 1)
+	assert.Equal(t, int64(201), result.Commitments[0].ID)
+	assert.True(t, result.Truncated)
+}
+
+func TestParseCommitmentID(t *testing.T) {
+	id, err := loops.ParseCommitmentID("c12")
+	require.NoError(t, err)
+	assert.Equal(t, int64(12), id)
+	for _, value := range []string{"12", "c012"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := loops.ParseCommitmentID(value)
+			assert.ErrorIs(t, err, loops.ErrInvalidCommitmentID)
+		})
+	}
 }

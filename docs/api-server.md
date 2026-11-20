@@ -172,7 +172,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.20.0**.
+it is separate from the binary release version. The current schema is **5.23.0**.
+
+Schema 5.23.0 adds agenda filing for open obligations.
+
+Schema 5.22.0 adds cited commitments and their decisions to the open loops API.
+
+Schema 5.21.0 adds claim kind, freshness status, and the optional latest support time to person fact history.
 
 Schema 5.20.0 adds `message_type` to file details.
 
@@ -2013,13 +2019,19 @@ These owner-only routes back `msgvault loops`, the Open loops section in
 People Details, and the MCP loop tools. See [Open loops](usage/open-loops.md)
 for what counts as a loop.
 
-`GET /api/v1/loops` lists loops, oldest first. Optional query parameters are
-`person_id` and `limit` (1 to 200, default 50). The response has these fields:
+`GET /api/v1/loops` lists reply loops and cited promises. The optional
+`person_id` filters both collections. The `limit` applies to each collection
+separately (1 to 200, default 50). Set `include_closed=true` to include done and
+snoozed promises.
 
 | Field | Meaning |
 |---|---|
 | `items` | The loops. Each has `kind` (`reply_owed` or `awaiting_reply`), `anchor_message_id` (the message that started the wait), `question_message_ids` (the questions it covers, oldest first), `conversation_id`, `source_id`, `channel` (`email` or `chat`), `counterparty` (`participant_id`, optional `person_id`, `display_name`, `address`), `summary`, `owed_since_at`, and `last_activity_at`. |
-| `truncated` | More loops are open than `limit` returned. |
+| `commitments` | Cited promises with their `c<ID>`, direction, exact message citation, evidence freshness and owner-visible state. |
+| `commitments_since` | Start of the promise discovery window, when available. |
+| `commitments_until` | End of the promise discovery window when the configured end date has passed. |
+| `commitments_complete` | Whether discovery has checked the window, when available. |
+| `truncated` | More eligible entries are available in at least one collection. |
 | `coverage_incomplete` | The request stopped before checking all history, because it read 1,000 new messages or ran out of time. Items come only from conversations checked in full. Call again to continue; saved results carry over. |
 | `skipped_unparseable` | Stored emails that couldn't be parsed. A reply in one of them may have answered a listed loop. |
 
@@ -2038,6 +2050,13 @@ conversation first and return `anchor_message_id`, `state` (`done` or
 
 `POST /api/v1/loops/{message_id}/reopen` clears the decision on that one
 question and returns `state: "open"`.
+
+`POST /api/v1/loops/commitments/{commitment_id}/decision` sets a cited
+promise's state. Use its `c<ID>` and send `{"state":"done"}`,
+`{"state":"open"}`, or `{"state":"snoozed","until":"<future RFC3339 time>"}`.
+The response contains `id`, `state`, and, for a snoozed promise,
+`snoozed_until`. An invalid request returns 400, and an unknown promise returns
+404.
 
 | Status | Error | When |
 |---|---|---|

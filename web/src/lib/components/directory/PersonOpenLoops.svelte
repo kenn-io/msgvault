@@ -4,14 +4,17 @@
   import { Button } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import { formatContactDate } from '../../directory/labels';
+  import { formatShortDate } from '../../util/format';
   import { listLoops } from '../../api/generated/api/api';
-  import type { LoopItem } from '../../api/generated/models';
+  import type { LoopCommitment, LoopItem, LoopListResponse } from '../../api/generated/models';
 
   // refreshKey changes when the person's identities change, so the list reloads.
   interface Props { client: APIClient; personID: number; refreshKey?: string }
   let { client, personID, refreshKey }: Props = $props();
   const limit = 5;
   let items = $state<LoopItem[]>([]);
+  let commitments = $state<LoopCommitment[]>([]);
+  const openCount = $derived(items.length + commitments.length);
   let loading = $state(true);
   let checkingMore = $state(false);
   let checkMoreFailed = $state(false);
@@ -20,6 +23,7 @@
   let coverageIncomplete = $state(false);
   let unreadable = $state(0);
   let checkMore = $state<() => void>(() => {});
+  let promiseStatus = $state('');
 
   $effect(() => {
     const selectedID = personID;
@@ -35,10 +39,12 @@
       } else {
         loading = true;
         items = [];
+        commitments = [];
         truncated = false;
         coverageIncomplete = false;
         unreadable = 0;
         failed = false;
+        promiseStatus = '';
       }
       try {
         const result = await listLoops(
@@ -48,6 +54,8 @@
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Open loops are unavailable.');
         items = result.data.items ?? [];
+        commitments = result.data.commitments ?? [];
+        promiseStatus = discoveryStatus(result.data);
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
         unreadable = result.data.skipped_unparseable ?? 0;
@@ -67,9 +75,27 @@
     return () => controller.abort();
   });
 
+  // Show the discovery window with the loop results.
+  function discoveryStatus(data: LoopListResponse): string {
+    if (data.commitments_complete == null) return '';
+    const since = data.commitments_since?.slice(0, 10);
+    const until = data.commitments_until?.slice(0, 10);
+    if (!since) return data.commitments_complete ? '' : 'Promise discovery has not started.';
+    if (until && until < since) return 'No messages were eligible for promise discovery in the current window.';
+    const day = (date: string) => formatShortDate(`${date}T00:00:00`);
+    return `Promises ${until ? `from ${day(since)} through ${day(until)}` : `since ${day(since)}`}${data.commitments_complete ? '' : ' · still searching'}`;
+  }
+
   const groups = $derived([
     { kind: 'reply_owed', label: 'Waiting on you', items: items.filter((loop) => loop.kind === 'reply_owed') },
     { kind: 'awaiting_reply', label: 'Waiting on them', items: items.filter((loop) => loop.kind !== 'reply_owed') },
+  ]);
+
+  const promiseGroups = $derived([
+    { key: 'by', label: 'Promises you made', items: commitments.filter((item) => item.direction === 'owed_by' && item.freshness === 'fresh') },
+    { key: 'to', label: 'Promises to you', items: commitments.filter((item) => item.direction === 'owed_to' && item.freshness === 'fresh') },
+    { key: 'stale-by', label: 'Stale promises you made', items: commitments.filter((item) => item.direction === 'owed_by' && item.freshness === 'stale') },
+    { key: 'stale-to', label: 'Stale promises to you', items: commitments.filter((item) => item.direction === 'owed_to' && item.freshness === 'stale') },
   ]);
 
   function ageLabel(since: string): string {
@@ -80,13 +106,14 @@
   }
 </script>
 
+<div class="open-loops-section">
 <DetailSection title="Open loops">
-  {#snippet control()}{#if !loading && !failed && items.length > 0}<span class="muted">{items.length}{truncated ? '+' : ''} open</span>{/if}{/snippet}
+  {#snippet control()}{#if !loading && !failed && openCount > 0}<span class="muted">{openCount}{truncated ? '+' : ''} open</span>{/if}{/snippet}
   <div class="open-loops">
   {#if loading}<p class="muted" role="status">Loading…</p>
   {:else if failed}<InlineNotice message="Couldn't load open loops." />
-  {:else if items.length === 0 && coverageIncomplete}<p class="muted">No open loops found. Some messages haven't been checked yet.</p>
-  {:else if items.length === 0}<p class="muted">Nothing open with this person.</p>
+  {:else if openCount === 0 && (coverageIncomplete || promiseStatus)}<p class="muted">No open loops found.{coverageIncomplete ? " Some messages haven't been checked yet." : ''}</p>
+  {:else if openCount === 0}<p class="muted">Nothing open with this person.</p>
   {:else}
     {#each groups as group (group.kind)}
       {#if group.items.length > 0}
@@ -103,7 +130,25 @@
         </div>
       {/if}
     {/each}
+    {#each promiseGroups as group (group.key)}
+      {#if group.items.length > 0}
+        <div class="group">
+          <h4>{group.label}</h4>
+          <ul>
+            {#each group.items as promise (promise.id)}
+              <li class="promise">
+                <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>“{promise.promise.text}”</a>
+                <span class="muted">
+                  {#if promise.due_on}{promise.overdue ? 'overdue' : 'due'} {formatShortDate(`${promise.due_on}T00:00:00`)}{' · '}{/if}made {ageLabel(promise.promised_at)} ago
+                </span>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+    {/each}
   {/if}
+  {#if !loading && !failed && promiseStatus}<p class="muted discovery-status">{promiseStatus}</p>{/if}
   {#if !loading && !failed && unreadable > 0}
     <p class="muted">
       {unreadable === 1 ? '1 message' : `${unreadable} messages`} could not be read, so a reply in {unreadable === 1 ? 'it' : 'one'} may have settled a loop.
@@ -115,17 +160,21 @@
   {/if}
 </div>
 </DetailSection>
+</div>
 
 <style>
-  .open-loops { display: grid; gap: var(--space-2); min-width: 0; }
+  .open-loops-section { min-width: 0; }
+  .open-loops { display: grid; gap: var(--space-2); min-width: 0; padding-bottom: var(--space-4); }
   h4, p, ul { margin: 0; }
   h4 { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; }
   .group { display: grid; gap: var(--space-1); }
+  .group + .group, .group + .discovery-status { margin-top: var(--space-4); }
   ul { display: grid; gap: var(--space-1); padding: 0; list-style: none; }
   li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); min-width: 0; }
   a { min-width: 0; overflow: hidden; color: var(--link-ink); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
   a:hover { text-decoration: underline; }
   li > span { flex: none; }
   .muted { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  .discovery-status { font-size: var(--font-size-xs); line-height: 1.5; }
   [role="alert"] { color: var(--text-danger); }
 </style>

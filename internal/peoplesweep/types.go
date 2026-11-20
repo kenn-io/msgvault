@@ -237,6 +237,9 @@ const (
 	ProviderCallPurposeRepair      = "repair"
 	ProviderCallPurposeBrief       = "brief"
 	ProviderCallPurposeBriefRepair = "brief_repair"
+
+	ProviderCallPurposeCommitment       = "commitment"
+	ProviderCallPurposeCommitmentRepair = "commitment_repair"
 )
 
 type ProviderCallCoordinate struct {

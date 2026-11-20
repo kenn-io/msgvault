@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/kataissues"
+	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
@@ -285,6 +286,7 @@ func (s *Server) writeKataIssueError(w http.ResponseWriter, err error) {
 		status        int
 		code, message string
 	}{
+		{loops.ErrEvidenceIncomplete, http.StatusServiceUnavailable, "loop_scan_incomplete", "More history remains. Retry this action to continue checking."},
 		{kataevidence.ErrDocbankLimit, http.StatusBadRequest, "invalid_evidence", kataevidence.ErrDocbankLimit.Error()},
 		{kataevidence.ErrInvalidReference, http.StatusBadRequest, "invalid_evidence", "Evidence identity or range is invalid"},
 		{taskclient.ErrInvalidRef, http.StatusBadRequest, "invalid_ref", "Kata issue ref is malformed"},

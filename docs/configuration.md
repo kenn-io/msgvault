@@ -421,6 +421,24 @@ client_secrets = "C:/Users/you/Downloads/client_secret.json"
 client_secrets = 'C:\Users\you\Downloads\client_secret.json'
 ```
 
+### Commitment extraction
+
+Set these optional keys in `[people.sweep.commitments]`. It runs in the people sweep after
+extraction and the person brief. The commitment grant covers both sides of
+direct conversations within the active provider's source and date scope.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `false` | Extract promises for tracked people with an exact commitment grant. |
+| `min_interval` | `24h` | Minimum time between successful passes for a person. |
+| `window` | `720h` | Recent message or archive-arrival window. |
+| `max_items` | `60` | Maximum messages in a call, up to 2000. |
+| `max_bytes` | `65536` | Maximum JSON-encoded message-text bytes in a call, up to `122880`. Messages over the limit are skipped and retried if you raise it. |
+| `max_output_tokens` | `2048` | Output cap within the shared per-person budget. |
+
+See [Open loops](usage/open-loops.md#see-cited-commitments) for consent and
+owner controls.
+
 ## Cron schedules
 
 Every `schedule` and `cron` key in this file uses the same five-field cron
@@ -959,6 +977,7 @@ Settings for the Web UI and API server started by `msgvault serve`. The same HTT
 | `cors_credentials` | `false` | Allow credentials in CORS requests |
 | `cors_max_age` | `0` | CORS preflight cache duration in seconds |
 | `trusted_proxies` | `[]` | IP addresses or CIDRs allowed to supply forwarded HTTPS/host headers |
+| `public_url` | — | Address browsers use for this server, such as `https://archive.example.ts.net`. Kata issues filed by the hourly pass link to messages through it. Without it, a server listening on every interface leaves those links out. |
 | `daemon_idle_timeout` | `20m` | Idle timeout for automatically started daemons; set to `"0s"` to disable |
 | `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
 | `muesli_recording_max_bytes` | `4294967296` (4 GiB) | Server limit for streamed Muesli audio uploads; `0` uses the default. Independent of the recorder's `recording_max_bytes` |
@@ -1094,6 +1113,7 @@ against Kata v0.18.0 and requires Kata API schema version 0.21.0 or later.
 | Key | Default | Description |
 |---|---|---|
 | `enabled` | `false` | Enable Kata person agendas and evidence issues |
+| `auto_agenda` | `true` | File open promises and replies you owe in Kata each hour |
 | `endpoint` | — | Required when enabled: an explicit HTTPS URL, loopback HTTP URL, or Unix socket URL |
 | `trust_private_network` | `false` | Also allow HTTP to DNS names and private, link-local, unspecified or CGNAT addresses on a network you trust; public literal IPs stay refused |
 | `api_key` | — | Bearer credential sent by the daemon to Kata; Settings returns only its configured state and a masked hint |

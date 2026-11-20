@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/personagenda"
@@ -38,6 +39,7 @@ type Kata interface {
 	CreateTaskReused(ctx context.Context, project, idempotencyKey string, create taskclient.KataCreate) (taskclient.KataTask, bool, error)
 	GetTask(ctx context.Context, project, taskID string) (taskclient.KataTask, error)
 	FindActionTask(ctx context.Context, project, action string) (taskclient.KataTask, bool, error)
+	FindOpenMetadataTask(ctx context.Context, project, key, value string, before time.Time) (taskclient.KataTask, bool, error)
 	FindMetadataTasks(ctx context.Context, project, key string, limit int) ([]taskclient.KataTask, error)
 	MutateMetadataKey(ctx context.Context, project, taskID, key string, previous, value any) (taskclient.KataTask, error)
 	AddComment(ctx context.Context, project, taskID, idempotencyKey, body string) error
@@ -56,11 +58,18 @@ type Service struct {
 }
 
 type CreateInput struct {
-	Title    string                   `json:"title"`
-	Brief    string                   `json:"brief"`
-	List     string                   `json:"list"`
-	PersonID *int64                   `json:"person_id,omitzero"`
-	Evidence []kataevidence.Reference `json:"evidence"`
+	OriginLink string `json:"-"`
+	// Thread names the conversation by its source identity, which parent
+	// lookup trusts; Conversation is its archive ID, kept for readers.
+	Thread       string                   `json:"-"`
+	Conversation string                   `json:"-"`
+	SourceTime   time.Time                `json:"-"`
+	DeadlineOn   *string                  `json:"-"`
+	Title        string                   `json:"title"`
+	Brief        string                   `json:"brief"`
+	List         string                   `json:"list"`
+	PersonID     *int64                   `json:"person_id,omitzero"`
+	Evidence     []kataevidence.Reference `json:"evidence"`
 }
 
 // Result reports whether this call created the issue or found the one an
@@ -105,19 +114,34 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 		return s.replay(existing, hash)
 	}
 	metadata := map[string]any{taskclient.ActionMetadataKey: marker, RequestMetadataKey: hash}
+	if input.Thread != "" && (input.PersonID == nil || input.SourceTime.IsZero()) {
+		return Result{}, ErrInvalidRequest
+	}
+	var parentRef string
 	if input.PersonID != nil {
 		uids, err := personagenda.PersonUIDs(ctx, s.People, *input.PersonID)
 		if err != nil {
 			return Result{}, err
 		}
 		metadata[personagenda.PersonMetadataKey], metadata[personagenda.ListMetadataKey] = uids[0], input.List
+		if input.Thread != "" {
+			metadata["msgvault.thread"] = threadDigest(archive, input.Thread, uids[0])
+			metadata["msgvault.conversation"] = input.Conversation
+			metadata["msgvault.source_time"] = input.SourceTime.UTC().Format(time.RFC3339Nano)
+			if parentRef, err = s.findParent(ctx, archive, input.Thread, uids, input.SourceTime); err != nil {
+				return Result{}, err
+			}
+		}
+	}
+	if input.DeadlineOn != nil {
+		metadata["deadline_on"] = *input.DeadlineOn
 	}
 	quotes, err := s.resolve(ctx, input.Evidence)
 	if err != nil {
 		return Result{}, err
 	}
 	metadata[EvidenceMetadataKey] = Envelope{Version: 1, Entries: entriesOf(quotes)}
-	issue, reused, err := s.Kata.CreateTaskReused(ctx, s.Project, marker, taskclient.KataCreate{Title: input.Title, Body: renderBody(input.Brief, firstOfEachPassage(quotes)), Metadata: metadata})
+	issue, reused, err := s.Kata.CreateTaskReused(ctx, s.Project, marker, taskclient.KataCreate{Title: input.Title, Body: renderBody(strings.TrimSpace(strings.Join([]string{input.Brief, input.OriginLink}, "\n\n")), firstOfEachPassage(quotes)), Metadata: metadata, ParentRef: parentRef})
 	if errors.Is(err, taskclient.ErrConflict) {
 		return s.createConflict(ctx, marker, hash, taskclient.ErrorCode(err))
 	}
@@ -125,6 +149,44 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 		return Result{}, err
 	}
 	return Result{Issue: issue, Replayed: reused}, nil
+}
+
+// threadDigest names one person's issues in one conversation by the person's
+// contact-card UID, which survives a merge into another person.
+func threadDigest(archive, conversation, uid string) string {
+	return kataevidence.Digest("msgvault.kata.thread.v3", archive, conversation, uid)
+}
+
+// findParent returns the oldest open issue filed before before in the
+// conversation under any UID the person holds, including those merged into it.
+func (s *Service) findParent(ctx context.Context, archive, conversation string, uids []string, before time.Time) (string, error) {
+	var parentRef string
+	var parentTime time.Time
+	for _, uid := range uids {
+		parent, found, err := s.Kata.FindOpenMetadataTask(ctx, s.Project, "msgvault.thread", threadDigest(archive, conversation, uid), before)
+		if err != nil {
+			return "", err
+		}
+		if !found {
+			continue
+		}
+		stamp, _ := parent.Metadata["msgvault.source_time"].(string)
+		at, _ := time.Parse(time.RFC3339Nano, stamp)
+		if parentRef == "" || at.Before(parentTime) {
+			parentRef, parentTime = parent.QualifiedRef, at
+		}
+	}
+	return parentRef, nil
+}
+
+// FindFiled returns the issue filed under a key, including closed issues.
+func (s *Service) FindFiled(ctx context.Context, key string) (taskclient.KataTask, bool, error) {
+	archive, err := s.archiveUID(ctx)
+	if err != nil {
+		return taskclient.KataTask{}, false, err
+	}
+	marker := kataevidence.Digest("msgvault.kata.create-marker.v1", archive, key)
+	return s.Kata.FindActionTask(ctx, s.Project, marker)
 }
 
 // createConflict reads Kata's refusal of a create. A key Kata already holds

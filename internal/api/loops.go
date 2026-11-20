@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/loops"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -39,10 +41,15 @@ type LoopItem struct {
 // LoopListResponse lists open loops oldest first.
 type LoopListResponse struct {
 	Items              []LoopItem `json:"items"`
-	Truncated          bool       `json:"truncated" doc:"True when more loops are open than limit returned"`
+	Truncated          bool       `json:"truncated" doc:"True when more reply loops or promises remain than the limit returned"`
 	CoverageIncomplete bool       `json:"coverage_incomplete" doc:"True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue"`
 	// SkippedUnparseable counts stored originals the list could not parse. A reply in one of them may have settled a loop that still lists.
 	SkippedUnparseable int `json:"skipped_unparseable" doc:"Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop"`
+
+	Commitments         []LoopCommitment `json:"commitments,omitempty"`
+	CommitmentsUntil    *time.Time       `json:"commitments_until,omitempty"`
+	CommitmentsSince    *time.Time       `json:"commitments_since,omitempty"`
+	CommitmentsComplete *bool            `json:"commitments_complete,omitempty"`
 }
 
 // LoopDecisionResponse is the result of a done, snooze, or reopen action.
@@ -64,6 +71,8 @@ func (s *Server) registerLoopRoutes(api huma.API) {
 	addActivityErrorResponses(api, list.Responses, list.Errors...)
 	list.Parameters = loopListParameters()
 	registerRawHumaRoute(api, list, s.handleListLoops)
+	s.registerCommitmentDecision(api)
+	s.registerLoopAgenda(api)
 
 	for _, action := range []struct {
 		id, path, summary string
@@ -104,7 +113,8 @@ func loopListParameters() []*huma.Param {
 	}
 	return []*huma.Param{
 		queryIntegerParam("person_id", "Only loops with this person"),
-		bounded("limit", "Maximum loops to return", loops.DefaultLimit, loops.MaxLimit),
+		queryBooleanParam("include_closed", "Include done and snoozed commitments"),
+		bounded("limit", "Maximum loops and commitments to return per collection", loops.DefaultLimit, loops.MaxLimit),
 	}
 }
 
@@ -135,17 +145,23 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if err == nil {
+		opts.IncludeClosed, _, err = queryBool(r, "include_closed")
+	}
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "person_id and limit must be valid")
+		writeError(w, http.StatusBadRequest, "invalid_request", "person_id, limit and include_closed must be valid")
 		return
 	}
-	evidence := &gatedLoopEvidence{Store: loopStore, gate: s.operationGate}
-	result, err := loops.List(r.Context(), evidence, opts, s.clockNow().UTC())
+	result, now, err := s.listLoops(r.Context(), loopStore, opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list open loops")
 		return
 	}
 	response := loopListResponse(result)
+	response.Commitments = loopCommitments(result.Commitments, now)
+	if !s.addCommitmentDiscovery(w, r, loopStore, opts.PersonID, now.Location().String(), &response) {
+		return
+	}
 	for _, l := range result.Loops {
 		item := LoopItem{
 			Kind: l.Kind, AnchorMessageID: l.Anchor.ID, QuestionMessageIDs: loopQuestionIDs(l),
@@ -166,6 +182,24 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 	if result.CoverageIncomplete {
 		s.startLoopEvidence(loopStore, opts.PersonID)
 	}
+}
+
+func (s *Server) listLoops(ctx context.Context, loopStore loops.Store, opts loops.Options) (loops.Result, time.Time, error) {
+	now := s.clockNow().UTC()
+	if s.cfg != nil {
+		cfg, err := s.currentPersonTierConfig()
+		if err != nil {
+			return loops.Result{}, now, err
+		}
+		location, err := time.LoadLocation(cfg.Activity.Timezone)
+		if err != nil {
+			return loops.Result{}, now, fmt.Errorf("load activity timezone: %w", err)
+		}
+		now = now.In(location)
+	}
+	evidence := &gatedLoopEvidence{Store: loopStore, gate: s.operationGate}
+	result, err := loops.List(ctx, evidence, opts, now)
+	return result, now, err
 }
 
 // startLoopEvidence continues an incomplete request under the server lifetime.
@@ -216,6 +250,46 @@ func (s *Server) fillLoopEvidence(st loops.Store, personID int64) {
 		s.loopEvidencePending = s.loopEvidencePending[1:]
 		s.importMu.Unlock()
 	}
+}
+
+// addCommitmentDiscovery reports the promise discovery window; a read that
+// times out leaves the reply loops in place and marks coverage incomplete.
+func (s *Server) addCommitmentDiscovery(w http.ResponseWriter, r *http.Request, loopStore loops.Store, personID int64, timezone string, response *LoopListResponse) bool {
+	cfg, ok := s.currentPeopleSweepConfig()
+	if !ok || !cfg.Commitments.Enabled {
+		return true
+	}
+	profile, err := cfg.Profile()
+	if err != nil {
+		return true
+	}
+	active, err := loopStore.HasActivePersonCommitmentConsent(r.Context(), profile.Fingerprint)
+	if err != nil {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment consent")
+			return false
+		}
+		response.CoverageIncomplete = true
+		return true
+	}
+	cfg.Commitments.Timezone = timezone
+	since, complete, err := loopStore.PersonCommitmentDiscoveryContext(r.Context(), personID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
+	if err != nil {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment discovery")
+			return false
+		}
+		response.CoverageIncomplete = true
+		complete = false
+	}
+	if !active {
+		complete = false
+	}
+	response.CommitmentsSince, response.CommitmentsComplete = since, &complete
+	if until, parseErr := time.Parse(time.DateOnly, profile.SourceUntil); parseErr == nil && until.Before(s.clockNow().UTC().Truncate(24*time.Hour)) {
+		response.CommitmentsUntil = &until
+	}
+	return true
 }
 
 func loopListResponse(result loops.Result) LoopListResponse {

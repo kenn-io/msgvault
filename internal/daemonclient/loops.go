@@ -3,6 +3,7 @@ package daemonclient
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	apiclient "go.kenn.io/msgvault/pkg/client"
@@ -20,11 +21,16 @@ const LoopDecisionNotFoundCode = "loop_decision_not_found"
 type LoopListOptions struct {
 	PersonID int64
 	Limit    int
+
+	IncludeClosed bool
 }
 
 // ListLoops returns the open loops, oldest first.
 func (c *Client) ListLoops(ctx context.Context, opts LoopListOptions) (generated.LoopListResponse, error) {
 	query := &generated.ListLoopsQuery{}
+	if opts.IncludeClosed {
+		query.IncludeClosed = &opts.IncludeClosed
+	}
 	if opts.PersonID != 0 {
 		query.PersonID = &opts.PersonID
 	}
@@ -92,6 +98,49 @@ func (c *Client) ReopenLoop(ctx context.Context, messageID int64) (generated.Loo
 	}
 	if resp.JSON200 == nil {
 		return generated.LoopDecisionResponse{}, errors.New("empty open loop decision response")
+	}
+	return *resp.JSON200, nil
+}
+
+// SetCommitmentDecision updates a cited promise's owner state.
+func (c *Client) SetCommitmentDecision(ctx context.Context, id, state string, until *time.Time) (generated.CommitmentDecisionResponse, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SetCommitmentDecisionResp, error) {
+		return client.SetCommitmentDecisionWithResponse(ctx, &generated.SetCommitmentDecisionRequestOptions{
+			PathParams: &generated.SetCommitmentDecisionPath{CommitmentID: id},
+			Body:       &generated.SetCommitmentDecisionBody{State: generated.CommitmentDecisionRequestState(state), Until: until},
+		})
+	})
+	if err != nil {
+		return generated.CommitmentDecisionResponse{}, err
+	}
+	if resp.JSON200 == nil {
+		return generated.CommitmentDecisionResponse{}, errors.New("empty commitment decision response")
+	}
+	return *resp.JSON200, nil
+}
+
+// FileLoopAgenda files one open loop or commitment in Kata.
+func (c *Client) FileLoopAgenda(ctx context.Context, ref string) (generated.LoopAgendaResponse, error) {
+	if strings.HasPrefix(ref, "c") {
+		resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.FileCommitmentAgendaResp, error) {
+			return client.FileCommitmentAgendaWithResponse(ctx, &generated.FileCommitmentAgendaRequestOptions{PathParams: &generated.FileCommitmentAgendaPath{CommitmentID: ref}})
+		})
+		if err != nil {
+			return generated.LoopAgendaResponse{}, err
+		}
+		if resp.JSON200 == nil {
+			return generated.LoopAgendaResponse{}, errors.New("empty agenda response")
+		}
+		return *resp.JSON200, nil
+	}
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.FileLoopAgendaResp, error) {
+		return client.FileLoopAgendaWithResponse(ctx, &generated.FileLoopAgendaRequestOptions{PathParams: &generated.FileLoopAgendaPath{MessageID: ref}})
+	})
+	if err != nil {
+		return generated.LoopAgendaResponse{}, err
+	}
+	if resp.JSON200 == nil {
+		return generated.LoopAgendaResponse{}, errors.New("empty agenda response")
 	}
 	return *resp.JSON200, nil
 }

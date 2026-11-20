@@ -1893,6 +1893,58 @@ type ListLoopsErrorResponseJSON503 = ErrorResponse
 
 type ListLoopsErrorResponseJSONDefault = ErrorResponse
 
+type FileCommitmentAgendaResponse = LoopAgendaResponse
+
+type FileCommitmentAgendaErrorResponse = ErrorResponse
+
+type FileCommitmentAgendaErrorResponseJSON = ErrorResponse
+
+type FileCommitmentAgendaErrorResponseJSON404 = ErrorResponse
+
+type FileCommitmentAgendaErrorResponseJSON409 = ErrorResponse
+
+type FileCommitmentAgendaErrorResponseJSON422 = ErrorResponse
+
+type FileCommitmentAgendaErrorResponseJSON503 = ErrorResponse
+
+type FileCommitmentAgendaErrorResponseJSONDefault = ErrorResponse
+
+type SetCommitmentDecisionResponse = CommitmentDecisionResponse
+
+type SetCommitmentDecisionErrorResponse = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON403 = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON404 = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON413 = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON415 = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON500 = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON503 = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSONDefault = ErrorResponse
+
+type FileLoopAgendaResponse = LoopAgendaResponse
+
+type FileLoopAgendaErrorResponse = ErrorResponse
+
+type FileLoopAgendaErrorResponseJSON = ErrorResponse
+
+type FileLoopAgendaErrorResponseJSON404 = ErrorResponse
+
+type FileLoopAgendaErrorResponseJSON409 = ErrorResponse
+
+type FileLoopAgendaErrorResponseJSON422 = ErrorResponse
+
+type FileLoopAgendaErrorResponseJSON503 = ErrorResponse
+
+type FileLoopAgendaErrorResponseJSONDefault = ErrorResponse
+
 type MarkLoopDoneResponse = LoopDecisionResponse
 
 type MarkLoopDoneErrorResponse = ErrorResponse
@@ -5931,6 +5983,50 @@ type ListLoopsResp struct {
 	JSON500      *ListLoopsErrorResponseJSON500
 	JSON503      *ListLoopsErrorResponseJSON503
 	JSONDefault  *ListLoopsErrorResponseJSONDefault
+}
+
+type FileCommitmentAgendaResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *FileCommitmentAgendaResponse
+	JSON400      *FileCommitmentAgendaErrorResponse
+	JSON401      *FileCommitmentAgendaErrorResponseJSON
+	JSON404      *FileCommitmentAgendaErrorResponseJSON404
+	JSON409      *FileCommitmentAgendaErrorResponseJSON409
+	JSON422      *FileCommitmentAgendaErrorResponseJSON422
+	JSON503      *FileCommitmentAgendaErrorResponseJSON503
+	JSONDefault  *FileCommitmentAgendaErrorResponseJSONDefault
+}
+
+type SetCommitmentDecisionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SetCommitmentDecisionResponse
+	JSON400      *SetCommitmentDecisionErrorResponse
+	JSON401      *SetCommitmentDecisionErrorResponseJSON
+	JSON403      *SetCommitmentDecisionErrorResponseJSON403
+	JSON404      *SetCommitmentDecisionErrorResponseJSON404
+	JSON413      *SetCommitmentDecisionErrorResponseJSON413
+	JSON415      *SetCommitmentDecisionErrorResponseJSON415
+	JSON500      *SetCommitmentDecisionErrorResponseJSON500
+	JSON503      *SetCommitmentDecisionErrorResponseJSON503
+	JSONDefault  *SetCommitmentDecisionErrorResponseJSONDefault
+}
+
+type FileLoopAgendaResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *FileLoopAgendaResponse
+	JSON400      *FileLoopAgendaErrorResponse
+	JSON401      *FileLoopAgendaErrorResponseJSON
+	JSON404      *FileLoopAgendaErrorResponseJSON404
+	JSON409      *FileLoopAgendaErrorResponseJSON409
+	JSON422      *FileLoopAgendaErrorResponseJSON422
+	JSON503      *FileLoopAgendaErrorResponseJSON503
+	JSONDefault  *FileLoopAgendaErrorResponseJSONDefault
 }
 
 type MarkLoopDoneResp503Headers struct {

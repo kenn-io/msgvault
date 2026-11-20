@@ -76,7 +76,11 @@ func (s *Store) bumpAccountIdentityRevisionContext(ctx context.Context, tx *logg
 		accountIdentityRevisionKey); err != nil {
 		return fmt.Errorf("bump account identity revision: %w", err)
 	}
-	return nil
+	// A changed identity can make unseen chats direct. Invalidate the scope so
+	// the next scan starts a new window while status retains the saved one.
+	_, err := tx.ExecContext(ctx, `UPDATE person_commitment_frontiers
+		SET scope_fingerprint = ''`)
+	return err
 }
 
 // AccountIdentity is one confirmed "me" address for one source.

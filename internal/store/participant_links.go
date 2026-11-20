@@ -496,9 +496,7 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		if err == nil {
 			linked = true
 			if personID != 0 {
-				err = s.publishPersonIdentityScopeChangesTx(
-					ctx, tx, []int64{personID},
-					peoplesweep.EvidenceEffectIdentityReassigned)
+				err = s.publishLinkedPersonIdentityScopeChangesTx(ctx, tx, personID)
 			}
 		}
 		if err == nil && afterLink != nil {
@@ -507,6 +505,33 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		return err
 	})
 	return revision, linked, err
+}
+
+func (s *Store) publishLinkedPersonIdentityScopeChangesTx(ctx context.Context, tx *loggedTx, personID int64) error {
+	if err := s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}, peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+		return err
+	}
+	var owner bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM person_participants pp
+		JOIN participants p ON p.id = pp.participant_id
+		JOIN account_identities ai ON `+ownerEmailMatch("p.email_address", "ai.address")+`
+		WHERE pp.person_id = ?
+		UNION ALL
+		SELECT 1 FROM person_participants pp
+		JOIN participant_identifiers pi ON pi.participant_id = pp.participant_id
+		JOIN account_identities ai ON `+ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address", identifierWithoutPrimaryEmail)+`
+		WHERE pp.person_id = ?
+	)`, personID, personID).Scan(&owner)
+	if err != nil {
+		return fmt.Errorf("check linked owner identities: %w", err)
+	}
+	if owner {
+		// An owner alias can make other people's conversations eligible.
+		_, err = tx.ExecContext(ctx, `UPDATE person_commitment_frontiers SET scope_fingerprint = ''`)
+		return err
+	}
+	return nil
 }
 
 type activePersonMergeLineageState struct {

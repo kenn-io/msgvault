@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 
 type countingConsent struct {
 	active            bool
+	commitmentActive  bool
 	err               error
 	calls             atomic.Int64
 	unverified        bool
@@ -58,6 +60,10 @@ func (c *countingConsent) HasActivePersonInferenceConsent(
 		c.order("consent")
 	}
 	return c.active, c.err
+}
+
+func (c *countingConsent) HasActivePersonCommitmentConsent(context.Context, string) (bool, error) {
+	return c.commitmentActive, c.err
 }
 
 func (c *countingConsent) HasSuccessfulPersonInferenceCheck(
@@ -498,40 +504,44 @@ func TestRunnerExecutionMarkerFailureTerminatesWithoutProviderIO(t *testing.T) {
 }
 
 func TestRunnerExecutionConsentFailureOccursBeforeStartedMarker(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	consent := &countingConsent{active: true}
-	transport := &repairTransport{responses: []peoplesweep.DriverResponse{{
-		CandidateJSON:   json.RawMessage(`{"ok":true}`),
-		ProviderVersion: "provider-v1", ModelVersion: "model-v1",
-	}}}
-	runner, err := peoplesweep.NewRunner(
-		runnerTestConfig(), consent, testDriverRegistry(transport),
-		lookupCredentialResolver(func(string) (string, bool) { return "test-key", true }),
-	)
-	require.NoError(err)
-	primary, err := runner.PrepareStructured(t.Context(), structuredTestRequest())
-	require.NoError(err)
-	session, err := runner.BeginStructuredExecution(t.Context(), primary)
-	require.NoError(err)
-	call, err := session.PrimaryCall(primary)
-	require.NoError(err)
-	consent.active = false
-	started := 0
-
-	_, err = call.Execute(t.Context(), func(context.Context) error {
-		started++
-		return nil
-	})
-	require.ErrorIs(err, peoplesweep.ErrPersonSweepConsentRevoked)
-	assert.Zero(started)
-	assert.Zero(transport.calls)
-	_, err = call.Execute(t.Context(), func(context.Context) error {
-		started++
-		return nil
-	})
-	require.ErrorContains(err, "already claimed")
-	assert.Zero(started)
+	for _, commitment := range []bool{false, true} {
+		t.Run(fmt.Sprintf("commitment=%t", commitment), func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			consent := &countingConsent{active: true, commitmentActive: true}
+			transport := &repairTransport{responses: []peoplesweep.DriverResponse{{CandidateJSON: json.RawMessage(`{"ok":true}`), ProviderVersion: "provider-v1", ModelVersion: "model-v1"}}}
+			cfg := runnerTestConfig()
+			mutateActiveProvider(&cfg, func(provider *peoplesweep.ProviderConfig) { provider.AllowSensitive = true })
+			runner, err := peoplesweep.NewRunner(cfg, consent, testDriverRegistry(transport), lookupCredentialResolver(func(string) (string, bool) { return "test-key", true }))
+			r.NoError(err)
+			request := structuredTestRequest()
+			if commitment {
+				request, err = peoplesweep.CommitmentRequestForTest(peoplesweep.CommitmentWindow{
+					Now: time.Date(2025, 8, 20, 12, 0, 0, 0, time.UTC), Timezone: "UTC",
+					Sources: []peoplesweep.CommitmentSource{{ID: "m1", Text: "I will call.", Direction: peoplesweep.CommitmentOwedTo, EventTime: time.Date(2025, 8, 20, 12, 0, 0, 0, time.UTC)}},
+				}, 32)
+				r.NoError(err)
+			}
+			primary, err := runner.PrepareStructured(t.Context(), request)
+			r.NoError(err)
+			session, err := runner.BeginStructuredExecution(t.Context(), primary)
+			r.NoError(err)
+			call, err := session.PrimaryCall(primary)
+			r.NoError(err)
+			started := 0
+			if commitment {
+				consent.commitmentActive = false
+			} else {
+				consent.active = false
+			}
+			_, err = call.Execute(t.Context(), func(context.Context) error { started++; return nil })
+			r.ErrorIs(err, peoplesweep.ErrPersonSweepConsentRevoked)
+			a.Zero(started)
+			a.Zero(transport.calls)
+			_, err = call.Execute(t.Context(), func(context.Context) error { started++; return nil })
+			r.ErrorContains(err, "already claimed")
+			a.Zero(started)
+		})
+	}
 }
 
 func (t *countingTransport) Prepare(

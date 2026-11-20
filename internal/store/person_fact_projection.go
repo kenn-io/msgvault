@@ -616,6 +616,9 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 	organizationLocks *personFactOrganizationLockSet, transactionTime time.Time,
 	systemRetirements map[personfacts.ProjectionRef]struct{},
 ) (bool, error) {
+	if descriptor.Kind == personfacts.TargetCommitment {
+		return s.resolvePersonCommitmentTargetTx(ctx, tx, generation, descriptor, preparedFailures)
+	}
 	resolvedClaims, chronology, err := s.loadPersonFactResolvedClaimsTx(
 		ctx, tx, generation.PersonID, descriptor, preparedFailures)
 	if err != nil {
@@ -2623,6 +2626,10 @@ func (s *Store) loadPersonFactTargetDescriptor(
 			SensitivePolicyBlocked: eligibleWithSensitive && definition.IsSensitive &&
 				!allowSensitive,
 		}, nil
+	case personfacts.TargetCommitment:
+		if fallback != nil {
+			return *fallback, personFactTargetEligibility{Supported: allowSensitive}, nil
+		}
 	case personfacts.TargetEmployment:
 		catalog, err := personfacts.BuildCatalog(nil, personfacts.CatalogOptions{})
 		if err != nil {

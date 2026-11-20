@@ -77,6 +77,8 @@ import type {
   CliRebuildFTSEvent,
   CliSearchResponse,
   CliStatsResponse,
+  CommitmentDecisionRequest,
+  CommitmentDecisionResponse,
   CommunicationService,
   CommunicationServicesResponse,
   ConsentSettingsPeopleInferenceProviderPathParameters,
@@ -130,6 +132,8 @@ import type {
   ExportCLIMessagesParams,
   FactSummary,
   FastSearchParams,
+  FileCommitmentAgendaPathParameters,
+  FileLoopAgendaPathParameters,
   FileMetadataResponse,
   FilterMessagesParams,
   FilteredMessagesResponse,
@@ -280,6 +284,7 @@ import type {
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
   LocalEmbeddingsStatus,
+  LoopAgendaResponse,
   LoopDecisionResponse,
   LoopListResponse,
   MCPCapabilities,
@@ -433,6 +438,7 @@ import type {
   SearchMessagesParams,
   SearchResult,
   SearchTextMessagesParams,
+  SetCommitmentDecisionPathParameters,
   SetOrganizationAttributeBody,
   SetOrganizationAttributePathParameters,
   SetPersonAttributeParams,
@@ -2262,6 +2268,54 @@ export const listLoops = (
 ) => {
   return orvalFetch<LoopListResponse>(
     { url: `/api/v1/loops`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary File an open obligation in Kata
+ */
+export const fileCommitmentAgenda = (
+  { commitmentId }: FileCommitmentAgendaPathParameters,
+  options?: SecondParameter<typeof orvalFetch<LoopAgendaResponse>>,
+) => {
+  return orvalFetch<LoopAgendaResponse>(
+    {
+      url: `/api/v1/loops/commitments/${encodeURIComponent(String(commitmentId))}/agenda`,
+      method: "POST",
+    },
+    options,
+  );
+};
+/**
+ * @summary Set an owner decision on a cited promise
+ */
+export const setCommitmentDecision = (
+  { commitmentId }: SetCommitmentDecisionPathParameters,
+  commitmentDecisionRequest: CommitmentDecisionRequest,
+  options?: SecondParameter<typeof orvalFetch<CommitmentDecisionResponse>>,
+) => {
+  return orvalFetch<CommitmentDecisionResponse>(
+    {
+      url: `/api/v1/loops/commitments/${encodeURIComponent(String(commitmentId))}/decision`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: commitmentDecisionRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary File an open obligation in Kata
+ */
+export const fileLoopAgenda = (
+  { messageId }: FileLoopAgendaPathParameters,
+  options?: SecondParameter<typeof orvalFetch<LoopAgendaResponse>>,
+) => {
+  return orvalFetch<LoopAgendaResponse>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(messageId))}/agenda`,
+      method: "POST",
+    },
     options,
   );
 };

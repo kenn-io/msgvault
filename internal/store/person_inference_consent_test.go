@@ -86,6 +86,11 @@ func TestPersonInferenceConsentLifecycle(t *testing.T) {
 	created, err = st.EnsurePersonInferenceProfile(t.Context(), profile)
 	require.NoError(err)
 	assert.False(created)
+	_, _, err = st.GrantPersonCommitmentConsent(t.Context(), profile.Fingerprint, "cli")
+	require.NoError(err)
+	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
+	require.NoError(err)
+	assert.False(active)
 
 	consent, created, err := st.GrantPersonInferenceConsent(
 		t.Context(), profile.Fingerprint, "cli")
@@ -101,14 +106,28 @@ func TestPersonInferenceConsentLifecycle(t *testing.T) {
 	assert.False(created)
 	assert.Equal(consent.ID, again.ID)
 
-	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
+	active, err = st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
 	require.NoError(err)
 	assert.True(active)
+	changed, err := st.RevokePersonCommitmentConsent(t.Context(), profile.Fingerprint, "cli")
+	require.NoError(err)
+	assert.True(changed)
+	commitmentActive, err := st.HasActivePersonCommitmentConsent(t.Context(), profile.Fingerprint)
+	require.NoError(err)
+	assert.False(commitmentActive)
+	active, err = st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
+	require.NoError(err)
+	assert.True(active)
+	_, _, err = st.GrantPersonCommitmentConsent(t.Context(), profile.Fingerprint, "cli")
+	require.NoError(err)
 
-	changed, err := st.RevokePersonInferenceConsent(
+	changed, err = st.RevokePersonInferenceConsent(
 		t.Context(), profile.Fingerprint, "cli")
 	require.NoError(err)
 	assert.True(changed)
+	commitmentActive, err = st.HasActivePersonCommitmentConsent(t.Context(), profile.Fingerprint)
+	require.NoError(err)
+	assert.False(commitmentActive)
 	changed, err = st.RevokePersonInferenceConsent(
 		t.Context(), profile.Fingerprint, "cli")
 	require.NoError(err)
@@ -178,6 +197,8 @@ func TestPersonInferenceProfilesCanBeListedAndRevokedWithoutRuntimeConfig(t *tes
 	require.NoError(err)
 	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "cli")
 	require.NoError(err)
+	_, _, err = st.GrantPersonCommitmentConsent(t.Context(), profile.Fingerprint, "cli")
+	require.NoError(err)
 	var policy map[string]any
 	require.NoError(json.Unmarshal(profile.PolicyJSON, &policy))
 	normalizedPolicy, err := json.Marshal(policy)
@@ -197,13 +218,16 @@ func TestPersonInferenceProfilesCanBeListedAndRevokedWithoutRuntimeConfig(t *tes
 
 	changed, err := st.RevokeAllPersonInferenceConsents(t.Context(), "cli")
 	require.NoError(err)
-	assert.Equal(int64(1), changed)
+	assert.Equal(int64(2), changed)
 	changed, err = st.RevokeAllPersonInferenceConsents(t.Context(), "cli")
 	require.NoError(err)
 	assert.Zero(changed)
 	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
 	require.NoError(err)
 	assert.False(active)
+	commitmentActive, err := st.HasActivePersonCommitmentConsent(t.Context(), profile.Fingerprint)
+	require.NoError(err)
+	assert.False(commitmentActive)
 }
 
 func TestPersonInferenceProfilesCanBeListedAfterProgramChange(t *testing.T) {
