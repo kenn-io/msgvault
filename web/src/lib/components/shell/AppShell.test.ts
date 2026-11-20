@@ -6,7 +6,7 @@ import { appShortcuts } from '@kenn-io/kit-ui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRawSnippet, getContext, mount, tick, unmount, type ComponentProps } from 'svelte';
 
-import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
+import { meetingFixtureResponse, meetingMetrics } from '../../meetings/fixtures.test-support';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { sourceGroup } from '../../explore/fixtures.test-support';
@@ -877,6 +877,48 @@ describe('AppShell', () => {
       await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
       await fireEvent.click(await screen.findByRole('option', { name: 'People' }));
       await waitFor(() => expect(document.title).toBe('People · msgvault'));
+    });
+
+    it('names the browser tab for an open entry and drops it on close or workspace change', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'message:1' });
+      render(AppShell, { client: createAPIClient(async () => Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }))), state });
+      await waitFor(() => expect(document.title).toBe('Synthetic subject 1 · Messages · msgvault'));
+      await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
+      await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
+      state.commitNavigation({ selectedRow: 'message:1' });
+      await waitFor(() => expect(document.title).toBe('Synthetic subject 1 · Messages · msgvault'));
+      await fireEvent.click(screen.getByRole('button', { name: 'Files' }));
+      await waitFor(() => expect(document.title).toBe('Files · msgvault'));
+    });
+
+    it('names the browser tab for an open group', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ groupingChain: ['source'], selectedRow: 'group:source:7' });
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/groups')) return Response.json(exploreResponse({ rows: [{ key: '7', label: 'Group Seven', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }], total_count: 1 }));
+        return Response.json(exploreResponse());
+      });
+      render(AppShell, { client, state });
+      await waitFor(() => expect(document.title).toBe('Group Seven · Messages · msgvault'));
+    });
+
+    it('names the browser tab after an archived meeting once loaded', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'archive-meeting:42' });
+      let finish!: (response: Response) => void;
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/messages/42')) return await new Promise<Response>(resolve => { finish = resolve; });
+        if (path.endsWith('/meetings/metrics')) return Response.json(meetingMetrics({ totals: { meeting_count: 1, known_duration_count: 0, unknown_duration_count: 1, total_known_seconds: 0, average_known_seconds: null } }));
+        return Response.json(exploreResponse());
+      });
+      render(AppShell, { client, state });
+      await waitFor(() => expect(finish).toBeTypeOf('function'));
+      await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
+      finish(Response.json({ id: 42, conversation_id: 8, subject: 'Planning meeting', conversation_title: '', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', labels: [], attachments: [], has_attachments: false, hidden_text_present: false, size_bytes: 10, snippet: 'Transcript' }));
+      await waitFor(() => expect(document.title).toBe('Planning meeting · Messages · msgvault'));
     });
 
     it.each([
@@ -1989,9 +2031,11 @@ describe('AppShell', () => {
       if (control === 'reader next') {
         await fireEvent.click(within(grid).getByText('Synthetic subject 1'));
         await screen.findByText('Reader body 1');
+        await waitFor(() => expect(document.title).toBe('Synthetic subject 1 · People · msgvault'));
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'l' });
         await screen.findByText('Reader body 2');
+        await waitFor(() => expect(document.title).toBe('Synthetic subject 2 · People · msgvault'));
       } else {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'f' });

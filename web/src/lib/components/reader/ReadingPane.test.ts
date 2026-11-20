@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
 import type { EntryRow, ExploreFilter, ExplorePredicate } from '../../explore/models';
-import ReadingPane from './ReadingPane.svelte';
+import ReadingPane, { readingSelectionTitle } from './ReadingPane.svelte';
 
 function entryRow(overrides: Partial<EntryRow> = {}): EntryRow {
   return {
@@ -42,6 +42,10 @@ function renderPane(row: EntryRow) {
 }
 
 describe('ReadingPane header', () => {
+  it('uses an untitled title for an entry without a title', () => {
+    expect(readingSelectionTitle({ kind: 'entry', row: entryRow({ title: '' }) })).toBe('(untitled)');
+  });
+
   it('uses a plain title for a missing message selected by ID', () => {
     render(ReadingPane, {
       client: createAPIClient(vi.fn<typeof fetch>()),

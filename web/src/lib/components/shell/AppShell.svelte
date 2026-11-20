@@ -38,6 +38,7 @@
   } from '../../explore/models';
   import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
+  import { messageTitle } from '../../archive/message-title';
   import { ExploreLoader, type MessagesTable } from '../../explore/loader.svelte';
   import { groupingOptions, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
@@ -287,6 +288,7 @@
   let displayOpen = $state(false);
   let personMessages = $state<MessagesTable>();
   let resultsWidth = $state(0);
+  let readingTitle = $state('');
   const displayState = $derived(exploreState.current.workspace === 'everything' ? exploreState : exploreState.current.workspace === 'relationships' ? personMessages?.state : undefined);
   const displayResultsWidth = $derived(exploreState.current.workspace === 'everything' ? resultsWidth : exploreState.current.workspace === 'relationships' ? personMessages?.resultsWidth ?? 0 : 0);
   const operationsController = new OperationsController(untrack(() => client));
@@ -513,7 +515,11 @@
   });
 
   $effect(() => {
-    document.title = `${workspaceLabel(exploreState.current.workspace)} · msgvault`;
+    const workspace = exploreState.current.workspace;
+    const detail = archiveMeetingID !== undefined
+      ? archivedMeeting.detail?.id === archiveMeetingID ? messageTitle(archivedMeeting.detail.subject, archivedMeeting.detail.conversation_title) : ''
+      : workspace === 'everything' ? readingTitle : workspace === 'relationships' ? personMessages?.readingTitle : '';
+    document.title = [detail, workspaceLabel(workspace), 'msgvault'].filter(Boolean).join(' · ');
   });
 
   $effect(() => {
@@ -1557,6 +1563,7 @@
           sources={shellData.jobs.sources}
           onAddSource={shellData.jobs.noSources ? addSource : undefined}
           bind:resultsWidth
+          bind:readingTitle
           {client}
           {exploreState}
           {loader}

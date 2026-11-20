@@ -44,7 +44,7 @@
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
   import TranscriptHits from '../search/TranscriptHits.svelte';
-  import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
+  import ReadingPane, { readingSelectionTitle, type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
   import MessageMeetingSummary from '../meetings/MessageMeetingSummary.svelte';
   import {
@@ -65,6 +65,7 @@
     conversationStart?: string;
     conversationEnd?: string;
     resultsWidth?: number;
+    readingTitle?: string;
     client: APIClient;
     exploreState: ExploreState;
     loader: ExploreLoader;
@@ -104,6 +105,7 @@
     conversationStart = undefined,
     conversationEnd = undefined,
     resultsWidth = $bindable(0),
+    readingTitle = $bindable(''),
     client,
     exploreState,
     loader,
@@ -244,6 +246,8 @@
       ? { ...session.readingGroupDetail, label: groupRowName(group.dimension, group.key, session.readingGroupDetail.label, group.dimension === 'source' ? sources : undefined).name }
       : undefined;
   });
+
+  $effect(() => { readingTitle = readingSelection ? readingSelectionTitle(readingSelection) : ''; });
 
   const readingState = $derived.by(
     (): {
