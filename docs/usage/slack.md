@@ -51,9 +51,9 @@ disk and does not fetch missing files from Slack.
 Re-running the same export updates existing messages and reuses stored file
 content instead of creating duplicates. If a file is referenced but missing
 from the export, msgvault keeps a metadata-only attachment record and reports
-it as missing in the command summary. If you have a remote configured, run the
-import on the daemon host with `--local`; msgvault does not upload the export
-from a client machine.
+it as missing in the command summary. If you have a remote configured, run
+the import on the daemon host with `--local`; msgvault does not upload the
+export from a client machine.
 
 ## Prerequisites
 
