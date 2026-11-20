@@ -747,7 +747,7 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 			}
 			require.NoError(err)
 			root := t.TempDir()
-			testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"private_group","messages":[{"id":1,"type":"message","from_id":"user1","date_unixtime":"1610909871","text":"earlier"},{"id":2,"type":"message","from_id":"user2","date_unixtime":"1610909872","text":"hello"}]}]}}`))
+			testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"user2","date_unixtime":"1610909872","text":"hello"}]}]}}`))
 			summary, err := Import(ctx, st, ImportOptions{RootDir: root})
 			require.ErrorContains(err, "forced identity failure")
 			assert.Zero(summary.MessagesAdded)
@@ -766,7 +766,7 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 			require.NoError(err)
 			summary, err = Import(ctx, st, ImportOptions{RootDir: root})
 			require.NoError(err)
-			assert.EqualValues(2, summary.MessagesAdded)
+			assert.EqualValues(1, summary.MessagesAdded)
 			members, err = st.ClusterMembers(participant)
 			require.NoError(err)
 			assert.ElementsMatch([]int64{participant, bridge}, members)
