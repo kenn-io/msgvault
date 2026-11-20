@@ -264,7 +264,11 @@ func TestMCPAttributeEditDuringApproval(t *testing.T) {
 					require.False(attributeOperation(t, b, "set_person_attribute", map[string]any{"person_id": person, "slug": slug, "value": map[string]any{"type": "text", "text": "email"}}).IsError)
 				}
 				compete := func() { assert.False(attributeOperation(t, b, "set_person_attribute", competing).IsError) }
-				params := &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": slug, "value": map[string]any{"type": "text", "text": "chat"}}}
+				args := map[string]any{"person_id": person, "slug": slug, "value": map[string]any{"type": "text", "text": "chat"}}
+				if scenario == "empty" {
+					args["expected_value_id"] = 0
+				}
+				params := &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: args}
 				if scenario == "clear" {
 					params.Name = "clear_person_attribute"
 					params.Arguments = map[string]any{"person_id": person, "slug": slug}
@@ -305,6 +309,22 @@ func TestMCPAttributeExactTokens(t *testing.T) {
 	b, st, person := recordAttributesFixture(t)
 	attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "metadata", "label": "Metadata", "value_type": "json", "field_type": "json"}})
 	session := operationMCPSession(t, b, []mcpserver.OperationFamily{mcpserver.OperationFamilyAttributes}, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}})
+	attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "large_integer", "label": "Large integer", "value_type": "integer", "field_type": "duration"}})
+	integerParams := &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": "large_integer", "value": map[string]any{"type": "integer", "integer": int64(9007199254740993)}}}
+	pending, err := session.CallTool(t.Context(), integerParams)
+	require.NoError(err)
+	require.NotEmpty(pending.RequestState)
+	prompt, ok := pending.InputRequests["confirm"].(*sdkmcp.ElicitParams)
+	require.True(ok)
+	assert.Contains(prompt.Message, `"integer":9007199254740993`)
+	integerParams.RequestState, integerParams.InputResponses = pending.RequestState, sdkmcp.InputResponseMap{"confirm": attributeAccept()}
+	result, err := session.CallTool(t.Context(), integerParams)
+	require.NoError(err)
+	require.False(result.IsError, "%v", result.Content)
+	values := attributeValues(t, st, person, "large_integer")
+	require.Len(values, 1)
+	require.NotNil(values[0].Value.Integer)
+	assert.Equal(int64(9007199254740993), *values[0].Value.Integer)
 	confirm := func(approved, retried string) (string, *sdkmcp.CallToolResult) {
 		value := map[string]any{"type": "json", "json": jsontext.Value(approved)}
 		params := &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": "metadata", "value": value}}
