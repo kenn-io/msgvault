@@ -213,6 +213,81 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 	}
 }
 
+func TestAgentVerificationChecksPublicCommentTitleBeforeOmittingIt(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("test", "reader@example.test")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "post-1", "public_comments", "Your verification code",
+	)
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "reply-1",
+		MessageType:     "facebook_comments",
+		SentAt:          sql.NullTime{Time: time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC), Valid: true},
+		Snippet:         sql.NullString{String: "482913", Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageBody(messageID,
+		sql.NullString{String: "482913", Valid: true},
+		sql.NullString{String: "<p>482913</p>", Valid: true},
+	))
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}},
+		Store:  st,
+		Logger: testLogger(),
+	})
+	t.Cleanup(func() { require.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	_, readerToken, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{
+		agentgrant.PermissionMessageRead,
+	}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	require.NoError(err)
+	_, revealToken, _, err := srv.agentGrants.Issue("reveal", []agentgrant.Permission{
+		agentgrant.PermissionMessageRead, agentgrant.PermissionVerificationRead,
+	}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	require.NoError(err)
+
+	for _, withEngine := range []bool{false, true} {
+		if withEngine {
+			srv.SetAnalyticsEngine(query.NewEngine(st.DB(), st.IsPostgreSQL()), AnalyticsModeSQL)
+		} else {
+			srv.SetAnalyticsEngine(nil, "")
+		}
+		for _, mode := range []string{"owner", "reader", "reveal"} {
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+				fmt.Sprintf("/api/v1/messages/%d", messageID), nil)
+			req.RemoteAddr = "127.0.0.1:1234"
+			switch mode {
+			case "owner":
+				req.Header.Set("X-Api-Key", "owner")
+			case "reader":
+				req.Header.Set(apiprotocol.AgentTokenHeader, readerToken)
+			case "reveal":
+				req.Header.Set(apiprotocol.AgentTokenHeader, revealToken)
+			}
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(http.StatusOK, w.Code, w.Body.String())
+			var detail struct {
+				BodyText          string `json:"body_text"`
+				ConversationTitle string `json:"conversation_title"`
+			}
+			require.NoError(json.NewDecoder(w.Body).Decode(&detail))
+			assert.Empty(detail.ConversationTitle, "engine=%t mode=%s", withEngine, mode)
+			if mode == "reader" {
+				assert.Equal(verification.Masked, detail.BodyText, "engine=%t", withEngine)
+			} else {
+				assert.Equal("482913", detail.BodyText, "engine=%t mode=%s", withEngine, mode)
+			}
+		}
+	}
+}
+
 func TestAgentVerificationModifierGrantsNoRead(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

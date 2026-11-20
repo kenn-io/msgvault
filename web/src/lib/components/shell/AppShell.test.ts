@@ -975,15 +975,34 @@ describe('AppShell', () => {
       expect(document.title).toBe('Thread subject · Messages · msgvault');
     });
 
-    it('uses the anchor subject when a conversation has no title', async () => {
+    it('uses the opened message title when the selected row is outside the loaded window', async () => {
       const state = shellState('everything');
-      state.commitNavigation({ selectedRow: 'source:1:conversation:9' });
-      const row = { ...entry(1), key: 'source:1:conversation:9', kind: 'conversation', message_type: 'email', conversation_type: 'email_thread', title: 'Conversation', anchor_message_id: 2, conversation_id: 9, message_count: 2 };
+      state.commitNavigation({ selectedRow: 'source:1:message:99', conversationAnchor: '2' });
+      const row = { ...entry(99), key: 'source:1:message:99', kind: 'email', anchor_message_id: 99, conversation_id: 9, message_count: 3 };
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
         if (path.endsWith('/conversations/9')) return Response.json({ id: 9, anchor_id: 2, messages: [
-          { id: 1, conversation_id: 9, subject: 'Earlier message subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Earlier body', attachments: [] },
-          { id: 2, conversation_id: 9, subject: 'Thread subject', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
+          { id: 2, conversation_id: 9, subject: 'Opened from file', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Opened body', attachments: [] },
+          { id: 3, conversation_id: 9, subject: 'Another subject', sent_at: '2026-07-18T13:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Another body', attachments: [] },
+        ], total: 3, has_before: true, has_after: false });
+        return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
+      });
+      render(AppShell, { client, state });
+      await screen.findByText('Opened body');
+      await waitFor(() => expect(document.title).toBe('Opened from file · Messages · msgvault'));
+      await fireEvent.click(screen.getByRole('button', { name: /Expand message 3/ }));
+      expect(document.title).toBe('Opened from file · Messages · msgvault');
+    });
+
+    it('uses the anchor subject when a conversation has no title', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'source:1:conversation:9' });
+      const row = { ...entry(1), key: 'source:1:conversation:9', kind: 'conversation', message_type: 'linkedin', conversation_type: 'group_chat', title: 'Conversation', anchor_message_id: 2, conversation_id: 9, message_count: 2 };
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/conversations/9')) return Response.json({ id: 9, anchor_id: 2, messages: [
+          { id: 1, conversation_id: 9, subject: 'Earlier message subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'linkedin', from: 'sender@example.com', to: [], body: 'Earlier body', attachments: [] },
+          { id: 2, conversation_id: 9, subject: 'Thread subject', sent_at: '2026-07-18T12:00:00Z', message_type: 'linkedin', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
         ], total: 2, has_before: true, has_after: false });
         return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
       });

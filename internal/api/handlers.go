@@ -533,6 +533,18 @@ func nullableTimePtr(value time.Time) *string {
 	return &formatted
 }
 
+// publicCommentsConversationType marks conversations whose title is post text.
+const publicCommentsConversationType = "public_comments"
+
+// detailConversationTitle omits the title of a public_comments conversation,
+// where it is post text, from message detail responses.
+func detailConversationTitle(conversationType, title string) string {
+	if conversationType == publicCommentsConversationType {
+		return ""
+	}
+	return title
+}
+
 // messageDetailFromQuery builds a MessageDetail response from a query-engine
 // MessageDetail, formatting addresses the same way the store path does and
 // emitting body_html alongside body when both are present.
@@ -584,7 +596,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 
 	return MessageDetail{
 		RelatedMessageID:  qMsg.RelatedMessageID,
-		ConversationTitle: qMsg.ConversationTitle,
+		ConversationTitle: detailConversationTitle(qMsg.ConversationType, qMsg.ConversationTitle),
 
 		ID:                qMsg.ID,
 		SourceID:          qMsg.SourceID,
@@ -846,7 +858,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	detail := MessageDetail{
 		RelatedMessageID:  msg.RelatedMessageID,
 		MessageSummary:    toMessageSummary(*msg),
-		ConversationTitle: msg.ConversationTitle,
+		ConversationTitle: detailConversationTitle(msg.ConversationType, msg.ConversationTitle),
 		Body:              msg.Body,
 		BodyText:          new(msg.BodyText),
 		BodyHTML:          msg.BodyHTML,

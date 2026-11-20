@@ -91,9 +91,23 @@
       window.removeEventListener('focus', report);
     };
   });
+  // The tab follows the opened item. When that item is outside the loaded
+  // window, the message the thread opened at names it instead, and the title
+  // then stays put while other messages expand.
+  let titleKey = '';
+  let openedAnchorId = 0;
+  let openedTitle = '';
   $effect(() => {
-    const anchor = messages.find((message) => message.id === (titleAnchorId ?? anchorId));
-    anchorTitle = anchor ? messageTitle(anchor.subject, anchor.conversation_title) || '(untitled)' : '';
+    const key = `${conversationId}:${titleAnchorId ?? ''}`;
+    if (key !== titleKey) {
+      titleKey = key;
+      openedAnchorId = untrack(() => anchorId);
+      openedTitle = '';
+    }
+    const anchor = messages.find((message) => message.id === (titleAnchorId ?? openedAnchorId)) ??
+      messages.find((message) => message.id === openedAnchorId);
+    if (anchor) openedTitle = messageTitle(anchor.subject, anchor.conversation_title) || '(untitled)';
+    anchorTitle = openedTitle;
   });
   onDestroy(() => { anchorTitle = ''; });
   let loading = $state(true);

@@ -61,9 +61,12 @@ var participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
-	SenderAuth           *senderauth.Verdict
-	RelatedMessageID     *int64
-	ConversationTitle    string
+	SenderAuth        *senderauth.Verdict
+	RelatedMessageID  *int64
+	ConversationTitle string
+	// ConversationType lets API handlers drop the title after verification
+	// classification; it is not serialized.
+	ConversationType     string
 	Calendar             *CalendarProjection
 	ID                   int64
 	SourceID             int64
@@ -264,7 +267,8 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(c.source_conversation_id, '') as source_conversation_id,
-			CASE WHEN c.conversation_type = 'public_comments' THEN '' ELSE COALESCE(c.title, '') END,
+			COALESCE(c.title, ''),
+			COALESCE(c.conversation_type, ''),
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
 			%s,
@@ -302,6 +306,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		&m.ConversationID,
 		&m.SourceConversationID,
 		&m.ConversationTitle,
+		&m.ConversationType,
 		&m.Subject,
 		&m.MessageType,
 		&m.From,
