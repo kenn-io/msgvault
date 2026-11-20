@@ -889,7 +889,7 @@ describe('AppShell', () => {
         const match = path.match(/\/conversations\/(\d+)$/);
         if (match) {
           const id = Number(match[1]);
-          return Response.json({ id, anchor_id: id, messages: [{ id, conversation_id: id, subject: id === 1 ? 'Subject' : '', conversation_title: id === 2 ? 'Conv title' : '', snippet: `Snippet ${id}`, sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: `Body ${id}`, attachments: [] }], total: 1, has_before: false, has_after: false });
+          return Response.json({ id, anchor_id: id, messages: [{ id, conversation_id: id, subject: id === 1 ? 'Subject' : '', tab_title: id === 1 ? 'Subject' : id === 2 ? 'Conv title' : '', conversation_title: id === 2 ? 'Conv title' : '', snippet: `Snippet ${id}`, sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: `Body ${id}`, attachments: [] }], total: 1, has_before: false, has_after: false });
         }
         return Response.json(exploreResponse({ rows, total_count: 3 }));
       });
@@ -927,10 +927,10 @@ describe('AppShell', () => {
       state.commitNavigation({ selectedRow: 'recording:1' });
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
-        if (path.endsWith('/messages/1')) return Response.json({ id: 1, conversation_id: 1, subject: 'Thread subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Selected body', labels: [], attachments: [] });
+        if (path.endsWith('/messages/1')) return Response.json({ id: 1, conversation_id: 1, subject: 'Thread subject', tab_title: 'Thread subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Selected body', labels: [], attachments: [] });
         if (path.endsWith('/conversations/1')) return Response.json({ id: 1, anchor_id: 1, messages: [
-          { id: 1, conversation_id: 1, subject: 'Thread subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Selected body', attachments: [] },
-          { id: 2, conversation_id: 1, subject: 'Other message subject', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Other body', attachments: [] },
+          { id: 1, conversation_id: 1, subject: 'Thread subject', tab_title: 'Thread subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Selected body', attachments: [] },
+          { id: 2, conversation_id: 1, subject: 'Other message subject', tab_title: 'Other message subject', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Other body', attachments: [] },
         ], total: 2, has_before: false, has_after: true });
         return Response.json(exploreResponse());
       });
@@ -958,8 +958,8 @@ describe('AppShell', () => {
         if (url.pathname.endsWith('/conversations/9')) {
           const anchor = Number(url.searchParams.get('anchor'));
           return Response.json({ id: 9, anchor_id: anchor, messages: [
-            { id: 1, conversation_id: 9, subject: 'Earlier message subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Earlier body', attachments: [] },
-            { id: 2, conversation_id: 9, subject: 'Thread subject', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
+            { id: 1, conversation_id: 9, subject: 'Earlier message subject', tab_title: 'Earlier message subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Earlier body', attachments: [] },
+            { id: 2, conversation_id: 9, subject: 'Thread subject', tab_title: 'Thread subject', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
           ], total: 2, has_before: true, has_after: false });
         }
         return Response.json(exploreResponse({ rows, total_count: 2 }));
@@ -977,21 +977,46 @@ describe('AppShell', () => {
 
     it('uses the opened message title when the selected row is outside the loaded window', async () => {
       const state = shellState('everything');
-      state.commitNavigation({ selectedRow: 'source:1:message:99', conversationAnchor: '2' });
-      const row = { ...entry(99), key: 'source:1:message:99', kind: 'email', anchor_message_id: 99, conversation_id: 9, message_count: 3 };
+      state.commitNavigation({ selectedRow: 'source:1:message:99', conversationAnchor: '30' });
+      const row = { ...entry(99), key: 'source:1:message:99', kind: 'email', anchor_message_id: 99, conversation_id: 9, message_count: 100 };
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
-        if (path.endsWith('/conversations/9')) return Response.json({ id: 9, anchor_id: 2, messages: [
-          { id: 2, conversation_id: 9, subject: 'Opened from file', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Opened body', attachments: [] },
-          { id: 3, conversation_id: 9, subject: 'Another subject', sent_at: '2026-07-18T13:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Another body', attachments: [] },
-        ], total: 3, has_before: true, has_after: false });
+        if (path.endsWith('/conversations/9')) return Response.json({ id: 9, anchor_id: 30, messages: Array.from({ length: 51 }, (_, index) => {
+          const id = index + 5;
+          const title = id === 30 ? 'Opened from file' : 'Another subject';
+          return { id, conversation_id: 9, subject: title, tab_title: title, sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: id === 30 ? 'Opened body' : 'Another body', attachments: [] };
+        }), total: 100, has_before: true, has_after: true });
         return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
       });
       render(AppShell, { client, state });
       await screen.findByText('Opened body');
       await waitFor(() => expect(document.title).toBe('Opened from file · Messages · msgvault'));
-      await fireEvent.click(screen.getByRole('button', { name: /Expand message 3/ }));
+      await fireEvent.click(screen.getByRole('button', { name: /Expand message 31/ }));
       expect(document.title).toBe('Opened from file · Messages · msgvault');
+    });
+
+    it('waits for an omitted message to load before naming the tab', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'source:1:message:2', conversationAnchor: '1' });
+      const row = { ...entry(2), key: 'source:1:message:2', kind: 'email', anchor_message_id: 2, conversation_id: 9, message_count: 2 };
+      let resolveDetail!: (response: Response) => void;
+      const detail = new Promise<Response>((resolve) => { resolveDetail = resolve; });
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/messages/2')) return detail;
+        if (path.endsWith('/conversations/9')) return Response.json({ id: 9, anchor_id: 1, messages: [
+          { id: 1, conversation_id: 9, subject: 'Anchor', tab_title: 'Anchor', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
+          { id: 2, conversation_id: 9, subject: 'Sensitive subject', tab_title: '', body_omitted: true, sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: '', attachments: [] },
+        ], total: 2, has_before: false, has_after: false });
+        return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
+      });
+      render(AppShell, { client, state });
+      await screen.findByText('Anchor body');
+      await waitFor(() => expect(document.title).toBe('(untitled) · Messages · msgvault'));
+      await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
+      expect(document.title).toBe('(untitled) · Messages · msgvault');
+      resolveDetail(Response.json({ id: 2, conversation_id: 9, subject: 'Sensitive subject', tab_title: 'Verification message', message_type: 'email', sent_at: '2026-07-18T12:00:00Z', from: 'sender@example.com', to: [], body: 'Your verification code is 123456', attachments: [] }));
+      await waitFor(() => expect(document.title).toBe('Verification message · Messages · msgvault'));
     });
 
     it('uses the anchor subject when a conversation has no title', async () => {
@@ -1001,8 +1026,8 @@ describe('AppShell', () => {
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
         if (path.endsWith('/conversations/9')) return Response.json({ id: 9, anchor_id: 2, messages: [
-          { id: 1, conversation_id: 9, subject: 'Earlier message subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'linkedin', from: 'sender@example.com', to: [], body: 'Earlier body', attachments: [] },
-          { id: 2, conversation_id: 9, subject: 'Thread subject', sent_at: '2026-07-18T12:00:00Z', message_type: 'linkedin', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
+          { id: 1, conversation_id: 9, subject: 'Earlier message subject', tab_title: 'Earlier message subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'linkedin', from: 'sender@example.com', to: [], body: 'Earlier body', attachments: [] },
+          { id: 2, conversation_id: 9, subject: 'Thread subject', tab_title: 'Thread subject', sent_at: '2026-07-18T12:00:00Z', message_type: 'linkedin', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
         ], total: 2, has_before: true, has_after: false });
         return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
       });
@@ -1017,7 +1042,7 @@ describe('AppShell', () => {
       const state = shellState('everything');
       const client = createAPIClient(async input => {
         const path = new URL((input as Request).url).pathname;
-        if (path.endsWith('/messages/42')) return Response.json({ id: 42, conversation_id: 8, subject: 'Planning meeting', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', labels: [], attachments: [] });
+        if (path.endsWith('/messages/42')) return Response.json({ id: 42, conversation_id: 8, subject: 'Planning meeting', tab_title: 'Planning meeting', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', labels: [], attachments: [] });
         if (path.endsWith('/meetings/metrics')) return Response.json(meetingMetrics({ totals: { meeting_count: 1, known_duration_count: 0, unknown_duration_count: 1, total_known_seconds: 0, average_known_seconds: null } }));
         return Response.json(exploreResponse());
       });

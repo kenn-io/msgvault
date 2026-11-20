@@ -344,6 +344,7 @@ type MessageDetail struct {
 
 	RelatedMessageID  *int64                    `json:"related_message_id,omitempty"`
 	ConversationTitle string                    `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
+	TabTitle          string                    `json:"tab_title" doc:"Title suitable for a browser tab; empty when unavailable."`
 	SenderAuth        *senderauth.Verdict       `json:"sender_auth,omitempty"`
 	Calendar          *store.CalendarProjection `json:"calendar,omitempty" doc:"Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."`
 
@@ -533,16 +534,14 @@ func nullableTimePtr(value time.Time) *string {
 	return &formatted
 }
 
-// publicCommentsConversationType marks conversations whose title is post text.
-const publicCommentsConversationType = "public_comments"
-
-// detailConversationTitle omits the title of a public_comments conversation,
-// where it is post text, from message detail responses.
-func detailConversationTitle(conversationType, title string) string {
-	if conversationType == publicCommentsConversationType {
-		return ""
+func messageTabTitle(conversationType, messageType string, content verification.Content) string {
+	if verification.Is(content) {
+		return "Verification message"
 	}
-	return title
+	if content.Subject != "" || conversationType == "public_comments" && messageType != "tiktok_export" {
+		return content.Subject
+	}
+	return content.Title
 }
 
 // messageDetailFromQuery builds a MessageDetail response from a query-engine
@@ -596,7 +595,8 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 
 	return MessageDetail{
 		RelatedMessageID:  qMsg.RelatedMessageID,
-		ConversationTitle: detailConversationTitle(qMsg.ConversationType, qMsg.ConversationTitle),
+		ConversationTitle: qMsg.ConversationTitle,
+		TabTitle:          messageTabTitle(qMsg.ConversationType, qMsg.MessageType, messageVerificationContent(qMsg.Subject, qMsg.Snippet, qMsg.ConversationTitle, qMsg.BodyText, qMsg.BodyHTML, len(qMsg.Attachments), func(i int) string { return qMsg.Attachments[i].Filename })),
 
 		ID:                qMsg.ID,
 		SourceID:          qMsg.SourceID,
@@ -858,7 +858,8 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	detail := MessageDetail{
 		RelatedMessageID:  msg.RelatedMessageID,
 		MessageSummary:    toMessageSummary(*msg),
-		ConversationTitle: detailConversationTitle(msg.ConversationType, msg.ConversationTitle),
+		ConversationTitle: msg.ConversationTitle,
+		TabTitle:          messageTabTitle(msg.ConversationType, msg.MessageType, messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename })),
 		Body:              msg.Body,
 		BodyText:          new(msg.BodyText),
 		BodyHTML:          msg.BodyHTML,

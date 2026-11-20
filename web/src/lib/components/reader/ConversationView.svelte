@@ -11,7 +11,6 @@
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail } from '../../archive/types';
   import type { MessageViewMode } from '../../archive/types';
-  import { messageTitle } from '../../archive/message-title';
   import { isEmailMessageType } from '../../explore/models';
   import MessageCard from './MessageCard.svelte';
   import { conversationTaskStatusKey, type TaskStatusLoader, type ConversationTaskStatus } from '../tasks/task-status';
@@ -23,7 +22,7 @@
     client,
     conversationId,
     anchorId,
-    titleAnchorId = undefined,
+    titleAnchorId,
     anchorTitle = $bindable(''),
     onAnchorChange = undefined,
     start = undefined,
@@ -39,7 +38,7 @@
     conversationId: number;
     anchorId: number;
     /** Stable message ID whose title names the selected thread. */
-    titleAnchorId?: number;
+    titleAnchorId: number;
     /** Title of the selected message; empty until the window loads. */
     anchorTitle?: string;
     onAnchorChange?: (anchorId: number) => void;
@@ -98,15 +97,15 @@
   let openedAnchorId = 0;
   let openedTitle = '';
   $effect(() => {
-    const key = `${conversationId}:${titleAnchorId ?? ''}`;
+    const key = `${conversationId}:${titleAnchorId}`;
     if (key !== titleKey) {
       titleKey = key;
       openedAnchorId = untrack(() => anchorId);
       openedTitle = '';
     }
-    const anchor = messages.find((message) => message.id === (titleAnchorId ?? openedAnchorId)) ??
+    const anchor = messages.find((message) => message.id === titleAnchorId) ??
       messages.find((message) => message.id === openedAnchorId);
-    if (anchor) openedTitle = messageTitle(anchor.subject, anchor.conversation_title) || '(untitled)';
+    if (anchor) openedTitle = anchor.tab_title || '(untitled)';
     anchorTitle = openedTitle;
   });
   onDestroy(() => { anchorTitle = ''; });
@@ -288,7 +287,7 @@
         return;
       }
       messages = messages.map((entry) =>
-        entry.id === id ? { ...entry, body: data.body, body_html: data.body_html, body_omitted: false } : entry,
+        entry.id === id ? { ...entry, body: data.body, body_html: data.body_html, tab_title: data.tab_title, body_omitted: false } : entry,
       );
     } catch (requestError) {
       if (requestGeneration !== generation) return;

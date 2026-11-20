@@ -38,7 +38,6 @@
   } from '../../explore/models';
   import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
-  import { messageTitle } from '../../archive/message-title';
   import { ExploreLoader, type MessagesTable } from '../../explore/loader.svelte';
   import { groupingOptions, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
@@ -517,7 +516,7 @@
   $effect(() => {
     const workspace = exploreState.current.workspace;
     const meeting = archivedMeeting.detail?.id === archiveMeetingID ? archivedMeeting.detail : undefined;
-    const detail = archiveMeetingID !== undefined ? (meeting ? messageTitle(meeting.subject, meeting.conversation_title) || '(untitled)' : '') :
+    const detail = archiveMeetingID !== undefined ? (meeting ? meeting.tab_title || '(untitled)' : '') :
       workspace === 'everything' ? readingTitle : workspace === 'relationships' ? personMessages?.readingTitle ?? '' : '';
     document.title = [detail, workspaceLabel(workspace), 'msgvault'].filter(Boolean).join(' · ');
   });

@@ -8342,6 +8342,9 @@ components:
           type: string
         subject:
           type: string
+        tab_title:
+          description: Title suitable for a browser tab; empty when unavailable.
+          type: string
         to:
           items:
             type: string
@@ -8352,6 +8355,7 @@ components:
             $ref: "#/components/schemas/ConversationParticipant"
           type: array
       required:
+        - tab_title
         - body
         - attachments
         - id
@@ -17309,7 +17313,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.20.0
+  version: 5.21.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

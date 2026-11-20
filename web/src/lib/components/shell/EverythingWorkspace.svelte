@@ -11,7 +11,6 @@
   import { mediaReadiness } from '../../search/media-ready.svelte';
   import { reportError } from '../../telemetry/actions';
   import { ArchiveMessageLoader } from '../../archive/message-loader.svelte';
-  import { messageTitle } from '../../archive/message-title';
   import { parseRecordingSelection } from '../../archive/recording-selection';
   import type {
     MeetingRef,
@@ -285,7 +284,7 @@
   let readingAnchorTitle = $state('');
   $effect(() => {
     const selected = readingSelection;
-    readingTitle = selected?.kind === 'archive' ? messageTitle(selected.message.subject, selected.message.conversation_title) || '(untitled)' :
+    readingTitle = selected?.kind === 'archive' ? selected.message.tab_title || '(untitled)' :
       selected?.kind === 'entry' ? readingAnchorTitle : '';
   });
 

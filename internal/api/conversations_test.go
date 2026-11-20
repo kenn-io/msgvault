@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -102,48 +103,83 @@ func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 	assert.Equal(ids[1], response.AnchorID)
 }
 
-func TestConversationWindowOmitsPublicPostBodyAsConversationTitle(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
+func TestMessageTabTitles(t *testing.T) {
+	for _, tc := range []struct {
+		name, conversationType, messageType, title, subject, body, want string
+	}{
+		{"verification", "email_thread", "email", "Conversation", "Your verification code is 123456", "", "Verification message"},
+		{"facebook", "public_comments", "facebook_comments", "Post text", "", "", ""},
+		{"linkedin", "public_comments", "linkedin", "Post text", "", "", ""},
+		{"tiktok", "public_comments", "tiktok_export", "https://example.com/video", "", "", "https://example.com/video"},
+		{"chat", "direct_chat", "linkedin", "Chat title", "", "", "Chat title"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("test", "archive@example.com")
+			require.NoError(t, err)
+			conversationID, err := st.EnsureConversationWithType(source.ID, "conversation", tc.conversationType, tc.title)
+			require.NoError(t, err)
+			id, err := st.UpsertMessage(&store.Message{ConversationID: conversationID, SourceID: source.ID, SourceMessageID: "message", MessageType: tc.messageType, Subject: sql.NullString{String: tc.subject, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
+			require.NoError(t, err)
+			require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: tc.body, Valid: true}, sql.NullString{}))
+			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+			for _, engine := range []bool{false, true} {
+				if engine {
+					srv.SetAnalyticsEngine(query.NewEngine(st.DB(), st.IsPostgreSQL()), AnalyticsModeSQL)
+				}
+				for _, path := range []string{fmt.Sprintf("/api/v1/messages/%d", id), fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, id)} {
+					w := httptest.NewRecorder()
+					srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
+					require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+					var raw map[string]any
+					require.NoError(t, json.NewDecoder(w.Body).Decode(&raw))
+					if messages, ok := raw["messages"].([]any); ok {
+						raw = messages[0].(map[string]any)
+					}
+					assert.Equal(t, tc.want, raw["tab_title"], "engine=%t path=%s", engine, path)
+					assert.Equal(t, tc.title, raw["conversation_title"], "engine=%t path=%s", engine, path)
+					assert.Equal(t, tc.subject, raw["subject"], "engine=%t path=%s", engine, path)
+				}
+			}
+		})
+	}
+}
+
+func TestConversationWindowTabTitleWaitsForOmittedBody(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("test", "archive@example.com")
-	require.NoError(err)
-	conversationID, err := st.EnsureConversationWithType(
-		source.ID, "post-1", "public_comments", "A private post body",
-	)
-	require.NoError(err)
-	messageID, err := st.UpsertMessage(&store.Message{
-		ConversationID:  conversationID,
-		SourceID:        source.ID,
-		SourceMessageID: "post-1",
-		MessageType:     "facebook_comments",
-		SentAt:          sql.NullTime{Time: time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC), Valid: true},
-		Snippet:         sql.NullString{String: "A private post body", Valid: true},
-	})
-	require.NoError(err)
+	require.NoError(t, err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "thread", "email_thread", "Conversation")
+	require.NoError(t, err)
+	ids := make([]int64, 0, 2)
+	for i, body := range []string{strings.Repeat("a", store.ConversationInlineBodyBudget+1), "Your verification code is 123456"} {
+		id, err := st.UpsertMessage(&store.Message{ConversationID: conversationID, SourceID: source.ID, SourceMessageID: fmt.Sprint(i), MessageType: "email", Subject: sql.NullString{String: "Ordinary subject", Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 1, i+1, 0, 0, 0, 0, time.UTC), Valid: true}})
+		require.NoError(t, err)
+		require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+		ids = append(ids, id)
+	}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
-		fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, messageID), nil)
 	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	require.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
-	var response ConversationResponse
-	require.NoError(json.NewDecoder(w.Body).Decode(&response))
-	require.Len(response.Messages, 1)
-	assert.Empty(response.Messages[0].ConversationTitle)
-
-	req = httptest.NewRequestWithContext(t.Context(), http.MethodGet,
-		fmt.Sprintf("/api/v1/messages/%d", messageID), nil)
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, ids[0]), nil))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var response struct {
+		Messages []struct {
+			BodyOmitted bool   `json:"body_omitted"`
+			TabTitle    string `json:"tab_title"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	require.Len(t, response.Messages, 2)
+	assert.True(t, response.Messages[1].BodyOmitted)
+	assert.Empty(t, response.Messages[1].TabTitle)
 	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	require.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
-	var detail MessageDetail
-	require.NoError(json.NewDecoder(w.Body).Decode(&detail))
-	assert.Empty(detail.ConversationTitle)
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", ids[1]), nil))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var detail struct {
+		TabTitle string `json:"tab_title"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&detail))
+	assert.Equal(t, "Verification message", detail.TabTitle)
 }
 
 func TestConversationWindowCapsInlineBodiesAndServesOmittedBodiesByID(t *testing.T) {
