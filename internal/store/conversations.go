@@ -250,7 +250,7 @@ func (s *Store) GetConversationWindowContext(
 			m.source_id,
 			COALESCE(m.source_message_id, ''),
 			COALESCE(m.conversation_id, 0),
-			COALESCE(c.source_conversation_id, ''), COALESCE(c.title, ''),
+			COALESCE(c.source_conversation_id, ''), CASE WHEN c.conversation_type = 'public_comments' THEN '' ELSE COALESCE(c.title, '') END,
 			COALESCE(m.subject, ''),
 			COALESCE(m.message_type, ''),
 			%s,

@@ -102,6 +102,40 @@ func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 	assert.Equal(ids[1], response.AnchorID)
 }
 
+func TestConversationWindowOmitsPublicPostBodyAsConversationTitle(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("test", "archive@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "post-1", "public_comments", "A private post body",
+	)
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "post-1",
+		MessageType:     "facebook_comments",
+		SentAt:          sql.NullTime{Time: time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC), Valid: true},
+		Snippet:         sql.NullString{String: "A private post body", Valid: true},
+	})
+	require.NoError(err)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, messageID), nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var response ConversationResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&response))
+	require.Len(response.Messages, 1)
+	assert.Empty(response.Messages[0].ConversationTitle)
+}
+
 func TestConversationWindowCapsInlineBodiesAndServesOmittedBodiesByID(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

@@ -90,7 +90,7 @@
   });
   $effect(() => {
     const anchor = messages.find((message) => message.id === anchorId);
-    anchorTitle = anchor ? messageTitle(anchor.subject, anchor.conversation_title) || '(untitled)' : '';
+    anchorTitle = anchor ? untrack(() => anchorTitle) || messageTitle(anchor.subject, anchor.conversation_title) || '(untitled)' : '';
   });
   onDestroy(() => { anchorTitle = ''; });
   let loading = $state(true);
