@@ -95,7 +95,7 @@ warns that its session cookie travels without TLS. `HttpOnly` and
 At 640px or narrower, message rows show the sender and time, subject, and a one-line preview. Conversation rows show their participants. Group rows show the name, item count, size, and latest date. Columns still chooses which parts appear.
 
 <figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Archived email table with global search, Save view button, and compact email rows in light theme" loading="lazy">
+  <img src="/docs/assets/generated/web/messages-light-compact.png" alt="Archived email table with global search, Save view button, and compact email rows in light theme" loading="lazy">
   <figcaption>Browse archived email. Select the image to view it at full size.</figcaption>
 </figure>
 
@@ -301,7 +301,7 @@ separate choices.
 ## People and domains
 
 <figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="People workspace showing a person list, the selected person's activity calendar, and their messages in dark theme" loading="lazy">
+  <img src="/docs/assets/generated/web/people-dark-comfortable.png" alt="People workspace showing a person list, the selected person's activity calendar, and their messages in dark theme" loading="lazy">
   <figcaption>Select a person to explore their activity and messages.</figcaption>
 </figure>
 
