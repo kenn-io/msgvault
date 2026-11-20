@@ -282,18 +282,11 @@
     },
   );
 
-  const titleMessage = new ArchiveMessageLoader();
-  $effect(() => {
-    const row = readingSelection?.kind === 'entry' ? readingSelection.row : undefined;
-    void titleMessage.load(client, row && row.kind !== 'conversation' ? row.anchor_message_id : undefined);
-    return () => titleMessage.cancel();
-  });
+  let readingAnchorTitle = $state('');
   $effect(() => {
     const selected = readingSelection;
-    const message = selected?.kind === 'archive' ? selected.message :
-      selected?.kind === 'entry' && selected.row.kind !== 'conversation' && titleMessage.detail?.id === selected.row.anchor_message_id ? titleMessage.detail : undefined;
-    readingTitle = message ? messageTitle(message.subject, message.conversation_title) || '(untitled)' :
-      selected?.kind === 'entry' && selected.row.kind === 'conversation' ? selected.row.title : '';
+    readingTitle = selected?.kind === 'archive' ? messageTitle(selected.message.subject, selected.message.conversation_title) || '(untitled)' :
+      selected?.kind === 'entry' ? selected.row.kind === 'conversation' ? selected.row.title : readingAnchorTitle : '';
   });
 
   const readingPredicateFingerprint = $derived(predicateFingerprint(exploreState.predicate()));
@@ -942,6 +935,7 @@
             {conversationStart}
             {conversationEnd}
             {conversationAnchorId}
+            bind:anchorTitle={readingAnchorTitle}
             onConversationAnchorChange={changeConversationAnchor}
           />
         {/if}

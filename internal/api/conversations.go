@@ -203,7 +203,7 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 		for _, recipient := range message.ToParticipants {
 			participants = append(participants, ConversationParticipant{ParticipantID: recipient.ParticipantID, Display: recipient.Display})
 		}
-		detail.FromParticipantID = message.FromParticipantID
+		detail.FromParticipantID, detail.ConversationTitle = message.FromParticipantID, message.ConversationTitle
 		detail.ToParticipants = participants
 		messages = append(messages, detail)
 	}

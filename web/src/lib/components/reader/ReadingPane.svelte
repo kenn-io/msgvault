@@ -62,6 +62,7 @@
     back = false,
     onRetry = undefined,
     conversationAnchorId = undefined,
+    anchorTitle = $bindable(''),
     conversationStart = undefined,
     conversationEnd = undefined,
     onConversationAnchorChange = undefined,
@@ -84,6 +85,8 @@
     /** Overrides the entry's own anchor when the reader navigated within the
      * thread (URL-carried, so Back/Forward restore the same message). */
     conversationAnchorId?: number;
+    /** Title of the selected message once its conversation window has loaded. */
+    anchorTitle?: string;
     /** Lower UTC bound (RFC3339, inclusive) restricting the conversation
      * window opened for this selection — e.g. a chat burst's local day. */
     conversationStart?: string;
@@ -228,6 +231,7 @@
         {client}
         conversationId={conversationID}
         anchorId={threadAnchorId}
+        bind:anchorTitle
         start={conversationStart}
         end={conversationEnd}
         onAnchorChange={(anchorId) => onConversationAnchorChange?.(anchorId)}

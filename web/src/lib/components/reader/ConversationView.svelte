@@ -11,6 +11,7 @@
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail } from '../../archive/types';
   import type { MessageViewMode } from '../../archive/types';
+  import { messageTitle } from '../../archive/message-title';
   import { isEmailMessageType } from '../../explore/models';
   import MessageCard from './MessageCard.svelte';
   import { conversationTaskStatusKey, type TaskStatusLoader, type ConversationTaskStatus } from '../tasks/task-status';
@@ -22,6 +23,7 @@
     client,
     conversationId,
     anchorId,
+    anchorTitle = $bindable(''),
     onAnchorChange = undefined,
     start = undefined,
     end = undefined,
@@ -35,6 +37,8 @@
     onOpenMeeting?: (meeting: import('../../api/generated/models').MeetingRef) => void;
     conversationId: number;
     anchorId: number;
+    /** Title of the loaded anchor message; empty until the window loads. */
+    anchorTitle?: string;
     onAnchorChange?: (anchorId: number) => void;
     /** Lower UTC bound (RFC3339, inclusive) restricting the window — e.g. a
      * chat burst's local day. Omit for the default unbounded window. */
@@ -84,6 +88,11 @@
       window.removeEventListener('focus', report);
     };
   });
+  $effect(() => {
+    const anchor = messages.find((message) => message.id === anchorId);
+    anchorTitle = anchor ? messageTitle(anchor.subject, anchor.conversation_title) || '(untitled)' : '';
+  });
+  onDestroy(() => { anchorTitle = ''; });
   let loading = $state(true);
   let error = $state('');
   let hasBefore = $state(false);
