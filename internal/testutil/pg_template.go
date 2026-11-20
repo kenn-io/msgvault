@@ -11,10 +11,9 @@ import (
 	"net/url"
 	"regexp"
 	"sync"
-	"time"
 
 	"github.com/jackc/pgx/v5"
-	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for test setup
+	"github.com/jackc/pgx/v5/stdlib"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -86,16 +85,26 @@ type cloneDrop struct {
 var cloneDrops = make(chan cloneDrop, 16)
 
 func init() {
-	// Start outside any synctest bubble so database calls and timeouts use real time.
+	// Start outside any synctest bubble so database calls and timeouts use real
+	// time. pgx ties a connection's timers to the bubble that dialed it, so the
+	// worker dials its own session rather than reuse the owner or admin pool,
+	// either of which a fixture may have dialed inside a bubble.
 	go func() {
+		sessions := map[string]*sql.DB{}
 		for request := range cloneDrops {
-			admin, err := pgAdminDB(request.dbURL)
-			if err != nil {
-				continue
+			session, ok := sessions[request.dbURL]
+			if !ok {
+				config, err := pgx.ParseConfig(request.dbURL)
+				if err != nil {
+					continue
+				}
+				// Bound a drop nobody waits on; a timeout fails only that statement.
+				config.RuntimeParams["statement_timeout"] = "30s"
+				session = stdlib.OpenDB(*config)
+				session.SetMaxOpenConns(1)
+				sessions[request.dbURL] = session
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			dropOwnedDatabase(ctx, admin, request.name)
-			cancel()
+			_ = dropOwnedDatabaseOn(context.Background(), session, request.name)
 		}
 	}()
 }
@@ -124,10 +133,8 @@ func pgAdminDB(dbURL string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The pinned owner and background drop can each occupy a connection, leaving
-	// the original two connections available for fixture and template work.
-	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(4)
+	db.SetMaxOpenConns(3)
+	db.SetMaxIdleConns(3)
 	adminDBs[dbURL] = db
 
 	return db, nil
