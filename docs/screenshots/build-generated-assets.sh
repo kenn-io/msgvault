@@ -27,8 +27,18 @@ repo_root="$(cd "$docs_root/.." && pwd)"
 web_source="$(mktemp -d)"
 trap 'rm -rf "$web_source"' EXIT
 git -C "$repo_root" ls-files -z --cached --others --exclude-standard |
+    while IFS= read -r -d '' path; do
+        # Skip tracked files deleted from the working tree.
+        if [[ -e "$repo_root/$path" || -L "$repo_root/$path" ]]; then
+            printf '%s\0' "$path"
+        fi
+    done |
     (cd "$repo_root" && tar --null -T - -cf -) | tar -xf - -C "$web_source"
-docker build -t msgvault-web-capture -f "$script_dir/web-capture.Dockerfile" "$script_dir"
+# Use the Playwright image whose Chromium matches the pinned test package.
+playwright_version="$(sed -n 's/.*"@playwright\/test": *"\([0-9][^"]*\)".*/\1/p' "$repo_root/web/package.json")"
+[[ -n "$playwright_version" ]] || { echo "cannot read @playwright/test version from web/package.json" >&2; exit 1; }
+docker build -t msgvault-web-capture --build-arg PLAYWRIGHT_VERSION="$playwright_version" \
+    -f "$script_dir/web-capture.Dockerfile" "$script_dir"
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -e GOPATH=/tmp/go -e GOCACHE=/tmp/go-build -e BUN_INSTALL_CACHE_DIR=/tmp/bun-cache \
     -v "$web_source:/src" -w /src \

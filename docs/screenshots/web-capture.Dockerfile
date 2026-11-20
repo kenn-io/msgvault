@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1.28
-# Runtime for the Web UI documentation captures. The Playwright image supplies
-# the Chromium build and system libraries that match web/package.json; Go and
-# Bun come from their official images at the versions go.mod and package.json pin.
+# Runtime for the Web UI documentation captures. build-generated-assets.sh
+# passes the @playwright/test version from web/package.json, so the image's
+# Chromium matches it. Go and Bun come from their official images at the
+# versions go.mod and package.json pin.
+ARG PLAYWRIGHT_VERSION
 FROM golang:1.27.4-bookworm AS go
 FROM oven/bun:1.4.4 AS bun
 
-FROM mcr.microsoft.com/playwright:v1.64.1-noble
+FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

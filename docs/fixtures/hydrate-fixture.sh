@@ -2,6 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(cd "$script_dir/../.." && pwd -P)"
 lock_path="${MSGVAULT_DOCS_FIXTURE_LOCK:-$script_dir/fixture.lock.json}"
 output_dir=""
 offline="${MSGVAULT_DOCS_FIXTURES_OFFLINE:-0}"
@@ -37,11 +38,14 @@ else
     exit 1
   fi
   locked_commit="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["commit"])' "$lock_path")"
-  # Fetch into a scratch repository so this works without the checkout's Git
-  # metadata, as in a linked worktree or a source copy inside a container.
-  fixture_git="$(mktemp -d)"
-  trap 'rm -rf "$fixture_git"' EXIT
-  git -C "$fixture_git" init -q
+  # A source copy without Git metadata, such as the Web UI capture's, fetches
+  # into a scratch repository instead of the checkout.
+  fixture_git="$repo_root"
+  if ! git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1; then
+    fixture_git="$(mktemp -d)"
+    trap 'rm -rf "$fixture_git"' EXIT
+    git -C "$fixture_git" init -q
+  fi
   fixture_ref="refs/msgvault-fixtures/docs-fixtures"
   git -C "$fixture_git" fetch -q --no-tags https://github.com/kenn-io/msgvault.git "+refs/heads/docs-fixtures:$fixture_ref"
   git -C "$fixture_git" cat-file -e "$locked_commit^{commit}"
