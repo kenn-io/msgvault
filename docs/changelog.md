@@ -28,6 +28,7 @@ All notable changes to msgvault, grouped by release.
 - [Skip Spam and Trash](configuration.md#accounts) when archiving a selected
   Gmail account. The setting applies to full sync, incremental sync, and
   recovery after Gmail History expires.
+- Read the order, delivery, invoice and reservation details an email carries as schema.org markup with the MCP tool `get_message_records`, without sending the message anywhere.
 - Import a LinkedIn member data export with
   [`import-linkedin`](usage/linkedin.md). DMs, your posts, and your own
   comments become searchable conversations. `--me` takes your profile URL and
@@ -148,6 +149,7 @@ All notable changes to msgvault, grouped by release.
 - MCP operation tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unusable. This replaces `operation_response_limit_exceeded`, `operation_response_failed`, and `invalid_operation_response` for those write receipts. Read current state before retrying.
 - An interrupted `sync-full` prints a command to run again with the same account, filters, configuration, and logging flags. It exits with status 130; on Windows, run the command in PowerShell 7.3 or later.
 - Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
+- In a 14,000-message Telegram import benchmark on SQLite, saving up to 50 messages at once reduced import time from 326 seconds to 119 seconds, about 2.7 times faster.
 
 ### Bug fixes
 

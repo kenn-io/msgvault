@@ -477,6 +477,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
 | `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. Returns `data`, `returned`, `offset`, and `has_more`; add `returned` to `offset` to page while `has_more` is true. | `domains` (comma-separated string, required), `limit` (int, default 100, max 500), `offset` (int), `after` (string), `before` (string) |
 | `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool), `include_segments` (bool) |
+| `get_message_records` | Read order, delivery, invoice and reservation records an email carries as schema.org markup | `message_id` (int, required) |
 | `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `conversation_id` (int), `limit` (int), `offset` (int), `account` (string) |
 | `list_thread` | List visible archived messages in one conversation, oldest first, with `has_raw` marking messages whose original `.eml` is stored. See [Export original emails](#export-original-emails). | exactly one of `id` (int), `source_message_id` (string), or `thread_id` (string); `account` (string), `limit` (1–500, default 100), `offset` (int) |
 | `export_eml` | Export one email's original `.eml` bytes in verified chunks. See [Export original emails](#export-original-emails). | exactly one of `id` (int) or `source_message_id` (string); `account` (string), `offset` (int), `length` (1–4194304, default 1048576), `sha256` (string, required after offset 0) |
@@ -585,6 +586,16 @@ To restrict mixed archives to values such as `email`, `calendar_event`,
 (for example `message_type:teams incident review`). `find_similar_messages`
 accepts a dedicated `message_type` parameter; `list_messages` does not
 support message-type filtering.
+
+`get_message_records` parses up to 20 schema.org Order, ParcelDelivery,
+Invoice, FlightReservation, LodgingReservation, or EventReservation records
+from one message's HTML. It calls no provider and stores nothing; malformed or
+oversized HTML returns no records. Records are sender claims: `typed` trust
+means the syntax was validated, and `markup_only` flags values that appear
+nowhere in the visible text. Field origin is `unknown`, because markup doesn't
+show who wrote it. Text and URLs stay untrusted, and URLs are never fetched.
+Verification messages return kind `verification` and no records. Delegated
+callers need `message.read` for the message's source.
 
 `get_message` returns large bodies in windows: each response carries one
 slice of the body plus `body_length`, `body_returned`, `offset`, and
