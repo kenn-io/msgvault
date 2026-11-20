@@ -213,23 +213,14 @@ func TestImportMediaFilenameContainsWarningWords(t *testing.T) {
 	assert.Equal(1, n)
 }
 
-var testBatchSizes = []int{0, BatchSize}
-
 func TestImportRepeatedLimitAdvances(t *testing.T) {
-	for _, batch := range testBatchSizes {
-		t.Run("batch="+strconv.Itoa(batch), func(t *testing.T) { testImportRepeatedLimitAdvances(t, batch) })
-	}
-}
-
-func testImportRepeatedLimitAdvances(t *testing.T, batch int) {
-	t.Helper()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""},{"id":2,"type":"message","date_unixtime":"1610909872","text":""},{"id":3,"type":"message","date_unixtime":"1610909872","text":""}]}`))
 	for i := range 3 {
-		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", Limit: 1, BatchSize: batch})
+		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", Limit: 1})
 		require.NoError(err)
 		assert.EqualValues(1, summary.MessagesAdded)
 		assert.Equal(i < 2, summary.LimitReached)
@@ -240,30 +231,19 @@ func testImportRepeatedLimitAdvances(t *testing.T, batch int) {
 }
 
 func TestImportDuplicateMessageIDInChat(t *testing.T) {
-	for _, batch := range testBatchSizes {
-		t.Run("batch="+strconv.Itoa(batch), func(t *testing.T) {
-			st := testutil.NewTestStore(t)
-			root := t.TempDir()
-			testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first"},{"id":1,"type":"message","date_unixtime":"1","text":"again"},{"id":2,"type":"message","date_unixtime":"2","text":"second"}]}`))
-			summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", BatchSize: batch})
-			require.NoError(t, err)
-			assert.EqualValues(t, 2, summary.MessagesAdded)
-			assert.EqualValues(t, 1, summary.MessagesSkipped)
-			var n int
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
-			assert.Equal(t, 2, n)
-		})
-	}
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first"},{"id":1,"type":"message","date_unixtime":"1","text":"again"},{"id":2,"type":"message","date_unixtime":"2","text":"second"}]}`))
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.MessagesAdded)
+	assert.EqualValues(t, 1, summary.MessagesSkipped)
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
+	assert.Equal(t, 2, n)
 }
 
 func TestImportFullAndAppendOnly(t *testing.T) {
-	for _, batch := range testBatchSizes {
-		t.Run("batch="+strconv.Itoa(batch), func(t *testing.T) { testImportFullAndAppendOnly(t, batch) })
-	}
-}
-
-func testImportFullAndAppendOnly(t *testing.T, batch int) {
-	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -306,7 +286,7 @@ func testImportFullAndAppendOnly(t *testing.T, batch int) {
 		require.NoError(os.MkdirAll(filepath.Dir(dest), 0700))
 		require.NoError(os.WriteFile(dest, []byte(path), 0600))
 	}
-	opts := ImportOptions{RootDir: root, AttachmentsDir: t.TempDir(), BatchSize: batch}
+	opts := ImportOptions{RootDir: root, AttachmentsDir: t.TempDir()}
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
 	assert.EqualValues(14, summary.MessagesAdded)
@@ -843,25 +823,25 @@ func dropTestTrigger(t *testing.T, st *store.Store, name, table string) {
 
 func TestImportBatchRollsBackFailedBatchAndResumes(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	size := BatchSize + 10
+	size := batchSize + 10
 	root := batchExport(t, []batchChat{{2, "personal_chat", size}, {3, "personal_chat", size}}, func(chat int64, id int) string {
-		if chat == 3 && id == BatchSize+2 {
+		if chat == 3 && id == batchSize+2 {
 			return "fail-me"
 		}
 		return "m"
 	})
 	createTestTrigger(t, st, "fail_batch", "BEFORE INSERT", "messages", "NEW.snippet = 'fail-me'",
 		"SELECT RAISE(ABORT, 'forced failure');", "RAISE EXCEPTION 'forced failure';")
-	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.ErrorContains(t, err, "forced failure")
-	require.ErrorContains(t, err, "persist message user3:"+strconv.Itoa(BatchSize+2)+":")
+	require.ErrorContains(t, err, "persist message user3:"+strconv.Itoa(batchSize+2)+":")
 	assert.Equal(t, size, countChatMessages(t, st, "user2"))
-	assert.Equal(t, BatchSize, countChatMessages(t, st, "user3"))
+	assert.Equal(t, batchSize, countChatMessages(t, st, "user3"))
 	dropTestTrigger(t, st, "fail_batch", "messages")
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.NoError(t, err)
-	assert.EqualValues(t, size-BatchSize, summary.MessagesAdded)
-	assert.EqualValues(t, BatchSize, summary.MessagesSkipped)
+	assert.EqualValues(t, size-batchSize, summary.MessagesAdded)
+	assert.EqualValues(t, batchSize, summary.MessagesSkipped)
 	assert.Equal(t, size, countChatMessages(t, st, "user2"))
 	assert.Equal(t, size, countChatMessages(t, st, "user3"))
 }
@@ -872,7 +852,7 @@ func TestImportBatchStopsWhenRunSuperseded(t *testing.T) {
 	createTestTrigger(t, st, "supersede_run", "AFTER INSERT", "conversations", "NEW.source_conversation_id = 'chat3'",
 		"UPDATE sync_runs SET status = 'failed' WHERE status = 'running';",
 		"UPDATE sync_runs SET status = 'failed' WHERE status = 'running'; RETURN NULL;")
-	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, BatchSize: BatchSize})
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.ErrorIs(t, err, store.ErrSyncRunSuperseded)
 	assert.Equal(t, 3, countChatMessages(t, st, "chat2"))
 	assert.Equal(t, 0, countChatMessages(t, st, "chat3"))

@@ -34,11 +34,10 @@ type ImportOptions struct {
 	AttachmentsDir string
 	Limit          int
 	NoResume       bool
-	BatchSize      int
 	Logger         *slog.Logger
 }
 
-const BatchSize = 50
+const batchSize = 50
 
 type pendingMessage struct {
 	key  string
@@ -47,22 +46,18 @@ type pendingMessage struct {
 
 type messageBatch struct {
 	st      *store.Store
-	size    int
 	pending []pendingMessage
 	keys    map[string]bool
 }
 
-func newMessageBatch(st *store.Store, size int) *messageBatch {
-	if size <= 1 {
-		return nil
-	}
-	return &messageBatch{st: st, size: size, keys: map[string]bool{}}
+func newMessageBatch(st *store.Store) *messageBatch {
+	return &messageBatch{st: st, keys: map[string]bool{}}
 }
 
 func (b *messageBatch) add(ctx context.Context, key string, data *store.MessagePersistData, existing map[string]int64, summary *ImportSummary) error {
 	b.pending = append(b.pending, pendingMessage{key: key, data: data})
 	b.keys[key] = true
-	if len(b.pending) >= b.size {
+	if len(b.pending) >= batchSize {
 		return b.flush(ctx, existing, summary)
 	}
 	return nil
@@ -76,7 +71,7 @@ func (b *messageBatch) flush(ctx context.Context, existing map[string]int64, sum
 	for i, p := range b.pending {
 		batch[i] = p.data
 	}
-	ids, err := b.st.PersistMessagesContext(ctx, batch)
+	ids, err := b.st.PersistTelegramMessagesContext(ctx, batch)
 	if err != nil {
 		return fmt.Errorf("telegram: persist batch of %d starting at %s: %w", len(batch), b.pending[0].key, err)
 	}
@@ -169,7 +164,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		return summary, err
 	}
 	st = st.ScopedToSync(source.ID, syncID)
-	batch := newMessageBatch(st, opts.BatchSize)
+	batch := newMessageBatch(st)
 	defer func() {
 		cleanup := context.WithoutCancel(ctx)
 		retErr = errors.Join(retErr, st.ResolveDeferredMessageRepliesContext(cleanup, source.ID, MessageType, 500), st.RecomputeConversationStatsContext(cleanup, source.ID))
@@ -268,12 +263,6 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 	if err != nil {
 		return err
 	}
-	pending := func() int64 {
-		if batch == nil {
-			return 0
-		}
-		return int64(len(batch.pending))
-	}
 	for i := range chat.Messages {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -287,11 +276,9 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			summary.UnsupportedEntriesSkipped++
 			continue
 		}
-		if opts.Limit > 0 && summary.MessagesAdded+pending() >= int64(opts.Limit) {
-			if batch != nil {
-				if err := batch.flush(ctx, existing, summary); err != nil {
-					return err
-				}
+		if opts.Limit > 0 && summary.MessagesAdded+int64(len(batch.pending)) >= int64(opts.Limit) {
+			if err := batch.flush(ctx, existing, summary); err != nil {
+				return err
 			}
 			return errLimitReached
 		}
@@ -306,7 +293,7 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			}
 		}
 		key := fmt.Sprintf("%s:%d", peer, m.ID)
-		if batch != nil && batch.keys[key] {
+		if batch.keys[key] {
 			if err := batch.flush(ctx, existing, summary); err != nil {
 				return err
 			}
@@ -369,23 +356,11 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			Edited:       m.Edited != "" || m.EditedUnixtime != "",
 			BodyText:     sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(encoded), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: replacement(writes), FTS: &store.FTSDoc{Body: m.Text},
 		}
-		if batch != nil {
-			if err := batch.add(ctx, key, data, existing, summary); err != nil {
-				return err
-			}
-			continue
+		if err := batch.add(ctx, key, data, existing, summary); err != nil {
+			return err
 		}
-		id, err := st.PersistMessageContext(ctx, data)
-		if err != nil {
-			return fmt.Errorf("telegram: persist %s: %w", key, err)
-		}
-		existing[key] = id
-		summary.MessagesAdded++
 	}
-	if batch != nil {
-		return batch.flush(ctx, existing, summary)
-	}
-	return nil
+	return batch.flush(ctx, existing, summary)
 }
 
 // prepareChat keeps a conversation for every exported chat, even one with no

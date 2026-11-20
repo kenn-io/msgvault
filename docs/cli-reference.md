@@ -2824,7 +2824,6 @@ msgvault import-telegram <export-dir>
 | `--limit` | `0` | Maximum messages added; `0` imports all messages |
 | `--no-resume` | `false` | Scan every chat, ignoring the resume checkpoint |
 | `--no-default-identity` | `false` | Skip automatic account identity creation |
-| `--batch` | `false` | Experimental: persist up to 50 messages per transaction instead of one |
 
 Re-imports add new messages and fill missing media. Archived text and edit flags stay unchanged. See [Telegram imports](usage/text-messages.md#import-telegram) for export and resume behavior.
 

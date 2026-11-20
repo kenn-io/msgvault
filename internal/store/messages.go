@@ -2216,7 +2216,8 @@ func (s *Store) persistMessageSnapshotAfter(ctx context.Context, tx *loggedTx, d
 	return nil
 }
 
-func (s *Store) PersistMessagesContext(ctx context.Context, batch []*MessagePersistData) ([]int64, error) {
+// PersistTelegramMessagesContext persists Telegram snapshots in one transaction.
+func (s *Store) PersistTelegramMessagesContext(ctx context.Context, batch []*MessagePersistData) ([]int64, error) {
 	if len(batch) == 0 {
 		return nil, nil
 	}
@@ -2228,9 +2229,7 @@ func (s *Store) PersistMessagesContext(ctx context.Context, batch []*MessagePers
 		lock.Sources = append(lock.Sources, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType).Sources...)
 	}
 	ids := make([]int64, len(batch))
-	calendarRaw := make([][]byte, len(batch))
 	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
-		clear(calendarRaw)
 		for i, data := range batch {
 			id, err := s.persistMessageWithParticipantsTx(
 				ctx, tx, nil, nil, func([]int64) *MessagePersistData { return data }, nil, s.persistMessageSnapshotAfter,
@@ -2239,19 +2238,11 @@ func (s *Store) PersistMessagesContext(ctx context.Context, batch []*MessagePers
 				return fmt.Errorf("persist message %s: %w", data.Message.SourceMessageID, err)
 			}
 			ids[i] = id
-			if IsEmailMessageType(data.Message.MessageType) && (data.RawFormat == "" || data.RawFormat == emailLinkageRawFormat) && hasCalendarToken(data.RawMIME) {
-				calendarRaw[i] = data.RawMIME
-			}
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
-	}
-	for i, raw := range calendarRaw {
-		if raw != nil {
-			s.deriveEmailCalendarAfterCommit(ctx, ids[i], raw)
-		}
 	}
 	return ids, nil
 }
