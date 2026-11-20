@@ -20,15 +20,21 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
     msgvault-diagrams bash build.sh
 
 echo "==> Capturing Web UI screenshots..."
-# A host web/node_modules holds host-platform binaries; install Linux ones in
-# a container-only directory instead.
+# The capture builds the web client and daemon, which rewrites generated
+# sources. Run it on a copy of the source files so the checkout stays as it
+# was, and so host-platform web/node_modules never reaches the container.
 repo_root="$(cd "$docs_root/.." && pwd)"
+web_source="$(mktemp -d)"
+trap 'rm -rf "$web_source"' EXIT
+git -C "$repo_root" ls-files -z --cached --others --exclude-standard |
+    (cd "$repo_root" && tar --null -T - -cf -) | tar -xf - -C "$web_source"
 docker build -t msgvault-web-capture -f "$script_dir/web-capture.Dockerfile" "$script_dir"
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -e GOPATH=/tmp/go -e GOCACHE=/tmp/go-build -e BUN_INSTALL_CACHE_DIR=/tmp/bun-cache \
-    -v "$repo_root:/src" -w /src \
-    --tmpfs /src/web/node_modules:exec,mode=1777 \
+    -v "$web_source:/src" -w /src \
     msgvault-web-capture bash docs/screenshots/generate-web-fixture-screenshots.sh
+mkdir -p "$generated/web"
+cp "$web_source/docs/assets/generated/web/"*.png "$generated/web/"
 
 mkdir -p "$output/assets"
 cp -R "$generated/." "$output/assets/"

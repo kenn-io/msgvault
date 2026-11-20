@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate generated docs assets, verify the docs build, and deploy to Vercel.
+# Hydrate published docs assets, verify the docs build, and deploy to Vercel.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,9 +10,10 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [--dry-run]
 
-Regenerate and push docs-generated-assets, hydrate docs assets, build and
-check the docs, then deploy the current committed workspace to production
-Vercel.
+Hydrate the docs-assets and docs-generated-assets branches, build and check
+the docs, then deploy the current committed workspace to production Vercel.
+The automated screenshot runner publishes docs-generated-assets; this script
+does not regenerate it.
 
 Run this after docs source changes have already been committed.
 EOF
@@ -78,10 +79,6 @@ cd "$repo_root"
 run_clean_tree_check
 
 run make docs-install
-run rm -rf docs/assets/generated
-run make docs-screenshots
-run bash docs/diagrams/build.sh
-run bash docs/screenshots/update-generated-assets-branch.sh --source docs/assets/generated --push
 run rm -rf docs/assets/static docs/assets/generated
 run bash docs/assets/hydrate-assets.sh
 run make docs-build
