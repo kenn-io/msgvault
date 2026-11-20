@@ -1,6 +1,7 @@
 import { disabledTaskLookup, taskLookup } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { tick } from 'svelte';
+import { mount, tick, unmount } from 'svelte';
+import { fromStore, writable } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
@@ -53,6 +54,42 @@ describe('ConversationView', () => {
     expect(screen.getByRole('button', { name: /Expand message 1/ })).toBeTruthy();
     expect(screen.queryByRole('article', { name: 'Message 1' })).toBeNull();
     expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname === '/api/v1/messages/3')).toBe(false);
+  });
+
+  it('keeps the selected title while its detail reloads with a new window', async () => {
+    const detailRequests: Array<(response: Response) => void> = [];
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const url = new URL((input as Request).url);
+      if (url.pathname === '/api/v1/messages/1') return new Promise<Response>(resolve => { detailRequests.push(resolve); });
+      const anchor = Number(url.searchParams.get('anchor'));
+      const anchorMessage = { ...message(anchor), tab_title: `Title ${anchor}` };
+      return Response.json({ id: 7, anchor_id: anchor, messages: anchor === 2 ? [anchorMessage] : [message(1), anchorMessage], has_before: false, has_after: false, total: 3 });
+    });
+    const anchor = writable(2);
+    const currentAnchor = fromStore(anchor);
+    let title = '';
+    const target = document.createElement('div');
+    document.body.append(target);
+    const component = mount(ConversationView, { target, props: {
+      client: createAPIClient(fetchFn), conversationId: 7,
+      get anchorId() { return currentAnchor.current; }, titleAnchorId: 1,
+      get anchorTitle() { return title; }, set anchorTitle(value: string) { title = value; }
+    } });
+    try {
+      await waitFor(() => expect(title).toBe('Title 2'));
+      anchor.set(3);
+      await waitFor(() => expect(detailRequests).toHaveLength(1));
+      expect(title).toBe('');
+      detailRequests[0]!(Response.json({ ...message(1), tab_title: 'Selected title' }));
+      await waitFor(() => expect(title).toBe('Selected title'));
+      anchor.set(4);
+      await waitFor(() => expect(detailRequests).toHaveLength(2));
+      expect(title).toBe('Selected title');
+    } finally {
+      for (const release of detailRequests) release(Response.json({ ...message(1), tab_title: 'Selected title' }));
+      await unmount(component);
+      target.remove();
+    }
   });
 
   it('loads the thread with the anchor expanded and the rest as one-line collapsed cards', async () => {

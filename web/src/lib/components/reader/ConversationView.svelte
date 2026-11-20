@@ -100,6 +100,7 @@
   let windowAnchorId = $state(0);
   let openedAnchorId = 0;
   let openedTitle = '';
+  let openedTitleId = 0;
   $effect(() => {
     const key = `${conversationId}:${titleAnchorId}`;
     if (key !== titleKey) {
@@ -108,6 +109,7 @@
       titleRequestKey = '';
       openedAnchorId = untrack(() => anchorId);
       openedTitle = '';
+      openedTitleId = 0;
     }
     const anchor = messages.find((message) => message.id === titleAnchorId) ??
       messages.find((message) => message.id === openedAnchorId);
@@ -118,9 +120,13 @@
         untrack(() => { void titleLoader.load(apiClient, anchor.id); });
       }
       const detail = titleLoader.detail;
-      openedTitle = detail?.id === anchor.id ? detail.tab_title || '(untitled)' : '';
+      if (detail?.id === anchor.id) {
+        openedTitle = detail.tab_title || '(untitled)';
+        openedTitleId = detail.id;
+      } else if (openedTitleId !== anchor.id) openedTitle = '';
     } else if (anchor?.id === windowAnchorId) {
       openedTitle = anchor.tab_title || '(untitled)';
+      openedTitleId = anchor.id;
     }
     anchorTitle = openedTitle;
   });
