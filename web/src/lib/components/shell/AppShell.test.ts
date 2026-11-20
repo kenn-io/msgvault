@@ -902,6 +902,30 @@ describe('AppShell', () => {
       await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
     });
 
+    it('uses the conversation payload for the selected message title without another message request', async () => {
+      const state = shellState('everything');
+      const row = { ...entry(1), kind: 'email', anchor_message_id: 1, conversation_id: 1, title: 'Body preview', preview: 'Body preview' };
+      const requests: string[] = [];
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        requests.push(path);
+        if (path.endsWith('/conversations/1')) return Response.json({
+          id: 1, anchor_id: 1, messages: [{ id: 1, conversation_id: 1, subject: '', conversation_title: 'Conversation title',
+            sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [],
+            body: 'Message body', snippet: 'Body preview', attachments: [] }],
+          total: 1, has_before: false, has_after: false
+        });
+        if (path.endsWith('/messages/1')) return new Response(null, { status: 500 });
+        return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
+      });
+      render(AppShell, { client, state });
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await fireEvent.click((await within(grid).findAllByText('Body preview'))[0]!);
+      await screen.findByText('Message body');
+      expect(requests).not.toContain('/api/v1/messages/1');
+      await waitFor(() => expect(document.title).toBe('Conversation title · Messages · msgvault'));
+    });
+
     it('keeps the workspace title while a message loads or is missing', async () => {
       const state = shellState('everything');
       state.commitNavigation({ selectedRow: 'message:1' });
