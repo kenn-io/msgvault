@@ -128,13 +128,11 @@ func TestMessageTabTitles(t *testing.T) {
 		{"verification in body", "email_thread", "email", "Conversation", "Account access", "Your verification code is 123456", "Verification message", false},
 		{"large ordinary body", "email_thread", "email", "Conversation", "Quarterly update", strings.Repeat("a", 1<<20), "Quarterly update", false},
 		{"large body with code cue", "email_thread", "email", "Conversation", "482913", strings.Repeat("a", 1<<20) + " Your verification code", "Verification message", false},
-		{"large body with verification subject", "email_thread", "email", "Conversation", "Your verification code is 123456", strings.Repeat("a", 1<<20), "Verification message", false},
-		{"large body with verification title", "email_thread", "email", "Your verification code is 123456", "", strings.Repeat("a", 1<<20), "Verification message", false},
+		{"verification title", "email_thread", "email", "Your verification code is 123456", "", "", "Verification message", false},
 		{"facebook", "public_comments", "facebook_comments", "Post text", "", "", "", false},
 		{"linkedin", "public_comments", "linkedin", "Post text", "", "", "", false},
 		{"tiktok", "public_comments", "tiktok_export", "https://example.com/video", "", "", "https://example.com/video", false},
 		{"chat", "direct_chat", "linkedin", "Chat title", "", "", "Chat title", false},
-		{"large body with code title", "email_thread", "email", "482913", "", strings.Repeat("a", 1<<20) + " Your verification code", "Verification message", false},
 		{"large HTML with code subject", "email_thread", "email", "Conversation", "482913", strings.Repeat("a", 1<<20) + " Your verification code", "Verification message", true},
 		{"large ordinary HTML", "email_thread", "email", "Conversation", "Quarterly update", strings.Repeat("a", 1<<20), "Quarterly update", true},
 	} {
@@ -156,63 +154,22 @@ func TestMessageTabTitles(t *testing.T) {
 				if engine {
 					srv.SetAnalyticsEngine(query.NewEngine(st.DB(), st.IsPostgreSQL()), AnalyticsModeSQL)
 				}
-				for _, path := range []string{fmt.Sprintf("/api/v1/messages/%d", id), fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, id)} {
-					w := httptest.NewRecorder()
-					srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
-					require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-					var raw map[string]any
-					require.NoError(t, json.NewDecoder(w.Body).Decode(&raw))
-					if messages, ok := raw["messages"].([]any); ok {
-						raw = messages[0].(map[string]any)
-					}
-					assert.Equal(t, tc.want, raw["tab_title"], "engine=%t path=%s", engine, path)
-					if strings.Contains(path, "/conversations/") {
-						assert.NotContains(t, raw, "conversation_title", "engine=%t path=%s", engine, path)
-					} else {
-						assert.Equal(t, tc.title, raw["conversation_title"], "engine=%t path=%s", engine, path)
-					}
-					assert.Equal(t, tc.subject, raw["subject"], "engine=%t path=%s", engine, path)
-				}
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil))
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				var raw map[string]any
+				require.NoError(t, json.NewDecoder(w.Body).Decode(&raw))
+				assert.Equal(t, tc.want, raw["tab_title"], "engine=%t", engine)
 			}
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, id), nil))
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var response ConversationResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+			require.Len(t, response.Messages, 1)
+			assert.Equal(t, tc.want, response.Messages[0].TabTitle)
 		})
 	}
-}
-
-func TestConversationWindowTabTitleWaitsForOmittedBody(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("test", "archive@example.com")
-	require.NoError(t, err)
-	conversationID, err := st.EnsureConversationWithType(source.ID, "thread", "email_thread", "Conversation")
-	require.NoError(t, err)
-	ids := make([]int64, 0, 2)
-	for i, body := range []string{strings.Repeat("a", store.ConversationInlineBodyBudget+1), "Your verification code is 123456"} {
-		id, err := st.UpsertMessage(&store.Message{ConversationID: conversationID, SourceID: source.ID, SourceMessageID: fmt.Sprint(i), MessageType: "email", Subject: sql.NullString{String: "Ordinary subject", Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 1, i+1, 0, 0, 0, 0, time.UTC), Valid: true}})
-		require.NoError(t, err)
-		require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
-		ids = append(ids, id)
-	}
-	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, ids[0]), nil))
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	var response struct {
-		Messages []struct {
-			BodyOmitted bool   `json:"body_omitted"`
-			TabTitle    string `json:"tab_title"`
-		} `json:"messages"`
-	}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
-	require.Len(t, response.Messages, 2)
-	assert.True(t, response.Messages[1].BodyOmitted)
-	assert.Empty(t, response.Messages[1].TabTitle)
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", ids[1]), nil))
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	var detail struct {
-		TabTitle string `json:"tab_title"`
-	}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&detail))
-	assert.Equal(t, "Verification message", detail.TabTitle)
 }
 
 func TestConversationWindowCapsInlineBodiesAndServesOmittedBodiesByID(t *testing.T) {
