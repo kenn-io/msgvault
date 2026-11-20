@@ -524,8 +524,9 @@
     const workspace = exploreState.current.workspace;
     const operationDetail = runHistory?.operationStatus ? RELATED_STATUS_LABELS[runHistory.operationStatus] :
       runHistory?.operationRunID ? (operationsController.snapshot.detail?.id === runHistory.operationRunID ? OPERATION_KIND_LABELS[operationsController.snapshot.detail.kind] : 'Run') : '';
-    const meeting = archiveMeetingID !== undefined && !runHistory && archivedMeeting.detail?.id === archiveMeetingID ?
-      readingSelectionTabTitle({ kind: 'archive', message: archivedMeeting.detail }) : '';
+    const meeting = archivedMeeting.detail?.id === archiveMeetingID && archivedMeeting.detail ?
+      readingSelectionTabTitle({ kind: 'archive', message: archivedMeeting.detail }) :
+      archivedMeeting.error ? 'Meeting unavailable' : 'Loading meeting';
     let detail = '';
     if (contextualViewerFile) detail = contextualFileTitle?.id === contextualViewerFile.id ? contextualFileTitle.name : '';
     else if (runHistory) detail = [operationDetail, 'Past runs'].filter(Boolean).join(' · ');

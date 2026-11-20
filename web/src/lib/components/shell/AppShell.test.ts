@@ -982,9 +982,22 @@ describe('AppShell', () => {
       await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
       state.commitNavigation({ selectedRow: 'archive-meeting:42' });
       await waitFor(() => expect(finish).toBeTypeOf('function'));
-      await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
+      await waitFor(() => expect(document.title).toBe('Loading meeting · Messages · msgvault'));
       finish(Response.json({ id: 42, conversation_id: 8, subject, conversation_title: '', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', labels: [], attachments: [], has_attachments: false, hidden_text_present: false, size_bytes: 10, snippet: 'Transcript' }));
       await waitFor(() => expect(document.title).toBe(`${expected} · Messages · msgvault`));
+    });
+
+    it('names the browser tab when an archived meeting is unavailable', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'archive-meeting:42' });
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/messages/42')) return new Response(null, { status: 404 });
+        return Response.json(exploreResponse());
+      });
+      render(AppShell, { client, state });
+      await screen.findByRole('alert');
+      await waitFor(() => expect(document.title).toBe('Meeting unavailable · Messages · msgvault'));
     });
 
     it.each([
