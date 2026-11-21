@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -26,17 +27,17 @@ type gmailAuditSnapshotGateKey struct{}
 
 type gmailAuditSnapshotGate struct {
 	targetID    int64
+	query       string
 	pauseOnce   sync.Once
 	releaseOnce sync.Once
 	paused      chan struct{}
 	release     chan struct{}
 }
 
-func newGmailAuditSnapshotGate(targetID int64) *gmailAuditSnapshotGate {
+func newGmailAuditSnapshotGate() *gmailAuditSnapshotGate {
 	return &gmailAuditSnapshotGate{
-		targetID: targetID,
-		paused:   make(chan struct{}),
-		release:  make(chan struct{}),
+		paused:  make(chan struct{}),
+		release: make(chan struct{}),
 	}
 }
 
@@ -104,7 +105,7 @@ func (c *gmailAuditSnapshotConn) QueryContext(
 		return nil, driver.ErrSkip
 	}
 	if gate, armed := ctx.Value(gmailAuditSnapshotGateKey{}).(*gmailAuditSnapshotGate); armed &&
-		gate == c.gate && gate.gatesTargetQuery(args) {
+		gate == c.gate && ((gate.query != "" && strings.Contains(query, gate.query)) || (gate.query == "" && gate.gatesTargetQuery(args))) {
 		if err := gate.hold(ctx); err != nil {
 			return nil, err
 		}
@@ -262,7 +263,7 @@ func gmailAuditRecipientAddress(evidence GmailAuditEvidence, recipientType strin
 func TestGmailAuditEvidencePageReadsOneCoherentSnapshot(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	gate := newGmailAuditSnapshotGate(0)
+	gate := newGmailAuditSnapshotGate()
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	var st *Store
 	if IsPostgresURL(dbURL) {
