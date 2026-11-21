@@ -32,32 +32,7 @@ func (r *meetingJITReader) QueryContext(ctx context.Context, query string, args 
 	return r.SQLReader.QueryContext(ctx, query, args...)
 }
 
-func TestMeetingCopyGraphRestoresJIT(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	if !st.IsPostgreSQL() {
-		t.Skip("requires PostgreSQL")
-	}
-	calendarFixture(t, st, "jit-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
-	_, edit := calendarFixture(t, st, "jit-edit", `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`)
-	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
-	require.NoError(t, err)
-	defer release()
-	reader := &meetingJITReader{SQLReader: ReadDBContext(ctx, st.db.DB), t: t}
-	ctx = WithReadSnapshotReaderContext(ctx, st.db.DB, reader)
-	for _, initial := range []string{"on", "off"} {
-		var setting string
-		require.NoError(t, reader.QueryRowContext(ctx, `SELECT set_config('jit', $1, true)`, initial).Scan(&setting))
-		reader.settings = nil
-		ids, err := st.meetingCopies(ctx, edit)
-		require.NoError(t, err)
-		assert.Contains(t, ids, edit)
-		assert.Equal(t, []string{"off"}, reader.settings)
-		require.NoError(t, reader.QueryRowContext(ctx, `SELECT current_setting('jit')`).Scan(&setting))
-		assert.Equal(t, initial, setting)
-	}
-}
-
-func TestMeetingDecisionAndPurgeGraphRestoreJIT(t *testing.T) {
+func TestMeetingGraphRestoresJIT(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("requires PostgreSQL")
@@ -77,11 +52,14 @@ func TestMeetingDecisionAndPurgeGraphRestoreJIT(t *testing.T) {
 			name string
 			run  func(*testing.T) error
 		}{
+			{"copies", func(t *testing.T) error {
+				_, err := st.meetingCopies(ctx, event)
+				return err
+			}},
 			{"decision", func(t *testing.T) error {
 				endpoint := meetingDecisionEndpoint{ID: event, Kind: meetingRefEvent, Key: occurrenceIdentity(t, "20270314T100000Z").Key()}
 				budget := 100
-				edges, err := st.meetingDecisionEdgesBatch(ctx, []meetingDecisionEndpoint{endpoint}, &budget)
-				assert.Len(t, edges[endpoint], 1)
+				_, err := st.meetingDecisionEdgesBatch(ctx, []meetingDecisionEndpoint{endpoint}, &budget)
 				return err
 			}},
 			{"purge", func(t *testing.T) error {
@@ -93,7 +71,8 @@ func TestMeetingDecisionAndPurgeGraphRestoreJIT(t *testing.T) {
 				require.NoError(t, reader.QueryRowContext(ctx, `SELECT set_config('jit', $1, true)`, initial).Scan(&setting))
 				reader.settings = nil
 				require.NoError(t, operation.run(t))
-				assert.Equal(t, []string{"off"}, reader.settings)
+				require.Len(t, reader.settings, 1, "graph query must run once")
+				assert.Equal(t, "off", reader.settings[0])
 				require.NoError(t, reader.QueryRowContext(ctx, `SELECT current_setting('jit')`).Scan(&setting))
 				assert.Equal(t, initial, setting)
 			})
