@@ -178,7 +178,7 @@ func TestAPageOfThreadsUpdatedAtOneInstantIsReadWholeBesideALaterUpdateCreatedWi
 		issue := f.issue(widgets, int64(i), i, "An issue", ann, at, "assigned_to_me")
 		issue.object["created_at"] = at
 	}
-	later := f.issue(widgets, 1000, 1000, "An issue edited later", ann, "2026-11-08T10:00:00Z", "assigned_to_me")
+	later := f.issue(widgets, 1000, 1000, "An issue edited a millisecond later", ann, "2026-11-08T09:00:00.001Z", "assigned_to_me")
 	later.object["created_at"] = at
 	list := listStream{resource: resourceIssues, scope: "assigned_to_me"}
 	state := cursor{Lists: map[string]listCursor{}}

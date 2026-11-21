@@ -516,9 +516,9 @@ func (f *Forge) listPage(ctx context.Context, list listStream, through time.Time
 	if created != nil {
 		query.Set("created_after", updatedAfter(created.from))
 		query.Set("created_before", updatedAfter(created.to))
-		// GitLab keeps finer times than a request names, and both bounds
-		// include their time: the next millisecond holds the whole instant.
-		query.Set("updated_before", updatedAfter(through.Add(time.Millisecond)))
+		// GitLab keeps times to the microsecond, and both bounds include
+		// their time: the instant's last microsecond ends it.
+		query.Set("updated_before", through.Add(time.Millisecond-time.Microsecond).UTC().Format("2006-01-02T15:04:05.000000Z07:00"))
 	}
 	var batch []listItem
 	header, err := f.client.get(ctx, "/"+list.resource, query, &batch)
