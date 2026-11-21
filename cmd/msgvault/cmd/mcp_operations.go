@@ -248,6 +248,9 @@ func readMCPOperationResponse[T any](ctx context.Context, client *daemonclient.C
 			return operationFailure("operation_refused", writes), nil
 		}
 	}
+	if response.StatusCode == http.StatusNoContent {
+		return &mcpserver.OperationResult{Output: struct{}{}}, nil
+	}
 	var output T
 	if err := json.Unmarshal(data, &output); err != nil {
 		return invalidOperationResponse(writes), err
