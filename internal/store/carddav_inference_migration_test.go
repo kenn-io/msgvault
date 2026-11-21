@@ -605,6 +605,7 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 			if tc.laterUnsupported {
 				err := st.InitSchema()
 				require.ErrorContains(err, "unsupported vCard resource metadata format 999")
+				assert.ErrorContains(t, err, "Use a msgvault version that supports this metadata format")
 				assert.ErrorContains(t, err, book.CanonicalURL+"later.vcf")
 				applied, err := st.IsMigrationAppliedContext(t.Context(), migrationCardDAVInferenceExportStateV3, 1)
 				require.NoError(err)
