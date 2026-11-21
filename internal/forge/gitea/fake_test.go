@@ -251,7 +251,10 @@ func (f *fakeGitea) serveRepo(w http.ResponseWriter, repo string) {
 // issues have now.
 func (f *fakeGitea) serveRepoByID(w http.ResponseWriter, raw string) {
 	id, err := strconv.ParseInt(raw, 10, 64)
-	assert.NoError(f.t, err)
+	if !assert.NoError(f.t, err) {
+		f.writeError(w, http.StatusBadRequest, "bad repository id")
+		return
+	}
 	for _, issue := range f.issues {
 		repo, ok := issue["repository"].(map[string]any)
 		if ok && repo["id"] == id {
