@@ -202,7 +202,18 @@ type HTTPError struct {
 }
 
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("%s: %d %s: %s", e.Request, e.Status, http.StatusText(e.Status), e.Message)
+	status := fmt.Sprintf("%s: %d %s", e.Request, e.Status, http.StatusText(e.Status))
+	if repeatsStatus(e.Message, e.Status) {
+		return status
+	}
+	return status + ": " + e.Message
+}
+
+// repeatsStatus reports whether a server's message says no more than its
+// status, as Gitea's "Not Found" and GitLab's "404 Not Found" do.
+func repeatsStatus(message string, status int) bool {
+	text := http.StatusText(status)
+	return message == "" || strings.EqualFold(message, text) || strings.EqualFold(message, strconv.Itoa(status)+" "+text)
 }
 
 func (e *HTTPError) Unwrap() error {
