@@ -373,11 +373,23 @@ terminal-only [`person provider enroll-codex`](cli-reference.md#person-provider-
 command creates a new profile through the daemon; host-side `person provider
 login` reauthenticates the selected existing Codex profile. Both remain gated.
 
-The Linux launcher disables Codex's local execution environment and shell
-tools. The app server can manage its staged OAuth credential, but its command
-and filesystem interfaces cannot access it. Command-execution requests or
-events abort inference. Enabling a release still requires a real authenticated
-structured-inference check through this launcher.
+Each launch contains the app server in a disposable work root that holds only
+a copy of the profile's `auth.json`:
+
+| Platform | Launcher | What the app server can reach |
+|----------|----------|-------------------------------|
+| Linux | Bubblewrap | Empty user, PID and network namespaces; of the host's files it sees only the work root, the system CA bundle and the executable. |
+| macOS | Seatbelt (`/usr/bin/sandbox-exec`) | A deny-by-default profile: it reads and writes only the work root, reads system libraries and the CA bundle, connects only to its proxy port, and cannot start another process. |
+
+On both, its only network path is a proxy in the daemon that opens connections
+to `chatgpt.com:443` and `auth.openai.com:443` and nothing else. On macOS the
+proxy listens on loopback and requires a credential that only that launch
+holds. The launchers also disable Codex's local execution environment and
+shell tools. The app server can manage its staged OAuth credential, but its
+command and filesystem interfaces cannot access it. Command-execution requests
+or events abort inference. Enabling a release on either platform still
+requires a real authenticated structured-inference check through that
+platform's launcher.
 
 `codex_app_server` profiles are also the one protocol `person provider add`
 cannot create: generic onboarding negotiates HTTP capabilities through an

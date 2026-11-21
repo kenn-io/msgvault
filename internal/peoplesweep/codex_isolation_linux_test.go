@@ -192,19 +192,7 @@ func TestCodexLauncherDeniesExecutionAndAccessToStagedAuth(t *testing.T) {
 	var thread codexThreadStartResult
 	requireChecks.NoError(client.Call(ctx, "thread/start", codexThreadStartRequest(3, ProviderProfile{Model: models.Data[0].ID}).Params, &thread))
 	requireChecks.NotEmpty(thread.Thread.ID)
-	for _, request := range []struct {
-		method string
-		params any
-	}{
-		{"fs/readFile", map[string]any{"path": "/work/.codex/auth.json"}},
-		{"command/exec", map[string]any{"command": []string{"/codex", "--version"}, "cwd": "/work"}},
-	} {
-		var result map[string]any
-		err := client.Call(ctx, request.method, request.params, &result)
-		requireChecks.ErrorContains(err, "failed with code", request.method)
-		assertChecks.Empty(result, request.method)
-		assertChecks.NotContains(err.Error(), "SYNTHETIC_AUTH_SECRET")
-	}
+	assertCodexRejectsExecutionAndFileRequests(ctx, t, client, "/work/.codex/auth.json", "/codex", "/work")
 	owned, ok := process.(*codexOwnedProcess)
 	requireChecks.True(ok)
 	execProcess, ok := owned.RPCProcess.(*execRPCProcess)
@@ -296,12 +284,6 @@ func codexProcessNetworkNamespaces(pid int) ([]string, error) {
 	}
 	err := visit(pid)
 	return namespaces, err
-}
-
-func compileCodexNativeFixture(t *testing.T, compiler string, args ...string) {
-	t.Helper()
-	output, err := exec.CommandContext(t.Context(), compiler, args...).CombinedOutput()
-	require.NoError(t, err, string(output))
 }
 
 // TestCodexPinnedStaticPIEArtifact exercises the native release candidate,

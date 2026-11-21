@@ -18,18 +18,21 @@ type codexBoundLauncher struct {
 }
 
 // CodexServiceProxy attaches a bounded host-side service to a disposable work
-// root. The default is nil, which keeps the child's network namespace disconnected.
+// root. The default is nil, which leaves the child with no network path.
 type CodexServiceProxy interface {
 	Attach(ctx context.Context, workRoot string) (CodexProxySession, error)
 }
 
+// CodexProxySession is one attached proxy. Endpoint is what the platform's
+// starter hands the child: the Unix socket path on Linux, and the
+// credential-bearing loopback proxy URL on macOS.
 type CodexProxySession interface {
-	SocketPath() string
+	Endpoint() string
 	Close() error
 }
 
 type codexProxyCommandStarter interface {
-	StartWithProxy(ctx context.Context, executable CodexExecutable, args []string, env []string, dir string, socketPath string) (RPCProcess, error)
+	StartWithProxy(ctx context.Context, executable CodexExecutable, args []string, env []string, dir string, proxyEndpoint string) (RPCProcess, error)
 }
 
 var ErrCodexProxyUnreleased = errors.New("codex service proxy is not released")
@@ -156,7 +159,7 @@ func (l codexBoundLauncher) start(
 	if proxySession == nil {
 		process, err = l.starter.Start(ctx, attestation.VerifiedExecutable(), slices.Clone(codexAppServerArgs), nil, workRoot)
 	} else {
-		process, err = proxyStarter.StartWithProxy(ctx, attestation.VerifiedExecutable(), slices.Clone(codexAppServerArgs), nil, workRoot, proxySession.SocketPath())
+		process, err = proxyStarter.StartWithProxy(ctx, attestation.VerifiedExecutable(), slices.Clone(codexAppServerArgs), nil, workRoot, proxySession.Endpoint())
 	}
 	if err != nil {
 		return nil, cleanupStart(err)

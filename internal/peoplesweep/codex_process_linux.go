@@ -24,12 +24,6 @@ type bubblewrapCodexStarter struct {
 // static bridge artifact. An unlinked development binary fails closed.
 var codexBridgeSHA256 string
 
-func codexAuthOwnedByDaemon(info os.FileInfo) bool {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	uid := os.Geteuid()
-	return ok && uid >= 0 && uint64(stat.Uid) == uint64(uid)
-}
-
 func NewCodexCommandStarter() CommandStarter {
 	return bubblewrapCodexStarter{bridgeDigest: codexBridgeSHA256}
 }

@@ -57,7 +57,7 @@ func TestCodexIsolationAgainstPromptInjectedToolAccess(t *testing.T) {
 	gate, executable := liveCodexIsolationTestGate(t)
 	config := codexIsolationTransportConfig(executable)
 	config.RequestTimeout = 2 * time.Minute
-	transport, err := NewCodexAppServerDriver(config, NewCodexCommandStarter(), gate)
+	transport, err := NewCodexAppServerDriverWithAuthHome(config, NewCodexCommandStarter(), gate, authRoot)
 	must.NoError(err)
 	models, err := transport.ListModels(t.Context())
 	must.NoError(err)
@@ -68,7 +68,7 @@ func TestCodexIsolationAgainstPromptInjectedToolAccess(t *testing.T) {
 		must.NotEmpty(models[0].SupportedEfforts)
 		config.ReasoningEffort = models[0].SupportedEfforts[0]
 	}
-	transport, err = NewCodexAppServerDriver(config, NewCodexCommandStarter(), gate)
+	transport, err = NewCodexAppServerDriverWithAuthHome(config, NewCodexCommandStarter(), gate, authRoot)
 	must.NoError(err)
 	profileConfig := testConfigWithProvider(config)
 	profile, err := profileConfig.Profile()
@@ -92,7 +92,10 @@ func TestCodexIsolationAgainstPromptInjectedToolAccess(t *testing.T) {
 	}
 	prepared, err := transport.Prepare(profile, request)
 	must.NoError(err)
-	response, err := transport.GeneratePrepared(t.Context(), profile, Credential{}, prepared)
+	// Production callers bound each request; so does the experiment.
+	requestCtx, cancel := context.WithTimeout(t.Context(), config.RequestTimeout)
+	defer cancel()
+	response, err := transport.GeneratePrepared(requestCtx, profile, Credential{}, prepared)
 	must.NoError(err)
 	var result struct {
 		PacketContent         string `json:"packet_content"`

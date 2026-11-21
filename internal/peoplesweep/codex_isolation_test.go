@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,6 +21,10 @@ import (
 )
 
 const codexIsolationFixtureVersion = "codex-cli 0.149.0"
+
+// codexFixtureHangMargin is how long the hanging fixture outlives the version
+// timeout before its late write.
+const codexFixtureHangMargin = 500 * time.Millisecond
 
 type isolationCountingStarter struct {
 	starts atomic.Int64
@@ -89,6 +94,7 @@ func buildCodexIsolationExecutableFixture(
 		"-X=main.mode=" + fixture.mode,
 		"-X=main.markerBase64=" + base64.StdEncoding.EncodeToString([]byte(fixture.marker)),
 		"-X=main.secret=" + fixture.secret,
+		"-X=main.hangMilliseconds=" + strconv.FormatInt((codexVersionTimeout+codexFixtureHangMargin).Milliseconds(), 10),
 	}
 	// This read makes Go's test cache rerun the test when the child's inputs change.
 	_, err := os.ReadDir(filepath.Join("testdata", "codexfixture"))
@@ -320,7 +326,7 @@ func TestCodexVersionTimeoutKillsHangingFixture(t *testing.T) {
 	started := time.Now()
 	_, err = codexExecutableVersion(t.Context(), attestation.VerifiedExecutable())
 	must.Error(err)
-	checks.Less(time.Since(started), 900*time.Millisecond)
+	checks.Less(time.Since(started), codexVersionTimeout+400*time.Millisecond)
 	checks.NotContains(err.Error(), secret)
 	checks.NotContains(err.Error(), executable)
 	time.Sleep(700 * time.Millisecond) //nolint:kennlint // sleeptest: waits past the fixture process's late write

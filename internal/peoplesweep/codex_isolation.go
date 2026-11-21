@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -18,9 +19,19 @@ import (
 
 const (
 	maxCodexVersionBytes  = 4096
-	codexVersionTimeout   = 500 * time.Millisecond
 	codexVersionWaitDelay = 100 * time.Millisecond
 )
+
+// codexVersionTimeout bounds the snapshot's --version run. macOS assesses a
+// fresh copy of a signed executable on its first launch; that took 1.6 to 2.4
+// seconds for a 270 MB Codex snapshot on Apple silicon, so darwin gets a
+// bound that holds on a loaded machine.
+var codexVersionTimeout = func() time.Duration {
+	if runtime.GOOS == "darwin" {
+		return 10 * time.Second
+	}
+	return 500 * time.Millisecond
+}()
 
 type verifiedCodexExecutable struct {
 	root string
