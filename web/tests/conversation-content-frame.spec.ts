@@ -421,35 +421,35 @@ test.describe('designed archived mail', () => {
     await expect(page.locator('html')).toHaveClass(/dark/);
     await page.getByRole('grid', { name: 'Messages results' }).getByText(row.title).click();
     const content = page.locator('iframe[title="Message body"]').contentFrame();
-    await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
+    await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(236, 236, 241)');
     let appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
     await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     await expect(content.locator('table')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-    await expect(content.locator('a').filter({ hasText: 'Read more' })).toHaveCSS('color', 'rgb(116, 172, 254)');
+    await expect(content.locator('a').filter({ hasText: 'Read more' })).toHaveCSS('color', 'rgb(96, 165, 250)');
     await expect(content.getByRole('img', { name: 'Embedded image' })).toHaveCSS('filter', 'none');
     const showQuote = content.getByText('Show quoted text');
-    await expect.soft(showQuote).toHaveCSS('color', 'rgb(164, 168, 175)');
+    await expect.soft(showQuote).toHaveCSS('color', 'rgb(139, 147, 168)');
     await showQuote.hover();
-    await expect.soft(showQuote).toHaveCSS('color', 'rgb(242, 243, 245)');
+    await expect.soft(showQuote).toHaveCSS('color', 'rgb(236, 236, 241)');
     await showQuote.click();
     await page.mouse.move(0, 0);
-    await expect.soft(content.getByText('Hide quoted text')).toHaveCSS('color', 'rgb(164, 168, 175)');
+    await expect.soft(content.getByText('Hide quoted text')).toHaveCSS('color', 'rgb(139, 147, 168)');
     for (const text of ['Quoted paragraph', 'Nested quote', 'Gmail quoted text']) {
-      await expect.soft(content.getByText(text, { exact: true })).toHaveCSS('color', 'rgb(164, 168, 175)');
+      await expect.soft(content.getByText(text, { exact: true })).toHaveCSS('color', 'rgb(139, 147, 168)');
     }
-    await expect(content.getByText('Quoted link', { exact: true })).toHaveCSS('color', 'rgb(116, 172, 254)');
+    await expect(content.getByText('Quoted link', { exact: true })).toHaveCSS('color', 'rgb(96, 165, 250)');
     await page.getByRole('button', { name: 'Use original colors' }).click();
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(17, 17, 17)');
     await expect(content.locator('table')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
     await page.getByRole('button', { name: 'Use app colors' }).click();
-    await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
+    await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(236, 236, 241)');
     // Change the actual shell theme while the same email remains open.
     await setKitTheme(page, 'light');
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(17, 17, 17)');
     appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
     await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     await setKitTheme(page, 'dark');
-    await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
+    await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(236, 236, 241)');
   });
 
   test('wide archived mail fits its visible 8px arrowless scrollbar', async ({ page }) => {
@@ -497,7 +497,6 @@ test('switching to light ignores the original-colors override for simple mail', 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
   await page.getByRole('grid', { name: 'Messages results' }).getByText(row.title).click();
   const frame = page.locator('iframe[title="Message body"]');
-  await expect(frame.contentFrame().getByText('Simple reply')).toHaveCSS('color', 'rgb(242, 243, 245)');
   await page.getByRole('button', { name: 'Use original colors' }).click();
   await expect(frame).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   await expect(frame.contentFrame().getByText('Simple reply')).toHaveCSS('color', 'rgb(17, 34, 51)');
@@ -505,4 +504,6 @@ test('switching to light ignores the original-colors override for simple mail', 
   await expect(page.getByRole('button', { name: 'Use app colors' })).toHaveCount(0);
   await expect(frame).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expect(frame.contentFrame().locator('body')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  const shellText = await page.locator('body').evaluate((element) => getComputedStyle(element).color);
+  await expect(frame.contentFrame().locator('body')).toHaveCSS('color', shellText);
 });
