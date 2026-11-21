@@ -1128,8 +1128,9 @@ engine is ready.
 
 Authenticated `GET /api/v1/health` adds `api_schema_version`. Starting in schema
 2.28.0, its `vector` object can also include `text_enabled` and `visual_enabled`.
-These fields reflect configured lanes and remain true while a lane initializes
-or fails. Public and delegated health responses omit them.
+Each flag reflects whether its own lane is configured, reporting `false` for an
+unconfigured lane and `true` for a configured lane, even while that lane
+initializes or fails. Public and delegated health responses omit them.
 
 ---
 
