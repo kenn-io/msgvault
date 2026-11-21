@@ -345,22 +345,22 @@ exact size, with no headroom.
 To connect Claude Desktop to msgvault:
 
 1. Open your Claude Desktop config file:
-   - **macOS.** `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - **Windows.** `%APPDATA%\Claude\claude_desktop_config.json`
+    - **macOS.** `~/Library/Application Support/Claude/claude_desktop_config.json`
+    - **Windows.** `%APPDATA%\Claude\claude_desktop_config.json`
 2. Add the `msgvault` server entry:
 
-   ```json
-   {
-     "mcpServers": {
-       "msgvault": {
-         "command": "msgvault",
-         "args": ["mcp"]
-       }
-     }
-   }
-   ```
+    ```json
+    {
+      "mcpServers": {
+        "msgvault": {
+          "command": "msgvault",
+          "args": ["mcp"]
+        }
+      }
+    }
+    ```
 
-   If `msgvault` is not on your PATH, use the full path to the binary.
+    If `msgvault` is not on your PATH, use the full path to the binary.
 3. Save the file and restart Claude Desktop.
 
 ### Native daemon endpoints
