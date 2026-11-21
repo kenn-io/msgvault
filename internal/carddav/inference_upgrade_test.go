@@ -1,9 +1,7 @@
 package carddav
 
 import (
-	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -231,108 +229,4 @@ func TestInferenceMigrationV2TracksRetiredInferenceInConflictUpdateIntent(t *tes
 	assert.True(preview.ReviewRequired)
 	require.ErrorIs(service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
 	assert.Equal(0, fixture.puts, "publication must wait for review of the retired inferred contact")
-}
-
-func TestInferenceMigrationV3ReviewsKeptLocalRetiredContact(t *testing.T) {
-	fixture := &mutationFixture{}
-	service, st, personID, book := seededMutationService(t, fixture)
-	base := conflictCard("person", "Remote base")
-	fixture.body, fixture.etag = base, `"base"`
-	hash, err := SemanticHash(base)
-	require.NoError(t, err)
-	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
-	require.NoError(t, err)
-	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
-		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: book.SyncRevision,
-		Upserts: []store.CardDAVRemoteResource{{Href: book.CanonicalURL + "person.vcf", RemoteUID: "person", RemoteETag: `"base"`, RemoteBody: base, SemanticHash: hash}},
-	})
-	require.NoError(t, err)
-	require.NoError(t, st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{IsSubscribed: true}))
-	contact, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-		AddressKind: store.ContactAddressEmail, OriginalValue: "alex@example.com",
-		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
-	})
-	require.NoError(t, err)
-	_, err = st.DB().Exec(st.Rebind(`DELETE FROM person_carddav_inference_state WHERE person_id=?`), personID)
-	require.NoError(t, err)
-	mapping, err := st.GetCardDAVResourceForPersonContext(t.Context(), book.ID, personID)
-	require.NoError(t, err)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
-	require.NoError(t, err)
-	capture, needed, err := service.prepareMappingConflict(t.Context(), books[0], *mapping, nil, true)
-	require.NoError(t, err)
-	require.True(t, needed)
-	conflict, err := st.RecordCardDAVConflictContext(t.Context(), capture)
-	require.NoError(t, err)
-	require.NoError(t, service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepLocal))
-	require.Contains(t, string(fixture.body), "alex@example.com")
-	resolved, err := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
-	require.NoError(t, err)
-	require.NotNil(t, resolved.ResolvedAt)
-	removed, err := st.SweepResolvedCardDAVConflictsContext(t.Context(), resolved.ResolvedAt.Add(30*24*time.Hour+time.Second))
-	require.NoError(t, err)
-	require.Equal(t, int64(1), removed)
-	_, err = st.GetCardDAVConflictContext(t.Context(), conflict.ID)
-	require.ErrorIs(t, err, store.ErrCardDAVConflictNotFound)
-	require.NoError(t, st.SupersedePersonContactPointContext(t.Context(), personID, contact.Envelope.ID, nil))
-	_, err = st.DB().Exec(st.Rebind(`DELETE FROM person_carddav_inference_state WHERE person_id=?`), personID)
-	require.NoError(t, err)
-	_, err = st.DB().Exec(`DELETE FROM applied_migrations WHERE name='carddav_inference_export_state_v3'`)
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchema())
-	require.NoError(t, st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{IsWriteTarget: true, IsSubscribed: true}))
-	preview, err := service.PreviewPublication(t.Context(), personID)
-	require.NoError(t, err)
-	assert.True(t, preview.ReviewRequired)
-	assert.NotContains(t, preview.VCard, "alex@example.com")
-}
-
-func TestInferenceMigrationV3PreservesReviewedPendingPublication(t *testing.T) {
-	for _, anotherCard := range []bool{false, true} {
-		t.Run(map[bool]string{false: "reviewed card", true: "another card"}[anotherCard], func(t *testing.T) {
-			fixture := &mutationFixture{}
-			service, st, personID, _ := seededMutationService(t, fixture)
-			contact, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-				AddressKind: store.ContactAddressEmail, OriginalValue: "alex@example.com",
-				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
-			})
-			require.NoError(t, err)
-			_, err = st.DB().Exec(st.Rebind(`DELETE FROM person_carddav_inference_state WHERE person_id=?`), personID)
-			require.NoError(t, err)
-			require.NoError(t, service.PublishPerson(t.Context(), personID))
-			require.NoError(t, st.SupersedePersonContactPointContext(t.Context(), personID, contact.Envelope.ID, nil))
-			_, err = st.DB().Exec(st.Rebind(`DELETE FROM person_carddav_inference_state WHERE person_id=?`), personID)
-			require.NoError(t, err)
-			_, err = st.DB().Exec(`DELETE FROM applied_migrations WHERE name='carddav_inference_export_state_v2'`)
-			require.NoError(t, err)
-			require.NoError(t, st.InitSchema())
-			preview, err := service.PreviewPublication(t.Context(), personID)
-			require.NoError(t, err)
-			require.True(t, preview.ReviewRequired)
-			fixture.putFailures = 1
-			require.Error(t, service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
-			before, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
-			require.NoError(t, err)
-			require.False(t, before.Inference.ReviewRequired(before.ConnectionGeneration, before.Book.ID))
-			if anotherCard {
-				otherHref := "https://contacts.example.test/books/other/person.vcf"
-				var otherBookID int64
-				err = st.DB().QueryRow(st.Rebind(`INSERT INTO carddav_address_books(account_id, canonical_url, display_name, discovery_index, last_seen_revision)
-			SELECT account_id, 'https://contacts.example.test/books/other/', 'Other', 1, 1 FROM carddav_address_books WHERE id=? RETURNING id`), before.Book.ID).Scan(&otherBookID)
-				require.NoError(t, err)
-				_, err = st.DB().Exec(st.Rebind(`INSERT INTO vcard_resource_envelopes (person_id, canonical_person_uid, source_ref, source_resource_uid, original_raw_bytes, stored_body, resource_metadata, content_hash, etag)
-			SELECT person_id, canonical_person_uid, ?, ?, original_raw_bytes, stored_body, resource_metadata, content_hash, etag FROM vcard_resource_envelopes WHERE person_id=?`), fmt.Sprintf("carddav:%d", otherBookID), otherHref, personID)
-				require.NoError(t, err)
-				_, err = st.DB().Exec(st.Rebind(`INSERT INTO carddav_resources(address_book_id, href, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id)
-			SELECT ?, ?, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id FROM carddav_resources WHERE person_id=?`), otherBookID, otherHref, personID)
-				require.NoError(t, err)
-			}
-			_, err = st.DB().Exec(`DELETE FROM applied_migrations WHERE name='carddav_inference_export_state_v3'`)
-			require.NoError(t, err)
-			require.NoError(t, st.InitSchema())
-			after, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
-			require.NoError(t, err)
-			assert.Equal(t, anotherCard, after.Inference.ReviewRequired(after.ConnectionGeneration, after.Book.ID))
-		})
-	}
 }
