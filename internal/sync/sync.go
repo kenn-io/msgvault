@@ -50,6 +50,9 @@ type Options struct {
 	// Query is an optional Gmail search query (e.g., "before:2020/01/01")
 	Query string
 
+	// GmailSkipSpamTrash excludes new acquisitions from Spam and Trash.
+	GmailSkipSpamTrash bool
+
 	// NoResume forces a fresh sync even if a checkpoint exists
 	NoResume bool
 
@@ -475,9 +478,18 @@ func (s *Syncer) fullCheckpointMatchesRequest(
 const gmailHistoryRecoveryPresenceFingerprint = store.GmailHistoryRecoveryRequestFingerprint + ":spam-trash:v1"
 const gmailHistoryRecoveryLabelFingerprint = gmailHistoryRecoveryPresenceFingerprint + ":labels:v1"
 const gmailHistoryRecoveryCoverageFingerprint = gmailHistoryRecoveryLabelFingerprint + ":files:v1"
+const gmailFilteredRecoveryFingerprint = gmailHistoryRecoveryCoverageFingerprint + ":exclude-spam-trash"
+
+func (s *Syncer) historyRecoveryFingerprint() string {
+	if s.opts.GmailSkipSpamTrash {
+		return gmailFilteredRecoveryFingerprint
+	}
+	return gmailHistoryRecoveryCoverageFingerprint
+}
 
 func isPinnedHistoryRecovery(run *store.SyncRun) bool {
-	return (checkpointMatchesRequest(run, gmailHistoryRecoveryCoverageFingerprint) ||
+	return (checkpointMatchesRequest(run, gmailFilteredRecoveryFingerprint) ||
+		checkpointMatchesRequest(run, gmailHistoryRecoveryCoverageFingerprint) ||
 		checkpointMatchesRequest(run, gmailHistoryRecoveryLabelFingerprint) ||
 		checkpointMatchesRequest(run, gmailHistoryRecoveryPresenceFingerprint) ||
 		checkpointMatchesRequest(run, store.GmailHistoryRecoveryRequestFingerprint)) &&
@@ -489,6 +501,9 @@ func (s *Syncer) fullSyncRequestFingerprint() string {
 		"full:v1\x00%s\x00%s\x00%d\x00%t",
 		s.opts.SourceType, s.opts.Query, s.opts.Limit, s.opts.NoResume,
 	)
+	if s.opts.GmailSkipSpamTrash {
+		request += "\x00exclude-spam-trash"
+	}
 	version := "full:v1"
 	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
 		// Checkpoints from before the History boundary was saved must restart.
@@ -567,12 +582,12 @@ func (s *Syncer) initHistoryRecoveryState(
 		if !s.opts.NoResume {
 			state.handoffCursor = prior.CursorAfter.String
 			state.wasResumed = true
-			if err := restoreRecoveryCheckpoint(state, prior); err != nil {
+			if err := restoreRecoveryCheckpoint(state, prior, s.historyRecoveryFingerprint()); err != nil {
 				return nil, err
 			}
 		}
 	}
-	state.syncID, err = s.startSync(ctx, execution, "full", gmailHistoryRecoveryCoverageFingerprint)
+	state.syncID, err = s.startSync(ctx, execution, "full", s.historyRecoveryFingerprint())
 	if err != nil {
 		return nil, fmt.Errorf("start history recovery: %w", err)
 	}
@@ -999,6 +1014,10 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
 				}
 				checkpoint.ErrorsCount++
+				continue
+			}
+			if !alreadyExists && s.skipGmailAcquisition(syncID, sourceMessageID, raw.LabelIDs) {
+				result.skipped++
 				continue
 			}
 			if needsRawComparison && raw.Raw == nil {
@@ -1533,7 +1552,7 @@ func (s *Syncer) full(
 
 	for !reconcilePresence || state.recoveryPhase == recoveryEnumerate {
 		// List messages
-		listResp, err := s.client.ListMessages(ctx, s.opts.Query, pageToken)
+		listResp, err := s.listAcquisitionMessages(ctx, pageToken)
 		if err != nil {
 			s.failStoppedSync(state.syncID, err)
 			return nil, fmt.Errorf("list messages: %w", err)

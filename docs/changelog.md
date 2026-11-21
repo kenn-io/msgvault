@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-19"
+last_edited: "2026-11-20"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -25,6 +25,9 @@ All notable changes to msgvault, grouped by release.
 
 ### New features
 
+- [Skip Spam and Trash](configuration.md#accounts) when archiving a selected
+  Gmail account. The setting applies to full sync, incremental sync, and
+  recovery after Gmail History expires.
 - Read the order, delivery, invoice and reservation details an email carries as schema.org markup with the MCP tool `get_message_records`, without sending the message anywhere.
 - Import a LinkedIn member data export with
   [`import-linkedin`](usage/linkedin.md). DMs, your posts, and your own

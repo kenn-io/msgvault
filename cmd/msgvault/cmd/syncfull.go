@@ -636,6 +636,9 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 	// Set up sync options
 	opts := sync.DefaultOptions()
 	opts.SourceType = src.SourceType
+	if src.SourceType == sourceTypeGmail || src.SourceType == "" {
+		opts.GmailSkipSpamTrash = cfg.GmailSkipSpamTrash(src.Identifier)
+	}
 	opts.Query = query
 	opts.NoResume = syncNoResume
 	opts.Limit = syncLimit

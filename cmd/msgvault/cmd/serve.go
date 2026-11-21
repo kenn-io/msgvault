@@ -4697,6 +4697,7 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	defer func() { _ = client.Close() }()
 
 	opts := sync.DefaultOptions()
+	opts.GmailSkipSpamTrash = cfg.GmailSkipSpamTrash(accountEmail)
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 
 	syncer := newMessageSyncer(client, s, opts, state).WithLogger(logger)
