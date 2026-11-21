@@ -158,7 +158,7 @@ func TestPostgresCloneDropsRecoverFromStalledHandshake(t *testing.T) {
 		t.Cleanup(func() { dropOwnedDatabase(context.WithoutCancel(t.Context()), admin, name) })
 	}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	accepted := make(chan net.Conn, 1)
 	go func() {
@@ -175,7 +175,7 @@ func TestPostgresCloneDropsRecoverFromStalledHandshake(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		require.FailNow(t, "worker did not connect")
 	}
-	next, err := net.Listen("tcp", "127.0.0.1:0")
+	next, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = next.Close() })
 	nextAccepted := make(chan struct{})
@@ -209,7 +209,7 @@ func TestPostgresCloneDropsRecoverFromStalledHandshake(t *testing.T) {
 }
 
 func TestCloneDropFailureIsLogged(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	address := listener.Addr().String()
 	require.NoError(t, listener.Close())
