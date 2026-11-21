@@ -167,11 +167,11 @@ func (s *Syncer) Sync(ctx context.Context, sourceID int64, opts Options) (summar
 		}
 		// It fetches every archived thread as well, including one no list
 		// shows any more, such as a release whose notification is gone.
+		// The owner it was archived under may have changed since, so each
+		// is queued and archive checks its current owner.
 		var archived []ThreadRef
 		if err := r.known.Each(ctx, func(thread KnownThread) error {
-			if r.owners.Allows(thread.Ref.Owner) {
-				archived = append(archived, thread.Ref)
-			}
+			archived = append(archived, thread.Ref)
 			return nil
 		}); err != nil {
 			return r.summary, err

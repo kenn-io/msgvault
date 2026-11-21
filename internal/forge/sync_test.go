@@ -989,6 +989,30 @@ func TestAFullSyncFetchesAnArchivedThreadNoListShowsAnyMore(t *testing.T) {
 	require.Equal(1, full.Archived, "a full sync fetches every archived thread")
 }
 
+func TestAFullSyncFetchesAnArchivedThreadWhoseRepositoryLeftAnExcludedOwner(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "secret", "2026-11-07T10:00:00Z"), ref("i2", "secret", "2026-11-07T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}}
+	f.threads["i2"] = [][]Post{{post("p2", "issue", ann, "Two", "Body.", "2026-11-01T10:00:00Z")}}
+	_, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+
+	// The owner is excluded now, and i1's repository has since moved to
+	// another owner. No list shows either thread.
+	f.owners["i1"] = "acme"
+	f.discover = func(context.Context, KnownThreads, func([]ThreadRef, []byte) error) error { return nil }
+	f.fetches = nil
+	full, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{Full: true, Owners: NewOwnerFilter(nil, []string{"secret"})})
+	require.NoError(err)
+	assert.Equal(1, full.Archived, "the moved repository's thread is fetched under its current owner")
+	assert.Equal(1, full.Excluded, "the thread still under the excluded owner is not")
+	assert.Equal([]string{"i1@"}, f.fetches)
+}
+
 func TestAThreadChangedInTheSecondItWasFetchedIsFetchedAgain(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
