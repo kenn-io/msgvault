@@ -177,7 +177,10 @@ msgvault sync-full personal@gmail.com
 msgvault sync work@company.com
 ```
 
-Before `sync` or `sync-full` starts, if a Gmail token stored on this machine
+Browser re-authorization for expired or revoked Gmail tokens happens only when
+you run `sync` or `sync-full` from an interactive terminal, against the daemon
+on this machine (not a remote daemon), and with OAuth configured in msgvault.
+In that case, before the sync starts, if a Gmail token stored on this machine
 has expired or been revoked, msgvault prints
 `Token for <account> is expired; opening browser to re-authorize...` and opens
 a browser to re-authorize that account, with the account pre-selected in
