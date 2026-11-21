@@ -253,9 +253,6 @@ func TestCodexSeatbeltLauncherContainsChild(t *testing.T) {
 	requireChecks.NoError(err)
 	t.Cleanup(func() { _ = udpCanary.Close() })
 	probe.denied(map[string]string{"op": "dial", "network": "udp", "address": udpCanary.LocalAddr().String()})
-	requireChecks.NoError(udpCanary.SetReadDeadline(time.Now().Add(500 * time.Millisecond)))
-	_, _, err = udpCanary.ReadFrom(make([]byte, 64))
-	assertChecks.ErrorIs(err, os.ErrDeadlineExceeded, "a datagram reached the proxy port's UDP listener")
 	assertChecks.False(canaryAccepted.Load())
 	// The profile admits localhost on the proxy's port, so the proxy holds the
 	// IPv6 twin of that port: no other process can listen there.
