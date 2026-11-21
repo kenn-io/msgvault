@@ -103,9 +103,14 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		return apiimport.Write{}, err
 	}
 	sender := snapshot.Sender
-	senderAddress := sender.Email
-	if senderAddress == "" {
-		senderAddress = sender.Phone
+	// Search indexes the sender's address as a rebuild of the index derives
+	// it: the envelope's, else the participant's. A post naming an account
+	// alone thus finds the email the account was joined to.
+	searchAddress := envelopeEmail(snapshot)
+	if searchAddress == "" {
+		if searchAddress, err = st.ParticipantSearchAddressContext(ctx, senderID); err != nil {
+			return apiimport.Write{}, fmt.Errorf("lookup message sender address: %w", err)
+		}
 	}
 	metadata := sql.NullString{String: string(snapshot.Metadata), Valid: true}
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
@@ -144,7 +149,7 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		FTS: &store.FTSDoc{
 			Subject:  snapshot.Title,
 			Body:     snapshot.BodyText,
-			FromAddr: senderAddress,
+			FromAddr: searchAddress,
 		},
 	})
 	if err != nil {

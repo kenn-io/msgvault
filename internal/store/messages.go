@@ -5241,6 +5241,21 @@ func (s *Store) ParticipantByIdentifierContext(ctx context.Context, identifierTy
 	return id, hasPhone, err
 }
 
+// ParticipantSearchAddressContext returns the address search indexes for a
+// message of participantID whose envelope names no sender address: the
+// participant's phone number, else its email, as storedFTSEnvelopeSQL derives
+// it when it rebuilds the index. A participant with neither returns "".
+func (s *Store) ParticipantSearchAddressContext(ctx context.Context, participantID int64) (string, error) {
+	var address string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(phone_number, email_address, '') FROM participants WHERE id = ?
+	`, participantID).Scan(&address)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return address, err
+}
+
 // AdoptLegacyParticipantIdentifier atomically upgrades one legacy identifier
 // to a scoped value. The legacy value is consumed on success, so another
 // account cannot claim the same unscoped identifier after the first account
