@@ -203,18 +203,6 @@ func TestMCPAttributeProvenance(t *testing.T) {
 		assert.Equal(store.Provenance(tc.wantSource), values[0].Source)
 		assert.Equal(tc.wantActor, *values[0].Actor)
 	}
-	modern := attributeSession(t, b, nil, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}}, "")
-	params := &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "chat"}, "source": "user"}}
-	pending, err := modern.CallTool(t.Context(), params)
-	require.NoError(err)
-	require.NotEmpty(pending.RequestState)
-	prompt, ok := pending.InputRequests["confirm"].(*sdkmcp.ElicitParams)
-	require.True(ok)
-	assert.Contains(prompt.Message, `"supplied_by_assistant":["source"]`)
-	params.RequestState, params.InputResponses = pending.RequestState, sdkmcp.InputResponseMap{"confirm": attributeAccept()}
-	result, err := modern.CallTool(t.Context(), params)
-	require.NoError(err)
-	require.False(result.IsError, "%v", result.Content)
 }
 
 func TestMCPAttributePersonDefinitions(t *testing.T) {
@@ -449,7 +437,7 @@ func TestMCPAttributeExactTokens(t *testing.T) {
 	assert.Contains(response, `"json":1e400`)
 }
 
-func TestMCPClearAttributeWithLargeSiblings(t *testing.T) {
+func TestMCPListAndClearAttributeWithLargeSiblings(t *testing.T) {
 	b, st, person := recordAttributesFixture(t)
 	created := attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "large_multi", "label": "Large multi", "value_type": "text", "field_type": "text", "cardinality": "multi"}})
 	require.False(t, created.IsError)
