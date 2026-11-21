@@ -156,15 +156,8 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	includeHistory, _, err := queryBool(r, "history")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
-		return
-	}
-	limit, hasLimit, limitErr := queryInt(r, "limit")
-	offset, _, offsetErr := queryInt(r, "offset")
-	if limitErr != nil || offsetErr != nil || (hasLimit && limit < 1) || offset < 0 {
-		writeError(w, http.StatusBadRequest, "bad_request", "limit must be positive and offset must be nonnegative")
+	options, ok := personAttributeListOptions(w, r)
+	if !ok {
 		return
 	}
 	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
@@ -203,7 +196,7 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 	if universalID == "" || valueSlug != "" {
 		values, err = attributes.ListPersonAttributeValuesContext(r.Context(), personID,
 			store.PersonAttributeQuery{
-				DefinitionSlug: valueSlug, IncludeHistory: includeHistory,
+				DefinitionSlug: valueSlug, IncludeHistory: options.history,
 			})
 		if err != nil {
 			s.writeAttributeError(w, err)
@@ -219,7 +212,7 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 		if value.ActiveUntil == nil && value.SupersededAt == nil {
 			current[value.DefinitionSlug] = append(current[value.DefinitionSlug], value)
 		}
-		if includeHistory {
+		if options.history {
 			history[value.DefinitionSlug] = append(history[value.DefinitionSlug], value)
 		}
 	}
@@ -242,16 +235,10 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 		group := PersonAttributeGroup{
 			Definition: definition, Current: current[definition.Slug],
 		}
-		if group.Current == nil {
-			group.Current = []store.PersonAttributeValue{}
-		}
-		group.Current = pageAttributeValues(group.Current, offset, limit, hasLimit)
-		if includeHistory {
+		group.Current = pageAttributeValues(group.Current, options.offset, options.limit, options.hasLimit)
+		if options.history {
 			group.History = history[definition.Slug]
-			if group.History == nil {
-				group.History = []store.PersonAttributeValue{}
-			}
-			group.History = pageAttributeValues(group.History, offset, limit, hasLimit)
+			group.History = pageAttributeValues(group.History, options.offset, options.limit, options.hasLimit)
 		}
 		response.Attributes = append(response.Attributes, group)
 	}
@@ -259,7 +246,33 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, response)
 }
 
+type attributeListOptions struct {
+	history, hasLimit bool
+	limit, offset     int
+}
+
+func personAttributeListOptions(w http.ResponseWriter, r *http.Request) (attributeListOptions, bool) {
+	var options attributeListOptions
+	var err error
+	options.history, _, err = queryBool(r, "history")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return options, false
+	}
+	options.limit, options.hasLimit, err = queryInt(r, "limit")
+	var offsetErr error
+	options.offset, _, offsetErr = queryInt(r, "offset")
+	if err != nil || offsetErr != nil || (options.hasLimit && options.limit < 1) || options.offset < 0 {
+		writeError(w, http.StatusBadRequest, "bad_request", "limit must be positive and offset must be nonnegative")
+		return options, false
+	}
+	return options, true
+}
+
 func pageAttributeValues(values []store.PersonAttributeValue, offset, limit int, hasLimit bool) []store.PersonAttributeValue {
+	if values == nil {
+		return []store.PersonAttributeValue{}
+	}
 	if offset >= len(values) {
 		return values[:0]
 	}
