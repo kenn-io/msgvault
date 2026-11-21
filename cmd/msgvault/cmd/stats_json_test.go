@@ -45,6 +45,7 @@ func TestStatsJSON(t *testing.T) {
 		{name: "grant", mode: "delegated", label: "agent grant", kind: "agent_grant", wantLabel: "agent grant", active: 8, deleted: 3, total: 11, sources: 2, scopeSources: 2},
 		{name: "empty grant", mode: "delegated", label: "agent grant", kind: "agent_grant", wantLabel: "agent grant"},
 		{name: "delegated account", mode: "delegated", account: "reader@example.test", label: "Resolved account", kind: "account", wantLabel: "Resolved account", sources: 2, scopeSources: 2},
+		{name: "host source scope", mode: "host-scoped", label: "authorized sources", kind: "authorized_sources", wantLabel: "authorized sources", active: 8, deleted: 3, total: 11, sources: 2, scopeSources: 2},
 		{name: "delegated collection", mode: "delegated", collection: "team", label: "team", kind: "collection", wantLabel: "team", deleted: 3, total: 3, sources: 2, scopeSources: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,7 +58,8 @@ func TestStatsJSON(t *testing.T) {
 				threads, attachments, labels = 6, 3, 9
 			}
 			sizeField := fmt.Sprintf(`,"database_size_bytes":%d`, tc.size)
-			if tc.mode == "delegated" {
+			hostWithholdsSize := tc.mode == "delegated" || tc.mode == "host-scoped"
+			if hostWithholdsSize {
 				sizeField = ""
 			}
 			body := fmt.Sprintf(`{"stats":{"total_messages":%d,"source_deleted_messages":%d,"total_threads":%d,"total_attachments":%d,"total_labels":%d,"total_accounts":%d%s},"scope_label":%q,"scope_source_count":%d}`,
@@ -84,7 +86,7 @@ func TestStatsJSON(t *testing.T) {
 				scope["label"] = tc.wantLabel
 			}
 			want["scope"] = scope
-			if tc.mode != "delegated" {
+			if !hostWithholdsSize {
 				want["database_size_bytes"] = json.Number(strconv.FormatInt(tc.size, 10))
 				want["database_size_scope"] = "global"
 			}
@@ -110,6 +112,16 @@ func TestStatsJSONCommandLocalFlagAndTextFallback(t *testing.T) {
 		assert.Contains(output.String(), "Stats for collection \"team\" (2 accounts):\n")
 		assert.Contains(output.String(), "\n  Messages:    11 (8 active, 3 deleted from source)\n")
 	}
+}
+
+func TestStatsTextNamesAHostSourceScope(t *testing.T) {
+	assert := assert.New(t)
+	cmd, output, _ := statsJSONFixture(t, "host-scoped", `{"stats":{"total_messages":8,"total_threads":6,"total_attachments":3,"total_labels":9,"total_accounts":2},"scope_label":"authorized sources","scope_source_count":2}`, "", "")
+	cmd.SetArgs(nil)
+	require.NoError(t, cmd.Execute())
+	assert.Contains(output.String(), "Scope: authorized sources\n")
+	assert.Contains(output.String(), "  Accounts:    2\n")
+	assert.NotContains(output.String(), "MB")
 }
 
 func TestStatsJSONWriterError(t *testing.T) {

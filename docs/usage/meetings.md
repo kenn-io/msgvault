@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-17"
 title: Meeting Transcripts
-description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Pocket, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
+description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Bland, Granola, Plaud, Pocket, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
 
 Find meeting decisions and transcripts in the same archive as your email and
@@ -15,6 +15,7 @@ emails connect meetings to the people you already know in msgvault.
 |---|---|---|
 | [Omi](#omi) | Developer API key | Completed, non-discarded, unlocked conversations exposed by the backend |
 | [Twilio](#twilio) | Account auth token or API key | Recordings and transcripts Twilio still retains |
+| [Bland](#bland) (unreleased) | Org API key | Calls and the postcall data Bland still retains |
 | [Chatwoot](../guides/chatwoot.md) calls | Account API token | Calls in selected inboxes; recordings and transcripts refresh for seven days |
 | [Granola](#granola) | API key | Requires access to Granola's public API |
 | [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Meeting PAT or integration, optional users integration | At most 50 attendee-visible meetings per discovery query |
@@ -47,6 +48,50 @@ matches. Meetings mode does not offer selection or deletion.
 
 Unscoped search includes meetings and chats. Email-specific CLI and TUI
 aggregates remain email-only unless you choose another message type.
+
+## Link calendar events and notes
+
+Use `msgvault meetings links <note-id>` to see the calendar copies and notes
+that share an exact occurrence. You can also pass `msg:<id>` or an event `ref`
+from the `REF` column of `msgvault calendar events`, for example
+`msgvault meetings links evt:23@20270321T100000Z`. The API and MCP expose the same record.
+Twenty notes use their iCalendar UID and scheduled time. Granola notes use the
+Google event ID only when their owner matches the archived calendar's mailbox.
+Twenty notes with the same UID and time and Granola notes with the same
+instance-suffixed Google ID can link before a calendar is imported. A bare
+Google series ID cannot identify one week, so those notes remain separate.
+A calendar single or exception can prove that a bare ID names one event,
+including after a reschedule. Other note formats remain separate unless linked by the owner.
+
+Use `msgvault meetings suggest <ref>` to find events that overlap a meeting note, or notes that overlap a calendar event. Use `msgvault meetings link <ref> <ref>` to accept a suggestion. Suggestions rank shared attendees, overlap, and title words. The API and MCP tool `suggest_meeting_links` return the same suggestions.
+
+When a note has no known duration, the search uses a 30-minute window and reports the resulting estimated overlap. For ranking, known overlaps come ahead of estimated overlaps when attendee counts tie; title words break ties between estimates.
+
+Each result's `ref` identifies the calendar event, and `member_message_id` identifies the meeting note. For a note seed, `ref` is the suggested event; for an event seed, `member_message_id` is the suggested note. The `title` and `start` describe the suggestion.
+
+Use `msgvault meetings link <ref> <ref>` to join copies, including notes from
+an unscheduled call. Use `msgvault meetings unlink <ref> <ref>` to separate an
+automatic match. Either command replaces the previous choice. Use
+`msgvault meetings reset-link <ref> <ref>` to clear the choice and restore
+automatic matching. Choices survive projection rebuilds. Deduplication and source
+merges carry choices to the kept copy; undoing deduplication leaves that copy unchanged.
+If carried choices conflict, a choice already on the kept copy wins; otherwise, the
+newest carried choice wins. If a third copy matches both sides of a split, it joins
+the first compatible group in a stable order. A link or split that would break
+another saved link returns a conflict. Reset the conflicting pair first to make
+that change.
+
+Records show whether a calendar copy was cancelled or deleted at its source.
+When a recurrence cannot be expanded, the record keeps the copies it found and
+reports the affected message IDs and reasons in `unexpandable`. The CLI table
+prints those warnings to stderr; JSON and MCP return them with the record.
+
+An archived cancellation stays in the record even when its series master hasn't
+been archived. Its `start` and `end` are `null` in JSON and `unknown` in the
+CLI table, and `unexpandable` reports the missing series and bounds. A known
+bound is kept even if the other is missing. Importing the master later fills
+in the times. Note matches, calendar candidate reads, and recurrence steps share
+one request work limit; exceeding it returns `query_too_broad`.
 
 ## Export context and read follow-ups
 
@@ -550,6 +595,108 @@ US1, IE1 (Dublin) and AU1 (Sydney) each use their own regional credentials.
 Conversation Intelligence transcripts are read in US1 only, so an IE1 or AU1
 account archives legacy transcriptions alone.
 
+## Bland
+
+This integration is unreleased. Each Bland call becomes one meeting with its
+summary, transcript and recording, so you keep them after Bland deletes them.
+Sync only reads: it never places calls or sets up webhooks.
+
+### Connect and sync
+
+Add a [`[[bland]]` entry](../configuration.md#bland-sources) for each org API
+key, then register and sync it:
+
+```bash
+msgvault add-bland work
+msgvault sync-bland work --probe        # check access without showing calls
+msgvault sync-bland work
+msgvault sync-bland work --limit 20     # fetch at most 20 calls
+msgvault sync-bland work --full         # revisit every call
+```
+
+`sync-bland` with no identifier syncs every configured account. Set `schedule`
+on the entry to let the daemon sync it. See the
+[CLI reference](../cli-reference.md#sync-bland) for every flag.
+
+A `--limit` run that stops before the end of the call list prints the command
+to continue, for example `Run: msgvault sync-bland work --limit 20`. Run it
+again until the summary says the sync is complete.
+
+### What gets stored
+
+- **Summary and transcript.** The call's summary and its corrected transcript,
+  which comes from Bland's delayed postcall webhook payload. Bland produces it
+  only for calls with a configured postcall webhook (with citation
+  extraction); without one, Bland keeps only the original transcript from the
+  call record, and that's what's archived. Transferred conversations are
+  appended with their offsets. When Bland later omits text it sent before, the
+  archived text stays.
+- **Audio.** The call's MP3 or WAV recording. The default limit is 1 GiB per
+  recording, the same as Twilio's;
+  [`max_media_mb`](../configuration.md#bland-sources) changes it.
+- **Call details.** The call record and the last postcall webhook payload Bland
+  retains. msgvault keeps the payload, not the webhook URL or delivery history
+  around it, since a webhook URL is often a secret. Phone numbers stay as
+  provider evidence, not proof of who spoke.
+
+### Late artifacts and coverage
+
+Bland adds summaries, corrected transcripts and recordings after a call ends.
+
+- **Relist window.** Each sync lists every call created since seven days before
+  the previous sync started, and fetches each one again. A summary, transcript
+  or recording that arrives within seven days of the call's creation reaches
+  its meeting on a later sync. Anything later needs
+  `msgvault sync-bland work --full`.
+- **Calls in progress.** A call is archived before its artifacts exist, with
+  what it has, and later syncs update it as it ends. A call scheduled to run
+  more than a week after it was created needs `--full` after it finishes.
+- **Recordings.** A recording is fetched once the call details or postcall
+  data report its URL; a call without one gets no recording. Bland deletes
+  recordings after a retention period, which the postcall data reports as
+  `recording_expiration`. Schedule syncs well inside that period: a recording
+  Bland deleted before msgvault stored it can't be recovered.
+- **Deleted calls.** A call deleted on Bland during a first sync or `--full`
+  can make that sync skip one other call. The next sync gets it if it's within
+  the seven-day window; otherwise run `--full` again.
+- **Request cost.** Each listed call costs about 2 Bland requests per sync, plus
+  the recording download until it's stored. That suits a schedule of every few
+  hours for up to a few hundred calls a day.
+
+### Failures
+
+- **Refused recording.** If Bland refuses a recording download (HTTP 400, 401,
+  403, 404 or 410) or returns something other than audio, the sync still
+  completes and the recording shows as failed.
+- **Refused details or postcall read.** An HTTP 4xx answer other than 429
+  leaves that part out, and the sync summary counts the affected calls in one
+  note per read and status, such as
+  `postcall data refused (HTTP 403) for 12 call(s)`. A call whose details are
+  refused is archived from the call list, and its postcall data is still
+  fetched. A call whose postcall read is refused is archived from its details.
+  A transcript the call already has is kept; when it has none, the stored
+  transcript is unavailable with the status `provider_refused`. `add-bland`
+  and `--probe` report a refused read instead of failing.
+- **Malformed answer.** A malformed call detail answer, including one without
+  a creation time or with a malformed transcript, leaves the call as it was
+  archived. A malformed postcall answer archives the call from its details.
+- **Call errors.** A malformed answer, or a network, rate-limit or server error
+  on a call, marks the sync failed and names the call and any malformed field.
+  Other calls still sync. Failed calls stay queued for later syncs, even when
+  they are older than seven days. Runs without `--after` retry them, retries
+  count toward `--limit`, and pending recordings are not aged out while a
+  retry is queued.
+- **Aged-out recordings.** Once a call leaves the window with no queued
+  failure, recordings still waiting for audio are marked failed, or
+  unavailable if Bland never produced them. The sync summary says how many,
+  and only `--full` tries them again.
+- **Size cap.** A recording over the size cap is skipped with a note naming it;
+  raise `max_media_mb` and run `--full` to fetch it. Recordings skipped while
+  `media = false` are not retried either; after turning `media` back on, run
+  `--full` to download them.
+- **Local storage failure.** A failure writing to the local attachment store
+  stops the sync.
+
 ## Granola
 
 ### Prerequisites
@@ -718,14 +865,36 @@ It still cannot discover history beyond the visible window.
 
 - `--after` filters meetings returned by Notion locally and implies `--full`.
 - `--limit` caps the visible meetings fetched and checked.
-- Due transcript retries run in addition to that limit.
+- Due meeting retries run in addition to that limit.
 
-Notion may publish notes before a transcript. Missing transcripts retry every
-six hours until seven days after the best known meeting end, or for 48 hours
-from discovery when timing is unknown. A temporary omission never erases a
-transcript already archived. Hard per-meeting failures retain the previous
-successful state; meetings written earlier in that failed run remain safe and
-idempotent.
+Meetings under data sources import their summary, notes, and transcript from
+their referenced section blocks. When a page meeting has no transcript section
+or its section reads completely empty, msgvault uses a complete transcript from
+the parent page's Markdown. An incomplete section keeps saved text for retry.
+
+Provider or network errors, incomplete pagination, and request, response-size,
+block-count, and nesting limits can leave sections incomplete. msgvault keeps
+their archived text and evidence and retries section blocks every six hours,
+even after a meeting leaves the query window. Incomplete sections stay queued
+until a complete read is saved.
+
+If page Markdown is incomplete, msgvault keeps the saved transcript and retries.
+When a transcript is missing without an incomplete section, background retries
+stop at the deadline. The sync summary reports partial coverage when a section
+is incomplete or the Notion query reports more meetings.
+
+When a transcript reference disappears without a replacement, msgvault keeps
+the saved transcript and retries. A complete empty referenced transcript section
+clears saved text when page Markdown has no replacement. Other omitted sections
+clear saved text.
+
+If combined evidence exceeds 64 MiB, msgvault keeps the last readable archive
+and reports partial coverage.
+
+A meeting whose saved evidence has a newer version keeps that evidence, and the
+sync reports an error for it. Existing `[[notion_meetings]]` settings need no
+changes. Other hard per-meeting failures retain the previous successful state;
+meetings written earlier in that failed run remain safe and idempotent.
 
 ### What gets stored (Notion)
 

@@ -303,6 +303,27 @@ type GetCLIMessageThreadQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ExportCLIMessagesQuery struct {
+	// Start Inclusive RFC3339 lower bound
+	Start string `json:"start" validate:"required"`
+
+	// End Exclusive RFC3339 upper bound
+	End string `json:"end" validate:"required"`
+
+	// MessageType Exact message type to include (repeatable)
+	MessageType []string `json:"message_type,omitempty"`
+
+	// Source Source selector type:identifier from list-accounts (repeatable)
+	Source []string `json:"source,omitempty"`
+
+	// PersonID Export messages for the durable person's bound participants
+	PersonID *int64 `json:"person_id,omitempty"`
+}
+
+func (e ExportCLIMessagesQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
 type SearchCLIQuery struct {
 	// IncludeSnippet Include attachment names and bounded FTS match context
 	IncludeSnippet *bool `json:"include_snippet,omitempty"`
@@ -546,13 +567,14 @@ type GetKataIssueContextQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
-type SearchIntegrationTasksQuery struct {
-	// Q Task title search within the configured project
-	Q string `json:"q" validate:"required"`
+type ListOpenKataIssuesQuery struct {
+	// Q Search open issue text by whole word or enter an exact qualified ref, including closed issues, up to 256 bytes
+	Q *string `json:"q,omitempty"`
 }
 
-func (s SearchIntegrationTasksQuery) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+type SearchIntegrationTasksQuery struct {
+	// Q Task title search within the configured project; omit to list tasks
+	Q *string `json:"q,omitempty"`
 }
 
 type ListLoopsQuery struct {
@@ -581,7 +603,7 @@ type SearchMediaQuery struct {
 	// Q Words to find in recordings and attachments
 	Q string `json:"q" validate:"required"`
 
-	// Mode Lexical mode; semantic and hybrid are unavailable
+	// Mode Search mode for recordings and attachments: lexical (default), semantic, or hybrid
 	Mode *string `json:"mode,omitempty"`
 
 	// PersonID Durable person ID
@@ -601,6 +623,23 @@ func (s SearchMediaQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type GetMeetingRecordQuery struct {
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (g GetMeetingRecordQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type SuggestMeetingLinksQuery struct {
+	Ref   string `json:"ref" validate:"required"`
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+}
+
+func (s SuggestMeetingLinksQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type ListMessagesQuery struct {
 	// Page One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
 	Page *int64 `json:"page,omitempty"`
@@ -610,6 +649,18 @@ type ListMessagesQuery struct {
 }
 
 type ListChangedMessagesQuery struct {
+	// PersonID Only messages sent by a linked identity of this person
+	PersonID *int64 `json:"person_id,omitempty"`
+
+	// SourceID Source IDs; repeat for multiple sources (maximum 50)
+	SourceID []int64 `json:"source_id,omitempty"`
+
+	// ConversationID Conversation IDs; repeat for multiple conversations (maximum 50)
+	ConversationID []int64 `json:"conversation_id,omitempty"`
+
+	// IncomingOnly Best-effort incoming filter; direction corrections alone do not redeliver changes
+	IncomingOnly *bool `json:"incoming_only,omitempty"`
+
 	// Cursor Opaque cursor from the next_cursor of the previous response, sent back verbatim. Do not parse, construct, compare, or order it; its contents may change without notice. Omit, or send it empty, to start from the beginning of the archive. The token is not authenticated: the server does not sign it and cannot tell one it issued from a well-formed one you built, so a fabricated cursor naming this archive is accepted and simply moves your own position. Rejected with 400 invalid_cursor, rather than read as the beginning: a token the server cannot read, one carrying a cursor format this build does not speak, and one issued against a different archive
 	Cursor *string `json:"cursor,omitempty"`
 
@@ -940,7 +991,13 @@ type ListDirectoryPeopleQuery struct {
 	// LastContactBefore Return people contacted at or before this RFC3339 timestamp
 	LastContactBefore *time.Time `json:"last_contact_before,omitempty"`
 
-	// Sort Directory order: name, last_contact_desc, or last_contact_asc
+	// Cadence Cadence filter: overdue, due (includes overdue), no_list, or unknown
+	Cadence *string `json:"cadence,omitempty"`
+
+	// DueWithinDays UTC days ahead for cadence=due, 0..3660 (default 0)
+	DueWithinDays *int64 `json:"due_within_days,omitempty"`
+
+	// Sort Directory order: name, last_contact_desc, last_contact_asc, most_overdue, or next_due
 	Sort *ListDirectoryPeopleQuerySort `json:"sort,omitempty"`
 }
 
@@ -984,8 +1041,15 @@ type ListPersonAttributesQuery struct {
 	// Slug Restrict the response to one definition slug
 	Slug *string `json:"slug,omitempty"`
 
+	// Ordinal Restrict values to one ordinal within a definition
+	Ordinal *int64 `json:"ordinal,omitempty" validate:"omitempty,gte=0"`
+
 	// UniversalID Restrict the response to one portable definition identifier
 	UniversalID *string `json:"universal_id,omitempty"`
+}
+
+func (l ListPersonAttributesQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
 type ClearPersonAttributeQuery struct {
@@ -1096,6 +1160,9 @@ type ListPersonFactDecisionsQuery struct {
 
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
+
+	// ClaimKey Restrict to one claim key
+	ClaimKey *string `json:"claim_key,omitempty"`
 }
 
 type ListPersonFactEvidenceQuery struct {
@@ -1107,6 +1174,9 @@ type ListPersonFactEvidenceQuery struct {
 
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
+
+	// EvidenceID Restrict to one evidence row
+	EvidenceID *int64 `json:"evidence_id,omitempty"`
 }
 
 type ListPersonFactEvidenceStatusEventsQuery struct {

@@ -7,6 +7,7 @@ import type { FileMetadataResponseContentState } from "./fileMetadataResponseCon
 export interface FileMetadataResponse {
   content_available: boolean;
   content_hash?: string;
+  /** File details check whether content can be opened; read or integrity errors can still occur. */
   content_state: FileMetadataResponseContentState;
   conversation_id: number;
   docbank?: DocbankAttachmentRef[];
@@ -14,6 +15,7 @@ export interface FileMetadataResponse {
   filename: string;
   id: number;
   message_id: number;
+  message_type: string;
   mime_type: string;
   size_bytes: number;
   url?: string;

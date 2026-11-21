@@ -322,6 +322,7 @@ func openAIEmbedConfig(vectorCfg vector.Config, apiKey string) embed.Config {
 		Endpoint: vectorCfg.Embeddings.Endpoint, APIKey: apiKey,
 		Model: vectorCfg.Embeddings.Model, Dimension: vectorCfg.Embeddings.Dimension,
 		Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
+		Builtin:         vectorCfg.Embeddings.LocalOnly,
 		DocumentPrefix:  vectorCfg.Embeddings.DocumentPrefix,
 		QueryPrefix:     vectorCfg.Embeddings.QueryPrefix,
 		RejectRedirects: true,

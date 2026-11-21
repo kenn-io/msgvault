@@ -6,7 +6,7 @@
   import type { Organization } from '../../directory/models';
   import OrganizationEditor from '../directory/OrganizationEditor.svelte';
 
-  let { controller }: { controller: DirectoryEntityController } = $props();
+  let { controller, onOpenPerson }: { controller: DirectoryEntityController; onOpenPerson?: (personID: number) => void } = $props();
   let query = $state('');
   let editing = $state<Organization | null>();
 
@@ -48,7 +48,7 @@
 </section>
 
 {#if editing !== undefined}
-  <OrganizationEditor {controller} organization={editing ?? undefined} onDone={finishEditor} onClose={closeEditor} />
+  <OrganizationEditor {controller} {onOpenPerson} organization={editing ?? undefined} onDone={finishEditor} onClose={closeEditor} />
 {/if}
 
 <style>

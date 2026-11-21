@@ -20,8 +20,10 @@ it('shows what a saved view holds in its tooltip', () => {
   ]);
 });
 
-it('keeps a view with invalid state disabled and deletable', async () => {
-  const incompatible = { schema_version: 2, incompatibility_reason: 'invalid saved view canonical state: semantic and hybrid exploration require free text', canonical_state: { presentation: 'files', search_mode: 'semantic', filters: [] } };
+it.each([
+  { name: 'invalid state', incompatible: { schema_version: 2, incompatibility_reason: 'invalid saved view canonical state: semantic and hybrid exploration require free text', canonical_state: { presentation: 'files', search_mode: 'semantic', filters: [] } } },
+  { name: 'newer schema', incompatible: { schema_version: 4 } }
+])('keeps a view with $name disabled', async ({ incompatible }) => {
   const onOpenView = vi.fn();
   const onDeleteView = vi.fn();
   renderRow({ ...view(1, 'Old view'), ...incompatible }, { onOpen: onOpenView, onDelete: onDeleteView });

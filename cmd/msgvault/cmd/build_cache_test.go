@@ -26,7 +26,56 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestBuildCacheMeetingGroupsUseSuppliedSnapshot(t *testing.T) {
+	for _, mode := range []string{"csv", "scanner"} {
+		t.Run(mode, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			if mode == "csv" {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+			} else {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "")
+			}
+			dbPath := filepath.Join(t.TempDir(), "archive.db")
+			archive, err := store.Open(dbPath)
+			requirements.NoError(err)
+			requirements.NoError(archive.InitSchema())
+			source, err := archive.GetOrCreateSource("meeting_import", "owner@example.test")
+			requirements.NoError(err)
+			var ids []int64
+			for _, key := range []string{"first", "second"} {
+				id, err := archive.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC), Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
+				requirements.NoError(err)
+				ids = append(ids, id)
+			}
+			_, err = archive.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "msg", MessageID: ids[0]}, store.MeetingLinkRef{Kind: "msg", MessageID: ids[1]}, "link")
+			requirements.NoError(err)
+			requirements.NoError(archive.Close())
+			duckDB, err := sql.Open("duckdb", "")
+			requirements.NoError(err)
+			t.Cleanup(func() { _ = duckDB.Close() })
+			snapshot, err := openCacheSourceSnapshot(t.Context(), duckDB, dbPath)
+			requirements.NoError(err)
+			t.Cleanup(func() { _ = snapshot.Close() })
+			if mode == "scanner" && snapshot.sqliteTx != nil {
+				t.Skip("SQLite scanner is unavailable")
+			}
+			var pinned int
+			requirements.NoError(snapshot.QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&pinned))
+			requirements.Equal(2, pinned)
+			if mode == "csv" && runtime.GOOS != "windows" {
+				// The open snapshot can still read the file, but a new connection to its original path cannot.
+				requirements.NoError(os.Rename(dbPath, dbPath+".moved"))
+			}
+			requirements.NoError(stageMeetingGroups(t.Context(), snapshot, ids[1]))
+			var count int
+			requirements.NoError(snapshot.DuckDB().QueryRowContext(t.Context(), "SELECT count(*) FROM tmp_meeting_groups WHERE group_id = ?", ids[0]).Scan(&count))
+			assertions.Equal(2, count)
+		})
+	}
+}
 
 func TestDaemonBuildCacheChildUsesQuietConsolePolicy(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, "")
@@ -144,7 +193,7 @@ func setupTestSQLite(t *testing.T) string {
 			participant_id INTEGER NOT NULL REFERENCES participants(id),
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
-			email_address TEXT
+			email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 		);
 
 		CREATE TABLE labels (
@@ -1558,14 +1607,14 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			require.NoError(err)
 			_, err = db.ExecContext(t.Context(), `
 				INSERT INTO conversations (id, source_id, source_conversation_id, title)
-				VALUES (105, 1, 'thread105', 'Partial Meeting');
+				VALUES (105, 1, 'thread105', 'Partial message');
 				INSERT INTO messages (
 					id, source_id, source_message_id, conversation_id,
 					subject, snippet, sent_at, size_estimate, message_type
 				) VALUES (
-					6, 1, 'meeting-partial', 105,
-					'Partial Meeting', 'Parent persisted first',
-					'2026-07-12 10:00:00', 500, 'meeting_transcript'
+					6, 1, 'message-partial', 105,
+					'Partial message', 'Parent persisted first',
+					'2026-07-12 10:00:00', 500, 'email'
 				);
 				CREATE TABLE sync_runs (
 					id INTEGER PRIMARY KEY,
@@ -1637,9 +1686,9 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 					id, source_id, source_message_id, conversation_id,
 					subject, snippet, sent_at, size_estimate, message_type
 				) VALUES (
-					7, 1, 'meeting-later', 105,
-					'Later Meeting', 'Arrived after the partial snapshot',
-					'2026-07-13 10:00:00', 500, 'meeting_transcript'
+					7, 1, 'message-later', 105,
+					'Later message', 'Arrived after the partial snapshot',
+					'2026-07-13 10:00:00', 500, 'email'
 				);
 			`)
 			require.NoError(err)
@@ -3061,7 +3110,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', is_from_me BOOLEAN DEFAULT FALSE, is_sent BOOLEAN DEFAULT TRUE, metadata TEXT, deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
+		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, source_id INTEGER, source_label_id TEXT, system_role TEXT, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
 		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
@@ -3261,7 +3310,7 @@ func BenchmarkBuildCache(b *testing.B) {
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
+		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
 		CREATE TABLE attachments (message_id INTEGER, size INTEGER, filename TEXT);
@@ -3377,7 +3426,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			participant_id INTEGER NOT NULL REFERENCES participants(id),
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
-			email_address TEXT
+			email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 		);
 		CREATE TABLE labels (
 			id INTEGER PRIMARY KEY,
@@ -4662,7 +4711,7 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
+		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
 		CREATE TABLE attachments (message_id INTEGER, size INTEGER, filename TEXT);

@@ -311,6 +311,8 @@ var settingsCatalog = []settingDefinition{
 	numberSetting("beeper.rate_limit_qps", settingsGroupSources, func(c *config.Config) float64 { return c.Beeper.RateLimitQPS }),
 	boolSetting("inline.enabled", settingsGroupSources, func(c *config.Config) bool { return c.Inline.Enabled }),
 	stringSetting("inline.schedule", settingsGroupSources, nil, func(c *config.Config) string { return c.Inline.Schedule }),
+	boolSetting("feeds.enabled", settingsGroupSources, func(c *config.Config) bool { return c.Feeds.Enabled }),
+	stringSetting("feeds.schedule", settingsGroupSources, nil, func(c *config.Config) string { return c.Feeds.Schedule }),
 	boolSetting("github.enabled", settingsGroupSources, func(c *config.Config) bool { return c.GitHub.Enabled }),
 	stringSetting("github.schedule", settingsGroupSources, nil, func(c *config.Config) string { return c.GitHub.Schedule }),
 	stringArraySetting("github.include_owners", settingsGroupSources, func(c *config.Config) []string { return c.GitHub.IncludeOwners }),
@@ -364,6 +366,7 @@ var settingsCatalog = []settingDefinition{
 	secretSetting("integrations.tasks.api_key", "integrations", func(_ *Server, c *config.Config) string { return c.Integrations.Tasks.APIKey }),
 	stringSetting("integrations.tasks.default_project", "integrations", nil, func(c *config.Config) string { return c.Integrations.Tasks.DefaultProject }),
 	boolSetting("integrations.kata.enabled", "integrations", func(c *config.Config) bool { return c.Integrations.Kata.Enabled }),
+	boolSetting("integrations.kata.trust_private_network", "integrations", func(c *config.Config) bool { return c.Integrations.Kata.TrustPrivateNetwork }),
 	stringSetting("integrations.kata.endpoint", "integrations", nil, func(c *config.Config) string { return c.Integrations.Kata.Endpoint }),
 	secretSetting("integrations.kata.api_key", "integrations", func(_ *Server, c *config.Config) string { return c.Integrations.Kata.APIKey }),
 	stringSetting("integrations.kata.default_project", "integrations", nil, func(c *config.Config) string { return c.Integrations.Kata.DefaultProject }),
@@ -894,7 +897,13 @@ func endpointOrigin(endpoint string) string {
 	}
 	scheme := strings.ToLower(parsed.Scheme)
 	if parsed.Host != "" {
-		return scheme + "://" + strings.ToLower(parsed.Host)
+		// IPv6 interface zones are case-sensitive destination identities.
+		host, zone, zoned := strings.Cut(parsed.Host, "%")
+		origin := scheme + "://" + strings.ToLower(host)
+		if zoned {
+			origin += "%" + zone
+		}
+		return origin
 	}
 	return scheme + "://" + parsed.Opaque + parsed.Path
 }

@@ -99,6 +99,10 @@ type EmbedJob struct {
 	Backend vector.Backend
 	Log     *slog.Logger
 
+	// RequestTimeout is the configured timeout for one embedding request.
+	RequestTimeout time.Duration
+	BatchSize      int
+
 	// Store provides the main-DB coverage count used for activation
 	// gating (how many live messages still need embedding for the
 	// building generation). May be nil; in that case the daemon will not

@@ -309,7 +309,8 @@ func TestPackVerificationWindowListsRowsAsKitReadsThem(t *testing.T) {
 	// row; repair must see the new location, or it deletes a live mapping.
 	require.NoError(st.AdoptPackedBlobs(store.PackRecord{PackID: newPack, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
 		[]store.PackIndexEntry{{BlobHash: hash, PackID: newPack, Offset: 6, StoredLen: 64, RawLen: 64}}))
-	indexed, err := store.NewPackCatalog(st).ListIndexed(ctx)
+	// The missing physical pack makes this mapping a verification candidate.
+	indexed, err := store.NewMaintenancePackCatalog(st, t.TempDir()).ListIndexed(ctx)
 	require.NoError(err)
 	require.Len(indexed, 1)
 	assert.Equal(newPack, indexed[0].PackID)
@@ -332,16 +333,21 @@ func TestPackVerificationWindowKeepsItsRangeAcrossListings(t *testing.T) {
 	record(inWindow)
 	ctx, pass, err := st.BeginPackVerification(t.Context(), 128, 32<<20)
 	require.NoError(err)
-	catalog := store.NewPackCatalog(st)
+	// Missing physical packs make these mappings verification candidates.
+	catalog := store.NewMaintenancePackCatalog(st, t.TempDir())
 	repair, err := catalog.ListIndexed(ctx)
 	require.NoError(err)
 	require.Len(repair, 1)
-	// Pack records newly packed blobs between its repair and sweep listings.
+	// Pack can add a row and move a selected mapping between listings.
 	record("bb11223344556677889900aabbccddeeff00112233445566778899aabbccddee")
+	movedPack := pack.NewPackID()
+	require.NoError(st.AdoptPackedBlobs(store.PackRecord{PackID: movedPack, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
+		[]store.PackIndexEntry{{BlobHash: inWindow, PackID: movedPack, Offset: 6, StoredLen: 64, RawLen: 64}}))
 	sweep, err := catalog.ListIndexed(ctx)
 	require.NoError(err)
 	require.Len(sweep, 1, "the sweep covers the window repair verified, not rows added after it")
 	assert.Equal(inWindow, sweep[0].Hash.String())
+	assert.Equal(movedPack, sweep[0].PackID, "the selected mapping is reread")
 	more, err := st.FinishPackVerification(t.Context(), pass)
 	require.NoError(err)
 	assert.False(more)
@@ -373,4 +379,85 @@ func TestSkipLooseEnumerationReportsNoCandidates(t *testing.T) {
 	skipped, err := catalog.ListUnpacked(ctx)
 	require.NoError(err)
 	assert.Empty(skipped, "a suppressed pass reports no loose candidates")
+}
+
+func TestPackVerificationSelectsLooseAndMissingPackMappings(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	layout, err := packstore.NewLayout(root, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
+	require.NoError(err)
+	created := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	present, missing, unrecorded := pack.NewPackID(), pack.NewPackID(), pack.NewPackID()
+	healthy := fmt.Sprintf("%064x", 0x1001)
+	loose := fmt.Sprintf("%064x", 0x1002)
+	absent := fmt.Sprintf("%064x", 0x1003)
+	dangling := fmt.Sprintf("%064x", 0x1004)
+	// More missing-pack mappings than one window's lookahead must still be
+	// reached after the cursor advances.
+	tail := []string{fmt.Sprintf("%064x", 0x1005), fmt.Sprintf("%064x", 0x1006), fmt.Sprintf("%064x", 0x1007)}
+	for i := range 300 {
+		hash := fmt.Sprintf("%064x", i+1)
+		path := filepath.Join(root, hash[:2], hash)
+		require.NoError(os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(os.WriteFile(path, []byte("synthetic"), 0o600))
+	}
+	record := func(id string, hashes ...string) {
+		entries := make([]store.PackIndexEntry, 0, len(hashes))
+		for _, hash := range hashes {
+			entries = append(entries, store.PackIndexEntry{BlobHash: hash, PackID: id, Offset: 6, StoredLen: 1, RawLen: 1})
+		}
+		require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{PackID: id, EntryCount: int64(len(entries)), StoredBytes: int64(len(entries)), CreatedAt: created}, entries))
+	}
+	record(present, healthy, loose)
+	record(missing, append([]string{absent}, tail...)...)
+	record(unrecorded, dangling)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM attachment_packs WHERE pack_id = ?`), unrecorded)
+	require.NoError(err)
+	require.NoError(os.MkdirAll(filepath.Dir(layout.PackPath(present)), 0o700))
+	require.NoError(os.WriteFile(layout.PackPath(present), []byte("synthetic"), 0o600))
+	hash, err := packstore.ParseHash(loose)
+	require.NoError(err)
+	require.NoError(os.MkdirAll(filepath.Dir(layout.CompressedLoosePath(hash)), 0o700))
+	require.NoError(os.WriteFile(layout.CompressedLoosePath(hash), []byte("synthetic"), 0o600))
+	catalog := store.NewMaintenancePackCatalog(st, root)
+	ctx, pass, err := st.BeginPackVerification(t.Context(), 2, 100)
+	require.NoError(err)
+	first, err := catalog.ListIndexed(ctx)
+	require.NoError(err)
+	require.Len(first, 2)
+	assert.Equal([]string{loose, absent}, []string{first[0].Hash.String(), first[1].Hash.String()})
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = st.FinishPackVerification(canceled, pass)
+	require.Error(err)
+	ctx, pass, err = st.BeginPackVerification(t.Context(), 2, 100)
+	require.NoError(err)
+	replayed, err := catalog.ListIndexed(ctx)
+	require.NoError(err)
+	assert.Equal(first, replayed)
+	more, err := st.FinishPackVerification(t.Context(), pass)
+	require.NoError(err)
+	require.True(more)
+	for _, window := range []struct {
+		want []string
+		more bool
+	}{
+		{want: []string{dangling, tail[0]}, more: true},
+		{want: tail[1:], more: false},
+	} {
+		windowCtx, windowPass, err := st.BeginPackVerification(t.Context(), 2, 100)
+		require.NoError(err)
+		listed, err := catalog.ListIndexed(windowCtx)
+		require.NoError(err)
+		got := make([]string, 0, len(listed))
+		for _, entry := range listed {
+			got = append(got, entry.Hash.String())
+		}
+		assert.Equal(window.want, got)
+		more, err := st.FinishPackVerification(t.Context(), windowPass)
+		require.NoError(err)
+		assert.Equal(window.more, more)
+	}
 }

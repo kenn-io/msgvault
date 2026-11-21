@@ -26,6 +26,8 @@ const (
 
 // BuildOptions identifies committed, staged, and output cache roots.
 type BuildOptions struct {
+	// MeetingGroups names a relation with message_id and group_id columns.
+	MeetingGroups string
 	// UnsentMessages names a message_id relation; empty means no unsent messages.
 	UnsentMessages string
 	Mode           Mode
@@ -67,6 +69,13 @@ type sqlExecutor interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (b builder) meetingGroups() string {
+	if b.opts.MeetingGroups == "" {
+		return "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)"
+	}
+	return b.opts.MeetingGroups
 }
 
 // Build derives the relationship datasets from schema-correct base Parquet.
@@ -153,13 +162,17 @@ func Build(
 		"SELECT * FROM "+logicalBuildRelation); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt)); err != nil {
+	groups := b.meetingGroups()
+	if err := b.copyDataset(ctx, DatasetMeetingGroups, "SELECT message_id::BIGINT AS message_id, group_id::BIGINT AS group_id FROM "+groups); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt, groups)); err != nil {
 		return BuildResult{}, err
 	}
 	if err := b.copyDataset(ctx, DatasetDomains, buildRelationshipDomainsSQL()); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(ctx, DatasetRelationshipDaily, buildRelationshipDailySQL()); err != nil {
+	if err := b.copyDataset(ctx, DatasetRelationshipDaily, buildRelationshipDailySQL(groups)); err != nil {
 		return BuildResult{}, err
 	}
 	validationActivity := activity
@@ -421,7 +434,7 @@ func (b builder) relationshipEffectiveAt(ctx context.Context, activity string) (
 	}
 	var newest sql.NullTime
 	if err := b.db.QueryRowContext(ctx,
-		"SELECT max(occurred_at) FROM "+activity,
+		"SELECT max(occurred_at) FROM "+activity+" WHERE NOT email_invite",
 	).Scan(&newest); err != nil {
 		return time.Time{}, fmt.Errorf("read relationship score effective time: %w", err)
 	}
@@ -537,7 +550,8 @@ WITH messages AS (
 	       coalesce(try_cast(size_estimate AS BIGINT), 0) AS size_estimate
 	FROM %s
 ), senders AS (
-	SELECT DISTINCT p.email_address, p.domain
+	SELECT DISTINCT %s AS email_address,
+	       %s AS domain
 	FROM %s mr
 	JOIN %s p ON p.id = try_cast(mr.participant_id AS BIGINT)
 	WHERE mr.recipient_type = 'from'
@@ -552,6 +566,8 @@ SELECT
 	(SELECT coalesce(sum(size_estimate), 0) FROM messages),
 	(SELECT coalesce(sum(try_cast(size AS BIGINT)), 0) FROM %s)`,
 		inputs.messages,
+		SenderAddressExpr("mr", "p"),
+		SenderDomainExpr("mr", "p"),
 		inputs.recipients,
 		inputs.participants,
 		inputs.attachments,
@@ -608,4 +624,9 @@ func parquetDatasetGlob(root, dataset string) string {
 
 func quoteSQLString(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
+}
+
+// SenderEnvelopeDomainExpr extracts the domain after the final at sign.
+func SenderEnvelopeDomainExpr(address string) string {
+	return "CASE WHEN " + address + " LIKE '%@%' THEN LOWER(SUBSTR(" + address + ", LENGTH(RTRIM(" + address + ", REPLACE(" + address + ", '@', ''))) + 1)) END"
 }

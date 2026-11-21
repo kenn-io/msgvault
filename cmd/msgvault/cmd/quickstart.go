@@ -3,7 +3,6 @@ package cmd
 import (
 	_ "embed"
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/docs"
@@ -27,7 +26,7 @@ Example:
 		mcp, _ := cmd.Flags().GetBool("mcp")
 		text := quickstartText
 		if mcp {
-			text = mcpQuickstart(docs.AgentQuickstart)
+			text = docs.MCPQuickstart(docs.AgentQuickstart)
 		}
 		if _, err := fmt.Fprint(cmd.OutOrStdout(), text); err != nil {
 			return fmt.Errorf("write quickstart guide: %w", err)
@@ -39,14 +38,4 @@ Example:
 func init() {
 	quickstartCmd.Flags().Bool("mcp", false, "Print the MCP connection and safety guide")
 	rootCmd.AddCommand(quickstartCmd)
-}
-
-func mcpQuickstart(markdown string) string {
-	markdown = strings.ReplaceAll(markdown, "\r\n", "\n")
-	if strings.HasPrefix(markdown, "---\n") {
-		_, markdown, _ = strings.Cut(markdown[4:], "\n---\n")
-	}
-	markdown = strings.TrimLeft(markdown, "\n")
-	markdown = strings.ReplaceAll(markdown, "](../", "](https://msgvault.io/docs/")
-	return "# msgvault MCP quickstart\n\n" + markdown
 }

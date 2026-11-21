@@ -24,6 +24,8 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
 	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
 	"getCLIMessageThread": agentgrant.PermissionMessageRead,
+	"getMeetingRecord":    agentgrant.PermissionMessageRead,
+	"suggestMeetingLinks": agentgrant.PermissionMessageRead,
 	"getMessage":          agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
 	"getAttachment": agentgrant.PermissionAttachmentRead, "getAttachmentContent": agentgrant.PermissionAttachmentRead,
 	"getCLIAttachment": agentgrant.PermissionAttachmentRead,
@@ -39,6 +41,30 @@ func (s *Server) agentObjectSourceAllowed(r *http.Request, sourceID int64) bool 
 		return false
 	}
 	return s.requestAuthentication(r).Grant == nil || slices.Contains(agentReadSourceIDs(r), sourceID)
+}
+
+// hostScopedCLIReads are the CLI reads a host may serve under a source scope.
+// They take the agent-read path with no grant: the host's scope is the set of
+// granted sources, and every query is limited to it inside msgvault.
+var hostScopedCLIReads = map[string]agentgrant.Permission{
+	"getCLIStats": agentgrant.PermissionStatsRead, "searchCLI": agentgrant.PermissionSearchRead,
+	"getCLIMessage": agentgrant.PermissionMessageRead, "getCLIMessageThread": agentgrant.PermissionMessageRead,
+	"exportCLIMessages": agentgrant.PermissionMessageRead,
+}
+
+// agentReadScoped reports whether authorizeAgentRead limited r to sources,
+// under an agent grant or a host's source scope.
+func agentReadScoped(r *http.Request) bool {
+	_, ok := r.Context().Value(agentReadScopeKey{}).(agentReadScope)
+	return ok
+}
+
+// agentReadScopeLabel names the population a scoped CLI read covers.
+func (s *Server) agentReadScopeLabel(r *http.Request) string {
+	if s.requestAuthentication(r).Grant != nil {
+		return "agent grant"
+	}
+	return "authorized sources"
 }
 
 func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.Permission, *apiHTTPError) {
@@ -141,13 +167,16 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	account := r.URL.Query().Get("account")
 	accountGranted := false
 	for _, src := range sources {
-		if grant.MatchesSource(agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}) {
+		if grant == nil || grant.MatchesSource(agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}) {
 			allowed = append(allowed, src.ID)
 			accountGranted = accountGranted || src.Identifier == account
 		}
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
+	case "getMeetingRecord", "suggestMeetingLinks":
+		*r = *r.WithContext(sourcescope.WithSourceIDs(r.Context(), allowed))
+		return nil
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {
 			return agentReadDenied(permission)
@@ -287,7 +316,7 @@ func (s *Server) agentScopedStats(w http.ResponseWriter, r *http.Request, cli bo
 	resp := statsResponseFromStore(stats)
 	resp.DatabaseSize = nil
 	if cli {
-		label := "agent grant"
+		label := s.agentReadScopeLabel(r)
 		if scope.scope.Account.Input != "" {
 			label = scope.scope.displayName()
 		}

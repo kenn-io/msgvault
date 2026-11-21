@@ -4,6 +4,7 @@
   import type { PeopleInferencePresetCreateRequest } from '../../api/generated/models';
   import { credentialStatus, PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
   import TrackedFieldsList from './TrackedFieldsList.svelte';
+  import { trackUnsavedForm } from '../../settings/unsaved-forms.svelte';
 
   let { client, controller }: { client: APIClient; controller: PeopleInferenceController } = $props();
   let provider = $state<PeopleInferencePresetCreateRequest['preset_id']>('openai');
@@ -18,6 +19,15 @@
   let retentionPosture = $state('');
   let trainingPosture = $state('');
   let removeConfirmationName = $state('');
+  trackUnsavedForm({
+    dirty: () => Boolean(name || model || key || replacementKey || allowedSources.length || sourceSince || sourceUntil ||
+      sensitiveChoice || retentionPosture || trainingPosture),
+    discard: () => {
+      name = model = key = replacementKey = sourceSince = sourceUntil = '';
+      sensitiveChoice = retentionPosture = trainingPosture = '';
+      allowedSources = [];
+    },
+  });
 
   async function createProfile(): Promise<void> {
     const stableName = name.trim();
@@ -73,7 +83,7 @@
   {:else}
     {#if controller.error}<p role="alert" class="error">{controller.error}</p>{/if}
     {#if controller.status.pending_restart}
-      <p role="status">Restart the daemon to use the saved people sweep profile. The running daemon still uses {controller.status.running_name || 'no profile'}.</p>
+      <p role="status">The running daemon still uses {controller.status.running_name || 'no profile'}.</p>
     {/if}
     <div class="state">
       <p><strong>Configured:</strong> {controller.status.configured_name || 'None'} ({controller.status.configured_enabled ? 'enabled' : 'disabled'})</p>

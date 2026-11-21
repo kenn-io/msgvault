@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -254,12 +255,9 @@ func TestApplySenderRepairSerializesConcurrentFromWriter(t *testing.T) {
 	assert.Equal(t, newerParticipant, finalParticipant, "later writer must win")
 }
 
-func TestApplySenderRepairRefreshesSQLiteFTS(t *testing.T) {
+func TestApplySenderRepairRefreshesFTS(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	if f.Store.IsPostgreSQL() {
-		t.Skip("directly verifies the standalone SQLite FTS5 row")
-	}
 	if !f.Store.FTS5Available() {
 		t.Skip("FTS5 not available")
 	}
@@ -282,16 +280,10 @@ func TestApplySenderRepairRefreshesSQLiteFTS(t *testing.T) {
 			Email: "repairftsneedle@example.test", Domain: "example.test",
 		}}), "ApplySenderRepairContext")
 
-	for term, want := range map[string]int{
-		"repairftsneedle":     1,
-		"preservedbodyneedle": 1,
-	} {
-		var got int
-		require.NoError(f.Store.DB().QueryRowContext(
-			t.Context(),
-			`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?`, term,
-		).Scan(&got), "search refreshed FTS for %s", term)
-		assert.Equal(t, want, got, "FTS match count for %s", term)
+	for _, term := range []string{"repairftsneedle@example.test", "preservedbodyneedle"} {
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err)
+		assert.Equal(t, []int64{messageID}, ids)
 	}
 }
 

@@ -7,10 +7,14 @@ import type { MediaSearchResult } from "./mediaSearchResult";
 import type { SearchCoverage } from "./searchCoverage";
 
 export interface MediaSearchResponse {
+  /** Recording mode Docbank ran: lexical, semantic, hybrid, or unavailable when no recording search ran */
+  actual_mode: string;
   attachments?: MediaAttachmentSearch;
   /** Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits */
   attribution_unavailable: number;
   coverage: SearchCoverage;
+  /** Why recording search ran below the requested mode, such as semantic_unconfigured or semantic_unavailable */
+  degradations: string[];
   /** Coverage or occurrence attribution is incomplete, even with no matching excerpts */
   partial: boolean;
   pending_occurrences: number;

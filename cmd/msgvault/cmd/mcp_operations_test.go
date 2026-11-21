@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,35 +25,95 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func TestMCPOperationFailureCompletion(t *testing.T) {
+func TestMCPOperationResponseFailures(t *testing.T) {
 	t.Parallel()
+	settings := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
+		return readMCPOperationJSON[slackSettingsResponse](ctx, client, method, path, nil, http.StatusOK)
+	}
 	for _, tt := range []struct {
-		name, method, body, want string
-		status                   int
+		name, method, body, want, path string
+		status                         int
+		interrupted, wantErr           bool
+		read                           func(context.Context, *daemonclient.Client, string, string) (*mcpserver.OperationResult, error)
 	}{
-		{"post-commit credential conflict", http.MethodPatch, `{"error":"credential_conflict"}`,
-			`{"error":"operation_refused","operation_may_have_completed":true}`, http.StatusPreconditionFailed},
-		{"unclassified server failure", http.MethodPost, `{"error":"settings_write_failed"}`,
-			`{"error":"operation_refused","operation_may_have_completed":true}`, http.StatusInternalServerError},
-		{"known pre-commit conflict", http.MethodPatch, `{"error":"settings_conflict"}`,
-			`{"error":"settings_conflict","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
-		{"read failure", http.MethodGet, `{"error":"credential_conflict"}`,
-			`{"error":"operation_refused","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
-		{"read validation failure", http.MethodGet, `{"error":"validation_failed"}`,
-			`{"error":"validation_failed","operation_may_have_completed":false}`, http.StatusUnprocessableEntity},
+		{
+			name: "post-commit credential conflict", method: http.MethodPatch,
+			body: `{"error":"credential_conflict"}`, want: `{"error":"operation_refused","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusPreconditionFailed, read: settings,
+		},
+		{
+			name: "unclassified server failure", method: http.MethodPost,
+			body: `{"error":"settings_write_failed"}`, want: `{"error":"operation_refused","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusInternalServerError, read: settings,
+		},
+		{
+			name: "unlisted no-content status", method: http.MethodDelete,
+			body: ``, want: `{"error":"operation_refused","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusNoContent, read: settings,
+		},
+		{
+			name: "known pre-commit conflict", method: http.MethodPatch,
+			body: `{"error":"settings_conflict"}`, want: `{"error":"settings_conflict","operation_may_have_completed":false}`,
+			path: "/api/v1/settings", status: http.StatusPreconditionFailed, read: settings,
+		},
+		{
+			name: "read failure", method: http.MethodGet,
+			body: `{"error":"credential_conflict"}`, want: `{"error":"operation_refused","operation_may_have_completed":false}`,
+			path: "/api/v1/settings", status: http.StatusPreconditionFailed, read: settings,
+		},
+		{
+			name: "oversized successful write receipt", method: http.MethodPatch,
+			body: `{"data":"` + strings.Repeat("x", 1<<20) + `"}`,
+			want: `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusOK, read: settings,
+		},
+		{
+			name: "interrupted write receipt", method: http.MethodPatch,
+			body: `{"partial":`, want: `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusOK, interrupted: true, wantErr: true, read: settings,
+		},
+		{
+			name: "interrupted error response", method: http.MethodPatch,
+			body: `{"error":`, want: `{"error":"operation_response_failed","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusInternalServerError, interrupted: true, wantErr: true, read: settings,
+		},
+		{
+			name: "malformed write receipt", method: http.MethodPatch,
+			body: `not json`, want: `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusOK, wantErr: true, read: settings,
+		},
+		{
+			name: "oversized read", method: http.MethodGet,
+			body: strings.Repeat("x", (1<<20)+1),
+			want: `{"error":"operation_response_limit_exceeded","operation_may_have_completed":false}`,
+			path: "/api/v1/settings", status: http.StatusOK, read: settings,
+		},
+		{
+			name: "read validation failure", method: http.MethodGet,
+			body: `{"error":"validation_failed"}`, want: `{"error":"validation_failed","operation_may_have_completed":false}`,
+			path: "/api/v1/settings", status: http.StatusUnprocessableEntity, read: settings,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			requirements, assertions := require.New(t), assert.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				assertions.Equal(tt.method, r.Method)
-				assertions.Equal("/api/v1/settings", r.URL.Path)
+				assertions.Equal(tt.path, r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", `"settings"`)
+				if tt.interrupted {
+					w.Header().Set("Content-Length", "100")
+				}
 				w.WriteHeader(tt.status)
 				_, _ = w.Write([]byte(tt.body))
 			})
-			result, err := readMCPOperationJSON[generated.SettingsResponse](t.Context(), client, tt.method, "/api/v1/settings", nil, http.StatusOK)
-			requirements.NoError(err)
+			result, err := tt.read(t.Context(), client, tt.method, tt.path)
+			if tt.wantErr {
+				requirements.Error(err)
+			} else {
+				requirements.NoError(err)
+			}
 			requirements.NotNil(result)
 			assertions.True(result.IsError)
 			encoded, err := json.Marshal(result.Output)
@@ -60,6 +121,20 @@ func TestMCPOperationFailureCompletion(t *testing.T) {
 			assertions.JSONEq(tt.want, string(encoded))
 		})
 	}
+}
+
+func TestMCPOperationAcceptsNoContent(t *testing.T) {
+	t.Parallel()
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodDelete, r.Method)
+		assert.Equal(t, "/api/v1/example", r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	result, err := readMCPOperationJSON[struct{}](t.Context(), client, http.MethodDelete, "/api/v1/example", nil, http.StatusNoContent)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
+	assert.Equal(t, struct{}{}, result.Output)
 }
 
 func TestDaemonMCPLaunchDiscoversRealOperationalTools(t *testing.T) {

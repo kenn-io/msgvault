@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-11-11"
 title: Beeper
 description: Archive every chat network connected to Beeper Desktop via its local API.
 ---
@@ -345,9 +345,10 @@ What happens:
   stays `blocked` without further polling. Resolve it in Docbank, then restart
   the msgvault daemon to resume checking its state.
 
-Provider transcripts stay searchable through the normal message text. This
-route does not add search over Docbank's processed output yet. Check progress
-with a query:
+Provider transcripts stay searchable through the normal message text. Set
+`integrations.docbank.voice_transcript_search` to search generated transcripts.
+Restart the daemon after changing this setting. Turning it off removes generated
+transcripts from the search index. Check progress with a query:
 
 ```sql
 SELECT retention_state, error_code, COUNT(*)
@@ -391,10 +392,18 @@ A scheduled run keeps other sources on their cadence:
 
 - **Bounded runs.** One scheduled Beeper job works for at most 3 minutes
   across all accounts. It also stops early when another scheduled source has
-  waited for it for a minute. It stops at a chat or history-page boundary,
-  completes the run, and the next run continues from the saved cursors.
+  waited for it for a minute. It stops between chats, history pages, or member
+  updates. The next run continues message and roster work,
+  including optional contact matching, from saved progress.
 - **Account rotation.** After stopping within an account, the next run starts
   with the following account. Each account retains its own progress.
+- **Yielding to waiting work.** When a run stops because other work is
+  waiting, a follow-up runs after that work. It visits only the accounts that
+  have not had a turn yet, including one cut short at a boundary. Once every
+  account has had a turn, the next run waits for the next scheduled time.
+  **Sync now** or a scheduled time that arrives while a follow-up waits starts
+  a new pass over every account instead. The daemon keeps this progress in
+  memory, so a restart starts over.
 - **New messages first.** Chats with only new messages sync before chats
   still backfilling history. Completed chats are skipped until the current
   discovery cycle finishes, so later chats also get a turn.
@@ -442,6 +451,10 @@ participants still unify across archives via phone-number and email matching
 resolving to the same person).
 
 Telegram users also link to [Telegram Desktop imports](text-messages.md#import-telegram) by numeric user ID when a sync revisits their chat; `sync-beeper --full` covers quiet chats.
+
+Linking users doesn't merge their messages, so a chat archived from both
+sources appears twice in search. To search one copy, see
+[Search one copy of overlapping chats](searching.md#search-one-copy-of-overlapping-chats).
 
 ## Caveats
 

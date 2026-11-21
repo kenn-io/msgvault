@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1149,8 +1150,7 @@ func TestDraftLifecycleSyncProjection(t *testing.T) {
 func TestDraftLifecycleCancellation(t *testing.T) {
 	requirements := require.New(t)
 	barrier := &reviewCmdStoreBarrier{stored: make(chan struct{}), release: make(chan struct{})}
-	baseCtx, cancel := context.WithCancel(t.Context())
-	ctx := &reviewLateCancelContext{Context: baseCtx, cancel: cancel}
+	ctx := newReviewLateCancelContext(t)
 	barrier.onAppend = ctx.arm
 	addr, _ := startReviewCmdStoreBarrierServer(t, barrier)
 	fixture := newReviewDraftReplyFixtureAtAddr(t, addr)
@@ -1183,8 +1183,7 @@ func TestDraftLifecycleCleanupCompletesAfterLateCancellation(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	barrier := &reviewCmdStoreBarrier{stored: make(chan struct{}), release: make(chan struct{})}
-	baseCtx, cancel := context.WithCancel(t.Context())
-	ctx := &reviewLateCancelContext{Context: baseCtx, cancel: cancel}
+	ctx := newReviewLateCancelContext(t)
 	barrier.onFetch = func(n int32) {
 		if n == 4 {
 			ctx.arm()
@@ -1234,12 +1233,29 @@ type reviewCreatedDraft struct {
 	MessageID int64  `json:"message_id"`
 }
 
+// reviewLateCancelContext cancels on the first Err check the request
+// goroutine makes after arm. A barrier arms it while the server handles a
+// command, before the server sends the response. The request goroutine waits
+// for that response without calling Err, so its next check comes after the
+// response. Background goroutines that hold the context also call Err:
+// database/sql calls it from each Rows watcher once the rows close. Those
+// calls are ignored. Otherwise one could cancel while the request still waits
+// for the response, which is an in-flight cancellation, not a late one.
 type reviewLateCancelContext struct {
 	context.Context
 
 	cancel    context.CancelFunc
+	goroutine []byte
 	armed     atomic.Bool
 	cancelled atomic.Bool
+}
+
+// newReviewLateCancelContext must be called on the goroutine that runs the
+// request.
+func newReviewLateCancelContext(t *testing.T) *reviewLateCancelContext {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	return &reviewLateCancelContext{Context: ctx, cancel: cancel, goroutine: reviewGoroutineHeader()}
 }
 
 func (c *reviewLateCancelContext) arm() {
@@ -1247,10 +1263,19 @@ func (c *reviewLateCancelContext) arm() {
 }
 
 func (c *reviewLateCancelContext) Err() error {
-	if c.armed.Load() && c.cancelled.CompareAndSwap(false, true) {
+	if c.armed.Load() && bytes.Equal(reviewGoroutineHeader(), c.goroutine) &&
+		c.cancelled.CompareAndSwap(false, true) {
 		c.cancel()
 	}
 	return c.Context.Err()
+}
+
+// reviewGoroutineHeader returns "goroutine <id> ", the start of the calling
+// goroutine's stack trace, which identifies the goroutine.
+func reviewGoroutineHeader() []byte {
+	var buf [64]byte
+	trace := buf[:runtime.Stack(buf[:], false)]
+	return bytes.Clone(trace[:bytes.IndexByte(trace, '[')])
 }
 
 func newReviewDraftReplyFixtureAtAddr(t *testing.T, addr string) draftReplyFixture {

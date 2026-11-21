@@ -343,11 +343,11 @@ func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 	})
 	requirements.NoError(err)
 
-	query := logicalActivitySQL(
-		testExpandedActivity(root, root),
-		"f.source_id = ?",
-	) + `
+	activity := testExpandedActivity(root, root)
+	activity = "(SELECT * FROM " + activity + " UNION ALL SELECT * REPLACE (102::BIGINT AS message_id, false AS is_chat, true AS email_invite, 'calendar_event' AS message_type, 'event' AS entry_kind, 'calendar' AS conversation_type) FROM " + activity + ")"
+	query := logicalActivitySQL(activity, "f.source_id = ?") + `
 		SELECT
+			(SELECT count(*) FROM logical_units),
 			(SELECT count(*) FROM logical_people),
 			(SELECT canonical_id FROM logical_people),
 			(SELECT anchor_message_id FROM logical_people),
@@ -361,10 +361,11 @@ func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 			 FROM logical_person_domains),
 			(SELECT CAST(to_json(list(domain ORDER BY domain)) AS VARCHAR)
 			 FROM logical_domain_keys)`
-	var peopleCount, canonicalID, anchorMessageID int64
+	var unitCount, peopleCount, canonicalID, anchorMessageID int64
 	var isAuthor, isOwner, withOwner bool
 	var personDomainsJSON, domainKeysJSON string
 	requirements.NoError(db.QueryRowContext(t.Context(), query, int64(1)).Scan(
+		&unitCount,
 		&peopleCount,
 		&canonicalID,
 		&anchorMessageID,
@@ -375,6 +376,7 @@ func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 		&domainKeysJSON,
 	))
 
+	assertions.Equal(int64(1), unitCount)
 	assertions.Equal(int64(1), peopleCount)
 	assertions.Equal(int64(1), canonicalID)
 	assertions.Equal(int64(101), anchorMessageID)
@@ -891,7 +893,7 @@ WITH message_facts AS (
 	       m.attachment_count::INTEGER AS attachment_count,
 	       coalesce(m.has_attachments::BOOLEAN, false) AS has_attachments,
 	       (m.deleted_from_source_at IS NOT NULL) AS deleted_from_source,
-	       false AS unsent,
+	       false AS unsent, false AS email_invite,
 	       year(m.sent_at)::SMALLINT AS occurred_year,
 	       m.sender_id::BIGINT AS sender_id
 	FROM read_parquet('%s', hive_partitioning=true, union_by_name=true) m
@@ -933,7 +935,7 @@ WITH message_facts AS (
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
 	   m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
 	   m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-	   m.deleted_from_source, m.unsent,
+	   m.deleted_from_source, m.unsent, m.email_invite,
 	   c.canonical_id, c.participant_domain,
 	   coalesce(bool_or(e.is_direct)
 	       FILTER (WHERE c.canonical_id IS NOT NULL), false) AS is_direct,
@@ -953,7 +955,7 @@ LEFT JOIN owner_canon o USING (canonical_id)
 GROUP BY m.message_id, m.conversation_id, m.source_id, m.source_type,
 	     m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
 	     m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-	     m.deleted_from_source, m.unsent,
+	     m.deleted_from_source, m.unsent, m.email_invite,
 	     c.canonical_id, c.participant_domain, o.canonical_id, m.occurred_year`,
 		EntryKindSQL("m.message_type"),
 		IsChatSQL("m.message_type", "coalesce(c.conversation_type, '')"),
@@ -985,7 +987,7 @@ WITH message_facts AS (
 	       m.attachment_count::INTEGER AS attachment_count,
 	       coalesce(m.has_attachments::BOOLEAN, false) AS has_attachments,
 	       (m.deleted_from_source_at IS NOT NULL) AS deleted_from_source,
-	       false AS unsent,
+	       false AS unsent, false AS email_invite,
 	       year(m.sent_at)::SMALLINT AS occurred_year,
 	       m.sender_id::BIGINT AS sender_id,
 	       m.owner_participant_id::BIGINT AS owner_participant_id
@@ -1053,7 +1055,7 @@ WITH message_facts AS (
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
        m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-       m.deleted_from_source, m.unsent,
+       m.deleted_from_source, m.unsent, m.email_invite,
        cm.canonical_id, cm.participant_domain,
        coalesce(d.is_direct, false) AS is_direct,
        true AS is_conversation_member,
@@ -1075,7 +1077,7 @@ UNION ALL
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
        m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-       m.deleted_from_source, m.unsent,
+       m.deleted_from_source, m.unsent, m.email_invite,
        d.canonical_id, d.participant_domain,
        d.is_direct,
        false AS is_conversation_member,
@@ -1098,7 +1100,7 @@ UNION ALL
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
        m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-       m.deleted_from_source, m.unsent,
+       m.deleted_from_source, m.unsent, m.email_invite,
        NULL::BIGINT AS canonical_id,
        NULL::VARCHAR AS participant_domain,
        false AS is_direct,

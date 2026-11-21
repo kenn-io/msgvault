@@ -98,3 +98,35 @@ func TestSourceMergePlanFingerprintsOnlyRowsWithDestinationCandidates(t *testing
 	assert.NotEmpty(plan.messages[0].fingerprint, "the source message with a destination identity candidate is fingerprinted")
 	assert.Empty(plan.messages[1].fingerprint, "a complete source payload without any destination candidate is not fingerprinted")
 }
+
+func TestCopyMergedMessageEvidenceRelayedSender(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "merge.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	requirements.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	requirements.NoError(err)
+	author, err := st.EnsureParticipantByIdentifier("github", "alice", "Alice")
+	requirements.NoError(err)
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "")
+	requirements.NoError(err)
+	from, err := st.UpsertMessage(&Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "from", MessageType: "email"})
+	requirements.NoError(err)
+	into, err := st.UpsertMessage(&Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "into", MessageType: "email"})
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO message_recipients(message_id, participant_id, recipient_type, email_address, is_relayed) VALUES (?, ?, 'from', 'notifications@github.com', TRUE)`, from, author)
+	requirements.NoError(err)
+	tx, err := st.DB().BeginTx(t.Context(), nil)
+	requirements.NoError(err)
+	requirements.NoError(copyMergedMessageEvidence(t.Context(), &loggedTx{Tx: tx, rebind: st.Rebind}, from, into, source.ID))
+	requirements.NoError(tx.Commit())
+	var participant int64
+	var address string
+	var relayed bool
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT participant_id, email_address, is_relayed FROM message_recipients WHERE message_id = ? AND recipient_type = 'from'`, into).Scan(&participant, &address, &relayed))
+	assertions.Equal(author, participant)
+	assertions.Equal("notifications@github.com", address)
+	assertions.True(relayed)
+}

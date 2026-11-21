@@ -1,0 +1,69 @@
+package daemonclient
+
+import (
+	"context"
+	"errors"
+
+	"go.kenn.io/msgvault/internal/store"
+	apiclient "go.kenn.io/msgvault/pkg/client"
+	"go.kenn.io/msgvault/pkg/client/generated"
+)
+
+func (c *Client) MeetingRecord(ctx context.Context, ref string) (store.MeetingRecord, error) {
+	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetMeetingRecordResp, error) {
+		return client.GetMeetingRecordWithResponse(ctx, &generated.GetMeetingRecordRequestOptions{Query: &generated.GetMeetingRecordQuery{Ref: ref}})
+	})
+	if err != nil {
+		return store.MeetingRecord{}, err
+	}
+	if response.JSON200 == nil {
+		return store.MeetingRecord{}, errors.New("meeting record: empty response")
+	}
+	decoded, err := decodeMeetingResponse[store.MeetingRecord]("meeting record", response.Body)
+	if err != nil {
+		return store.MeetingRecord{}, err
+	}
+	return *decoded, nil
+}
+
+// DecideMeetingLink saves a link or split between archived copies.
+func (c *Client) DecideMeetingLink(ctx context.Context, left, right, decision string) (store.MeetingLinkDecisionResult, error) {
+	body := generated.DecideMeetingLinkBody{Left: left, Right: right, Decision: generated.MeetingDecisionRequestDecision(decision)}
+	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.DecideMeetingLinkResp, error) {
+		return client.DecideMeetingLinkWithResponse(ctx, &generated.DecideMeetingLinkRequestOptions{Body: &body})
+	})
+	if err != nil {
+		return store.MeetingLinkDecisionResult{}, err
+	}
+	if response.JSON200 == nil {
+		return store.MeetingLinkDecisionResult{}, errors.New("meeting decision: empty response")
+	}
+	decoded, err := decodeMeetingResponse[store.MeetingLinkDecisionResult]("meeting decision", response.Body)
+	if err != nil {
+		return store.MeetingLinkDecisionResult{}, err
+	}
+	return *decoded, nil
+}
+
+// SuggestMeetingLinks finds overlapping copies the owner can link.
+func (c *Client) SuggestMeetingLinks(ctx context.Context, ref string, limit int) (store.MeetingSuggestionPage, error) {
+	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.SuggestMeetingLinksResp, error) {
+		query := &generated.SuggestMeetingLinksQuery{Ref: ref}
+		if limit != 0 {
+			value := int64(limit)
+			query.Limit = &value
+		}
+		return client.SuggestMeetingLinksWithResponse(ctx, &generated.SuggestMeetingLinksRequestOptions{Query: query})
+	})
+	if err != nil {
+		return store.MeetingSuggestionPage{}, err
+	}
+	if response.JSON200 == nil {
+		return store.MeetingSuggestionPage{}, errors.New("meeting suggestions: empty response")
+	}
+	decoded, err := decodeMeetingResponse[store.MeetingSuggestionPage]("meeting suggestions", response.Body)
+	if err != nil {
+		return store.MeetingSuggestionPage{}, err
+	}
+	return *decoded, nil
+}

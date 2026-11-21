@@ -1,4 +1,4 @@
-import type { MediaSearchResponse, MediaSearchResult } from '../api/generated/models';
+import type { MediaAttachmentSearch, MediaSearchResponse, MediaSearchResult } from '../api/generated/models';
 
 export function recording(overrides: Record<string, unknown> = {}) {
   return { attachment_id: 1, filename: 'voice.wav', size_bytes: 2048, state: 'ready', ...overrides };
@@ -21,7 +21,13 @@ export function recordingSearchHit(overrides: Partial<MediaSearchResult> = {}): 
 }
 
 export function recordingSearchReport(overrides: Partial<MediaSearchResponse> = {}): MediaSearchResponse {
-  return { results: [recordingSearchHit()],
+  return { actual_mode: 'lexical', degradations: [], results: [recordingSearchHit()],
     coverage: { state: 'complete', binding_required: false, complete_documents: 1, scoped_documents: 1 },
     partial: false, truncated: false, pending_occurrences: 0, unavailable_occurrences: 0, attribution_unavailable: 0, ...overrides };
+}
+
+export function attachmentSearchReport(overrides: Partial<MediaAttachmentSearch> = {}): MediaAttachmentSearch {
+  return { requested_mode: 'lexical', actual_mode: 'lexical',
+    coverage: { state: 'unknown', binding_required: false, complete_documents: 0, scoped_documents: 0 },
+    partial: false, degradations: [], results: [], truncated: false, ...overrides };
 }

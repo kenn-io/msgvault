@@ -220,7 +220,7 @@ func (d *loggedDB) BeginTx(
 	if err != nil {
 		return nil, err
 	}
-	return &loggedTx{Tx: tx, rebind: d.rebind}, nil
+	return &loggedTx{Tx: tx, rebind: d.rebind, ctx: ctx}, nil
 }
 
 // loggedTx mirrors loggedDB for *sql.Tx: it embeds the raw
@@ -230,9 +230,15 @@ type loggedTx struct {
 	*sql.Tx
 
 	rebind func(string) string
+	// ctx is the context BeginTx received; Commit does its own database work
+	// under it.
+	ctx context.Context
 	// attribution records the locks withAttributionTxContext took before the
 	// sync fence; nil for every other transaction.
 	attribution *attributionLockState
+	// accountCatalogChanged is set when this transaction wrote account
+	// attribution; Commit then bumps the catalog revision once.
+	accountCatalogChanged bool
 
 	// Set only after this transaction successfully fences a running sync run.
 	syncGenerationFenced bool

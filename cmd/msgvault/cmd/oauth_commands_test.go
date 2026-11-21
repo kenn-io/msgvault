@@ -352,6 +352,43 @@ func TestCommandForcePreflightFinalReadHonorsCancellation(t *testing.T) {
 	}
 }
 
+func TestSyncFullCredentialDiscoveryHonorsCancellation(t *testing.T) {
+	resetSyncFullFlagsForTest(t)
+	_, state := setupCommandOAuth(t)
+	state.cfg.OAuth.ClientSecretsCommand = testutil.SecretCommand(t, "client-after-wait")
+	st := testutil.NewSQLiteTestStoreAt(t, state.cfg.DatabaseDSN())
+	_, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+	ctx, cancel := context.WithCancel(withInvocation(t.Context(), state))
+	defer cancel()
+	command := &cobra.Command{Use: "sync-full", RunE: runSyncFullLocalForTest}
+	command.SetContext(ctx)
+	result := make(chan error, 1)
+	done := make(chan struct{})
+	go func() { defer close(done); result <- command.Execute() }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			assert.Fail(t, "credential command did not stop")
+		}
+	}()
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(filepath.Join(os.Getenv("MSGVAULT_TEST_SECRET_ROOT"), "client-after-wait.started"))
+		return err == nil
+	}, 15*time.Second, 10*time.Millisecond)
+	cancel()
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorContains(t, err, "reader@example.test")
+	case <-time.After(15 * time.Second):
+		require.FailNow(t, "credential discovery did not stop")
+	}
+}
+
 func TestCommandGrantDecisionReadsExactTokenOnce(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
@@ -401,7 +438,7 @@ func headlessNativeArgs(t *testing.T, shell, fixture, line string) []string {
 	if err != nil {
 		t.Skipf("native shell unavailable: %s", shell)
 	}
-	tail := strings.TrimPrefix(line, "msgvault ")
+	tail := strings.TrimPrefix(strings.TrimPrefix(line, "'msgvault' "), "msgvault ")
 	var command *exec.Cmd
 	switch shell {
 	case "cmd":

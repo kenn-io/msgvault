@@ -1,15 +1,20 @@
 ---
 title: External credential providers
-description: Obtain scoped message MCP access through a trusted local helper.
+description: Obtain scoped message MCP or HTTP read access, or source read credentials, through a trusted local helper.
 ---
 
 Applications can use `go.kenn.io/msgvault/pkg/credentialprovider` to ask a
-trusted local executable for access to a hosted message MCP endpoint. The
-application does not need an archive-owner token or its own login flow.
+trusted local executable for access to a hosted message MCP endpoint or a
+hosted archive's HTTP API. The application does not need an archive-owner
+token or its own login flow. The msgvault CLI uses the HTTP profile for a
+remote with a `credential_provider`; see
+[Read a remote through a helper](#read-a-remote-through-a-helper).
+The same package also lets msgvault ask a helper for a credential to read a
+mail source through an external endpoint; see
+[Read a source through a helper](#read-a-source-through-a-helper).
 
 This package supplies the exchange and validation contract. It does not add a
-credential issuer to `msgvault serve`, change the standalone CLI's HTTP client,
-or configure the MCP listener. The hosting service must implement approval,
+credential issuer to `msgvault serve` or configure the MCP listener. The hosting service must implement approval,
 issuance, revocation, and scoped reads. Its access checks remain authoritative.
 
 ## Configure a helper
@@ -73,7 +78,7 @@ strings. Empty scope and wildcards are invalid. Tool names are an explicit,
 duplicate-free subset of `get_message`, `list_messages`, `list_thread`,
 `search_metadata`, `search_message_bodies`, and `get_stats`. New upstream tools
 do not join an existing approval. This profile excludes attachment bytes and
-the native HTTP API.
+the native HTTP API, which has its own profile below.
 
 ## Accept a credential
 
@@ -146,3 +151,114 @@ one of these status/reason pairs. Clients translate the codes into their own tex
 or credential. A missing or inaccessible approval uses the same
 `approval_required` response. No helper decision grants more access than the
 service's current permission checks allow.
+
+## Read a remote through a helper
+
+The HTTP read profile asks for access to a hosted archive's msgvault HTTP API.
+A request carries `operations` in place of `tools`; every other field, status,
+and rule above is the same. A scope names exactly one of the two.
+
+```json
+{
+  "version": 1,
+  "operation": "authorize",
+  "request_id": "11111111-1111-4111-8111-111111111111",
+  "endpoint": "https://archive.example.org/messages",
+  "archive_id": "archive-a",
+  "client_id": "22222222-2222-4222-8222-222222222222",
+  "delegation_id": "33333333-3333-4333-8333-333333333333",
+  "source_ids": ["17", "23"],
+  "operations": ["getHealth", "listCLIAccounts", "getCLIStats", "searchCLI", "getCLIMessage", "getCLIMessageThread", "exportCLIMessages"]
+}
+```
+
+`endpoint` is the archive's base URL, the prefix of every API path the client
+calls. `operations` is a duplicate-free subset of the operation IDs that
+`ReadOperations()` returns, shown in full above: the health probe and the
+operations behind `list-accounts`, `stats`, `search`, `show-message`,
+`show-thread`, and `export-messages`. The hosting service must admit only the
+operations a credential names and only within its sources. New msgvault
+operations do not join an existing approval.
+
+The CLI requests every read operation for the remote's configured
+[delegation](../configuration.md#credential-helper). It sends the bearer as
+`Authorization: Bearer` to the endpoint only and does not follow redirects.
+Before starting the helper, it saves the request, never a credential, to a
+journal under the msgvault home and holds a lock on it, so commands
+exchange one at a time.
+
+- A command that ends while the helper runs leaves the request saved. The next
+  command replays it exactly.
+- Each command starts without a bearer in memory, so after the first it sends
+  `replace` naming the newest credential. An `already_issued` or
+  `replacement_required` replay is followed by one `replace`.
+- A bearer is renewed with `renew` 30 seconds before it expires, or halfway
+  through the lifetime of a bearer shorter than a minute.
+- A refusal ends the request. After a `conflict`, the next command sends a new
+  `authorize` instead of guessing a generation.
+
+## Read a source through a helper
+
+The inbound profile runs in the other direction. msgvault asks the helper for a
+bearer credential to read one mail account through an external endpoint, such
+as a read-only proxy that holds the provider's tokens. The process contract is
+the same as above: `ExchangeInbound(ctx, argv, request)` runs argv without a
+shell, the helper reads `DecodeInboundRequest` and writes `WriteInboundResponse`,
+and the size limit, time limit, and exit codes do not change.
+
+```json
+{
+  "version": 1,
+  "operation": "authorize",
+  "request_id": "11111111-1111-4111-8111-111111111111",
+  "endpoint": "https://proxy.example.org/gmail/v1",
+  "source_type": "gmail",
+  "account": "alice@example.com"
+}
+```
+
+- `endpoint` is the exact URL that receives the credential. It is HTTPS, or
+  HTTP on a loopback host, with no user information, query, or fragment.
+- `source_type` is the msgvault source type: `gmail` or `msmail`.
+- `account` is the source identifier, treated as an opaque string with no
+  whitespace or control characters.
+
+A first success echoes the envelope and all three scope fields and adds the same
+`status`, `credential_id`, `credential_generation`, `issued_at`, `expires_at`,
+and bearer `credential` fields as the MCP profile. `DecodeInboundResponse`
+applies the same strict checks.
+
+| Operation | Required fields in addition to the scope | Result |
+| --- | --- | --- |
+| `authorize` | New `request_id`; no predecessor fields | `ready` |
+| `renew` | New `request_id`, `previous_request_id`, `credential_id`, `expected_generation` | `ready` with a different credential ID and higher generation |
+
+There is no replay, replace, or release. msgvault keeps inbound credentials only
+in memory and does not journal requests: after a restart or a refusal it sends
+a new `authorize`. A helper must answer each request on its own and must not
+require an exact replay. A credential issued for a response msgvault never
+read goes unused until it expires.
+
+`InboundSource` is the client msgvault uses for one account. It serializes
+exchanges, reuses the held credential until 30 seconds before it expires (or
+half its lifetime, if shorter), and measures elapsed time on both the monotonic
+and wall clocks so a host that slept renews before its next request.
+
+- A credential whose usable lifetime ends during its own exchange is not
+  returned; the call fails with `ErrCredentialExpired` and the next call renews.
+- When the endpoint rejects a credential, `Renew` sends one `renew`. The
+  rejected credential is never returned again, even if that renewal fails or
+  is canceled.
+  Callers holding an already-replaced credential receive its successor without
+  another exchange.
+- A canceled caller stops waiting for another caller's exchange and never
+  receives a credential.
+
+Refusals contain only the envelope and one of these status/reason pairs:
+
+| Status | Reason |
+| --- | --- |
+| `sign_in_required` | `no_current_sign_in` |
+| `approval_required` | `account_approval_required` |
+| `conflict` | `generation_changed` |
+| `unavailable` | `authority_unavailable` |

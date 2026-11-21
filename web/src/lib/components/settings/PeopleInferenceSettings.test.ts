@@ -123,7 +123,7 @@ describe('PeopleInferenceSettings', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Grant consent' }));
     await waitFor(() => expect((screen.getByRole('button', { name: 'Select and enable' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Select and enable' }));
-    expect((await screen.findByRole('status')).textContent).toContain('Restart the daemon');
+    expect((await screen.findByRole('status')).textContent).toContain('running daemon still uses no profile');
     const consent = requests.find((request) => request.url.endsWith('/consent'))!;
     await expect(consent.json()).resolves.toEqual({ fingerprint: 'fingerprint-routed', confirmed: true });
     expect(consent.headers.get('If-Match')).toBe('"config-a"');

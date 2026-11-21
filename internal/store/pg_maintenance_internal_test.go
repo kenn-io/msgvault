@@ -86,34 +86,32 @@ func newUninitializedPGStoreInternal(tb testing.TB, dbURL string) *Store {
 }
 
 // TestExclusiveLockTablesCoverCascade pins finding S4: every table with a
-// direct ON DELETE CASCADE foreign key to sources(id) MUST appear in
+// transitive ON DELETE CASCADE foreign-key chain to sources(id) MUST appear in
 // exclusiveLockTables, otherwise RemoveSourceSerialized's cascade DELETE can
 // race a concurrent writer to that table and reopen the race the EXCLUSIVE
 // lock exists to close.
-//
-// Before the fix, source_import_items (written by UpsertSourceImportItem) and
-// sync_checkpoints were absent, so this test would fail and name them. It is a
-// single-level pg_constraint query because both newly-added tables are direct
-// FKs to sources; that is authoritative for the cascade tables this lock must
-// cover.
 func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t)
 
-	// Tables with a direct ON DELETE CASCADE FK to sources(id), read from the
-	// catalog (scoped to the test's current schema so sibling schemas can't
-	// leak in).
+	// UNION deduplicates tables reached through multiple paths and terminates
+	// even if a future schema introduces a cascade cycle. Scope every edge to
+	// this fixture's schema so sibling fixtures cannot leak into the result.
 	rows, err := st.DB().QueryContext(t.Context(), `
-		SELECT DISTINCT c.conrelid::regclass::text
-		FROM pg_constraint c
-		JOIN pg_class child ON child.oid = c.conrelid
-		JOIN pg_namespace ns ON ns.oid = child.relnamespace
-		WHERE c.contype = 'f'
-		  AND c.confrelid = 'sources'::regclass
-		  AND c.confdeltype = 'c'
-		  AND ns.nspname = current_schema()
+		WITH RECURSIVE cascade_tables(oid) AS (
+			SELECT 'sources'::regclass::oid
+			UNION
+			SELECT c.conrelid FROM pg_constraint c
+			JOIN cascade_tables parent ON parent.oid = c.confrelid
+			WHERE c.contype = 'f' AND c.confdeltype = 'c'
+			  AND EXISTS (SELECT 1 FROM pg_class child
+				JOIN pg_namespace ns ON ns.oid = child.relnamespace
+				WHERE child.oid = c.conrelid AND ns.nspname = current_schema())
+		)
+		SELECT oid::regclass::text FROM cascade_tables
+		WHERE oid <> 'sources'::regclass::oid
 	`)
 	require.NoError(err, "query cascade tables")
 	defer func() { _ = rows.Close() }()
@@ -143,6 +141,9 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 		"source_import_items must be a direct cascade target (sanity)")
 	assert.Contains(cascadeTables, "sync_checkpoints",
 		"sync_checkpoints must be a direct cascade target (sanity)")
+	assert.Contains(cascadeTables, "recording_references", "must traverse messages")
+	assert.Contains(cascadeTables, "source_merge_preserved_attachments", "must traverse attachments")
+	assert.Contains(cascadeTables, "visual_work_claims", "must traverse messages")
 
 	var missing []string
 	for _, tbl := range cascadeTables {

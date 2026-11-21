@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -28,6 +29,7 @@ import (
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/omi"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -131,6 +133,7 @@ type IntegrationsConfig struct {
 // DocbankIntegrationConfig configures the optional stored-media destination.
 // The selected API key source is read when a request runs.
 type DocbankIntegrationConfig struct {
+	TrustPrivateNetwork     bool     `toml:"trust_private_network"`
 	Enabled                 bool     `toml:"enabled"`
 	URL                     string   `toml:"url"`
 	APIKeyEnv               string   `toml:"api_key_env"`
@@ -138,11 +141,14 @@ type DocbankIntegrationConfig struct {
 	APIKeyFile              string   `toml:"api_key_file"`
 	AllSourcesUploadConsent bool     `toml:"all_sources_upload_consent"`
 	DocumentProfile         string   `toml:"document_profile"`
+	VoiceTranscriptSearch   bool     `toml:"voice_transcript_search"`
 	ASRProfile              string   `toml:"asr_profile"`
 	ReferenceConsent        bool     `toml:"reference_consent"`
 	ReferenceOrigins        []string `toml:"reference_origins"`
 	AttachmentUploadConsent bool     `toml:"attachment_upload_consent"`
 	AttachmentFolder        string   `toml:"attachment_folder"`
+	AttachmentSearchProfile string   `toml:"attachment_search_profile"`
+	RecordingSearchProfile  string   `toml:"recording_search_profile"`
 }
 
 // MirrorFolder returns the destination virtual directory.
@@ -171,10 +177,11 @@ func (d DocbankIntegrationConfig) validate() error {
 
 // TaskIntegrationConfig configures a task service connection.
 type TaskIntegrationConfig struct {
-	Enabled        bool   `toml:"enabled"`
-	Endpoint       string `toml:"endpoint"`
-	APIKey         string `toml:"api_key"`
-	DefaultProject string `toml:"default_project"`
+	TrustPrivateNetwork bool   `toml:"trust_private_network"`
+	Enabled             bool   `toml:"enabled"`
+	Endpoint            string `toml:"endpoint"`
+	APIKey              string `toml:"api_key"`
+	DefaultProject      string `toml:"default_project"`
 }
 
 func (t *TaskIntegrationConfig) ApplyDefaults() {
@@ -189,6 +196,9 @@ func (t *TaskIntegrationConfig) ApplyDefaults() {
 // (authentication, socket existence and ownership) still happen when the
 // client connects.
 func (t *TaskIntegrationConfig) Validate(section string) error {
+	if section != "kata" && t.TrustPrivateNetwork {
+		return fmt.Errorf("trust_private_network is only supported in [integrations.kata], not [integrations.%s]", section)
+	}
 	endpoint := strings.TrimSpace(t.Endpoint)
 	if endpoint == "" {
 		if section == "kata" && t.Enabled {
@@ -196,7 +206,7 @@ func (t *TaskIntegrationConfig) Validate(section string) error {
 		}
 		return nil
 	}
-	if err := taskclient.ValidateEndpoint(endpoint); err != nil {
+	if err := taskclient.ValidateEndpoint(endpoint, section == "kata" && t.TrustPrivateNetwork); err != nil {
 		return fmt.Errorf("invalid [integrations.%s] endpoint %q: %w "+
 			"(valid forms: https://tasks.example.com, http://localhost:8080, unix:///path/to/socket.sock)",
 			section, t.Endpoint, err)
@@ -292,16 +302,6 @@ func (s *ServerConfig) ApplyDefaults() {
 // the default of true.
 func (s *ServerConfig) DaemonAutoStartEnabled() bool {
 	return s.DaemonAutoStart == nil || *s.DaemonAutoStart
-}
-
-// TelemetryConfig controls the daemon's anonymous usage telemetry.
-type TelemetryConfig struct {
-	Enabled *bool `toml:"enabled"` // unset means true; MSGVAULT_TELEMETRY_ENABLED overrides it
-}
-
-// EnabledOrDefault reports the configured telemetry setting, true when unset.
-func (t TelemetryConfig) EnabledOrDefault() bool {
-	return t.Enabled == nil || *t.Enabled
 }
 
 func (s *ServerConfig) Validate() error {
@@ -449,7 +449,8 @@ type SynctechSMSSource struct {
 }
 
 // RemoteConfig holds configuration for a remote msgvault server.
-// Remote-capable commands use this destination unless --local is selected.
+// Remote-capable commands use [remote] unless --local is selected, or
+// --remote selects one of the named [remotes.<name>] tables instead.
 type RemoteConfig struct {
 	URL           string `toml:"url"`     // Remote server URL (e.g., http://nas:8080)
 	APIKey        string `toml:"api_key"` // API key for authentication
@@ -457,6 +458,20 @@ type RemoteConfig struct {
 	APIKeyEnv     string `toml:"api_key_env"`
 	credential    runtimeCredential
 	AllowInsecure bool `toml:"allow_insecure"` // Allow HTTP (insecure) for trusted networks
+	// CredentialProvider runs a trusted local helper, as a command and its
+	// arguments, for a short-lived bearer instead of using an API key. It
+	// needs Delegation and excludes every api_key setting.
+	CredentialProvider []string          `toml:"credential_provider,omitempty"`
+	Delegation         *RemoteDelegation `toml:"delegation,omitempty"`
+}
+
+// RemoteDelegation names the access a hosting service approved for this
+// client. The credential helper is asked for exactly this access.
+type RemoteDelegation struct {
+	ArchiveID    string    `toml:"archive_id"`
+	ClientID     uuid.UUID `toml:"client_id"`
+	DelegationID uuid.UUID `toml:"delegation_id"`
+	SourceIDs    []int64   `toml:"source_ids"`
 }
 
 // IdentityConfig holds the user's curated identity addresses.
@@ -596,6 +611,7 @@ func (c SenderAuthConfig) Pins() map[int64][]string {
 }
 
 type Config struct {
+	RelayedSenders     []mime.RelayedSenderRule  `toml:"relayed_senders"`
 	SenderAuth         SenderAuthConfig          `toml:"sender_auth"`
 	ConversationPolicy ConversationPolicyConfig  `toml:"conversation_policy"`
 	Data               DataConfig                `toml:"data"`
@@ -609,6 +625,7 @@ type Config struct {
 	Web                WebConfig                 `toml:"web"`
 	Integrations       IntegrationsConfig        `toml:"integrations"`
 	Remote             RemoteConfig              `toml:"remote"`
+	Remotes            map[string]RemoteConfig   `toml:"remotes,omitempty"`
 	Vector             vector.Config             `toml:"vector"`
 	Identity           IdentityConfig            `toml:"identity"`
 	Fastmail           []FastmailSource          `toml:"fastmail"`
@@ -620,11 +637,15 @@ type Config struct {
 	GCal               []GCalSource              `toml:"gcal"`
 	Beeper             BeeperConfig              `toml:"beeper"`
 	Chatwoot           []ChatwootSource          `toml:"chatwoot"`
+	MetaWebhooks       MetaWebhooksConfig        `toml:"meta_webhooks"`
 	FacebookComments   []FacebookCommentsSource  `toml:"facebook_comments"`
 	InstagramComments  []InstagramCommentsSource `toml:"instagram_comments"`
+	FacebookMessages   []FacebookCommentsSource  `toml:"facebook_messages"`
+	InstagramMessages  []InstagramCommentsSource `toml:"instagram_messages"`
 	Matrix             MatrixConfig              `toml:"matrix"`
 	Slack              SlackConfig               `toml:"slack"`
 	Inline             InlineConfig              `toml:"inline"`
+	Feeds              FeedsConfig               `toml:"feeds"`
 	GitHub             ForgeConfig               `toml:"github"`
 	Omi                []OmiSource               `toml:"omi"`
 	Granola            []GranolaSource           `toml:"granola"`
@@ -633,6 +654,7 @@ type Config struct {
 	Pocket             []PocketSource            `toml:"pocket"`
 	NotionMeetings     []NotionMeetingsSource    `toml:"notion_meetings"`
 	Twilio             []TwilioSource            `toml:"twilio"`
+	Bland              []BlandSource             `toml:"bland"`
 	Muesli             []MuesliSource            `toml:"muesli"`
 	Twenty             []TwentySource            `toml:"twenty"`
 	Backup             BackupConfig              `toml:"backup"`
@@ -644,7 +666,6 @@ type Config struct {
 	Deletion           DeletionConfig            `toml:"deletion"`
 	IMAP               IMAPConfig                `toml:"imap"`
 	Gmail              GmailConfig               `toml:"gmail"`
-	Telemetry          TelemetryConfig           `toml:"telemetry"`
 
 	// Computed paths (not from config file)
 	HomeDir            string `toml:"-"`
@@ -867,9 +888,29 @@ func (o *OAuthConfig) HasAnyConfig() bool {
 
 // MicrosoftConfig holds Microsoft 365 / Azure AD OAuth configuration.
 type MicrosoftConfig struct {
+	ClientID    string                  `toml:"client_id"`
+	TenantID    string                  `toml:"tenant_id"`
+	RedirectURI string                  `toml:"redirect_uri"`
+	Apps        map[string]MicrosoftApp `toml:"apps"`
+}
+
+// MicrosoftApp holds credentials for one Microsoft app.
+type MicrosoftApp struct {
 	ClientID    string `toml:"client_id"`
 	TenantID    string `toml:"tenant_id"`
 	RedirectURI string `toml:"redirect_uri"`
+}
+
+// App resolves a named app or the default Microsoft configuration.
+func (c *MicrosoftConfig) App(name string) (MicrosoftConfig, error) {
+	if name == "" {
+		return *c, nil
+	}
+	app, ok := c.Apps[name]
+	if !ok || app.ClientID == "" {
+		return MicrosoftConfig{}, fmt.Errorf("[microsoft.apps.%s] must specify client_id", name)
+	}
+	return MicrosoftConfig{ClientID: app.ClientID, TenantID: app.TenantID, RedirectURI: app.RedirectURI}, nil
 }
 
 // EffectiveRedirectURI returns the redirect URI, defaulting to the
@@ -1140,6 +1181,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// the pre-filled section so changing endpoint cannot silently carry the
 	// default Voyage key environment name to another origin.
 	cfg.Vector.Multimodal = vector.MultimodalConfig{}
+	// Embedding transport defaults depend on the decoded endpoint selection.
+	cfg.Vector.Embeddings.BatchSize = 0
+	cfg.Vector.Embeddings.Timeout = 0
 	// People-sweep provider defaults include a generated profile. Decode into
 	// an empty section so ApplyDefaults only fills it when the file defines
 	// no profiles of its own.
@@ -1169,6 +1213,12 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		slog.Warn("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md; for Mistral run docbank processing probe --profile <name> --seeds <dir> (Docbank v0.17.0 or later)")
 	}
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && (key[0] == "facebook_messages" || key[0] == "instagram_messages") {
+			return nil, fmt.Errorf("unknown Meta inbox config key %q", key.String())
+		}
+		if len(key) > 0 && key[0] == "meta_webhooks" {
+			return nil, fmt.Errorf("unknown Meta webhooks config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "instagram_comments" {
 			return nil, fmt.Errorf("unknown Instagram comments config key %q", key.String())
 		}
@@ -1280,6 +1330,17 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
+	seen := make(map[string]int, len(cfg.RelayedSenders))
+	for i, rule := range cfg.RelayedSenders {
+		if !mime.ValidateRelayedSenderRule(rule) {
+			return nil, fmt.Errorf("relayed_senders[%d]: invalid address, header, or identifier type", i)
+		}
+		key := strings.ToLower(rule.Address)
+		if j, ok := seen[key]; ok {
+			return nil, fmt.Errorf("relayed_senders[%d]: address duplicates relayed_senders[%d]", i, j)
+		}
+		seen[key] = i
+	}
 	if err := cfg.OAuth.Validate(); err != nil {
 		return nil, fmt.Errorf("oauth: %w", err)
 	}
@@ -1332,6 +1393,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
 	if err := cfg.validateChatwootSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateMetaWebhooks(); err != nil {
 		return nil, err
 	}
 	if err := cfg.validateFacebookCommentsSources(); err != nil {
@@ -2373,6 +2437,9 @@ func (c *Config) applyMeetingSourceDefaults() {
 	if len(c.Twilio) == 1 && c.Twilio[0].Identifier == "" {
 		c.Twilio[0].Identifier = defaultMeetingSourceIdentifier
 	}
+	if len(c.Bland) == 1 && c.Bland[0].Identifier == "" {
+		c.Bland[0].Identifier = defaultMeetingSourceIdentifier
+	}
 }
 
 // validateMeetingSources rejects native meeting-source lists with empty
@@ -2572,8 +2639,27 @@ func (c *Config) validateMeetingSources() error {
 		if src.Region == "" {
 			src.Region = "us1"
 		}
-		if src.MaxMediaMB < 0 || int64(src.MaxMediaMB) > math.MaxInt64>>20 {
-			return fmt.Errorf("[[twilio]] identifier %q: max_media_mb must be zero or a positive representable MiB limit", src.Identifier)
+		if err := validateCallRecordingCap("twilio", src.Identifier, src.MaxMediaMB); err != nil {
+			return err
+		}
+	}
+	blandIDs := make([]string, len(c.Bland))
+	for i, s := range c.Bland {
+		blandIDs[i] = s.Identifier
+	}
+	if err := check("bland", blandIDs); err != nil {
+		return err
+	}
+	// Bland API keys are checked when the source is used.
+	for i := range c.Bland {
+		src := &c.Bland[i]
+		email, err := src.EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		src.AccountEmail = email
+		if err := validateCallRecordingCap("bland", src.Identifier, src.MaxMediaMB); err != nil {
+			return err
 		}
 	}
 	return nil

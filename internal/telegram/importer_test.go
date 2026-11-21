@@ -228,6 +228,26 @@ func TestImportRepeatedLimitAdvances(t *testing.T) {
 	var n int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
 	assert.Equal(3, n)
+	st = testutil.NewTestStore(t)
+	root = batchExport(t, batchSize+2, func(int) string { return "m" })
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Limit: batchSize + 1})
+	require.NoError(err)
+	assert.EqualValues(batchSize+1, summary.MessagesAdded)
+	assert.True(summary.LimitReached)
+	assert.Equal(batchSize+1, countMessages(t, st))
+}
+
+func TestImportDuplicateMessageIDInChat(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first"},{"id":1,"type":"message","date_unixtime":"1","text":"again"},{"id":2,"type":"message","date_unixtime":"2","text":"second"}]}`))
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.MessagesAdded)
+	assert.EqualValues(t, 1, summary.MessagesSkipped)
+	var snippet string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT snippet FROM messages WHERE source_message_id = 'user2:1'`).Scan(&snippet))
+	assert.Equal(t, "first", snippet)
 }
 
 func TestImportFullAndAppendOnly(t *testing.T) {
@@ -752,4 +772,60 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 			assert.ElementsMatch([]int64{participant, bridge}, members)
 		})
 	}
+}
+
+func batchExport(t *testing.T, size int, text func(id int) string) string {
+	t.Helper()
+	var msgs []string
+	for id := 1; id <= size; id++ {
+		msgs = append(msgs, `{"id":`+strconv.Itoa(id)+`,"type":"message","date_unixtime":"1","text":"`+text(id)+`"}`)
+	}
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[`+strings.Join(msgs, ",")+`]}]}}`))
+	return root
+}
+
+func countMessages(t *testing.T, st *store.Store) int {
+	t.Helper()
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
+	return n
+}
+
+func TestImportFailedBatchRetriesChat(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := batchExport(t, 60, func(id int) string {
+		if id == 55 {
+			return "fail-me"
+		}
+		return "message"
+	})
+	var err error
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_batch_import() RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN RAISE EXCEPTION 'forced failure'; END $$`)
+		require.NoError(t, err)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_batch_import BEFORE INSERT ON messages
+			FOR EACH ROW WHEN (NEW.snippet = 'fail-me') EXECUTE FUNCTION fail_batch_import()`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_batch_import BEFORE INSERT ON messages
+			WHEN NEW.snippet = 'fail-me' BEGIN SELECT RAISE(ABORT, 'forced failure'); END`)
+	}
+	require.NoError(t, err)
+	opts := ImportOptions{RootDir: root, Me: "1"}
+	_, err = Import(t.Context(), st, opts)
+	require.ErrorContains(t, err, "forced failure")
+	assert.Equal(t, 50, countMessages(t, st))
+	drop := "DROP TRIGGER fail_batch_import"
+	if st.IsPostgreSQL() {
+		drop += " ON messages"
+	}
+	_, err = st.DB().ExecContext(t.Context(), drop)
+	require.NoError(t, err)
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.True(t, summary.WasResumed)
+	assert.EqualValues(t, 10, summary.MessagesAdded)
+	assert.EqualValues(t, 50, summary.MessagesSkipped)
+	assert.Equal(t, 60, countMessages(t, st))
 }

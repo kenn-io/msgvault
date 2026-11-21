@@ -1172,6 +1172,7 @@ type CalendarOccurrence struct {
 	End               time.Time  `json:"end" validate:"required"`
 	EndDate           string     `json:"end_date" validate:"omitempty"`
 	MessageID         int64      `json:"message_id"`
+	Ref               *string    `json:"ref,omitzero"`
 	SeriesMessageID   int64      `json:"series_message_id"`
 	SourceID          int64      `json:"source_id"`
 	Start             time.Time  `json:"start" validate:"required"`
@@ -1628,7 +1629,7 @@ type CardDAVBinding struct {
 	Connection    string `json:"connection" validate:"required"`
 	Href          string `json:"href" validate:"required"`
 	MappingStatus string `json:"mapping_status" validate:"required"`
-	RemoteUID     string `json:"remote_uid" validate:"required"`
+	RemoteUID     string `json:"remote_uid"`
 }
 
 func (c CardDAVBinding) Validate() error {
@@ -2366,6 +2367,7 @@ func (c ChoiceDescriptor) Validate() error {
 
 type CliAccountResponse struct {
 	Alias              *string          `json:"alias" validate:"required"`
+	AuthMethod         *string          `json:"auth_method,omitzero"`
 	DisplayName        string           `json:"display_name" validate:"required"`
 	Email              string           `json:"email" validate:"required"`
 	HistoryOnly        bool             `json:"history_only"`
@@ -3088,28 +3090,49 @@ func (c ContactPointPage) Validate() error {
 }
 
 type ContactState struct {
-	CadenceDueAt        *time.Time `json:"cadence_due_at,omitempty"`
-	CadenceStatus       string     `json:"cadence_status" validate:"required"`
-	ComputedAt          time.Time  `json:"computed_at" validate:"required"`
-	FirstContactAt      *time.Time `json:"first_contact_at,omitempty"`
-	FirstContactRef     *string    `json:"first_contact_ref,omitzero"`
-	InferredChannel     *string    `json:"inferred_channel,omitzero"`
-	InteractionCount    int64      `json:"interaction_count"`
-	LastContactAt       *time.Time `json:"last_contact_at,omitempty"`
-	LastContactChannel  *string    `json:"last_contact_channel,omitzero"`
-	LastContactOwner    *string    `json:"last_contact_owner,omitzero"`
-	LastContactRef      *string    `json:"last_contact_ref,omitzero"`
-	LastContactSourceID *int64     `json:"last_contact_source_id,omitempty"`
-	LastInboundAt       *time.Time `json:"last_inbound_at,omitempty"`
-	LastInboundRef      *string    `json:"last_inbound_ref,omitzero"`
-	LastOutboundAt      *time.Time `json:"last_outbound_at,omitempty"`
-	LastOutboundRef     *string    `json:"last_outbound_ref,omitzero"`
-	PersonID            int64      `json:"person_id"`
-	Stale               bool       `json:"stale"`
+	CadenceDueAt        *time.Time              `json:"cadence_due_at,omitempty"`
+	CadenceStatus       string                  `json:"cadence_status" validate:"required"`
+	ComputedAt          time.Time               `json:"computed_at" validate:"required"`
+	FirstContactAt      *time.Time              `json:"first_contact_at,omitempty"`
+	FirstContactKind    *string                 `json:"first_contact_kind,omitzero"`
+	FirstContactRef     *string                 `json:"first_contact_ref,omitzero"`
+	FirstSeenAt         *time.Time              `json:"first_seen_at,omitempty"`
+	FirstSeenRef        *string                 `json:"first_seen_ref,omitzero"`
+	InferredChannel     *string                 `json:"inferred_channel,omitzero"`
+	InteractionCount    int64                   `json:"interaction_count"`
+	Introducer          *FirstContactIntroducer `json:"introducer,omitempty"`
+	LastContactAt       *time.Time              `json:"last_contact_at,omitempty"`
+	LastContactChannel  *string                 `json:"last_contact_channel,omitzero"`
+	LastContactOwner    *string                 `json:"last_contact_owner,omitzero"`
+	LastContactRef      *string                 `json:"last_contact_ref,omitzero"`
+	LastContactSourceID *int64                  `json:"last_contact_source_id,omitempty"`
+	LastInboundAt       *time.Time              `json:"last_inbound_at,omitempty"`
+	LastInboundRef      *string                 `json:"last_inbound_ref,omitzero"`
+	LastOutboundAt      *time.Time              `json:"last_outbound_at,omitempty"`
+	LastOutboundRef     *string                 `json:"last_outbound_ref,omitzero"`
+	PersonID            int64                   `json:"person_id"`
+	Stale               bool                    `json:"stale"`
 }
 
 func (c ContactState) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.CadenceStatus, "required"); err != nil {
+		errors = errors.Append("CadenceStatus", err)
+	}
+	if err := typesValidator.Var(c.ComputedAt, "required"); err != nil {
+		errors = errors.Append("ComputedAt", err)
+	}
+	if c.Introducer != nil {
+		if v, ok := any(c.Introducer).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Introducer", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ContextPassage struct {
@@ -3629,13 +3652,49 @@ func (d DeletionTarget) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
+type DirectoryCadence struct {
+	DaysOverdue   *int64     `json:"days_overdue,omitempty"`
+	DueAt         *time.Time `json:"due_at,omitempty"`
+	FrequencyDays *int64     `json:"frequency_days,omitempty"`
+	List          *string    `json:"list,omitzero"`
+	Stale         bool       `json:"stale"`
+	Status        string     `json:"status" validate:"required"`
+}
+
+func (d DirectoryCadence) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DirectoryCadenceCoverage struct {
+	NoList    int64 `json:"no_list"`
+	Scheduled int64 `json:"scheduled"`
+	Total     int64 `json:"total"`
+	Unknown   int64 `json:"unknown"`
+}
+
 type DirectoryPeopleResponse struct {
-	NextCursor *string                  `json:"next_cursor,omitzero"`
-	People     []DirectoryPersonSummary `json:"people" validate:"required"`
+	CadenceCoverage *DirectoryCadenceCoverage `json:"cadence_coverage,omitempty"`
+	CadencePresets  []Preset                  `json:"cadence_presets,omitempty"`
+	NextCursor      *string                   `json:"next_cursor,omitzero"`
+	People          []DirectoryPersonSummary  `json:"people" validate:"required"`
 }
 
 func (d DirectoryPeopleResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if d.CadenceCoverage != nil {
+		if v, ok := any(d.CadenceCoverage).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("CadenceCoverage", err)
+			}
+		}
+	}
+	for i, item := range d.CadencePresets {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("CadencePresets[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(d.People, "required"); err != nil {
 		errors = errors.Append("People", err)
 	}
@@ -3653,20 +3712,30 @@ func (d DirectoryPeopleResponse) Validate() error {
 }
 
 type DirectoryPersonSummary struct {
-	CarddavBindings []CardDAVBinding `json:"carddav_bindings" validate:"required"`
-	Categories      []string         `json:"categories" validate:"required"`
-	ContactState    string           `json:"contact_state" validate:"required"`
-	DisplayName     *string          `json:"display_name,omitzero"`
-	ID              int64            `json:"id"`
-	LastContactAt   *time.Time       `json:"last_contact_at,omitempty"`
-	Organizations   []string         `json:"organizations" validate:"required"`
-	PrimaryChannel  *string          `json:"primary_channel,omitzero"`
-	Revision        int64            `json:"revision"`
-	VcardUID        string           `json:"vcard_uid" validate:"required"`
+	Cadence            *DirectoryCadence         `json:"cadence,omitempty"`
+	CarddavBindings    []CardDAVBinding          `json:"carddav_bindings" validate:"required"`
+	Categories         []string                  `json:"categories" validate:"required"`
+	ContactState       string                    `json:"contact_state" validate:"required"`
+	DisplayName        *string                   `json:"display_name,omitzero"`
+	ID                 int64                     `json:"id"`
+	LastContactAt      *time.Time                `json:"last_contact_at,omitempty"`
+	LastContactChannel *string                   `json:"last_contact_channel,omitzero"`
+	Organizations      []string                  `json:"organizations" validate:"required"`
+	PrimaryChannel     *string                   `json:"primary_channel,omitzero"`
+	ReachOutContext    *DirectoryReachOutContext `json:"reach_out_context,omitempty"`
+	Revision           int64                     `json:"revision"`
+	VcardUID           string                    `json:"vcard_uid" validate:"required"`
 }
 
 func (d DirectoryPersonSummary) Validate() error {
 	var errors runtime.ValidationErrors
+	if d.Cadence != nil {
+		if v, ok := any(d.Cadence).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Cadence", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(d.CarddavBindings, "required"); err != nil {
 		errors = errors.Append("CarddavBindings", err)
 	}
@@ -3686,6 +3755,13 @@ func (d DirectoryPersonSummary) Validate() error {
 	if err := typesValidator.Var(d.Organizations, "required"); err != nil {
 		errors = errors.Append("Organizations", err)
 	}
+	if d.ReachOutContext != nil {
+		if v, ok := any(d.ReachOutContext).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ReachOutContext", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(d.VcardUID, "required"); err != nil {
 		errors = errors.Append("VcardUID", err)
 	}
@@ -3693,6 +3769,14 @@ func (d DirectoryPersonSummary) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type DirectoryReachOutContext struct {
+	AwaitingReplyCount *int64  `json:"awaiting_reply_count,omitempty"`
+	NeedsReplyCount    *int64  `json:"needs_reply_count,omitempty"`
+	OpenLoopsStale     *bool   `json:"open_loops_stale,omitempty"`
+	SignalsStale       *bool   `json:"signals_stale,omitempty"`
+	SuggestedList      *string `json:"suggested_list,omitzero"`
 }
 
 type Disclosure struct {
@@ -4075,6 +4159,51 @@ func (d DurationTotals) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type EmailFamily struct {
+	AnchorMessageID int64               `json:"anchor_message_id"`
+	Members         []EmailFamilyMember `json:"members" validate:"required"`
+	PendingLinkage  bool                `json:"pending_linkage"`
+	Truncated       bool                `json:"truncated"`
+	TruncatedReason *string             `json:"truncated_reason,omitzero"`
+}
+
+func (e EmailFamily) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Members, "required"); err != nil {
+		errors = errors.Append("Members", err)
+	}
+	for i, item := range e.Members {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Members[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type EmailFamilyMember struct {
+	AccountAddress   *string    `json:"account_address,omitzero"`
+	AccountPath      *string    `json:"account_path,omitzero"`
+	ConversationID   int64      `json:"conversation_id"`
+	Draft            bool       `json:"draft"`
+	Evidence         string     `json:"evidence" validate:"required"`
+	LinkageOutcome   string     `json:"linkage_outcome" validate:"required"`
+	MessageID        int64      `json:"message_id"`
+	SentAt           *time.Time `json:"sent_at,omitempty"`
+	SourceID         int64      `json:"source_id"`
+	SourceIdentifier string     `json:"source_identifier" validate:"required"`
+	SourceType       string     `json:"source_type" validate:"required"`
+	Subject          *string    `json:"subject,omitzero"`
+}
+
+func (e EmailFamilyMember) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
 }
 
 type EmbeddingBatch struct {
@@ -4701,6 +4830,62 @@ func (e ExploreFilter) Validate() error {
 	return errors
 }
 
+type ExploreGroupActivity struct {
+	Bucket string `json:"bucket" validate:"required"`
+	Count  int64  `json:"count"`
+}
+
+func (e ExploreGroupActivity) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type ExploreGroupCoParticipant struct {
+	Count int64  `json:"count"`
+	Key   string `json:"key" validate:"required"`
+	Label string `json:"label" validate:"required"`
+}
+
+func (e ExploreGroupCoParticipant) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type ExploreGroupOverview struct {
+	Activity       []ExploreGroupActivity      `json:"activity" validate:"required"`
+	CoParticipants []ExploreGroupCoParticipant `json:"co_participants" validate:"required"`
+	FirstAt        time.Time                   `json:"first_at" validate:"required"`
+}
+
+func (e ExploreGroupOverview) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Activity, "required"); err != nil {
+		errors = errors.Append("Activity", err)
+	}
+	for i, item := range e.Activity {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Activity[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.CoParticipants, "required"); err != nil {
+		errors = errors.Append("CoParticipants", err)
+	}
+	for i, item := range e.CoParticipants {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("CoParticipants[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.FirstAt, "required"); err != nil {
+		errors = errors.Append("FirstAt", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ExploreGroupRow struct {
 	Count          int64                 `json:"count"`
 	EstimatedBytes int64                 `json:"estimated_bytes"`
@@ -4708,6 +4893,7 @@ type ExploreGroupRow struct {
 	Label          string                `json:"label" validate:"required"`
 	LatestAt       time.Time             `json:"latest_at" validate:"required"`
 	Level          *ExploreGroupRowLevel `json:"level,omitempty"`
+	TotalItems     *int64                `json:"total_items,omitempty"`
 }
 
 func (e ExploreGroupRow) Validate() error {
@@ -4777,7 +4963,7 @@ type ExploreGroupsHTTPRequest struct {
 	SentOnly *bool              `json:"sent_only,omitempty"`
 	Sort     []ExploreGroupSort `json:"sort,omitempty"`
 
-	// Timezone IANA timezone for day grouping; defaults to UTC
+	// Timezone IANA timezone for day, month, and year grouping; defaults to UTC
 	Timezone *string `json:"timezone,omitzero"`
 }
 
@@ -4845,20 +5031,28 @@ func (e ExploreGroupsHTTPRequest) Validate() error {
 }
 
 type ExploreGroupsHTTPResponse struct {
-	CacheRevision       string            `json:"cache_revision" validate:"required"`
-	CandidateSnapshotID *string           `json:"candidate_snapshot_id,omitzero"`
-	NextCursor          *string           `json:"next_cursor,omitzero"`
-	Rows                []ExploreGroupRow `json:"rows" validate:"required"`
-	SearchDeletionScope *string           `json:"search_deletion_scope,omitzero"`
-	SearchProvenance    SearchProvenance  `json:"search_provenance"`
-	TotalCount          int64             `json:"total_count"`
-	Warnings            []string          `json:"warnings,omitempty"`
+	CacheRevision       string                `json:"cache_revision" validate:"required"`
+	CandidateSnapshotID *string               `json:"candidate_snapshot_id,omitzero"`
+	NextCursor          *string               `json:"next_cursor,omitzero"`
+	Overview            *ExploreGroupOverview `json:"overview,omitempty"`
+	Rows                []ExploreGroupRow     `json:"rows" validate:"required"`
+	SearchDeletionScope *string               `json:"search_deletion_scope,omitzero"`
+	SearchProvenance    SearchProvenance      `json:"search_provenance"`
+	TotalCount          int64                 `json:"total_count"`
+	Warnings            []string              `json:"warnings,omitempty"`
 }
 
 func (e ExploreGroupsHTTPResponse) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(e.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
+	}
+	if e.Overview != nil {
+		if v, ok := any(e.Overview).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Overview", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(e.Rows, "required"); err != nil {
 		errors = errors.Append("Rows", err)
@@ -5193,6 +5387,21 @@ func (e ExploreUnavailableAction) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(e))
 }
 
+type FactSummary struct {
+	ClaimedFields int64 `json:"claimed_fields"`
+
+	// HasFactHistory Whether claims, evidence, or pin events are stored
+	HasFactHistory bool `json:"has_fact_history"`
+
+	// HasValues Whether attribute values or employments are stored
+	HasValues     bool       `json:"has_values"`
+	LatestClaimAt *time.Time `json:"latest_claim_at" validate:"omitempty"`
+}
+
+func (f FactSummary) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
 type FieldDescriptor struct {
 	Cardinality string `json:"cardinality" validate:"required"`
 	Name        string `json:"name" validate:"required"`
@@ -5297,18 +5506,21 @@ func (f FileGroupsHTTPResponse) Validate() error {
 }
 
 type FileMetadataResponse struct {
-	ContentAvailable bool                             `json:"content_available"`
-	ContentHash      *string                          `json:"content_hash,omitzero"`
-	ContentState     FileMetadataResponseContentState `json:"content_state" validate:"required"`
-	ConversationID   int64                            `json:"conversation_id"`
-	Docbank          []DocbankAttachmentRef           `json:"docbank,omitempty"`
-	EntryKey         string                           `json:"entry_key" validate:"required"`
-	Filename         *string                          `json:"filename" validate:"required"`
-	ID               int64                            `json:"id"`
-	MessageID        int64                            `json:"message_id"`
-	MimeType         *string                          `json:"mime_type" validate:"required"`
-	SizeBytes        int64                            `json:"size_bytes"`
-	URL              *string                          `json:"url,omitzero"`
+	ContentAvailable bool    `json:"content_available"`
+	ContentHash      *string `json:"content_hash,omitzero"`
+
+	// ContentState File details check whether content can be opened; read or integrity errors can still occur.
+	ContentState   FileMetadataResponseContentState `json:"content_state" validate:"required"`
+	ConversationID int64                            `json:"conversation_id"`
+	Docbank        []DocbankAttachmentRef           `json:"docbank,omitempty"`
+	EntryKey       string                           `json:"entry_key" validate:"required"`
+	Filename       *string                          `json:"filename" validate:"required"`
+	ID             int64                            `json:"id"`
+	MessageID      int64                            `json:"message_id"`
+	MessageType    string                           `json:"message_type" validate:"required"`
+	MimeType       *string                          `json:"mime_type" validate:"required"`
+	SizeBytes      int64                            `json:"size_bytes"`
+	URL            *string                          `json:"url,omitzero"`
 }
 
 func (f FileMetadataResponse) Validate() error {
@@ -5330,6 +5542,9 @@ func (f FileMetadataResponse) Validate() error {
 	}
 	if err := typesValidator.Var(f.Filename, "required"); err != nil {
 		errors = errors.Append("Filename", err)
+	}
+	if err := typesValidator.Var(f.MessageType, "required"); err != nil {
+		errors = errors.Append("MessageType", err)
 	}
 	if err := typesValidator.Var(f.MimeType, "required"); err != nil {
 		errors = errors.Append("MimeType", err)
@@ -5416,8 +5631,12 @@ func (f FileSearchHTTPResponse) Validate() error {
 }
 
 type FileSearchRow struct {
-	ContainingTitle    string                    `json:"containing_title" validate:"required"`
-	ContentAvailable   bool                      `json:"content_available"`
+	ContainingTitle string `json:"containing_title" validate:"required"`
+
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
+
+	// ContentState List availability is based on metadata; file details check whether storage can be opened.
 	ContentState       FileSearchRowContentState `json:"content_state" validate:"required"`
 	ConversationID     int64                     `json:"conversation_id"`
 	EntryKey           string                    `json:"entry_key" validate:"required"`
@@ -5443,6 +5662,11 @@ func (f FileSearchRow) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(f.ContainingTitle, "required"); err != nil {
 		errors = errors.Append("ContainingTitle", err)
+	}
+	if v, ok := any(f.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
 	}
 	if v, ok := any(f.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
@@ -5572,22 +5796,30 @@ func (f FileSuggestionHTTPResponse) Validate() error {
 }
 
 type FileSuggestionRow struct {
-	ContentAvailable bool                           `json:"content_available"`
-	ContentState     FileSuggestionRowContentState  `json:"content_state" validate:"required"`
-	ConversationID   int64                          `json:"conversation_id"`
-	Filename         string                         `json:"filename" validate:"required"`
-	FilenameMatch    FileSuggestionRowFilenameMatch `json:"filename_match" validate:"required"`
-	ID               int64                          `json:"id"`
-	MessageID        int64                          `json:"message_id"`
-	MimeFamily       FileSuggestionRowMimeFamily    `json:"mime_family" validate:"required"`
-	MimeType         *string                        `json:"mime_type" validate:"required"`
-	OccurredAt       *time.Time                     `json:"occurred_at" validate:"omitempty"`
-	SizeBytes        int64                          `json:"size_bytes"`
-	SourceID         int64                          `json:"source_id"`
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
+
+	// ContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
+	ContentState   FileSuggestionRowContentState  `json:"content_state" validate:"required"`
+	ConversationID int64                          `json:"conversation_id"`
+	Filename       string                         `json:"filename" validate:"required"`
+	FilenameMatch  FileSuggestionRowFilenameMatch `json:"filename_match" validate:"required"`
+	ID             int64                          `json:"id"`
+	MessageID      int64                          `json:"message_id"`
+	MimeFamily     FileSuggestionRowMimeFamily    `json:"mime_family" validate:"required"`
+	MimeType       *string                        `json:"mime_type" validate:"required"`
+	OccurredAt     *time.Time                     `json:"occurred_at" validate:"omitempty"`
+	SizeBytes      int64                          `json:"size_bytes"`
+	SourceID       int64                          `json:"source_id"`
 }
 
 func (f FileSuggestionRow) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(f.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
+	}
 	if v, ok := any(f.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("ContentState", err)
@@ -5657,6 +5889,16 @@ type Filters struct {
 	Recipients    []string `json:"recipients,omitempty"`
 	SenderDomains []string `json:"sender_domains,omitempty"`
 	Senders       []string `json:"senders,omitempty"`
+}
+
+type FirstContactIntroducer struct {
+	DisplayName   string `json:"display_name" validate:"required"`
+	ParticipantID int64  `json:"participant_id"`
+	PersonID      *int64 `json:"person_id,omitempty"`
+}
+
+func (f FirstContactIntroducer) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
 }
 
 type FormatCoverage struct {
@@ -6939,7 +7181,7 @@ func (k KataIssueCreateRequest) Validate() error {
 type KataIssueListResponse struct {
 	Issues []KataIssueReceipt `json:"issues" validate:"required"`
 
-	// Truncated The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked
+	// Truncated The list may omit matching issues: more matched than were returned, or some citations could not be checked
 	Truncated bool `json:"truncated"`
 }
 
@@ -7280,7 +7522,7 @@ type MediaAttachmentResult struct {
 	AttachmentID    int64      `json:"attachment_id"`
 	ContainingTitle string     `json:"containing_title" validate:"omitempty"`
 	ConversationID  int64      `json:"conversation_id"`
-	Excerpt         string     `json:"excerpt" validate:"required"`
+	Excerpt         string     `json:"excerpt" validate:"omitempty"`
 	Filename        string     `json:"filename" validate:"omitempty"`
 	MessageID       int64      `json:"message_id"`
 	OccurredAt      *time.Time `json:"occurred_at,omitempty"`
@@ -7291,19 +7533,38 @@ func (m MediaAttachmentResult) Validate() error {
 }
 
 type MediaAttachmentSearch struct {
-	ErrorData *ErrorResponse          `json:"error,omitempty"`
-	Results   []MediaAttachmentResult `json:"results" validate:"required"`
-	Truncated bool                    `json:"truncated"`
+	ActualMode    string                  `json:"actual_mode" validate:"required"`
+	Coverage      SearchCoverage          `json:"coverage"`
+	Degradations  []string                `json:"degradations" validate:"required"`
+	ErrorData     *ErrorResponse          `json:"error,omitempty"`
+	Partial       bool                    `json:"partial"`
+	RequestedMode string                  `json:"requested_mode" validate:"required"`
+	Results       []MediaAttachmentResult `json:"results" validate:"required"`
+	Truncated     bool                    `json:"truncated"`
 }
 
 func (m MediaAttachmentSearch) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.ActualMode, "required"); err != nil {
+		errors = errors.Append("ActualMode", err)
+	}
+	if v, ok := any(m.Coverage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Coverage", err)
+		}
+	}
+	if err := typesValidator.Var(m.Degradations, "required"); err != nil {
+		errors = errors.Append("Degradations", err)
+	}
 	if m.ErrorData != nil {
 		if v, ok := any(m.ErrorData).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("ErrorData", err)
 			}
 		}
+	}
+	if err := typesValidator.Var(m.RequestedMode, "required"); err != nil {
+		errors = errors.Append("RequestedMode", err)
 	}
 	if err := typesValidator.Var(m.Results, "required"); err != nil {
 		errors = errors.Append("Results", err)
@@ -7322,11 +7583,16 @@ func (m MediaAttachmentSearch) Validate() error {
 }
 
 type MediaSearchResponse struct {
+	// ActualMode Recording mode Docbank ran: lexical, semantic, hybrid, or unavailable when no recording search ran
+	ActualMode  string                 `json:"actual_mode" validate:"required"`
 	Attachments *MediaAttachmentSearch `json:"attachments,omitempty"`
 
 	// AttributionUnavailable Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits
 	AttributionUnavailable int64          `json:"attribution_unavailable"`
 	Coverage               SearchCoverage `json:"coverage"`
+
+	// Degradations Why recording search ran below the requested mode, such as semantic_unconfigured or semantic_unavailable
+	Degradations []string `json:"degradations" validate:"required"`
 
 	// Partial Coverage or occurrence attribution is incomplete, even with no matching excerpts
 	Partial                bool                `json:"partial"`
@@ -7339,6 +7605,9 @@ type MediaSearchResponse struct {
 
 func (m MediaSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.ActualMode, "required"); err != nil {
+		errors = errors.Append("ActualMode", err)
+	}
 	if m.Attachments != nil {
 		if v, ok := any(m.Attachments).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -7350,6 +7619,9 @@ func (m MediaSearchResponse) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Coverage", err)
 		}
+	}
+	if err := typesValidator.Var(m.Degradations, "required"); err != nil {
+		errors = errors.Append("Degradations", err)
 	}
 	if m.RecordingsError != nil {
 		if v, ok := any(m.RecordingsError).(runtime.Validator); ok {
@@ -7611,6 +7883,31 @@ func (m MeetingContextRequest) Validate() error {
 	return errors
 }
 
+type MeetingDecisionRequest struct {
+	Decision MeetingDecisionRequestDecision `json:"decision" validate:"required"`
+	Left     string                         `json:"left" validate:"required"`
+	Right    string                         `json:"right" validate:"required"`
+}
+
+func (m MeetingDecisionRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Decision).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Decision", err)
+		}
+	}
+	if err := typesValidator.Var(m.Left, "required"); err != nil {
+		errors = errors.Append("Left", err)
+	}
+	if err := typesValidator.Var(m.Right, "required"); err != nil {
+		errors = errors.Append("Right", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MeetingExploreScope struct {
 	CacheRevision       string             `json:"cache_revision" validate:"required"`
 	CandidateSnapshotID *string            `json:"candidate_snapshot_id,omitzero"`
@@ -7685,6 +7982,29 @@ func (m MeetingImportResponse) Validate() error {
 	return errors
 }
 
+type MeetingLink struct {
+	DeletedFromSource bool       `json:"deleted_from_source"`
+	End               *time.Time `json:"end"`
+	Ref               string     `json:"ref" validate:"required"`
+	Start             *time.Time `json:"start"`
+	Status            string     `json:"status" validate:"required"`
+	Subject           *string    `json:"subject,omitzero"`
+}
+
+func (m MeetingLink) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingLinkDecisionResult struct {
+	Left  string `json:"left" validate:"required"`
+	Right string `json:"right" validate:"required"`
+	State string `json:"state" validate:"required"`
+}
+
+func (m MeetingLinkDecisionResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
 type MeetingMetricsRequest struct {
 	Explore *MeetingExploreScope `json:"explore,omitempty"`
 	Scope   *MeetingScopeRequest `json:"scope,omitempty"`
@@ -7725,6 +8045,43 @@ type MeetingPerson struct {
 
 func (m MeetingPerson) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingRecord struct {
+	Links        []MeetingLink          `json:"links" validate:"required"`
+	MessageIds   []int64                `json:"message_ids" validate:"required"`
+	Unexpandable []CalendarUnexpandable `json:"unexpandable" validate:"required"`
+}
+
+func (m MeetingRecord) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Links, "required"); err != nil {
+		errors = errors.Append("Links", err)
+	}
+	for i, item := range m.Links {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Links[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.MessageIds, "required"); err != nil {
+		errors = errors.Append("MessageIds", err)
+	}
+	if err := typesValidator.Var(m.Unexpandable, "required"); err != nil {
+		errors = errors.Append("Unexpandable", err)
+	}
+	for i, item := range m.Unexpandable {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Unexpandable[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type MeetingRef struct {
@@ -7813,6 +8170,60 @@ func (m MeetingScopeRequest) Validate() error {
 	return errors
 }
 
+type MeetingSuggestion struct {
+	// MemberMessageID Meeting note ID; the suggestion when the seed is an event
+	MemberMessageID int64 `json:"member_message_id"`
+	OverlapMinutes  int64 `json:"overlap_minutes"`
+
+	// Ref Calendar event reference; the suggestion when the seed is a note
+	Ref             string `json:"ref" validate:"required"`
+	SharedAttendees int64  `json:"shared_attendees"`
+
+	// Start Start of the suggested event or note
+	Start time.Time `json:"start" validate:"required"`
+
+	// Title Title of the suggested event or note
+	Title       string `json:"title" validate:"required"`
+	TitleTokens int64  `json:"title_tokens"`
+}
+
+func (m MeetingSuggestion) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingSuggestionPage struct {
+	Suggestions  []MeetingSuggestion    `json:"suggestions" validate:"required"`
+	Unexpandable []CalendarUnexpandable `json:"unexpandable" validate:"required"`
+}
+
+func (m MeetingSuggestionPage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Suggestions, "required"); err != nil {
+		errors = errors.Append("Suggestions", err)
+	}
+	for i, item := range m.Suggestions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Suggestions[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.Unexpandable, "required"); err != nil {
+		errors = errors.Append("Unexpandable", err)
+	}
+	for i, item := range m.Unexpandable {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Unexpandable[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MergeOrganizationBody struct {
 	LosingOrganizationID int64 `json:"losing_organization_id"`
 	LosingRevision       int64 `json:"losing_revision"`
@@ -7867,7 +8278,10 @@ type MessageDetail struct {
 	SourceID          *int64             `json:"source_id,omitempty"`
 	SourceMessageID   *string            `json:"source_message_id,omitzero"`
 	Subject           string             `json:"subject" validate:"required"`
-	To                []string           `json:"to" validate:"required"`
+
+	// TabTitle Title suitable for a browser tab; empty when unavailable.
+	TabTitle string   `json:"tab_title" validate:"omitempty"`
+	To       []string `json:"to" validate:"required"`
 
 	// ToParticipants Recipient participants, populated for conversation windows.
 	ToParticipants []ConversationParticipant `json:"to_participants,omitempty"`
@@ -11230,6 +11644,98 @@ func (p PersonContactPointPatchRequest) Validate() error {
 	return errors
 }
 
+type PersonCreateContact struct {
+	Type  *string `json:"type,omitzero"`
+	Value string  `json:"value" validate:"required"`
+}
+
+func (p PersonCreateContact) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := runtime.ValidatePattern(p.Type, `^[A-Za-z0-9-]{1,64}$`); err != nil {
+		errors = errors.Append("Type", err)
+	}
+	if err := typesValidator.Var(p.Value, "required"); err != nil {
+		errors = errors.Append("Value", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCreateInput struct {
+	Address *string               `json:"address,omitzero" validate:"omitempty,max=1000"`
+	Emails  []PersonCreateContact `json:"emails,omitempty"`
+	Name    string                `json:"name" validate:"required,max=256,min=1"`
+	Note    *string               `json:"note,omitzero" validate:"omitempty,max=10000"`
+	Org     *string               `json:"org,omitzero" validate:"omitempty,max=256"`
+	Phones  []PersonCreateContact `json:"phones,omitempty"`
+
+	// Source Provenance of every created value; defaults to user
+	Source *PersonCreateInputSource `json:"source,omitempty"`
+
+	// Title Job title at org; requires org
+	Title *string `json:"title,omitzero" validate:"omitempty,max=280"`
+}
+
+func (p PersonCreateInput) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.Address != nil {
+		if err := typesValidator.Var(p.Address, "omitempty,max=1000"); err != nil {
+			errors = errors.Append("Address", err)
+		}
+	}
+	if len(p.Emails) > 200 {
+		errors = errors.Add("Emails", fmt.Sprintf("must have at most 200 items, got %d", len(p.Emails)))
+	}
+	for i, item := range p.Emails {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Emails[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.Name, "required,max=256,min=1"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if p.Note != nil {
+		if err := typesValidator.Var(p.Note, "omitempty,max=10000"); err != nil {
+			errors = errors.Append("Note", err)
+		}
+	}
+	if p.Org != nil {
+		if err := typesValidator.Var(p.Org, "omitempty,max=256"); err != nil {
+			errors = errors.Append("Org", err)
+		}
+	}
+	if len(p.Phones) > 200 {
+		errors = errors.Add("Phones", fmt.Sprintf("must have at most 200 items, got %d", len(p.Phones)))
+	}
+	for i, item := range p.Phones {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Phones[%d]", i), err)
+			}
+		}
+	}
+	if p.Source != nil {
+		if v, ok := any(p.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
+		}
+	}
+	if p.Title != nil {
+		if err := typesValidator.Var(p.Title, "omitempty,max=280"); err != nil {
+			errors = errors.Append("Title", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonDate struct {
 	CalendarScale *string       `json:"calendar_scale,omitzero"`
 	Date          PartialDate   `json:"date"`
@@ -11615,16 +12121,23 @@ func (p PersonFactClaimsResponse) Validate() error {
 }
 
 type PersonFactDecision struct {
-	Action            string                   `json:"action" validate:"required"`
-	ClaimKey          string                   `json:"claim_key" validate:"required"`
-	CompetingClaimKey *string                  `json:"competing_claim_key,omitzero"`
-	CreatedAt         time.Time                `json:"created_at" validate:"required"`
-	DecisionKey       string                   `json:"decision_key" validate:"required"`
-	ID                int64                    `json:"id"`
-	Projection        *ProjectionRef           `json:"projection,omitempty"`
-	Reason            string                   `json:"reason" validate:"required"`
-	ResolutionID      int64                    `json:"resolution_id"`
-	Score             PersonFactScoreBreakdown `json:"score"`
+	Action   string `json:"action" validate:"required"`
+	ClaimKey string `json:"claim_key" validate:"required"`
+
+	// ClaimValue Submitted JSON value of the claim this decision describes
+	ClaimValue        string                     `json:"claim_value" validate:"required"`
+	CompetingClaimKey *string                    `json:"competing_claim_key,omitzero"`
+	CreatedAt         time.Time                  `json:"created_at" validate:"required"`
+	DecisionKey       string                     `json:"decision_key" validate:"required"`
+	ID                int64                      `json:"id"`
+	Outcome           *PersonFactDecisionOutcome `json:"outcome" validate:"required"`
+	Projection        *ProjectionRef             `json:"projection,omitempty"`
+	Reason            string                     `json:"reason" validate:"required"`
+	ResolutionID      int64                      `json:"resolution_id"`
+	ResolverVersion   string                     `json:"resolver_version" validate:"required"`
+	Score             PersonFactScoreBreakdown   `json:"score"`
+	ScoreMaxima       *PersonFactScoreBreakdown  `json:"score_maxima,omitempty"`
+	Target            TargetRef                  `json:"target"`
 }
 
 func (p PersonFactDecision) Validate() error {
@@ -11635,11 +12148,21 @@ func (p PersonFactDecision) Validate() error {
 	if err := typesValidator.Var(p.ClaimKey, "required"); err != nil {
 		errors = errors.Append("ClaimKey", err)
 	}
+	if err := typesValidator.Var(p.ClaimValue, "required"); err != nil {
+		errors = errors.Append("ClaimValue", err)
+	}
 	if err := typesValidator.Var(p.CreatedAt, "required"); err != nil {
 		errors = errors.Append("CreatedAt", err)
 	}
 	if err := typesValidator.Var(p.DecisionKey, "required"); err != nil {
 		errors = errors.Append("DecisionKey", err)
+	}
+	if p.Outcome != nil {
+		if v, ok := any(p.Outcome).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Outcome", err)
+			}
+		}
 	}
 	if p.Projection != nil {
 		if v, ok := any(p.Projection).(runtime.Validator); ok {
@@ -11651,9 +12174,24 @@ func (p PersonFactDecision) Validate() error {
 	if err := typesValidator.Var(p.Reason, "required"); err != nil {
 		errors = errors.Append("Reason", err)
 	}
+	if err := typesValidator.Var(p.ResolverVersion, "required"); err != nil {
+		errors = errors.Append("ResolverVersion", err)
+	}
 	if v, ok := any(p.Score).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Score", err)
+		}
+	}
+	if p.ScoreMaxima != nil {
+		if v, ok := any(p.ScoreMaxima).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ScoreMaxima", err)
+			}
+		}
+	}
+	if v, ok := any(p.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
 		}
 	}
 	if len(errors) == 0 {
@@ -12057,8 +12595,12 @@ func (p PersonFileSearchHTTPResponse) Validate() error {
 }
 
 type PersonFileSearchRow struct {
-	ContainingTitle    string                          `json:"containing_title" validate:"required"`
-	ContentAvailable   bool                            `json:"content_available"`
+	ContainingTitle string `json:"containing_title" validate:"required"`
+
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
+
+	// ContentState List availability is based on metadata; file details check whether storage can be opened.
 	ContentState       PersonFileSearchRowContentState `json:"content_state" validate:"required"`
 	ConversationID     int64                           `json:"conversation_id"`
 	EntryKey           string                          `json:"entry_key" validate:"required"`
@@ -12085,6 +12627,11 @@ func (p PersonFileSearchRow) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(p.ContainingTitle, "required"); err != nil {
 		errors = errors.Append("ContainingTitle", err)
+	}
+	if v, ok := any(p.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
 	}
 	if v, ok := any(p.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
@@ -12218,7 +12765,10 @@ func (p PersonFileSuggestionHTTPResponse) Validate() error {
 }
 
 type PersonFileSuggestionRow struct {
-	ContentAvailable bool                                 `json:"content_available"`
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
+
+	// ContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 	ContentState     PersonFileSuggestionRowContentState  `json:"content_state" validate:"required"`
 	ConversationID   int64                                `json:"conversation_id"`
 	Filename         string                               `json:"filename" validate:"required"`
@@ -12235,6 +12785,11 @@ type PersonFileSuggestionRow struct {
 
 func (p PersonFileSuggestionRow) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(p.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
+	}
 	if v, ok := any(p.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("ContentState", err)
@@ -13844,6 +14399,15 @@ type PingInfo struct {
 	Version *string `json:"version,omitzero"`
 }
 
+type Preset struct {
+	Days int64  `json:"days"`
+	List string `json:"list" validate:"required"`
+}
+
+func (p Preset) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type Progress struct {
 	Done  int64 `json:"done"`
 	Total int64 `json:"total"`
@@ -14505,6 +15069,9 @@ func (r Result) Validate() error {
 type RunSavedViewRequest struct {
 	Cursor *string `json:"cursor,omitzero"`
 	Limit  *int64  `json:"limit,omitempty" validate:"omitempty,gte=0,lte=100"`
+
+	// Timezone IANA timezone for calendar grouping; defaults to UTC
+	Timezone *string `json:"timezone,omitzero"`
 }
 
 func (r RunSavedViewRequest) Validate() error {
@@ -15159,10 +15726,12 @@ func (s SetOrganizationAttributeBody) Validate() error {
 }
 
 type SetPersonAttributeRequest struct {
-	ActiveFrom      *time.Time                       `json:"active_from,omitempty"`
-	ActiveUntil     *time.Time                       `json:"active_until,omitempty"`
-	Actor           *string                          `json:"actor,omitzero"`
-	Confidence      *float64                         `json:"confidence,omitempty"`
+	ActiveFrom  *time.Time `json:"active_from,omitempty"`
+	ActiveUntil *time.Time `json:"active_until,omitempty"`
+	Actor       *string    `json:"actor,omitzero"`
+	Confidence  *float64   `json:"confidence,omitempty"`
+
+	// ExpectedValueID Positive ID compares the current value; zero requires no current value
 	ExpectedValueID *int64                           `json:"expected_value_id,omitempty"`
 	Ordinal         *int64                           `json:"ordinal,omitempty"`
 	Source          *SetPersonAttributeRequestSource `json:"source,omitempty"`
@@ -16347,6 +16916,9 @@ func (t TaskLinkTask) Validate() error {
 
 type TaskSearchResponse struct {
 	Tasks []TaskSummary `json:"tasks" validate:"required"`
+
+	// Truncated More tasks matched than were returned
+	Truncated bool `json:"truncated"`
 }
 
 func (t TaskSearchResponse) Validate() error {
@@ -16378,10 +16950,10 @@ func (t TaskSummary) Validate() error {
 }
 
 type TelemetryEventRequest struct {
-	// Event Allowlisted event name, app_opened, screen_viewed, session_ended, search_run, message_opened, sync_finished, search_empty, or error_shown
+	// Event Allowlisted interface event name
 	Event string `json:"event" validate:"required"`
 
-	// Properties Fixed properties: surface (web, tui, cli), screen for screen_viewed, duration_bucket for session_ended, search_type (text, semantic, hybrid) for search_run. Searches report after successful current first-page results load, including retries and reloads; message opens report when readable. Core actions require surface; search_run also requires search_type. The daemon counts successful manual browser sync completions even after the person leaves Sources; the CLI posts its successful sync_finished events. search_empty counts submitted empty searches once per UTC day, surface, and search type, excluding previews and reloads. Everything sends no search_empty while recording search is unknown or set up. error_shown requires surface and kind (search, message, sync, other) for displayed search, archive load, message, or Sync now requests on Sources that fail to start, without daily deduplication; retries can send repeats. sync_failed fires when a scheduled sync or Sync now on Sources finds a source starting to fail; it is daemon-only and rejected here. Manual CLI syncs and Settings → CardDAV Sync now neither record nor clear outages; the next successful scheduled pass clears them. Unlisted outcome values become other. Invalid core actions are dropped; unknown properties are stripped
+	// Properties Allowlisted event properties; unknown properties are stripped
 	Properties map[string]any `json:"properties,omitempty"`
 }
 
@@ -16390,7 +16962,7 @@ func (t TelemetryEventRequest) Validate() error {
 }
 
 type TelemetryEventResponse struct {
-	// Status queued when accepted, including suppressed daily screen_viewed and message_opened duplicates or invalid screen names; disabled when telemetry is off
+	// Status queued when accepted; disabled otherwise
 	Status TelemetryEventResponseStatus `json:"status" validate:"required"`
 }
 

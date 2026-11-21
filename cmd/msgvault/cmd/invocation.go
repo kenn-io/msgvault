@@ -22,6 +22,7 @@ type invocationOptions struct {
 	homeDir    string
 	verbose    bool
 	useLocal   bool
+	remoteName string
 	logFile    string
 	logLevel   string
 	noLogFile  bool
@@ -151,6 +152,9 @@ func prepareInvocation(cmd *cobra.Command) *invocation {
 	if flags.Lookup(localValue) != nil {
 		inv.options.useLocal = invocationBoolFlag(flags, localValue)
 	}
+	if flags.Lookup(remoteFlag) != nil {
+		inv.options.remoteName = invocationStringFlag(flags, remoteFlag)
+	}
 	if flags.Lookup("log-file") != nil {
 		inv.options.logFile = invocationStringFlag(flags, "log-file")
 	}
@@ -243,7 +247,7 @@ func clearInvocationFlags(root *cobra.Command) {
 		return
 	}
 	for _, name := range []string{
-		"config", "home", "verbose", localValue, "log-file", "log-level",
+		"config", "home", "verbose", localValue, remoteFlag, "log-file", "log-level",
 		"no-log-file", "log-sql", "log-sql-slow-ms", "agent-url",
 		"agent-token-file", "agent-allow-insecure",
 	} {

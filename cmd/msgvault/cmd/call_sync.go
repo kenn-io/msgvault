@@ -27,7 +27,7 @@ func callResumeFlags(limit int, after string, full bool) string {
 func writeCallSyncSummary(out io.Writer, label, command, identifier string, summary *callsync.Summary, failed bool, resumeFlags string) {
 	switch {
 	case failed:
-		_, _ = fmt.Fprintf(out, "\n%s sync failed; later syncs retry calls that errored while they're within seven days; an older call that failed during a first sync or --full needs --full.\n", label)
+		_, _ = fmt.Fprintf(out, "\n%s sync failed; later syncs retry the calls that errored, even after they leave the seven-day window.\n", label)
 	case summary.DiscoveryPending:
 		_, _ = fmt.Fprintf(out, "\n%s sync paused with more calls to discover.\n", label)
 	default:

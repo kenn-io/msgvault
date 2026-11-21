@@ -24,7 +24,6 @@ import (
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/telemetry"
 )
 
 func clearTelemetryVetoEnvironment(t *testing.T) {
@@ -38,8 +37,8 @@ func clearTelemetryVetoEnvironment(t *testing.T) {
 func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDECODE", "")
-	t.Setenv(telemetry.EnabledEnv, "1")
-	t.Setenv(posthog.GenericEnabledEnv, "")
+	t.Setenv(posthog.PrefixedEnabledEnv("MSGVAULT"), "")
+	t.Setenv(posthog.GenericEnabledEnv, "1")
 	clearTelemetryVetoEnvironment(t)
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
@@ -224,8 +223,8 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 func TestCLIActionDeliveryDeadline(t *testing.T) {
 	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDECODE", "")
-	t.Setenv(telemetry.EnabledEnv, "1")
-	t.Setenv(posthog.GenericEnabledEnv, "")
+	t.Setenv(posthog.PrefixedEnabledEnv("MSGVAULT"), "")
+	t.Setenv(posthog.GenericEnabledEnv, "1")
 	clearTelemetryVetoEnvironment(t)
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
@@ -342,7 +341,7 @@ func TestCLIActionLocallyDisabledSendsNothing(t *testing.T) {
 	clearTelemetryVetoEnvironment(t)
 	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDECODE", "")
-	t.Setenv(telemetry.EnabledEnv, "")
+	t.Setenv(posthog.PrefixedEnabledEnv("MSGVAULT"), "")
 	t.Setenv(posthog.GenericEnabledEnv, "")
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
@@ -354,8 +353,9 @@ func TestCLIActionLocallyDisabledSendsNothing(t *testing.T) {
 	require.NoError(t, err)
 	cmd := &cobra.Command{Use: "search"}
 	cfg := config.NewDefaultConfig()
-	enabled := false
-	cfg.Telemetry.Enabled = &enabled
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	reportCLIAction(cmd, client, "search_run", "search_type", "text")
 	invocationFromCommand(cmd).sends.Wait(time.Second)

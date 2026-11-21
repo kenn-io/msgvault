@@ -635,3 +635,48 @@ func TestNewMessageRecordingReader(t *testing.T) {
 		assert.Same(st, reader.Store)
 	}
 }
+
+func TestPrivateNetworkDocbankRuntime(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, blobs := storedBeeperVoiceNote(t)
+	for _, trust := range []bool{false, true} {
+		cfg := config.DocbankIntegrationConfig{Enabled: true, URL: "http://docbank:8485", TrustPrivateNetwork: trust, AttachmentUploadConsent: true, ReferenceConsent: true}
+		sched := scheduler.New(nil)
+		reader, err := newMessageRecordingReader(t.Context(), st, cfg)
+		if trust {
+			requirements.NoError(err)
+			assertions.NotNil(reader.Client)
+		} else {
+			requirements.Error(err)
+		}
+		err = configureDocbankAttachmentJob(t.Context(), sched, nil, st, blobs, t.TempDir(), cfg, nil)
+		if trust {
+			requirements.NoError(err)
+			assertions.True(sched.IsJobScheduled(api.DocbankAttachmentMirrorJob))
+		} else {
+			requirements.Error(err)
+		}
+		err = configureRecordingReferenceJob(t.Context(), sched, nil, st, cfg, nil)
+		if trust {
+			requirements.NoError(err)
+			assertions.True(sched.IsJobScheduled(recordingReferenceJob))
+		} else {
+			requirements.Error(err)
+		}
+		<-sched.Stop().Done()
+	}
+}
+
+func TestVoiceTranscriptSearchDisabledWhenDocbankOff(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st, blobs := storedBeeperVoiceNote(t)
+	sched := scheduler.New(nil)
+	defer func() { <-sched.Stop().Done() }()
+	require.NoError(st.SetVoiceTranscriptSearch(t.Context(), true))
+	err := configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), t.TempDir(), config.DocbankIntegrationConfig{VoiceTranscriptSearch: true}, nil)
+	require.NoError(err)
+	var value string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT value FROM archive_metadata WHERE key='voice_transcript_search_enabled'`).Scan(&value))
+	assert.Equal("0", value)
+}

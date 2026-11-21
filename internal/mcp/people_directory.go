@@ -18,17 +18,20 @@ func listDirectoryPeopleDefinition(_ *handlers) toolDefinition {
 		store.DirectoryPeopleSortName,
 		store.DirectoryPeopleSortLastContactDesc,
 		store.DirectoryPeopleSortLastContactAsc,
+		store.DirectoryPeopleSortMostOverdue, store.DirectoryPeopleSortNextDue,
 	)
 	sort.Default = jsontext.Value(`"last_contact_desc"`)
 	definition := readDefinition(
 		ToolListDirectoryPeople,
-		"List durable people from the Directory, ordered by name or last contact. Search observed contacts separately with search_people.",
+		"List durable people from the Directory, with cadence filters and ordering by name, last contact, or due date. Search observed contacts separately with search_people.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:          stringSchema("Optional lexical query over durable person fields"),
 			"address":             stringSchema("Optional literal case-insensitive address or identifier substring. Sparse matches can scan all saved people. Requires daemon API schema 3.29.0."),
 			toolArgCursor:         stringSchema("Opaque cursor from the previous list_directory_people response"),
 			toolArgLimit:          nonNegativeIntegerSchema("Maximum rows to return (default 50, max 100)", store.DefaultDirectoryPeopleLimit),
 			"sort":                sort,
+			"cadence":             stringSchema("Cadence filter", "overdue", "due", "no_list", "unknown"),
+			"due_within_days":     &jsonschema.Schema{Type: "integer", Minimum: new(float64(0)), Maximum: new(float64(3660)), Description: "UTC days ahead, only with cadence=due (default 0)"},
 			"last_contact_after":  stringSchema("Inclusive lower bound for last contact: RFC3339 timestamp or YYYY-MM-DD (midnight UTC)"),
 			"last_contact_before": stringSchema("Inclusive upper bound for last contact: RFC3339 timestamp or YYYY-MM-DD (midnight UTC)"),
 			"contact_state":       stringSchema("Current contact state", "active", "inactive"),
@@ -69,12 +72,24 @@ func (h *handlers) listDirectoryPeople(ctx context.Context, req toolRequest) (*t
 		Cursor:            stringArgument(args, toolArgCursor),
 		Limit:             limitArg(args, toolArgLimit, store.DefaultDirectoryPeopleLimit),
 		Sort:              stringArgument(args, "sort"),
+		Cadence:           stringArgument(args, "cadence"),
 		LastContactAfter:  after,
 		LastContactBefore: before,
 		ContactState:      stringArgument(args, "contact_state"),
 		Category:          stringArgument(args, "category"),
 		Organization:      stringArgument(args, "organization"),
 		PrimaryChannel:    stringArgument(args, "primary_channel"),
+	}
+	if _, ok := args["due_within_days"]; ok {
+		days64, err := nonnegativeInt64Arg(args, "due_within_days")
+		if err != nil {
+			return toolErrorResult(err.Error()), nil
+		}
+		if query.Cadence != "due" || days64 > 3660 {
+			return toolErrorResult("due_within_days requires cadence=due and an integer from 0 to 3660"), nil
+		}
+		days := int(days64)
+		query.DueWithinDays = &days
 	}
 	if query.Sort == "" {
 		query.Sort = store.DirectoryPeopleSortLastContactDesc

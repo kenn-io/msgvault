@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -23,29 +24,37 @@ import (
 // bare name. The store-backed API used to read only p.email_address,
 // which dropped phone-only and identifier-only participants (synctech
 // SMS/MMS, etc.). Standard SQL (CASE + ||) — works on SQLite and PG.
-const participantDisplaySQL = `COALESCE(
+var participantDisplaySQL = `COALESCE(
 		CASE
 			WHEN COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), '')) <> ''
-			  AND COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, '')) <> ''
+			  AND COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), NULLIF(p.phone_number, '')) <> ''
 			THEN COALESCE(NULLIF(TRIM(mr.display_name), ''), TRIM(p.display_name))
 				|| ' <'
-				|| COALESCE(NULLIF(p.email_address, ''), p.phone_number)
+				|| COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), p.phone_number)
 				|| '>'
 			ELSE COALESCE(
-				NULLIF(p.email_address, ''),
+				NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''),
 				NULLIF(p.phone_number, ''),
 				NULLIF(TRIM(mr.display_name), ''),
 				NULLIF(TRIM(p.display_name), ''),
+				` + participantXUserIDSQL + `,
 				''
 			)
 		END,
 		''
 	)`
 
-const participantSenderEmailSQL = `COALESCE(NULLIF(p.email_address, ''), '')`
-const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), '')`
+// Numeric X IDs are display fallbacks, never persisted as observed names.
+const participantXUserIDSQL = `(SELECT pi.identifier_value FROM participant_identifiers pi
+    WHERE pi.participant_id = p.id AND pi.identifier_type = 'x_user'
+    ORDER BY pi.identifier_value LIMIT 1)`
+
+var participantSenderEmailSQL = `COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), '')`
+
+const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), ` + participantXUserIDSQL + `, '')`
 const participantSenderPhoneSQL = `COALESCE(NULLIF(p.phone_number, ''), '')`
-const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
+
+var participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 			` + participantSenderEmailSQL + ` as from_email,
 			` + participantSenderNameSQL + ` as from_name,
 			` + participantSenderPhoneSQL + ` as from_phone`
@@ -55,6 +64,7 @@ type APIMessage struct {
 	SenderAuth           *senderauth.Verdict
 	RelatedMessageID     *int64
 	ConversationTitle    string
+	ConversationType     string
 	Calendar             *CalendarProjection
 	ID                   int64
 	SourceID             int64
@@ -256,6 +266,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(c.source_conversation_id, '') as source_conversation_id,
 			COALESCE(c.title, ''),
+			COALESCE(c.conversation_type, ''),
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
 			%s,
@@ -293,6 +304,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		&m.ConversationID,
 		&m.SourceConversationID,
 		&m.ConversationTitle,
+		&m.ConversationType,
 		&m.Subject,
 		&m.MessageType,
 		&m.From,
@@ -632,7 +644,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			conditions = append(conditions, "FALSE")
 			ftsEnabled = false
 		} else {
-			join, where, orderBy, orderArgCount := s.dialect.FTSSearchClause(rowIDs)
+			join, where, orderBy, orderArgCount := s.dialect.FTSSearchClause(rowIDs, q.TextTerms)
 			ftsJoin = join
 			ftsOrder = orderBy
 			ftsOrderArgCount = orderArgCount
@@ -1473,14 +1485,19 @@ func (s *Store) GetMessageRecipientsContext(
 
 // ChangedMessage is one row of the content-change feed. Every field is a column
 // of `messages`, but the feed's fields and the watermark's columns are not the
-// same set: sender_id and metadata move the watermark without appearing here,
-// and id and content_changed_at appear here without moving it — the first is
+// same set: sender_id and metadata move the watermark without appearing in the
+// public feed, and id and content_changed_at appear without moving it — the first is
 // immutable identity and the second is the watermark itself. source_id moves
 // the watermark when archive ownership changes during consolidation. See
 // MessagesContentColumns. Labels and recipients live in child tables the
 // watermark does not cover and are deliberately absent: a consumer handed them
 // here would cache them stale forever.
+// SenderID (with From-recipient fallback) and IsFromMe are internal filter
+// inputs, not public feed fields.
+// Direction is not tracked and may change without moving the watermark.
 type ChangedMessage struct {
+	SenderID            int64
+	IsFromMe            bool
 	ID                  int64
 	SourceID            int64
 	SourceMessageID     string
@@ -1606,7 +1623,8 @@ func (c ChangedMessagesCursor) AfterID() (int64, bool) { return c.afterID, c.aft
 // because the clock says which instants have been REACHED and nothing about
 // which are still open for COMMITS. See ListChangedMessages.
 //
-// Single-table by design: no joins, no hydration. See ChangedMessage.
+// One ordered messages scan; a scalar lookup resolves a missing sender from
+// the first From recipient, as in the message list. No body hydration.
 //
 // No visibility filter (no LiveMessagesWhere): dedup-hidden and source-deleted
 // rows are returned with their timestamps set, because a consumer mirroring the
@@ -1617,7 +1635,10 @@ const changedMessagesSelect = `
 	       COALESCE(message_type,''), list_id, COALESCE(subject,''), COALESCE(snippet,''),
 	       sent_at, received_at, internal_date, COALESCE(size_estimate,0),
 	       COALESCE(has_attachments,FALSE), COALESCE(attachment_count,0),
-	       deleted_at, deleted_from_source_at, content_changed_at
+	       deleted_at, deleted_from_source_at, content_changed_at,
+	       COALESCE(sender_id, (SELECT mr.participant_id FROM message_recipients mr
+	           WHERE mr.message_id = messages.id AND mr.recipient_type = 'from'
+	           ORDER BY mr.id LIMIT 1), 0), COALESCE(is_from_me,FALSE)
 	FROM messages
 	WHERE content_changed_at >= ?`
 
@@ -1764,6 +1785,8 @@ func (s *Store) ListChangedMessages(
 			&deletedAt,
 			&deletedFromSourceAt,
 			&contentChangedAt,
+			&m.SenderID,
+			&m.IsFromMe,
 		); err != nil {
 			return ChangedMessagePage{}, fmt.Errorf("scan changed message: %w", err)
 		}

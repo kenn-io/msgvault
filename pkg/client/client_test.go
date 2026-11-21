@@ -606,6 +606,12 @@ func TestGeneratedExploreGroupingValidatesExactlyOneDimension(t *testing.T) {
 	}}).Validate(), "multiple file grouping dimensions")
 }
 
+func TestGeneratedConversationResponseAcceptsEmptyNonAnchorTabTitle(t *testing.T) {
+	var response generated.ConversationResponse
+	require.NoError(t, json.Unmarshal([]byte(`{"id":1,"anchor_id":1,"messages":[{"id":1,"body":"body","from":"sender","sent_at":"now","snippet":"snippet","subject":"subject","tab_title":"title","attachments":[],"labels":[],"to":[]},{"id":2,"body":"body","from":"sender","sent_at":"now","snippet":"snippet","subject":"subject","tab_title":"","attachments":[],"labels":[],"to":[]}],"total":2,"has_before":false,"has_after":false}`), &response))
+	require.NoError(t, response.Validate())
+}
+
 func TestGeneratedMessageRecordingsAcceptUnnamedAudio(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -656,19 +662,19 @@ func TestGeneratedCLIAccountsRequireAliasPresenceButAcceptEmptyStrings(t *testin
 	}
 }
 
-func TestGeneratedFileMetadataRequiresPresenceButAcceptsEmptyLegacyStrings(t *testing.T) {
+func TestGeneratedFileMetadataRequiresFilenameAndMIMETypeButAcceptsEmptyStrings(t *testing.T) {
 	t.Run("metadata response", func(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
 		var present generated.FileMetadataResponse
 		requirements.NoError(json.Unmarshal([]byte(
-			`{"content_state":"metadata_only","entry_key":"source:1:message:m1","filename":"","mime_type":""}`,
+			`{"content_state":"metadata_only","entry_key":"source:1:message:m1","filename":"","message_type":"email","mime_type":""}`,
 		), &present))
 		requirements.NotNil(present.Filename)
 		requirements.NotNil(present.MimeType)
 		assertions.Empty(*present.Filename)
 		assertions.Empty(*present.MimeType)
-		requirements.NoError(present.Validate(), "present empty strings are legitimate legacy metadata")
+		requirements.NoError(present.Validate(), "empty filename and MIME type are legitimate legacy metadata")
 
 		missingFilename := present
 		missingFilename.Filename = nil
@@ -750,12 +756,16 @@ func TestGeneratedMediaSearchAcceptsEmptyAttachmentMetadata(t *testing.T) {
 	requirements := require.New(t)
 	var response generated.MediaSearchResponse
 	requirements.NoError(json.Unmarshal([]byte(`{
-		"results":[],"coverage":{"state":"complete","binding_required":false,"complete_documents":1,"scoped_documents":1},"partial":false,"truncated":false,
+		"actual_mode":"lexical","degradations":[],"results":[],"coverage":{"state":"complete","binding_required":false,"complete_documents":1,"scoped_documents":1},"partial":false,"truncated":false,
 		"pending_occurrences":0,"unavailable_occurrences":0,"attribution_unavailable":0,
-		"attachments":{"results":[{"attachment_id":1,"message_id":2,"conversation_id":3,
+		"attachments":{"requested_mode":"lexical","actual_mode":"lexical","coverage":{"state":"unknown","binding_required":false,"complete_documents":0,"scoped_documents":1},"partial":false,"degradations":[],"results":[{"attachment_id":1,"message_id":2,"conversation_id":3,
 			"filename":"","containing_title":"","excerpt":"matching text"}],"truncated":false}
 	}`), &response))
 	requirements.NoError(response.Validate())
+	response.Attachments.RequestedMode = "semantic"
+	response.Attachments.ActualMode = "semantic"
+	response.Attachments.Results[0].Excerpt = ""
+	requirements.NoError(response.Validate(), "semantic-only attachment matches may have no excerpt")
 }
 
 func TestGeneratedPersonFactEvidenceRequiresPresenceButAcceptsEmptyStrings(t *testing.T) {

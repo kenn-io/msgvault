@@ -8,7 +8,7 @@ export type SearchMediaParams = {
    */
   q: string;
   /**
-   * Lexical mode; semantic and hybrid are unavailable
+   * Search mode for recordings and attachments: lexical (default), semantic, or hybrid
    */
   mode?: string;
   /**

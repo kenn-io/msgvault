@@ -12,6 +12,96 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRelationshipsCountLinkedTranscriptsOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		ownerOnFirstCopy  bool
+		ownerOnSecondCopy bool
+		personOnFirstCopy bool
+		filter            string
+	}{
+		{name: "linked copies count once", ownerOnFirstCopy: true, ownerOnSecondCopy: true, personOnFirstCopy: true},
+		{name: "owner evidence outside selected copy", ownerOnFirstCopy: true, filter: "selected copy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewTestDataBuilder(t)
+			firstSource := b.AddSourceWithType("first@example.test", "granola")
+			secondSource := b.AddSourceWithType("second@example.test", "zoom")
+			owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+			person := b.AddParticipant("alice@example.test", "example.test", "Alice")
+			b.AddOwnerParticipant(firstSource, owner)
+			b.AddOwnerParticipant(secondSource, owner)
+			firstAt := time.Date(2025, 12, 31, 23, 0, 0, 0, time.UTC)
+			secondAt := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+			first := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript", SentAt: firstAt})
+			second := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript", SentAt: secondAt})
+			if tc.ownerOnFirstCopy {
+				b.AddFrom(first, owner, "Owner")
+			}
+			if tc.personOnFirstCopy {
+				b.AddTo(first, person, "Alice")
+			}
+			if tc.ownerOnSecondCopy {
+				b.AddFrom(second, owner, "Owner")
+			}
+			b.AddTo(second, person, "Alice")
+			b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
+			engine := b.BuildEngine()
+			filter := Context{}
+			if tc.filter == "selected copy" {
+				filter.SourceIDs = []int64{secondSource}
+			}
+			result, err := engine.Relationships(t.Context(), RelationshipsRequest{Now: secondAt.Add(time.Hour), Limit: 10, ShowAll: true, Context: filter})
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 1)
+			require.Equal(t, person, result.Rows[0].CanonicalID)
+			require.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
+			if tc.filter == "selected copy" {
+				after := secondAt.Add(-time.Hour)
+				result, err = engine.Relationships(t.Context(), RelationshipsRequest{Now: secondAt.Add(time.Hour), Limit: 10, ShowAll: true, Context: Context{After: &after}})
+				require.NoError(t, err)
+				require.Len(t, result.Rows, 1)
+				require.Equal(t, person, result.Rows[0].CanonicalID)
+				require.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
+			}
+		})
+	}
+}
+
+func TestRelationshipsCountsStandaloneCalendarEvents(t *testing.T) {
+	t.Parallel()
+	b := NewTestDataBuilder(t)
+	sourceID := b.AddSourceWithType("owner@example.test", "google_calendar")
+	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+	person := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	b.AddOwnerParticipant(sourceID, owner)
+	meetingAt := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
+	meetingID := b.AddMessage(MessageOpt{
+		SourceID: sourceID, MessageType: "calendar_event", SentAt: meetingAt,
+	})
+	b.AddFrom(meetingID, owner, "Owner")
+	b.AddTo(meetingID, person, "Alice")
+	engine := b.BuildEngine()
+
+	for _, tc := range []struct {
+		name   string
+		filter Context
+	}{
+		{name: "all sources"},
+		{name: "calendar source", filter: Context{SourceIDs: []int64{sourceID}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := engine.Relationships(t.Context(), RelationshipsRequest{
+				Now: meetingAt.Add(time.Hour), Limit: 10, ShowAll: true, Context: tc.filter,
+			})
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, person, result.Rows[0].CanonicalID)
+			assert.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
+		})
+	}
+}
+
 // TestRelationshipsRanksByReciprocityAndGatesNewsletters builds an owner
 // (O), a reciprocal counterpart (A, clustered with a second identity A2 that
 // only has chat activity), and an inbound-only newsletter sender (B). It
@@ -41,7 +131,7 @@ func TestRelationshipsRanksByReciprocityAndGatesNewsletters(t *testing.T) {
 	}
 
 	// One meeting together (owner + A).
-	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "calendar_event", SentAt: now.AddDate(0, 0, -2)})
+	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "meeting_transcript", SentAt: now.AddDate(0, 0, -2)})
 	b.AddFrom(meetingID, ownerID, "Owner")
 	b.AddTo(meetingID, aID, "Alice")
 
@@ -354,7 +444,7 @@ func TestRelationshipsWithOwnerResolvesAlias(t *testing.T) {
 	otherID := b.AddParticipant("x@example.com", "example.com", "X")
 
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "calendar_event", SentAt: now.AddDate(0, 0, -1)})
+	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "meeting_transcript", SentAt: now.AddDate(0, 0, -1)})
 	b.AddFrom(meetingID, ownerAliasID, "Owner Alias")
 	b.AddTo(meetingID, otherID, "X")
 
@@ -661,7 +751,7 @@ func TestRelationshipsClampsFutureEntryDecayAtOne(t *testing.T) {
 	// An upcoming meeting a year out has a negative age; its decay weight
 	// must clamp at exp(0) = 1, not grow to exp(+rate*365).
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "calendar_event",
+	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "meeting_transcript",
 		SentAt: now.AddDate(1, 0, 0)})
 	b.AddFrom(meetingID, ownerID, "Owner")
 	b.AddTo(meetingID, xID, "X")
@@ -708,7 +798,7 @@ func TestRelationshipsFutureRowsPreserveGateModalitiesAndLastTimestamp(t *testin
 	meetingAt := time.Date(2026, 1, 4, 16, 45, 12, 0, time.UTC)
 	meeting := b.AddMessage(MessageOpt{
 		SourceID:    sourceID,
-		MessageType: "calendar_event",
+		MessageType: "meeting_transcript",
 		SentAt:      meetingAt,
 	})
 	b.AddFrom(meeting, ownerID, "Owner")

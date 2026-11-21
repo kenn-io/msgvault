@@ -55,7 +55,7 @@ func init() {
 	)
 	createSubsetCmd.Flags().BoolVar(
 		&subsetIncludeProfiles, "include-profiles", false,
-		"copy structured profile values, history, media, contact observations, relationships, employment history with referenced organizations (their profiles, contacts, and media), and provenance; may expose sensitive personal data",
+		"copy profile details, history, media, contacts, relationships, jobs, linked organizations and their profiles, contacts, and media, and where each value came from; may expose sensitive personal data",
 	)
 	createSubsetCmd.Flags().BoolVar(
 		&subsetIncludeVCardResources, "include-vcard-resources", false,
@@ -119,7 +119,7 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 	}
 	if subsetIncludeProfiles {
 		fmt.Fprintln(os.Stderr,
-			"WARNING: --include-profiles copies every included person's current and historical structured profile values, media, contact observations, relationships, and provenance metadata, plus their employment history and the referenced organizations' profiles, contacts, and media.")
+			"WARNING: --include-profiles copies each person's profile details, history, media, contacts, relationships, jobs, and linked organizations' profiles, contacts, and media. It also copies where values came from.")
 	}
 	if subsetIncludeVCardResources {
 		warning := "WARNING: --include-vcard-resources copies every included person's complete native vCard bodies and retired-UID aliases. A body is copied whole and stays opaque, so it may carry custom properties and RELATED entries naming people outside the subset."

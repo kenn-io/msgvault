@@ -51,7 +51,7 @@ func firstDifference(left, right []byte) int {
 	return min(len(left), len(right))
 }
 
-func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) {
+func TestRewriteGeneratedValidatorsAllowsEmptyAndNullableFields(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
@@ -60,11 +60,21 @@ func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) 
 	assertions.NotContains(string(got), `typesValidator.Var(m.Network, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(m.NetworkLabel, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(m.ProviderChatID, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(m.TabTitle, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(p.AliasReason, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(c.DisplayName, "required")`)
+	assertions.NotContains(string(got), "RemoteUID string `json:\"remote_uid\" validate:\"required\"`")
 	assertions.Contains(string(got), "Address       string `json:\"address\"`\n")
 	assertions.Contains(string(got), "DisplayName   string `json:\"display_name\"`\n")
+	assertions.Contains(string(got), "End   *time.Time `json:\"end\"`\n\tStart *time.Time `json:\"start\"`\n")
 	assertions.NotContains(string(got), `typesValidator.Var(l.Summary, "required")`)
+}
+
+func TestRewriteNullableMeetingLinkBoundsRejectsMissingStart(t *testing.T) {
+	requirements := require.New(t)
+	missing := strings.Replace(generatedValidatorFixture(), "\tStart *time.Time `json:\"start\" validate:\"required\"`\n", "", 1) + "\ntype Other struct { Start *time.Time }\n"
+	_, err := RewriteGeneratedValidators([]byte(missing))
+	requirements.ErrorContains(err, "MeetingLink.Start")
 }
 
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
@@ -195,6 +205,16 @@ func (e Evidence) Validate() error {
 	}
 	return errors
 }
+type MessageDetail struct {
+	TabTitle string
+}
+func (m MessageDetail) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.TabTitle, "required"); err != nil {
+		errors = errors.Append("TabTitle", err)
+	}
+	return errors
+}
 func (e ExploreGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 }
@@ -213,7 +233,9 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() + loopCounterpartyEmptyStringValidatorFixture()
+
+` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() + cardDAVBindingEmptyRemoteUIDValidatorFixture() +
+		loopCounterpartyEmptyStringValidatorFixture()
 }
 
 func contactRouteEmptyStringValidatorFixture() string {
@@ -235,10 +257,17 @@ func contactCandidateEmptyStringValidatorFixture() string {
 		"\tif len(errors) == 0 {\n\t\treturn nil\n\t}\n\treturn errors\n}\n"
 }
 
+func cardDAVBindingEmptyRemoteUIDValidatorFixture() string {
+	return "type CardDAVBinding struct {\n\tRemoteUID string `json:\"remote_uid\" validate:\"required\"`\n}\n" +
+		"func (c CardDAVBinding) Validate() error {\n\treturn runtime.ConvertValidatorError(typesValidator.Struct(c))\n}\n"
+}
+
 func loopCounterpartyEmptyStringValidatorFixture() string {
 	return "type LoopCounterparty struct {\n\tAddress       string `json:\"address\" validate:\"required\"`\n" +
 		"\tDisplayName   string `json:\"display_name\" validate:\"required\"`\n\tParticipantID int64  `json:\"participant_id\"`\n}\n" +
 		"func (l LoopCounterparty) Validate() error {\n\treturn runtime.ConvertValidatorError(typesValidator.Struct(l))\n}\n" +
+		"type MeetingLink struct {\n\tEnd   *time.Time `json:\"end\" validate:\"required\"`\n\tStart *time.Time `json:\"start\" validate:\"required\"`\n}\n" +
+		"func (m MeetingLink) Validate() error {\n\treturn runtime.ConvertValidatorError(typesValidator.Struct(m))\n}\n" +
 		"type LoopItem struct {\n\tSummary string\n}\n" +
 		"func (l LoopItem) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
 		"\tif err := typesValidator.Var(l.Summary, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Summary\", err)\n\t}\n" +

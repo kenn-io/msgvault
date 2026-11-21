@@ -1,6 +1,8 @@
 package taskclient
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -9,6 +11,43 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPrivateNetworkKataConnection(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertions.Equal("kata:7777", r.Host)
+		assertions.Equal("Bearer synthetic-key", r.Header.Get("Authorization"))
+		assertions.Nil(r.URL.User)
+		switch r.URL.Path {
+		case "/api/v1/health":
+			writeTestJSON(t, w, map[string]any{"api_schema_version": "0.21.0"})
+		case "/api/v1/projects":
+			writeTestJSON(t, w, map[string]any{"projects": []any{map[string]any{"id": 1, "uid": "project-uid", "name": "msgvault", "active": true}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", server.Listener.Addr().String())
+	}}
+	t.Cleanup(transport.CloseIdleConnections)
+	cfg := IntegrationConfig{Enabled: true, Endpoint: "http://kata:7777", APIKey: "synthetic-key", DefaultProject: "msgvault", HTTPClient: &http.Client{Transport: transport}}
+	_, err := ConnectKata(t.Context(), cfg)
+	requirements.ErrorIs(err, ErrInsecureEndpoint)
+	cfg.TrustPrivateNetwork = true
+	client, err := ConnectKata(t.Context(), cfg)
+	requirements.NoError(err)
+	assertions.Equal(EndpointPrivateHTTP, client.transport.EndpointKind())
+	assertions.Equal(StateReady, EvaluateKata(t.Context(), cfg).State)
+	// The shared configuration type must not opt generic tasks into this policy.
+	_, _, err = Connect(t.Context(), cfg)
+	requirements.ErrorIs(err, ErrInsecureEndpoint)
+	cfg.APIKey = ""
+	_, err = ConnectKata(t.Context(), cfg)
+	requirements.ErrorIs(err, ErrAuthenticationRequired)
+}
 
 // These responses exercise compatibility and error classification at the native
 // HTTP boundary. The personagenda package runs issue operations against real Kata.

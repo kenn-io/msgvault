@@ -160,6 +160,10 @@ func (u *Updater) PerformUpdate(info *UpdateInfo, reporter Reporter) error {
 		DestinationPath:   dstPath,
 		ArchiveBinaryName: targetBinary,
 		Progress:          progress,
+		// Run the new binary before it replaces this one. A release that
+		// cannot start here, such as one needing a newer glibc, then leaves
+		// the working install in place.
+		VerifyArgs: []string{"version"},
 	}); err != nil {
 		return fmt.Errorf("install update: %w", err)
 	}

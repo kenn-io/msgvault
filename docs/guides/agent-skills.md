@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-06
+last_edited: 2026-11-17
 title: Agent Skills
 description: Teach coding agents the msgvault CLI with installable skills
 ---
@@ -29,7 +29,8 @@ direction before archive mutations such as sync, import, dedup or deletion.
 msgvault skills install
 ```
 
-This detects installed agents by directory (`~/.claude`, `~/.codex`)
+This detects installed agents by directory (`~/.claude`, `~/.codex`, or the
+directories set by `CLAUDE_CONFIG_DIR` and `CODEX_HOME`)
 and writes the skills to each agent's user-level skills directory
 (`~/.claude/skills/`, `~/.codex/skills/`). Options:
 
@@ -54,10 +55,18 @@ terminal coding agents that already run shell commands and can pipe
 `--json` output through `jq`. Skill content is validated against the
 CLI's command tree in CI, so examples stay correct as the CLI evolves.
 
+MCP clients can read the same guides without installing files. Call
+`msgvault.skills {}` to list them, and `msgvault.skills {"name":"workflow"}`
+to read the [agent quickstart](agent-quickstart.md). The list holds
+`workflow` followed by every skill bundled with the running binary, so new
+skills appear without configuration. Skills installed on disk do not change
+it. The tool is read-only, reads no archive data, and is available in
+delegated sessions.
+
 ## Follow through on feedback
 
-The feedback skill is newer than the latest release. After upgrading msgvault,
-run `msgvault skills install` again. Ask your agent to record feedback from a
+After upgrading msgvault, run `msgvault skills install` again to get the
+feedback skill. Ask your agent to record feedback from a
 specific person or message, review your earlier decision, or follow through on
 an accepted change. Summarizing feedback alone does not authorize task writes.
 

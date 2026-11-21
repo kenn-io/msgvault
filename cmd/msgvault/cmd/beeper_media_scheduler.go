@@ -64,10 +64,13 @@ func configureBeeperMediaJob(
 	cfg config.DocbankIntegrationConfig,
 	logger *slog.Logger,
 ) error {
+	settingErr := withBeeperMediaGate(ctx, gate, beeperMediaGateLabel, func() error {
+		return st.SetVoiceTranscriptSearch(ctx, cfg.Enabled && cfg.VoiceTranscriptSearch)
+	})
 	// The mirror reports its own setup failure independently of the audio route.
 	_ = configureDocbankAttachmentJob(ctx, sched, gate, st, blobs, attachmentsDir, cfg, logger)
-	if !cfg.Enabled {
-		return removeBeeperMediaRoute(ctx, sched, gate, st)
+	if !cfg.Enabled || settingErr != nil {
+		return errors.Join(settingErr, removeBeeperMediaRoute(ctx, sched, gate, st))
 	}
 	err := addBeeperMediaRoute(ctx, sched, gate, st, blobs, spoolDir, cfg, logger)
 	if err != nil {
@@ -105,7 +108,7 @@ func configureDocbankAttachmentJob(
 		if destination == "" {
 			return nil
 		}
-		client, err := docbankmedia.NewClient(strings.TrimRight(strings.TrimSpace(cfg.URL), "/"), cfg.ResolveAPIKey)
+		client, err := docbankmedia.NewClient(strings.TrimRight(strings.TrimSpace(cfg.URL), "/"), cfg.ResolveAPIKey, docbankmedia.WithTrustPrivateNetwork(cfg.TrustPrivateNetwork))
 		if err != nil {
 			return err
 		}
@@ -175,6 +178,9 @@ func addBeeperMediaRoute(
 	}
 	submitter := beeper.NewMediaSubmitter(st, blobs, submitClient, destination, spoolDir).
 		WithASRProfile(cfg.ASRProfile).WithOperationGate(beeperMediaGate(gate, beeperMediaGateLabel))
+	if cfg.VoiceTranscriptSearch {
+		submitter.WithVoiceTranscriptSearch(client)
+	}
 	return sched.AddJob(scheduler.Job{
 		Name:     beeperMediaSubmitJob,
 		Schedule: beeperMediaSubmitCron,
@@ -198,7 +204,7 @@ func addBeeperMediaRoute(
 func docbankMediaClient(
 	ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig,
 ) (*docbankmedia.Client, string, error) {
-	client, err := docbankmedia.NewClient(cfg.URL, cfg.ResolveAPIKey)
+	client, err := docbankmedia.NewClient(cfg.URL, cfg.ResolveAPIKey, docbankmedia.WithTrustPrivateNetwork(cfg.TrustPrivateNetwork))
 	if err != nil {
 		return nil, "", err
 	}
@@ -222,6 +228,7 @@ func newMessageRecordingReader(
 		return reader, err
 	}
 	reader.Client, reader.Destination, reader.UploadConsent = client, destination, cfg.AllSourcesUploadConsent
+	reader.SearchProfile = strings.TrimSpace(cfg.RecordingSearchProfile)
 	return reader, nil
 }
 
@@ -240,7 +247,7 @@ func newDocbankAttachmentReader(ctx context.Context, st *store.Store, cfg config
 	if err != nil {
 		return nil, err
 	}
-	return &api.DocbankAttachmentReader{Store: st, Client: client, Destination: destination, Folder: cfg.MirrorFolder()}, nil
+	return &api.DocbankAttachmentReader{Store: st, Client: client, Destination: destination, Folder: cfg.MirrorFolder(), SearchProfile: cfg.AttachmentSearchProfile}, nil
 }
 
 func docbankAttachmentDestination(ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig) (string, error) {

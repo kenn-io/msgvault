@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	maxDownloadBytes = 256 << 20
+	MaxDownloadBytes = 256 << 20
 	maxDownloads     = 8
 	downloadLifetime = 5 * time.Minute
 )
@@ -23,11 +23,15 @@ var (
 )
 
 type downloadKey struct {
+	operation  string
+	identity   string
 	message    query.MessageRef
 	attachment int64
 }
 
 type downloadSnapshot struct {
+	etag       string
+	mediaType  string
 	validate   func(context.Context) error
 	data       []byte
 	digest     string
@@ -38,26 +42,26 @@ type downloadSnapshot struct {
 }
 
 // downloadCache retains at most 256 MiB across eight downloads. A digest pins
-// continuations to their initial bytes even if the archive changes meanwhile.
+// continuations to their initial bytes until a fresh read replaces the snapshot.
 type downloadCache struct {
 	mu      sync.Mutex
 	entries map[downloadKey]*downloadSnapshot
+	loading map[downloadKey]chan struct{}
 	bytes   int
 	closed  bool
 }
 
 func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkRequest, load func() (*downloadSnapshot, error)) (*downloadSnapshot, error) {
-	// ponytail: serialize snapshot loads; per-download locks if concurrent
-	// large exports need to avoid waiting behind another download.
 	c.mu.Lock()
 	defer c.mu.Unlock()
+retry:
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if c.closed {
 		return nil, errDownloadExpired
 	}
-	if entry := c.entries[key]; entry != nil {
+	if entry := c.entries[key]; entry != nil && (key.operation == "" || req.offset != 0) {
 		if time.Now().Before(entry.expires) {
 			if entry.validate != nil {
 				if err := entry.validate(ctx); err != nil {
@@ -81,19 +85,71 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 	if req.offset != 0 {
 		return nil, errDownloadExpired
 	}
-	entry, err := load()
+	if key.operation == "" {
+		if pending := c.loading[key]; pending != nil {
+			err := func() error {
+				c.mu.Unlock()
+				defer c.mu.Lock()
+				select {
+				case <-pending:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}()
+			if err != nil {
+				return nil, err
+			}
+			goto retry
+		}
+		if c.loading == nil {
+			c.loading = make(map[downloadKey]chan struct{})
+		}
+		pending := make(chan struct{})
+		c.loading[key] = pending
+		defer func() {
+			delete(c.loading, key)
+			close(pending)
+		}()
+	}
+	entry, err := func() (*downloadSnapshot, error) {
+		c.mu.Unlock()
+		defer c.mu.Lock()
+		entry, err := load()
+		if err != nil {
+			return nil, err
+		}
+		if len(entry.data) > MaxDownloadBytes {
+			return nil, errDownloadTooLarge
+		}
+		sum := sha256.Sum256(entry.data)
+		entry.digest = hex.EncodeToString(sum[:])
+		return entry, nil
+	}()
 	if err != nil {
 		return nil, err
 	}
-	if len(entry.data) > maxDownloadBytes {
-		return nil, errDownloadTooLarge
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	sum := sha256.Sum256(entry.data)
-	entry.digest = hex.EncodeToString(sum[:])
+	if c.closed {
+		return nil, errDownloadExpired
+	}
+	if key.operation == "" && c.entries[key] != nil {
+		goto retry
+	}
 	if req.digest != "" && req.digest != entry.digest {
 		return nil, errDownloadExpired
 	}
-	for len(c.entries) >= maxDownloads || c.bytes+len(entry.data) > maxDownloadBytes {
+	if key.operation != "" {
+		if c.entries[key] != nil {
+			c.remove(key)
+		}
+		if req.offset == 0 && int64(len(entry.data)) <= req.length {
+			return entry, nil
+		}
+	}
+	for len(c.entries) >= maxDownloads || c.bytes+len(entry.data) > MaxDownloadBytes {
 		var oldest downloadKey
 		var expires time.Time
 		for key, cached := range c.entries {

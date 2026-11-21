@@ -69,7 +69,7 @@ function samePageAuthority(
  * sites rather than owned exclusively by EverythingWorkspace.
  */
 // A message table the shell's reader and Display commands act on.
-export type MessagesTable = { state: ExploreState; loader: ExploreLoader; openRow: (row: EntryRow) => void; resultsWidth: number };
+export type MessagesTable = { state: ExploreState; loader: ExploreLoader; openRow: (row: EntryRow) => void; resultsWidth: number; readingTitle?: string };
 
 export class ExploreLoader {
   rows = $state<EntryRow[]>([]);

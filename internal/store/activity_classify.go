@@ -38,25 +38,7 @@ func ClassifyActivityCandidate(
 		result.RefKind = RefKindMeeting
 	}
 
-	owningSenderIndex := -1
-	for index, counterpart := range counterparts {
-		if counterpart.RecipientType == "from" && counterpart.IsOwner {
-			owningSenderIndex = index
-			break
-		}
-	}
-	switch {
-	case candidate.SourceIsFromMe || owningSenderIndex >= 0:
-		result.Direction = DirectionOutbound
-		if owningSenderIndex >= 0 {
-			result.OwnerAddress = counterparts[owningSenderIndex].OwnerAddress
-		}
-	case activityOwnerAmongNonSenders(counterparts):
-		result.Direction = DirectionInbound
-		result.OwnerAddress = firstActivityNonSenderOwnerAddress(counterparts)
-	default:
-		result.Direction = DirectionObserved
-	}
+	result.Direction, result.OwnerAddress = activityDirection(candidate.SourceIsFromMe, counterparts)
 	if result.Direction != DirectionObserved && candidate.SourceID > 0 {
 		sourceID := candidate.SourceID
 		result.OwnerSourceID = &sourceID
@@ -64,20 +46,12 @@ func ClassifyActivityCandidate(
 
 	ownerLinked := activityOwnerLinked(counterparts)
 
-	type audienceKey struct {
-		person bool
-		id     int64
-	}
 	nonOwnerIDs := make(map[audienceKey]struct{}, len(counterparts))
 	for _, counterpart := range counterparts {
 		if ownerLinked(counterpart) {
 			continue
 		}
-		key := audienceKey{id: counterpart.ParticipantID}
-		if counterpart.PersonID != nil {
-			key = audienceKey{person: true, id: *counterpart.PersonID}
-		}
-		nonOwnerIDs[key] = struct{}{}
+		nonOwnerIDs[activityAudienceKey(counterpart)] = struct{}{}
 	}
 	broadcast := len(nonOwnerIDs) > maxDirectCounterparts
 	result.Broadcast = broadcast
@@ -85,7 +59,7 @@ func ClassifyActivityCandidate(
 		if ownerLinked(counterpart) || counterpart.PersonID == nil {
 			continue
 		}
-		isSender := counterpart.RecipientType == "from"
+		isSender := counterpart.RecipientType == recipientTypeFrom
 		result.Persons = append(result.Persons, ActivityEventPerson{
 			PersonID: *counterpart.PersonID,
 			Role:     classifiedActivityRole(counterpart.RecipientType, isSender, meeting),
@@ -94,6 +68,42 @@ func ClassifyActivityCandidate(
 	}
 	result.Persons = strongestClassifiedActivityLinks(result.Persons)
 	return result
+}
+
+// activityDirection applies owner-relative direction to counterpart evidence.
+func activityDirection(sourceIsFromMe bool, counterparts []ActivityCounterpart) (direction ActivityDirection, ownerAddress string) {
+	owningSenderIndex := -1
+	for index, counterpart := range counterparts {
+		if counterpart.RecipientType == recipientTypeFrom && counterpart.IsOwner {
+			owningSenderIndex = index
+			break
+		}
+	}
+	switch {
+	case sourceIsFromMe || owningSenderIndex >= 0:
+		direction = DirectionOutbound
+		if owningSenderIndex >= 0 {
+			ownerAddress = counterparts[owningSenderIndex].OwnerAddress
+		}
+	case activityOwnerAmongNonSenders(counterparts):
+		direction = DirectionInbound
+		ownerAddress = firstActivityNonSenderOwnerAddress(counterparts)
+	default:
+		direction = DirectionObserved
+	}
+	return direction, ownerAddress
+}
+
+type audienceKey struct {
+	person bool
+	id     int64
+}
+
+func activityAudienceKey(counterpart ActivityCounterpart) audienceKey {
+	if counterpart.PersonID != nil {
+		return audienceKey{person: true, id: *counterpart.PersonID}
+	}
+	return audienceKey{id: counterpart.ParticipantID}
 }
 
 // activityOwnerLinked reports whether a counterpart of the message is the
@@ -176,7 +186,7 @@ func activityChannelFor(conversationType string, meeting bool) ActivityChannel {
 
 func activityOwnerAmongNonSenders(counterparts []ActivityCounterpart) bool {
 	for _, counterpart := range counterparts {
-		if counterpart.RecipientType != "from" && counterpart.IsOwner {
+		if counterpart.RecipientType != recipientTypeFrom && counterpart.IsOwner {
 			return true
 		}
 	}
@@ -185,7 +195,7 @@ func activityOwnerAmongNonSenders(counterparts []ActivityCounterpart) bool {
 
 func firstActivityNonSenderOwnerAddress(counterparts []ActivityCounterpart) string {
 	for _, counterpart := range counterparts {
-		if counterpart.RecipientType != "from" && counterpart.IsOwner {
+		if counterpart.RecipientType != recipientTypeFrom && counterpart.IsOwner {
 			return counterpart.OwnerAddress
 		}
 	}

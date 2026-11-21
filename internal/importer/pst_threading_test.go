@@ -42,7 +42,7 @@ func TestPstThreadingNUL(t *testing.T) {
 			require.NotNil(entry)
 			raw, err := pstreader.BuildRFC5322(entry, nil)
 			require.NoError(err)
-			require.NoError(pstMessageIngester(nil)(t.Context(), st, src.ID, src.Identifier,
+			require.NoError(pstMessageIngester(nil, nil)(t.Context(), st, src.ID, src.Identifier,
 				t.TempDir(), nil, "pst-synthetic", "synthetic-hash", raw, time.Time{}, slog.Default()))
 			ids, err := st.MessageExistsBatch(src.ID, []string{"pst-synthetic"})
 			require.NoError(err)
@@ -88,7 +88,7 @@ func TestPstThreadingPipeline(t *testing.T) {
 				raw, err := pstreader.BuildRFC5322(entry, nil)
 				require.NoError(err)
 				sourceID := fmt.Sprintf("pst-synthetic-%d", i)
-				require.NoError(IngestRawMessage(t.Context(), st, src.ID, "owner@example.test", "", nil, sourceID, strconv.Itoa(i), raw, time.Time{}, slog.Default()))
+				require.NoError(IngestRawMessage(t.Context(), st, src.ID, "owner@example.test", "", nil, sourceID, strconv.Itoa(i), raw, time.Time{}, slog.Default(), nil))
 				require.NoError(recordPstMessageHeaders(t.Context(), st, src.ID, sourceID, raw))
 			}
 			require.NoError(st.ResolveEmailReplyParentsContext(t.Context(), src.ID, 0, nil))

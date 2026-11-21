@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gmail"
 	imaplib "go.kenn.io/msgvault/internal/imap"
-	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/sync"
@@ -198,7 +197,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		}
 		if len(sources) == 0 {
 			if len(syncErrors) > 0 {
-				return fmt.Errorf("%s", syncErrors[0])
+				return errors.Join(errors.New(syncErrors[0]), cmd.Context().Err())
 			}
 			return errors.New("no accounts are ready to sync")
 		}
@@ -238,28 +237,26 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if err := runFullSync(ctx, s, getOAuthMgr, src, state); err != nil {
+		if err := runFullSync(ctx, s, getOAuthMgr, src, state, false); err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 			continue
 		}
 	}
 
-	// Rebuild analytics cache.
 	cacheErr := rebuildCacheAfterManualSync(dbPath, state)
-
+	var sourceErr error
 	if len(syncErrors) > 0 {
 		fmt.Println()
 		fmt.Println("Errors:")
 		for _, e := range syncErrors {
 			fmt.Printf("  %s\n", e)
 		}
-		return errors.Join(
-			fmt.Errorf("%d account(s) failed to sync: %s", len(syncErrors), strings.Join(syncErrors, "; ")),
-			cacheErr,
-		)
+		sourceErr = fmt.Errorf("%d account(s) failed to sync: %s", len(syncErrors), strings.Join(syncErrors, "; "))
 	}
-
-	return cacheErr
+	if ctx.Err() != nil {
+		cmd.SilenceErrors = true
+	}
+	return errors.Join(sourceErr, cacheErr, ctx.Err())
 }
 
 // buildAPIClient creates the appropriate gmail.API client for the given
@@ -349,16 +346,13 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 
 		switch imapCfg.EffectiveAuthMethod() {
 		case imaplib.AuthXOAuth2:
-			if cfg.Microsoft.ClientID == "" {
+			if sourceOAuthApp(src) == "" && cfg.Microsoft.ClientID == "" {
 				return nil, errors.New("microsoft OAuth not configured — add a [microsoft] section with client_id to config.toml")
 			}
-			msMgr := microsoft.NewManager(
-				cfg.Microsoft.ClientID,
-				cfg.Microsoft.EffectiveTenantID(),
-				cfg.Microsoft.EffectiveRedirectURI(),
-				cfg.TokensDir(),
-				logger,
-			)
+			msMgr, err := newMicrosoftIMAPManager(cfg, logger, src)
+			if err != nil {
+				return nil, err
+			}
 			tokenFn, err := msMgr.TokenSource(ctx, imapCfg.Username)
 			if err != nil {
 				return nil, fmt.Errorf("load Microsoft token: %w (run 'add-o365' first)", err)
@@ -518,16 +512,11 @@ func applyIMAPMailboxDeltas(
 		}
 		observationIndexes[key] = len(normalizedObservations)
 		normalizedObservations = append(normalizedObservations, store.IMAPMembershipObservation{
-			Mailbox:                  observation.Mailbox,
-			UIDValidity:              observation.UIDValidity,
-			UID:                      observation.UID,
-			SourceMessageID:          observation.SourceMessageID,
-			CanonicalSourceMessageID: observation.CanonicalSourceMessageID,
-			RFC822MessageID:          observation.RFC822MessageID,
-			RawSHA256:                observation.RawSHA256,
-			RawSize:                  observation.RawSize,
-			Flags:                    append([]string(nil), observation.Flags...),
-			ArchivedMessageID:        observation.ArchivedMessageID,
+			Mailbox: observation.Mailbox, UIDValidity: observation.UIDValidity, UID: observation.UID,
+			SourceMessageID: observation.SourceMessageID, CanonicalSourceMessageID: observation.CanonicalSourceMessageID,
+			RFC822MessageID: observation.RFC822MessageID, RawSHA256: observation.RawSHA256,
+			RawSize: observation.RawSize, ArchivedMessageID: observation.ArchivedMessageID,
+			Flags: append([]string(nil), observation.Flags...),
 		})
 	}
 	byMailbox := make(map[string][]store.IMAPMembershipObservation)
@@ -548,6 +537,7 @@ func applyIMAPMailboxDeltas(
 		}
 		storeDeltas = append(storeDeltas, store.IMAPMailboxDelta{
 			Mailbox: delta.Mailbox,
+			Trash:   delta.Trash,
 			State: store.IMAPFolderState{
 				Mailbox:       delta.Mailbox,
 				UIDValidity:   delta.State.UIDValidity,
@@ -603,7 +593,7 @@ func saveIMAPFolderStates(
 	return nil
 }
 
-func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), src *store.Source, state *invocation) error {
+func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), src *store.Source, state *invocation, reportInterrupt bool) error {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
@@ -706,10 +696,12 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 	)
 	if err != nil {
 		if ctx.Err() != nil {
-			if opts.NoResume {
-				fmt.Println("\nSync interrupted. Run again to restart (already-imported messages will be skipped).")
-			} else {
-				fmt.Println("\nSync interrupted. Run again to resume.")
+			if reportInterrupt {
+				if opts.NoResume {
+					fmt.Println("\nSync interrupted. Run again to restart (already-imported messages will be skipped).")
+				} else {
+					fmt.Println("\nSync interrupted. Run again to resume.")
+				}
 			}
 			return nil
 		}
@@ -1032,16 +1024,13 @@ func imapSkipReason(src *store.Source, cfg *config.Config, logger *slog.Logger) 
 	}
 	switch imapCfg.EffectiveAuthMethod() {
 	case imaplib.AuthXOAuth2:
-		if cfg.Microsoft.ClientID == "" {
+		if sourceOAuthApp(src) == "" && cfg.Microsoft.ClientID == "" {
 			return fmt.Sprintf("Skipping %s (Microsoft OAuth not configured — add client_id to [microsoft] in config.toml)", src.Identifier), nil
 		}
-		msMgr := microsoft.NewManager(
-			cfg.Microsoft.ClientID,
-			cfg.Microsoft.EffectiveTenantID(),
-			cfg.Microsoft.EffectiveRedirectURI(),
-			cfg.TokensDir(),
-			repairLogger(logger),
-		)
+		msMgr, err := newMicrosoftIMAPManager(cfg, repairLogger(logger), src)
+		if err != nil {
+			return fmt.Sprintf("Skipping %s (%v)", src.Identifier, err), nil
+		}
 		if !msMgr.HasToken(imapCfg.Username) {
 			return fmt.Sprintf("Skipping %s (no Microsoft token — run 'add-o365' first)", src.Identifier), nil
 		}

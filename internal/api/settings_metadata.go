@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/feeds"
 	"go.kenn.io/msgvault/internal/forge/github"
 )
 
@@ -67,12 +68,13 @@ var settingsGroups = []SettingGroup{
 	},
 	{
 		ID: settingsGroupSources, Label: "Sources",
-		Description: "Sync schedules and filters for chat, GitHub and contact sources.",
+		Description: "Sync schedules and filters for chat, feed, GitHub and contact sources.",
 		Sections: []SettingSection{
 			{ID: "shared", Label: "All sources"},
 			{ID: sourceTypeBeeper, Label: "Beeper"},
 			{ID: sourceTypeSlack, Label: "Slack"},
 			{ID: sourceTypeInline, Label: "Inline"},
+			{ID: feeds.SourceType, Label: "Feeds", Description: "Follow feeds with msgvault source feeds add."},
 			{ID: github.Name, Label: "GitHub", Description: "Add accounts with msgvault add-github."},
 			{ID: "carddav", Label: "CardDAV", Description: "Change these in the CardDAV account category."},
 		},
@@ -201,6 +203,8 @@ var settingsMetadata = map[string]settingMetadata{
 	"beeper.rate_limit_qps":         {"Beeper requests per second", "Request rate limit for Beeper.", sourceTypeBeeper},
 	"inline.enabled":                {"Scheduled Inline sync", "Sync configured Inline accounts on the schedule below.", sourceTypeInline},
 	"inline.schedule":               {"Inline schedule", "When Inline sync runs.", sourceTypeInline},
+	"feeds.enabled":                 {"Scheduled feed sync", "Fetch followed RSS, Atom and JSON feeds on the schedule below.", feeds.SourceType},
+	"feeds.schedule":                {"Feed schedule", "When followed feeds are fetched.", feeds.SourceType},
 	"inline.media":                  {"Download Inline attachments", "Download attachments from future Inline syncs.", sourceTypeInline},
 	"inline.media_scope":            {"Inline conversations", "Which Inline conversations to download attachments from.", sourceTypeInline},
 	"inline.media_max_participants": {"Inline participant limit", "Skip Inline conversations with more people than this or an unknown roster. Zero allows unknown rosters.", sourceTypeInline},
@@ -245,14 +249,15 @@ var settingsMetadata = map[string]settingMetadata{
 	"people.enrichment.batch_size":     {"Enrichment batch size", "People handled per run.", ""},
 	"people.enrichment.lease_duration": {"Enrichment lease", "How long one run holds a batch before another run may take it.", ""},
 
-	"integrations.tasks.enabled":         {"Task integration", "Send tasks to the configured task service.", ""},
-	"integrations.tasks.endpoint":        {"Task endpoint", "Where the task service listens.", ""},
-	"integrations.tasks.api_key":         {"Task API key", "Bearer key the daemon sends to the task service.", ""},
-	"integrations.tasks.default_project": {"Default task project", "Project used when creating or looking up tasks.", ""},
-	"integrations.kata.enabled":          {"Kata person agendas", "Show live Kata tasks linked to people.", ""},
-	"integrations.kata.endpoint":         {"Kata endpoint", "Where the Kata service listens. Required when enabled.", ""},
-	"integrations.kata.api_key":          {"Kata API key", "Bearer key the daemon sends to Kata.", ""},
-	"integrations.kata.default_project":  {"Kata project", "Existing Kata project used for person agendas.", ""},
+	"integrations.tasks.enabled":              {"Task integration", "Send tasks to the configured task service.", ""},
+	"integrations.tasks.endpoint":             {"Task endpoint", "Where the task service listens.", ""},
+	"integrations.tasks.api_key":              {"Task API key", "Bearer key the daemon sends to the task service.", ""},
+	"integrations.tasks.default_project":      {"Default task project", "Project used when creating or looking up tasks.", ""},
+	"integrations.kata.enabled":               {"Kata person agendas", "Show live Kata tasks linked to people.", ""},
+	"integrations.kata.trust_private_network": {"Trust private network", "Allow plaintext HTTP, including the API key, on a network you trust.", ""},
+	"integrations.kata.endpoint":              {"Kata endpoint", "Where the Kata service listens. Required when enabled.", ""},
+	"integrations.kata.api_key":               {"Kata API key", "Bearer key the daemon sends to Kata.", ""},
+	"integrations.kata.default_project":       {"Kata project", "Existing Kata project used for person agendas.", ""},
 }
 
 // settingsValidation carries format and range rules. A hint says how to
@@ -302,6 +307,7 @@ var settingsValidation = map[string]SettingValidation{
 	"beeper.schedule": cronValidation(false),
 	"slack.schedule":  cronValidation(false),
 	"inline.schedule": cronValidation(false),
+	"feeds.schedule":  cronValidation(false),
 	"github.schedule": cronValidation(false),
 	// A float has no "greater than zero" bound a number control can carry,
 	// so the on range starts at 0.1 requests per second. A smaller positive
@@ -329,7 +335,7 @@ var settingsValidation = map[string]SettingValidation{
 	"people.enrichment.batch_size":     atLeast(1),
 	"people.enrichment.lease_duration": {Hint: "Duration such as 5m or 1h.", Required: true},
 	"integrations.tasks.endpoint":      {Hint: "HTTPS URL, loopback HTTP URL, or a Unix socket you own."},
-	"integrations.kata.endpoint":       {Hint: "HTTPS URL, loopback HTTP URL, or a Unix socket you own."},
+	"integrations.kata.endpoint":       {Hint: "HTTPS, loopback HTTP, trusted private-network HTTP, or a Unix socket you own."},
 }
 
 func atLeast(minimum float64) SettingValidation {

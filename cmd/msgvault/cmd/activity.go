@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	activitypkg "go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -122,31 +123,70 @@ func registerActivityProjectionJob(
 		Preemptible: true,
 		MaxRuntime:  activityProjectionMaxRuntime,
 		Schedule:    activityConfig.Schedule,
-		Run: func(ctx context.Context) error {
-			result, runErr := projector.RunOnce(ctx)
-			if errors.Is(runErr, activitypkg.ErrWorkRemaining) {
-				log.Info("activity projection pass complete; continuing behind queued work", "processed", result.Processed, "batches", result.Batches)
-				return scheduler.ErrReschedule
-			}
-			if runErr != nil && (errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded)) {
-				return runErr
-			}
-			if runErr != nil {
-				log.Error("activity projection failed",
-					"error", runErr,
-					"processed", result.Processed,
-					"batches", result.Batches)
-				return runErr
-			}
-			log.Info("activity projection complete",
-				"events_projected", result.EventsProjected,
-				"persons_touched", result.PersonsTouched,
-				"persons_recomputed", result.PersonsRecomputed,
-				"batches", result.Batches,
-				"watermark", result.Watermark)
-			return nil
-		},
+		Run:         activityProjectionRun(projector.RunOnce, st.ContactRevisionsContext, log),
 	})
+}
+
+// A job's callbacks are serialized, so the baseline belongs to its current
+// continuation chain, including passes resumed after scheduler interruptions.
+func activityProjectionRun(
+	runOnce func(context.Context) (activitypkg.RunResult, error),
+	revisions func(context.Context) (store.ContactRevisions, error),
+	log *slog.Logger,
+) func(context.Context) error {
+	var baseline *store.ContactRevisions
+	return func(ctx context.Context) (err error) {
+		budgetExpired := func() bool { return errors.Is(context.Cause(ctx), jobctx.ErrRunBudgetExceeded) }
+		yielded := func() bool { return budgetExpired() || jobctx.YieldedToWaiter(ctx) || jobctx.PreemptionRequested(ctx) }
+		defer func() {
+			// Match runJob's priority: deferral and a budget without progress
+			// end the chain even if another scheduler signal is also present.
+			if err == scheduler.ErrDeferUntilNextTrigger || //nolint:errorlint // Only bare deferral ends a clean chain.
+				(budgetExpired() && !jobctx.HasProgress(ctx)) ||
+				(!errors.Is(err, scheduler.ErrReschedule) && !yielded()) {
+				baseline = nil
+			}
+		}()
+		current, err := revisions(ctx)
+		if err != nil {
+			return fmt.Errorf("read activity projection revisions: %w", err)
+		}
+		if baseline == nil {
+			baseline = &current
+		}
+		moved := current != *baseline
+		// Accept this pass even after a revision change: its trigger may already
+		// include an explicit request coalesced behind the preceding pass.
+		result, runErr := runOnce(ctx)
+		clean := jobctx.ErrorAfterYield(ctx, runErr, activitypkg.ErrWorkRemaining) == nil
+		continuing := errors.Is(runErr, activitypkg.ErrWorkRemaining) || yielded()
+		if moved && clean && continuing && (!budgetExpired() || jobctx.HasProgress(ctx)) {
+			log.Info("activity projection pass complete; continuation deferred after identity change",
+				"processed", result.Processed, "batches", result.Batches)
+			return scheduler.ErrDeferUntilNextTrigger
+		}
+		if clean && errors.Is(runErr, activitypkg.ErrWorkRemaining) {
+			log.Info("activity projection pass complete; continuing behind queued work", "processed", result.Processed, "batches", result.Batches)
+			return scheduler.ErrReschedule
+		}
+		if runErr != nil && (errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded)) {
+			return runErr
+		}
+		if runErr != nil {
+			log.Error("activity projection failed",
+				"error", runErr,
+				"processed", result.Processed,
+				"batches", result.Batches)
+			return runErr
+		}
+		log.Info("activity projection complete",
+			"events_projected", result.EventsProjected,
+			"persons_touched", result.PersonsTouched,
+			"persons_recomputed", result.PersonsRecomputed,
+			"batches", result.Batches,
+			"watermark", result.Watermark)
+		return nil
+	}
 }
 
 func init() {

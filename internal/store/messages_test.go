@@ -2060,8 +2060,18 @@ func TestClearMessageDeletedFromSource(t *testing.T) {
 	insertStoreTestMessage(t, st, otherSource.ID, otherConversationID, "345678901234567890")
 	require.NoError(st.MarkMessageDeleted(otherSource.ID, "345678901234567890"))
 
+	var messageID, baseline int64
+	if !st.IsPostgreSQL() {
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, "345678901234567890").Scan(&messageID))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
+	}
 	require.NoError(st.ClearMessageDeletedFromSource(source.ID, "345678901234567890"))
 	assertSourceMessageIDNotDeleted(t, st, source.ID, "345678901234567890")
+	if !st.IsPostgreSQL() {
+		var count int
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`), baseline, messageID).Scan(&count))
+		assert.Positive(count)
+	}
 
 	var otherDeletedAt sql.NullTime
 	err = st.DB().QueryRowContext(
@@ -2071,6 +2081,13 @@ func TestClearMessageDeletedFromSource(t *testing.T) {
 	).Scan(&otherDeletedAt)
 	require.NoError(err)
 	assert.True(otherDeletedAt.Valid)
+	if !st.IsPostgreSQL() {
+		require.NoError(st.MarkMessageDeleted(source.ID, "345678901234567890"))
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_restore_journal BEFORE INSERT ON cache_related_change_journal BEGIN SELECT RAISE(ABORT, 'journal unavailable'); END`)
+		require.NoError(err)
+		require.Error(st.ClearMessageDeletedFromSourceContext(t.Context(), source.ID, "345678901234567890"))
+		assertMessageDeletedFromSource(t, st, source.ID, "345678901234567890", true)
+	}
 }
 
 func TestReconcileSourceMessageSnapshotIsSourceScopedAndGenerationFenced(t *testing.T) {
