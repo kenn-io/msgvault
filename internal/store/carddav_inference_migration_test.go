@@ -480,7 +480,7 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 	for _, tc := range []struct {
 		name                                                      string
 		publicationAfterV2, differentMapping, otherPerson, remote bool
-		declared, current, laterUnsupported                       bool
+		declared, current, unsupportedMetadata                    bool
 		review, multiple, approved, publication, anotherCard      bool
 	}{
 		{name: "retired", review: true},
@@ -494,7 +494,7 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 		{name: "remote", remote: true},
 		{name: "declared", declared: true},
 		{name: "current", current: true},
-		{name: "unsupported metadata after match", laterUnsupported: true},
+		{name: "unsupported metadata", unsupportedMetadata: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -591,8 +591,8 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 				_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_publications(person_id, desired, address_book_id, href) VALUES (?, TRUE, ?, ?)`), personID, book.ID, href)
 				require.NoError(err)
 			}
-			if tc.laterUnsupported {
-				otherHref := book.CanonicalURL + "later.vcf"
+			if tc.unsupportedMetadata {
+				otherHref := book.CanonicalURL + "unsupported.vcf"
 				_, err = st.db.Exec(st.Rebind(`INSERT INTO vcard_resource_envelopes (person_id, canonical_person_uid, source_ref, source_resource_uid, original_raw_bytes, stored_body, resource_metadata, content_hash, etag)
 					SELECT person_id, canonical_person_uid, source_ref, ?, original_raw_bytes, stored_body, `+st.dialect.JSONBindExpr()+`, content_hash, etag FROM vcard_resource_envelopes WHERE person_id=?`), otherHref, `{"format_version":999}`, personID)
 				require.NoError(err)
@@ -602,11 +602,11 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 			}
 			_, err = st.db.Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name=?`), migrationCardDAVInferenceExportStateV3)
 			require.NoError(err)
-			if tc.laterUnsupported {
+			if tc.unsupportedMetadata {
 				err := st.InitSchema()
 				require.ErrorContains(err, "unsupported vCard resource metadata format 999")
 				assert.ErrorContains(t, err, "Use a msgvault version that supports this metadata format")
-				assert.ErrorContains(t, err, book.CanonicalURL+"later.vcf")
+				assert.ErrorContains(t, err, book.CanonicalURL+"unsupported.vcf")
 				applied, err := st.IsMigrationAppliedContext(t.Context(), migrationCardDAVInferenceExportStateV3, 1)
 				require.NoError(err)
 				assert.False(t, applied)
