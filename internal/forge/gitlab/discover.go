@@ -608,6 +608,11 @@ type knownCursor struct {
 	Done    *knownGroup `json:"done,omitempty"`
 	// LastIID is the last thread number checked within Done.
 	LastIID int `json:"last_iid,omitzero"`
+	// Unchecked holds, for each group a check skipped because its project
+	// was gone, closed to the token or an excluded owner's, the watermark
+	// its changes are unread from. The next check that reads the group
+	// reads from there.
+	Unchecked map[string]time.Time `json:"unchecked,omitempty"`
 }
 
 // knownGroup is the archived threads of one kind in one project.
@@ -618,6 +623,22 @@ type knownGroup struct {
 
 func (g knownGroup) compare(other knownGroup) int {
 	return cmp.Or(cmp.Compare(g.Project, other.Project), strings.Compare(g.Resource, other.Resource))
+}
+
+func (g knownGroup) key() string {
+	return strconv.FormatInt(g.Project, 10) + "/" + g.Resource
+}
+
+// skip records that a check left the group unread from its watermark on,
+// keeping an earlier record.
+func (c *knownCursor) skip(group knownGroup) {
+	if _, ok := c.Unchecked[group.key()]; ok {
+		return
+	}
+	if c.Unchecked == nil {
+		c.Unchecked = map[string]time.Time{}
+	}
+	c.Unchecked[group.key()] = c.Through
 }
 
 // checkKnown asks each project which of its archived threads changed since
@@ -681,12 +702,18 @@ func (f *Forge) checkGroup(ctx context.Context, state *cursor, group knownGroup,
 	}
 	if err != nil || !owners.Allows(owner) {
 		// The project is gone, closed to the token, or an excluded owner's
-		// now. Its threads fail, or are dropped, on their own when fetched.
+		// now. Its threads fail, or are dropped, on their own when fetched,
+		// and its changes are read once a check can read it again.
+		cur.skip(group)
 		cur.Done, cur.LastIID = &group, iids[len(iids)-1]
 		return page(nil, state.encode())
 	}
+	from := cur.Through
+	if unchecked, ok := cur.Unchecked[group.key()]; ok && unchecked.Before(from) {
+		from = unchecked
+	}
 	for batch := range slices.Chunk(iids, perPage) {
-		through := cur.Through
+		through := from
 		for _, iid := range batch {
 			thread := archived[iid]
 			// A fetch completed after the last check began may have read
@@ -696,12 +723,6 @@ func (f *Forge) checkGroup(ctx context.Context, state *cursor, group knownGroup,
 			readFrom := thread.ReadAt.Add(-clockSlack)
 			if readFrom.Before(through) && !thread.CheckedAt.Before(cur.Through.Add(-clockSlack)) {
 				through = readFrom
-			}
-			// A thread archived under an owner the filters exclude went
-			// unchecked while its project stayed there, so its changes
-			// since the version archived are read.
-			if !owners.Allows(thread.Ref.Owner) && thread.Ref.UpdatedAt.Before(through) {
-				through = thread.Ref.UpdatedAt
 			}
 		}
 		items, gone, err := f.changedSince(ctx, through, group, batch)
@@ -713,6 +734,7 @@ func (f *Forge) checkGroup(ctx context.Context, state *cursor, group knownGroup,
 			// The project is gone or closed to the token; its threads fail
 			// on their own when fetched.
 			lastIID = iids[len(iids)-1]
+			cur.skip(group)
 		}
 		var refs []forge.ThreadRef
 		for _, item := range items {
@@ -727,9 +749,10 @@ func (f *Forge) checkGroup(ctx context.Context, state *cursor, group knownGroup,
 			return err
 		}
 		if gone {
-			break
+			return nil
 		}
 	}
+	delete(cur.Unchecked, group.key())
 	return nil
 }
 
