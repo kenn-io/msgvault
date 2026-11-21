@@ -29269,17 +29269,12 @@ paths:
           name: slug
           schema:
             type: string
-        - description: Maximum values per definition
+        - description: Restrict values to one ordinal within a definition
           in: query
-          name: limit
+          name: ordinal
           schema:
             format: int64
-            type: integer
-        - description: Values to skip per definition
-          in: query
-          name: offset
-          schema:
-            format: int64
+            minimum: 0
             type: integer
         - description: Restrict the response to one portable definition identifier
           in: query

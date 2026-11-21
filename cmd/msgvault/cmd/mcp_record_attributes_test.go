@@ -449,7 +449,7 @@ func TestMCPListAndClearAttributeWithLargeSiblings(t *testing.T) {
 	session := attributeSession(t, b, nil, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		return attributeAccept(), nil
 	}}, "2025-06-18")
-	listed, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_attributes", Arguments: map[string]any{"person_id": person, "slug": "large_multi", "limit": 1, "offset": 2}})
+	listed, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_attributes", Arguments: map[string]any{"person_id": person, "slug": "large_multi", "ordinal": 2}})
 	require.NoError(t, err)
 	require.False(t, listed.IsError, "%v", listed.Content)
 	var page generated.PersonAttributesResponse

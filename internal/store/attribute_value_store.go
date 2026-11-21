@@ -174,13 +174,17 @@ func (s *Store) runAttributeWrite(
 
 func (s *Store) listAttributeValuesContext(
 	ctx context.Context, queryer contextRowsQuerier, owner attributeOwner,
-	ownerID int64, definitionSlug string, includeHistory bool,
+	ownerID int64, definitionSlug string, ordinal *int64, includeHistory bool,
 ) ([]attributeValueRow, error) {
 	conditions := []string{"v." + owner.column + " = ?"}
 	args := []any{ownerID}
 	if definitionSlug != "" {
 		conditions = append(conditions, "d.slug = ?", "d.object_type = ?")
 		args = append(args, definitionSlug, string(owner.objectType))
+	}
+	if ordinal != nil {
+		conditions = append(conditions, "v.ordinal = ?")
+		args = append(args, *ordinal)
 	}
 	if !includeHistory {
 		conditions = append(conditions,

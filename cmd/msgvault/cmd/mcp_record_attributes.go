@@ -24,7 +24,7 @@ func recordAttributeMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MC
 		name, id, method, path, needs string
 		query, properties             []string
 	}{
-		{"list_person_attributes", "listPersonAttributes", http.MethodGet, "/api/v1/people/{id}/attributes", "", []string{"history", "slug", "universal_id", "limit", "offset"}, nil},
+		{"list_person_attributes", "listPersonAttributes", http.MethodGet, "/api/v1/people/{id}/attributes", "", []string{"history", "slug", "universal_id", "ordinal"}, nil},
 		{"list_attribute_definitions", "listAttributeDefinitions", http.MethodGet, "/api/v1/attribute-definitions", "", []string{"object_type", "include_hidden"}, nil},
 		{"get_attribute_definition", "getAttributeDefinition", http.MethodGet, "/api/v1/attribute-definitions/{id}", "", nil, nil},
 		{attributeSetOperation, "setPersonAttribute", http.MethodPut, "/api/v1/people/{id}/attributes/{slug}", "get_attribute_definition", []string{"dry_run"}, []string{"value", "ordinal", "expected_value_id", attributeSourceKey, "source_ref", "confidence", "actor", "active_from", "active_until"}},
@@ -46,8 +46,7 @@ type attributeListArgs struct {
 	History     *bool   `json:"history,omitempty"`
 	Slug        *string `json:"slug,omitempty"`
 	UniversalID *string `json:"universal_id,omitempty"`
-	Limit       *int64  `json:"limit,omitempty"`
-	Offset      *int64  `json:"offset,omitempty"`
+	Ordinal     *int64  `json:"ordinal,omitempty"`
 }
 type attributeSetArgs struct {
 	generated.SetPersonAttributeBody `json:",inline"`
@@ -98,7 +97,7 @@ func attributeRequest(name string, args map[string]any) (string, string, runtime
 		if err != nil {
 			return "", "", nil, false
 		}
-		return http.MethodGet, "/api/v1/people/{id}/attributes", &generated.ListPersonAttributesRequestOptions{PathParams: &generated.ListPersonAttributesPath{ID: in.PersonID}, Query: &generated.ListPersonAttributesQuery{History: in.History, Slug: in.Slug, UniversalID: in.UniversalID, Limit: in.Limit, Offset: in.Offset}}, true
+		return http.MethodGet, "/api/v1/people/{id}/attributes", &generated.ListPersonAttributesRequestOptions{PathParams: &generated.ListPersonAttributesPath{ID: in.PersonID}, Query: &generated.ListPersonAttributesQuery{History: in.History, Slug: in.Slug, UniversalID: in.UniversalID, Ordinal: in.Ordinal}}, true
 	case attributeSetOperation:
 		in, err := decodeMCPOperationArguments[attributeSetArgs](args)
 		if err != nil || in.PersonID <= 0 || store.ValidateAttributeSlug(in.Slug) != nil {

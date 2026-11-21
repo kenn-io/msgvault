@@ -79,10 +79,12 @@ func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 	list := rawAPIV1Operation("listPersonAttributes", http.MethodGet,
 		"/people/{id}/attributes", "List a person's typed attributes")
 	addPersonIDParameter(&list)
+	ordinal := queryIntegerParam("ordinal", "Restrict values to one ordinal within a definition")
+	ordinal.Schema.Minimum = new(float64(0))
 	list.Parameters = append(list.Parameters,
 		queryBooleanParam("history", "Include superseded values"),
 		queryStringParam("slug", "Restrict the response to one definition slug", false),
-		queryIntegerParam("limit", "Maximum values per definition"), queryIntegerParam("offset", "Values to skip per definition"),
+		ordinal,
 		queryStringParam("universal_id", "Restrict the response to one portable definition identifier", false))
 	list.Responses = jsonResponsesFor[PersonAttributesResponse](api)
 	addErrorResponses(api, list.Responses, http.StatusNotFound, http.StatusServiceUnavailable)
@@ -160,6 +162,10 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 	}
 	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
 	universalID := strings.TrimSpace(r.URL.Query().Get("universal_id"))
+	if options.ordinal != nil && slug == "" && universalID == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "ordinal requires slug or universal_id")
+		return
+	}
 	if slug != "" && universalID != "" {
 		writeError(w, http.StatusBadRequest, "bad_request",
 			"slug and universal_id cannot both be provided")
@@ -194,7 +200,7 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 	if universalID == "" || valueSlug != "" {
 		values, err = attributes.ListPersonAttributeValuesContext(r.Context(), personID,
 			store.PersonAttributeQuery{
-				DefinitionSlug: valueSlug, IncludeHistory: options.history,
+				DefinitionSlug: valueSlug, Ordinal: options.ordinal, IncludeHistory: options.history,
 			})
 		if err != nil {
 			s.writeAttributeError(w, err)
@@ -233,10 +239,11 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 		group := PersonAttributeGroup{
 			Definition: definition, Current: current[definition.Slug],
 		}
-		group.Current = pageAttributeValues(group.Current, options.offset, options.limit, options.hasLimit)
+		if group.Current == nil {
+			group.Current = []store.PersonAttributeValue{}
+		}
 		if options.history {
 			group.History = history[definition.Slug]
-			group.History = pageAttributeValues(group.History, options.offset, options.limit, options.hasLimit)
 		}
 		response.Attributes = append(response.Attributes, group)
 	}
@@ -245,8 +252,8 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 }
 
 type attributeListOptions struct {
-	history, hasLimit bool
-	limit, offset     int
+	history bool
+	ordinal *int64
 }
 
 func personAttributeListOptions(w http.ResponseWriter, r *http.Request) (attributeListOptions, bool) {
@@ -257,28 +264,15 @@ func personAttributeListOptions(w http.ResponseWriter, r *http.Request) (attribu
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return options, false
 	}
-	options.limit, options.hasLimit, err = queryInt(r, "limit")
-	var offsetErr error
-	options.offset, _, offsetErr = queryInt(r, "offset")
-	if err != nil || offsetErr != nil || (options.hasLimit && options.limit < 1) || options.offset < 0 {
-		writeError(w, http.StatusBadRequest, "bad_request", "limit must be positive and offset must be nonnegative")
+	ordinal, present, err := queryInt64(r, "ordinal")
+	if err != nil || (present && ordinal < 0) {
+		writeError(w, http.StatusBadRequest, "bad_request", "ordinal must be nonnegative")
 		return options, false
 	}
+	if present {
+		options.ordinal = &ordinal
+	}
 	return options, true
-}
-
-func pageAttributeValues(values []store.PersonAttributeValue, offset, limit int, hasLimit bool) []store.PersonAttributeValue {
-	if values == nil {
-		return []store.PersonAttributeValue{}
-	}
-	if offset >= len(values) {
-		return values[:0]
-	}
-	values = values[offset:]
-	if hasLimit && limit < len(values) {
-		values = values[:limit]
-	}
-	return values
 }
 
 func (s *Server) handleSetPersonAttribute(w http.ResponseWriter, r *http.Request) {

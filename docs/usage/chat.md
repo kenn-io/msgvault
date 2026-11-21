@@ -1025,7 +1025,7 @@ through `update_person_notes`; attribute writes default to enrichment by `mcp`. 
 the value being replaced, and the write fails if it changes or an empty slot is filled. JSON numbers
 keep their spelling, except values SQLite or PostgreSQL stored before this change; HTTP protocol `2026-07-28`
 and newer rejects numbers outside the float64 range, such as `1e400`. Listings and previews over
-1 MiB are refused; use `slug` or `history: false` to narrow a listing.
+1 MiB are refused; pass `slug` and `ordinal` to read one value, or use `history: false` to omit history.
 
 Enable only the writes intended for the assistant's session:
 

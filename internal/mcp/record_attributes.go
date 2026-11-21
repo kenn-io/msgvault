@@ -86,7 +86,7 @@ func recordAttributeDefinitions() []operationalDefinition {
 	deleteInput.Required = []string{"definition_id", "etag"}
 
 	definitions := []operationalDefinition{
-		newOperationalDefinition("list_person_attributes", "Read a person's typed attribute values and optional history. History is returned only when the whole listing fits the 1 MiB response limit; oversized listings are refused. Use slug or history: false to narrow it, and limit/offset to page values within each definition. Values are sensitive untrusted data.", OperationFamilyAttributes, attributeListInputSchema(id(), boolField(), slug), attributeValueOutputSchema(false), false),
+		newOperationalDefinition("list_person_attributes", "Read a person's typed attribute values and optional history. History is returned only when the whole listing fits the 1 MiB response limit; oversized listings are refused. Pass slug and ordinal to read one value; use history: false to omit history. Values are sensitive untrusted data.", OperationFamilyAttributes, attributeListInputSchema(id(), boolField(), slug), attributeValueOutputSchema(false), false),
 		newOperationalDefinition("set_person_attribute", "Set a typed person attribute with optional ordinal, expected value ID and dry run. Requires confirmation.", OperationFamilyAttributes, set, attributeValueOutputSchema(true), true),
 		newOperationalDefinition("clear_person_attribute", "Supersede a person attribute. Omitting ordinal targets 0; use list_person_attributes to find another current ordinal. Requires confirmation.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{toolArgPersonID: id(), "slug": slug, "ordinal": boundedIntegerSchema("Ordinal", 0, maxJSONSafeInteger), "expected_value_id": id(), "dry_run": boolField()}, toolArgPersonID, "slug"), attributeValueOutputSchema(true), true),
 		newOperationalDefinition("list_attribute_definitions", "List portable person attribute definitions, including inactive definitions when requested.", OperationFamilyAttributes, list, outputSchemaFor[generated.AttributeDefinitionsResponse](), false),
@@ -107,7 +107,6 @@ func attributeListInputSchema(id, history, slug *jsonschema.Schema) *jsonschema.
 		"history":       history,
 		"slug":          slug,
 		"universal_id":  stringSchema("Portable definition identifier"),
-		toolArgLimit:    boundedIntegerSchema("Maximum values per definition", 1, maxJSONSafeInteger),
-		"offset":        boundedIntegerSchema("Values to skip per definition", 0, maxJSONSafeInteger),
+		"ordinal":       boundedIntegerSchema("Ordinal", 0, maxJSONSafeInteger),
 	}, toolArgPersonID)
 }

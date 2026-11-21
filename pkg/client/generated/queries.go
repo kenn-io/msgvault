@@ -1041,14 +1041,15 @@ type ListPersonAttributesQuery struct {
 	// Slug Restrict the response to one definition slug
 	Slug *string `json:"slug,omitempty"`
 
-	// Limit Maximum values per definition
-	Limit *int64 `json:"limit,omitempty"`
-
-	// Offset Values to skip per definition
-	Offset *int64 `json:"offset,omitempty"`
+	// Ordinal Restrict values to one ordinal within a definition
+	Ordinal *int64 `json:"ordinal,omitempty" validate:"omitempty,gte=0"`
 
 	// UniversalID Restrict the response to one portable definition identifier
 	UniversalID *string `json:"universal_id,omitempty"`
+}
+
+func (l ListPersonAttributesQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
 type ClearPersonAttributeQuery struct {
