@@ -174,8 +174,32 @@ func TestAttributeValueJSONMigration(t *testing.T) {
 	}
 	_, err = st.db.ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name = ?`, "attribute_value_json")
 	require.NoError(err)
-	// JSONB normalized the old value; new writes retain their original token.
 	require.NoError(st.InitSchemaContext(t.Context()))
+	for _, table := range []string{"person_attribute_values", "organization_attribute_values"} {
+		var dataType string
+		require.NoError(st.db.QueryRowContext(t.Context(), `SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name = 'value_json'`, table).Scan(&dataType))
+		assert.Equal("json", dataType)
+		_, err = st.db.ExecContext(t.Context(), `ALTER TABLE `+table+` ALTER COLUMN value_json TYPE JSONB USING value_json::JSONB`)
+		require.NoError(err)
+	}
+	st.db.SetMaxOpenConns(2)
+	st.db.SetMaxIdleConns(2)
+	blocker, err := st.db.BeginTx(t.Context(), nil)
+	require.NoError(err)
+	defer func() { _ = blocker.Rollback() }()
+	_, err = blocker.ExecContext(t.Context(), `LOCK TABLE person_attribute_values IN ACCESS EXCLUSIVE MODE`)
+	require.NoError(err)
+	conn, err := st.db.Conn(t.Context())
+	require.NoError(err)
+	_, err = conn.ExecContext(t.Context(), `SET statement_timeout = '100ms'`)
+	require.NoError(err)
+	require.NoError(conn.Close())
+	released := make(chan error, 1)
+	time.AfterFunc(300*time.Millisecond, func() { released <- blocker.Commit() }) //nolint:kennlint // sleeptest: keep the table locked past the session timeout.
+	err = st.migrateAttributeValueJSON(t.Context())
+	require.NoError(<-released)
+	require.NoError(err)
+	// JSONB normalized the old value; new writes retain their original token.
 	values, err := st.ListPersonAttributeValuesContext(t.Context(), person, PersonAttributeQuery{DefinitionSlug: def.Slug})
 	require.NoError(err)
 	require.Len(values, 1)
@@ -190,41 +214,5 @@ func TestAttributeValueJSONMigration(t *testing.T) {
 		var dataType string
 		require.NoError(st.db.QueryRowContext(t.Context(), `SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name = 'value_json'`, table).Scan(&dataType))
 		assert.Equal("json", dataType)
-	}
-}
-
-func TestAttributeValueJSONMigrationLiftsStatementTimeout(t *testing.T) {
-	if os.Getenv("MSGVAULT_TEST_DB") == "" {
-		t.Skip("requires PostgreSQL")
-	}
-	require := require.New(t)
-	st, _, _ := newPersonFactProjectionStore(t)
-	ctx := t.Context()
-	for _, table := range []string{"person_attribute_values", "organization_attribute_values"} {
-		_, err := st.db.ExecContext(ctx, `ALTER TABLE `+table+` ALTER COLUMN value_json TYPE JSONB USING value_json::JSONB`)
-		require.NoError(err)
-	}
-	st.db.SetMaxOpenConns(2)
-	st.db.SetMaxIdleConns(2)
-	blocker, err := st.db.BeginTx(ctx, nil)
-	require.NoError(err)
-	defer func() { _ = blocker.Rollback() }()
-	_, err = blocker.ExecContext(ctx, `LOCK TABLE person_attribute_values IN ACCESS EXCLUSIVE MODE`)
-	require.NoError(err)
-	conn, err := st.db.Conn(ctx)
-	require.NoError(err)
-	_, err = conn.ExecContext(ctx, `SET statement_timeout = '100ms'`)
-	require.NoError(err)
-	require.NoError(conn.Close())
-	released := make(chan error, 1)
-	time.AfterFunc(300*time.Millisecond, func() { released <- blocker.Commit() }) //nolint:kennlint // sleeptest: keep the table locked past the session timeout.
-	err = st.migrateAttributeValueJSON(ctx)
-	releaseErr := <-released
-	require.NoError(releaseErr)
-	require.NoError(err)
-	for _, table := range []string{"person_attribute_values", "organization_attribute_values"} {
-		var dataType string
-		require.NoError(st.db.QueryRowContext(ctx, `SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name = 'value_json'`, table).Scan(&dataType))
-		require.Equal("json", dataType)
 	}
 }
