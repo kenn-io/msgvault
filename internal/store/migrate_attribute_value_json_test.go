@@ -67,6 +67,10 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 			_, err = conn.ExecContext(t.Context(), sql)
 			require.NoError(err)
 		}
+		_, err = conn.ExecContext(t.Context(), `ALTER TABLE `+table+` ADD COLUMN extra_note TEXT`)
+		require.NoError(err)
+		_, err = conn.ExecContext(t.Context(), `UPDATE `+table+` SET extra_note = 'preserved'`)
+		require.NoError(err)
 	}
 	// Deleted values may still be referenced by a merge journal.
 	for _, table := range []string{"person_attribute_values", "organization_attribute_values"} {
@@ -112,6 +116,9 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 	assert.Equal(second.Value.ID, absorbedID)
 	assert.False(resolutionID.Valid)
 	for _, table := range []string{"person_attribute_values", "organization_attribute_values"} {
+		var note string
+		require.NoError(st.db.QueryRowContext(t.Context(), `SELECT extra_note FROM `+table+` LIMIT 1`).Scan(&note))
+		assert.Equal("preserved", note)
 		owner := "person_id"
 		if table == "organization_attribute_values" {
 			owner = "organization_id"

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -49,10 +48,6 @@ func (s *Store) migrateAttributeValueJSONSQLite(ctx context.Context) (err error)
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	schema, err := schemaFS.ReadFile("schema.sql")
-	if err != nil {
-		return fmt.Errorf("read attribute schema: %w", err)
-	}
 	for _, table := range []string{"person_attribute_values", "organization_attribute_values"} {
 		var definition string
 		if err := tx.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&definition); err != nil {
@@ -84,19 +79,33 @@ func (s *Store) migrateAttributeValueJSONSQLite(ctx context.Context) (err error)
 		if err != nil {
 			return fmt.Errorf("inspect %s indexes: %w", table, err)
 		}
-		prefix := "CREATE TABLE IF NOT EXISTS " + table + " ("
-		start := bytes.Index(schema, []byte(prefix))
-		if start < 0 {
-			return fmt.Errorf("missing schema for %s", table)
+		columns, err := func() ([]string, error) {
+			rows, err := tx.QueryContext(ctx, `SELECT name FROM pragma_table_info(?) ORDER BY cid`, table)
+			if err != nil {
+				return nil, err
+			}
+			defer func() { _ = rows.Close() }()
+			var columns []string
+			for rows.Next() {
+				var name string
+				if err := rows.Scan(&name); err != nil {
+					return nil, err
+				}
+				columns = append(columns, `"`+strings.ReplaceAll(name, `"`, `""`)+`"`)
+			}
+			return columns, rows.Err()
+		}()
+		if err != nil {
+			return fmt.Errorf("inspect %s columns: %w", table, err)
 		}
-		definition = string(schema[start:])
-		end := strings.Index(definition, "\n);")
-		if end < 0 {
-			return fmt.Errorf("incomplete schema for %s", table)
+		start := strings.Index(definition, "(")
+		if start < 0 || !strings.Contains(definition, "value_json        JSON") {
+			return fmt.Errorf("unexpected schema for %s", table)
 		}
 		temp := table + "_json_upgrade"
-		definition = strings.Replace(definition[:end+3], prefix, "CREATE TABLE "+temp+" (", 1)
-		for _, statement := range []string{definition, `INSERT INTO ` + temp + ` SELECT * FROM ` + table, `UPDATE ` + temp + ` SET value_json = CAST(value_json AS TEXT) WHERE value_json IS NOT NULL`, `DROP TABLE ` + table, `ALTER TABLE ` + temp + ` RENAME TO ` + table} {
+		definition = "CREATE TABLE " + temp + " " + strings.Replace(definition[start:], "value_json        JSON", "value_json        TEXT", 1)
+		columnList := strings.Join(columns, ", ")
+		for _, statement := range []string{definition, `INSERT INTO ` + temp + ` (` + columnList + `) SELECT ` + columnList + ` FROM ` + table, `UPDATE ` + temp + ` SET value_json = CAST(value_json AS TEXT) WHERE value_json IS NOT NULL`, `DROP TABLE ` + table, `ALTER TABLE ` + temp + ` RENAME TO ` + table} {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("rebuild %s: %w", table, err)
 			}
