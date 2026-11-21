@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { claimDialogEscape } from '../common/dialog-escape';
-  import { Button, Modal } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, Modal } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { MeetingRef, MessageDetail } from '../../api/generated/models';
@@ -21,7 +20,7 @@
     onOpenMeeting: (meeting: MeetingRef) => void;
     onAnchorChange: (id: number) => void;
   } = $props();
-  onMount(() => claimDialogEscape('archived-meeting-reader', onClose));
+  onMount(() => appShortcuts.pushScope('archived-meeting-reader'));
 </script>
 
 <Modal ariaLabel="Archived meeting" closeLabel="Close archived meeting" title="Archived meeting"

@@ -254,6 +254,7 @@
           >
             <div role="gridcell">
               <span class="avatar-slot">
+                <!-- kit-ui-check-ignore: this tile gives way to selection while the row is hovered or focused. -->
                 <span class="avatar">
                   <IdentityAvatar label={row.label} seed={row.key} shape={row.domain ? 'domain' : 'person'} size={32} />
                 </span>
@@ -397,6 +398,7 @@
     place-items: center;
   }
 
+  /* kit-ui-check-ignore: the custom identity tile swaps with the selection control. */
   .avatar,
   .avatar-slot :global(.selection-checkbox) {
     position: absolute;
@@ -410,8 +412,11 @@
     transform: scale(0.9);
   }
 
+  /* kit-ui-check-ignore: the tile gives way to selection while a row is active. */
   .row:hover .avatar,
+  /* kit-ui-check-ignore: the tile gives way to selection while a row is active. */
   .row:focus-within .avatar,
+  /* kit-ui-check-ignore: the tile gives way to selection while a row is active. */
   .rows.selection-mode .avatar {
     opacity: 0;
     transform: scale(0.9);

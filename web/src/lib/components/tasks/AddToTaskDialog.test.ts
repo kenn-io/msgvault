@@ -145,7 +145,10 @@ describe('Add to task', () => {
     const close = screen.getByRole('button', { name: 'Close' });
     close.focus();
     await fireEvent.keyDown(close, { key: 'Escape' });
-    await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
+    const overlay = document.querySelector('.kit-modal-overlay')!;
+    await fireEvent.pointerDown(overlay, { pointerId: 1 });
+    await fireEvent.pointerUp(overlay, { pointerId: 1 });
+    await fireEvent.click(overlay);
     await fireEvent.click(close);
     expect(onclose).not.toHaveBeenCalled();
     respond(result === 'success'

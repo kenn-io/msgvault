@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { DetailDrawer, IconButton } from '@kenn-io/kit-ui';
+  import { appShortcuts, DetailDrawer, IconButton } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
   import { onMount, type Snippet } from 'svelte';
-  import { claimDialogEscape } from './dialog-escape';
 
   interface Props {
     title: string;
@@ -13,7 +12,7 @@
   }
 
   const id = $props.id();
-  onMount(() => claimDialogEscape(`source-drawer:${id}`, onclose));
+  onMount(() => appShortcuts.pushScope(`source-drawer:${id}`));
 
   let { title, onclose, children, footer = undefined }: Props = $props();
 </script>

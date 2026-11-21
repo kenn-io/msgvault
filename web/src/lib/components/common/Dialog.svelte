@@ -1,8 +1,7 @@
 <script lang="ts">
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import X from '@lucide/svelte/icons/x';
-  import { claimDialogEscape } from './dialog-escape';
-  import { Button, IconButton, Modal } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, IconButton, Modal } from '@kenn-io/kit-ui';
   import { onMount, type Snippet } from 'svelte';
 
   const id = $props.id();
@@ -13,7 +12,7 @@
       const panel = shell.querySelector('[role="dialog"]');
       if (document.activeElement === panel) shell.querySelector<HTMLElement>('h2')?.focus();
     });
-    return claimDialogEscape(scope, () => dismiss());
+    return appShortcuts.pushScope(scope);
   });
 
   /** A step that removes the focused control hands focus to the title, so it stays in the dialog. */

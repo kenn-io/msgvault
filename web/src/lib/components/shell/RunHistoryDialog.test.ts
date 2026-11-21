@@ -109,8 +109,8 @@ describe('Past runs', () => {
     await screen.findByRole('button', { name: 'Open Source sync run' });
     const applyURLState = vi.spyOn(controller, 'applyURLState');
     await fireEvent.click(screen.getByRole('button', { name: /2026-10-10/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Oct 11, 2026' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Oct 13, 2026' }));
+    await fireEvent.click(screen.getByRole('gridcell', { name: 'Sunday, October 11, 2026' }));
+    await fireEvent.click(screen.getByRole('gridcell', { name: 'Tuesday, October 13, 2026' }));
     expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationStartedFrom: '2026-10-11T00:00:00Z', operationStartedBefore: '2026-10-14T00:00:00Z' }), false);
     await fireEvent.keyDown(document, { key: 'Escape' });
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'All visual attachments');
