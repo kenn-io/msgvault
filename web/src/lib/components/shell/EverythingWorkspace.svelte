@@ -65,6 +65,7 @@
     conversationStart?: string;
     conversationEnd?: string;
     resultsWidth?: number;
+    readingTitle?: string;
     client: APIClient;
     exploreState: ExploreState;
     loader: ExploreLoader;
@@ -104,6 +105,7 @@
     conversationStart = undefined,
     conversationEnd = undefined,
     resultsWidth = $bindable(0),
+    readingTitle = $bindable(''),
     client,
     exploreState,
     loader,
@@ -278,6 +280,13 @@
       };
     },
   );
+
+  let readingAnchorTitle = $state('');
+  $effect(() => {
+    const selected = readingSelection;
+    readingTitle = selected?.kind === 'archive' ? selected.message.tab_title || '(untitled)' :
+      selected?.kind === 'entry' ? readingAnchorTitle : '';
+  });
 
   const readingPredicateFingerprint = $derived(predicateFingerprint(exploreState.predicate()));
 
@@ -925,6 +934,7 @@
             {conversationStart}
             {conversationEnd}
             {conversationAnchorId}
+            bind:anchorTitle={readingAnchorTitle}
             onConversationAnchorChange={changeConversationAnchor}
           />
         {/if}

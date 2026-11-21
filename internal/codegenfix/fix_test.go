@@ -60,6 +60,7 @@ func TestRewriteGeneratedValidatorsAllowsEmptyAndNullableFields(t *testing.T) {
 	assertions.NotContains(string(got), `typesValidator.Var(m.Network, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(m.NetworkLabel, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(m.ProviderChatID, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(m.TabTitle, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(p.AliasReason, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(c.DisplayName, "required")`)
 	assertions.NotContains(string(got), "RemoteUID string `json:\"remote_uid\" validate:\"required\"`")
@@ -201,6 +202,16 @@ func (e Evidence) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(e.Excerpt, "required"); err != nil {
 		errors = errors.Append("Excerpt", err)
+	}
+	return errors
+}
+type MessageDetail struct {
+	TabTitle string
+}
+func (m MessageDetail) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.TabTitle, "required"); err != nil {
+		errors = errors.Append("TabTitle", err)
 	}
 	return errors
 }

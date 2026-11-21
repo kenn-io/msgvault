@@ -836,6 +836,7 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 		SourceConversationID: msg.SourceConversationID,
 		Subject:              msg.Subject,
 		ConversationTitle:    msg.ConversationTitle,
+		ConversationType:     msg.ConversationType,
 		MessageType:          msg.MessageType,
 		Snippet:              msg.Snippet,
 		SentAt:               msg.SentAt,

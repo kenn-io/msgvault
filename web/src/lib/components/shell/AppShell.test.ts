@@ -6,7 +6,7 @@ import { appShortcuts } from '@kenn-io/kit-ui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRawSnippet, getContext, mount, tick, unmount, type ComponentProps } from 'svelte';
 
-import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
+import { meetingFixtureResponse, meetingMetrics } from '../../meetings/fixtures.test-support';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { sourceGroup } from '../../explore/fixtures.test-support';
@@ -877,6 +877,164 @@ describe('AppShell', () => {
       await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
       await fireEvent.click(await screen.findByRole('option', { name: 'People' }));
       await waitFor(() => expect(document.title).toBe('People · msgvault'));
+    });
+
+    it('updates the tab as the selected message changes and clears it on close', async () => {
+      const state = shellState('everything');
+      const rows = [1, 2, 3].map(id => ({ ...entry(id), key: `source:1:message:${id}`, kind: 'email', anchor_message_id: id, conversation_id: id, title: `Snippet ${id}`, preview: `Snippet ${id}` }));
+      const requests: string[] = [];
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        requests.push(path);
+        const match = path.match(/\/conversations\/(\d+)$/);
+        if (match) {
+          const id = Number(match[1]);
+          return Response.json({ id, anchor_id: id, messages: [{ id, conversation_id: id, subject: id === 1 ? 'Subject' : '', tab_title: id === 1 ? 'Subject' : id === 2 ? 'Conv title' : '', conversation_title: id === 2 ? 'Conv title' : '', snippet: `Snippet ${id}`, sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: `Body ${id}`, attachments: [] }], total: 1, has_before: false, has_after: false });
+        }
+        return Response.json(exploreResponse({ rows, total_count: 3 }));
+      });
+      render(AppShell, { client, state });
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      for (const [id, title] of [[1, 'Subject'], [2, 'Conv title'], [3, '(untitled)']] as const) {
+        await fireEvent.click((await within(grid).findAllByText(`Snippet ${id}`))[0]!);
+        await waitFor(() => expect(document.title).toBe(`${title} · Messages · msgvault`));
+        expect(document.title).not.toContain('Snippet');
+      }
+      expect(requests).not.toContain('/api/v1/messages/1');
+      await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
+      await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
+    });
+
+    it('keeps the workspace title while a message loads or is missing', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'source:1:message:1' });
+      let finish!: (response: Response) => void;
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/conversations/1')) return await new Promise<Response>(resolve => { finish = resolve; });
+        return Response.json(exploreResponse({ rows: [{ ...entry(1), key: 'source:1:message:1', kind: 'email', anchor_message_id: 1, conversation_id: 1 }], total_count: 1 }));
+      });
+      render(AppShell, { client, state });
+      await waitFor(() => expect(finish).toBeTypeOf('function'));
+      expect(document.title).toBe('Messages · msgvault');
+      finish(Response.json({ message: 'Conversation unavailable' }, { status: 404 }));
+      await screen.findByText('Conversation unavailable');
+      expect(document.title).toBe('Messages · msgvault');
+    });
+
+    it('archive selection uses its message tab_title', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'recording:1' });
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/messages/1')) return Response.json({ id: 1, conversation_id: 1, subject: 'Thread subject', tab_title: 'Thread subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Selected body', labels: [], attachments: [] });
+        if (path.endsWith('/conversations/1')) return Response.json({ id: 1, anchor_id: 1, messages: [
+          { id: 1, conversation_id: 1, subject: 'Thread subject', tab_title: 'Thread subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Selected body', attachments: [] },
+          { id: 2, conversation_id: 1, subject: 'Other message subject', tab_title: '', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Other body', attachments: [] },
+        ], total: 2, has_before: false, has_after: true });
+        return Response.json(exploreResponse());
+      });
+      render(AppShell, { client, state });
+      await screen.findByText('Selected body');
+      await waitFor(() => expect(document.title).toBe('Thread subject · Messages · msgvault'));
+    });
+
+    it('updates the tab when another item in the same thread opens', async () => {
+      const state = shellState('everything');
+      const rows = [1, 2].map(id => ({
+        ...entry(id),
+        key: id === 1 ? 'source:1:message:1' : 'source:1:conversation:9',
+        kind: id === 1 ? 'email' : 'conversation',
+        anchor_message_id: id,
+        conversation_id: 9,
+        conversation_type: 'email_thread',
+        message_count: 2,
+        title: `Message subject ${id}`,
+      }));
+      const client = createAPIClient(async input => {
+        const url = new URL((input as Request).url);
+        if (url.pathname.endsWith('/messages/2')) return Response.json({ id: 2, conversation_id: 9, subject: 'Thread subject', tab_title: 'Thread subject', message_type: 'email', sent_at: '2026-07-18T12:00:00Z', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] });
+        if (url.pathname.endsWith('/conversations/9')) {
+          const anchor = Number(url.searchParams.get('anchor'));
+          return Response.json({ id: 9, anchor_id: anchor, messages: [
+            { id: 1, conversation_id: 9, subject: 'Earlier message subject', tab_title: anchor === 1 ? 'Earlier message subject' : '', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Earlier body', attachments: [] },
+            { id: 2, conversation_id: 9, subject: 'Thread subject', tab_title: anchor === 2 ? 'Thread subject' : '', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
+          ], total: 2, has_before: true, has_after: false });
+        }
+        return Response.json(exploreResponse({ rows, total_count: 2 }));
+      });
+      render(AppShell, { client, state });
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await fireEvent.click((await within(grid).findAllByText('Synthetic excerpt 1'))[0]!);
+      await waitFor(() => expect(document.title).toBe('Earlier message subject · Messages · msgvault'));
+      await fireEvent.click((await within(grid).findAllByText('Synthetic excerpt 2'))[0]!);
+      await waitFor(() => expect(document.title).toBe('Thread subject · Messages · msgvault'));
+    });
+
+    it('keeps the opened title when the window reloads around another message', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'source:1:message:99', conversationAnchor: '30' });
+      const row = { ...entry(99), key: 'source:1:message:99', kind: 'email', anchor_message_id: 99, conversation_id: 9, message_count: 100 };
+      const client = createAPIClient(async input => {
+        const url = new URL((input as Request).url);
+        if (url.pathname.endsWith('/conversations/9')) {
+          const anchor = Number(url.searchParams.get('anchor'));
+          // Message 31 disappears between reads, shifting 30 into the next window.
+          return Response.json({ id: 9, anchor_id: anchor, messages: Array.from({ length: 51 }, (_, index) => {
+            const id = anchor === 30 ? index + 5 : index === 0 ? 30 : index + 31;
+            const subject = id === 30 ? 'Opened from file' : `Message ${id}`;
+            return { id, conversation_id: 9, subject, tab_title: id === anchor ? subject : '', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: `Body ${id}`, attachments: [] };
+          }), total: anchor === 30 ? 100 : 99, has_before: true, has_after: true });
+        }
+        return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
+      });
+      render(AppShell, { client, state });
+      await screen.findByText('Body 30');
+      await waitFor(() => expect(document.title).toBe('Opened from file · Messages · msgvault'));
+      state.commitNavigation({ conversationAnchor: '56' });
+      await screen.findByText('Body 56');
+      await tick();
+      expect(document.title).toBe('Opened from file · Messages · msgvault');
+    });
+
+    it.each(['Selected subject', 'failure'])('loads the selected non-anchor title: %s', async (title) => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'source:1:message:2', conversationAnchor: '1' });
+      const row = { ...entry(2), key: 'source:1:message:2', kind: 'email', anchor_message_id: 2, conversation_id: 9, message_count: 2 };
+      let resolveDetail!: (response: Response) => void;
+      let detailReturned = false;
+      const detail = new Promise<Response>((resolve) => { resolveDetail = resolve; });
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/messages/2')) { const response = await detail; detailReturned = true; return response; }
+        if (path.endsWith('/conversations/9')) return Response.json({ id: 9, anchor_id: 1, messages: [
+          { id: 1, conversation_id: 9, subject: 'Anchor', tab_title: 'Anchor', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
+          { id: 2, conversation_id: 9, subject: 'Sensitive subject', tab_title: '', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Body 2', attachments: [] },
+        ], total: 2, has_before: false, has_after: false });
+        return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
+      });
+      render(AppShell, { client, state });
+      await screen.findByText('Anchor body');
+      await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
+      resolveDetail(title === 'failure' ? Response.json({ message: 'Unavailable' }, { status: 503 }) : Response.json({ id: 2, conversation_id: 9, subject: title, tab_title: title, message_type: 'email', sent_at: '2026-07-18T12:00:00Z', from: 'sender@example.com', to: [], body: 'Message body', attachments: [] }));
+      await waitFor(() => expect(detailReturned).toBe(true));
+      await tick();
+      await waitFor(() => expect(document.title).toBe(title === 'failure' ? 'Messages · msgvault' : `${title} · Messages · msgvault`));
+    });
+
+    it('names a resolved archived meeting', async () => {
+      const state = shellState('everything');
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/messages/42')) return Response.json({ id: 42, conversation_id: 8, subject: 'Planning meeting', tab_title: 'Planning meeting', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', labels: [], attachments: [] });
+        if (path.endsWith('/conversations/8')) return Response.json({ id: 8, anchor_id: 42, messages: [{ id: 42, conversation_id: 8, subject: 'Planning meeting', tab_title: 'Planning meeting', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', attachments: [] }], total: 1, has_before: false, has_after: false });
+        if (path.endsWith('/meetings/metrics')) return Response.json(meetingMetrics({ totals: { meeting_count: 1, known_duration_count: 0, unknown_duration_count: 1, total_known_seconds: 0, average_known_seconds: null } }));
+        return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+      });
+      render(AppShell, { client, state });
+      state.commitNavigation({ selectedRow: 'archive-meeting:42' });
+      await screen.findByText('Transcript');
+      await waitFor(() => expect(document.title).toBe('Planning meeting · Messages · msgvault'));
     });
 
     it.each([
@@ -1954,7 +2112,7 @@ describe('AppShell', () => {
     } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
   });
 
-  it.each(['reader next', 'Filter shortcut'])('supports %s in the person Messages table', async (control) => {
+  it.each(['reader next', 'Filter shortcut', 'reading title'])('supports %s in the person Messages table', async (control) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -1964,7 +2122,7 @@ describe('AppShell', () => {
         source_counts: [], first_at: '2026-07-18T12:00:00Z', last_at: '2026-07-18T12:00:00Z', cache_revision: 'cache-1'
       });
       if (path === '/api/v1/participants/1/timeline') return Response.json(exploreResponse({
-        rows: [1, 2].map(id => ({ ...entry(id), conversation_id: id, anchor_message_id: id })), total_count: 2
+        rows: [1, 2].map(id => ({ ...entry(id), key: `source:1:message:${id}`, kind: 'email', conversation_id: id, anchor_message_id: id })), total_count: 2
       }));
       if (path === '/api/v1/relationships/1/calendar') return Response.json({
         participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC',
@@ -1974,7 +2132,7 @@ describe('AppShell', () => {
       });
       if (/\/conversations\/[12]$/.test(path)) {
         const id = Number(path.split('/').at(-1));
-        return Response.json({ id, messages: [{ id, conversation_id: id, subject: `Synthetic subject ${id}`,
+        return Response.json({ id, messages: [{ id, conversation_id: id, subject: `Synthetic subject ${id}`, tab_title: `Synthetic subject ${id}`,
           sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [],
           body: `Reader body ${id}`, snippet: `Reader body ${id}`, attachments: [] }],
           anchor_id: id, total: 1, has_before: false, has_after: false });
@@ -1986,12 +2144,16 @@ describe('AppShell', () => {
     try {
       const grid = await screen.findByRole('grid', { name: 'Messages results' });
       await within(grid).findByText('Synthetic subject 1');
-      if (control === 'reader next') {
+      if (control === 'reader next' || control === 'reading title') {
         await fireEvent.click(within(grid).getByText('Synthetic subject 1'));
         await screen.findByText('Reader body 1');
-        grid.focus();
-        await fireEvent.keyDown(grid, { key: 'l' });
-        await screen.findByText('Reader body 2');
+        if (control === 'reading title') {
+          await waitFor(() => expect(document.title).toBe('Synthetic subject 1 · People · msgvault'));
+        } else {
+          grid.focus();
+          await fireEvent.keyDown(grid, { key: 'l' });
+          await screen.findByText('Reader body 2');
+        }
       } else {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'f' });
