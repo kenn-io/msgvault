@@ -1006,6 +1006,7 @@ it.each(['http', 'network'] as const)('turns on local search once and keeps unre
   let phase = 'idle';
   let enabled = false;
   let failed = false;
+  let recovered = false;
   let releaseActivation!: () => void;
   const activation = new Promise<void>(resolve => { releaseActivation = resolve; });
   const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
@@ -1019,6 +1020,7 @@ it.each(['http', 'network'] as const)('turns on local search once and keeps unre
       if (failure === 'network') throw new TypeError('Network interrupted');
       return new Response('', { status: 503 });
     }
+    if (phase !== 'idle' && failed) recovered = true;
     return Response.json(localStatus({ enabled, provider: enabled ? 'builtin' : '', phase, running: phase !== 'idle' }));
   });
   render(SettingsWorkspace, { client, operationsController, category: 'advanced' });
@@ -1029,12 +1031,13 @@ it.each(['http', 'network'] as const)('turns on local search once and keeps unre
   await fireEvent.click(turnOn);
   expect(localPosts(seen).map(request => request.body)).toEqual([undefined]);
   releaseActivation();
-  await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
+  await screen.findByRole('status', { name: 'Search by meaning setup' });
   expect(screen.queryByRole('dialog')).toBeNull();
   await waitFor(() => expect(failed).toBe(true));
-  await screen.findByText(/^Indexing /, {}, { timeout: 3000 });
+  await waitFor(() => expect(recovered).toBe(true), { timeout: 3000 });
+  expect(screen.getByRole('status', { name: 'Search by meaning setup' })).toBeDefined();
   phase = 'idle'; enabled = true;
   await screen.findByText('On', {}, { timeout: 3000 });
-  expect(screen.queryByRole('progressbar', { name: 'Search by meaning setup' })).toBeNull();
+  expect(screen.queryByRole('status', { name: 'Search by meaning setup' })).toBeNull();
   expect(screen.getByText('1 unsaved change')).toBeDefined();
 });

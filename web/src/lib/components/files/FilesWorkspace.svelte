@@ -1270,6 +1270,9 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .data-row--active .containing-link {
+    color: var(--active-ink);
+  }
   .containing-link:hover {
     text-decoration: underline;
   }

@@ -277,7 +277,7 @@
   }
 
   .sidebar__item[aria-current='page'] {
-    background: var(--nav-active-bg);
+    background: var(--selected-list-bg);
     color: var(--text-primary);
     font-weight: 600;
   }
