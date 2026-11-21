@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -34,6 +36,24 @@ func recordAttributesFixture(t *testing.T) (*daemonMCPOperations, *store.Store, 
 	cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: st, Logger: slog.New(slog.DiscardHandler)}))
 	return backend, st, person.ID
+}
+
+func TestMCPAttributeWritesRequireDefinitionRoute(t *testing.T) {
+	b, _, _ := recordAttributesFixture(t)
+	caps, err := b.client.MCPCapabilities(t.Context())
+	require.NoError(t, err)
+	caps.Routes = slices.DeleteFunc(caps.Routes, func(route apiprotocol.MCPRouteDescriptor) bool {
+		return route.OperationID == "listPersonAttributes"
+	})
+	names := newDaemonMCPOperations(b.client, caps).capabilities()
+	assert.Contains(t, names, "set_person_attribute")
+	assert.Contains(t, names, "clear_person_attribute")
+	caps.Routes = slices.DeleteFunc(caps.Routes, func(route apiprotocol.MCPRouteDescriptor) bool {
+		return route.OperationID == "getAttributeDefinition"
+	})
+	names = newDaemonMCPOperations(b.client, caps).capabilities()
+	assert.NotContains(t, names, "set_person_attribute")
+	assert.NotContains(t, names, "clear_person_attribute")
 }
 
 func attributeOperation(t *testing.T, b *daemonMCPOperations, name string, args map[string]any) *mcpserver.OperationResult {
@@ -434,23 +454,27 @@ func TestMCPClearAttributeWithLargeSiblings(t *testing.T) {
 	created := attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "large_multi", "label": "Large multi", "value_type": "text", "field_type": "text", "cardinality": "multi"}})
 	require.False(t, created.IsError)
 	large := strings.Repeat("x", 600<<10)
-	for _, value := range []string{"small", large, large} {
+	for _, value := range []string{large, large, "small"} {
 		_, err := st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: "large_multi", Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}, Source: store.ProvenanceUser})
 		require.NoError(t, err)
 	}
-	values := attributeValues(t, st, person, "large_multi")
-	require.Len(t, values, 3)
-	attributeError(t, attributeOperation(t, b, "list_person_attributes", map[string]any{"person_id": person, "slug": "large_multi"}), "operation_response_limit_exceeded")
 	session := attributeSession(t, b, nil, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		return attributeAccept(), nil
 	}}, "2025-06-18")
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "clear_person_attribute", Arguments: map[string]any{"person_id": person, "slug": "large_multi", "ordinal": values[0].Ordinal}})
+	listed, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_attributes", Arguments: map[string]any{"person_id": person, "slug": "large_multi", "limit": 1, "offset": 2}})
+	require.NoError(t, err)
+	require.False(t, listed.IsError, "%v", listed.Content)
+	var page generated.PersonAttributesResponse
+	require.NoError(t, json.Unmarshal([]byte(mcpDraftResultText(t, listed)), &page))
+	require.Len(t, page.Attributes, 1)
+	require.Len(t, page.Attributes[0].Current, 1)
+	selected := page.Attributes[0].Current[0]
+	require.Equal(t, "small", *selected.Value.Text)
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "clear_person_attribute", Arguments: map[string]any{"person_id": person, "slug": "large_multi", "ordinal": selected.Ordinal, "expected_value_id": selected.ID}})
 	require.NoError(t, err)
 	require.False(t, result.IsError, "%v", result.Content)
 	remaining := attributeValues(t, st, person, "large_multi")
 	require.Len(t, remaining, 2)
-	assert.Equal(t, values[1].ID, remaining[0].ID)
 	assert.Equal(t, large, *remaining[0].Value.Text)
-	assert.Equal(t, values[2].ID, remaining[1].ID)
 	assert.Equal(t, large, *remaining[1].Value.Text)
 }

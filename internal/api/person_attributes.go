@@ -82,6 +82,8 @@ func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 	list.Parameters = append(list.Parameters,
 		queryBooleanParam("history", "Include superseded values"),
 		queryStringParam("slug", "Restrict the response to one definition slug", false),
+		queryIntegerParam("limit", "Maximum values per definition"),
+		queryIntegerParam("offset", "Values to skip per definition"),
 		queryStringParam("universal_id",
 			"Restrict the response to one portable definition identifier", false))
 	list.Responses = jsonResponsesFor[PersonAttributesResponse](api)
@@ -157,6 +159,12 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 	includeHistory, _, err := queryBool(r, "history")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	limit, hasLimit, limitErr := queryInt(r, "limit")
+	offset, _, offsetErr := queryInt(r, "offset")
+	if limitErr != nil || offsetErr != nil || (hasLimit && limit < 1) || offset < 0 {
+		writeError(w, http.StatusBadRequest, "bad_request", "limit must be positive and offset must be nonnegative")
 		return
 	}
 	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
@@ -237,16 +245,29 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 		if group.Current == nil {
 			group.Current = []store.PersonAttributeValue{}
 		}
+		group.Current = pageAttributeValues(group.Current, offset, limit, hasLimit)
 		if includeHistory {
 			group.History = history[definition.Slug]
 			if group.History == nil {
 				group.History = []store.PersonAttributeValue{}
 			}
+			group.History = pageAttributeValues(group.History, offset, limit, hasLimit)
 		}
 		response.Attributes = append(response.Attributes, group)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
+}
+
+func pageAttributeValues(values []store.PersonAttributeValue, offset, limit int, hasLimit bool) []store.PersonAttributeValue {
+	if offset >= len(values) {
+		return values[:0]
+	}
+	values = values[offset:]
+	if hasLimit && limit < len(values) {
+		values = values[:limit]
+	}
+	return values
 }
 
 func (s *Server) handleSetPersonAttribute(w http.ResponseWriter, r *http.Request) {

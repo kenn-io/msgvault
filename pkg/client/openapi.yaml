@@ -28989,6 +28989,18 @@ paths:
           name: slug
           schema:
             type: string
+        - description: Maximum values per definition
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Values to skip per definition
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
         - description: Restrict the response to one portable definition identifier
           in: query
           name: universal_id

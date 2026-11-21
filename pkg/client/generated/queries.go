@@ -1041,6 +1041,12 @@ type ListPersonAttributesQuery struct {
 	// Slug Restrict the response to one definition slug
 	Slug *string `json:"slug,omitempty"`
 
+	// Limit Maximum values per definition
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Values to skip per definition
+	Offset *int64 `json:"offset,omitempty"`
+
 	// UniversalID Restrict the response to one portable definition identifier
 	UniversalID *string `json:"universal_id,omitempty"`
 }
