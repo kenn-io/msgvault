@@ -209,6 +209,17 @@
     cursor: pointer;
   }
 
+  @media (hover: none), (pointer: coarse) {
+    .saved-view__open {
+      height: 44px;
+    }
+
+    :global(:root:root .saved-view__menu .kit-icon-button--sm) {
+      width: 44px;
+      height: 44px;
+    }
+  }
+
   .saved-view__open:hover {
     color: var(--text-primary);
   }

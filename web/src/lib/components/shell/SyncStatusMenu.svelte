@@ -84,4 +84,15 @@
     justify-content: center;
     padding: 0;
   }
+
+  @media (hover: none), (pointer: coarse) {
+    .sync-status {
+      min-height: 44px;
+    }
+
+    .sync-status--rail {
+      width: 44px;
+      min-height: 44px;
+    }
+  }
 </style>

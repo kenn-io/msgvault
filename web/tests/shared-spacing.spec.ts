@@ -198,6 +198,56 @@ test('every sidebar row, including the sync status control, uses the shared heig
   expect(new Set(railSizes.map(([width, height]) => `${width}x${height}`))).toEqual(new Set(['34x34']));
 });
 
+test.describe('wide touch sidebar', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 1280, height: 844 } });
+
+  test('keeps sidebar targets at 44px on a wide touch screen', async ({ page }) => {
+    await page.route('**/api/v1/saved-views', route => route.fulfill({
+      json: {
+        saved_views: Array.from({ length: 3 }, (_, index) => ({
+          id: index + 1,
+          name: `Touch saved view ${index + 1}`,
+          schema_version: 2,
+          revision: 1,
+          canonical_state: {
+            filters: [{ field: 'source', operator: 'eq', values: ['1'] }],
+            grouping: ['year'],
+            presentation: index < 2 ? 'table' : 'files'
+          },
+          created_at: row.occurred_at,
+          updated_at: row.occurred_at
+        }))
+      }
+    }));
+    await page.goto('/?workspace=everything');
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+
+    const sidebar = page.getByRole('complementary', { name: 'Sidebar', exact: true });
+    const views = sidebar.locator('.saved-view');
+    await expect(views).toHaveCount(3);
+    const expandedTargets = await sidebar.locator('.sidebar__item, .sync-status, .saved-view__open, .saved-view__menu button').evaluateAll(elements => elements.map(element => {
+      const { width, height } = element.getBoundingClientRect();
+      return { width, height };
+    }));
+    expect(expandedTargets.length).toBeGreaterThan(8);
+    for (const [index, target] of expandedTargets.entries()) {
+      expect(target.width, `expanded touch target ${index + 1} width`).toBeGreaterThanOrEqual(44);
+      expect(target.height, `expanded touch target ${index + 1} height`).toBeGreaterThanOrEqual(44);
+    }
+
+    await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
+    const railTargets = await sidebar.locator('.sidebar__item, .sync-status').evaluateAll(elements => elements.map(element => {
+      const { width, height } = element.getBoundingClientRect();
+      return { width, height };
+    }));
+    expect(railTargets.length).toBeGreaterThan(3);
+    for (const [index, target] of railTargets.entries()) {
+      expect(target.width, `rail touch target ${index + 1} width`).toBeGreaterThanOrEqual(44);
+      expect(target.height, `rail touch target ${index + 1} height`).toBeGreaterThanOrEqual(44);
+    }
+  });
+});
+
 for (const width of [1280, 390]) {
   for (const workspace of ['Messages', 'Files']) {
     test(`${workspace} Filter ${workspace === 'Messages' ? 'fields use' : 'filename uses'} the shared scale at ${width}px`, async ({ page }) => {

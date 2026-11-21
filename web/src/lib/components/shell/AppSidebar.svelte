@@ -264,6 +264,27 @@
     padding: 0;
   }
 
+  @media (hover: none), (pointer: coarse) {
+    .sidebar nav > ul > li,
+    .sidebar .sidebar__views > li {
+      display: grid;
+      grid-template-rows: minmax(44px, auto);
+    }
+
+    .sidebar--rail .sidebar__item {
+      width: 44px;
+      min-height: 44px;
+    }
+
+    .sidebar__footer .sidebar__item {
+      min-height: 44px;
+    }
+
+    .sidebar--rail {
+      padding-inline: 0;
+    }
+  }
+
   .sidebar__label {
     min-width: 0;
     overflow: hidden;
