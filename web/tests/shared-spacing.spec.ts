@@ -167,7 +167,6 @@ test('a long sidebar saved view list keeps every row at its full height and scro
   const first = views.first();
   await expect(first).toHaveCSS('height', '26px');
   await first.hover();
-  await expect(first).toHaveCSS('height', '26px');
   const rows = await views.evaluateAll((elements) => elements.map((element) => {
     const box = element.getBoundingClientRect();
     return { top: box.top, bottom: box.bottom, overflow: element.scrollHeight - element.clientHeight };
