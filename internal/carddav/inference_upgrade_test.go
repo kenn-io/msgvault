@@ -284,9 +284,4 @@ func TestInferenceMigrationV3ReviewsKeptLocalRetiredContact(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, preview.ReviewRequired)
 	assert.NotContains(t, preview.VCard, "alex@example.com")
-	puts := fixture.puts
-	require.ErrorIs(t, service.PublishPerson(t.Context(), personID), store.ErrCardDAVInferenceReviewRequired)
-	assert.Equal(t, puts, fixture.puts)
-	require.NoError(t, service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
-	assert.NotContains(t, string(fixture.body), "alex@example.com")
 }

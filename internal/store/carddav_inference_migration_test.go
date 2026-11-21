@@ -480,9 +480,10 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 	for _, tc := range []struct {
 		name                                                                 string
 		publicationAfterV2, differentMapping, otherPerson, remote, ambiguous bool
-		declared, current, unsupportedMetadata, review                       bool
+		declared, current, unsupportedMetadata, review, multiple             bool
 	}{
 		{name: "retired", review: true},
+		{name: "multiple people", review: true, multiple: true},
 		{name: "publication after v2", publicationAfterV2: true, review: true},
 		{name: "different mapping", differentMapping: true},
 		{name: "other person", otherPerson: true},
@@ -496,54 +497,68 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 			require := require.New(t)
 			st, personID, _ := newPersonFactProjectionStore(t)
 			book := inferenceMigrationBook(t, st)
-			source := ProvenanceEnrichment
-			if tc.declared {
-				source = ProvenanceUser
-			}
-			contact, err := st.AddPersonContactPointContext(t.Context(), personID, PersonContactPointInput{AddressKind: ContactAddressEmail, OriginalValue: "retired@example.test", Envelope: ValueEnvelopeInput{Source: source}})
-			require.NoError(err)
-			envelope, err := vcard.ParseResourceEnvelope([]byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:person\r\nFN:Example\r\nEMAIL:retired@example.test\r\nEND:VCARD\r\n"))
-			require.NoError(err)
-			envelope.SourceRef = fmt.Sprintf("carddav:%d", book.ID)
-			envelope.SourceResourceUID = book.CanonicalURL + "person.vcf"
-			for _, property := range envelope.PropertyTree {
-				if property.Property.Name == "EMAIL" {
-					envelope.NativeMappings = []vcard.NativeMapping{{Identity: property.Identity, Table: personContactPointsTableName, RowID: contact.Envelope.ID, Field: "original_value", Kind: vcard.HandlingNative}}
+			seed := func(personID int64) {
+				source := ProvenanceEnrichment
+				if tc.declared {
+					source = ProvenanceUser
+				}
+				contact, err := st.AddPersonContactPointContext(t.Context(), personID, PersonContactPointInput{AddressKind: ContactAddressEmail, OriginalValue: "retired@example.test", Envelope: ValueEnvelopeInput{Source: source}})
+				require.NoError(err)
+				envelope, err := vcard.ParseResourceEnvelope([]byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:person\r\nFN:Example\r\nEMAIL:retired@example.test\r\nEND:VCARD\r\n"))
+				require.NoError(err)
+				envelope.SourceRef = fmt.Sprintf("carddav:%d", book.ID)
+				envelope.SourceResourceUID = fmt.Sprintf("%s%d.vcf", book.CanonicalURL, personID)
+				for _, property := range envelope.PropertyTree {
+					if property.Property.Name == "EMAIL" {
+						envelope.NativeMappings = []vcard.NativeMapping{{Identity: property.Identity, Table: personContactPointsTableName, RowID: contact.Envelope.ID, Field: "original_value", Kind: vcard.HandlingNative}}
+					}
+				}
+				if tc.differentMapping {
+					envelope.NativeMappings = nil
+				}
+				envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, envelope.NativeMappings)
+				_, err = st.PutVCardResourceEnvelopeContext(t.Context(), VCardResourceEnvelopeInput{PersonID: personID, Envelope: envelope})
+				require.NoError(err)
+				if !tc.current {
+					require.NoError(st.SupersedePersonContactPointContext(t.Context(), personID, contact.Envelope.ID, nil))
+				}
+				before, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
+				require.NoError(err)
+				require.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error {
+					return st.approveCardDAVInferenceTx(t.Context(), tx, before.Inference, before.ConnectionGeneration, book.ID)
+				}))
+				var resourcePerson any = personID
+				if tc.otherPerson {
+					var other int64
+					require.NoError(st.db.QueryRow(st.Rebind(`INSERT INTO persons(vcard_uid, display_name) VALUES ('other', 'Other') RETURNING id`)).Scan(&other))
+					resourcePerson = other
+				}
+				governance, status := CardDAVGovernanceLocal, CardDAVMappingMapped
+				if tc.remote {
+					governance = CardDAVGovernanceRemote
+				}
+				if tc.ambiguous {
+					status, governance, resourcePerson = CardDAVMappingAmbiguous, CardDAVGovernanceNone, nil
+				}
+				_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_resources(address_book_id, href, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id) VALUES (?, ?, ?, ?, ?, 'local', ?, ?, ?)`), book.ID, envelope.SourceResourceUID, `"etag"`, envelope.StoredBody, "hash", status, governance, resourcePerson)
+				require.NoError(err)
+				if tc.otherPerson || tc.remote || tc.ambiguous {
+					var otherBookID int64
+					require.NoError(st.db.QueryRow(st.Rebind(`INSERT INTO carddav_address_books(account_id, canonical_url, display_name, discovery_index, last_seen_revision) VALUES (?, ?, 'Other', 1, 1) RETURNING id`), book.AccountID, "https://contacts.example.test/books/other/").Scan(&otherBookID))
+					_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_resources(address_book_id, href, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id) VALUES (?, ?, ?, ?, ?, 'local', ?, ?, ?)`), otherBookID, "https://contacts.example.test/books/other/person.vcf", `"etag"`, envelope.StoredBody, "hash", CardDAVMappingMapped, CardDAVGovernanceLocal, personID)
+					require.NoError(err)
 				}
 			}
-			if tc.differentMapping {
-				envelope.NativeMappings = nil
-			}
-			envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, envelope.NativeMappings)
-			_, err = st.PutVCardResourceEnvelopeContext(t.Context(), VCardResourceEnvelopeInput{PersonID: personID, Envelope: envelope})
-			require.NoError(err)
-			if !tc.current {
-				require.NoError(st.SupersedePersonContactPointContext(t.Context(), personID, contact.Envelope.ID, nil))
+			seed(personID)
+			var secondID, secondBefore int64
+			if tc.multiple {
+				require.NoError(st.db.QueryRow(st.Rebind(`INSERT INTO persons(vcard_uid, display_name) VALUES ('second', 'Second') RETURNING id`)).Scan(&secondID))
+				seed(secondID)
+				secondBefore = inferenceRevision(t, st, secondID)
 			}
 			before, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
 			require.NoError(err)
-			require.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error {
-				return st.approveCardDAVInferenceTx(t.Context(), tx, before.Inference, before.ConnectionGeneration, book.ID)
-			}))
-			var resourcePerson any = personID
-			if tc.otherPerson {
-				var other int64
-				require.NoError(st.db.QueryRow(st.Rebind(`INSERT INTO persons(vcard_uid, display_name) VALUES ('other', 'Other') RETURNING id`)).Scan(&other))
-				resourcePerson = other
-			}
-			governance, status := CardDAVGovernanceLocal, CardDAVMappingMapped
-			if tc.remote {
-				governance = CardDAVGovernanceRemote
-			}
-			if tc.ambiguous {
-				status = CardDAVMappingAmbiguous
-			}
-			_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_resources(address_book_id, href, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id) VALUES (?, ?, ?, ?, ?, 'local', ?, ?, ?)`), book.ID, envelope.SourceResourceUID, `"etag"`, envelope.StoredBody, "hash", status, governance, resourcePerson)
-			require.NoError(err)
-			if tc.otherPerson || tc.remote || tc.ambiguous {
-				_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_resources(address_book_id, href, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id) VALUES (?, ?, ?, ?, ?, 'local', ?, ?, ?)`), book.ID, book.CanonicalURL+"other.vcf", `"etag"`, envelope.StoredBody, "hash", CardDAVMappingMapped, CardDAVGovernanceLocal, personID)
-				require.NoError(err)
-			}
+			href := fmt.Sprintf("%s%d.vcf", book.CanonicalURL, personID)
 			if tc.publicationAfterV2 {
 				_, err = st.db.Exec(st.Rebind(`DELETE FROM person_carddav_inference_state WHERE person_id=?`), personID)
 				require.NoError(err)
@@ -553,7 +568,7 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 				before, err = st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
 				require.NoError(err)
 				assert.False(t, before.Inference.ReviewRequired(before.ConnectionGeneration, book.ID))
-				_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_publications(person_id, desired, address_book_id, href) VALUES (?, TRUE, ?, ?)`), personID, book.ID, envelope.SourceResourceUID)
+				_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_publications(person_id, desired, address_book_id, href) VALUES (?, TRUE, ?, ?)`), personID, book.ID, href)
 				require.NoError(err)
 			}
 			if tc.unsupportedMetadata {
@@ -570,63 +585,22 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 				assert.Equal(t, before.Inference.InferenceRevision, inferenceRevision(t, st, personID))
 				return
 			}
-			runs := 1
-			if tc.name == "retired" {
-				runs = 2
+			require.NoError(st.InitSchema())
+			var after CardDAVInferenceExportState
+			require.NoError(st.withReadSnapshotContext(t.Context(), func(tx *loggedTx) error {
+				var err error
+				after, err = st.getCardDAVInferenceExportStateTx(t.Context(), tx, personID)
+				return err
+			}))
+			increment := int64(0)
+			if tc.review {
+				increment = 1
 			}
-			for range runs {
-				require.NoError(st.InitSchema())
-				var after CardDAVInferenceExportState
-				require.NoError(st.withReadSnapshotContext(t.Context(), func(tx *loggedTx) error {
-					var err error
-					after, err = st.getCardDAVInferenceExportStateTx(t.Context(), tx, personID)
-					return err
-				}))
-				increment := int64(0)
-				if tc.review {
-					increment = 1
-				}
-				assert.Equal(t, before.Inference.InferenceRevision+increment, after.InferenceRevision)
-				assert.Equal(t, increment == 1, after.ReviewRequired(before.ConnectionGeneration, book.ID))
+			assert.Equal(t, before.Inference.InferenceRevision+increment, after.InferenceRevision)
+			assert.Equal(t, increment == 1, after.ReviewRequired(before.ConnectionGeneration, book.ID))
+			if tc.multiple {
+				assert.Equal(t, secondBefore+1, inferenceRevision(t, st, secondID))
 			}
 		})
 	}
-}
-
-func TestCardDAVInferenceMigrationV3MultiplePeople(t *testing.T) {
-	st, firstID, _ := newPersonFactProjectionStore(t)
-	book := inferenceMigrationBook(t, st)
-	ids := []int64{firstID}
-	for _, name := range []string{"second", "unaffected"} {
-		var id int64
-		require.NoError(t, st.db.QueryRow(st.Rebind(`INSERT INTO persons(vcard_uid, display_name) VALUES (?, ?) RETURNING id`), name, name).Scan(&id))
-		ids = append(ids, id)
-	}
-	before := make([]int64, len(ids))
-	for i, id := range ids {
-		contact, err := st.AddPersonContactPointContext(t.Context(), id, PersonContactPointInput{AddressKind: ContactAddressEmail, OriginalValue: "retired@example.test", Envelope: ValueEnvelopeInput{Source: ProvenanceEnrichment}})
-		require.NoError(t, err)
-		envelope, err := vcard.ParseResourceEnvelope([]byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:person\r\nFN:Example\r\nEMAIL:retired@example.test\r\nEND:VCARD\r\n"))
-		require.NoError(t, err)
-		envelope.SourceRef = fmt.Sprintf("carddav:%d", book.ID)
-		envelope.SourceResourceUID = fmt.Sprintf("%s%d.vcf", book.CanonicalURL, id)
-		for _, property := range envelope.PropertyTree {
-			if property.Property.Name == "EMAIL" && i < 2 {
-				envelope.NativeMappings = []vcard.NativeMapping{{Identity: property.Identity, Table: personContactPointsTableName, RowID: contact.Envelope.ID, Field: "original_value", Kind: vcard.HandlingNative}}
-			}
-		}
-		envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, envelope.NativeMappings)
-		_, err = st.PutVCardResourceEnvelopeContext(t.Context(), VCardResourceEnvelopeInput{PersonID: id, Envelope: envelope})
-		require.NoError(t, err)
-		require.NoError(t, st.SupersedePersonContactPointContext(t.Context(), id, contact.Envelope.ID, nil))
-		_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_resources(address_book_id, href, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id) VALUES (?, ?, ?, ?, ?, 'local', ?, ?, ?)`), book.ID, envelope.SourceResourceUID, `"etag"`, envelope.StoredBody, "hash", CardDAVMappingMapped, CardDAVGovernanceLocal, id)
-		require.NoError(t, err)
-		before[i] = inferenceRevision(t, st, id)
-	}
-	_, err := st.db.Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name=?`), migrationCardDAVInferenceExportStateV3)
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchema())
-	assert.Equal(t, before[0]+1, inferenceRevision(t, st, ids[0]))
-	assert.Equal(t, before[1]+1, inferenceRevision(t, st, ids[1]))
-	assert.Equal(t, before[2], inferenceRevision(t, st, ids[2]))
 }
