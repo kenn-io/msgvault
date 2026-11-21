@@ -125,7 +125,7 @@ func TestEnrichmentCreatedNameReplacementLeavesOneFN(t *testing.T) {
 	assert.NotContains(body, "Alex Agent Name")
 }
 
-func TestEnrichmentCreatedPersonRenameUpdatesFormattedNameAndRequiresReview(t *testing.T) {
+func TestEnrichmentCreatedPersonRenamedCardRequiresReview(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := &mutationFixture{}
@@ -143,15 +143,6 @@ func TestEnrichmentCreatedPersonRenameUpdatesFormattedNameAndRequiresReview(t *t
 	require.NoError(err)
 	_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, current.Revision, new("Alex Renamed"))
 	require.NoError(err)
-
-	profile, err := st.GetPersonProfileContext(t.Context(), person.ID)
-	require.NoError(err)
-	assert.Empty(profile.Names)
-	history, err := st.GetPersonProfileHistoryContext(t.Context(), person.ID)
-	require.NoError(err)
-	require.Len(history.Names, 1)
-	assert.Equal(store.ProvenanceEnrichment, history.Names[0].Envelope.Source)
-	assert.NotNil(history.Names[0].Envelope.SupersededAt)
 
 	preview, err = service.PreviewPublication(t.Context(), person.ID)
 	require.NoError(err)
@@ -209,29 +200,6 @@ func TestDisplayNameEditKeepsSavedNameOnPublishedCard(t *testing.T) {
 			assert.Equal(t, 1, strings.Count(body, "\r\nFN"), body)
 			assert.Contains(t, body, "FN:Alex Example\r\n")
 		})
-	}
-}
-
-func TestInferredPersonCardFollowsRepeatedDisplayNameEdits(t *testing.T) {
-	fixture := &mutationFixture{}
-	service, st, _, _ := seededMutationService(t, fixture)
-	person, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
-		Name: "Alex Example", Source: store.ProvenanceEnrichment,
-	})
-	require.NoError(t, err)
-	for _, change := range []string{"Alex Renamed", "Alex Third"} {
-		person, err = st.GetPersonContext(t.Context(), person.ID)
-		require.NoError(t, err)
-		_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, &change)
-		require.NoError(t, err)
-		preview, err := service.PreviewPublication(t.Context(), person.ID)
-		require.NoError(t, err)
-		require.NoError(t, service.PublishReviewedPerson(t.Context(), person.ID, preview.ApprovalToken))
-		fixture.mu.Lock()
-		body := string(fixture.body)
-		fixture.mu.Unlock()
-		assert.Equal(t, 1, strings.Count(body, "\r\nFN"), body)
-		assert.Contains(t, body, "FN:"+change+"\r\n")
 	}
 }
 

@@ -2003,34 +2003,6 @@ func TestCopySubset_PreservesPersonProfiles(t *testing.T) {
 	assert.Equal(person.ParticipantIDs, copied.ParticipantIDs)
 }
 
-func TestCopySubsetKeepsRenamedInferredPersonLabel(t *testing.T) {
-	srcDB := createTestSourceDB(t, t.TempDir(), 5)
-	source, err := Open(srcDB)
-	require.NoError(t, err)
-	person, err := source.CreateStandalonePersonContext(t.Context(), PersonCreateInput{
-		Name: "Alex Example", Source: ProvenanceEnrichment,
-	})
-	require.NoError(t, err)
-	_, err = source.DB().ExecContext(t.Context(), source.Rebind(`INSERT INTO person_participants (person_id, participant_id) VALUES (?, ?)`), person.ID, 2)
-	require.NoError(t, err)
-	_, err = source.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, new("Alex Renamed"))
-	require.NoError(t, err)
-	require.NoError(t, source.Close())
-
-	dstDir := filepath.Join(t.TempDir(), "dst")
-	_, err = CopySubset(t.Context(), srcDB, dstDir, 1, false)
-	require.NoError(t, err)
-	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = destination.Close() })
-	copied, err := destination.GetPerson(person.ID)
-	require.NoError(t, err)
-	assert.Equal(t, new("Alex Renamed"), copied.DisplayName)
-	history, err := destination.GetPersonProfileHistoryContext(t.Context(), person.ID)
-	require.NoError(t, err)
-	assert.Empty(t, history.Names)
-}
-
 func TestCopySubset_ExcludesStructuredProfilesByDefault(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

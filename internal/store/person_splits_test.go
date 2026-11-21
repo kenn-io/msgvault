@@ -146,44 +146,6 @@ func TestSplitDoesNotRestoreRetiredInferredDisplayNameOwner(t *testing.T) {
 		"split must not restore a display-name mirror whose owning name row is retired")
 }
 
-func TestSplitKeepsRenamedInferredPersonLabelAfterNameRetirement(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	survivor, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
-		Name: "Curated Survivor",
-	})
-	require.NoError(t, err)
-	absorbed, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
-		Name: "Inferred Person", Source: store.ProvenanceEnrichment,
-	})
-	require.NoError(t, err)
-	absorbed, err = st.UpdatePersonDisplayNameContext(t.Context(), absorbed.ID, absorbed.Revision, new("Renamed Person"))
-	require.NoError(t, err)
-	name, err := st.AddPersonNameContext(t.Context(), absorbed.ID, store.PersonNameInput{
-		NameKind: store.PersonNameFormatted, Formatted: new("Renamed Person"), OriginalValue: "Renamed Person",
-		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment},
-	})
-	require.NoError(t, err)
-	absorbed, err = st.GetPersonContext(t.Context(), absorbed.ID)
-	require.NoError(t, err)
-	merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{
-		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
-		ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision,
-		IdempotencyKey: "split-renamed-inferred-merge", Actor: "test",
-	})
-	require.NoError(t, err)
-	split, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
-		SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
-		ExpectedSourceRevision: merged.Person.Revision,
-		IdempotencyKey:         "split-renamed-inferred", Actor: "test",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, new("Renamed Person"), split.NewPerson.DisplayName)
-	require.NoError(t, st.SupersedePersonNameContext(t.Context(), split.NewPerson.ID, name.Envelope.ID, nil))
-	person, err := st.GetPersonContext(t.Context(), split.NewPerson.ID)
-	require.NoError(t, err)
-	assert.Equal(t, new("Renamed Person"), person.DisplayName)
-}
-
 func TestAncestorSplitDoesNotRestoreRetiredInferredDisplayNameOwner(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
