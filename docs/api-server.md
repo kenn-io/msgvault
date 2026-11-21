@@ -517,6 +517,7 @@ Each of `add` and `remove` accepts at most 100 nonblank UTF-8 strings. Before
 waiting for other work or checking provider credentials, the daemon validates
 tag names, removes duplicates, and rejects overlapping `add` and `remove` sets.
 Provider rules vary:
+
 - **IMAP.** Accepts ASCII keyword atoms up to 255 bytes and compares them
   without case.
 - **Gmail.** Requires existing user label IDs.
@@ -559,6 +560,7 @@ daemon client accepts tag error responses up to 1 MiB so observed tags, flags,
 and recovery messages are not truncated.
 
 Status codes map as follows:
+
 - `400`: invalid tags.
 - `403`: insufficient provider scope.
 - `404`: missing archived message.
@@ -1125,9 +1127,9 @@ available during startup, while analytics routes return `503` until the required
 engine is ready.
 
 Authenticated `GET /api/v1/health` adds `api_schema_version`. Starting in schema
-2.28.0, its `vector` object can also include `text_enabled` and `visual_enabled`
-to show configured lanes; both stay `true` even while a lane initializes or
-fails. Public and delegated health responses omit them.
+2.28.0, its `vector` object can also include `text_enabled` and `visual_enabled`.
+These fields reflect configured lanes and remain true while a lane initializes
+or fails. Public and delegated health responses omit them.
 
 ---
 
