@@ -17,6 +17,46 @@ import (
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
+type meetingJITReader struct {
+	SQLReader
+	t        *testing.T
+	settings []string
+}
+
+func (r *meetingJITReader) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if strings.Contains(query, "copies(idx,id)") {
+		var setting string
+		require.NoError(r.t, r.SQLReader.QueryRowContext(ctx, `SELECT current_setting('jit')`).Scan(&setting))
+		r.settings = append(r.settings, setting)
+	}
+	return r.SQLReader.QueryContext(ctx, query, args...)
+}
+
+func TestMeetingCopyGraphRestoresJIT(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL")
+	}
+	calendarFixture(t, st, "jit-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	_, edit := calendarFixture(t, st, "jit-edit", `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`)
+	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
+	require.NoError(t, err)
+	defer release()
+	reader := &meetingJITReader{SQLReader: ReadDBContext(ctx, st.db.DB), t: t}
+	ctx = WithReadSnapshotReaderContext(ctx, st.db.DB, reader)
+	for _, initial := range []string{"on", "off"} {
+		var setting string
+		require.NoError(t, reader.QueryRowContext(ctx, `SELECT set_config('jit', $1, true)`, initial).Scan(&setting))
+		reader.settings = nil
+		ids, err := st.meetingCopies(ctx, edit)
+		require.NoError(t, err)
+		assert.Contains(t, ids, edit)
+		assert.Equal(t, []string{"off"}, reader.settings)
+		require.NoError(t, reader.QueryRowContext(ctx, `SELECT current_setting('jit')`).Scan(&setting))
+		assert.Equal(t, initial, setting)
+	}
+}
+
 func TestMeetingLinkDecisionReadsOnlyRequestedOccurrence(t *testing.T) {
 	r := require.New(t)
 	base := newRFC822IDBackfillBackendStore(t)
