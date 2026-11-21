@@ -5256,6 +5256,16 @@ func (s *Store) ParticipantSearchAddressContext(ctx context.Context, participant
 	return address, err
 }
 
+// ParticipantSentInSourceContext reports whether participantID sent any
+// message of sourceID.
+func (s *Store) ParticipantSentInSourceContext(ctx context.Context, participantID, sourceID int64) (bool, error) {
+	var sent bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM messages WHERE sender_id = ? AND source_id = ?)
+	`, participantID, sourceID).Scan(&sent)
+	return sent, err
+}
+
 // AdoptLegacyParticipantIdentifier atomically upgrades one legacy identifier
 // to a scoped value. The legacy value is consumed on success, so another
 // account cannot claim the same unscoped identifier after the first account
