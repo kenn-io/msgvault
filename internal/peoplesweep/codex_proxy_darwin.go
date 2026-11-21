@@ -42,7 +42,7 @@ func listenCodexProxy(ctx context.Context, _ string) (net.Listener, string, stri
 }
 
 // codexLoopbackListener serves 127.0.0.1:port and holds [::1]:port. The
-// Seatbelt rule "localhost:port" admits both addresses, so holding the IPv6
+// Seatbelt rule "tcp localhost:port" admits both addresses, so holding the IPv6
 // one keeps any other process from listening where the child may connect.
 type codexLoopbackListener struct {
 	net.Listener

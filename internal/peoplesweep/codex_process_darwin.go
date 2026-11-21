@@ -71,8 +71,10 @@ const codexSeatbeltProfile = `(version 1)
 (allow user-preference-read (preference-domain "com.openai.codex"))
 `
 
-// codexSeatbeltProxyRule is added only when a proxy session is attached.
-const codexSeatbeltProxyRule = `(allow network-outbound (remote ip (string-append "localhost:" (param "PROXY_PORT"))))
+// codexSeatbeltProxyRule is added only when a proxy session is attached. It
+// admits TCP alone: the proxy holds that port's TCP listeners, and nothing
+// stops another process from receiving UDP on the same port number.
+const codexSeatbeltProxyRule = `(allow network-outbound (remote tcp (string-append "localhost:" (param "PROXY_PORT"))))
 `
 
 // seatbeltCodexStarter confines the pinned, standalone Codex binary with a
