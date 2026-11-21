@@ -19,25 +19,25 @@ separate Graph token under `tokens/teams_<email>.json`. An Outlook IMAP token
 from `add-o365` doesn't authorize Teams sync.
 
 1. Register a Microsoft Entra app as described in
-   [OAuth Setup](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail), with:
+    [OAuth Setup](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail), with:
 
-   - Redirect URI: `http://localhost:8089/callback/microsoft`
-   - Public client flows enabled
-   - Delegated Microsoft Graph permissions:
-     `Chat.Read`, `ChannelMessage.Read.All`, `Team.ReadBasic.All`,
-     `Channel.ReadBasic.All`, `User.Read`, `User.ReadBasic.All`,
-     `TeamMember.Read.All`, and `ChannelMember.Read.All`
+    - Redirect URI: `http://localhost:8089/callback/microsoft`
+    - Public client flows enabled
+    - Delegated Microsoft Graph permissions:
+      `Chat.Read`, `ChannelMessage.Read.All`, `Team.ReadBasic.All`,
+      `Channel.ReadBasic.All`, `User.Read`, `User.ReadBasic.All`,
+      `TeamMember.Read.All`, and `ChannelMember.Read.All`
 
-   Some tenants require an administrator to grant consent for channel-message
-   permissions before you can authorize the app.
+    Some tenants require an administrator to grant consent for channel-message
+    permissions before you can authorize the app.
 
 2. Add the app to your `config.toml`:
 
-   ```toml
-   [microsoft]
-   client_id = "your-azure-app-client-id"
-   # tenant_id = "your-org-tenant-id"  # optional; default is "common"
-   ```
+    ```toml
+    [microsoft]
+    client_id = "your-azure-app-client-id"
+    # tenant_id = "your-org-tenant-id"  # optional; default is "common"
+    ```
 
 ## Authorize Teams
 
