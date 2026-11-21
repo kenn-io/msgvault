@@ -57,6 +57,9 @@ test.describe('compact toolbar', () => {
   test('compact Messages and Files toolbars fit one row and View opens Files', async ({ page }) => {
     await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows, total_count: rows.length, cache_revision: 'toolbar' } }));
     await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [fileRow(1, 'Presentation message 1')], total_count: 1234567, cache_revision: 'toolbar' } }));
+    await page.route('**/api/v1/cli/accounts', route => route.fulfill({ json: { accounts: [{
+      email: 'archive@example.com', virtual_accounts: [{ key: 'account:1', source_id: 1, account_address: 'archive@example.com', message_count: 1, source_deleted_count: 0 }]
+    }] } }));
     await page.goto('/?workspace=everything');
     for (const name of ['Messages', 'Files']) {
       const main = page.getByRole('main', { name, exact: true });
@@ -70,8 +73,23 @@ test.describe('compact toolbar', () => {
         await expect(page).toHaveURL(/[?&]workspace=files(&|$)/);
       } else {
         await page.keyboard.press('Escape');
-        await controls.getByRole('button', { name: 'Filter', exact: true }).click();
+        const filter = controls.getByRole('button', { name: 'Filter', exact: true });
+        await filter.click();
         const dialog = page.getByRole('dialog', { name: 'Filter' });
+        const account = dialog.getByRole('combobox', { name: /^Account:/ });
+        await expect(account).toBeVisible();
+        await account.click();
+        const accountOptions = dialog.getByRole('listbox');
+        await expect(accountOptions).toBeVisible();
+        await page.keyboard.press('Escape');
+        await expect(accountOptions).not.toBeVisible();
+        await expect(dialog).toBeVisible();
+        await expect(account).toBeFocused();
+        await page.keyboard.press('Escape');
+        await expect(dialog).not.toBeVisible();
+        await expect(filter).toBeFocused();
+        await filter.click();
+        await expect(dialog).toBeVisible();
         await dialog.getByLabel('From', { exact: true }).fill('2026-07-01');
         await dialog.getByLabel('To', { exact: true }).fill('2026-07-31');
         await page.keyboard.press('Escape');

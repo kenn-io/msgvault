@@ -20,8 +20,8 @@
   );
 </script>
 
-<span
-  class="identity-avatar"
+<!-- kit-ui-check-ignore: msgvault keeps its stable identity hue and separate person/domain shapes. -->
+<span class="identity-avatar"
   class:identity-avatar--domain={shape === 'domain'}
   style:--avatar-hue={hue}
   style:width={`${size}px`}
@@ -35,6 +35,7 @@
    * as the fill, the initials in a deeper shade of the same hue. Rows stay
    * text-first — the tile marks identity without competing with content.
    * Presentation-only. */
+  /* kit-ui-check-ignore: this tile preserves msgvault's identity hue and shape. */
   .identity-avatar {
     display: inline-flex;
     flex: none;
@@ -54,6 +55,7 @@
     border-radius: 12%;
   }
 
+  /* kit-ui-check-ignore: the dark palette keeps the same identity hue. */
   :global(.dark) .identity-avatar {
     background: hsl(var(--avatar-hue, 210) 55% 65% / 0.14);
     color: hsl(var(--avatar-hue, 210) 45% 74%);

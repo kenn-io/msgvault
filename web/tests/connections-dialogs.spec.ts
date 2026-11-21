@@ -167,6 +167,14 @@ for (const width of [1440, 390]) {
     const empty = await dialog.locator('.kit-typeahead__empty').evaluate(element => getComputedStyle(element).fontStyle);
     expect(empty).toBe('normal');
     await typeSearch.press('Escape');
+    await expect(dialog).toBeVisible();
+    await expect(typeSearch).not.toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Connection type: Type', exact: true })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await expect(add).toBeFocused();
+    await add.click();
+    await expect(dialog).toBeVisible();
 
     await dialog.getByRole('button', { name: 'Person', exact: true }).click();
     await dialog.getByRole('combobox', { name: 'Person', exact: true }).fill('Sela');
