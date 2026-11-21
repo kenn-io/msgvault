@@ -22,6 +22,8 @@ import (
 const extractionMaxOutputTokens = 4096
 
 type EvidencePacket struct {
+	BriefContext *BriefEventContext
+
 	PersonID          int64
 	ProgramID         string
 	ProgramVersion    string
@@ -47,6 +49,8 @@ type ProjectedValue struct {
 }
 
 type packetWireEnvelope struct {
+	BriefContext *BriefEventContext `json:"brief_context,omitempty"`
+
 	PersonID          int64                `json:"person_id"`
 	ProgramID         string               `json:"program_id"`
 	ProgramVersion    string               `json:"program_version"`
@@ -248,6 +252,26 @@ func canonicalPacket(packet EvidencePacket) (EvidencePacket, error) {
 		return EvidencePacket{}, errors.New("person sweep packet does not use a frozen program")
 	}
 	canonical := packet
+	if packet.ProgramID == BriefProgramID && packet.BriefContext == nil {
+		return EvidencePacket{}, errors.New("person brief packet requires event context")
+	}
+	if packet.BriefContext != nil {
+		if packet.ProgramID != BriefProgramID || packet.BriefContext.AsOf.IsZero() || len(packet.BriefContext.Events) > 8 {
+			return EvidencePacket{}, errors.New("invalid person brief event context")
+		}
+		context := *packet.BriefContext
+		context.AsOf = context.AsOf.UTC()
+		context.AdmissionThrough = context.AdmissionThrough.UTC()
+		// JSON round-trip detaches nested highlights, event dates and resolutions.
+		raw, err := json.Marshal(context.Events)
+		if err != nil {
+			return EvidencePacket{}, err
+		}
+		if err := json.Unmarshal(raw, &context.Events); err != nil {
+			return EvidencePacket{}, err
+		}
+		canonical.BriefContext = &context
+	}
 	canonical.Catalog.Targets = append([]personfacts.TargetDescriptor(nil), packet.Catalog.Targets...)
 	seenTargets := make(map[string]struct{}, len(canonical.Catalog.Targets))
 	for index := range canonical.Catalog.Targets {
@@ -424,7 +448,7 @@ func marshalPacketEnvelope(packet EvidencePacket) ([]byte, error) {
 	// Nested catalog and claim types own their canonical JSON shapes.
 	encoded, err := json.Marshal(packetWireEnvelope{
 		PersonID: packet.PersonID, ProgramID: packet.ProgramID, ProgramVersion: packet.ProgramVersion,
-		Catalog: packet.Catalog, CurrentProjection: packet.CurrentProjection,
+		Catalog: packet.Catalog, CurrentProjection: packet.CurrentProjection, BriefContext: packet.BriefContext,
 		UnresolvedClaims: packet.UnresolvedClaims, Seeds: seeds, Context: context,
 	}, json.Deterministic(true))
 	if err != nil {

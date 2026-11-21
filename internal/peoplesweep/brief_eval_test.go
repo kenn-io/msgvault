@@ -206,7 +206,7 @@ func runBriefFixture(t *testing.T, fixture briefFixture) {
 
 	rendered, err := peoplesweep.RenderBrief(parsed, window)
 	require.NoError(t, err)
-	assert.Equal(t, peoplesweep.BriefRendererPolicyV1, rendered.Policy)
+	assert.Equal(t, peoplesweep.BriefRendererPolicyV2, rendered.Policy)
 	assert.Equal(t, fixture.Expected.RenderedText, rendered.Text)
 	assert.Len(t, rendered.Sentences, briefExpectedSentenceCount(fixture.Expected.Output),
 		"one rendered sentence per surviving structured item")
@@ -336,7 +336,7 @@ func briefProviderJSON(
 		highlights = append(highlights, map[string]any{
 			"text": highlight.Text, "speaker": highlight.Speaker,
 			"evidence_ids": resolve(highlight.Evidence), "observed_at": highlight.ObservedAt,
-			"confidence_basis_points": highlight.ConfidenceBasisPoints,
+			"confidence_basis_points": highlight.ConfidenceBasisPoints, "life_event": nil,
 		})
 	}
 	document["highlights"] = highlights

@@ -171,6 +171,32 @@ describe('PersonBriefController', () => {
     controller.destroy();
   });
 
+  it.each([
+    ['follow_up', { state: 'follow_up', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, 'You may want to ask: How did it go?', 'You may want to ask: How did it go?'],
+    ['upcoming', { state: 'upcoming', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, 'Upcoming: moving soon.', 'Upcoming: moving soon.'],
+    ['resolved', { state: 'resolved', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, 'Resolved: the move.', 'Resolved: the move.'],
+    ['v1', undefined, 'Old sentence.', 'They were preparing for a role change.'],
+    ['null', null, 'Old sentence.', 'They were preparing for a role change.'],
+    ['malformed', { state: 'follow_up' }, 'Old sentence.', 'They were preparing for a role change.'],
+    ['empty sentence', { state: 'follow_up', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, '', 'They were preparing for a role change.'],
+  ] as const)('uses saved event sentence for %s with the same citations', async (_name, event, sentenceText, expected) => {
+    const data = structured();
+    const highlights = data.highlights.map((item, index) => index === 0 ? { ...item, life_event: event } : item);
+    const values = sentences();
+    values[1] = { ...values[1], text: sentenceText };
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(requestOf(input).url);
+      if (url.pathname.endsWith('/brief-enrollment')) return Response.json(enrollment(true));
+      return Response.json(brief({ structured: { ...data, highlights }, sentences: values }));
+    });
+    const controller = new PersonBriefController(createAPIClient(fetchFn));
+    await controller.setPerson(7);
+    expect(controller.brief?.sentences[1]?.detail).toBe(expected);
+    expect(controller.brief?.sentences[1]?.text).toBe(sentenceText);
+    expect(controller.brief?.sentences[1]?.evidence).toEqual([citedEvidence.first]);
+    controller.destroy();
+  });
+
   it('does not read the brief for a person who is not enrolled', async () => {
     const paths: string[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -468,6 +494,40 @@ describe('PersonBriefController', () => {
     expect(outcome.kind).toBe('confirmed');
     expect(controller.runOutcome).toBe('No new brief version. Reason: Provider budget exhausted.');
     expect(controller.brief).toBeUndefined();
+    controller.destroy();
+  });
+
+  it('refreshes a retired current brief and its visible history after a run with no new version', async () => {
+    let retired = false;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (request.method === 'POST' && path === '/api/v1/people/7/brief/generate') {
+        retired = true;
+        return Response.json({ run_id: 'run-1', attempt_id: 'attempt-1', brief_version: 0, brief_failure_class: '' });
+      }
+      if (path === '/api/v1/people/7/brief-enrollment') return Response.json(enrollment(true));
+      if (path === '/api/v1/people/7/brief/versions') {
+        return Response.json({ versions: [brief(retired ? { status: 'superseded', superseded_at: '2026-08-30T00:00:00Z' } : {})] });
+      }
+      if (path === '/api/v1/people/7/brief') {
+        return retired ? Response.json({ error: 'person_brief_not_found' }, { status: 404 }) : Response.json(brief());
+      }
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    const controller = new PersonBriefController(createAPIClient(fetchFn));
+    await controller.setPerson(7);
+    await controller.showVersions();
+    expect(controller.brief?.version).toBe(2);
+    expect(controller.versions[0]?.status).toBe('current');
+
+    const outcome = await controller.generate();
+
+    expect(outcome.kind).toBe('confirmed');
+    expect(controller.runOutcome).toBe('No new brief version.');
+    expect(controller.brief).toBeUndefined();
+    expect(controller.briefMissing).toBe(true);
+    expect(controller.versions[0]?.status).toBe('superseded');
     controller.destroy();
   });
 

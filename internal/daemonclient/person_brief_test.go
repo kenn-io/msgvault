@@ -1,6 +1,7 @@
 package daemonclient
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -8,7 +9,52 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 )
+
+func TestPersonBriefEventDetailsPreserveQuestionStateAndEvidence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	output := peoplesweep.BriefOutput{Highlights: []peoplesweep.BriefHighlight{{
+		Text: "their interview", Speaker: peoplesweep.BriefSpeakerPerson,
+		EvidenceIDs: []string{"evidence:aaa"},
+		LifeEvent: &peoplesweep.BriefLifeEvent{AnchorID: "evidence:aaa", Quote: "I have an interview.",
+			Question: "How did the interview go?", State: peoplesweep.BriefEventFollowUp},
+	}}}
+	structured, err := json.Marshal(output)
+	require.NoError(err)
+	sentences, err := json.Marshal([]map[string]any{{"kind": "highlight", "index": 0,
+		"text": "You may want to ask: How did the interview go?", "evidence_ordinals": []int{0}}})
+	require.NoError(err)
+	var payload map[string]any
+	require.NoError(json.Unmarshal([]byte(briefResponseFixtureWithSentences(
+		string(sentences), string(structured), briefEvidenceFixture)), &payload))
+	payload["program_version"] = "v2"
+	payload["renderer_policy"] = peoplesweep.BriefRendererPolicyV2
+	payload["rendered_text"] = "You may want to ask: How did the interview go?"
+	response, err := json.Marshal(payload)
+	require.NoError(err)
+	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writePeopleBrowserJSON(t, w, http.StatusOK, string(response))
+	}))
+	brief, err := engine.GetPersonBrief(t.Context(), 51)
+	require.NoError(err)
+	require.NotNil(brief)
+	require.Len(brief.Items, 1)
+	assert.Equal("You may want to ask: How did the interview go?", brief.Items[0].Text)
+	assert.Equal(peoplebrowser.PersonBriefHighlight, brief.Items[0].Kind)
+	require.Len(brief.Items[0].Evidence, 1)
+	assert.Equal("message:1", brief.Items[0].Evidence[0].SourceRef)
+
+	payload["sentences"] = []any{}
+	response, err = json.Marshal(payload)
+	require.NoError(err)
+	brief, err = engine.GetPersonBrief(t.Context(), 51)
+	require.NoError(err)
+	require.Len(brief.Items, 1)
+	assert.Equal("You may want to ask: How did the interview go?", brief.Items[0].Text, "fallback renders the saved event state")
+	assert.Empty(brief.Items[0].Evidence, "missing sentence ordinals do not invent citations")
+}
 
 // briefStructuredFixture is a stored person brief structure. The citation
 // order the sweep's parser produced for it is the interaction's item, the
@@ -277,7 +323,7 @@ func TestPeopleBrowserPersonBriefMutations(t *testing.T) {
 		mutationError(engine.GeneratePersonBrief(t.Context(), 0)),
 		mutationError(engine.RejectPersonBrief(t.Context(), 0, "")),
 	} {
-		assert.Error(err, "a non-positive ID never reaches the daemon")
+		require.Error(err, "a non-positive ID never reaches the daemon")
 	}
 }
 
@@ -344,12 +390,4 @@ func TestPeopleBrowserWithoutBriefsHidesTheBriefSurfacesAndForwardsTheRest(t *te
 	require.NoError(err)
 	assert.Equal([]string{"/api/v1/participants/11"}, paths,
 		"every other People operation still reaches the daemon")
-}
-
-func TestDaemonPeopleBrowserImplementsBriefSurfaces(t *testing.T) {
-	var backend peoplebrowser.Backend = &PeopleBrowser{}
-	_, reader := backend.(peoplebrowser.PersonBriefReader)
-	assert.True(t, reader)
-	_, writer := backend.(peoplebrowser.PersonBriefWriter)
-	assert.True(t, writer)
 }

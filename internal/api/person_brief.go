@@ -80,7 +80,7 @@ type PersonBriefSentence struct {
 
 // PersonBrief is one immutable brief version. It carries the paragraph, the
 // sentence-to-item map, the validated structure, and the cited archive items —
-// never an excerpt of the archive text the brief was derived from.
+// including short evidence-backed event quotes when present.
 type PersonBrief struct {
 	Version          int                                `json:"version"`
 	Status           string                             `json:"status"`
@@ -363,7 +363,7 @@ func (s *Server) personBriefDTO(
 		Sentences:        sentences,
 		Structured:       s.sanitizedPersonBriefStructure(brief),
 		Evidence:         pointers,
-		Boundary:         personBriefJSON(brief.Boundary),
+		Boundary:         sanitizedPersonBriefBoundary(brief.Boundary),
 		DroppedItemCount: brief.DroppedItemCount,
 		ProgramID:        brief.ProgramID,
 		ProgramVersion:   brief.ProgramVersion,
@@ -393,7 +393,7 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) jsontext
 			textutil.SanitizeTerminal(output.LastMeaningfulInteraction.Summary)
 	}
 	for index := range output.Highlights {
-		output.Highlights[index].Text = textutil.SanitizeTerminal(output.Highlights[index].Text)
+		sanitizeBriefHighlight(&output.Highlights[index])
 	}
 	for index := range output.FollowUps {
 		output.FollowUps[index].Question = textutil.SanitizeTerminal(output.FollowUps[index].Question)
@@ -410,6 +410,37 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) jsontext
 		s.logger.Error("person brief structure could not be re-encoded",
 			"person_id", brief.PersonID, "version", brief.Version)
 		return personBriefJSON(brief.Structured)
+	}
+	return encoded
+}
+
+// sanitizeBriefHighlight leaves evidence identifiers untouched.
+func sanitizeBriefHighlight(highlight *peoplesweep.BriefHighlight) {
+	highlight.Text = textutil.SanitizeTerminal(highlight.Text)
+	if event := highlight.LifeEvent; event != nil {
+		event.Quote = textutil.SanitizeTerminal(event.Quote)
+		event.Question = textutil.SanitizeTerminal(event.Question)
+		if event.Resolution != nil {
+			event.Resolution.Quote = textutil.SanitizeTerminal(event.Resolution.Quote)
+		}
+	}
+}
+
+// sanitizedPersonBriefBoundary sanitizes event prose in the response only.
+func sanitizedPersonBriefBoundary(raw jsontext.Value) jsontext.Value {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return personBriefJSON(raw)
+	}
+	var boundary peoplesweep.BriefBoundary
+	if err := json.Unmarshal(raw, &boundary); err != nil {
+		return personBriefJSON(raw)
+	}
+	for index := range boundary.EventMemory {
+		sanitizeBriefHighlight(&boundary.EventMemory[index].Highlight)
+	}
+	encoded, err := json.Marshal(boundary, json.Deterministic(true))
+	if err != nil {
+		return personBriefJSON(raw)
 	}
 	return encoded
 }
@@ -443,7 +474,7 @@ func (s *Server) personBriefSentences(
 	brief store.PersonBrief, pointerCount int,
 ) []PersonBriefSentence {
 	empty := []PersonBriefSentence{}
-	if brief.RendererPolicy != peoplesweep.BriefRendererPolicyV1 {
+	if brief.RendererPolicy != peoplesweep.BriefRendererPolicyV1 && brief.RendererPolicy != peoplesweep.BriefRendererPolicyV2 {
 		return empty
 	}
 	var output peoplesweep.BriefOutput
@@ -451,6 +482,13 @@ func (s *Server) personBriefSentences(
 		s.logger.Error("person brief structure could not be decoded",
 			"person_id", brief.PersonID, "version", brief.Version)
 		return empty
+	}
+	if brief.RendererPolicy == peoplesweep.BriefRendererPolicyV1 {
+		for _, highlight := range output.Highlights {
+			if highlight.LifeEvent != nil {
+				return empty
+			}
+		}
 	}
 	rendered, err := peoplesweep.RenderBrief(
 		peoplesweep.ParsedBrief{Output: output}, peoplesweep.BriefWindow{})
