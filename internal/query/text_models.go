@@ -184,4 +184,7 @@ var KnownMessageTypes = []string{
 	"tiktok_export",
 	"linkedin",
 	"feed_item",
+	"github",
+	"gitlab",
+	"gitea",
 }

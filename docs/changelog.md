@@ -25,6 +25,11 @@ All notable changes to msgvault, grouped by release.
 
 ### New features
 
+- Archive the GitHub issues, pull requests, and discussions you take part in,
+  with every comment and review, and the releases of repositories you watch.
+  Add an account with `msgvault add-github`, then sync with `sync-github` or
+  the `[github]` schedule; `exclude_owners` keeps an organization's
+  repositories from ever being fetched. See [Code forges](usage/forges.md).
 - Read the order, delivery, invoice and reservation details an email carries as schema.org markup with the MCP tool `get_message_records`, without sending the message anywhere.
 - Import a LinkedIn member data export with
   [`import-linkedin`](usage/linkedin.md). DMs, your posts, and your own

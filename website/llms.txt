@@ -63,6 +63,7 @@ Run `msgvault agent setup` to connect Claude Code and Codex.
 - [Meta webhooks](https://msgvault.io/docs/usage/meta-webhooks.md): `[meta_webhooks]` receiver that archives Facebook Page comment changes as they happen (unreleased)
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)
+- [Code Forges](https://msgvault.io/docs/usage/forges.md): GitHub issues, pull requests, reviews, discussions, and watched releases, with owner filters
 - [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)
 - [RSS, Atom and JSON Feeds](https://msgvault.io/docs/usage/feeds.md): follow feeds and archive each item once
 - [Messages from Any Source](https://msgvault.io/docs/usage/message-import.md): archive other messages through the import API

@@ -354,6 +354,34 @@ func TestSchemaVersionInlineServiceUpgrade(t *testing.T) {
 	}
 }
 
+func TestSchemaVersionForgeServicesUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s := testutil.NewTestStore(t)
+	ctx := t.Context()
+
+	// An archive set up by version 50 has no forge services.
+	_, err := s.DB().ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = 'communication_services_forges_v1'`)
+	require.NoError(err)
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM communication_services WHERE slug IN ('github', 'gitlab', 'gitea')`)
+	require.NoError(err)
+	_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), "50")
+	require.NoError(err)
+	require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
+
+	// A writer opens the archive through InitSchemaUnlessCurrentContext. Its
+	// PostgreSQL fast path for current archives applies no new seed, so the
+	// older version must send this archive through the full initializer.
+	require.NoError(s.InitSchemaUnlessCurrentContext(ctx))
+	require.NoError(s.ValidateSchemaContext(ctx))
+	for _, slug := range []string{"github", "gitlab", "gitea"} {
+		service, err := s.ResolveCommunicationServiceContext(ctx, slug)
+		require.NoError(err, slug)
+		assert.True(service.IsSystem, slug)
+		assert.Equal(store.ScopePolicyRequired, service.ScopePolicy, slug)
+	}
+}
+
 func TestSchemaVersionMalformedAndFuture(t *testing.T) {
 	req := require.New(t)
 	check := assert.New(t)
@@ -427,6 +455,7 @@ var (
 		48: "07dd36cdfff6c46735a6db924e0f9e3701dd68d8fec798f196c894ba7cdc948d",
 		49: "aba299e2311d826c1db938c2461c3bc9a8d844065695c4f6548af4e0d9a32df8",
 		50: "347d939adf66868ab2e3e0428fb71339805a692ef2d96da15f831d51ac2f91ee",
+		51: "332020dac12b4cd2a6dfe25f1e08d02d85f6a10e4393245c90b35fc19f984fb6",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -474,6 +503,7 @@ var (
 		48: "88e0cabb45d64a8274c254a16a8c5990205c16f8eeca807a579cb38d336bcf04",
 		49: "26e862477d035b98f3c45c39dc90d03383e5adc4bd148790c0efd0b27900ce8c",
 		50: "504e4433a0f6934a24e064cd5605296ec98e2baced32c20584932552130b2f67",
+		51: "a3d585edd930ba83337869a9e1e89e34f052c72d8c9ec393eededa8a4eb1d2c8",
 	}
 )
 

@@ -55,6 +55,8 @@ attachments alongside the records you browse.
   AI Meeting Notes, and Muesli in the same searchable record.
 - **Social and feeds** — Facebook Page and Instagram comments, RSS, Atom, and
   JSON feeds, and messages from any other source through the import API.
+- **Code forges** — GitHub issues, pull requests, reviews, and discussions you
+  take part in, and releases you watch.
 - **Calendar** — Google Calendar events, organizers, and attendees, read-only.
 - **Contacts** — import contacts from a CardDAV address book and choose which
   saved profiles to sync back.
