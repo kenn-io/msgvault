@@ -19,6 +19,7 @@ import (
 
 type meetingJITReader struct {
 	SQLReader
+
 	t        *testing.T
 	settings []string
 }
@@ -53,16 +54,19 @@ func TestMeetingGraphRestoresJIT(t *testing.T) {
 			run  func(*testing.T) error
 		}{
 			{"copies", func(t *testing.T) error {
+				t.Helper()
 				_, err := st.meetingCopies(ctx, event)
 				return err
 			}},
 			{"decision", func(t *testing.T) error {
+				t.Helper()
 				endpoint := meetingDecisionEndpoint{ID: event, Kind: meetingRefEvent, Key: occurrenceIdentity(t, "20270314T100000Z").Key()}
 				budget := 100
 				_, err := st.meetingDecisionEdgesBatch(ctx, []meetingDecisionEndpoint{endpoint}, &budget)
 				return err
 			}},
 			{"purge", func(t *testing.T) error {
+				t.Helper()
 				return st.preservePurgedMeetingDecisionsWith(ctx, tx, "id=?", purge)
 			}},
 		} {
