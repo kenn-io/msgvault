@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -86,4 +87,16 @@ func TestCodexServiceProxyRequiresSessionCredential(t *testing.T) {
 		})
 	}
 	assert.Zero(t, dials.Load())
+}
+
+// assertCodexProxySessionHeld checks that no other process can listen on
+// either loopback address the child's Seatbelt rule admits.
+func assertCodexProxySessionHeld(t *testing.T, session CodexProxySession) {
+	t.Helper()
+	endpoint, err := url.Parse(session.Endpoint())
+	require.NoError(t, err)
+	for network, host := range map[string]string{"tcp4": "127.0.0.1", "tcp6": "::1"} {
+		_, err := (&net.ListenConfig{}).Listen(t.Context(), network, net.JoinHostPort(host, endpoint.Port()))
+		require.ErrorIs(t, err, syscall.EADDRINUSE, network)
+	}
 }

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -138,24 +139,35 @@ func TestCodexSeatbeltLauncherContainsChild(t *testing.T) {
 	})
 
 	// The same probe outside the sandbox reaches every target below.
-	unconfined := exec.CommandContext(t.Context(), probePath)
+	// It outlives the test's context to remove its shared-memory segment.
+	unconfined := exec.CommandContext(context.WithoutCancel(t.Context()), probePath)
 	unconfinedIn, err := unconfined.StdinPipe()
 	requireChecks.NoError(err)
 	unconfinedOut, err := unconfined.StdoutPipe()
 	requireChecks.NoError(err)
 	requireChecks.NoError(unconfined.Start())
 	baseline := codexSeatbeltProbe{t: t, stdin: json.NewEncoder(unconfinedIn), stdout: bufio.NewScanner(unconfinedOut)}
+	// A shared-memory segment under cfprefs' prefix that is not one of the two
+	// the profile names. POSIX names are limited to 31 bytes.
+	syntheticSegment := "apple.cfprefs.mv" + strconv.Itoa(os.Getpid())
+	requireChecks.True(baseline.run(map[string]string{"op": "shm-create", "path": syntheticSegment}).OK)
+	t.Cleanup(func() {
+		baseline.run(map[string]string{"op": "shm-unlink", "path": syntheticSegment})
+		_ = unconfinedIn.Close()
+		_ = unconfined.Wait()
+	})
 	for _, operation := range []map[string]string{
 		{"op": "read", "path": archive},
 		{"op": "read", "path": filepath.Join(authHome, "unrelated.txt")},
 		{"op": "dial", "network": "tcp", "address": tcpCanary.Addr().String()},
 		{"op": "dial", "network": "unix", "address": canarySocket},
 		{"op": "preference", "domain": preferenceDomain, "key": "SyntheticCanary"},
+		{"op": "exec", "path": "/bin/sh"},
+		{"op": "shm", "path": syntheticSegment},
 	} {
-		assertChecks.True(baseline.run(operation).OK, "unconfined baseline %v", operation)
+		result := baseline.run(operation)
+		assertChecks.True(result.OK, "unconfined baseline %v: %s", operation, result.Error)
 	}
-	requireChecks.NoError(unconfinedIn.Close())
-	requireChecks.NoError(unconfined.Wait())
 	requireChecks.Eventually(canaryAccepted.Load, 2*time.Second, 10*time.Millisecond)
 	canaryAccepted.Store(false)
 
@@ -233,10 +245,20 @@ func TestCodexSeatbeltLauncherContainsChild(t *testing.T) {
 	probe.denied(map[string]string{"op": "write", "path": outside})
 	assertChecks.NoFileExists(outside)
 	probe.denied(map[string]string{"op": "exec", "path": "/bin/sh"})
-	// cfprefsd answers a denied domain as an empty one.
+	// cfprefsd stays reachable, so Codex can synchronize, but answers every
+	// domain as empty: the canary the unconfined probe read is unavailable.
+	sync := probe.run(map[string]string{"op": "preference-sync", "domain": preferenceDomain})
+	assertChecks.True(sync.OK, sync.Error)
 	preference := probe.run(map[string]string{"op": "preference", "domain": preferenceDomain, "key": "SyntheticCanary"})
 	assertChecks.False(preference.OK)
 	assertChecks.Equal("preference unavailable", preference.Error)
+	// Only the two cfprefs change counters are readable shared memory.
+	for _, segment := range []string{"apple.cfprefs.daemonv1", "apple.cfprefs." + strconv.Itoa(os.Geteuid()) + "v1"} {
+		opened := probe.run(map[string]string{"op": "shm", "path": segment})
+		assertChecks.True(opened.OK, "%s: %s", segment, opened.Error)
+	}
+	probe.denied(map[string]string{"op": "shm", "path": syntheticSegment})
+	probe.denied(map[string]string{"op": "shm-create", "path": "apple.cfprefs.mvsandbox"})
 
 	// Denied: every network path except the proxy port.
 	for _, target := range []map[string]string{
@@ -322,11 +344,16 @@ func TestCodexRegisteredExecutableRejectsAdjacentDynamicDependency(t *testing.T)
 	for _, tc := range []struct {
 		name string
 		link []string
+		// installName is the path the executable records for the dependency.
+		installName func(root string) string
 	}{
 		{name: "strong", link: []string{"-ladjacent"}},
 		{name: "weak", link: []string{"-Wl,-weak-ladjacent"}},
 		{name: "reexport", link: []string{"-Wl,-reexport-ladjacent"}},
 		{name: "loader environment", link: []string{"-Wl,-dyld_env,DYLD_LIBRARY_PATH=@executable_path"}},
+		{name: "system prefix escaping with dot-dot", link: []string{"-ladjacent"}, installName: func(root string) string {
+			return "/usr/lib/../.." + root + "/libadjacent.dylib"
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			must := require.New(t)
@@ -343,8 +370,12 @@ func TestCodexRegisteredExecutableRejectsAdjacentDynamicDependency(t *testing.T)
 					"int main(void) { FILE *f = fopen(\""+marker+"\", \"w\"); "+
 					"if (f) { fputs(\"ran\", f); fclose(f); } puts(\"codex-cli 0.149.0\"); return 0; }\n",
 			), 0o600))
+			installName := "@rpath/libadjacent.dylib"
+			if tc.installName != nil {
+				installName = tc.installName(root)
+			}
 			compileCodexNativeFixture(t, compiler, "-dynamiclib", dependencySource,
-				"-install_name", "@rpath/libadjacent.dylib", "-o", dependency)
+				"-install_name", installName, "-o", dependency)
 			args := append([]string{launcherSource, "-L" + root, "-Wl,-rpath,@loader_path"}, tc.link...)
 			compileCodexNativeFixture(t, compiler, append(args, "-o", executable)...)
 			contents, err := os.ReadFile(executable)
@@ -390,8 +421,9 @@ func TestCodexPinnedArtifactDeniesExecutionAndAccessToStagedAuth(t *testing.T) {
 	defer func() { require.NoError(t, attestation.Close()) }()
 	process, err := launcher.Start(ctx, attestation, authHome)
 	requireChecks.NoError(err)
-	client := &CodexRPCClient{Process: process}
-	defer func() { require.NoError(t, finishCodexProcess(ctx, process, client, true)) }()
+	recorded := recordCodexFrames(process)
+	client := &CodexRPCClient{Process: recorded}
+	defer func() { require.NoError(t, finishCodexProcess(ctx, recorded, client, true)) }()
 	var initialized map[string]any
 	requireChecks.NoError(client.Call(ctx, "initialize", codexInitializeRequest().Params, &initialized))
 	requireChecks.NoError(client.Notify(ctx, "initialized", nil))
@@ -405,9 +437,47 @@ func TestCodexPinnedArtifactDeniesExecutionAndAccessToStagedAuth(t *testing.T) {
 	requireChecks.True(ok)
 	workRoot, err := filepath.EvalSymlinks(owned.workRoot)
 	requireChecks.NoError(err)
-	assertCodexRejectsExecutionAndFileRequests(ctx, t, client,
+	assertCodexRejectsExecutionAndFileRequests(ctx, t, client, recorded,
 		filepath.Join(workRoot, ".codex", "auth.json"), attestation.VerifiedExecutable().verifiedPath, workRoot)
 	contents, err := os.ReadFile(filepath.Join(authHome, "auth.json"))
 	requireChecks.NoError(err)
 	assertChecks.JSONEq(syntheticAuth, string(contents))
+}
+
+// TestCodexSeatbeltProxyOutlivesCancellation catches the launcher releasing
+// the proxy's port, the only one the child may connect to, before the child
+// has exited.
+func TestCodexSeatbeltProxyOutlivesCancellation(t *testing.T) {
+	requireChecks := require.New(t)
+	probePath := buildCodexSeatbeltProbe(t)
+	contents, err := os.ReadFile(probePath)
+	requireChecks.NoError(err)
+	registry := codexIsolationFixtureRegistry(contents)
+	for key, attestation := range registry {
+		attestation.Version = "codex-cli 0.0.0-seatbelt-probe"
+		registry[key] = attestation
+	}
+	authHome := t.TempDir()
+	requireChecks.NoError(os.Chmod(authHome, 0o700))
+	requireChecks.NoError(os.WriteFile(filepath.Join(authHome, "auth.json"), []byte(`{"synthetic":true}`), 0o600))
+	launcher := codexBoundLauncher{
+		gate: injectedReleasedCodexGate{registry: registry}, starter: NewCodexCommandStarter(),
+		proxy: newCodexHostServiceProxy(nil),
+	}
+	attestation, err := launcher.Verify(t.Context(), probePath)
+	requireChecks.NoError(err)
+	defer func() { require.NoError(t, attestation.Close()) }()
+	ctx, cancel := context.WithCancel(t.Context())
+	process, err := launcher.Start(ctx, attestation, authHome)
+	requireChecks.NoError(err)
+	owned, ok := process.(*codexOwnedProcess)
+	requireChecks.True(ok)
+	session := owned.proxy
+	probe := startCodexSeatbeltProbe(t, process)
+	requireChecks.True(probe.run(map[string]string{"op": "env"}).OK)
+
+	cancel()
+	assertCodexProxySessionHeld(t, session)
+	requireChecks.Error(process.Wait())
+	assertCodexProxySessionClosed(t, session)
 }

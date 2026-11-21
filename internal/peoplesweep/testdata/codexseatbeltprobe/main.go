@@ -8,8 +8,34 @@ package main
 
 /*
 #cgo LDFLAGS: -framework CoreFoundation
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <CoreFoundation/CoreFoundation.h>
+
+// shm_open is variadic, which cgo cannot call directly.
+static int probe_shm_open(const char *name, int create) {
+	int fd = create ? shm_open(name, O_RDWR | O_CREAT, 0600) : shm_open(name, O_RDONLY);
+	if (fd < 0) {
+		return -errno;
+	}
+	if (create && ftruncate(fd, 64) != 0) {
+		int saved = errno;
+		close(fd);
+		return -saved;
+	}
+	close(fd);
+	return 0;
+}
+
+static int probe_preference_sync(const char *domain) {
+	CFStringRef d = CFStringCreateWithCString(NULL, domain, kCFStringEncodingUTF8);
+	Boolean ok = CFPreferencesAppSynchronize(d);
+	CFRelease(d);
+	return ok ? 1 : 0;
+}
 
 static int probe_preference_present(const char *key, const char *domain) {
 	CFStringRef k = CFStringCreateWithCString(NULL, key, kCFStringEncodingUTF8);
@@ -38,6 +64,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 	"unsafe"
 )
@@ -119,6 +146,31 @@ func run(op operation) (string, error) {
 		return "", errors.Join(err, conn.Close())
 	case "connect":
 		return connect(op.Authority)
+	case "shm", "shm-create":
+		name := C.CString(op.Path)
+		defer C.free(unsafe.Pointer(name))
+		create := C.int(0)
+		if op.Op == "shm-create" {
+			create = 1
+		}
+		if code := C.probe_shm_open(name, create); code != 0 {
+			return "", syscall.Errno(-code)
+		}
+		return "", nil
+	case "shm-unlink":
+		name := C.CString(op.Path)
+		defer C.free(unsafe.Pointer(name))
+		if C.shm_unlink(name) != 0 {
+			return "", errors.New("shm_unlink failed")
+		}
+		return "", nil
+	case "preference-sync":
+		domain := C.CString(op.Domain)
+		defer C.free(unsafe.Pointer(domain))
+		if C.probe_preference_sync(domain) == 0 {
+			return "", errors.New("preference synchronize failed")
+		}
+		return "", nil
 	case "preference":
 		key := C.CString(op.Key)
 		domain := C.CString(op.Domain)

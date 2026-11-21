@@ -4,6 +4,7 @@ package peoplesweep
 
 import (
 	"net"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,4 +24,11 @@ func codexProxySessionCredential(*testing.T, CodexProxySession) string { return 
 func assertCodexProxySessionClosed(t *testing.T, session CodexProxySession) {
 	t.Helper()
 	assert.NoFileExists(t, session.Endpoint())
+}
+
+func assertCodexProxySessionHeld(t *testing.T, session CodexProxySession) {
+	t.Helper()
+	info, err := os.Lstat(session.Endpoint())
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&os.ModeSocket)
 }

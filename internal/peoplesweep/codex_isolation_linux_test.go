@@ -109,7 +109,7 @@ func TestCodexPinnedArtifactDoesNotInheritAmbientAuthHome(t *testing.T) {
 	registry := map[CodexReleaseKey]CodexAttestation{
 		{ExecutableSHA256: digest, ExecutionBoundary: CodexExecutionBoundaryV1}: {
 			Version: "codex-cli 0.156.0", ExecutableSHA256: digest,
-			ExecutionBoundary: CodexExecutionBoundaryV1, LaunchArtifact: CodexLaunchArtifactNativeStandaloneV1,
+			ExecutionBoundary: CodexExecutionBoundaryV1, LaunchArtifact: CodexLaunchArtifactNativeStandaloneV1, Platform: codexHostPlatform,
 		},
 	}
 	launcher := codexBoundLauncher{
@@ -170,7 +170,7 @@ func TestCodexLauncherDeniesExecutionAndAccessToStagedAuth(t *testing.T) {
 	registry := map[CodexReleaseKey]CodexAttestation{
 		{ExecutableSHA256: digest, ExecutionBoundary: CodexExecutionBoundaryV1}: {
 			Version: "codex-cli 0.156.0", ExecutableSHA256: digest,
-			ExecutionBoundary: CodexExecutionBoundaryV1, LaunchArtifact: CodexLaunchArtifactNativeStandaloneV1,
+			ExecutionBoundary: CodexExecutionBoundaryV1, LaunchArtifact: CodexLaunchArtifactNativeStandaloneV1, Platform: codexHostPlatform,
 		},
 	}
 	launcher := codexBoundLauncher{gate: injectedReleasedCodexGate{registry: registry}, starter: NewCodexCommandStarter()}
@@ -181,8 +181,9 @@ func TestCodexLauncherDeniesExecutionAndAccessToStagedAuth(t *testing.T) {
 	defer func() { require.NoError(t, attestation.Close()) }()
 	process, err := launcher.Start(ctx, attestation, authHome)
 	requireChecks.NoError(err)
-	client := &CodexRPCClient{Process: process}
-	defer func() { require.NoError(t, finishCodexProcess(ctx, process, client, true)) }()
+	recorded := recordCodexFrames(process)
+	client := &CodexRPCClient{Process: recorded}
+	defer func() { require.NoError(t, finishCodexProcess(ctx, recorded, client, true)) }()
 	var initialized map[string]any
 	requireChecks.NoError(client.Call(ctx, "initialize", codexInitializeRequest().Params, &initialized))
 	requireChecks.NoError(client.Notify(ctx, "initialized", nil))
@@ -192,7 +193,7 @@ func TestCodexLauncherDeniesExecutionAndAccessToStagedAuth(t *testing.T) {
 	var thread codexThreadStartResult
 	requireChecks.NoError(client.Call(ctx, "thread/start", codexThreadStartRequest(3, ProviderProfile{Model: models.Data[0].ID}).Params, &thread))
 	requireChecks.NotEmpty(thread.Thread.ID)
-	assertCodexRejectsExecutionAndFileRequests(ctx, t, client, "/work/.codex/auth.json", "/codex", "/work")
+	assertCodexRejectsExecutionAndFileRequests(ctx, t, client, recorded, "/work/.codex/auth.json", "/codex", "/work")
 	owned, ok := process.(*codexOwnedProcess)
 	requireChecks.True(ok)
 	execProcess, ok := owned.RPCProcess.(*execRPCProcess)

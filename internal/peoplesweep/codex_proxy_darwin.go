@@ -21,8 +21,10 @@ const (
 
 // listenCodexProxy serves the policy proxy on an ephemeral loopback port, the
 // one address the Seatbelt profile lets the child connect to. Loopback ports
-// are visible to every local user, so each session requires its own random
-// Proxy-Authorization credential, which only the child's environment holds.
+// are reachable by every local user, so each session requires its own random
+// Proxy-Authorization credential. It travels in the child's environment, which
+// processes of the daemon's own user can read, as they can use the Linux
+// owner-only socket.
 func listenCodexProxy(ctx context.Context, _ string) (net.Listener, string, string, error) {
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"debug/macho"
 	"errors"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -52,7 +53,7 @@ func validateCodexLaunchArtifact(path string, artifact CodexLaunchArtifact) erro
 			if !ok {
 				return errors.New("read codex launch artifact dependencies")
 			}
-			if !strings.HasPrefix(name, "/usr/lib/") && !strings.HasPrefix(name, "/System/Library/") {
+			if !systemMachOLibrary(name) {
 				return errors.New("codex launch artifact requires a non-system library")
 			}
 		case machoDyldEnvironment:
@@ -60,6 +61,13 @@ func validateCodexLaunchArtifact(path string, artifact CodexLaunchArtifact) erro
 		}
 	}
 	return nil
+}
+
+// systemMachOLibrary admits only a clean absolute path under the system
+// library roots, so "/usr/lib/../../tmp/x.dylib" does not pass as system code.
+func systemMachOLibrary(name string) bool {
+	return filepath.Clean(name) == name &&
+		(strings.HasPrefix(name, "/usr/lib/") || strings.HasPrefix(name, "/System/Library/"))
 }
 
 func machoLoadCommandName(raw []byte, file *macho.File) (string, bool) {

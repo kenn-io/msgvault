@@ -215,7 +215,7 @@ func liveCodexIsolationTestGate(t *testing.T) (injectedReleasedCodexGate, string
 	registry := map[CodexReleaseKey]CodexAttestation{
 		{ExecutableSHA256: digest, ExecutionBoundary: CodexExecutionBoundaryV1}: {
 			Version: version, ExecutableSHA256: digest, ExecutionBoundary: CodexExecutionBoundaryV1,
-			LaunchArtifact: CodexLaunchArtifactNativeStandaloneV1,
+			LaunchArtifact: CodexLaunchArtifactNativeStandaloneV1, Platform: codexHostPlatform,
 		},
 	}
 	return injectedReleasedCodexGate{registry: registry}, executable

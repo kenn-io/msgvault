@@ -3,12 +3,17 @@
 package peoplesweep
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"encoding/json/jsontext"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -121,25 +126,82 @@ func TestCodexPinnedArtifactPacketOnlyStructuredInference(t *testing.T) {
 	t.Log("packet-only structured inference completed through the pinned launcher")
 }
 
+// recordedCodexProcess keeps a copy of every frame the app server writes, so
+// a test can read an error's message, which CodexRPCClient never returns.
+type recordedCodexProcess struct {
+	RPCProcess
+
+	mu     sync.Mutex
+	frames bytes.Buffer
+	stdout io.ReadCloser
+}
+
+func recordCodexFrames(process RPCProcess) *recordedCodexProcess {
+	recorded := &recordedCodexProcess{RPCProcess: process}
+	recorded.stdout = struct {
+		io.Reader
+		io.Closer
+	}{io.TeeReader(process.Stdout(), recordedCodexWriter{recorded}), process.Stdout()}
+	return recorded
+}
+
+func (p *recordedCodexProcess) Stdout() io.ReadCloser { return p.stdout }
+
+// errorMessage returns the error message of the response to request id.
+func (p *recordedCodexProcess) errorMessage(t *testing.T, id int64) string {
+	t.Helper()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for line := range strings.Lines(p.frames.String()) {
+		var frame struct {
+			ID    *int64 `json:"id"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(line), &frame) == nil && frame.ID != nil && *frame.ID == id && frame.Error != nil {
+			return frame.Error.Message
+		}
+	}
+	return ""
+}
+
+type recordedCodexWriter struct{ process *recordedCodexProcess }
+
+func (w recordedCodexWriter) Write(data []byte) (int, error) {
+	w.process.mu.Lock()
+	defer w.process.mu.Unlock()
+	n, err := w.process.frames.Write(data)
+	if err != nil {
+		return n, fmt.Errorf("record codex frame: %w", err)
+	}
+	return n, nil
+}
+
 // assertCodexRejectsExecutionAndFileRequests catches the app server serving
 // its command or filesystem interface to a client, which would expose the
-// staged credential beside it. Only synthetic secrets are staged.
+// staged credential beside it. The refusals asserted are Codex's own, from
+// CODEX_EXEC_SERVER_URL=none, reached before the OS is asked; what the OS
+// refuses is the containment probes' job. Only synthetic secrets are staged.
 func assertCodexRejectsExecutionAndFileRequests(
-	ctx context.Context, t *testing.T, client *CodexRPCClient, stagedAuth, executable, workRoot string,
+	ctx context.Context, t *testing.T, client *CodexRPCClient, process *recordedCodexProcess,
+	stagedAuth, executable, workRoot string,
 ) {
 	t.Helper()
 	for _, request := range []struct {
-		method string
-		params any
+		method  string
+		params  any
+		refusal string
 	}{
-		{"fs/readFile", map[string]any{"path": stagedAuth}},
-		{"command/exec", map[string]any{"command": []string{executable, "--version"}, "cwd": workRoot}},
+		{"fs/readFile", map[string]any{"path": stagedAuth}, "local filesystem is not configured"},
+		{"command/exec", map[string]any{"command": []string{executable, "--version"}, "cwd": workRoot}, "local environment is not configured"},
 	} {
 		var result map[string]any
 		err := client.Call(ctx, request.method, request.params, &result)
 		require.ErrorContains(t, err, "failed with code", request.method)
 		assert.Empty(t, result, request.method)
 		assert.NotContains(t, err.Error(), "SYNTHETIC_AUTH_SECRET")
+		assert.Equal(t, request.refusal, process.errorMessage(t, client.nextID), request.method)
 	}
 }
 
@@ -152,7 +214,7 @@ func pinnedCodexProbeRegistry(t *testing.T, artifact string) map[CodexReleaseKey
 	return map[CodexReleaseKey]CodexAttestation{
 		{ExecutableSHA256: digest, ExecutionBoundary: CodexExecutionBoundaryV1}: {
 			Version: version, ExecutableSHA256: digest,
-			ExecutionBoundary: CodexExecutionBoundaryV1, LaunchArtifact: CodexLaunchArtifactNativeStandaloneV1,
+			ExecutionBoundary: CodexExecutionBoundaryV1, LaunchArtifact: CodexLaunchArtifactNativeStandaloneV1, Platform: codexHostPlatform,
 		},
 	}
 }

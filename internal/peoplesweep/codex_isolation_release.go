@@ -12,10 +12,16 @@ var releasedCodexAttestations = map[CodexReleaseKey]CodexAttestation{}
 // release. Enrollment must remain unavailable until users can use its credentials.
 // Each launch still verifies the selected executable against the release registry.
 func CodexReleaseAvailable() bool {
+	return codexReleaseAvailable(releasedCodexAttestations)
+}
+
+// codexReleaseAvailable admits only entries certified for this OS and
+// architecture, so a certification on one platform opens no other's gate.
+func codexReleaseAvailable(registry map[CodexReleaseKey]CodexAttestation) bool {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		return false
 	}
-	for key, attestation := range releasedCodexAttestations {
+	for key, attestation := range registry {
 		if key.ExecutionBoundary == CodexExecutionBoundaryV1 && validReleasedCodexAttestation(key, attestation) {
 			return true
 		}

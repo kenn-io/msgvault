@@ -379,12 +379,15 @@ a copy of the profile's `auth.json`:
 | Platform | Launcher | What the app server can reach |
 |----------|----------|-------------------------------|
 | Linux | Bubblewrap | Empty user, PID and network namespaces; of the host's files it sees only the work root, the system CA bundle and the executable. |
-| macOS | Seatbelt (`/usr/bin/sandbox-exec`) | A deny-by-default profile: it reads and writes only the work root, reads system libraries and the CA bundle, connects only to its proxy port, and cannot start another process. |
+| macOS | Seatbelt (`/usr/bin/sandbox-exec`) | A deny-by-default profile: of the host's files it reads only the work root, system libraries, the CA bundle and the names of the top-level directories; it connects only over TCP to its proxy port, reads no preferences, and cannot start another process. |
 
 On both, its only network path is a proxy in the daemon that opens connections
 to `chatgpt.com:443` and `auth.openai.com:443` and nothing else. On macOS the
-proxy listens on loopback and requires a credential that only that launch
-holds. The launchers also disable Codex's local execution environment and
+proxy listens on loopback, which every local user can reach, so it requires a
+per-launch credential. That credential is in the app server's environment, so
+other processes running as the daemon's user can read it, as they can use the
+Linux proxy's owner-only socket. The `--version` check that precedes each
+launch runs under the same launcher. The launchers also disable Codex's local execution environment and
 shell tools. The app server can manage its staged OAuth credential, but its
 command and filesystem interfaces cannot access it. Command-execution requests
 or events abort inference. Enabling a release on either platform still

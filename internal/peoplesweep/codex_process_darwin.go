@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -22,18 +23,20 @@ const (
 
 // codexSeatbeltProfile denies everything the app server does not need. The
 // launcher passes every path as a parameter, so no path is parsed as profile
-// text. The child can read and write only its disposable work root, read the
-// system's code and CA bundle, and connect only to the session's proxy port.
-// It cannot fork or execute anything but the verified snapshot itself.
+// text. Each grant below is one Codex 0.167.0 fails without on macOS 27 (Apple
+// silicon): it aborts in dyld, exits naming the refused path, or panics in the
+// Rust runtime. Codex starts no process; the profile lets it exec only itself.
 const codexSeatbeltProfile = `(version 1)
 (deny default)
 
 (allow process-exec (literal (param "CODEX")))
 (allow file-read* file-map-executable (literal (param "CODEX")))
 
-; The loader finds the shared cache from the root directory, and system code
-; lives under these paths. None of them holds user data.
-(allow file-read* (literal "/"))
+; dyld opens the root directory to find the shared cache, and aborts without
+; it. This exposes the names of the top-level directories, not their contents.
+(allow file-read-data (literal "/"))
+; /etc is a symlink Codex resolves to look for /etc/codex/requirements.toml, and
+; it canonicalizes CODEX_HOME, which stats each ancestor of the work root.
 (allow file-read-metadata (literal "/etc") (path-ancestors (param "WORK")))
 (allow file-read* file-map-executable
   (subpath "/usr/lib")
@@ -41,34 +44,23 @@ const codexSeatbeltProfile = `(version 1)
   (subpath "/System/Library/PrivateFrameworks"))
 (allow file-read* (literal "/dev/random") (literal "/dev/urandom") (literal (param "CA_BUNDLE")))
 (allow file-read* file-write-data (literal "/dev/null"))
-(allow sysctl-read
-  (sysctl-name "hw.ephemeral_storage")
-  (sysctl-name "hw.machine")
-  (sysctl-name "hw.ncpu")
-  (sysctl-name "hw.pagesize_compat")
-  (sysctl-name-prefix "hw.optional.")
-  (sysctl-name "kern.bootargs")
-  (sysctl-name "kern.hostname")
-  (sysctl-name "kern.iossupportversion")
-  (sysctl-name "kern.osproductversion")
-  (sysctl-name "kern.osrelease")
-  (sysctl-name "kern.ostype")
-  (sysctl-name "kern.osvariant_status")
-  (sysctl-name "kern.version")
-  (sysctl-name-prefix "machdep.cpu.")
-  (sysctl-name "security.mac.lockdown_mode_state"))
+; The Rust runtime reads the page size at start.
+(allow sysctl-read (sysctl-name "hw.pagesize_compat"))
 
 ; The disposable work root holds the staged auth.json and everything Codex
 ; writes. It is the only user path the child can read.
 (allow file-read* file-write* (subpath (param "WORK")))
 
-; Codex refuses to start until it refreshes its managed preferences. It may
-; read its own preference domain and no other.
-(allow ipc-posix-shm-read* (ipc-posix-name-prefix "apple.cfprefs."))
+; Codex refuses to start until CFPreferences synchronizes its managed
+; preferences. That needs cfprefsd and the two change counters it publishes
+; in shared memory, read-only. No preference domain is readable: cfprefsd
+; answers every read as empty.
 (allow mach-lookup
   (global-name "com.apple.cfprefsd.daemon")
   (global-name "com.apple.cfprefsd.agent"))
-(allow user-preference-read (preference-domain "com.openai.codex"))
+(allow ipc-posix-shm-read-data
+  (ipc-posix-name "apple.cfprefs.daemonv1")
+  (ipc-posix-name (string-append "apple.cfprefs." (param "UID") "v1")))
 `
 
 // codexSeatbeltProxyRule is added only when a proxy session is attached. It
@@ -143,22 +135,57 @@ func (seatbeltCodexStarter) start(
 			return nil, err
 		}
 	}
+	sandboxArgs, childEnv, err := codexSeatbeltInvocation(workRoot, codex, proxyURL, proxyPort, args)
+	if err != nil {
+		return nil, err
+	}
+	return execCommandStarter{}.Start(
+		ctx, CodexExecutable{verifiedPath: codexSandboxExec}, sandboxArgs, childEnv, workRoot,
+	)
+}
+
+// codexVersionCommand runs the snapshot's --version under the same
+// profile, without a proxy, in a disposable root.
+func codexVersionCommand(ctx context.Context, verifiedPath, root string) (*exec.Cmd, error) {
+	workRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, errors.New("codex version root is unavailable")
+	}
+	codex, err := filepath.EvalSymlinks(verifiedPath)
+	if err != nil {
+		return nil, errors.New("codex verified executable is unavailable")
+	}
+	sandboxArgs, childEnv, err := codexSeatbeltInvocation(workRoot, codex, "", "", []string{"--version"})
+	if err != nil {
+		return nil, err
+	}
+	command := exec.CommandContext(ctx, codexSandboxExec, sandboxArgs...) //nolint:gosec // A fixed system binary; the launcher builds every argument.
+	command.Env = childEnv
+	command.Dir = workRoot
+	return command, nil
+}
+
+// codexSeatbeltInvocation checks the system files the profile relies on,
+// prepares the work root, and returns sandbox-exec's arguments and the
+// child's whole environment. An empty proxyURL leaves the child no network.
+func codexSeatbeltInvocation(workRoot, codex, proxyURL, proxyPort string, args []string) ([]string, []string, error) {
 	if err := requireCodexSystemFile(codexSandboxExec, true); err != nil {
-		return nil, errors.New("codex launcher requires a root-owned sandbox-exec")
+		return nil, nil, errors.New("codex launcher requires a root-owned sandbox-exec")
 	}
 	if err := requireCodexSystemFile(codexCABundle, false); err != nil {
-		return nil, errors.New("codex launcher requires a root-owned system CA bundle")
+		return nil, nil, errors.New("codex launcher requires a root-owned system CA bundle")
 	}
 	codexHome := filepath.Join(workRoot, ".codex")
 	tmp := filepath.Join(workRoot, "tmp")
 	for _, path := range []string{codexHome, tmp} {
 		if err := os.Mkdir(path, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-			return nil, errors.New("create codex launcher work directories")
+			return nil, nil, errors.New("create codex launcher work directories")
 		}
 	}
 	profile := codexSeatbeltProfile
 	sandboxArgs := []string{
 		"-D", "WORK=" + workRoot, "-D", "CODEX=" + codex, "-D", "CA_BUNDLE=" + codexCABundle,
+		"-D", "UID=" + strconv.Itoa(os.Geteuid()),
 	}
 	childEnv := []string{
 		"HOME=" + workRoot, "CODEX_HOME=" + codexHome,
@@ -167,7 +194,7 @@ func (seatbeltCodexStarter) start(
 		"CODEX_EXEC_SERVER_URL=none",
 		"SSL_CERT_FILE=" + codexCABundle, "TMPDIR=" + tmp,
 	}
-	if proxyEndpoint != "" {
+	if proxyURL != "" {
 		profile += codexSeatbeltProxyRule
 		sandboxArgs = append(sandboxArgs, "-D", "PROXY_PORT="+proxyPort)
 		childEnv = append(childEnv,
@@ -176,10 +203,7 @@ func (seatbeltCodexStarter) start(
 	}
 	sandboxArgs = append([]string{"-p", profile}, sandboxArgs...)
 	sandboxArgs = append(sandboxArgs, codex)
-	sandboxArgs = append(sandboxArgs, args...)
-	return execCommandStarter{}.Start(
-		ctx, CodexExecutable{verifiedPath: codexSandboxExec}, sandboxArgs, childEnv, workRoot,
-	)
+	return append(sandboxArgs, args...), childEnv, nil
 }
 
 // codexSeatbeltProxyEndpoint accepts only the loopback proxy URL the darwin

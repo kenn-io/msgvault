@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"syscall"
@@ -119,33 +120,9 @@ func (s bubblewrapCodexStarter) start(
 			_ = bridge.Close()
 		}
 	}()
-	const bubblewrap = "/usr/bin/bwrap"
-	if info, err := os.Stat(bubblewrap); err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
-		return nil, errors.New("codex launcher requires Bubblewrap")
-	}
-	const caBundle = "/etc/ssl/certs/ca-certificates.crt"
-	caInfo, err := os.Stat(caBundle)
-	if err != nil || !caInfo.Mode().IsRegular() || caInfo.Size() == 0 ||
-		caInfo.Mode().Perm()&0o022 != 0 {
-		return nil, errors.New("codex launcher requires a readable system CA bundle")
-	}
-	caStat, ok := caInfo.Sys().(*syscall.Stat_t)
-	if !ok || caStat.Uid != 0 {
-		return nil, errors.New("codex launcher requires a root-owned system CA bundle")
-	}
-	bwrapArgs := []string{
-		"--unshare-user", "--unshare-pid", "--unshare-net", "--die-with-parent", "--new-session",
-		"--clearenv", "--tmpfs", "/tmp", "--dir", "/work", "--bind", dir, "/work",
-		"--dir", "/work/.codex",
-		"--dir", "/etc", "--dir", "/etc/ssl", "--dir", "/etc/ssl/certs",
-		"--ro-bind", caBundle, caBundle,
-		"--ro-bind", executable.verifiedPath, "/codex", "--proc", "/proc", "--dev", "/dev",
-		"--setenv", "HOME", "/work", "--setenv", "CODEX_HOME", "/work/.codex",
-		// The app server owns OAuth; model turns must have no execution or
-		// filesystem environment that could read its credential store.
-		"--setenv", "CODEX_EXEC_SERVER_URL", "none",
-		"--setenv", "SSL_CERT_FILE", caBundle,
-		"--setenv", "TMPDIR", "/tmp", "--chdir", "/work",
+	bwrapArgs, err := codexBubblewrapArgs(dir, executable.verifiedPath)
+	if err != nil {
+		return nil, err
 	}
 	entrypoint := "/codex"
 	if bridge != nil {
@@ -159,7 +136,7 @@ func (s bubblewrapCodexStarter) start(
 	bwrapArgs = append(bwrapArgs, "--", entrypoint)
 	bwrapArgs = append(bwrapArgs, args...)
 	process, err := execCommandStarter{}.Start(
-		ctx, CodexExecutable{verifiedPath: bubblewrap}, bwrapArgs, []string{"PATH=/usr/bin:/bin"}, dir,
+		ctx, CodexExecutable{verifiedPath: codexBubblewrap}, bwrapArgs, []string{"PATH=/usr/bin:/bin"}, dir,
 	)
 	if err != nil {
 		return nil, err
@@ -183,4 +160,54 @@ func (p *codexBridgeOwnedProcess) Wait() error {
 
 func (p *codexBridgeOwnedProcess) Kill() error {
 	return errors.Join(p.RPCProcess.Kill(), p.bridge.Close())
+}
+
+const (
+	codexBubblewrap = "/usr/bin/bwrap"
+	codexCABundle   = "/etc/ssl/certs/ca-certificates.crt"
+)
+
+// codexBubblewrapArgs confines the executable to empty user, PID and network
+// namespaces whose only host files are dir (as /work), the system CA bundle
+// and the executable (as /codex). The caller appends "--" and the command.
+func codexBubblewrapArgs(dir, executable string) ([]string, error) {
+	if info, err := os.Stat(codexBubblewrap); err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		return nil, errors.New("codex launcher requires Bubblewrap")
+	}
+	caInfo, err := os.Stat(codexCABundle)
+	if err != nil || !caInfo.Mode().IsRegular() || caInfo.Size() == 0 ||
+		caInfo.Mode().Perm()&0o022 != 0 {
+		return nil, errors.New("codex launcher requires a readable system CA bundle")
+	}
+	caStat, ok := caInfo.Sys().(*syscall.Stat_t)
+	if !ok || caStat.Uid != 0 {
+		return nil, errors.New("codex launcher requires a root-owned system CA bundle")
+	}
+	return []string{
+		"--unshare-user", "--unshare-pid", "--unshare-net", "--die-with-parent", "--new-session",
+		"--clearenv", "--tmpfs", "/tmp", "--dir", "/work", "--bind", dir, "/work",
+		"--dir", "/work/.codex",
+		"--dir", "/etc", "--dir", "/etc/ssl", "--dir", "/etc/ssl/certs",
+		"--ro-bind", codexCABundle, codexCABundle,
+		"--ro-bind", executable, "/codex", "--proc", "/proc", "--dev", "/dev",
+		"--setenv", "HOME", "/work", "--setenv", "CODEX_HOME", "/work/.codex",
+		// The app server owns OAuth; model turns must have no execution or
+		// filesystem environment that could read its credential store.
+		"--setenv", "CODEX_EXEC_SERVER_URL", "none",
+		"--setenv", "SSL_CERT_FILE", codexCABundle,
+		"--setenv", "TMPDIR", "/tmp", "--chdir", "/work",
+	}, nil
+}
+
+// codexVersionCommand runs the snapshot's --version in the same
+// namespaces as the app server, in a disposable root.
+func codexVersionCommand(ctx context.Context, verifiedPath, root string) (*exec.Cmd, error) {
+	args, err := codexBubblewrapArgs(root, verifiedPath)
+	if err != nil {
+		return nil, err
+	}
+	command := exec.CommandContext(ctx, codexBubblewrap, append(args, "--", "/codex", "--version")...) //nolint:gosec // A fixed system binary; the launcher builds every argument.
+	command.Env = []string{"PATH=/usr/bin:/bin"}
+	command.Dir = root
+	return command, nil
 }
