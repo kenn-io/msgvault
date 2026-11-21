@@ -298,9 +298,11 @@ profile.
 When the card uses the person's display name, changing that name updates the
 card on the next publish or sync. A formatted or structured profile name takes
 priority over the display label, including a formatted name imported from an
-address book. Edit that profile name to change the card's name. If another
-device removes or blanks the card's name and msgvault would otherwise upload
-the display name in its place, sync records a conflict instead.
+address book. Renaming the display label retires only the inferred profile name
+behind that label. Separately saved names remain and keep priority on the card.
+Edit that profile name to change the card's name. If another device removes or
+blanks the card's name and msgvault would otherwise upload the display name in
+its place, sync records a conflict instead.
 
 Cards published by earlier msgvault versions keep the name from their first
 upload as a separate formatted-name (`FN`) line. On the next publish or sync,

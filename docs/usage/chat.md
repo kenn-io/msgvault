@@ -477,6 +477,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
 | `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. Returns `data`, `returned`, `offset`, and `has_more`; add `returned` to `offset` to page while `has_more` is true. | `domains` (comma-separated string, required), `limit` (int, default 100, max 500), `offset` (int), `after` (string), `before` (string) |
 | `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool), `include_segments` (bool) |
+| `get_message_records` | Read order, delivery, invoice and reservation records an email carries as schema.org markup | `message_id` (int, required) |
 | `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `conversation_id` (int), `limit` (int), `offset` (int), `account` (string) |
 | `list_thread` | List visible archived messages in one conversation, oldest first, with `has_raw` marking messages whose original `.eml` is stored. See [Export original emails](#export-original-emails). | exactly one of `id` (int), `source_message_id` (string), or `thread_id` (string); `account` (string), `limit` (1–500, default 100), `offset` (int) |
 | `export_eml` | Export one email's original `.eml` bytes in verified chunks. See [Export original emails](#export-original-emails). | exactly one of `id` (int) or `source_message_id` (string); `account` (string), `offset` (int), `length` (1–4194304, default 1048576), `sha256` (string, required after offset 0) |
@@ -585,6 +586,16 @@ To restrict mixed archives to values such as `email`, `calendar_event`,
 (for example `message_type:teams incident review`). `find_similar_messages`
 accepts a dedicated `message_type` parameter; `list_messages` does not
 support message-type filtering.
+
+`get_message_records` parses up to 20 schema.org Order, ParcelDelivery,
+Invoice, FlightReservation, LodgingReservation, or EventReservation records
+from one message's HTML. It calls no provider and stores nothing; malformed or
+oversized HTML returns no records. Records are sender claims: `typed` trust
+means the syntax was validated, and `markup_only` flags values that appear
+nowhere in the visible text. Field origin is `unknown`, because markup doesn't
+show who wrote it. Text and URLs stay untrusted, and URLs are never fetched.
+Verification messages return kind `verification` and no records. Delegated
+callers need `message.read` for the message's source.
 
 `get_message` returns large bodies in windows: each response carries one
 slice of the body plus `body_length`, `body_returned`, `offset`, and
@@ -1009,6 +1020,13 @@ before retrying.
 
 ## Write controls
 
+On unreleased `main`, owner sessions can read person attributes and definitions. Notes edits go
+through `update_person_notes`; attribute writes default to enrichment by `mcp`. Set and clear show
+the value being replaced, and the write fails if it changes or an empty slot is filled. JSON numbers
+keep their spelling, except values SQLite or PostgreSQL stored before this change; HTTP protocol `2026-07-28`
+and newer rejects numbers outside the float64 range, such as `1e400`. Listings and previews over
+1 MiB are refused; pass `slug` and `ordinal` to read one value, or use `history: false` to omit history.
+
 Enable only the writes intended for the assistant's session:
 
 | Writes | Stdio | HTTP |
@@ -1016,6 +1034,7 @@ Enable only the writes intended for the assistant's session:
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Structured person profile patches | `--allow-curated-writes` | `--http-allow-writes --allow-curated-writes` |
+| Person attributes and attribute definitions | `--allow-attribute-writes` | `--http-allow-writes --allow-attribute-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Historical imports | `--allow-import-writes` | `--http-allow-writes --allow-import-writes`, protocol `2026-07-28` or newer |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
@@ -1110,6 +1129,7 @@ msgvault mcp --http 8080
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-curated-writes` | `false` | Expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-attribute-writes` | `false` | On unreleased `main`, expose person attribute and definition writes that require client confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-import-writes` | `false` | Expose bounded historical import creation with per-call confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |

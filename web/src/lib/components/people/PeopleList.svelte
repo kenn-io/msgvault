@@ -384,7 +384,7 @@
   .row.open {
     border-start-start-radius: 0;
     border-end-start-radius: 0;
-    background: var(--selected-bg);
+    background: var(--selected-list-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 

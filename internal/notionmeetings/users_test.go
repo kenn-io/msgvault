@@ -104,12 +104,12 @@ func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
 			meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1"}
 			if budget == "requests" {
 				pages := map[string]*BlockPage{}
-				for i := range maxHydrationRequests - 5 {
+				for i := range maxHydrationRequests - 4 {
 					cursor := ""
 					if i > 0 {
 						cursor = strconv.Itoa(i)
 					}
-					pages[cursor] = &BlockPage{HasMore: i < maxHydrationRequests-6, NextCursor: strconv.Itoa(i + 1)}
+					pages[cursor] = &BlockPage{HasMore: i < maxHydrationRequests-5, NextCursor: strconv.Itoa(i + 1)}
 				}
 				source.children["notes-1"] = pages
 			} else {

@@ -1,38 +1,7 @@
 /*
- * msgvault retunes kit-ui's tokens for a quiet archive workspace: platform
- * system fonts, neutral surfaces, one blue accent, and green, amber, and red
- * for status only. kit-ui components read only these tokens, so declaring
- * them after kit-ui/theme.css restyles every component consistently.
- *
- * This is the palette definition file, so raw colors belong here. It lives
- * outside src/ because kit-ui-check guards component styles, not palettes.
+ * msgvault retunes kit-ui's type and layout tokens for the archive workspace.
  */
 :root {
-  --bg-primary: #f7f8fa;
-  --bg-surface: #ffffff;
-  --bg-surface-hover: #f2f4f7;
-  --bg-inset: #f4f5f7;
-  --border-default: #dde1e6;
-  --border-muted: #eceef1;
-
-  --text-primary: #1b1f24;
-  --text-secondary: #464e58;
-  --text-muted: #5f6772;
-
-  --accent-blue: #0061d5;
-  --accent-amber: #b45309;
-  --accent-purple: #6d4ad6;
-  --accent-green: #047857;
-  --accent-red: #c62828;
-  --accent-teal: #0e7490;
-
-  --nav-active-bg: #e6eefb;
-
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
-  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
-  --shadow-lg: 0 16px 40px rgba(16, 24, 40, 0.16);
-  --overlay-bg: rgba(16, 24, 40, 0.32);
-
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
@@ -54,33 +23,6 @@
   --header-height: 48px;
   --nav-width: 232px;
   --nav-rail-width: 56px;
-}
-
-:root.dark {
-  --bg-primary: #151618;
-  --bg-surface: #1c1d20;
-  --bg-surface-hover: #26282b;
-  --bg-inset: #222427;
-  --border-default: #34373c;
-  --border-muted: #2a2c30;
-
-  --text-primary: #ececee;
-  --text-secondary: #b8bcc3;
-  --text-muted: #92979f;
-
-  --accent-blue: #4d9cff;
-  --accent-amber: #f0a64a;
-  --accent-purple: #a995f5;
-  --accent-green: #4cc38a;
-  --accent-red: #f27474;
-  --accent-teal: #3fc1d6;
-
-  --nav-active-bg: #243650;
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
-  --overlay-bg: rgba(0, 0, 0, 0.55);
 }
 
 /* Repeats kit-ui's handheld type scale, which the base block above would

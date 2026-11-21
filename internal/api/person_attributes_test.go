@@ -70,6 +70,20 @@ func TestPersonAttributesHTTPListsDefinitionsSetsHistoryAndClears(t *testing.T) 
 	require.Equal(http.StatusOK, history.Code)
 	historyGroups := decodePersonAttributes(t, history.Body.Bytes())
 	assert.Len(historyGroups[store.AttributeSlugPrimaryChannel].History, 2)
+	selectedPath := personAttributesPath(person) + "?slug=" + store.AttributeSlugPrimaryChannel
+	selected := attributeRequest(t, srv, http.MethodGet, selectedPath+"&history=true&ordinal=0", nil, "")
+	require.Equal(http.StatusOK, selected.Code, selected.Body.String())
+	selectedGroup := decodePersonAttributes(t, selected.Body.Bytes())[store.AttributeSlugPrimaryChannel]
+	require.Len(selectedGroup.History, 2)
+	require.Len(selectedGroup.Current, 1)
+	assert.Equal(secondWrite.Value.ID, selectedGroup.Current[0].ID)
+	for _, query := range []string{"?slug=" + store.AttributeSlugPrimaryChannel + "&ordinal=-1", "?ordinal=0"} {
+		response := attributeRequest(t, srv, http.MethodGet, personAttributesPath(person)+query, nil, "")
+		assert.Equal(http.StatusBadRequest, response.Code)
+	}
+	selected = attributeRequest(t, srv, http.MethodGet, selectedPath+"&ordinal=99", nil, "")
+	require.Equal(http.StatusOK, selected.Code, selected.Body.String())
+	assert.Empty(decodePersonAttributes(t, selected.Body.Bytes())[store.AttributeSlugPrimaryChannel].Current)
 
 	cleared := attributeRequest(t, srv, http.MethodDelete, path, nil, "")
 	require.Equal(http.StatusOK, cleared.Code, cleared.Body.String())

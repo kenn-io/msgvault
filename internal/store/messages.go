@@ -2199,19 +2199,42 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	return s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
 		nil, nil, func([]int64) *MessagePersistData { return data }, nil,
-		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
-			q := boundQuerier{ctx: ctx, q: tx}
-			if data.MIMEAttachmentReplacement != nil {
-				if err := s.persistAttachmentSnapshotWith(q, id, data.MIMEAttachmentReplacement); err != nil {
-					return err
-				}
-			}
-			if data.Edited {
-				return setMessageEditedStateWith(q, id, true)
-			}
-			return nil
-		},
+		s.persistMessageSnapshotAfter,
 	)
+}
+
+func (s *Store) persistMessageSnapshotAfter(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
+	q := boundQuerier{ctx: ctx, q: tx}
+	if data.MIMEAttachmentReplacement != nil {
+		if err := s.persistAttachmentSnapshotWith(q, id, data.MIMEAttachmentReplacement); err != nil {
+			return err
+		}
+	}
+	if data.Edited {
+		return setMessageEditedStateWith(q, id, true)
+	}
+	return nil
+}
+
+// PersistTelegramMessagesContext persists Telegram snapshots in one transaction.
+func (s *Store) PersistTelegramMessagesContext(ctx context.Context, batch []*MessagePersistData) ([]int64, error) {
+	ids := make([]int64, len(batch))
+	err := s.withAttributionTxContext(ctx, attributionLock{}, func(tx *loggedTx) error {
+		for i, data := range batch {
+			id, err := s.persistMessageWithParticipantsTx(
+				ctx, tx, nil, nil, func([]int64) *MessagePersistData { return data }, nil, s.persistMessageSnapshotAfter,
+			)
+			if err != nil {
+				return fmt.Errorf("persist message %s: %w", data.Message.SourceMessageID, err)
+			}
+			ids[i] = id
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // RelayedFromRecipient preserves the transport sender for an attributed author.

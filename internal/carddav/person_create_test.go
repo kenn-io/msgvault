@@ -51,6 +51,35 @@ func TestCreateStandalonePersonAndPublish(t *testing.T) {
 	assert.NotContains(body, "Alex Example")
 }
 
+func TestDisplayNameEditRejectsCarriageReturnWithoutChangingCard(t *testing.T) {
+	t.Parallel()
+	fixture := &mutationFixture{}
+	service, st, _, _ := seededMutationService(t, fixture)
+	person, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+		Name: "Alex Example", Source: store.ProvenanceEnrichment,
+	})
+	require.NoError(t, err)
+	preview, err := service.PreviewPublication(t.Context(), person.ID)
+	require.NoError(t, err)
+	require.True(t, preview.ReviewRequired)
+	require.NoError(t, service.PublishReviewedPerson(t.Context(), person.ID, preview.ApprovalToken))
+
+	person, err = st.GetPersonContext(t.Context(), person.ID)
+	require.NoError(t, err)
+	_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, new("Alex\rRenamed"))
+	require.ErrorIs(t, err, store.ErrInvalidPersonNameText)
+
+	preview, err = service.PreviewPublication(t.Context(), person.ID)
+	require.NoError(t, err)
+	assert.False(t, preview.ReviewRequired)
+	assert.Contains(t, preview.VCard, "FN:Alex Example\r\n")
+	require.NoError(t, service.PublishPerson(t.Context(), person.ID))
+	fixture.mu.Lock()
+	assert.Equal(t, 1, fixture.puts)
+	assert.Contains(t, string(fixture.body), "FN:Alex Example\r\n")
+	fixture.mu.Unlock()
+}
+
 func TestEnrichmentCreatedPersonPublishesOnlyAfterApproval(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -125,7 +154,7 @@ func TestEnrichmentCreatedNameReplacementLeavesOneFN(t *testing.T) {
 	assert.NotContains(body, "Alex Agent Name")
 }
 
-func TestEnrichmentCreatedPersonRenameUpdatesFormattedNameAndRequiresReview(t *testing.T) {
+func TestEnrichmentCreatedPersonRenamedCardRequiresReview(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := &mutationFixture{}
@@ -144,18 +173,6 @@ func TestEnrichmentCreatedPersonRenameUpdatesFormattedNameAndRequiresReview(t *t
 	_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, current.Revision, new("Alex Renamed"))
 	require.NoError(err)
 
-	profile, err := st.GetPersonProfileContext(t.Context(), person.ID)
-	require.NoError(err)
-	require.Len(profile.Names, 1)
-	require.NotNil(profile.Names[0].Formatted)
-	assert.Equal("Alex Renamed", *profile.Names[0].Formatted)
-	assert.Equal(store.ProvenanceUser, profile.Names[0].Envelope.Source)
-	history, err := st.GetPersonProfileHistoryContext(t.Context(), person.ID)
-	require.NoError(err)
-	require.Len(history.Names, 2)
-	assert.Equal(store.ProvenanceEnrichment, history.Names[0].Envelope.Source)
-	assert.NotNil(history.Names[0].Envelope.SupersededAt)
-
 	preview, err = service.PreviewPublication(t.Context(), person.ID)
 	require.NoError(err)
 	assert.True(preview.ReviewRequired)
@@ -171,6 +188,48 @@ func TestEnrichmentCreatedPersonRenameUpdatesFormattedNameAndRequiresReview(t *t
 	assert.Contains(string(fixture.body), "FN:Alex Renamed\r\n")
 	assert.NotContains(string(fixture.body), "Alex Agent Name")
 	fixture.mu.Unlock()
+}
+
+func TestDisplayNameEditKeepsSavedNameOnPublishedCard(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change *string
+	}{
+		{name: "rename", change: new("Alex Renamed")},
+		{name: "clear"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := &mutationFixture{}
+			service, st, _, _ := seededMutationService(t, fixture)
+			person, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+				Name: "Alex Example", Source: store.ProvenanceEnrichment,
+			})
+			require.NoError(t, err)
+			_, err = st.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{
+				NameKind: store.PersonNameFormatted, Formatted: new("Alex Example"), OriginalValue: "Alex Example",
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+			})
+			require.NoError(t, err)
+			publish := func() string {
+				preview, err := service.PreviewPublication(t.Context(), person.ID)
+				require.NoError(t, err)
+				require.NoError(t, service.PublishReviewedPerson(t.Context(), person.ID, preview.ApprovalToken))
+				fixture.mu.Lock()
+				defer fixture.mu.Unlock()
+				return string(fixture.body)
+			}
+			body := publish()
+			assert.Equal(t, 2, strings.Count(body, "FN:Alex Example\r\n"), body)
+
+			person, err = st.GetPersonContext(t.Context(), person.ID)
+			require.NoError(t, err)
+			_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, tc.change)
+			require.NoError(t, err)
+			body = publish()
+			assert.Equal(t, 1, strings.Count(body, "\r\nFN"), body)
+			assert.Contains(t, body, "FN:Alex Example\r\n")
+		})
+	}
 }
 
 func TestApprovedEnrichmentPersonNeedsReviewAfterInferredReplacement(t *testing.T) {

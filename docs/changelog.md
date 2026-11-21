@@ -6,6 +6,17 @@ description: Release history for msgvault
 
 All notable changes to msgvault, grouped by release.
 
+## Unreleased
+
+### New features
+
+- Read the order, delivery, invoice and reservation details an email carries as schema.org markup with the MCP tool `get_message_records`, without sending the message anywhere.
+- Let owner MCP clients read person attributes and definitions, and enable attribute edits with `--allow-attribute-writes`. The owner approves the previewed value, and the write refuses if that value or empty slot changes before saving. The tools require an updated daemon. Existing archives migrate attribute JSON on writable open; upgrade applications using embedded archive readers alongside the daemon. Numbers stored before this change may have already lost their original spelling.
+
+### Improvements
+
+- In a 14,000-message Telegram import benchmark on SQLite, saving up to 50 messages at once reduced import time from 326 seconds to 119 seconds, about 2.7 times faster.
+
 ## 0.26.0
 <small>2026-11-19</small>
 
