@@ -843,13 +843,22 @@ func (s *Store) personHasPublishedContactInferenceTx(ctx context.Context, tx *lo
 
 func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedTx, personID int64, byTable map[string]map[int64]bool, predicate string, validateMetadata bool) (bool, error) {
 	mappingsExpr := "json_extract(e.resource_metadata, '$.native_mappings')"
+	approvedExpr := "FALSE"
 	if s.IsPostgreSQL() {
 		mappingsExpr = "e.resource_metadata ->> 'native_mappings'"
 	}
 	if validateMetadata {
 		mappingsExpr = "e.resource_metadata"
+		approvedExpr = `EXISTS(SELECT 1 FROM carddav_publications p
+			JOIN person_carddav_inference_state s ON s.person_id=p.person_id
+			JOIN carddav_address_books b ON b.id=p.address_book_id
+			JOIN carddav_accounts a ON a.id=b.account_id
+			WHERE p.person_id=e.person_id AND p.desired=TRUE AND p.href=e.source_resource_uid
+			  AND e.source_ref='carddav:' || CAST(p.address_book_id AS TEXT)
+			  AND s.inference_revision>0 AND s.approved_revision=s.inference_revision
+			  AND s.approved_address_book_id=p.address_book_id AND s.approved_connection_generation=a.connection_generation)`
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT e.source_resource_uid, `+mappingsExpr+` FROM vcard_resource_envelopes e WHERE e.person_id=? AND `+predicate, personID)
+	rows, err := tx.QueryContext(ctx, `SELECT e.source_resource_uid, `+mappingsExpr+`, `+approvedExpr+` FROM vcard_resource_envelopes e WHERE e.person_id=? AND `+predicate, personID)
 	if err != nil {
 		return false, fmt.Errorf("load contact inference mappings: %w", err)
 	}
@@ -858,7 +867,8 @@ func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedT
 	for rows.Next() {
 		var href string
 		var raw sql.NullString
-		if err := rows.Scan(&href, &raw); err != nil {
+		var approved bool
+		if err := rows.Scan(&href, &raw, &approved); err != nil {
 			return false, err
 		}
 		if !raw.Valid {
@@ -875,7 +885,7 @@ func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedT
 			return false, fmt.Errorf("decode contact inference mappings: %w", err)
 		}
 		for _, mapping := range mappings {
-			if byTable[mapping.Table][mapping.RowID] {
+			if !approved && byTable[mapping.Table][mapping.RowID] {
 				matched = true
 				if !validateMetadata {
 					return true, nil
