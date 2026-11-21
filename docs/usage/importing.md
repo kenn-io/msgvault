@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-19"
 title: Importing Local Email
 description: Bring local email archives into msgvault, or backfill older Gmail and IMAP messages.
 ---
@@ -17,8 +17,11 @@ labels where the format provides them.
 | Maildir or Maildir++ archive | [`import-maildir`](#import-maildir) |
 | MailMate-style tree of `.eml` files | [`import-eml`](#import-eml) |
 | Apple Mail directory or backup | [`import-emlx`](#import-emlx) |
+| Calendar `.ics` file | [`import-ics`](../cli-reference.md#import-ics) |
 | Older messages still in Gmail or IMAP | [Historical import jobs](#historical-import-jobs) |
 | Chat database or export | [Text messages](/docs/usage/text-messages/) or [Slackdump](/docs/usage/slack/#import-a-slackdump-export) |
+| LinkedIn member data export | [LinkedIn](/docs/usage/linkedin/) |
+| TikTok **Download your data** export | [TikTok](/docs/usage/tiktok-export/) |
 | RSS, Atom, or JSON feeds | [Feeds](/docs/usage/feeds/) |
 | Messages from a source without a connector, such as tool notifications | [Messages from any source](/docs/usage/message-import/) |
 
@@ -456,7 +459,8 @@ Jobs accept optional `limit` and `noresume` fields. Gmail jobs also accept a
 Gmail `query`; IMAP jobs reject that field. An account with an active sync
 rejects another import with `409 sync_already_active`. See the
 [API reference](/docs/api-server/#historical-import-jobs) for the request,
-response, and restart behavior.
+response, and restart behavior. To start and follow a job through an assistant,
+see [MCP source status and sync](/docs/usage/chat/#source-status-and-sync).
 
 For a foreground CLI workflow, use `sync-full` with the same date bounds:
 

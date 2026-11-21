@@ -77,7 +77,7 @@ func TestAuthorsBecomeAccountsGhostsAndMigratedNames(t *testing.T) {
 	f.scopes = "notifications, repo, read:user"
 	withEmail := user("ann", 2002)
 	withEmail["email"] = "ann@example.com"
-	robot := map[string]any{"__typename": "Bot", "login": "ci-bot", "url": "https://github.com/apps/ci-bot", "databaseId": 3003, "email": "bot@example.com"}
+	robot := map[string]any{"__typename": "Bot", "login": "ci-bot", "url": "https://github.com/apps/ci-bot", "databaseId": 3003}
 	f.issueSearch = []searchNode{found("Issue", "acme", "widgets", 4, "2026-11-07T09:00:00Z")}
 	f.threads["acme/widgets#4"] = map[string]any{
 		"__typename": "Issue", "id": "I_4", "number": 4, "title": "Who wrote this", "url": "https://github.com/acme/widgets/issues/4",
@@ -95,7 +95,7 @@ func TestAuthorsBecomeAccountsGhostsAndMigratedNames(t *testing.T) {
 	messages := archived(t, st, source.ID)
 	assert.Equal("url:https://github.com/ghost", messages["I_4"].SenderValue, "a deleted account is GitHub's ghost")
 	assert.True(strings.HasPrefix(messages["IC_M"].SenderValue, "name:"), "a migrated name is no account")
-	assert.Equal("github.com:user:3003", messages["IC_B"].SenderValue, "a bot never joins a person by email")
+	assert.Equal("github.com:user:3003", messages["IC_B"].SenderValue, "a bot is an account keyed by its ID")
 	var email string
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(p.email_address, '') FROM messages m JOIN participants p ON p.id = m.sender_id

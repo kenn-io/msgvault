@@ -19,12 +19,14 @@ const (
 // FTSDoc is the set of fields the dialect needs to upsert a message into
 // the full-text search index.
 type FTSDoc struct {
-	MessageID int64
-	Subject   string
-	Body      string
-	FromAddr  string
-	ToAddrs   string
-	CcAddrs   string
+	MessageID   int64
+	Subject     string
+	Body        string
+	FromAddr    string
+	ToAddrs     string
+	CcAddrs     string
+	voice       string
+	voiceLoaded bool
 }
 
 type ftsEnvelopeExpressions struct {
@@ -41,7 +43,7 @@ func storedFTSEnvelopeSQL(aggregate string) ftsEnvelopeExpressions {
 	}
 	return ftsEnvelopeExpressions{
 		subject: "COALESCE(m.subject, CASE WHEN m.message_type = 'fbmessenger' THEN (SELECT c.title FROM conversations c WHERE c.id = m.conversation_id) END, '')",
-		fromAddr: `COALESCE(CASE WHEN m.message_type IN ('slack', 'teams', 'inline', 'facebook_comments', 'instagram_comments', 'discord') THEN (SELECT TRIM(mr.display_name || ' ' || ` + recipients("from") + `) FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND mr.display_name != '' LIMIT 1) END, CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
+		fromAddr: `COALESCE(CASE WHEN m.message_type IN ('slack', 'teams', 'inline', 'facebook_comments', 'instagram_comments', 'facebook_messages', 'instagram_messages', 'instagram_mentions', 'discord') THEN (SELECT TRIM(mr.display_name || ' ' || ` + recipients("from") + `) FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND mr.display_name != '' LIMIT 1) END, CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
 			THEN COALESCE((SELECT NULLIF(mr.email_address, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)) END, ` + recipients("from") + `)`,
 		toAddrs: `CASE WHEN m.message_type = 'discord' THEN COALESCE((SELECT ` + aggregate + `(mr.display_name, ' ') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'mention'), '') ELSE ` + recipients("to") + ` END`,
 		ccAddrs: recipients("cc"),
@@ -458,6 +460,7 @@ type Dialect interface {
 	// from text; without ?::JSONB the bind raises
 	// "column is of type jsonb but expression is of type text".
 	JSONBindExpr() string
+	JSONTextBindExpr() string
 
 	// JSONIsDistinctExpr returns a null-safe comparison between a JSON column
 	// and one bound JSON value. PostgreSQL compares parsed JSONB values rather

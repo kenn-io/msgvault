@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/gcal"
@@ -200,6 +201,28 @@ func TestDerivedOnlyRefreshWithNoChangesIsANoOp(t *testing.T) {
 		"a no-op refresh must leave every cache byte (including the marker) intact")
 }
 
+func TestMeetingGroupingFailurePreservesCache(t *testing.T) {
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
+	require.NoError(t, err)
+	before := snapshotCacheBytes(t, analyticsDir)
+	groupingError := errors.New("meeting grouping failed")
+	resolveCacheMeetingGroups = func(context.Context, store.SQLReader, int64) (map[int64]int64, error) {
+		return nil, groupingError
+	}
+	t.Cleanup(func() { resolveCacheMeetingGroups = store.MeetingTranscriptGroupsSQLiteSnapshotContext })
+	for _, build := range []func() error{
+		func() error { _, err := buildCache(t.Context(), dbPath, analyticsDir, true); return err },
+		func() error { _, err := buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir); return err },
+	} {
+		require.ErrorIs(t, build(), groupingError)
+		assert.Equal(t, before, snapshotCacheBytes(t, analyticsDir))
+		assert.Equal(t, query.CacheReady, mustInspectCacheReadiness(t, analyticsDir))
+	}
+}
+
 func TestDerivedOnlyFailurePreservesMarkerAndLeavesDetectableDrift(t *testing.T) {
 	requirementsForTest := require.New(t)
 	tmp := setupTestSQLite(t)
@@ -258,6 +281,32 @@ func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T
 	assert.Equal(t, revision, got)
 }
 
+func TestStoreAPIIdentityRefreshReportsAbsentCache(t *testing.T) {
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "archive.db"))
+	old := executeBuildCacheSubprocessMode
+	executeBuildCacheSubprocessMode = func(context.Context, buildCacheMode) error { return ErrDerivedRefreshRequiresFullBuild }
+	t.Cleanup(func() { executeBuildCacheSubprocessMode = old })
+	adapter := &storeAPIAdapter{store: st, analyticsDir: t.TempDir()}
+	_, err := adapter.RefreshIdentityDatasets(t.Context())
+	require.ErrorIs(t, err, api.ErrIdentityCacheBuildRequired)
+}
+
+func TestStoreAPIIdentityRefreshReportsPostgreSQLUnsupported(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL")
+	}
+	old := executeBuildCacheSubprocessMode
+	executeBuildCacheSubprocessMode = func(context.Context, buildCacheMode) error {
+		assert.Fail(t, "cache subprocess must not run for PostgreSQL")
+		return nil
+	}
+	t.Cleanup(func() { executeBuildCacheSubprocessMode = old })
+	adapter := &storeAPIAdapter{store: st, analyticsDir: t.TempDir()}
+	_, err := adapter.RefreshIdentityDatasets(t.Context())
+	require.ErrorIs(t, err, api.ErrIdentityCacheUnsupported)
+}
+
 func TestDerivedChildEscalatesTypedPreconditionFailureToFullBuild(t *testing.T) {
 	requirements := require.New(t)
 	old := executeBuildCacheSubprocessMode
@@ -301,7 +350,7 @@ func TestDerivedChildDoesNotEscalateWhenCacheAbsent(t *testing.T) {
 	t.Cleanup(func() { executeBuildCacheSubprocessMode = old })
 
 	err := runDerivedCacheSubprocess(t.Context(), t.TempDir())
-	requirements.ErrorIs(err, ErrDerivedRefreshRequiresFullBuild)
+	requirements.ErrorIs(err, api.ErrIdentityCacheBuildRequired)
 	assert.Equal(t, []buildCacheMode{buildCacheModeDerived}, modes,
 		"a derived refresh must not create a cache that configuration left absent")
 }

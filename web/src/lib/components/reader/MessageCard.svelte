@@ -4,6 +4,7 @@
   import MessageMenu from './MessageMenu.svelte';
   import PersonLink from './PersonLink.svelte';
   import MessageTasks from '../tasks/MessageTasks.svelte';
+  import { formatShortDateTime } from '../../util/format';
   import MeetingActions from '../meetings/MeetingActions.svelte';
   import type { MeetingRef } from '../../api/generated/models';
 
@@ -12,6 +13,7 @@
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import ContentFrame from './ContentFrame.svelte';
   import MessageRecordings from './MessageRecordings.svelte';
+  import RelatedCopies from './RelatedCopies.svelte';
 
   interface Props {
     message: ArchiveMessageDetail;
@@ -32,6 +34,8 @@
     onOpenPerson?: (participantID: number) => void;
     onOpenSettings?: () => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
+    /** IDs of the messages the thread has loaded. */
+    loadedIDs?: number[];
   }
 
   let {
@@ -48,7 +52,8 @@
     onOpenPerson = undefined,
     onOpenSettings = undefined,
     onOpenMeeting = undefined,
-    client = undefined
+    client = undefined,
+    loadedIDs = []
   }: Props = $props();
 
   let tasksRefresh = $state(0);
@@ -58,13 +63,6 @@
     typeof message.bodyHtml === 'string' && message.bodyHtml.trim() !== '' && !sanitizationFailed
   );
   const renderAsHTML = $derived(hasRenderableHTML && viewMode === 'html');
-
-  function formatDate(value: string): string {
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.valueOf())) return value;
-    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(parsed);
-  }
-
 </script>
 
 {#if expanded}
@@ -79,7 +77,7 @@
       <div class="header-content">
         <span class="header-line">
           <strong class="sender"><PersonLink name={message.sender || 'Unknown sender'} participantID={message.senderParticipantID} {onOpenPerson} /></strong>
-          <time datetime={message.sentAt} data-mono>{formatDate(message.sentAt)}</time>
+          <time datetime={message.sentAt} data-mono>{formatShortDateTime(message.sentAt)}</time>
         </span>
         {#if message.recipients.length > 0}
           <span class="recipients">to {#if message.recipientParticipants}{#each message.recipientParticipants as recipient, index}{#if index > 0}, {/if}<PersonLink name={recipient.display} participantID={recipient.participantID} {onOpenPerson} />{/each}{:else}{message.recipients.join(', ')}{/if}</span>
@@ -95,6 +93,9 @@
       </a>
     {/if}
     {#if menuError}<p class="sanitize-notice" role="alert">{menuError}</p>{/if}
+    {#if client && (!message.messageType || message.messageType === 'email')}
+      <div class="card-actions"><RelatedCopies {client} messageID={message.id} {loadedIDs} /></div>
+    {/if}
 
     {#if sanitizationFailed}
       <p class="sanitize-notice" role="alert">Could not render HTML formatting. Showing plain text.</p>
@@ -154,7 +155,7 @@
     <IdentityAvatar label={message.sender || '?'} size={24} />
     <span class="collapsed-sender">{message.sender || 'Unknown sender'}</span>
     <span class="collapsed-snippet">{message.snippet || message.subject}</span>
-    <time datetime={message.sentAt} data-mono>{formatDate(message.sentAt)}</time>
+    <time datetime={message.sentAt} data-mono>{formatShortDateTime(message.sentAt)}</time>
   </button>
 {/if}
 
@@ -245,6 +246,14 @@
     margin: var(--space-3) var(--pane-pad-x) 0;
   }
 
+  .card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4) 0;
+  }
+
   .card-header {
     display: flex;
     align-items: flex-start;
@@ -269,6 +278,7 @@
 
   .header-line {
     display: flex;
+    min-width: 0;
     align-items: baseline;
     justify-content: space-between;
     gap: var(--space-4);

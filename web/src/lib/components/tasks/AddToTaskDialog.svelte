@@ -18,19 +18,28 @@
   let kataBusy = $state(false);
   let kataReceipt = $state<KataIssueReceipt>();
   let busy = $state(false);
+  let taskAction = $state('create');
+  let taskReady = $state(false);
   const options = $derived([
     ...(email ? [{ value: 'tasks', label: 'Tasks' }] : []),
     ...(kata?.ready ? [{ value: 'kata', label: 'Kata' }] : []),
   ]);
 </script>
 
-<Dialog title={email ? 'Add to task' : 'Kata issue'} onclose={() => { if (!busy && !kataBusy) onclose(); }}>
+<Dialog title={provider === 'tasks' ? 'Add to task' : 'Add to Kata issue'} onclose={() => { if (!busy && !kataBusy) onclose(); }}>
   <div class="task-dialog">
-    {#if options.length > 1 && !kataReceipt}
-      <div class="provider"><span>Send to</span><SegmentedControl variant="borderless" ariaLabel="Send to" disabled={busy || kataBusy} {options} value={provider} onchange={(value) => { provider = value; if (value === 'kata') kataInitialized = true; }} /></div>
+    {#if !kataReceipt}
+      <div class="toolbar">
+        {#if options.length > 1}
+          <div class="provider"><span>Send to</span><SegmentedControl variant="borderless" ariaLabel="Send to" disabled={busy || kataBusy} {options} value={provider} onchange={(value) => { provider = value; if (value === 'kata') kataInitialized = true; }} /></div>
+        {/if}
+        {#if provider === 'tasks' && taskReady}
+          <SegmentedControl variant="borderless" disabled={busy} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={taskAction} onchange={(value) => taskAction = value} />
+        {/if}
+      </div>
     {/if}
-    {#if email}<div hidden={provider !== 'tasks'}>
-      <TaskLinks {client} {messageId} {title} {onsettings} mode="add" bind:busy oncancel={onclose} oncomplete={onclose} />
+    {#if email}<div class="task-surface" hidden={provider !== 'tasks'}>
+      <TaskLinks {client} {messageId} {title} {onsettings} mode="add" bind:action={taskAction} bind:actionReady={taskReady} bind:busy oncancel={onclose} oncomplete={onclose} />
     </div>{/if}
     {#if kataInitialized && (email || kata?.ready)}<div hidden={provider !== 'kata'}>
       <KataEvidenceDialog {client} selector={{ kind: 'message', message_id: messageId, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={title} defaultBrief={`${location.origin}/messages/${messageId}`} modeLabel={email} bind:busy={kataBusy} bind:receipt={kataReceipt} {onclose} />
@@ -39,7 +48,8 @@
 </Dialog>
 
 <style>
-  .task-dialog { display: grid; gap: var(--space-6); }
-  .provider { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .provider :global(.kit-segmented) { justify-self: start; }
+  .task-dialog { display: grid; min-width: 0; gap: var(--space-6); }
+  .task-surface:not([hidden]) { display: grid; gap: var(--space-6); }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-4); }
+  .provider { display: flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
 </style>

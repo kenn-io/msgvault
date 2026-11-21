@@ -112,7 +112,7 @@
   {:else if thumbnailState === 'loading'}
     <span class="placeholder" role="status">Loading thumbnail…</span>
   {:else}
-    <span class="placeholder" data-kind="unavailable">Image preview unavailable</span>
+    <span class="placeholder" data-kind="unavailable">No preview</span>
   {/if}
 </div>
 

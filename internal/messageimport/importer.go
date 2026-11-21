@@ -98,14 +98,19 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		priorConversationID = ref.ConversationID
 	}
 
-	senderID, err := resolveSender(ctx, st, snapshot)
+	senderID, err := resolveSender(ctx, st, sourceID, snapshot)
 	if err != nil {
 		return apiimport.Write{}, err
 	}
 	sender := snapshot.Sender
-	senderAddress := sender.Email
-	if senderAddress == "" {
-		senderAddress = sender.Phone
+	// Search indexes the sender's address as a rebuild of the index derives
+	// it: the envelope's, else the participant's. A post naming an account
+	// alone thus finds the email the account was joined to.
+	searchAddress := envelopeEmail(snapshot)
+	if searchAddress == "" {
+		if searchAddress, err = st.ParticipantSearchAddressContext(ctx, senderID); err != nil {
+			return apiimport.Write{}, fmt.Errorf("lookup message sender address: %w", err)
+		}
 	}
 	metadata := sql.NullString{String: string(snapshot.Metadata), Valid: true}
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
@@ -144,7 +149,7 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		FTS: &store.FTSDoc{
 			Subject:  snapshot.Title,
 			Body:     snapshot.BodyText,
-			FromAddr: senderAddress,
+			FromAddr: searchAddress,
 		},
 	})
 	if err != nil {
@@ -204,7 +209,7 @@ func storedMatches(ctx context.Context, st *store.Store, prior store.MessageMeta
 // connector's shared identifier type; anything else becomes an imported
 // identifier, see senderIdentifier. A sender with both an email and an id of
 // the shared type links the two, see linkSenderIdentifier.
-func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int64, error) {
+func resolveSender(ctx context.Context, st *store.Store, sourceID int64, snapshot Snapshot) (int64, error) {
 	sender := snapshot.Sender
 	var (
 		id  int64
@@ -228,13 +233,39 @@ func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int
 		id, err = st.EnsureParticipantByIdentifierContext(ctx,
 			snapshot.SenderIdentifierType, sender.ID, sender.Name)
 	default:
-		id, err = st.EnsureParticipantByIdentifierContext(ctx,
-			SenderIdentifierType, senderIdentifier(snapshot.SourceType, snapshot.SourceIdentifier, sender), sender.Name)
+		identifier := senderIdentifier(snapshot.SourceType, snapshot.SourceIdentifier, sender)
+		err = adoptUntypedSender(ctx, st, sourceID, snapshot, identifier)
+		if err == nil {
+			id, err = st.EnsureParticipantByIdentifierContext(ctx, SenderIdentifierType, identifier, sender.Name)
+		}
 	}
 	if err != nil {
 		return 0, fmt.Errorf("resolve message sender: %w", err)
 	}
 	return id, nil
+}
+
+// adoptUntypedSender moves a sender's key from the form it had before sender
+// scopes named the source's type, which a feed's senders still have in
+// archives written then, to identifier, so the sender keeps its participant,
+// its history and the person it belongs to. Only a participant that sent a
+// message of this source is moved: an untyped key that a message import of
+// the same identifier wrote stays that import's.
+func adoptUntypedSender(ctx context.Context, st *store.Store, sourceID int64, snapshot Snapshot, identifier string) error {
+	untyped := senderIdentifier(SourceType, snapshot.SourceIdentifier, snapshot.Sender)
+	if untyped == identifier {
+		return nil
+	}
+	owner, _, err := st.ParticipantByIdentifierContext(ctx, SenderIdentifierType, untyped)
+	if err != nil || owner == 0 {
+		return err
+	}
+	sent, err := st.ParticipantSentInSourceContext(ctx, owner, sourceID)
+	if err != nil || !sent {
+		return err
+	}
+	_, err = st.AdoptLegacyParticipantIdentifier(ctx, SenderIdentifierType, untyped, identifier, "")
+	return err
 }
 
 // linkSenderIdentifier records a sender's account id as an identifier of

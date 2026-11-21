@@ -18,7 +18,7 @@ func latestSyncItemIDsQuery(forMessage bool) string {
 		// Keep the unit lookup's early-stop plan instead of grouping the source.
 		selection = "SELECT i.id"
 		identity = " AND i.source_message_id = ?"
-		lowerBound = "COALESCE((SELECT id " + lastSuccessfulSyncSelection(true) + "), 0)"
+		lowerBound = "COALESCE((SELECT id " + lastSuccessfulSyncSelection("=") + "), 0)"
 		latest = " ORDER BY i.id DESC LIMIT 1"
 	}
 	return selection + `

@@ -42,6 +42,9 @@ type WorkStore interface {
 	LoadProviderPersonIDs(ctx context.Context, personID int64, providerNamespace string) ([]string, error)
 	RenewLease(ctx context.Context, token LeaseToken, until time.Time) error
 	ReleaseWork(ctx context.Context, token LeaseToken, release WorkRelease) error
+	// BeginAttempt returns ErrRequestBudgetExceeded or ErrCostBudgetExceeded
+	// after it has released the lease and deferred the work to the next UTC
+	// day of the store's clock.
 	BeginAttempt(ctx context.Context, token LeaseToken, start AttemptStart) (*DurableAttempt, bool, error)
 	AuthorizeAttemptDispatch(ctx context.Context, token LeaseToken) error
 	AuthorizeAttemptPoll(ctx context.Context, token LeaseToken) error

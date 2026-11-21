@@ -4,6 +4,7 @@ import { appShortcuts } from '@kenn-io/kit-ui';
 
 import { createAPIClient } from '../../api/client';
 import type { FileSearchRow } from '../../explore/models';
+import AddToTaskDialog from '../tasks/AddToTaskDialog.svelte';
 import FileViewer from './FileViewer.svelte';
 
 const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
@@ -23,6 +24,8 @@ const { renderPDF } = vi.hoisted(() => ({
     return { pages: 1, setZoom: vi.fn(), destroy: vi.fn() };
   })
 }));
+
+vi.mock('../tasks/AddToTaskDialog.svelte', { spy: true });
 
 vi.mock('./FileViewer.browser.svelte', () => ({
   MAX_PDF_BYTES: 25 * 1024 * 1024,
@@ -338,7 +341,7 @@ describe('FileViewer', () => {
 it('shows context and steps with buttons and arrows', async () => {
   const mime_type = 'application/zip';
   const onStep = vi.fn();
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type }, new TextEncoder().encode('Example text'))), file: file({ mime_type, participant_labels: ['Alex Example', 'Jordan Example'] }), position: { index: 2, total: 1038 }, onStep });
+  const view = render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type }, new TextEncoder().encode('Example text'))), file: file({ mime_type, participant_labels: ['Alex Example', 'Jordan Example'] }), position: { index: 2, total: 1038 }, onStep });
   await screen.findByText('3 of 1,038');
   expect(screen.getByText(/Containing item · Alex Example, Jordan Example/)).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
@@ -346,6 +349,12 @@ it('shows context and steps with buttons and arrows', async () => {
   await fireEvent.keyDown(screen.getByRole('region', { name: 'File preview preview.png' }), { key: 'ArrowRight' });
   await fireEvent.keyDown(window, { key: 'ArrowLeft' });
   expect(onStep.mock.calls).toEqual([[1], [-1], [1], [-1]]);
+
+  await view.rerender({ canStepForward: false, notice: 'Could not load more files' });
+  expect(screen.getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(true);
+  await fireEvent.keyDown(window, { key: 'ArrowRight' });
+  expect(onStep.mock.calls).toEqual([[1], [-1], [1], [-1]]);
+  expect(screen.getByRole('alert').textContent).toContain('Could not load more files');
 });
 
 it.each([
@@ -444,14 +453,6 @@ it('warns when malformed CSV rows could not be read', async () => {
   render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, filename: 'malformed.csv', mime_type: 'text/csv' }, new TextEncoder().encode('Name,Amount\nExample,"42\nOther,73'))), file: file({ filename: 'malformed.csv', mime_type: 'text/csv' }) });
   expect(await screen.findByText("Some rows couldn't be read.")).toBeDefined();
 });
-it('stops at the loaded end and shows the list notice', async () => {
-  const onStep = vi.fn();
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true })), file: file(), position: { index: 1, total: 4 }, onStep, canStepForward: false, notice: 'Could not load more files' });
-  expect(screen.getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(true);
-  await fireEvent.keyDown(window, { key: 'ArrowRight' });
-  expect(onStep).not.toHaveBeenCalled();
-  expect(screen.getByRole('alert').textContent).toBe('Could not load more files');
-});
 it.each(['audio/wav', 'application/pdf', 'image/png'])('offers Download when %s exceeds the preview bound', async (mime_type) => {
   render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type, size_bytes: 26 * 1024 * 1024 })), file: file({ mime_type, size_bytes: 26 * 1024 * 1024 }) });
   expect(await screen.findByText('This file is too large to preview.')).toBeDefined();
@@ -474,3 +475,37 @@ it('reports when the cell limit omits rows', async () => {
   expect(await screen.findByText('Preview is limited to 20,000 cells; showing 199 rows.', {}, { timeout: 15000 })).toBeDefined();
   expect(screen.getByText('Preview is limited to 200 rows.')).toBeDefined();
 }, 20000);
+
+it.each([
+  ['email', false, true],
+  ['imessage', true, true],
+  ['imessage', false, false],
+])('offers filing for %s with Kata ready=%s: %s', async (messageType, ready, offered) => {
+  const { KataReadiness, kataReadinessKey } = await import('../../kata/kata-ready.svelte');
+  vi.mocked(AddToTaskDialog).mockClear();
+  vi.mocked(AddToTaskDialog).mockImplementation(() => ({}));
+  const onOpenTaskSettings = vi.fn();
+  const client = createAPIClient(async input => {
+    const request = input as Request;
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/integrations/kata/status') return Response.json({ state: ready ? 'ready' : 'disabled', project: 'example' });
+    if (path === '/api/v1/files/7') return Response.json({ id: 7, message_id: 42, message_type: messageType, conversation_id: 21, entry_key: 'source:1:message:m-42', filename: 'notes.txt', mime_type: 'text/plain', size_bytes: 0, content_state: 'missing_blob', content_available: false });
+    return Response.json({ message: 'Unexpected request' }, { status: 404 });
+  });
+  const readiness = new KataReadiness(client);
+  await waitFor(() => expect(ready ? readiness.ready : readiness.absent).toBe(true));
+  const view = render(FileViewer, { props: { client, file: file({ filename: 'notes.txt' }), onOpenTaskSettings }, context: new Map([[kataReadinessKey, readiness]]) });
+  try {
+    await screen.findByText(/bytes are missing/);
+    await fireEvent.click(screen.getByRole('button', { name: 'More file actions' }));
+    expect(screen.getByRole('menuitem', { name: 'Open conversation' })).toBeDefined();
+    const action = screen.queryByRole('menuitem', { name: 'Add to task…' });
+    expect(Boolean(action)).toBe(offered);
+    if (action) {
+      await fireEvent.click(action);
+      await waitFor(() => expect(vi.mocked(AddToTaskDialog).mock.calls.at(-1)?.[1]).toMatchObject({
+        client, messageId: 42, title: 'Containing item', email: messageType === 'email', onsettings: onOpenTaskSettings
+      }));
+    }
+  } finally { view.unmount(); readiness.dispose(); }
+});

@@ -1,4 +1,4 @@
-import { taskCreationClient, taskOutboundMetadata } from './fixtures.test-support';
+import { taskCreationClient, taskLookup } from './fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -12,7 +12,7 @@ function pendingCreate() {
   const client = createAPIClient(async (input) => {
     const request = input as Request;
     if (request.method === 'POST') return response;
-    return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+    return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : taskLookup());
   });
   render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose });
   return { respond, onclose };
@@ -24,7 +24,7 @@ describe('Add to task', () => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (path.endsWith('/prepare')) return Response.json({ evidence: [{ id: 'one', passage: 'one', reference: { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, source_type: 'email', source_identifier: 'example', source_message_id: '42', message: { body_sha256: 'a'.repeat(64), start_rune: 0, end_rune: 5 } }, excerpt: 'Quote', display: {}, content_trust: 'untrusted' }] });
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+      return Response.json(taskLookup());
     });
     const readiness = new KataReadiness(client);
     let view: ReturnType<typeof render> | undefined;
@@ -35,13 +35,14 @@ describe('Add to task', () => {
         context: new Map([[kataReadinessKey, readiness]])
       });
       if (email) {
+        expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeTruthy();
         await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
       }
-      expect(screen.getByRole('dialog', { name: email ? 'Add to task' : 'Kata issue' })).toBeTruthy();
+      expect(screen.getByRole('dialog', { name: 'Add to Kata issue' })).toBeTruthy();
       expect(screen.getByRole('radiogroup', { name: 'Issue' })).toBeTruthy();
       expect(screen.queryByText('Issue')).toEqual(email ? expect.anything() : null);
       expect(await screen.findByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Follow up');
-      expect(screen.getByLabelText('Brief')).toHaveProperty('value', `${location.origin}/messages/42`);
+      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', `${location.origin}/messages/42`);
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
@@ -55,7 +56,7 @@ describe('Add to task', () => {
       if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (path.endsWith('/prepare')) return Response.json({ evidence: [{ id: 'one', passage: 'one', reference, excerpt: 'Quote', display: {}, content_trust: 'untrusted' }] });
       if (request.method === 'POST') return pending;
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+      return Response.json(taskLookup());
     });
     const readiness = new KataReadiness(client);
     await waitFor(() => expect(readiness.ready).toBe(true));
@@ -64,12 +65,12 @@ describe('Add to task', () => {
     try {
       await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
       await screen.findByText('Quote');
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Create issue' })).toHaveProperty('disabled', false));
       await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
       expect(onclose).not.toHaveBeenCalled();
       finish(Response.json({ issue: { uid: 'one', ref: 'abcd', qualified_ref: 'example#abcd', project: 'example', title: 'Follow up', status: 'open', revision: '1' }, replayed: false }));
       await screen.findByRole('button', { name: 'Done' });
-      expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeTruthy();
       expect(screen.queryByRole('radio', { name: 'Tasks' })).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
       expect(onclose).toHaveBeenCalledOnce();
@@ -80,7 +81,7 @@ describe('Add to task', () => {
     const client = createAPIClient(async (input) => {
       const request = input as Request;
       return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' }
-        : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+        : taskLookup());
     });
     const readiness = new KataReadiness(client);
     let view: ReturnType<typeof render> | undefined;
@@ -91,30 +92,50 @@ describe('Add to task', () => {
         context: new Map([[kataReadinessKey, readiness]])
       });
       await fireEvent.input(await screen.findByRole('textbox', { name: 'Task title' }), { target: { value: 'Revised follow up' } });
-      await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Draft notes' } });
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
       await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
-      await fireEvent.input(screen.getByLabelText('Brief'), { target: { value: 'Brief draft' } });
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Brief draft' } });
       await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
-      expect(screen.getByLabelText('Brief')).toHaveProperty('value', 'Brief draft');
+      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', 'Brief draft');
       await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
       expect(await screen.findByRole('textbox', { name: 'Task title' })).toHaveProperty('value', 'Revised follow up');
-      expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
+      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveProperty('value', 'Draft notes');
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
-  it.each(['create', 'cancel'])('closes its single dialog after %s', async (mode) => {
+  it('closes its single dialog when cancelling a new task', async () => {
     const onclose = vi.fn();
-    const client = taskCreationClient();
-    const view = render(AddToTaskDialog, { props: { client, messageId: 42, title: 'Follow up', email: true, onclose } });
+    const view = render(AddToTaskDialog, { client: taskCreationClient(), messageId: 42, title: 'Follow up', email: true, onclose });
     try {
       await screen.findByRole('button', { name: 'Cancel' });
       expect(screen.getAllByRole('dialog')).toHaveLength(1);
-      await fireEvent.click(screen.getByRole('button', { name: mode === 'cancel' ? 'Cancel' : 'Create task' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
       await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+    } finally { view.unmount(); }
+  });
+
+  it.each(['ready', 'partial', 'stale'])('updates the task control when the index is %s', async state => {
+    const client = createAPIClient(async input => {
+      const url = (input as Request).url;
+      if (url.includes('/search')) return Response.json({ tasks: [], truncated: false });
+      return Response.json(url.endsWith('/status') ? { state: 'ready', project: 'example' } : taskLookup({ state, complete: state === 'ready' }));
+    });
+    const view = render(AddToTaskDialog, { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() });
+    try {
+      if (state === 'stale') {
+        await screen.findByRole('alert');
+        expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
+      } else {
+        const existing = await screen.findByRole('radio', { name: 'Existing' });
+        expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
+        expect(screen.queryByText('Task')).toBeNull();
+        await fireEvent.click(existing);
+        expect(await screen.findByRole('searchbox', { name: 'Filter tasks' })).toBeDefined();
+      }
     } finally { view.unmount(); }
   });
 

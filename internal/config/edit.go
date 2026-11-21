@@ -907,10 +907,10 @@ func validateEditableCandidate(cfg *Config) error {
 		"matrix.schedule":                 cfg.Matrix.Schedule,
 		"slack.schedule":                  cfg.Slack.Schedule,
 		"inline.schedule":                 cfg.Inline.Schedule,
+		"feeds.schedule":                  cfg.Feeds.Schedule,
 		"github.schedule":                 cfg.GitHub.Schedule,
 		"gitlab.schedule":                 cfg.GitLab.Schedule,
 		"gitea.schedule":                  cfg.Gitea.Schedule,
-		"feeds.schedule":                  cfg.Feeds.Schedule,
 		"imessage.schedule":               cfg.IMessage.Schedule,
 	}
 	for index, account := range cfg.Accounts {
@@ -945,6 +945,9 @@ func validateEditableCandidate(cfg *Config) error {
 	}
 	for index, source := range cfg.Twilio {
 		schedules[fmt.Sprintf("twilio[%d].schedule", index)] = source.Schedule
+	}
+	for index, source := range cfg.Bland {
+		schedules[fmt.Sprintf("bland[%d].schedule", index)] = source.Schedule
 	}
 	for index, source := range cfg.Muesli {
 		schedules[fmt.Sprintf("muesli[%d].schedule", index)] = source.Schedule

@@ -189,6 +189,36 @@ func daemonAnalyticsCacheWorkTracker(idleTracker scheduler.WorkTracker) schedule
 	return combineWorkTrackers(idleTracker)
 }
 
+func newDaemonAnalyticsCacheActivator(c *config.Config, s *store.Store, server *api.Server, ready <-chan struct{}, initializer **daemonAnalyticsInitHandle) func(context.Context) error {
+	var mu sync.Mutex
+	return func(ctx context.Context) error {
+		if s.IsPostgreSQL() || (c.Analytics.Engine != "" && c.Analytics.Engine != config.AnalyticsEngineAuto) {
+			return nil
+		}
+		select {
+		case <-ready:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		h := *initializer
+		if h == nil || !h.WaitContext(ctx) {
+			return errors.New("analytics initialization did not finish")
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if server.AnalyticsMode() == api.AnalyticsModeDuckDB {
+			return nil
+		}
+		engine, err := openDaemonDuckDBEngine(ctx, c, s)
+		if err != nil {
+			return fmt.Errorf("activate analytics cache: %w", err)
+		}
+		server.SetAnalyticsEngine(engine, api.AnalyticsModeDuckDB)
+		h.setSwapped()
+		return nil
+	}
+}
+
 // startDaemonAnalyticsInitializer performs final cache selection after the
 // HTTP listener starts. Its tracker keeps an idle-shutdown daemon alive until
 // the worker exits.

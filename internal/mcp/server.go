@@ -5,18 +5,24 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -30,6 +36,7 @@ import (
 
 // Tool name constants.
 const (
+	ToolSetPersonContactList      = "set_person_contact_list"
 	ToolDraftReply                = "draft_reply"
 	ToolDraftCompose              = "draft_compose"
 	ToolDraftForward              = "draft_forward"
@@ -44,6 +51,7 @@ const (
 	ToolSearchMessageBodies       = "search_message_bodies"
 	ToolSemanticSearchMessages    = "semantic_search_messages"
 	ToolGetMessage                = "get_message"
+	ToolGetMessageRecords         = "get_message_records"
 	ToolGetAttachment             = "get_attachment"
 	ToolExportAttachment          = "export_attachment"
 	ToolExportEML                 = "export_eml"
@@ -67,6 +75,7 @@ const (
 	ToolPreviewPersonTiers        = "preview_person_tiers"
 	ToolExplainPersonTier         = "explain_person_tier"
 	ToolFindContactCandidates     = "find_contact_candidates"
+	ToolGetEmailFamily            = "get_email_family"
 	ToolGetPersonMessagingRoutes  = "get_person_messaging_routes"
 	ToolPromotePerson             = "promote_person"
 	ToolUpdatePersonNotes         = "update_person_notes"
@@ -76,9 +85,14 @@ const (
 	ToolCreateSavedView           = "create_saved_view"
 	ToolUpdateSavedView           = "update_saved_view"
 	ToolDeleteSavedView           = "delete_saved_view"
+	ToolGetMeetingRecord          = "get_meeting_record"
+	ToolSuggestMeetingLinks       = "suggest_meeting_links"
 	ToolGetMeetingContext         = "get_meeting_context"
 	ToolListMeetingActionItems    = "list_meeting_action_items"
 	ToolGetMeetingMetrics         = "get_meeting_metrics"
+	ToolLinkMeeting               = "link_meeting"
+	ToolUnlinkMeeting             = "unlink_meeting"
+	ToolResetMeetingLink          = "reset_meeting_link"
 	ToolListIdentityMatches       = "list_identity_matches"
 	ToolGetIdentityMatch          = "get_identity_match"
 	ToolAcceptIdentityMatch       = "accept_identity_match"
@@ -137,6 +151,7 @@ type ServeOptions struct {
 	PersonTierBackend      PersonTierBackend
 	Kata                   KataBackend
 	ContactRoutesBackend   ContactRoutesBackend
+	EmailFamilyBackend     EmailFamilyBackend
 	// KataLookup enables issue lookup and context reads.
 	KataLookup  bool
 	KataDocbank bool
@@ -178,8 +193,11 @@ type ServeOptions struct {
 	SavedViews savedview.Service
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
-	Meetings MeetingBackend
-	Calendar CalendarBackend
+	Meetings           MeetingBackend
+	MeetingRecords     bool
+	MeetingSuggestions bool
+	MeetingDecisions   bool
+	Calendar           CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
 	// ConfirmSensitiveDrafts requires client approval before writing flagged draft content.
@@ -196,6 +214,9 @@ type ServeOptions struct {
 	// person merge and token-guarded CardDAV publication routes.
 	PersonCardDAV PersonCardDAVBackend
 	MessageTags   MessageTagBackend
+	// PersonCreator is present only when the daemon serves standalone person
+	// creation. Older daemons omit create_person.
+	PersonCreator PersonCreator
 	// IdentityScoring exposes consented manual scoring. Consent is
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
@@ -311,6 +332,73 @@ func officialToolHandler(
 	}
 }
 
+func exactAttributeToolHandler(definition operationalDefinition, backend OperationBackend, downloads *downloadCache, confirmation confirmationConfig) sdkmcp.ToolHandler {
+	handler := officialToolHandler(definition.bind(backend, downloads), confirmation)
+	schema, err := definition.definition.inputSchema.Resolve(nil)
+	if err != nil {
+		panic(err)
+	}
+	return func(ctx context.Context, request *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+		var args map[string]any
+		if err := json.Unmarshal(request.Params.Arguments, &args, jsonexact.PreserveNumbers); err != nil {
+			return nil, err
+		}
+		if err := schema.Validate(attributeValidationValue(args)); err != nil {
+			var result sdkmcp.CallToolResult
+			result.SetError(fmt.Errorf("invalid_arguments: %w", err))
+			return &result, nil
+		}
+		result, output, err := handler(ctx, request, args)
+		if err != nil || output == nil {
+			return result, err
+		}
+		raw, ok := output.(jsontext.Value)
+		if !ok {
+			return nil, errors.New("invalid attribute output")
+		}
+		result.StructuredContent = raw
+		if result.Content == nil {
+			result.Content = []sdkmcp.Content{&sdkmcp.TextContent{Text: string(raw)}}
+		}
+		return result, nil
+	}
+}
+
+func attributeValidationValue(value any) any {
+	switch value := value.(type) {
+	case jsontext.Value:
+		n, err := strconv.ParseFloat(string(value), 64)
+		if err != nil {
+			return math.Copysign(math.MaxFloat64, n)
+		}
+		if rational, ok := new(big.Rat).SetString(string(value)); ok && !rational.IsInt() && math.Trunc(n) == n {
+			direction := math.Inf(1)
+			if rational.Cmp(new(big.Rat).SetFloat64(n)) < 0 {
+				direction = math.Inf(-1)
+			}
+			n = math.Nextafter(n, direction)
+			if math.Trunc(n) == n {
+				return string(value)
+			}
+		}
+		return n
+	case map[string]any:
+		converted := make(map[string]any, len(value))
+		for key, item := range value {
+			converted[key] = attributeValidationValue(item)
+		}
+		return converted
+	case []any:
+		converted := make([]any, len(value))
+		for i, item := range value {
+			converted[i] = attributeValidationValue(item)
+		}
+		return converted
+	default:
+		return value
+	}
+}
+
 func mapInternalError(err error) error {
 	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
 		return &jsonrpc.Error{
@@ -348,6 +436,7 @@ var mcpSchemaCache = sdkmcp.NewSchemaCache()
 
 // newMCPServer builds an official MCP server from the operation catalog.
 func newMCPServer(opts ServeOptions, allowWrites bool) *sdkmcp.Server {
+	opts.DiscoverFamilies = nil
 	return newMCPServerWithPolicy(opts, allowWrites, newStdioInvocationPolicy())
 }
 
@@ -363,7 +452,7 @@ func newMCPServerWithPolicy(
 	}
 	capabilities := &sdkmcp.ServerCapabilities{Tools: &sdkmcp.ToolCapabilities{}}
 	instructions := archiveSafetyInstructions + " " + decisionMemoryInstructions + " Use returned web_url values when linking to archived messages."
-	instructions += " Agent guide: https://msgvault.io/docs/guides/agent-quickstart.md (msgvault quickstart --mcp)."
+	instructions += " Agent guide: https://msgvault.io/docs/guides/agent-quickstart.md (msgvault quickstart --mcp). " + bundledSkills().Instructions()
 	if !opts.DelegatedOnly {
 		capabilities.Resources = &sdkmcp.ResourceCapabilities{}
 	} else {
@@ -383,6 +472,8 @@ func newMCPServerWithPolicy(
 		invocationPolicyMiddleware(policy),
 		cachePolicyMiddleware,
 	)
+	// Guides need no archive access, so every session, including delegated ones, gets them.
+	bundledSkills().Register(s)
 
 	if opts.downloads == nil {
 		opts.downloads = &downloadCache{}
@@ -417,24 +508,33 @@ func newMCPServerWithPolicy(
 		identityReview:       opts.IdentityReview,
 		personCardDAV:        opts.PersonCardDAV,
 		messageTags:          opts.MessageTags,
+		personCreator:        opts.PersonCreator,
 		identityScoring:      opts.IdentityScoring,
 		drafts:               opts.Drafts,
 		contactRoutesBackend: opts.ContactRoutesBackend,
 		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
+		emailFamilyBackend:   opts.EmailFamilyBackend,
 	}
 
-	for _, definition := range operationCatalog(opts, h) {
-		if !toolClassAllowed(definition.security, opts, allowWrites) {
-			continue
-		}
+	definitions := authorizedOperationCatalog(opts, allowWrites)
+	operations := operationalCatalog(opts, allowWrites)
+	h.toolDiscovery = toolDiscovery{definitions: definitions, discoverFamilies: opts.DiscoverFamilies}
+	for _, operation := range operations {
+		h.toolDiscovery.definitions = append(h.toolDiscovery.definitions, operation.definition)
+	}
+	for _, definition := range definitions {
 		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h), confirmation))
 	}
 	if !opts.DelegatedOnly {
 		registerAttachmentResources(s, h)
 	}
 
-	for _, definition := range operationalCatalog(opts, allowWrites) {
-		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
+	for _, definition := range operations {
+		if definition.family == OperationFamilyAttributes {
+			s.AddTool(definition.definition.tool(), exactAttributeToolHandler(definition, opts.Operations, opts.downloads, confirmation))
+		} else {
+			sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations, opts.downloads), confirmation))
+		}
 	}
 
 	return s
@@ -464,7 +564,7 @@ func ServeTransport(ctx context.Context, opts ServeOptions, transport sdkmcp.Tra
 	if opts.DiscoverFamilies != nil {
 		opts.Families = opts.DiscoverFamilies(ctx)
 	}
-	return newMCPServerWithPolicy(opts, true, newStdioInvocationPolicy()).Run(ctx, transport) //nolint:wrapcheck // ServeWithOptions adds transport-specific context.
+	return newMCPServer(opts, true).Run(ctx, transport) //nolint:wrapcheck // ServeWithOptions adds transport-specific context.
 }
 
 // ServeHTTPWithOptions creates an MCP server from opts and serves over
@@ -635,7 +735,7 @@ func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
 	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
 		return agentgrant.PermissionSearchRead, true
-	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
+	case ToolGetMessage, ToolGetMessageRecords, ToolListThread, ToolSearchInMessage, ToolGetMeetingRecord, ToolSuggestMeetingLinks:
 		return agentgrant.PermissionMessageRead, true
 	case ToolGetAttachment:
 		return agentgrant.PermissionAttachmentRead, true

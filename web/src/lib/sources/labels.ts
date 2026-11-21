@@ -12,14 +12,16 @@ import { sentenceCase } from '../explore/labels';
 const SOURCE_TYPES: Readonly<Record<string, string>> = {
   '': '', gmail: 'Gmail', imap: 'IMAP', msmail: 'Microsoft mail', teams: 'Teams',
   discord: 'Discord', feed: 'Feeds', chatwoot: 'Chatwoot', github: 'GitHub', gitlab: 'GitLab', gitea: 'Gitea', meeting_import: 'Meeting import', message_import: 'Message import', synctech_sms: 'SMS backup',
-  imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', pocket: 'Pocket', gcal: 'Google Calendar', muesli: 'Muesli',
-  granola: 'Granola', notion_meetings: 'Notion meetings', twilio: 'Twilio', pst: 'PST import',
+  imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', pocket: 'Pocket', gcal: 'Google Calendar', ics: 'ICS import', muesli: 'Muesli',
+  granola: 'Granola', notion_meetings: 'Notion meetings', twilio: 'Twilio', bland: 'Bland', pst: 'PST import',
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', inline: 'Inline', matrix: 'Matrix',
   eml: 'EML import', maildir: 'Maildir import', whatsapp: 'WhatsApp',
   apple_messages: 'Apple Messages', facebook_messenger: 'Facebook Messenger',
   facebook_comments: 'Facebook Page comments',
   instagram_comments: 'Instagram comments',
-  'google-groups': 'Google Groups'
+  'google-groups': 'Google Groups',
+  tiktok_export: 'TikTok export',
+  linkedin_export: 'LinkedIn export'
 };
 export function sourceTypeLabel(code: string): string {
   return Object.hasOwn(SOURCE_TYPES, code) ? SOURCE_TYPES[code]! : sentenceCase(code);
@@ -132,7 +134,7 @@ export function sourceDisplayName(type: string | undefined, identifier: string):
 
 export function sourceIcon(type: string) {
   if (['gmail', 'imap', 'msmail', 'pst', 'apple-mail', 'mbox', 'eml', 'maildir', 'google-groups'].includes(type)) return Mail;
-  if (['teams', 'discord', 'synctech_sms', 'imazing_csv', 'twilio', 'beeper', 'slack', 'inline', 'matrix', 'whatsapp', 'apple_messages', 'facebook_messenger', 'chatwoot'].includes(type)) return MessageCircle;
+  if (['teams', 'discord', 'synctech_sms', 'imazing_csv', 'twilio', 'bland', 'beeper', 'slack', 'inline', 'matrix', 'whatsapp', 'apple_messages', 'facebook_messenger', 'chatwoot'].includes(type)) return MessageCircle;
   if (['meeting_import', 'circleback', 'plaud', 'pocket', 'muesli', 'granola', 'notion_meetings'].includes(type)) return Mic;
   return type === 'gcal' ? Calendar : Archive;
 }

@@ -5,12 +5,15 @@ Usage:
 
 Available Commands:
   facebook-comments  Archive comments from a configured Facebook Page
+  facebook-messages  Archive a Facebook Page's Messenger inbox
   feeds              Follow RSS, Atom and JSON feeds
   instagram-comments Archive comments from a linked Instagram account
+  instagram-mentions Archive Instagram media that tags a linked account
+  instagram-messages Archive a linked Instagram account's inbox
 
 Flags:
-  -h, --help   help for source
+  -h, --help[=true|false]   help for source
 
-Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, --remote, -v/--verbose (see 'msgvault --help')
 
 Use "msgvault source [command] --help" for more information about a command.

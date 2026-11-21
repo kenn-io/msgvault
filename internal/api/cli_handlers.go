@@ -738,22 +738,23 @@ type sourceMessageCounter interface {
 
 // virtualAccountLister reads the virtual account catalog. Its freshness
 // depends on the confirmed identities, so a store that offers the catalog
-// also reports the revision that changes when one is added or removed.
+// also reports the revision that changes when one is added or removed or any
+// transaction rewrites a message's attribution.
 type virtualAccountLister interface {
 	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
-	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
+	AccountCatalogRevisionContext(ctx context.Context) (int64, error)
 }
 
 // virtualAccountCatalogFreshFor is how long a completed catalog read serves
 // as current. Confirming or removing an identity starts a new read at once.
 const virtualAccountCatalogFreshFor = 2 * time.Minute
 
-// virtualAccountCatalogVersion is the identity revision a catalog read
-// depends on, so a read from before an identity change is never fresh.
+// virtualAccountCatalogVersion is the catalog revision a read depends on, so a
+// read from before an identity or attribution change is never fresh.
 func (s *Server) virtualAccountCatalogVersion(ctx context.Context, lister virtualAccountLister) string {
-	revision, err := lister.AccountIdentityRevisionContext(ctx)
+	revision, err := lister.AccountCatalogRevisionContext(ctx)
 	if err != nil {
-		s.logger.Warn("reading account identity revision for the account catalog", "error", err)
+		s.logger.Warn("reading account catalog revision", "error", err)
 		return ""
 	}
 	return strconv.FormatInt(revision, 10)
@@ -960,7 +961,7 @@ func (s cliScope) displayName() string {
 }
 
 func (s *Server) handleCLIStats(w http.ResponseWriter, r *http.Request) {
-	if s.requestAuthentication(r).Grant != nil {
+	if agentReadScoped(r) {
 		s.agentScopedStats(w, r, true)
 		return
 	}
@@ -1446,7 +1447,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
 		} else {
-			s.logger.Error("failed to run CLI command", "args", req.Args, "error", err)
+			s.logger.Error("failed to run CLI command", "args", RedactedCLIRunArgs(req.Args), "error", err)
 		}
 		if writeErr := writeEvent(CLIRunEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
 			s.logger.Error("failed to stream CLI run error event", "error", writeErr)
@@ -1541,6 +1542,25 @@ func cliRunArgsContainFlag(args []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// RedactedCLIRunArgs returns args for logging. For `comment reply` it
+// replaces the reply text given with --body by a placeholder; other commands'
+// args are returned as they are.
+func RedactedCLIRunArgs(args []string) []string {
+	if len(args) < 2 || args[0] != "comment" || args[1] != "reply" {
+		return args
+	}
+	redacted := slices.Clone(args)
+	for i, arg := range redacted {
+		switch {
+		case arg == "--body" && i+1 < len(redacted):
+			redacted[i+1] = "[redacted]"
+		case strings.HasPrefix(arg, "--body="):
+			redacted[i] = "--body=[redacted]"
+		}
+	}
+	return redacted
 }
 
 func (s *Server) handleCLIAddCalendarPlan(w http.ResponseWriter, r *http.Request) {
@@ -1690,7 +1710,7 @@ func cliRunCommandAllowed(args []string) bool {
 			return false
 		}
 		switch args[1] {
-		case "facebook-comments", "instagram-comments":
+		case "facebook-comments", "instagram-comments", "instagram-mentions", "facebook-messages", "instagram-messages":
 			return args[2] == "add" || args[2] == "sync"
 		case "feeds":
 			switch args[2] {
@@ -1699,6 +1719,9 @@ func cliRunCommandAllowed(args []string) bool {
 			}
 		}
 		return false
+	}
+	if args[0] == "comment" {
+		return len(args) >= 2 && (args[1] == "moderate" || args[1] == "reply")
 	}
 	// Internal subprocess commands are callable only by their owning public
 	// command on the daemon host, never through the generic HTTP runner.
@@ -1770,6 +1793,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-synctech-sms-drive",
 		"add-teams",
 		"add-twilio",
+		"add-bland",
 		"backfill-beeper-media",
 		"backfill-discord-media",
 		"backfill-inline-media",
@@ -1786,6 +1810,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"gc",
 		"import",
 		"import-maildir",
+		"import-ics",
 		"import-eml",
 		"import-emlx",
 		"import-gvoice",
@@ -1796,7 +1821,9 @@ func cliRunCommandAllowed(args []string) bool {
 		"import-pst",
 		"import-slackdump",
 		"import-telegram",
+		"import-tiktok",
 		"import-discord-package",
+		"import-linkedin",
 		"import-x",
 		"import-synctech-sms",
 		"import-whatsapp",
@@ -1833,7 +1860,8 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams",
-		"sync-twilio":
+		"sync-twilio",
+		"sync-bland":
 		return true
 	default:
 		return false
@@ -2367,9 +2395,8 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var scope cliScope
-	grant := s.requestAuthentication(r).Grant
-	admitted, _ := r.Context().Value(agentReadScopeKey{}).(agentReadScope)
-	if grant != nil {
+	admitted, scoped := r.Context().Value(agentReadScopeKey{}).(agentReadScope)
+	if scoped {
 		scope = admitted.scope
 		if scope.Collection != nil {
 			collection = scope.Collection.Name
@@ -2392,7 +2419,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "empty_search", "empty search query")
 		return
 	}
-	if grant != nil {
+	if scoped {
 		parsed.AccountIDs = admitted.ids
 	}
 	resp := cliSearchResponse{
@@ -2400,14 +2427,14 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		ScopeSourceCount: len(scope.sourceIDs()),
 	}
 
-	if grant != nil {
+	if scoped {
 		resp.ScopeSourceCount = admitted.sourceCount()
 		if admitted.scope.Account.Input == "" {
-			resp.ScopeLabel = "agent grant"
+			resp.ScopeLabel = s.agentReadScopeLabel(r)
 		}
 	}
 	resp.IndexState = admitted.indexState
-	if grant == nil {
+	if !scoped {
 		resp.IndexState = s.ensureCLISearchIndexAsync(cliStore, true)
 	}
 	results, err := s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit+1, offset)
@@ -2441,7 +2468,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	}
 	// Search leaves summary BodyText empty; /cli/message serves full bodies.
 	resp.Results = results
-	if grant == nil && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
+	if !scoped && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
 		len(parsed.AccountAddrs) == 0 && len(parsed.ReceivedAddrs) == 0 &&
 		parsed.DeletionScope != search.DeletionScopeDeleted && parsed.DeletionScope != search.DeletionScopeAny {
 		resp.HybridAvailable = s.hybridHintAvailable(r.Context(), parsed.MessageTypes)

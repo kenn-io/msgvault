@@ -26,12 +26,14 @@ import (
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/beeper"
+	"go.kenn.io/msgvault/internal/bland"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
+	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/granola"
@@ -131,7 +133,10 @@ var runDerivedCacheSubprocess = func(ctx context.Context, analyticsDir string) e
 		// auto_build_cache=false, PostgreSQL) deliberately leaves absent;
 		// the caller reports the cache stale instead.
 		readiness, inspectErr := query.InspectCacheReadiness(analyticsDir)
-		if inspectErr != nil || readiness == query.CacheAbsent {
+		if inspectErr == nil && readiness == query.CacheAbsent {
+			return api.ErrIdentityCacheBuildRequired
+		}
+		if inspectErr != nil {
 			return err
 		}
 		return executeBuildCacheSubprocessMode(ctx, buildCacheModeFull)
@@ -282,12 +287,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}()
 	telemetryReporter := telemetry.NewReporterOrDisabled(telemetry.Options{
 		DataDir: cfg.Data.DataDir, Version: Version, Commit: Commit,
-		ConfigEnabled: cfg.Telemetry.EnabledOrDefault(),
-	}, logger)
+	})
 	defer func() {
-		if err := telemetryReporter.Close(); err != nil {
-			logger.Warn("close telemetry reporter", "error", err)
-		}
+		_ = telemetryReporter.Close()
 	}()
 	setStartupPhase := func(phase string) {
 		if err := ownership.SetStartupPhase(phase); err != nil {
@@ -725,6 +727,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 		})); err != nil {
 			logger.Error("failed to schedule Instagram comments", "profile", source.Identifier, "error", err)
 		}
+		if !source.Mentions {
+			continue
+		}
+		if err := registerScheduledInstagramMentionsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredInstagramMentionsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Instagram mentions", "profile", source.Identifier, "error", err)
+		}
+	}
+	for _, provider := range []inboxProvider{facebookInbox, instagramInbox} {
+		for _, err := range provider.scheduleJobs(sched, cfg, s, attachmentMaint, state) {
+			logger.Error("failed to schedule Meta inbox sync", "error", err)
+		}
 	}
 
 	if cfg.Feeds.Enabled && cfg.Feeds.Schedule == "" {
@@ -934,6 +949,34 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Info("scheduled twilio source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
+	for _, src := range cfg.Bland {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("bland source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "15 */6 * * *") on the [[bland]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledBlandSources() {
+		source := src
+		jobName, ok := api.SchedulerJobNameForSource(bland.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for bland source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+					return runConfiguredBlandSync(ctx, s, source)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule bland source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled bland source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
 	for _, src := range cfg.Muesli {
 		if src.Enabled && src.Schedule == "" {
 			logger.Warn("muesli source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
@@ -1100,6 +1143,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer = api.NewServerWithOptions(apiOpts)
+	analyticsReady := make(chan struct{})
+	storeAdapter.activateAnalyticsCache = newDaemonAnalyticsCacheActivator(cfg, s, apiServer, analyticsReady, &analyticsInit)
+	apiServer.StartAccountAttributionRecovery()
 	if cfg.People.Sweep.Enabled {
 		// The daemon owns the people sweep worker, so it owns manual brief
 		// generation: POST /api/v1/people/{id}/brief/generate reports
@@ -1118,6 +1164,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}()
 	var serverStartupErr error
+	var metaWebhooks *metaWebhookRuntime
 	startErr := apiServer.WaitStarted(ctx)
 	if startErr != nil {
 		if ctx.Err() == nil {
@@ -1133,10 +1180,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 			resourceCleanupSafe = false
 		}
 		cancel()
+		close(analyticsReady)
 	} else {
 		listenerReserved = false
 		analyticsServerStarted = true
 		resourceCleanupSafe = false
+		var webhookErr error
+		metaWebhooks, webhookErr = startMetaWebhooks(ctx, cfg, s, idleTracker, combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "a Meta webhook delivery")))
+		if webhookErr != nil {
+			logger.Error("Meta webhook receiver failed to start", "error", webhookErr)
+			serverStartupErr = webhookErr
+			cancel()
+		}
 		if analyticsAsync {
 			analyticsInit = startDaemonAnalyticsInitializer(
 				ctx, cfg, s, startupCacheIntent, apiServer, ownership,
@@ -1145,6 +1200,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		} else {
 			analyticsInit = completedDaemonAnalyticsInitHandle()
 		}
+		close(analyticsReady)
 		// Wait for the initializer to publish its startup barrier before vector
 		// initialization can compete for shared archive resources.
 		_ = analyticsInit.WaitStarted(ctx)
@@ -1182,10 +1238,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  API server: http://%s\n", apiAddr)
 		fmt.Printf("  Scheduled accounts: %d\n", count)
 		fmt.Printf("  Data directory: %s\n", cfg.Data.DataDir)
-		if telemetryReporter.Enabled() {
-			fmt.Printf("  Anonymous telemetry: on ([telemetry] enabled = false or %s=0 turns it off)\n",
-				telemetry.EnabledEnv)
-		}
 		fmt.Println()
 		fmt.Println("Press Ctrl+C to stop.")
 		fmt.Println()
@@ -1204,6 +1256,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		case err := <-serverErr:
 			logger.Error("API server error", "error", err)
 			fmt.Printf("\nAPI server error: %v\n", err)
+			serverStartupErr = err
+		case err := <-metaWebhooks.Errors():
+			logger.Error("Meta webhook receiver error", "error", err)
 			serverStartupErr = err
 		case err := <-analyticsInit.Fatal():
 			if ctx.Err() == nil {
@@ -1233,7 +1288,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			mcpInitErr = errors.New("native MCP initialization did not stop during shutdown")
 		}
 	}
-	shutdownErr := errors.Join(mcpInitErr, shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate))
+	shutdownErr := errors.Join(mcpInitErr, metaWebhooks.Shutdown(shutdownCtx), shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate))
 	if !cacheJobs.waitContext(shutdownCtx) {
 		logger.Warn("analytics cache build did not stop within the shutdown drain timeout")
 		shutdownErr = errors.Join(shutdownErr, errors.New("analytics cache build did not stop during shutdown"))
@@ -1975,6 +2030,7 @@ type storeAPIAdapter struct {
 	// analyticsDir is the daemon's Parquet analytics cache directory, used
 	// to read the revision committed by the derived-refresh child.
 	analyticsDir           string
+	activateAnalyticsCache func(context.Context) error
 	cacheJobs              *cacheBuildJobs
 	personEnrichmentConfig personenrichment.Config
 	lookupEnv              personenrichment.CredentialLookup
@@ -2003,6 +2059,11 @@ func (a *storeAPIAdapter) invocationContext(ctx context.Context) context.Context
 		state.logger = a.logger
 	}
 	return withInvocation(ctx, state)
+}
+
+// OpenMessageExport serves GET /api/v1/cli/messages/export.
+func (a *storeAPIAdapter) OpenMessageExport(ctx context.Context, request export.MessagesRequest) (*export.MessagesExport, error) {
+	return export.OpenMessages(ctx, a.store, request)
 }
 
 func (a *storeAPIAdapter) GrantPersonMatchConsentContext(ctx context.Context, disclosure personmatch.Disclosure, actor string, mutationGate func(context.Context) (func(), error)) (*store.PersonMatchConsent, bool, error) {
@@ -2302,6 +2363,9 @@ func (a *storeAPIAdapter) BeginReadSnapshotContext(ctx context.Context) (context
 }
 func (a *storeAPIAdapter) DB() *sql.DB        { return a.store.DB() }
 func (a *storeAPIAdapter) IsPostgreSQL() bool { return a.store.IsPostgreSQL() }
+func (a *storeAPIAdapter) RepairAccountAttributionContext(ctx context.Context, sourceID int64, progress func(store.AccountAttributionRepairSummary)) (store.AccountAttributionRepairSummary, error) {
+	return a.store.RepairAccountAttributionContext(ctx, sourceID, progress)
+}
 
 func (a *storeAPIAdapter) ListMessagesContext(
 	ctx context.Context, offset, limit int, sourceIDs []int64,
@@ -2440,7 +2504,13 @@ func (a *storeAPIAdapter) BuildCLICache(
 	emit func(api.CLICacheBuildEvent) error,
 ) error {
 	ctx = a.invocationContext(ctx)
-	return buildCacheSubprocessStream(ctx, fullRebuild, false, emit)
+	if err := buildCacheSubprocessStream(ctx, fullRebuild, false, emit); err != nil {
+		return err
+	}
+	if a.activateAnalyticsCache != nil {
+		return a.activateAnalyticsCache(ctx)
+	}
+	return nil
 }
 
 func (a *storeAPIAdapter) RunCLISync(
@@ -2695,7 +2765,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}
-	if manualSyncCLICommand(req.Args) {
+	if manualSyncCLICommand(req.Args) || commentWriteCLICommand(req.Args) {
 		defer func() {
 			force, skip := manualSyncCacheFlagValues(req.Args)
 			runErr = errors.Join(runErr, a.queueCacheRefreshAfterManualSync(force, skip))
@@ -3121,17 +3191,28 @@ func (a *storeAPIAdapter) ListVirtualAccountsContext(ctx context.Context) (map[i
 	return a.store.ListVirtualAccountsContext(ctx)
 }
 
+func (a *storeAPIAdapter) PendingAccountAttributionSourcesContext(ctx context.Context) ([]int64, error) {
+	return a.store.PendingAccountAttributionSourcesContext(ctx)
+}
+
 // AccountIdentityRevisionContext lets the API tell a catalog read from before
 // an identity change from a current one.
 func (a *storeAPIAdapter) AccountIdentityRevisionContext(ctx context.Context) (int64, error) {
 	return a.store.AccountIdentityRevisionContext(ctx)
 }
 
+// AccountCatalogRevisionContext reports attribution rewrites, including ones
+// committed outside the daemon's repair queue.
+func (a *storeAPIAdapter) AccountCatalogRevisionContext(ctx context.Context) (int64, error) {
+	return a.store.AccountCatalogRevisionContext(ctx)
+}
+
 // The API serves the account catalog only from a store that also reports
-// the identity revision, so the adapter must keep both.
+// the identity and catalog revisions, so the adapter must keep all three.
 var _ interface {
 	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
 	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
+	AccountCatalogRevisionContext(ctx context.Context) (int64, error)
 } = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) ResolveAccountIdentityContext(
@@ -3389,6 +3470,10 @@ func (a *storeAPIAdapter) ListPersonFactDecisionsContext(
 	ctx context.Context, personID int64, filter personfacts.DecisionFilter,
 ) ([]personfacts.Decision, error) {
 	return a.store.ListPersonFactDecisionsContext(ctx, personID, filter)
+}
+
+func (a *storeAPIAdapter) PersonFactSummaryContext(ctx context.Context, personID int64) (personfacts.FactSummary, error) {
+	return a.store.PersonFactSummaryContext(ctx, personID)
 }
 
 func (a *storeAPIAdapter) ListPersonFactPinsContext(
@@ -3956,12 +4041,20 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 // allocator exits with the process; the long-lived daemon does neither.
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
 	ctx = a.invocationContext(ctx)
+	if a.store.IsPostgreSQL() {
+		return 0, api.ErrIdentityCacheUnsupported
+	}
 	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
 		return 0, err
 	}
 	state, err := query.ReadCacheSyncState(a.analyticsDir)
 	if err != nil {
 		return 0, fmt.Errorf("read refreshed cache revision: %w", err)
+	}
+	if a.activateAnalyticsCache != nil {
+		if err := a.activateAnalyticsCache(ctx); err != nil {
+			return 0, err
+		}
 	}
 	return state.IdentityRevision, nil
 }
@@ -3970,8 +4063,8 @@ func (a *storeAPIAdapter) GetActiveSyncReadOnly(ctx context.Context, sourceID in
 	return a.store.GetActiveSyncReadOnly(ctx, sourceID)
 }
 
-func (a *storeAPIAdapter) GetLatestSyncContext(ctx context.Context, sourceID, excludeID int64) (*store.SyncRun, error) {
-	return a.store.GetLatestSyncContext(ctx, sourceID, excludeID)
+func (a *storeAPIAdapter) GetLatestSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*store.SyncRun, error) {
+	return a.store.GetLatestSyncExcludingTypeContext(ctx, sourceID, syncType)
 }
 
 func (a *storeAPIAdapter) GetSyncOperation(operationID string) (*store.SyncOperation, error) {
@@ -3982,8 +4075,8 @@ func (a *storeAPIAdapter) CreateSyncOperation(sourceID int64, operationID string
 	return a.store.CreateSyncOperation(sourceID, operationID)
 }
 
-func (a *storeAPIAdapter) GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error) {
-	return a.store.GetLastSuccessfulSyncContext(ctx, sourceID)
+func (a *storeAPIAdapter) GetLastSuccessfulSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*store.SyncRun, error) {
+	return a.store.GetLastSuccessfulSyncExcludingTypeContext(ctx, sourceID, syncType)
 }
 
 func (a *storeAPIAdapter) CountSyncRunItemsContext(ctx context.Context, syncRunID int64, status string) (int64, error) {

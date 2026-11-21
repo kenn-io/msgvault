@@ -73,6 +73,9 @@ func TestSourceSetupFailuresAreRecorded(t *testing.T) {
 		{"twilio", "work", "account_sid", func(ctx context.Context, st *store.Store) error {
 			return runConfiguredTwilioSync(ctx, st, config.TwilioSource{Identifier: "work"})
 		}},
+		{"bland", "work", "has no API key", func(ctx context.Context, st *store.Store) error {
+			return runConfiguredBlandSync(ctx, st, config.BlandSource{Identifier: "work"})
+		}},
 		{"plaud", "work", "owner differs", func(ctx context.Context, st *store.Store) error {
 			return runConfiguredPlaudSync(ctx, st, config.PlaudSource{Identifier: "work", AccountEmail: "changed@example.com"})
 		}},

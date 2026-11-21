@@ -58,7 +58,7 @@ func TestMCPCapabilitiesRequiresOwner(t *testing.T) {
 	assertions.NotContains(delegated.Body.String(), agentTokenTestAPIKey)
 }
 
-func TestMCPCapabilitiesDescribeRealLoopAndDeletionRoutes(t *testing.T) {
+func TestMCPCapabilitiesDescribeRealOperationRoutes(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Logger: testLogger()})
@@ -72,6 +72,12 @@ func TestMCPCapabilitiesDescribeRealLoopAndDeletionRoutes(t *testing.T) {
 		routes[route.OperationID] = route
 	}
 	for _, tc := range []struct{ id, method, path string }{
+		{"getPersonStructuredProfile", http.MethodGet, "/api/v1/people/{id}/profile"},
+		{"patchPersonStructuredProfile", http.MethodPatch, "/api/v1/people/{id}/profile"},
+		{"getPersonProfileHistory", http.MethodGet, "/api/v1/people/{id}/profile/history"},
+		{"getPersonProfileMediaContent", http.MethodGet, "/api/v1/people/{id}/profile/media/{media_id}/content"},
+		{"runCLI", http.MethodPost, "/api/v1/cli/run"},
+		{"listChangedMessages", http.MethodGet, "/api/v1/messages/changes"},
 		{"listLoops", http.MethodGet, "/api/v1/loops"},
 		{"listDeletions", http.MethodGet, "/api/v1/deletions"},
 		{"getDeletion", http.MethodGet, "/api/v1/deletions/{id}"},
@@ -83,8 +89,13 @@ func TestMCPCapabilitiesDescribeRealLoopAndDeletionRoutes(t *testing.T) {
 		assertions.Equal(tc.method, routes[tc.id].Method)
 		assertions.Equal(tc.path, routes[tc.id].Path)
 	}
+	assertions.ElementsMatch([]string{"names", "contact_points", "addresses", "dates", "categories", "media"}, routes["patchPersonStructuredProfile"].RequestProperties)
 	assertions.Contains(routes["listDeletions"].QueryParameters, "status")
+	assertions.Contains(routes["runCLI"].RequestProperties, "args")
 	assertions.ElementsMatch([]string{"limit", "person_id"}, routes["listLoops"].QueryParameters)
+	for _, param := range []string{"person_id", "source_id", "conversation_id", "incoming_only"} {
+		assertions.Contains(routes["listChangedMessages"].QueryParameters, param)
+	}
 	assertions.Contains(routes["snoozeLoop"].RequestProperties, "until")
 	assertions.Contains(routes["markLoopDone"].QueryParameters, "question_message_ids")
 	assertions.Contains(routes["snoozeLoop"].QueryParameters, "question_message_ids")

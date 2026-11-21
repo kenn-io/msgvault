@@ -23,7 +23,9 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/meta"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -342,6 +344,7 @@ type MessageDetail struct {
 
 	RelatedMessageID  *int64                    `json:"related_message_id,omitempty"`
 	ConversationTitle string                    `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
+	TabTitle          string                    `json:"tab_title" doc:"Title suitable for a browser tab; empty when unavailable."`
 	SenderAuth        *senderauth.Verdict       `json:"sender_auth,omitempty"`
 	Calendar          *store.CalendarProjection `json:"calendar,omitempty" doc:"Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."`
 
@@ -531,6 +534,23 @@ func nullableTimePtr(value time.Time) *string {
 	return &formatted
 }
 
+func messageTabTitle(conversationType, messageType string, content verification.Content) string {
+	// Classify a bounded prefix without the fail-closed agent-access policy.
+	if len(content.Text) >= verification.MaxFieldBytes {
+		content.Text = content.Text[:verification.MaxFieldBytes-1]
+	}
+	if len(content.HTML) >= verification.MaxFieldBytes {
+		content.HTML = content.HTML[:verification.MaxFieldBytes-1]
+	}
+	if verification.Is(content) {
+		return "Verification message"
+	}
+	if content.Subject != "" || conversationType == "public_comments" && messageType != "tiktok_export" {
+		return content.Subject
+	}
+	return content.Title
+}
+
 // messageDetailFromQuery builds a MessageDetail response from a query-engine
 // MessageDetail, formatting addresses the same way the store path does and
 // emitting body_html alongside body when both are present.
@@ -583,6 +603,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 	return MessageDetail{
 		RelatedMessageID:  qMsg.RelatedMessageID,
 		ConversationTitle: qMsg.ConversationTitle,
+		TabTitle:          messageTabTitle(qMsg.ConversationType, qMsg.MessageType, messageVerificationContent(qMsg.Subject, qMsg.Snippet, qMsg.ConversationTitle, qMsg.BodyText, qMsg.BodyHTML, len(qMsg.Attachments), func(i int) string { return qMsg.Attachments[i].Filename })),
 
 		ID:                qMsg.ID,
 		SourceID:          qMsg.SourceID,
@@ -845,6 +866,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		RelatedMessageID:  msg.RelatedMessageID,
 		MessageSummary:    toMessageSummary(*msg),
 		ConversationTitle: msg.ConversationTitle,
+		TabTitle:          messageTabTitle(msg.ConversationType, msg.MessageType, messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename })),
 		Body:              msg.Body,
 		BodyText:          new(msg.BodyText),
 		BodyHTML:          msg.BodyHTML,
@@ -1720,7 +1742,9 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 		status.CanSync = true
 	}
 
-	latest, err := statusStore.GetLatestSyncContext(ctx, source.ID, 0)
+	// Webhook runs record single changes between polling syncs. Leave them out
+	// so a recent webhook run cannot hide a failing polling sync.
+	latest, err := statusStore.GetLatestSyncExcludingTypeContext(ctx, source.ID, meta.WebhookSyncType)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return SourceStatus{}, fmt.Errorf("get latest sync: %w", err)
 	}
@@ -1729,7 +1753,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 		return SourceStatus{}, err
 	}
 
-	lastSuccessful, err := statusStore.GetLastSuccessfulSyncContext(ctx, source.ID)
+	lastSuccessful, err := statusStore.GetLastSuccessfulSyncExcludingTypeContext(ctx, source.ID, meta.WebhookSyncType)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return SourceStatus{}, fmt.Errorf("get last successful sync: %w", err)
 	}
@@ -3244,6 +3268,11 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
+	filter, err := parseChangesFilter(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	limit, ok, err := queryInt(r, "limit")
 	if err != nil {
 		s.rejectBadParam(w, err)
@@ -3283,6 +3312,11 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
+	digest := filter.digest()
+	if position.filter != "" && position.filter != digest {
+		s.rejectBadParam(w, changesCursorError("was issued for a different filter; restart from an unfiltered cursor or the original filter"))
+		return
+	}
 	since := position.cursor
 
 	lister, ok := s.store.(ChangedMessageLister)
@@ -3293,7 +3327,11 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// One extra row decides has_more without a count == limit false positive.
-	page, err := lister.ListChangedMessages(r.Context(), since, limit+1)
+	readLimit := limit + 1
+	if digest != "" {
+		readLimit = changesScanBudget + 1
+	}
+	page, err := lister.ListChangedMessages(r.Context(), since, readLimit)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -3302,10 +3340,22 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Message change query failed")
 		return
 	}
+	if filter.PersonID != 0 {
+		reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: filter.PersonID}
+		resolution, resolveErr := resolver.Resolve(r.Context(), s.store, reference, nil)
+		if resolveErr != nil {
+			s.writePersonScopeError(w, reference, resolveErr, "change feed")
+			return
+		}
+		filter.participants = resolution.Scope.ParticipantIDs
+	}
 
 	rows := page.Messages
 	hasMore := len(rows) > limit
-	if hasMore {
+	var filteredNext store.ChangedMessagesCursor
+	if digest != "" {
+		rows, filteredNext, hasMore = scanChanges(page, since, filter, limit)
+	} else if hasMore {
 		rows = rows[:limit]
 	}
 
@@ -3316,6 +3366,8 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 
 	next := since
 	switch {
+	case digest != "":
+		next = filteredNext
 	case len(rows) > 0:
 		last := rows[len(rows)-1]
 		next = store.ChangedMessagesAfter(last.ContentChangedAt, last.ID)
@@ -3342,6 +3394,9 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		next = store.ChangedMessagesFrom(page.CompleteThrough)
 	}
 
+	if s.writeIfContextError(w, r.Context().Err()) {
+		return
+	}
 	s.logIfChangeFeedStalled(page.ServerTime, page.CompleteThrough)
 	var completeThrough *string
 	if !page.CompleteThrough.IsZero() {
@@ -3353,7 +3408,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		Messages:        messages,
 		Count:           len(messages),
 		HasMore:         hasMore,
-		NextCursor:      encodeChangesCursor(archiveUID, next),
+		NextCursor:      encodeChangesCursor(archiveUID, next, digest),
 		ServerTime:      page.ServerTime.UTC().Format(changesTimeLayout),
 		CompleteThrough: completeThrough,
 	})

@@ -165,6 +165,34 @@ func TestAPageOfThreadsCreatedAndUpdatedAtOneInstantIsReadWhole(t *testing.T) {
 	assert.Len(got, perPage+1, "a last page that ends in the instant holds all of it")
 }
 
+func TestAPageOfThreadsUpdatedAtOneInstantIsReadWholeBesideALaterUpdateCreatedWithThem(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFakeGitLab(t)
+	f.project(widgets, "acme/widgets")
+	ann := person(t, 2, "ann", "Ann Example")
+	at := time.Date(2026, 11, 8, 9, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	// An import creates a page of threads and one more at one instant, and
+	// the one more is updated later: creation time can't part them.
+	for i := 1; i <= perPage; i++ {
+		issue := f.issue(widgets, int64(i), i, "An issue", ann, at, "assigned_to_me")
+		issue.object["created_at"] = at
+	}
+	later := f.issue(widgets, 1000, 1000, "An issue edited later", ann, "2026-11-08T10:00:00Z", "assigned_to_me")
+	later.object["created_at"] = at
+	list := listStream{resource: resourceIssues, scope: "assigned_to_me"}
+	state := cursor{Lists: map[string]listCursor{}}
+	var got []string
+	require.NoError(f.forge().scanList(t.Context(), &state, list, forge.NewOwnerFilter(nil, nil),
+		func(refs []forge.ThreadRef, _ []byte) error {
+			for _, ref := range refs {
+				got = append(got, ref.Key)
+			}
+			return nil
+		}))
+	assert.Len(got, perPage+1, "the instant's page and the later update are both read")
+}
+
 func TestAThreadLeavingARunUpdatedAtOneInstantShiftsNoneOutOfTheScan(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -582,6 +610,29 @@ func TestTheArchivedThreadCheckReadsNothingOfAProjectMovedToAnExcludedOwner(t *t
 	log := f.requestLog()
 	assert.NotEmpty(requestsFor(log, "/api/v4/projects/5?"), "the check reads the project's owner")
 	assert.Empty(requestsFor(log, "/api/v4/projects/5/"), "and nothing of an excluded owner's project")
+}
+
+func TestTheArchivedThreadCheckReadsAProjectMovedFromAnExcludedOwner(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFakeGitLab(t)
+	ann := person(t, 2, "ann", "Ann Example")
+	archivedAt := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+	// The issue was archived while its project sat under a group the
+	// filters now exclude. The project has since moved to an allowed group,
+	// and the issue got a reply before the last check, which skipped it.
+	f.project(widgets, "acme/widgets")
+	f.issue(widgets, 41, 1, "Widgets break", ann, "2026-11-08T08:00:00Z")
+	known := knownThreads{{Ref: threadRef(resourceIssues, 41, widgets, 1, "secret-corp/widgets", archivedAt)}}
+	state := cursor{Known: knownCursor{Through: time.Date(2026, 11, 9, 8, 0, 0, 0, time.UTC)}}
+	var got []forge.ThreadRef
+	require.NoError(f.forge().checkKnown(t.Context(), &state, excludeSecretCorp().Owners, known,
+		func(refs []forge.ThreadRef, _ []byte) error {
+			got = append(got, refs...)
+			return nil
+		}))
+	require.Len(got, 1, "the thread is checked by its project's current owner, from the version archived")
+	assert.Equal("acme", got[0].Owner)
 }
 
 func TestAProjectMovedToAnExcludedOwnerSinceDiscoveryIsNotFetched(t *testing.T) {

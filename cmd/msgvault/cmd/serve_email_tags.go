@@ -18,7 +18,11 @@ var _ api.MessageTagStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) MessageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string, acquireWrite func(context.Context) (func(), error)) (*emailtags.MessageTagResult, error) {
 	ctx = a.invocationContext(ctx)
-	target, err := a.store.EmailTagTargetContext(ctx, id, mailbox)
+	resolve := a.store.EmailTagTargetContext
+	if change == nil {
+		resolve = a.store.EmailTagReadTargetContext
+	}
+	target, err := resolve(ctx, id, mailbox)
 	if err != nil {
 		return nil, err
 	}

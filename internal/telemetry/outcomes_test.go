@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -10,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/telemetry/posthog"
+	"go.kenn.io/msgvault/internal/bland"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/gcal"
@@ -62,7 +62,7 @@ func TestOutcomeWire(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	stub := newWireStub(t)
-	runWireHelper(t, stub.server.URL, t.TempDir(), "MSGVAULT_OUTCOMES_TEST=1")
+	runWireHelper(t, stub.server.URL, t.TempDir(), posthog.GenericEnabledEnv+"=1", "MSGVAULT_OUTCOMES_TEST=1")
 	events := batchEvents(t, stub)
 	require.Len(events, 5)
 	for i, want := range []map[string]any{
@@ -106,9 +106,9 @@ func TestSyncFailureRegisteredSourceTypes(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	enableTelemetryEnv(t)
 	stub := newWireStub(t)
-	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, testAPIKey, stub.server.URL, slog.Default())
+	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir()}, testAPIKey, stub.server.URL)
 	defer func() { require.NoError(reporter.Close()) }()
-	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, pocket.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType, "facebook_comments", "instagram_comments", "github", "gitlab", "gitea"} {
+	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, pocket.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, bland.SourceType, chatwoot.SourceType, "facebook_comments", "instagram_comments", "github", "gitlab", "gitea"} {
 		properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
 		assert.Equal(sourceType, properties["sync_source"], sourceType)
 	}

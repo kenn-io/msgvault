@@ -935,6 +935,7 @@ func TestRemoveNonMatrixAccountDoesNotWaitForMatrixLifecycleLock(t *testing.T) {
 
 	lockHeld := make(chan struct{})
 	releaseLock := make(chan struct{})
+	releaseMatrixLock := sync.OnceFunc(func() { close(releaseLock) })
 	lockDone := make(chan error, 1)
 	go func() {
 		lockDone <- matrixsource.WithCredentialLifecycleLock(testCfg.TokensDir(), func() error {
@@ -943,22 +944,40 @@ func TestRemoveNonMatrixAccountDoesNotWaitForMatrixLifecycleLock(t *testing.T) {
 			return nil
 		})
 	}()
+	t.Cleanup(func() {
+		releaseMatrixLock()
+		assert.NoError(t, <-lockDone)
+	})
 	select {
 	case <-lockHeld:
 	case <-time.After(5 * time.Second):
 		require.FailNow("Matrix lifecycle lock was not acquired")
 	}
+	// Observe account deletion while the Matrix lock is held. Pause here so
+	// the analytics rebuild cannot consume the deadline for that observation.
+	cascadeFinished := make(chan struct{})
+	resumeCache := make(chan struct{})
+	removeAccountAfterCascadeHook = func() {
+		close(cascadeFinished)
+		<-resumeCache
+	}
 	removeDone := make(chan error, 1)
 	go func() { removeDone <- executeRemoveAccount(t, ctx) }()
+	finishRemoval := sync.OnceFunc(func() {
+		releaseMatrixLock()
+		close(resumeCache)
+		// Join the command before resetting its hook or removing its fixtures.
+		err := <-removeDone
+		removeAccountAfterCascadeHook = nil
+		assert.NoError(t, err)
+	})
+	t.Cleanup(finishRemoval)
 	select {
-	case err := <-removeDone:
-		require.NoError(err)
+	case <-cascadeFinished:
 	case <-time.After(5 * time.Second):
-		close(releaseLock)
 		require.FailNow("unrelated account removal waited for Matrix lifecycle lock")
 	}
-	close(releaseLock)
-	require.NoError(<-lockDone)
+	finishRemoval()
 }
 
 func TestRemoveAccountCmd_LiveSQLWhileRemovalPausedAfterCascade(t *testing.T) {

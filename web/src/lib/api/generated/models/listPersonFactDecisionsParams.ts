@@ -15,4 +15,8 @@ export type ListPersonFactDecisionsParams = {
    * Zero-based row offset
    */
   offset?: number;
+  /**
+   * Restrict to one claim key
+   */
+  claim_key?: string;
 };

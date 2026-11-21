@@ -29,6 +29,12 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
  ON CONFLICT (conversation_id, participant_id) DO NOTHING`, c.destination, c.id); err != nil {
 				return err
 			}
+			if err := s.setConversationRosterRepairPending(boundQuerier{ctx: ctx, q: tx}, c.destination, true); err != nil {
+				return err
+			}
+			if err := s.invalidateMessagingRouteEvidenceWith(boundQuerier{ctx: ctx, q: tx}, c.destination, ""); err != nil {
+				return err
+			}
 		}
 	}
 	for _, m := range plan.messages {
@@ -81,6 +87,30 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			return err
 		}
 	}
+	// Map hidden calendar copies to the visible copy with the same provider identity.
+	rows, err := tx.QueryContext(ctx, `SELECT e.message_id, v.message_id FROM calendar_events e JOIN messages m ON m.id=e.message_id JOIN calendar_events v ON v.provider_event_id=e.provider_event_id JOIN messages vm ON vm.id=v.message_id AND vm.source_id=m.source_id WHERE m.source_id=? AND m.deleted_at IS NULL AND vm.deleted_at IS NULL AND e.message_id<>v.message_id AND NOT `+calendarEventVisibility("e", "m")+` AND `+calendarEventVisibility("v", "vm"), into)
+	if err != nil {
+		return err
+	}
+	visibleGroups := map[int64][]int64{}
+	for rows.Next() {
+		var hidden, visible int64
+		if err := rows.Scan(&hidden, &visible); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		visibleGroups[visible] = append(visibleGroups[visible], hidden)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for visible, ids := range visibleGroups {
+		for _, id := range ids {
+			if _, err := tx.ExecContext(ctx, `UPDATE source_merge_messages SET survivor_message_id=? WHERE message_id=?`, visible, id); err != nil {
+				return err
+			}
+		}
+	}
 	// Gmail's canonical IDs also carry trusted roles. Preserve that evidence
 	// before archive labels lose provider IDs; Drafts takes precedence.
 	if _, err := tx.ExecContext(ctx, `UPDATE labels SET system_role = CASE
@@ -91,7 +121,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		return err
 	}
 	// Incoming labels are archive organization, not destination provider label IDs.
-	rows, err := tx.QueryContext(ctx, `SELECT l.id, l.name, COALESCE(l.system_role, ''), EXISTS(SELECT 1 FROM source_merge_preserved_labels p WHERE p.label_id = l.id) FROM labels l WHERE l.source_id = ? ORDER BY l.id`, from)
+	rows, err = tx.QueryContext(ctx, `SELECT l.id, l.name, COALESCE(l.system_role, ''), EXISTS(SELECT 1 FROM source_merge_preserved_labels p WHERE p.label_id = l.id) FROM labels l WHERE l.source_id = ? ORDER BY l.id`, from)
 	if err != nil {
 		return err
 	}
@@ -175,7 +205,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	// Moved mail uses a new mailbox, and incoming aliases or a Sent folder can
 	// change attribution for existing destination mail too. Mark these rows in
 	// the merge transaction; derive them in pages after it commits.
-	if _, err := tx.ExecContext(ctx, `UPDATE messages SET account_address = NULL, account_path = NULL
+	if _, err := tx.execAttributionContext(ctx, `UPDATE messages SET account_address = NULL, account_path = NULL
  WHERE source_id = ? AND COALESCE(message_type, '') IN ('', 'email', 'calendar_event')`, into); err != nil {
 		return fmt.Errorf("mark merged account attribution pending: %w", err)
 	}

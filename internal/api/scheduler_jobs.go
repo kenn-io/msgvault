@@ -2,8 +2,10 @@ package api
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/bland"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/feeds"
@@ -64,6 +66,9 @@ const SlackJobName = sourceTypeSlack
 // InlineJobName drives every configured Inline account and its chat selection.
 const InlineJobName = sourceTypeInline
 
+// FeedsJobName drives every followed feed; all feeds share one source.
+const FeedsJobName = "feeds"
+
 // GitHubJobName drives every added GitHub account.
 const GitHubJobName = github.Name
 
@@ -72,9 +77,6 @@ const GitLabJobName = gitlab.Name
 
 // GiteaJobName drives every added Gitea and Forgejo account.
 const GiteaJobName = gitea.Name
-
-// FeedsJobName drives every followed feed; all feeds share one source.
-const FeedsJobName = "feeds"
 
 // IMessageJobName drives the selected Apple Messages source.
 const IMessageJobName = "apple-messages"
@@ -132,16 +134,16 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return WhatsAppAppleJobName(identifier), true
 	case "apple_messages":
 		return IMessageJobName, true
-	case meta.InstagramSourceType:
+	case meta.InstagramSourceType, meta.MentionsSourceType, meta.InstagramMessagesSourceType:
 		if _, ok := meta.ParseInstagramSourceIdentifier(identifier); !ok {
 			return "", false
 		}
-		return meta.InstagramSourceType + ":" + identifier, true
-	case meta.SourceType:
+		return sourceType + ":" + identifier, true
+	case meta.SourceType, meta.FacebookMessagesSourceType:
 		if _, _, ok := meta.ParseSourceIdentifier(identifier); !ok {
 			return "", false
 		}
-		return meta.SourceType + ":" + identifier, true
+		return sourceType + ":" + identifier, true
 	case chatwoot.SourceType:
 		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
 		if !ok {
@@ -180,6 +182,8 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return "notion-meetings:" + identifier, true
 	case twilio.SourceType:
 		return "twilio:" + identifier, true
+	case bland.SourceType:
+		return "bland:" + identifier, true
 	case twenty.SourceType:
 		return "twenty:" + identifier, true
 	case muesli.SourceType:
@@ -222,7 +226,7 @@ func isSourceSyncJobName(name string) bool {
 	if kind == CardDAVJobName {
 		return true
 	}
-	if kind == meta.SourceType || kind == meta.InstagramSourceType {
+	if slices.Contains([]string{meta.SourceType, meta.InstagramSourceType, meta.MentionsSourceType, meta.FacebookMessagesSourceType, meta.InstagramMessagesSourceType}, kind) {
 		canonical, ok := SchedulerJobNameForSource(kind, identifier)
 		return ok && canonical == name
 	}

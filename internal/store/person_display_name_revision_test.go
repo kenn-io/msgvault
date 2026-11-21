@@ -66,3 +66,20 @@ func TestPersonDisplayNameRevision(t *testing.T) {
 	counter(2)
 	t.Log("counter: create=0 rename=1 CAS miss=1 cancellation=1 repeated rename=1 clear=2 repeated clear=2 profile patch=2 delete=2")
 }
+
+func TestDisplayNameRejectsCarriageReturnBeforeClearing(t *testing.T) {
+	f := storetest.New(t)
+	person, err := f.Store.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+		Name: "Alex Example", Source: store.ProvenanceEnrichment,
+	})
+	require.NoError(t, err)
+
+	_, err = f.Store.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, new("\r"))
+	require.ErrorIs(t, err, store.ErrInvalidPersonNameText)
+	current, err := f.Store.GetPersonContext(t.Context(), person.ID)
+	require.NoError(t, err)
+	assert.Equal(t, person.DisplayName, current.DisplayName)
+	names, err := f.Store.ListPersonNamesContext(t.Context(), person.ID, true)
+	require.NoError(t, err)
+	assert.Len(t, names, 1)
+}

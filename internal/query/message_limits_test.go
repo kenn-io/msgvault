@@ -24,7 +24,7 @@ func TestBoundedDuckDBMessageDetails(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
  CREATE SCHEMA sqlite_db;
  CREATE TABLE sqlite_db.messages (id BIGINT, source_id BIGINT, source_message_id VARCHAR, rfc822_message_id VARCHAR, conversation_id BIGINT, subject VARCHAR, message_type VARCHAR, snippet VARCHAR, sent_at TIMESTAMP, received_at TIMESTAMP, size_estimate BIGINT, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, is_from_me BOOLEAN, deleted_from_source_at TIMESTAMP, deleted_at TIMESTAMP, sender_id BIGINT, metadata VARCHAR);
- CREATE TABLE sqlite_db.conversations (id BIGINT, source_conversation_id VARCHAR, title VARCHAR);
+ CREATE TABLE sqlite_db.conversations (id BIGINT, source_conversation_id VARCHAR, title VARCHAR, conversation_type VARCHAR);
  CREATE TABLE sqlite_db.message_bodies (message_id BIGINT, body_text VARCHAR, body_html VARCHAR);
  CREATE TABLE sqlite_db.message_raw (message_id BIGINT, raw_data BLOB, compression VARCHAR);
  CREATE TABLE sqlite_db.participants (id BIGINT, email_address VARCHAR, phone_number VARCHAR, display_name VARCHAR);
@@ -34,7 +34,7 @@ func TestBoundedDuckDBMessageDetails(t *testing.T) {
  CREATE TABLE sqlite_db.message_labels (message_id BIGINT, label_id BIGINT);
  CREATE TABLE sqlite_db.attachments (id BIGINT, message_id BIGINT, filename VARCHAR, mime_type VARCHAR, size BIGINT, content_hash VARCHAR, storage_path VARCHAR, source_attachment_id VARCHAR);
  INSERT INTO sqlite_db.messages (id, source_id, source_message_id, conversation_id, has_attachments) VALUES (1,1,'fixture',1,false);
- INSERT INTO sqlite_db.conversations (id, source_conversation_id) VALUES (1,'fixture-thread');`)
+ INSERT INTO sqlite_db.conversations (id, source_conversation_id, title, conversation_type) VALUES (1,'fixture-thread','Fixture thread','email_thread');`)
 	requirements.NoError(err)
 	body := strings.Repeat("é", 17)
 	_, err = db.ExecContext(t.Context(), `INSERT INTO sqlite_db.message_bodies VALUES (1, ?, '')`, body)
@@ -49,6 +49,7 @@ func TestBoundedDuckDBMessageDetails(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, body, detail.BodyText)
+			assert.Equal(t, "email_thread", detail.ConversationType)
 		}
 	})
 	raw := []byte("Subject: Fixture\r\n\r\nSynthetic body.")

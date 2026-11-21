@@ -486,13 +486,22 @@ func (f *fakeGitLab) thread(project int64, resource, iid string) *fakeThread {
 }
 
 // serveList serves the threads keep selects, oldest update first, from
-// updated_after on, a page at a time.
+// updated_after through updated_before, a page at a time.
 func (f *fakeGitLab) serveList(w http.ResponseWriter, r *http.Request, keep func(*fakeThread) bool) {
 	var after time.Time
 	if raw := r.URL.Query().Get("updated_after"); raw != "" {
 		var err error
 		after, err = time.Parse(time.RFC3339Nano, raw)
 		assert.NoError(f.t, err)
+	}
+	before := func(thread *fakeThread) bool {
+		raw := r.URL.Query().Get("updated_before")
+		if raw == "" {
+			return true
+		}
+		bound, err := time.Parse(time.RFC3339Nano, raw)
+		assert.NoError(f.t, err)
+		return !f.stamp(thread.object["updated_at"]).After(bound)
 	}
 	createdIn := func(thread *fakeThread) bool {
 		created := f.stamp(thread.object["created_at"])
@@ -509,7 +518,7 @@ func (f *fakeGitLab) serveList(w http.ResponseWriter, r *http.Request, keep func
 	}
 	var items []map[string]any
 	for _, thread := range f.threads {
-		if keep(thread) && !f.stamp(thread.object["updated_at"]).Before(after) && createdIn(thread) {
+		if keep(thread) && !f.stamp(thread.object["updated_at"]).Before(after) && before(thread) && createdIn(thread) {
 			items = append(items, thread.object)
 		}
 	}

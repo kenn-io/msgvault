@@ -499,8 +499,9 @@ var firstCreated = time.Unix(0, 0).UTC()
 type createdRange struct{ from, to time.Time }
 
 // listPage requests the first page of a list from through on, oldest update
-// first, within created when it is set, and reports whether another page
-// follows.
+// first, and reports whether another page follows. With created set it reads
+// the threads of that creation range updated at the instant through alone,
+// so a thread updated later never makes the instant look longer than a page.
 func (f *Forge) listPage(ctx context.Context, list listStream, through time.Time, created *createdRange) ([]listItem, bool, error) {
 	query := url.Values{
 		"scope": {list.scope}, "state": {"all"}, "order_by": {"updated_at"}, "sort": {"asc"},
@@ -515,6 +516,9 @@ func (f *Forge) listPage(ctx context.Context, list listStream, through time.Time
 	if created != nil {
 		query.Set("created_after", updatedAfter(created.from))
 		query.Set("created_before", updatedAfter(created.to))
+		// GitLab keeps finer times than a request names, and both bounds
+		// include their time: the next millisecond holds the whole instant.
+		query.Set("updated_before", updatedAfter(through.Add(time.Millisecond)))
 	}
 	var batch []listItem
 	header, err := f.client.get(ctx, "/"+list.resource, query, &batch)
@@ -623,8 +627,10 @@ func (g knownGroup) compare(other knownGroup) int {
 func (f *Forge) checkKnown(ctx context.Context, state *cursor, owners forge.OwnerFilter, known forge.KnownThreads, page pageFunc) error {
 	groups := map[knownGroup]map[int]forge.KnownThread{}
 	err := known.Each(ctx, func(thread forge.KnownThread) error {
+		// The project's owner may have changed since the thread was
+		// archived, so checkGroup decides by its current owner.
 		loc, ok := locatorOf(thread.Ref)
-		if !ok || !owners.Allows(thread.Ref.Owner) {
+		if !ok {
 			return nil
 		}
 		group := knownGroup{Project: loc.project, Resource: loc.resource}
@@ -690,6 +696,12 @@ func (f *Forge) checkGroup(ctx context.Context, state *cursor, group knownGroup,
 			readFrom := thread.ReadAt.Add(-clockSlack)
 			if readFrom.Before(through) && !thread.CheckedAt.Before(cur.Through.Add(-clockSlack)) {
 				through = readFrom
+			}
+			// A thread archived under an owner the filters exclude went
+			// unchecked while its project stayed there, so its changes
+			// since the version archived are read.
+			if !owners.Allows(thread.Ref.Owner) && thread.Ref.UpdatedAt.Before(through) {
+				through = thread.Ref.UpdatedAt
 			}
 		}
 		items, gone, err := f.changedSince(ctx, through, group, batch)

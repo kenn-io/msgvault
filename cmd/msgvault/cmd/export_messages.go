@@ -1,22 +1,20 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"sort"
-	"strings"
-	"time"
+	"io"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/personscope"
-	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
+	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const messageExportSchema = "msgvault-message-export/1"
+// messageExportMinAPISchemaVersion is the first daemon schema with exportCLIMessages.
+const messageExportMinAPISchemaVersion = "5.19.0"
 
 type exportMessagesDeps struct {
 	openStore func(context.Context) (*store.Store, func(), error)
@@ -31,129 +29,6 @@ type exportMessagesOptions struct {
 	Sources      []string
 }
 
-type exportMessagesSourceSelector struct {
-	SourceType string `json:"source_type"`
-	Identifier string `json:"identifier"`
-}
-
-type exportMessagesWindow struct {
-	Start time.Time `json:"start"`
-	End   time.Time `json:"end"`
-}
-
-type exportMessagesFilters struct {
-	PersonID     *int64                         `json:"person_id,omitzero"`
-	MessageTypes []string                       `json:"message_types"`
-	Sources      []exportMessagesSourceSelector `json:"sources"`
-}
-
-type exportMessagesManifest struct {
-	RecordType      string                `json:"record_type"`
-	Schema          string                `json:"schema"`
-	MsgvaultVersion string                `json:"msgvault_version"`
-	Window          exportMessagesWindow  `json:"window"`
-	Filters         exportMessagesFilters `json:"filters"`
-}
-
-type exportMessagesSourceRecord struct {
-	RecordType           string     `json:"record_type"`
-	SourceType           string     `json:"source_type"`
-	Identifier           string     `json:"identifier"`
-	DisplayName          string     `json:"display_name"`
-	LastSuccessfulSyncAt *time.Time `json:"last_successful_sync_at"`
-}
-
-type exportMessagesConversationRecord struct {
-	RecordType       string                              `json:"record_type"`
-	SourceType       string                              `json:"source_type"`
-	SourceIdentifier string                              `json:"source_identifier"`
-	ID               string                              `json:"id"`
-	Title            string                              `json:"title"`
-	ConversationType store.MessageExportConversationType `json:"conversation_type"`
-	ParentID         *string                             `json:"parent_id"`
-}
-
-type exportMessagesAuthorRecord struct {
-	DisplayName string `json:"display_name"`
-	Address     string `json:"address"`
-}
-
-type exportMessagesMessageRecord struct {
-	RecordType        string                      `json:"record_type"`
-	SourceType        string                      `json:"source_type"`
-	SourceIdentifier  string                      `json:"source_identifier"`
-	ID                string                      `json:"id"`
-	ConversationID    string                      `json:"conversation_id"`
-	MessageType       string                      `json:"message_type"`
-	Subject           string                      `json:"subject"`
-	Text              string                      `json:"text"`
-	Author            *exportMessagesAuthorRecord `json:"author"`
-	OccurredAt        time.Time                   `json:"occurred_at"`
-	DeletedFromSource bool                        `json:"deleted_from_source"`
-}
-
-type exportMessagesComplete struct {
-	RecordType string               `json:"record_type"`
-	Counts     exportMessagesCounts `json:"counts"`
-}
-
-type exportMessagesCounts struct {
-	Sources       int `json:"sources"`
-	Conversations int `json:"conversations"`
-	Messages      int `json:"messages"`
-}
-
-type exportMessagesJSONLSink struct {
-	encoder *jsontext.Encoder
-}
-
-func (s exportMessagesJSONLSink) Source(source store.MessageExportSource) error {
-	return json.MarshalEncode(s.encoder, exportMessagesSourceRecord{
-		RecordType:           "source",
-		SourceType:           source.SourceType,
-		Identifier:           source.Identifier,
-		DisplayName:          source.DisplayName,
-		LastSuccessfulSyncAt: source.LastSuccessfulSyncAt,
-	}, json.Deterministic(true))
-}
-
-func (s exportMessagesJSONLSink) Conversation(
-	conversation store.MessageExportConversation,
-) error {
-	return json.MarshalEncode(s.encoder, exportMessagesConversationRecord{
-		RecordType:       "conversation",
-		SourceType:       conversation.SourceType,
-		SourceIdentifier: conversation.SourceIdentifier,
-		ID:               conversation.ID,
-		Title:            conversation.Title,
-		ConversationType: conversation.ConversationType,
-		ParentID:         conversation.ParentID,
-	}, json.Deterministic(true))
-}
-
-func (s exportMessagesJSONLSink) Message(message store.MessageExportMessage) error {
-	var author *exportMessagesAuthorRecord
-	if message.Author != nil {
-		author = &exportMessagesAuthorRecord{
-			DisplayName: message.Author.DisplayName,
-			Address:     message.Author.Address,
-		}
-	}
-	return json.MarshalEncode(s.encoder, exportMessagesMessageRecord{
-		RecordType:        "message",
-		SourceType:        message.SourceType,
-		SourceIdentifier:  message.SourceIdentifier,
-		ID:                message.ID,
-		ConversationID:    message.ConversationID,
-		MessageType:       message.MessageType,
-		Subject:           message.Subject,
-		Text:              message.Text,
-		Author:            author,
-		OccurredAt:        message.OccurredAt,
-		DeletedFromSource: message.DeletedFromSource,
-	}, json.Deterministic(true))
-}
-
 func defaultExportMessagesDeps() exportMessagesDeps {
 	return exportMessagesDeps{openStore: func(ctx context.Context) (*store.Store, func(), error) {
 		return openReadOnlyStoreForInvocation(ctx, invocationFromContext(ctx))
@@ -164,10 +39,14 @@ func newExportMessagesCmd(deps exportMessagesDeps) *cobra.Command {
 	cmd := newExportMessagesLocalCmd(deps)
 	runLocal := cmd.RunE
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if !isDaemonCLISubprocess() {
-			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		if isDaemonCLISubprocess() {
+			return runLocal(cmd, args)
 		}
-		return runLocal(cmd, args)
+		request, err := exportMessagesRequestFromFlags(cmd)
+		if err != nil {
+			return err
+		}
+		return runExportMessagesHTTP(cmd, request)
 	}
 	return cmd
 }
@@ -212,20 +91,9 @@ nothing), or --person-id from 'msgvault person list'.`,
 func runExportMessages(
 	cmd *cobra.Command,
 	deps exportMessagesDeps,
-	opts exportMessagesOptions,
+	_ exportMessagesOptions,
 ) error {
-	start, end, err := parseMessageExportBounds(opts.Start, opts.End)
-	if err != nil {
-		return err
-	}
-	if opts.Format != "jsonl" {
-		return fmt.Errorf("unsupported --format %q (expected jsonl)", opts.Format)
-	}
-	messageTypes, err := normalizeMessageExportTypes(opts.MessageTypes)
-	if err != nil {
-		return err
-	}
-	selectors, err := normalizeMessageExportSelectors(opts.Sources)
+	request, err := exportMessagesRequestFromFlags(cmd)
 	if err != nil {
 		return err
 	}
@@ -237,181 +105,103 @@ func runExportMessages(
 		return err
 	}
 	defer cleanup()
-
-	ctx, release, err := st.BeginReadSnapshotContext(cmd.Context())
+	messages, err := export.OpenMessages(cmd.Context(), st, request)
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer messages.Close()
+	return messages.Write(cmd.OutOrStdout(), Version)
+}
 
-	sourceIDs, err := resolveMessageExportSources(ctx, st, selectors)
-	if err != nil {
-		return err
-	}
-
-	var scope *personscope.Scope
+// exportMessagesRequestFromFlags validates the flags before any archive access.
+func exportMessagesRequestFromFlags(cmd *cobra.Command) (export.MessagesRequest, error) {
+	flags := cmd.Flags()
+	format, _ := flags.GetString("format")
+	start, _ := flags.GetString("start")
+	end, _ := flags.GetString("end")
+	messageTypes, _ := flags.GetStringArray("message-type")
+	sources, _ := flags.GetStringArray("source")
 	var personID *int64
-	if cmd.Flags().Changed("person-id") {
-		resolved, err := personresolver.Resolve(ctx, st, personresolver.Reference{Kind: personresolver.ReferencePerson, ID: opts.PersonID}, nil)
-		if err != nil {
-			return fmt.Errorf("resolve --person-id: %w", err)
-		}
-		scope = &resolved.Scope
-		personID = &resolved.PersonID
+	if flags.Changed("person-id") {
+		id, _ := flags.GetInt64("person-id")
+		personID = &id
 	}
-	encoder := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.EscapeForHTML(false))
-
-	if err := json.MarshalEncode(encoder, exportMessagesManifest{
-		RecordType:      "manifest",
-		Schema:          messageExportSchema,
-		MsgvaultVersion: Version,
-		Window:          exportMessagesWindow{Start: start, End: end},
-		Filters: exportMessagesFilters{
-			PersonID:     personID,
-			MessageTypes: messageTypes,
-			Sources:      selectors,
-		},
-	}, json.Deterministic(true)); err != nil {
-		return fmt.Errorf("encode message export manifest: %w", err)
-	}
-
-	counts, err := st.ExportMessages(ctx, store.MessageExportFilter{
-		PersonScope:  scope,
-		Start:        start,
-		End:          end,
-		SourceIDs:    sourceIDs,
-		MessageTypes: messageTypes,
-	}, exportMessagesJSONLSink{encoder: encoder})
+	request, err := export.ParseMessagesRequest(start, end, messageTypes, sources, personID)
 	if err != nil {
-		return fmt.Errorf("export messages: %w", err)
+		return export.MessagesRequest{}, err
 	}
-	if err := json.MarshalEncode(encoder, exportMessagesComplete{
-		RecordType: "complete",
-		Counts: exportMessagesCounts{
-			Sources:       counts.Sources,
-			Conversations: counts.Conversations,
-			Messages:      counts.Messages,
-		},
-	}, json.Deterministic(true)); err != nil {
-		return fmt.Errorf("encode message export completion: %w", err)
+	if format != "jsonl" {
+		return export.MessagesRequest{}, fmt.Errorf("unsupported --format %q (expected jsonl)", format)
+	}
+	return request, nil
+}
+
+// runExportMessagesHTTP streams the export from the local daemon or a remote.
+func runExportMessagesHTTP(cmd *cobra.Command, request export.MessagesRequest) error {
+	client, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
+	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), messageExportMinAPISchemaVersion)
+	if err != nil {
+		return fmt.Errorf("check server for message export: %w", err)
+	}
+	if !supported {
+		return fmt.Errorf("export-messages needs a server with API schema %s or newer; upgrade msgvault on the server", messageExportMinAPISchemaVersion)
+	}
+	body, err := client.OpenMessageExport(cmd.Context(), request)
+	if err != nil {
+		return err
+	}
+	out := &lastLineWriter{w: cmd.OutOrStdout()}
+	_, copyErr := io.Copy(out, body)
+	if err := errors.Join(copyErr, body.Close()); err != nil {
+		return err
+	}
+	// The server reports a failure after the first byte only by ending the
+	// stream without its completion record.
+	var last struct {
+		RecordType string `json:"record_type"`
+	}
+	if json.Unmarshal(out.last, &last) != nil || last.RecordType != "complete" {
+		return errors.New("message export ended without its completion record; the output is incomplete")
 	}
 	return nil
 }
 
-func parseMessageExportBounds(startValue, endValue string) (time.Time, time.Time, error) {
-	start, err := time.Parse(time.RFC3339, startValue)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf(
-			"invalid --start %q (expected RFC3339): %w", startValue, err,
-		)
-	}
-	end, err := time.Parse(time.RFC3339, endValue)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf(
-			"invalid --end %q (expected RFC3339): %w", endValue, err,
-		)
-	}
-	start = start.UTC()
-	end = end.UTC()
-	if !start.Before(end) {
-		return time.Time{}, time.Time{}, errors.New("--start must be before --end")
-	}
-	return start, end, nil
+// maxCompletionRecordBytes bounds what lastLineWriter keeps of a line. The
+// completion record holds only counts, so it is far smaller.
+const maxCompletionRecordBytes = 4096
+
+// lastLineWriter forwards every byte and keeps the last complete line when it
+// fits in maxCompletionRecordBytes.
+type lastLineWriter struct {
+	w        io.Writer
+	line     []byte
+	overflow bool
+	last     []byte
 }
 
-func normalizeMessageExportTypes(values []string) ([]string, error) {
-	normalized := append([]string(nil), values...)
-	for _, value := range normalized {
-		if strings.TrimSpace(value) == "" {
-			return nil, errors.New("--message-type must be non-empty")
+func (l *lastLineWriter) Write(p []byte) (int, error) {
+	n, err := l.w.Write(p)
+	for rest := p[:n]; len(rest) > 0; {
+		chunk, after, found := bytes.Cut(rest, []byte("\n"))
+		if !l.overflow && len(l.line)+len(chunk) <= maxCompletionRecordBytes {
+			l.line = append(l.line, chunk...)
+		} else {
+			l.overflow = true
 		}
+		if !found {
+			break
+		}
+		l.last = nil
+		if !l.overflow {
+			l.last = append(l.last, l.line...)
+		}
+		l.line, l.overflow, rest = l.line[:0], false, after
 	}
-	sort.Strings(normalized)
-	return compactSortedStrings(normalized), nil
-}
-
-func normalizeMessageExportSelectors(
-	values []string,
-) ([]exportMessagesSourceSelector, error) {
-	selectors := make([]exportMessagesSourceSelector, 0, len(values))
-	for _, value := range values {
-		sourceType, identifier, ok := strings.Cut(value, ":")
-		if !ok || strings.TrimSpace(sourceType) == "" || strings.TrimSpace(identifier) == "" {
-			return nil, fmt.Errorf(
-				"invalid --source %q (expected non-empty type:identifier)", value,
-			)
-		}
-		selectors = append(selectors, exportMessagesSourceSelector{
-			SourceType: sourceType,
-			Identifier: identifier,
-		})
-	}
-	sort.Slice(selectors, func(i, j int) bool {
-		if selectors[i].SourceType != selectors[j].SourceType {
-			return selectors[i].SourceType < selectors[j].SourceType
-		}
-		return selectors[i].Identifier < selectors[j].Identifier
-	})
-	return compactMessageExportSelectors(selectors), nil
-}
-
-func resolveMessageExportSources(
-	ctx context.Context,
-	st *store.Store,
-	selectors []exportMessagesSourceSelector,
-) ([]int64, error) {
-	sourceIDs := make([]int64, 0, len(selectors))
-	for _, selector := range selectors {
-		sources, err := st.ListSourcesContext(ctx, selector.SourceType)
-		if err != nil {
-			return nil, fmt.Errorf(
-				"list sources of type %q: %w", selector.SourceType, err,
-			)
-		}
-		var matched *store.Source
-		for _, source := range sources {
-			if source.Identifier == selector.Identifier {
-				matched = source
-				break
-			}
-		}
-		if matched == nil {
-			return nil, fmt.Errorf(
-				"source %s:%s not found", selector.SourceType, selector.Identifier,
-			)
-		}
-		sourceIDs = append(sourceIDs, matched.ID)
-	}
-	return sourceIDs, nil
-}
-
-func compactSortedStrings(values []string) []string {
-	if len(values) == 0 {
-		return []string{}
-	}
-	compacted := values[:1]
-	for _, value := range values[1:] {
-		if value != compacted[len(compacted)-1] {
-			compacted = append(compacted, value)
-		}
-	}
-	return compacted
-}
-
-func compactMessageExportSelectors(
-	selectors []exportMessagesSourceSelector,
-) []exportMessagesSourceSelector {
-	if len(selectors) == 0 {
-		return []exportMessagesSourceSelector{}
-	}
-	compacted := selectors[:1]
-	for _, selector := range selectors[1:] {
-		last := compacted[len(compacted)-1]
-		if selector != last {
-			compacted = append(compacted, selector)
-		}
-	}
-	return compacted
+	return n, err
 }
 
 func init() {

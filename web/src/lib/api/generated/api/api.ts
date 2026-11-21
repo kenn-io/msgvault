@@ -119,6 +119,7 @@ import type {
   DocbankAttachmentBackfillResponse,
   DocbankAttachmentStatus,
   DomainSummary,
+  EmailFamily,
   EmbeddingStatus,
   Employment,
   EmploymentBody,
@@ -126,6 +127,8 @@ import type {
   EndEmploymentBody,
   EndEmploymentPathParameters,
   ExplainPersonTierPathParameters,
+  ExportCLIMessagesParams,
+  FactSummary,
   FastSearchParams,
   FileMetadataResponse,
   FilterMessagesParams,
@@ -155,6 +158,7 @@ import type {
   GetConversationPathParameters,
   GetDeletionPathParameters,
   GetDomainPathParameters,
+  GetEmailFamilyPathParameters,
   GetEmbeddingStatusParams,
   GetEmploymentPathParameters,
   GetFileContentPathParameters,
@@ -180,6 +184,7 @@ import type {
   GetPersonBriefPathParameters,
   GetPersonByUIDParams,
   GetPersonContactStatePathParameters,
+  GetPersonFactSummaryPathParameters,
   GetPersonMergePathParameters,
   GetPersonMergeSnapshotPathParameters,
   GetPersonMessagingRoutesParams,
@@ -348,6 +353,7 @@ import type {
   PersonBriefEnrollment,
   PersonBriefRun,
   PersonBriefVersionsResponse,
+  PersonCreateInput,
   PersonDayPage,
   PersonDaysPage,
   PersonEnrichmentProviderUpdate,
@@ -404,6 +410,7 @@ import type {
   RelationshipTypesResponse,
   RemoteImageRequest,
   ReopenLoopPathParameters,
+  RepairAccountAttributionPathParameters,
   ResolveCardDAVConflictPathParameters,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
@@ -1265,6 +1272,23 @@ export const getCLIMessageThread = (
   );
 };
 /**
+ * @summary Stream messages in a time window as msgvault-message-export/1 JSON Lines
+ */
+export const exportCLIMessages = (
+  params: ExportCLIMessagesParams,
+  options?: SecondParameter<typeof orvalFetch<Blob>>,
+) => {
+  return orvalFetch<Blob>(
+    {
+      url: `/api/v1/cli/messages/export`,
+      method: "GET",
+      params,
+      responseType: "blob",
+    },
+    options,
+  );
+};
+/**
  * @summary Rebuild the CLI full-text search index
  */
 export const rebuildCLIFTS = (
@@ -1767,6 +1791,17 @@ export const getHealth = (
 ) => {
   return orvalFetch<HealthResponse>(
     { url: `/api/v1/health`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Refresh identity datasets
+ */
+export const refreshIdentityCache = (
+  options?: SecondParameter<typeof orvalFetch<IdentityLinkResponse>>,
+) => {
+  return orvalFetch<IdentityLinkResponse>(
+    { url: `/api/v1/identity/cache-refresh`, method: "POST" },
     options,
   );
 };
@@ -2380,6 +2415,21 @@ export const getMessage = (
   );
 };
 /**
+ * @summary Read the other archived copies, replies and forwards of an email
+ */
+export const getEmailFamily = (
+  { id }: GetEmailFamilyPathParameters,
+  options?: SecondParameter<typeof orvalFetch<EmailFamily>>,
+) => {
+  return orvalFetch<EmailFamily>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/family`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
  * @summary Get an inline MIME part
  */
 export const getMessageInlinePart = (
@@ -2910,6 +2960,24 @@ export const findContactCandidates = (
   );
 };
 /**
+ * Creates a durable profile with a new vCard UID and user-curated contact data. Refuses contacts already present on a person or observed participant cluster. A title requires an organization. Does not publish to CardDAV.
+ * @summary Create a person without message participants
+ */
+export const createStandalonePerson = (
+  personCreateInput: PersonCreateInput,
+  options?: SecondParameter<typeof orvalFetch<Person>>,
+) => {
+  return orvalFetch<Person>(
+    {
+      url: `/api/v1/people/create`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: personCreateInput,
+    },
+    options,
+  );
+};
+/**
  * Returns one stable, non-sensitive page of promoted durable people.
  * @summary Query durable people for the Directory
  */
@@ -3410,6 +3478,21 @@ export const setPersonFactPin = (
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       data: setPersonFactPinRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Get person fact summary
+ */
+export const getPersonFactSummary = (
+  { id }: GetPersonFactSummaryPathParameters,
+  options?: SecondParameter<typeof orvalFetch<FactSummary>>,
+) => {
+  return orvalFetch<FactSummary>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-summary`,
+      method: "GET",
     },
     options,
   );
@@ -4402,6 +4485,21 @@ export const listSourceStatus = (
   );
 };
 /**
+ * @summary Retry account matching for one source
+ */
+export const repairAccountAttribution = (
+  { sourceId }: RepairAccountAttributionPathParameters,
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/sources/${encodeURIComponent(String(sourceId))}/account-attribution/repair`,
+      method: "POST",
+    },
+    options,
+  );
+};
+/**
  * @summary List confirmed identities for one source
  */
 export const listSourceIdentities = (
@@ -4457,7 +4555,7 @@ export const triggerSync = (
   );
 };
 /**
- * @summary Report a web, terminal UI, or interactive CLI usage event
+ * @summary Record an interface event
  */
 export const captureTelemetryEvent = (
   telemetryEventRequest: TelemetryEventRequest,

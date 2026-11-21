@@ -1,9 +1,9 @@
-import { taskCreationClient, taskOutboundMetadata } from './fixtures.test-support';
+import { taskCreationClient, taskLookup, taskOutboundMetadata } from './fixtures.test-support';
 import { tick } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { getTaskIntegrationStatus } from '../../api/generated/api/api';
 import { conversationTaskStatusKey, type ConversationTaskStatus } from './task-status';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -16,6 +16,56 @@ function expectOneInitialTaskRead(requests: Request[]): void {
 }
 
 describe('TaskLinks', () => {
+  it('unlinks two tasks from the same message in sequence', async () => {
+    let tasks = [{ id: 'one', title: 'First task' }, { id: 'two', title: 'Second task' }];
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      if (request.url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (request.method === 'DELETE') {
+        tasks = tasks.filter(task => !request.url.endsWith(`/${task.id}`));
+        return Response.json({ task: { id: 'removed', title: 'Removed' } });
+      }
+      return Response.json(taskLookup({ tasks }));
+    });
+    render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Unlink First task' }));
+    await waitFor(() => expect(screen.queryByText('First task')).toBeNull());
+    const second = screen.getByRole('button', { name: 'Unlink Second task' });
+    expect(second).toHaveProperty('disabled', false);
+    await fireEvent.click(second);
+    await waitFor(() => expect(screen.queryByText('Second task')).toBeNull());
+  });
+
+  it('clears lookup errors after refresh', async () => {
+    let lookups = 0;
+    const client = createAPIClient(async input => {
+      if ((input as Request).url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (++lookups === 1) return Response.json({ message: 'Lookup failed' }, { status: 503 });
+      return Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review notes' }] }));
+    });
+    const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic', refresh: 0 });
+    await screen.findByText('Lookup failed');
+    await view.rerender({ refresh: 1 });
+    await screen.findByText('Review notes');
+    expect(screen.queryByText('Lookup failed')).toBeNull();
+  });
+
+  it('keeps linked rows while refresh is pending', async () => {
+    let respond: ((response: Response) => void) | undefined;
+    let hold = false;
+    const client = createAPIClient(async input => {
+      if ((input as Request).url.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (hold) return new Promise<Response>(resolve => { respond = resolve; });
+      return Response.json(taskLookup({ tasks: [{ id: 'one', title: 'Review notes' }] }));
+    });
+    const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic', refresh: 0 });
+    await screen.findByText('Review notes');
+    hold = true;
+    await view.rerender({ refresh: 1 });
+    await waitFor(() => expect(respond).toBeDefined());
+    expect(screen.getByText('Review notes')).toBeDefined();
+  });
+
   it("preserves an open creation draft and retry identity across another message's failed status refresh", async () => {
     const requests: Request[] = [];
     let statusCalls = 0;
@@ -31,7 +81,7 @@ describe('TaskLinks', () => {
           ? Response.json({ message: 'Create response unavailable' }, { status: 503 })
           : Response.json({ task: { id: 'task-1', title: 'Draft title' } }, { status: 201 });
       }
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+      return Response.json(taskLookup());
     });
     const statuses = new SvelteMap<string, ConversationTaskStatus['latest']>();
     const shared: ConversationTaskStatus = {
@@ -73,21 +123,14 @@ describe('TaskLinks', () => {
     await expect(requests[1]!.clone().text()).resolves.toBe(await requests[0]!.clone().text());
   });
 
-  it('preserves a creation draft when switching between New and Existing', async () => {
-    const client = createAPIClient(async input => {
-      const url = (input as Request).url;
-      return Response.json(url.endsWith('/status') ? { state: 'ready', project: 'example' }
-        : url.includes('/tasks/search') ? { tasks: [], truncated: false }
-        : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
-    });
-    render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Follow up' });
-    await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Draft title' } });
-    expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
-    expect(screen.queryByText('Task')).toBeNull();
+  it('keeps the create form mounted while action is not create', async () => {
+    const props = { client: taskCreationClient(), mode: 'add' as const, messageId: 42, title: 'Follow up' };
+    const view = render(TaskLinks, { ...props, action: 'create' });
+    await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Revised follow up' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
-    expect(screen.getByLabelText('Task title')).toHaveProperty('value', 'Draft title');
+    await view.rerender({ ...props, action: 'existing' });
+    await view.rerender({ ...props, action: 'create' });
+    expect(screen.getByLabelText('Task title')).toHaveProperty('value', 'Revised follow up');
     expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
   });
 
@@ -108,8 +151,8 @@ describe('TaskLinks', () => {
         ? { state: 'ready', project: 'example' }
         : { state: 'authentication_required', message: 'Task service authentication is required.' });
       return Response.json(path.endsWith('/messages/42/tasks')
-        ? { state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Earlier cached task' }], outbound_metadata: {} }
-        : { state: 'authentication_required', complete: false, tasks: [], outbound_metadata: {} });
+        ? taskLookup({ tasks: [{ id: 'task-1', title: 'Earlier cached task' }] })
+        : taskLookup({ state: 'authentication_required', complete: false }, 43));
     });
     const statuses = new SvelteMap<string, ConversationTaskStatus['latest']>();
     const shared: ConversationTaskStatus = {
@@ -131,7 +174,6 @@ describe('TaskLinks', () => {
     expect(screen.queryByRole('button', { name: /^Unlink/ })).toBeNull();
     expect(owner.container.querySelector('[role="alert"]')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Open Settings' })).toHaveLength(1);
-    expect(later.container.querySelector('h2')).toBeNull();
   });
 
   it('keeps a later empty card hidden while its lookup waits after shared status is unreachable', async () => {
@@ -145,49 +187,46 @@ describe('TaskLinks', () => {
       context: new Map([[conversationTaskStatusKey, shared]]),
     });
     await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
-    expect(screen.queryByRole('status')).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
-    finish(Response.json({ state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} }));
+    expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
+    finish(Response.json(taskLookup({ state: 'unavailable', complete: false }, 43)));
     await waitFor(() => expect(fetchFn.mock.settledResults[0]?.type).toBe('fulfilled'));
     await tick();
-    expect(screen.queryByRole('status')).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Tasks' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
   });
 
-  it('shows loading, linked tasks, and honest partial authority', async () => {
+  it('shows the project once above distinct linked tasks', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'ready', project: 'garden' }
+      : taskLookup({ tasks: [{ id: 'one', title: 'Plant seeds' }, { id: 'two', title: 'Water plants' }] })));
+    render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
+    const first = await screen.findByText('Plant seeds');
+    expect(screen.getByText('Water plants')).toBeDefined();
+    const projects = screen.getAllByText('Tasks · garden');
+    expect(projects).toHaveLength(1);
+    expect(projects[0].compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('shows loading and permits create and unlink on a partial index', async () => {
     let resolve!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>((input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.url.endsWith('/integrations/tasks/status')) return Promise.resolve(Response.json({ state: 'ready', project: 'project', message: 'Ready' }));
       return new Promise((done) => { resolve = done; });
     });
-    render(TaskLinks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic' });
+    const view = render(TaskLinks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic' });
     expect(screen.getByRole('status').textContent).toContain('Loading linked tasks');
     await waitFor(() => expect(resolve).toBeTypeOf('function'));
-    resolve(Response.json({ state: 'partial', complete: false, last_scan: '2026-07-19T01:00:00Z', remote_revision: 'remote-1', reason: 'safety_limit', tasks: [{ id: 'task-1', title: 'Follow up', revision: 'r1' }] }));
+    resolve(Response.json(taskLookup({ state: 'partial', complete: false, last_scan: '2026-07-19T01:00:00Z', remote_revision: 'remote-1', reason: 'safety_limit', tasks: [{ id: 'task-1', title: 'Follow up', revision: 'r1' }] })));
     expect(await screen.findByText('Follow up')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('Some linked tasks may be missing');
     expect(screen.getByRole('alert').textContent).toContain('2026');
-  });
-
-  it.each([
-    ['authentication_required', 'Authentication is required'],
-    ['incompatible', 'incompatible'],
-    ['unavailable', 'unavailable'],
-    ['stale', 'stale'],
-    ['partial', 'some linked tasks may be missing'],
-    ['disabled', 'disabled'],
-    ['not_found', 'not found'],
-    ['wrong_project', 'wrong project']
-  ])('renders the %s state without claiming there are no links', async (state, copy) => {
-    render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      return request.url.endsWith('/integrations/tasks/status')
-        ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
-        : Response.json({ state, complete: false, reason: state, last_scan: '2026-07-19T01:00:00Z', tasks: [] });
-    })), messageId: 42, title: 'Synthetic', showSetup: false });
-    expect((await screen.findByRole('alert')).textContent?.toLowerCase()).toContain(copy.toLowerCase());
-    expect(screen.queryByText('No linked tasks.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Unlink Follow up' })).toHaveProperty('disabled', false);
+    view.unmount();
+    const addClient = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'ready', project: 'project', message: 'Ready' }
+      : taskLookup({ state: 'partial', complete: false, last_scan: '2026-07-19T01:00:00Z', remote_revision: 'remote-1', reason: 'safety_limit', tasks: [{ id: 'task-1', title: 'Follow up', revision: 'r1' }] })));
+    render(TaskLinks, { client: addClient, mode: 'add', messageId: 42, title: 'Synthetic' });
+    expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
   });
 
   it('requests linked tasks without waiting for integration status', async () => {
@@ -214,9 +253,7 @@ describe('TaskLinks', () => {
       const request = input instanceof Request ? input : new Request(input);
       return request.url.endsWith('/integrations/tasks/status')
         ? Response.json({ message: 'Status temporarily unavailable' }, { status: 503 })
-        : Response.json({ state: 'unavailable', complete: false, reason: 'daemon_unavailable', tasks: [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {
-          archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z'
-        } });
+        : Response.json(taskLookup({ state: 'unavailable', complete: false, reason: 'daemon_unavailable', tasks: [{ id: 'task-1', title: 'Cached task' }] }));
     })), messageId: 42, title: 'Synthetic' });
     expect(await screen.findByText('Cached task')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('unavailable');
@@ -233,7 +270,7 @@ describe('TaskLinks', () => {
         requests.push(request);
         return request.url.endsWith('/integrations/tasks/status')
           ? Response.json({ state: integrationState, project: 'project', message: `Integration reason: ${integrationState}` })
-          : Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
+          : Response.json(taskLookup({ tasks: [{ id: 'task-1', title: 'Cached task' }] }));
       })), messageId: 42, title: 'Synthetic', onsettings });
 
       expect(await screen.findByText('Cached task')).toBeDefined();
@@ -247,42 +284,33 @@ describe('TaskLinks', () => {
     }
   );
 
-  it('shows create and existing-task controls and enables unlink on a partial index', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
-      return Response.json({
-        state: 'partial', complete: false, reason: 'safety_limit', last_scan: '2026-07-19T01:00:00Z',
-        tasks: [{ id: 'task-1', title: 'Partial task' }], outbound_metadata: taskOutboundMetadata
-      });
-    });
-    const client = createAPIClient(fetchFn);
-    const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
-
-    expect(await screen.findByText('Partial task')).toBeDefined();
-    expect(screen.getByRole('alert').textContent).toContain('Some linked tasks may be missing');
-    expect((screen.getByRole('button', { name: 'Unlink Partial task' }) as HTMLButtonElement).disabled).toBe(false);
-    await view.rerender({ mode: 'add' });
-    expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
-    expect(screen.getByRole('radio', { name: 'Existing' })).toBeDefined();
-  });
-
-  it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project', 'authentication_required'])(
+  it.each([
+    ['authentication_required', 'Authentication is required'],
+    ['incompatible', 'incompatible'],
+    ['unavailable', 'The task service is unavailable; safe cached links may be shown.'],
+    ['stale', 'stale'],
+    ['disabled', 'disabled'],
+    ['not_found', 'not found'],
+    ['wrong_project', 'wrong project']
+  ])(
     'keeps cached tasks visible but disables mutations when the index state is %s even with a ready integration',
-    async (state) => {
-      const view = render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
+    async (state, copy) => {
+      const client = createAPIClient(vi.fn(async (input) => {
         const request = input instanceof Request ? input : new Request(input);
         return request.url.endsWith('/integrations/tasks/status')
           ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
-          : Response.json({ state, complete: false, reason: state, tasks: state === 'authentication_required' ? [] : [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
-      })), mode: 'list', messageId: 42, title: 'Synthetic' });
+          : Response.json(taskLookup({ state, complete: false, tasks: state === 'authentication_required' ? [] : [{ id: 'task-1', title: 'Cached task' }] }));
+      }));
+      const view = render(TaskLinks, { client, mode: 'list', messageId: 42, title: 'Synthetic' });
 
       const alert = await screen.findByRole('alert');
-      if (state === 'unavailable') expect(alert.textContent).toContain('The task service is unavailable; safe cached links may be shown.');
+      expect(alert.textContent?.toLowerCase()).toContain(copy.toLowerCase());
       expect(screen.queryByText('Cached task') !== null).toBe(state !== 'authentication_required');
-      await view.rerender({ mode: 'add' });
+      if (state !== 'authentication_required') expect(screen.getByRole('button', { name: 'Unlink Cached task' })).toHaveProperty('disabled', true);
+      view.unmount();
+      render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Synthetic' });
+      await screen.findByRole('alert');
       expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
-      expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
     }
   );
 
@@ -291,10 +319,7 @@ describe('TaskLinks', () => {
       const request = input instanceof Request ? input : new Request(input);
       return request.url.endsWith('/integrations/tasks/status')
         ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
-        : Response.json({
-          state: 'ready', complete: true, reason: 'cache_persistence_unsupported',
-          tasks: [{ id: 'task-1', title: 'Current-session task' }], outbound_metadata: {}
-        });
+        : Response.json(taskLookup({ reason: 'cache_persistence_unsupported', tasks: [{ id: 'task-1', title: 'Current-session task' }] }));
     })), messageId: 42, title: 'Synthetic' });
 
     expect(await screen.findByText('Current-session task')).toBeDefined();
@@ -315,9 +340,9 @@ describe('TaskLinks', () => {
     await view.rerender({ client: createAPIClient(fetchFn), messageId: 43, title: 'Message B' });
     expect(screen.queryByText('Task A')).toBeNull();
     await waitFor(() => expect(responses.has(43)).toBe(true));
-    responses.get(43)!(Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-b', title: 'Task B' }], outbound_metadata: {} }));
+    responses.get(43)!(Response.json(taskLookup({ tasks: [{ id: 'task-b', title: 'Task B' }] }, 43)));
     expect(await screen.findByText('Task B')).toBeDefined();
-    responses.get(42)!(Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-a', title: 'Task A' }], outbound_metadata: {} }));
+    responses.get(42)!(Response.json(taskLookup({ tasks: [{ id: 'task-a', title: 'Task A' }] })));
     await Promise.resolve();
     expect(screen.queryByText('Task A')).toBeNull();
     expect(screen.getByText('Task B')).toBeDefined();
@@ -332,7 +357,7 @@ describe('TaskLinks', () => {
       if (request.url.endsWith('/integrations/tasks/status')) return Promise.resolve(Response.json({ state: 'ready', project: 'project', message: 'Ready' }));
       if (request.method === 'DELETE') return new Promise((resolve) => { resolveDelete = resolve; });
       const id = Number(request.url.match(/messages\/(\d+)\/tasks/)?.[1]);
-      return Promise.resolve(Response.json({ state: 'ready', complete: true, tasks: [{ id: `task-${id}`, title: `Task ${id}` }], outbound_metadata: {} }));
+      return Promise.resolve(Response.json(taskLookup({ tasks: [{ id: `task-${id}`, title: `Task ${id}` }] }, id)));
     });
     const client = createAPIClient(fetchFn);
     const view = render(TaskLinks, { client, messageId: 42, title: 'Message A' });
@@ -348,7 +373,7 @@ describe('TaskLinks', () => {
     expect(requests.filter((request) => request.method === 'GET' && request.url.includes('/messages/42/tasks'))).toHaveLength(1);
   });
 
-  it('links a selected task through the typed route', async () => {
+  it('provides existing-task metadata and links a selected task', async () => {
     const requests: Request[] = [];
     const oncomplete = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -356,13 +381,14 @@ describe('TaskLinks', () => {
       if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
       if (request.url.includes('/integrations/tasks/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Synthetic result', revision: 'r1' }, { id: 'task-2', title: 'Synthetic result', revision: 'r2' }], truncated: false });
       if (request.method === 'POST') return Response.json({ task: { id: 'task-1', project: 'project', title: 'Linked', revision: 'r1' } }, { status: 201 });
-      return Response.json({ state: 'ready', complete: true, last_scan: '2026-07-19T01:00:00Z', tasks: [], outbound_metadata: {
-        archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z'
-      } });
+      return Response.json(taskLookup({ last_scan: '2026-07-19T01:00:00Z', outbound_metadata: { ...taskOutboundMetadata, sent_at: '2026-07-18T12:00:37Z' } }));
     });
-    render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic', oncomplete });
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic', oncomplete });
     expect(await screen.findByRole('radio', { name: 'Synthetic result · task-1' })).toBeDefined();
+    const existing = within(screen.getByRole('region', { name: 'Linked tasks' }));
+    expect(existing.getByText('archive-a')).toBeTruthy();
+    expect(existing.getByText('Sent at').nextElementSibling?.textContent).toBe('2026-07-18T12:00:37Z');
+    expect(existing.getByText('When linked')).toBeTruthy();
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic result · task-2' }));
     const search = requests.find(request => new URL(request.url).pathname.endsWith('/integrations/tasks/search'))!;
     expect(new URL(search.url).searchParams.has('q')).toBe(false);
@@ -388,13 +414,11 @@ describe('TaskLinks', () => {
         if (posts.length === 1) return Response.json({ message: 'Unavailable' }, { status: 503 });
         return Response.json({ task: { id: 'task-1', project: 'project', title: 'Linked', revision: 'r2' } }, { status: 201 });
       }
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: {} });
+      return Response.json(taskLookup());
     });
     render(TaskLinks, {
-      client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic',
+      client: createAPIClient(fetchFn), mode: 'add', action: 'existing', messageId: 42, title: 'Synthetic',
     });
-
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic result · task-1' }));
     const link = screen.getByRole('button', { name: 'Link task' });
     await fireEvent.click(link);

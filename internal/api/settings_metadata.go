@@ -76,10 +76,10 @@ var settingsGroups = []SettingGroup{
 			{ID: sourceTypeBeeper, Label: "Beeper"},
 			{ID: sourceTypeSlack, Label: "Slack"},
 			{ID: sourceTypeInline, Label: "Inline"},
+			{ID: feeds.SourceType, Label: "Feeds", Description: "Follow feeds with msgvault source feeds add."},
 			{ID: github.Name, Label: "GitHub", Description: "Add accounts with msgvault add-github."},
 			{ID: gitlab.Name, Label: "GitLab", Description: "Add accounts with msgvault add-gitlab."},
 			{ID: gitea.Name, Label: "Gitea and Forgejo", Description: "Add accounts with msgvault add-gitea."},
-			{ID: feeds.SourceType, Label: "Feeds", Description: "Follow feeds with msgvault source feeds add."},
 			{ID: "carddav", Label: "CardDAV", Description: "Change these in the CardDAV account category."},
 		},
 	},
@@ -319,10 +319,10 @@ var settingsValidation = map[string]SettingValidation{
 	"beeper.schedule": cronValidation(false),
 	"slack.schedule":  cronValidation(false),
 	"inline.schedule": cronValidation(false),
+	"feeds.schedule":  cronValidation(false),
 	"github.schedule": cronValidation(false),
 	"gitlab.schedule": cronValidation(false),
 	"gitea.schedule":  cronValidation(false),
-	"feeds.schedule":  cronValidation(false),
 	// A float has no "greater than zero" bound a number control can carry,
 	// so the on range starts at 0.1 requests per second. A smaller positive
 	// rate is raised to 0.1 on save rather than rejected; zero stays off.

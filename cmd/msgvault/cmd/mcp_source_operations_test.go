@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +69,11 @@ func sourceOperationFixture(t *testing.T, fixture *api.Server) *daemonMCPOperati
 	t.Helper()
 	server := httptest.NewServer(fixture.Router())
 	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
+		defer cancel()
+		require.NoError(t, fixture.Shutdown(ctx))
+	})
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	require.NoError(t, err)
 	capabilities, err := client.MCPCapabilities(t.Context())
@@ -207,6 +213,20 @@ func TestMCPSlackPolicySDKUsesRealDaemonAndApproval(t *testing.T) {
 	reloaded, err := config.Load(path, "")
 	requirements.NoError(err)
 	assertions.False(reloaded.Slack.DMsEnabled())
+}
+
+const validSlackSettingsReceipt = `{"pending_restart":false,"settings":[{"key":"slack.dms","group":"sources","label":"Direct messages","description":"Include one-to-one direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.group_dms","group":"sources","label":"Group direct messages","description":"Include group direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.channels","group":"sources","label":"Channels","description":"Included channel selectors","kind":"string_array","value":{"strings":["C_EXAMPLE"]}},{"key":"slack.exclude_channels","group":"sources","label":"Excluded channels","description":"Excluded channel selectors","kind":"string_array","value":{"strings":[]}}]}`
+
+func TestMCPSlackPolicyWriteMissingETagRemainsUncertain(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	var settings slackSettingsResponse
+	requirements.NoError(json.Unmarshal([]byte(validSlackSettingsReceipt), &settings))
+	result := &mcpserver.OperationResult{Output: settings}
+	result = slackPolicyProjection(result, true)
+	requirements.True(result.IsError)
+	data, err := json.Marshal(result.Output)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
 }
 
 func TestMCPSlackPolicyCommittedBeforeCredentialCleanupFailure(t *testing.T) {
@@ -361,11 +381,7 @@ func TestMCPPersonCommittedRenameWithMissingETagRemainsUncertain(t *testing.T) {
 	requirements.True(result.IsError)
 	data, err := json.Marshal(result.Output)
 	requirements.NoError(err)
-	var receipt struct {
-		Uncertain bool `json:"operation_may_have_completed"`
-	}
-	requirements.NoError(json.Unmarshal(data, &receipt))
-	assertions.True(receipt.Uncertain)
+	assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
 	current, err := st.GetPerson(person.ID)
 	requirements.NoError(err)
 	assertions.Equal(new("Committed Example"), current.DisplayName)
@@ -634,4 +650,94 @@ func TestMCPCacheJobStatusRetainsRealLifecycle(t *testing.T) {
 	assertions.Equal(api.CacheBuildFailed, status.Status)
 	requirements.NotNil(status.ErrorData)
 	assertions.NotContains(*status.ErrorData, directory)
+}
+
+func TestListChangesRequiresAllFilterCapabilities(t *testing.T) {
+	fixture := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler)})
+	backend := sourceOperationFixture(t, fixture)
+	for _, param := range []string{"person_id", "source_id", "conversation_id", "incoming_only"} {
+		t.Run(param, func(t *testing.T) {
+			requirements := require.New(t)
+			capabilities, err := backend.client.MCPCapabilities(t.Context())
+			requirements.NoError(err)
+			found := false
+			for i := range capabilities.Routes {
+				route := &capabilities.Routes[i]
+				if route.OperationID == "listChangedMessages" {
+					found = true
+					requirements.Contains(route.QueryParameters, param)
+					route.QueryParameters = slices.DeleteFunc(route.QueryParameters, func(name string) bool { return name == param })
+				}
+			}
+			requirements.True(found)
+			assert.NotContains(t, newDaemonMCPOperations(backend.client, capabilities).capabilities(), "list_changes")
+		})
+	}
+}
+
+func TestListChangesPreservesActionableRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		code   string
+		status int
+	}{
+		{"invalid_cursor", http.StatusBadRequest}, {"rate_limit_exceeded", http.StatusTooManyRequests},
+		{"person_not_found", http.StatusNotFound}, {"person_scope_empty", http.StatusUnprocessableEntity},
+		{"invalid_source_id", http.StatusBadRequest}, {"person_scope_unavailable", http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			requirements := require.New(t)
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"error":"` + tc.code + `"}`))
+			})
+			backend := &daemonMCPOperations{client: client}
+			result, handled, err := backend.executeSourceOperation(t.Context(), "list_changes", nil)
+			requirements.NoError(err)
+			requirements.True(handled)
+			requirements.True(result.IsError)
+			data, err := json.Marshal(result.Output)
+			requirements.NoError(err)
+			assert.JSONEq(t, `{"error":"`+tc.code+`","operation_may_have_completed":false}`, string(data))
+		})
+	}
+}
+
+func TestListChangesReturnsLargeArchivedSnippet(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "large@example.com")
+	requirements.NoError(err)
+	conversation, err := st.EnsureConversationWithType(source.ID, "large-thread", "email_thread", "Large thread")
+	requirements.NoError(err)
+	snippet := strings.Repeat("x", (1<<20)+1)
+	id, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, SourceMessageID: "large-message", ConversationID: conversation,
+		MessageType: "email", Snippet: sql.NullString{String: snippet, Valid: true},
+	})
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET content_changed_at = '2020-01-01 00:00:00.000' WHERE id = ?"), id)
+	requirements.NoError(err)
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
+	result, err := backend.ExecuteOperation(t.Context(), "list_changes", map[string]any{"limit": 1, "source_ids": []int64{source.ID}})
+	requirements.NoError(err)
+	page := operationOutput[generated.ChangesResponse](t, result)
+	requirements.Len(page.Messages, 1)
+	assertions.Equal(id, page.Messages[0].ID)
+	requirements.NotNil(page.Messages[0].Snippet)
+	assertions.Equal(snippet, *page.Messages[0].Snippet)
+}
+
+func TestOtherMCPOperationsStillLimitResponseSize(t *testing.T) {
+	requirements := require.New(t)
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", (1<<20)+1)))
+	})
+	result, err := readMCPOperationJSON[generated.SourceStatusResponse](t.Context(), client, http.MethodGet, "/api/v1/sources/status", nil, http.StatusOK)
+	requirements.NoError(err)
+	requirements.True(result.IsError)
+	data, err := json.Marshal(result.Output)
+	requirements.NoError(err)
+	assert.JSONEq(t, `{"error":"operation_response_limit_exceeded","operation_may_have_completed":false}`, string(data))
 }

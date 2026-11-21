@@ -75,11 +75,10 @@ func TestPersonCreateSchemaOptionalNullableDisplayName(t *testing.T) {
 	}
 }
 
-// An explicit string must never fall back to an observed name, even when
-// normalization clears it. JSON serialization supplies arbitrary valid wire
-// strings (including escaped controls) to the real API and SQLite store.
+// Explicit valid names never fall back to an observed name, even when
+// normalization clears them. JSON supplies arbitrary strings to the real API.
 func FuzzPersonCreateExplicitDisplayName(f *testing.F) {
-	for _, seed := range []string{"", "\t\n", " Custom Example ", "例示", "\x00", "\xff"} {
+	for _, seed := range []string{"", "\t\n", " Custom Example ", "例示", "\x00", "\r", "\xff"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, name string) {
@@ -92,6 +91,13 @@ func FuzzPersonCreateExplicitDisplayName(f *testing.F) {
 		body, err := json.Marshal(map[string]any{"participant_id": id, "display_name": name})
 		require.NoError(err)
 		response := personRequest(t, srv, http.MethodPost, peoplePath, body, "")
+		if strings.ContainsAny(name, "\r\x00") {
+			require.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+			people, err := st.ListPersonsContext(t.Context())
+			require.NoError(err)
+			assert.Empty(people)
+			return
+		}
 		require.Equal(http.StatusCreated, response.Code, response.Body.String())
 		var got store.Person
 		require.NoError(json.Unmarshal(response.Body.Bytes(), &got))

@@ -45,6 +45,63 @@ func TestPrepareDaemonAnalyticsEngineAutoStartsWithSQLFallback(t *testing.T) {
 	assert.IsType(&query.SQLiteEngine{}, engine)
 }
 
+func TestIdentityRefreshActivatesManuallyBuiltCache(t *testing.T) {
+	for _, mode := range []string{config.AnalyticsEngineAuto, config.AnalyticsEngineSQL} {
+		t.Run(mode, func(t *testing.T) {
+			require := require.New(t)
+			c, s := openTestDaemonAnalyticsStore(t)
+			c.Analytics.Engine = mode
+			c.Analytics.AutoBuildCache = false
+			initial := query.NewEngine(s.DB(), false)
+			initialMode := api.AnalyticsModeSQLFallback
+			if mode == config.AnalyticsEngineSQL {
+				initialMode = api.AnalyticsModeSQL
+			}
+			adapter := &storeAPIAdapter{store: s, config: c, analyticsDir: c.AnalyticsDir()}
+			server := api.NewServerWithOptions(api.ServerOptions{Config: c, Store: adapter, Engine: initial, AnalyticsMode: initialMode, Logger: slog.New(slog.DiscardHandler)})
+			initializer := completedDaemonAnalyticsInitHandle()
+			ready := make(chan struct{})
+			close(ready)
+			adapter.activateAnalyticsCache = newDaemonAnalyticsCacheActivator(c, s, server, ready, &initializer)
+			t.Cleanup(func() { require.NoError(closeDaemonAnalyticsEngines(server, initial, initializer)) })
+
+			old := executeBuildCacheSubprocessMode
+			executeBuildCacheSubprocessMode = func(ctx context.Context, mode buildCacheMode) error {
+				_, err := buildCacheDerivedOnly(ctx, c.DatabaseDSN(), c.AnalyticsDir())
+				return err
+			}
+			t.Cleanup(func() { executeBuildCacheSubprocessMode = old })
+			request := func(method, path, body string) *httptest.ResponseRecorder {
+				rec := httptest.NewRecorder()
+				req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				server.Router().ServeHTTP(rec, req)
+				return rec
+			}
+			response := request(http.MethodPost, "/api/v1/identity/cache-refresh", "")
+			require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+			require.Contains(response.Body.String(), "identity_cache_build_required")
+			_, err := buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
+			require.NoError(err)
+			response = request(http.MethodPost, "/api/v1/identity/cache-refresh", "")
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
+			require.Contains(response.Body.String(), `"cache_state":"ready"`)
+			if mode == config.AnalyticsEngineSQL {
+				require.Equal(api.AnalyticsModeSQL, server.AnalyticsMode())
+				return
+			}
+			for _, tc := range []struct{ path, body string }{
+				{"/api/v1/participants/search", `{"identity_query":"example"}`},
+				{"/api/v1/files/search", `{"predicate":{}}`},
+				{"/api/v1/explore/groups", `{"grouping":["source"]}`},
+			} {
+				response = request(http.MethodPost, tc.path, tc.body)
+				require.Equal(http.StatusOK, response.Code, "%s: %s", tc.path, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestRunServeAllowsDeletionIDsWhileAnalyticsBuildBlocked(t *testing.T) {
 	cfg := testConfigValue()
 

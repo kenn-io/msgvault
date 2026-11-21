@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-13"
+last_edited: "2026-11-19"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,22 +8,272 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
+### Upgrade notes
+
+- `[telemetry] enabled = false` is now ignored. To keep [usage telemetry](configuration.md#usage-reporting) off, set `MSGVAULT_TELEMETRY_ENABLED=0` instead.
+- **The archive upgrades to schema 49 on first start.** 0.25.0 archives are at
+  schema 42. The upgrade also fills in the outcome of earlier fact decisions
+  where their history shows it; decisions it can't settle show
+  **Result unavailable** in Facts.
+- **Review some CardDAV cards again.** People whose names, contact points, or
+  postal addresses came from extraction or enrichment, including earlier MCP
+  profile writes, are not republished until you
+  [review their cards](usage/people-carddav.md#review-inferred-changes-before-they-are-exported).
+- **Upgrade servers before clients.** `export-messages` against a remote needs
+  server API schema 5.19.0. An older server makes the CLI stop and ask you to
+  upgrade the server.
+
+### New features
+
 - Archive the GitHub issues, pull requests, and discussions you take part in,
   with every comment and review, and the releases of repositories you watch.
   Add an account with `msgvault add-github`, then sync with `sync-github` or
   the `[github]` schedule; `exclude_owners` keeps an organization's
   repositories from ever being fetched. See [Code forges](usage/forges.md).
-- Archive the GitLab issues and merge requests you take part in, on gitlab.com
-  or a self-managed instance, with every comment, thread reply, diff note and
-  approval. Add an account with `msgvault add-gitlab`, then sync with
-  `sync-gitlab` or the `[gitlab]` schedule. See
-  [Code forges](usage/forges.md#gitlab).
 - Archive the issues and pull requests you take part in on a Gitea or Forgejo
   server, such as Codeberg, with every comment, review and review comment. Add
   an account with `msgvault add-gitea --url <server>`, then sync with
   `sync-gitea` or the `[gitea]` schedule. See
   [Code forges](usage/forges.md#gitea-and-forgejo).
+- Archive the GitLab issues and merge requests you take part in, on gitlab.com
+  or a self-managed instance, with every comment, thread reply, diff note and
+  approval. Add an account with `msgvault add-gitlab`, then sync with
+  `sync-gitlab` or the `[gitlab]` schedule. See
+  [Code forges](usage/forges.md#gitlab).
+- Read the order, delivery, invoice and reservation details an email carries as schema.org markup with the MCP tool `get_message_records`, without sending the message anywhere.
+- Import a LinkedIn member data export with
+  [`import-linkedin`](usage/linkedin.md). DMs, your posts, and your own
+  comments become searchable conversations. `--me` takes your profile URL and
+  ties the source to it.
+- Import a TikTok **Download your data** export with
+  [`import-tiktok`](usage/tiktok-export.md). DMs and the comments you wrote
+  become searchable. Include Profile Information in the export so your own
+  messages count as sent by you.
+- Calendar invites in archived email appear in `calendar events` as one event
+  per meeting, with updates and cancellations applied. Only invites sent by the
+  meeting's organizer count. Import `.ics` files with
+  [`import-ics`](cli-reference.md#import-ics). Mail you already archived gets
+  its invites on the next re-derivation, which `msgvault repair-derived` runs.
+- Reach several servers from one config. Add
+  [`[remotes.<name>]`](configuration.md#remotesname) tables and pick one per
+  command with `--remote <name>`; `[remote]` stays the default.
+- A remote can get short-lived bearers from a local
+  [credential helper](configuration.md#credential-helper) instead of an API
+  key. Set `credential_provider` and the approved `delegation`. Such a remote
+  serves `list-accounts`, `stats`, keyword `search`, `show-message`,
+  `show-thread`, and `export-messages`. `stats` counts only the sources the
+  host allows and reports scope kind `authorized_sources`.
+- Run [`export-messages`](cli-reference.md#export-messages) against a remote,
+  including with a
+  [read-only client key](guides/remote-deployment.md#read-only-remote-clients).
+  The server streams the same JSONL as a local export.
+- Apps that embed msgvault's archive server and limit callers with
+  `archive.WithSourceScope` can serve the same CLI read commands to those
+  callers, each covering only its authorized sources. See
+  [Restrict reads to authorized sources](guides/embedding.md#restrict-reads-to-authorized-sources).
+- [Save someone you have never messaged](usage/people.md#create-a-person) with
+  `msgvault person create`, `POST /api/v1/people/create`, or the MCP
+  `create_person` tool. Creation refuses an email or phone msgvault already
+  knows and names the match. The MCP tool needs `--allow-profile-writes`.
+- Find recordings by meaning with
+  [`media search --mode semantic`](usage/searching.md#search-spoken-words), or
+  `--mode hybrid` for meaning and keywords. Set
+  `recording_search_profile` under `[integrations.docbank]` to the profile
+  that embedded your transcripts. Older Docbank servers report recording
+  search as unavailable.
+- Find Beeper voice memos with ordinary keyword search by the words in
+  Docbank's generated transcripts. Set `voice_transcript_search = true` under
+  `[integrations.docbank]` and restart the daemon; see
+  [Send audio to Docbank](usage/beeper.md#send-audio-to-docbank).
+- List Gmail downloads, processing steps, and file saves that sync still
+  retries with
+  [`msgvault diagnose-acquisition --source-id N`](cli-reference.md#diagnose-acquisition).
+  `--all` adds failures that were fixed, retired, or are unknown. An empty list
+  doesn't prove the archive is complete.
+- Describe a task to find the command for it with
+  [`msgvault cli search`](cli-reference.md#cli-search), for example
+  `msgvault cli search "find email by sender"`. It runs locally and needs no
+  archive or daemon.
+- [Facts](web-ui.md#saved-profiles-and-possible-duplicates) shows each field's
+  saved value above its claims, where each claim came from, and why a claim
+  wasn't used.
+- MCP `get_message` segments recognize Thunderbird reply and forward markers
+  in Spanish, Italian, and Portuguese. `segments_version` is now `seg-v2`;
+  refresh any cached `seg-v1` ranges.
+- File messages to Tasks or Kata from the reader, and see linked work together under **Tasks**.
+- Archive [Bland calls](usage/meetings.md#bland) as meetings with their summaries, retained transcripts and recordings saved locally, up to 1 GiB each by default (`max_media_mb`).
+- Filter the message change feed by person, source, conversation, or incoming direction, and read it from an owner MCP agent with `list_changes`.
+- Contact lists turn `contact_frequency` into a reach-out queue. `msgvault person attributes set <id> contact_frequency --list A` sets the 21/60/180/365-day A/B/C/D presets, and `person directory --cadence overdue|due|no_list|unknown` with `--sort most_overdue|next_due` lists who is due. MCP `list_directory_people` takes the same filters, and `set_person_contact_list` sets a list after confirmation. See [contact lists](usage/people.md#keep-in-touch-with-contact-lists).
+- Start bounded Gmail or IMAP historical imports through MCP with `--allow-import-writes`, and follow their durable job status.
+- MCP clients can list and read msgvault's bundled guides with `msgvault.skills`: the MCP quickstart as `workflow` and every [agent skill](guides/agent-skills.md#skills-and-the-mcp-server). Delegated sessions can use it too.
+- Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose.
+- Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.
+  With `--allow-curated-writes` and explicit client confirmation, it can apply
+  atomic profile patches. The client is responsible for obtaining user approval.
+- Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
+- Join or separate archived meeting copies with `meetings link` and `meetings unlink`, the API, or MCP. Choices survive sync and rebuilds. `meetings reset-link` restores automatic matching. Requires HTTP API schema 5.10.0.
+- Open linked calendar copies and notes with `msgvault meetings links`,
+  `GET /api/v1/meetings/record`, or MCP `get_meeting_record`. Copy an
+  occurrence reference from `msgvault calendar events` to select a specific
+  week.
+- New Messenger and Instagram inbox messages, including the ones the Page or
+  account sends, are archived as they arrive when the
+  [Meta webhook receiver](usage/meta-webhooks.md#inbox-messages) gets the
+  `messages` and `message_echoes` fields.
+- [Facebook and Instagram messages](usage/meta-messages.md) archive a Page's
+  Messenger inbox or a linked Instagram account's direct messages as searchable
+  chats. Configure `[[facebook_messages]]` or `[[instagram_messages]]`, then run
+  `msgvault source facebook-messages` or `instagram-messages` `add` and `sync`.
+  Meta returns the 20 most recent messages of each conversation.
+- Posts and comments by others that mention a Facebook Page are archived in
+  its comment source when the [Meta webhook receiver](usage/meta-webhooks.md)
+  gets the Page `mention` field.
+- Instagram captions and comments that @-mention a linked account are archived
+  into its [mentions source](usage/instagram-comments.md#archive-media-that-tags-the-account)
+  when the Meta webhook receiver gets the `mentions` field.
+- [Meta webhooks](usage/meta-webhooks.md) archive new Instagram comments and
+  live comments as they arrive. Subscribe the Instagram object to `comments`
+  and `live_comments`.
+- [Meta webhooks](usage/meta-webhooks.md) archive new, edited, hidden and
+  removed Facebook Page comments as they happen. Configure `[meta_webhooks]`
+  and subscribe the Page to the `feed` field; polling sync stays available for
+  backfill.
+- [Instagram mentions sync](usage/instagram-comments.md#archive-media-that-tags-the-account)
+  archives media in which other accounts tag a linked professional account, in a
+  separate opt-in source. Set `mentions = true` on the profile, then run
+  `msgvault source instagram-mentions add` and `sync`.
+- [Reply publicly](usage/facebook-comments.md#reply-to-comments) to an archived
+  Facebook Page or Instagram comment with `msgvault comment reply`. The reply
+  is archived straight away, and msgvault refuses to send the same text to a
+  comment twice. Each profile opts in with `"reply"` in `actions`.
+- [Hide, unhide, or delete](usage/facebook-comments.md#hide-or-delete-comments)
+  an archived Facebook Page or Instagram comment with `msgvault comment moderate`.
+  Each profile opts in with `actions`, and delete needs `--yes`.
+- Instagram comment sync can also archive comments on the account's ads that
+  its media list leaves out. Set `ad_account_id` and `ad_token_env` on the
+  profile; see [Include ad media](usage/instagram-comments.md#include-ad-media).
+- Let owner MCP clients read person attributes and definitions, and enable attribute edits with `--allow-attribute-writes`. The owner approves the previewed value, and the write refuses if that value or empty slot changes before saving. The tools require an updated daemon. Existing archives migrate attribute JSON on writable open; upgrade applications using embedded archive readers alongside the daemon. Numbers stored before this change may have already lost their original spelling.
+- Use `msgvault family show <id>`, the MCP tool `get_email_family`, or the family read endpoint to find an email's archived copies, replies and forwards across accounts. Results identify the evidence connecting each copy and report when the lookup is incomplete. These reads are available to the archive owner.
+- Open **Related copies** beside an email to find copies in other accounts and conversations. The panel loads when opened and leaves out messages already shown in the conversation.
+
+### Improvements
+
+- Incomplete open-loop lists continue checking history in the background.
+- MCP operation tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unusable. This replaces `operation_response_limit_exceeded`, `operation_response_failed`, and `invalid_operation_response` for those write receipts. Read current state before retrying.
+- An interrupted `sync-full` prints a command to run again with the same account, filters, configuration, and logging flags. It exits with status 130; on Windows, run the command in PowerShell 7.3 or later.
+- Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
+- In a 14,000-message Telegram import benchmark on SQLite, saving up to 50 messages at once reduced import time from 326 seconds to 119 seconds, about 2.7 times faster.
+
+### Bug fixes
+
+- Circleback syncs wait and retry when Circleback answers `429 Too Many Requests`, instead of failing every remaining meeting in the run.
+- Count linked transcripts once in People and Relationships, including when a source or date filter selects only one copy.
+- Account matching recovers after identity changes. Explore refreshes pending counts and lets you retry matching for each source.
+- A message you restore from Trash in Gmail or IMAP returns to search after the
+  next sync. If you restored a Gmail message earlier and it is still hidden,
+  run `msgvault sync-full you@example.com`.
+- An unfiltered Gmail `sync-full` no longer skips label changes and deletions
+  that were waiting in Gmail's history; the next incremental sync applies them.
+- `msgvault message-tags` reads a source-deleted message's current tags when
+  the provider still has the message. Editing its tags is still refused.
+- When an identity change saves but its cache refresh fails, **Retry**
+  refreshes the related views without repeating the change, and the warning
+  stays while you move between views.
+- Scheduled Beeper imports stop between members of a large group chat when
+  their time runs out, so other sources no longer wait on them. Imported
+  messages are kept and the roster work finishes on a later run.
+- An IMAP sync no longer crashes when the server drops the connection and
+  reconnecting fails, as DavMail does when it restarts. The mailbox is skipped
+  or the run ends with an error.
+- Scheduled person enrichment no longer stops when a request or cost budget
+  runs out at UTC midnight.
+
+## 0.25.0
+<small>2026-11-14</small>
+
+Connect Claude Code and Codex to your archive with one command, sync Microsoft
+365 mailboxes from several organizations, and let assistants find the right
+tool for a task, export one person's messages, and review staged deletions.
+This release also replaces 0.24.0, which was withdrawn because its Linux
+binaries did not start on most distributions.
+
+[GitHub release](https://github.com/kenn-io/msgvault/releases/tag/v0.25.0) ·
+[All changes since 0.24.0](https://github.com/kenn-io/msgvault/compare/v0.24.0...v0.25.0)
+
+### Upgrade notes
+
+- **0.25.0 includes everything in 0.24.0.** If you are upgrading from 0.23.0,
+  follow the [0.24.0 upgrade notes](#0240) first. They cover document search
+  moving to Docbank and upgrading clients together with the daemon.
+- **On Linux, reinstall if 0.24.0 left msgvault unable to start.** The 0.24.0
+  Linux binaries required glibc 2.43, so they failed with
+  ``version `GLIBC_2.43' not found`` on Ubuntu 24.04, Debian 12, and other
+  releases older than Ubuntu 26.04. `msgvault update` from 0.23.0 installed
+  them anyway, which left a binary that could not run or update itself.
+  Reinstall with `curl -fsSL https://msgvault.io/install.sh | bash`. The
+  archive was not changed, because 0.24.0 exited before it opened anything.
+
+### New features
+
+- Connect Claude Code and Codex to your archive with
+  [`msgvault agent setup`](cli-reference.md#agent-setup). The command installs
+  skills and configures MCP access, the connection assistants use to work with
+  msgvault. [`msgvault setup status`](cli-reference.md#setup-status) reports
+  each installed agent's connection status and any repair command.
+- Sync Microsoft 365 mailboxes from
+  [multiple organizations](guides/oauth-setup.md#mailboxes-in-multiple-organizations)
+  without switching configuration between runs. Define named apps under
+  `[microsoft.apps.NAME]` and select one with
+  `msgvault add-o365 ADDRESS --oauth-app NAME`. Teams, contacts, and the web
+  add-source form continue to use `[microsoft]`.
+- Find MCP tools by describing a task with
+  [`search_tools`](usage/chat.md#find-tools-for-a-task). Search runs locally
+  and returns relevant tools with their descriptions and inputs, limited to
+  those available to the connection.
+- Export one person's messages as JSONL through an MCP-connected assistant
+  with [`export_person_messages`](usage/chat.md#available-tools). Archive
+  owners receive the export, manifest, and completion receipt without running
+  `msgvault export-messages` separately. Exports must fit within the 512 KiB
+  response limit.
+- [Review staged deletions through MCP](usage/chat.md#staged-deletion-via-mcp)
+  without enabling writes. Archive owners can list deletion batches with
+  `list_deletions` and read a batch's receipt with `get_deletion`. These tools
+  are unavailable to delegated sessions.
+
+### Improvements
+
+- Remove leftover Microsoft tokens when removing a Graph mail or IMAP source.
+  msgvault attempts cleanup across the default and named apps, keeps tokens
+  another active source still uses, and warns when unreadable IMAP settings
+  prevent cleanup.
+- Identify an IMAP account's authentication method through the optional
+  `auth_method` field on `GET /api/v1/cli/accounts`, when its settings are
+  readable. See [API compatibility](api-server.md#api-compatibility).
+
+### Bug fixes
+
+- Run the Linux release binaries on distributions back to Ubuntu 22.04 again.
+- Keep your working installation when an update cannot run.
+  [`msgvault update`](cli-reference.md#update) checks that the new binary
+  starts before replacing the installed one. A failed, timed-out, or canceled
+  check leaves the existing binary in place and reports why.
+- Restore provider credentials, CardDAV logins, and the server API key on
+  Windows with the required access permissions. Restore preserves files
+  omitted from the backup and reports permission conflicts. To repair a
+  conflict, move the conflicting file aside, stop the daemon, and rerun
+  [`msgvault backup restore`](cli-reference.md#backup-restore)
+  `SNAPSHOT --repo REPO --target DIR --permissions-only`.
+
+### Acknowledgements
+
+Thanks to everyone who contributed to this release:
+
+- [@AndrewWiggins](https://github.com/AndrewWiggins) for documenting how full-text indexing works and simplifying how sync records partial imports.
+- [@rodboev](https://github.com/rodboev) for `msgvault agent setup`, Microsoft 365 mailboxes in multiple organizations, Microsoft token cleanup when removing a source, and the IMAP authentication method in the accounts API.
+- [@salmonumbrella](https://github.com/salmonumbrella) for task-based tool search, JSONL export of one person's messages, staged deletion review through MCP, and Windows credential restores.
+- [@wesm](https://github.com/wesm) for keeping the installed binary when an update cannot run.
+
+---
 
 ## 0.24.0
 <small>2026-11-13</small>
@@ -35,7 +285,9 @@ for sensitive content and unfamiliar recipients, and sign-in codes withheld
 from delegated reads. Turn on search by meaning from Settings, search attached
 documents through Docbank, and use the Web UI comfortably on a phone.
 
-[GitHub release](https://github.com/kenn-io/msgvault/releases/tag/v0.24.0) ·
+Withdrawn: its Linux binaries did not start on most distributions. Install
+[0.25.0](#0250), which includes these changes.
+
 [All changes since 0.23.0](https://github.com/kenn-io/msgvault/compare/v0.23.0...v0.24.0)
 
 ### Upgrade notes

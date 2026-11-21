@@ -16,10 +16,9 @@
   --control-bg: var(--bg-surface);
   --control-border: var(--border-default);
   --text-danger: var(--accent-red);
-  --active-ink: var(--accent-blue);
+  --active-ink: color-mix(in srgb, var(--accent-blue) 80%, var(--text-primary));
   --link-ink: var(--accent-blue);
   --focus-color: var(--accent-blue);
-  --selected-bg: color-mix(in srgb, var(--accent-blue) 14%, var(--bg-surface));
   --artifact-ink: var(--accent-purple);
   --status-success-bg: color-mix(in srgb, var(--accent-green) 10%, var(--bg-surface));
   --status-success-ink: color-mix(in srgb, var(--accent-green) 72%, var(--text-primary));
@@ -323,6 +322,11 @@ body .kit-disclosure.kit-disclosure--plain.fold > .kit-disclosure__content {
  * labels below AA contrast. The dot and check mark already show the state. */
 :root .kit-filter-dropdown__panel .kit-filter-dropdown__item:not(.active) {
   opacity: 1;
+}
+
+/* Active filter labels need contrast against the inset fill in both themes. */
+:root .kit-filter-dropdown__btn.kit-filter-dropdown__btn--active {
+  color: var(--active-ink);
 }
 
 /* Kit centers a short segment inside a taller track, so the active pill floats

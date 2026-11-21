@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -96,11 +97,22 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 	var ownerResp HealthResponse
 	require.NoError(json.NewDecoder(wO.Body).Decode(&ownerResp))
 
-	for _, credential := range []struct{ header, key string }{
-		{apiprotocol.AgentTokenHeader, secret},
-		{"X-Api-Key", remoteClientTestReaderKey},
+	// A host's source scope restricts an owner-key request too, whether or
+	// not it authorizes any source.
+	for _, credential := range []struct {
+		header, key string
+		scope       []int64
+	}{
+		{apiprotocol.AgentTokenHeader, secret, nil},
+		{"X-Api-Key", remoteClientTestReaderKey, nil},
+		{"X-Api-Key", agentTokenTestAPIKey, []int64{1}},
+		{"X-Api-Key", agentTokenTestAPIKey, []int64{}},
 	} {
-		reqD := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
+		ctx := t.Context()
+		if credential.scope != nil {
+			ctx = sourcescope.WithSourceIDs(ctx, credential.scope)
+		}
+		reqD := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/health", nil)
 		reqD.Header.Set(credential.header, credential.key)
 		wD := httptest.NewRecorder()
 		srv.Router().ServeHTTP(wD, reqD)

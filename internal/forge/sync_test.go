@@ -209,6 +209,9 @@ func TestSyncArchivesEveryPostOfDiscoveredThreads(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	source := newForgeSource(t, st)
+	// The bot's email already names a person in the user's mail.
+	mailBot, err := st.EnsureParticipantContext(t.Context(), "bot@example.com", "CI", "example.com")
+	require.NoError(err)
 	f := newFakeForge()
 	f.pages = [][]ThreadRef{
 		{ref("i1", "acme", "2026-11-07T10:00:00Z"), ref("x1", "secret", "2026-11-07T11:00:00Z")},
@@ -269,7 +272,14 @@ func TestSyncArchivesEveryPostOfDiscoveredThreads(t *testing.T) {
 	assert.False(got["p1"].FromMe)
 	assert.Equal(fakeName, got["c1"].SenderType)
 	assert.Equal("forge.example.com:8443/git:user:1001", got["c1"].SenderValue, "accounts are keyed by instance and ID")
-	assert.Equal("forge.example.com:8443/git:user:3003", got["c2"].SenderValue, "a bot never links by email")
+	assert.Equal("forge.example.com:8443/git:user:3003", got["c2"].SenderValue, "accounts are keyed by instance and ID")
+	var botID int64
+	var botEmail string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT p.id, COALESCE(p.email_address, '') FROM messages m JOIN participants p ON p.id = m.sender_id
+		WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, "c2").Scan(&botID, &botEmail))
+	assert.NotEqual(mailBot, botID, "a bot never joins a person by email")
+	assert.Empty(botEmail, "a bot never joins a person by email")
 	assert.NotEqual(fakeName, got["p2"].SenderType, "a deleted account gets no forge identity")
 	assert.NotEqual(fakeName, got["c3"].SenderType, "a migrated name gets no forge identity")
 
@@ -977,6 +987,30 @@ func TestAFullSyncFetchesAnArchivedThreadNoListShowsAnyMore(t *testing.T) {
 	full, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{Full: true})
 	require.NoError(err)
 	require.Equal(1, full.Archived, "a full sync fetches every archived thread")
+}
+
+func TestAFullSyncFetchesAnArchivedThreadWhoseRepositoryLeftAnExcludedOwner(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "secret", "2026-11-07T10:00:00Z"), ref("i2", "secret", "2026-11-07T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}}
+	f.threads["i2"] = [][]Post{{post("p2", "issue", ann, "Two", "Body.", "2026-11-01T10:00:00Z")}}
+	_, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+
+	// The owner is excluded now, and i1's repository has since moved to
+	// another owner. No list shows either thread.
+	f.owners["i1"] = "acme"
+	f.discover = func(context.Context, KnownThreads, func([]ThreadRef, []byte) error) error { return nil }
+	f.fetches = nil
+	full, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{Full: true, Owners: NewOwnerFilter(nil, []string{"secret"})})
+	require.NoError(err)
+	assert.Equal(1, full.Archived, "the moved repository's thread is fetched under its current owner")
+	assert.Equal(1, full.Excluded, "the thread still under the excluded owner is not")
+	assert.Equal([]string{"i1@"}, f.fetches)
 }
 
 func TestAThreadChangedInTheSecondItWasFetchedIsFetchedAgain(t *testing.T) {

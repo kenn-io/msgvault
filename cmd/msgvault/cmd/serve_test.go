@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
 	imaplib "go.kenn.io/msgvault/internal/imap"
@@ -254,12 +255,14 @@ func TestStoreAPIAdapterDeletePersonRejectsRecordedAttemptKeyMismatch(t *testing
 	assert.NotEmpty(t, attempts)
 }
 
-// serveLifecycleTestTimeout bounds waits for daemon-startup milestones (API
-// seam entered, analytics build started, health ready). Every use is a
-// positive wait, so the value only stretches the failure path — passing runs
-// are unaffected. It must absorb a full InitSchema on the slowest CI
-// environment: the sharded Windows runner has been observed taking over two
-// minutes to execute schema.sql under filesystem load.
+// serveLifecycleTestTimeout bounds waits for daemon lifecycle milestones (API
+// seam entered, analytics build started, health ready, runServe returning
+// after cancellation). Every use is a positive wait, so the value only
+// stretches the failure path — passing runs are unaffected. It must absorb a
+// full InitSchema on the slowest CI environment: the sharded Windows runner
+// has been observed taking over two minutes to execute schema.sql under
+// filesystem load, and stalling for over five seconds between two
+// non-blocking steps of shutdown.
 const serveLifecycleTestTimeout = 180 * time.Second
 
 func TestServeOAuthValidationAllowsMicrosoftOnly(t *testing.T) {
@@ -305,7 +308,7 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	select {
 	case err := <-errCh:
 		require.NoError(t, err, "runServe")
-	case <-time.After(5 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow(t, "runServe did not stop after context cancellation")
 	}
 }
@@ -351,7 +354,7 @@ func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
 	select {
 	case err := <-errCh:
 		require.NoError(err, "runServe")
-	case <-time.After(5 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow("runServe did not stop after context cancellation")
 	}
 }
@@ -467,7 +470,7 @@ func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 	select {
 	case err := <-errCh:
 		require.NoError(err, "runServe")
-	case <-time.After(5 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow("runServe did not stop after context cancellation")
 	}
 }
@@ -2072,6 +2075,12 @@ func TestCLISyncSubprocessArgs(t *testing.T) {
 	)
 	assert.Equal([]string{"sync-full", "--", "-reader@example.org"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, Email: "-reader@example.org"}))
+	assert.Equal(
+		[]string{"sync-full", "--query", "label:example", "--noresume", "--before", "2024-03-01", "--after", "2024-01-01", "--limit", "2"},
+		cliSyncSubprocessArgs(api.CLISyncRequest{
+			Full: true, Query: "label:example", NoResume: true, Before: "2024-03-01", After: "2024-01-01", Limit: 2,
+		}),
+	)
 }
 
 func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {
@@ -2203,6 +2212,47 @@ func TestStoreAPIAdapterCanceledSyncOperationIsFailed(t *testing.T) {
 	assert.False(op.StartedAt.Valid)
 	assert.True(op.FinishedAt.Valid)
 	assert.Empty(op.Runs)
+}
+
+func TestStoreAPIAdapterInterruptedSyncOperationIsFailed(t *testing.T) {
+	f := storetest.New(t)
+	_, err := f.Store.CreateSyncOperation(f.Source.ID, "operation-1")
+	require.NoError(t, err)
+	adapter := &storeAPIAdapter{store: f.Store}
+	var events []api.CLISyncEvent
+	err = adapter.runCLISyncOperationWithRunner(t.Context(), api.CLISyncRequest{Full: true, OperationID: "operation-1"}, func(event api.CLISyncEvent) error {
+		events = append(events, event)
+		return nil
+	}, func(_ context.Context, _ []string, emit func(string, string) error) error {
+		require.NoError(t, emit("outcome", "interrupted"))
+		return errors.New(cliSubprocessExitSentinel)
+	})
+	require.EqualError(t, err, cliSubprocessExitSentinel)
+	assert.Equal(t, []api.CLISyncEvent{{Type: "outcome", Data: "interrupted"}}, events)
+	op, err := f.Store.GetSyncOperation("operation-1")
+	require.NoError(t, err)
+	assert.Equal(t, "failed", op.Status)
+}
+
+type interruptedSyncAdapter struct{ *storeAPIAdapter }
+
+func (a interruptedSyncAdapter) RunCLISync(ctx context.Context, req api.CLISyncRequest, emit func(api.CLISyncEvent) error) error {
+	return a.runCLISyncOperationWithRunner(ctx, req, emit, func(ctx context.Context, args []string, emit func(string, string) error) error {
+		return classifyDaemonCLIWaitErr(helperProcessCommand(ctx, "interrupted").Run(), args, emit)
+	})
+}
+
+func TestInterruptedSyncStreamFailsWithoutOutcomeHandling(t *testing.T) {
+	f := storetest.New(t)
+	adapter := interruptedSyncAdapter{&storeAPIAdapter{store: f.Store}}
+	srv := api.NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, adapter, nil, slog.New(slog.DiscardHandler))
+	httpServer := httptest.NewServer(srv.Router())
+	t.Cleanup(httpServer.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: httpServer.URL, AllowInsecure: true, RequestMode: daemonclient.RequestModeCLI})
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+	err = client.RunCLISync(t.Context(), daemonclient.CLISyncRequest{Full: true}, func(string, string) error { return nil })
+	require.ErrorContains(t, err, cliSubprocessExitSentinel)
 }
 
 func TestStoreAPIAdapterFinalizesSyncOperationAfterRunnerReturns(t *testing.T) {
