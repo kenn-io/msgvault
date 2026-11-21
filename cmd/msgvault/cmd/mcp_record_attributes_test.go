@@ -441,9 +441,13 @@ func TestMCPListAndClearAttributeWithLargeSiblings(t *testing.T) {
 	b, st, person := recordAttributesFixture(t)
 	created := attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "large_multi", "label": "Large multi", "value_type": "text", "field_type": "text", "cardinality": "multi"}})
 	require.False(t, created.IsError)
-	large := strings.Repeat("x", 600<<10)
-	for _, value := range []string{large, large, "small"} {
-		_, err := st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: "large_multi", Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}, Source: store.ProvenanceUser})
+	largeRef := strings.Repeat("x", 600<<10)
+	for _, value := range []string{"large", "large", "small"} {
+		var sourceRef *string
+		if value == "large" {
+			sourceRef = &largeRef
+		}
+		_, err := st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: "large_multi", Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}, Source: store.ProvenanceUser, SourceRef: sourceRef})
 		require.NoError(t, err)
 	}
 	session := attributeSession(t, b, nil, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
@@ -463,6 +467,8 @@ func TestMCPListAndClearAttributeWithLargeSiblings(t *testing.T) {
 	require.False(t, result.IsError, "%v", result.Content)
 	remaining := attributeValues(t, st, person, "large_multi")
 	require.Len(t, remaining, 2)
-	assert.Equal(t, large, *remaining[0].Value.Text)
-	assert.Equal(t, large, *remaining[1].Value.Text)
+	assert.Equal(t, "large", *remaining[0].Value.Text)
+	assert.Equal(t, "large", *remaining[1].Value.Text)
+	assert.Equal(t, largeRef, *remaining[0].SourceRef)
+	assert.Equal(t, largeRef, *remaining[1].SourceRef)
 }
