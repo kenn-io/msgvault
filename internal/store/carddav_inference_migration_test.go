@@ -477,7 +477,7 @@ func TestMalformedCurrentInferredEmailCanBeRetired(t *testing.T) {
 }
 
 func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
-	for _, scenario := range []string{"retired", "other person", "unbound", "remote", "unmapped", "declared", "current", "unsupported metadata"} {
+	for _, scenario := range []string{"retired", "publication after v2", "different mapping", "other person", "remote", "ambiguous", "declared", "current", "unsupported metadata"} {
 		t.Run(scenario, func(t *testing.T) {
 			require := require.New(t)
 			st, personID, _ := newPersonFactProjectionStore(t)
@@ -497,26 +497,11 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 					envelope.NativeMappings = []vcard.NativeMapping{{Identity: property.Identity, Table: personContactPointsTableName, RowID: contact.Envelope.ID, Field: "original_value", Kind: vcard.HandlingNative}}
 				}
 			}
+			if scenario == "different mapping" {
+				envelope.NativeMappings = nil
+			}
 			envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, envelope.NativeMappings)
 			_, err = st.PutVCardResourceEnvelopeContext(t.Context(), VCardResourceEnvelopeInput{PersonID: personID, Envelope: envelope})
-			require.NoError(err)
-			var resourcePerson any = personID
-			if scenario == "unbound" {
-				resourcePerson = nil
-			}
-			if scenario == "other person" {
-				var other int64
-				require.NoError(st.db.QueryRow(st.Rebind(`INSERT INTO persons(vcard_uid, display_name) VALUES ('other', 'Other') RETURNING id`)).Scan(&other))
-				resourcePerson = other
-			}
-			governance, status := CardDAVGovernanceLocal, CardDAVMappingMapped
-			if scenario == "remote" {
-				governance = CardDAVGovernanceRemote
-			}
-			if scenario == "unmapped" {
-				status = CardDAVMappingUnbound
-			}
-			_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_resources(address_book_id, href, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id) VALUES (?, ?, ?, ?, ?, 'local', ?, ?, ?)`), book.ID, envelope.SourceResourceUID, `"etag"`, envelope.StoredBody, "hash", status, governance, resourcePerson)
 			require.NoError(err)
 			if scenario != "current" {
 				require.NoError(st.SupersedePersonContactPointContext(t.Context(), personID, contact.Envelope.ID, nil))
@@ -526,12 +511,37 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 			require.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error {
 				return st.approveCardDAVInferenceTx(t.Context(), tx, before.Inference, before.ConnectionGeneration, book.ID)
 			}))
-			var unrelatedID int64
-			require.NoError(st.db.QueryRow(st.Rebind(`INSERT INTO persons(vcard_uid, display_name) VALUES ('unrelated', 'Unrelated') RETURNING id`)).Scan(&unrelatedID))
-			unrelated, err := st.AddPersonContactPointContext(t.Context(), unrelatedID, PersonContactPointInput{AddressKind: ContactAddressEmail, OriginalValue: "unrelated@example.test", Envelope: ValueEnvelopeInput{Source: ProvenanceEnrichment}})
+			var resourcePerson any = personID
+			if scenario == "other person" {
+				var other int64
+				require.NoError(st.db.QueryRow(st.Rebind(`INSERT INTO persons(vcard_uid, display_name) VALUES ('other', 'Other') RETURNING id`)).Scan(&other))
+				resourcePerson = other
+			}
+			governance, status := CardDAVGovernanceLocal, CardDAVMappingMapped
+			if scenario == "remote" {
+				governance = CardDAVGovernanceRemote
+			}
+			if scenario == "ambiguous" {
+				status = CardDAVMappingAmbiguous
+			}
+			_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_resources(address_book_id, href, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id) VALUES (?, ?, ?, ?, ?, 'local', ?, ?, ?)`), book.ID, envelope.SourceResourceUID, `"etag"`, envelope.StoredBody, "hash", status, governance, resourcePerson)
 			require.NoError(err)
-			require.NoError(st.SupersedePersonContactPointContext(t.Context(), unrelatedID, unrelated.Envelope.ID, nil))
-			unrelatedBefore := inferenceRevision(t, st, unrelatedID)
+			if scenario == "other person" || scenario == "remote" || scenario == "ambiguous" {
+				_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_resources(address_book_id, href, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id) VALUES (?, ?, ?, ?, ?, 'local', ?, ?, ?)`), book.ID, book.CanonicalURL+"other.vcf", `"etag"`, envelope.StoredBody, "hash", CardDAVMappingMapped, CardDAVGovernanceLocal, personID)
+				require.NoError(err)
+			}
+			if scenario == "publication after v2" {
+				_, err = st.db.Exec(st.Rebind(`DELETE FROM person_carddav_inference_state WHERE person_id=?`), personID)
+				require.NoError(err)
+				_, err = st.db.Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name=?`), migrationCardDAVInferenceExportStateV2)
+				require.NoError(err)
+				require.NoError(st.InitSchema())
+				before, err = st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
+				require.NoError(err)
+				assert.False(t, before.Inference.ReviewRequired(before.ConnectionGeneration, book.ID))
+				_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_publications(person_id, desired, address_book_id, href) VALUES (?, TRUE, ?, ?)`), personID, book.ID, envelope.SourceResourceUID)
+				require.NoError(err)
+			}
 			if scenario == "unsupported metadata" {
 				_, err = st.db.Exec(st.Rebind(`UPDATE vcard_resource_envelopes SET resource_metadata=`+st.dialect.JSONBindExpr()+` WHERE person_id=?`), `{"format_version":999}`, personID)
 				require.NoError(err)
@@ -546,17 +556,24 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 				assert.Equal(t, before.Inference.InferenceRevision, inferenceRevision(t, st, personID))
 				return
 			}
-			for range 2 {
+			runs := 1
+			if scenario == "retired" {
+				runs = 2
+			}
+			for range runs {
 				require.NoError(st.InitSchema())
-				after, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
-				require.NoError(err)
+				var after CardDAVInferenceExportState
+				require.NoError(st.withReadSnapshotContext(t.Context(), func(tx *loggedTx) error {
+					var err error
+					after, err = st.getCardDAVInferenceExportStateTx(t.Context(), tx, personID)
+					return err
+				}))
 				increment := int64(0)
-				if scenario == "retired" {
+				if scenario == "retired" || scenario == "publication after v2" {
 					increment = 1
 				}
-				assert.Equal(t, unrelatedBefore, inferenceRevision(t, st, unrelatedID))
-				assert.Equal(t, before.Inference.InferenceRevision+increment, after.Inference.InferenceRevision)
-				assert.Equal(t, scenario == "retired", after.Inference.ReviewRequired(after.ConnectionGeneration, book.ID))
+				assert.Equal(t, before.Inference.InferenceRevision+increment, after.InferenceRevision)
+				assert.Equal(t, increment == 1, after.ReviewRequired(before.ConnectionGeneration, book.ID))
 			}
 		})
 	}
