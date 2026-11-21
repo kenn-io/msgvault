@@ -174,7 +174,7 @@ test('a long sidebar saved view list keeps every row at its full height and scro
   }));
   for (const [index, current] of rows.entries()) {
     expect(current.overflow, `row ${index + 1} content overflows its row`).toBeLessThanOrEqual(0);
-    expect(current.bottom - current.top, `row ${index + 1} is squashed`).toBeGreaterThanOrEqual(26);
+    expect(current.bottom - current.top, `row ${index + 1} has the wrong height`).toBe(26);
     if (index > 0) expect(current.top, `row ${index + 1} overlaps the row above`).toBeGreaterThanOrEqual(rows[index - 1]!.bottom - 1);
   }
   const last = sidebar.getByRole('button', { name: 'Saved view 40', exact: true });
