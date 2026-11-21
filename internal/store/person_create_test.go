@@ -638,7 +638,7 @@ func TestRetiringInferredNameInvalidatesDisplayNameConsumers(t *testing.T) {
 		"clearing a mirrored display name invalidates related-card snapshots")
 }
 
-func TestEnrichmentCreatedFormattedNameTracksRepeatedDisplayNameEdits(t *testing.T) {
+func TestDisplayNameEditsRetireEnrichmentCreatedName(t *testing.T) {
 	firstName := "Alex First"
 	secondName := "Alex Second"
 	for _, tc := range []struct {
@@ -647,12 +647,12 @@ func TestEnrichmentCreatedFormattedNameTracksRepeatedDisplayNameEdits(t *testing
 		want    *string
 	}{
 		{
-			name:    "second rename updates the current formatted name",
+			name:    "second rename sets the display name",
 			changes: []*string{&firstName, &secondName},
 			want:    &secondName,
 		},
 		{
-			name:    "clearing retires the rename-created formatted name",
+			name:    "clearing removes the display name",
 			changes: []*string{&firstName, nil},
 		},
 	} {
