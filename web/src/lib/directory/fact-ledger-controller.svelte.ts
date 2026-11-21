@@ -58,6 +58,8 @@ export interface FactEvidenceRow {
 }
 export interface FactClaimRow {
   rowToken: string;
+  kind: RawClaim['kind'];
+  status: RawClaim['status'];
   submittedValue: string;
   displayValue: string;
   parsedValue?: unknown;
@@ -657,6 +659,8 @@ function projectClaim(row: RawClaim, index: number): FactClaimRow {
   const { parsedValue, displayValue } = claimValue(row.submitted_value, row.target.kind);
   return {
     rowToken: `claim-${index}`,
+    kind: row.kind,
+    status: row.status,
     submittedValue: row.submitted_value,
     displayValue,
     parsedValue,
