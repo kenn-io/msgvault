@@ -439,15 +439,11 @@ func TestMCPAttributeExactTokens(t *testing.T) {
 
 func TestMCPListAndClearAttributeWithLargeSiblings(t *testing.T) {
 	b, st, person := recordAttributesFixture(t)
-	created := attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "large_multi", "label": "Large multi", "value_type": "text", "field_type": "text", "cardinality": "multi"}})
+	created := attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "large_multi", "label": "Large multi", "value_type": "json", "field_type": "json", "cardinality": "multi"}})
 	require.False(t, created.IsError)
-	largeRef := strings.Repeat("x", 600<<10)
-	for _, value := range []string{"large", "large", "small"} {
-		var sourceRef *string
-		if value == "large" {
-			sourceRef = &largeRef
-		}
-		_, err := st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: "large_multi", Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}, Source: store.ProvenanceUser, SourceRef: sourceRef})
+	large := `"` + strings.Repeat("x", 600<<10) + `"`
+	for _, value := range []string{large, large, `"small"`} {
+		_, err := st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: "large_multi", Value: store.AttributeValue{Type: store.AttributeValueJSON, JSON: jsontext.Value(value)}, Source: store.ProvenanceUser})
 		require.NoError(t, err)
 	}
 	session := attributeSession(t, b, nil, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
@@ -461,14 +457,12 @@ func TestMCPListAndClearAttributeWithLargeSiblings(t *testing.T) {
 	require.Len(t, page.Attributes, 1)
 	require.Len(t, page.Attributes[0].Current, 1)
 	selected := page.Attributes[0].Current[0]
-	require.Equal(t, "small", *selected.Value.Text)
+	require.Equal(t, `"small"`, string(selected.Value.JSON))
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "clear_person_attribute", Arguments: map[string]any{"person_id": person, "slug": "large_multi", "ordinal": selected.Ordinal, "expected_value_id": selected.ID}})
 	require.NoError(t, err)
 	require.False(t, result.IsError, "%v", result.Content)
 	remaining := attributeValues(t, st, person, "large_multi")
 	require.Len(t, remaining, 2)
-	assert.Equal(t, "large", *remaining[0].Value.Text)
-	assert.Equal(t, "large", *remaining[1].Value.Text)
-	assert.Equal(t, largeRef, *remaining[0].SourceRef)
-	assert.Equal(t, largeRef, *remaining[1].SourceRef)
+	assert.Equal(t, large, string(remaining[0].Value.JSON))
+	assert.Equal(t, large, string(remaining[1].Value.JSON))
 }
