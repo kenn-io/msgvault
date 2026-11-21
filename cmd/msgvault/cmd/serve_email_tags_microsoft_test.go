@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"log/slog"
 	"net/http"
@@ -82,4 +83,77 @@ func TestDaemonMessageTagsMicrosoftSharedPath(t *testing.T) {
 	require.NoError(err)
 	assert.ElementsMatch([]string{"Inbox", "Category: Other", "Category: Next"}, msg.Labels)
 	assert.Equal(int32(1), writes.Load())
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), source.ID, sql.NullString{String: "missing", Valid: true}))
+	_, err = a.MessageTags(t.Context(), mid, &emailtags.MessageTagChange{Add: []string{"Another"}}, "", nil)
+	require.ErrorAs(err, &failure)
+	assert.Equal("provider_unavailable", failure.Code)
+	assert.Equal(int32(1), writes.Load())
+}
+
+func TestDaemonMessageTagsSourceDeletedRead(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeMSMail, "owner@example.test")
+	require.NoError(t, err)
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Tags")
+	require.NoError(t, err)
+	mid, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "immutable-1", MessageType: "email"})
+	require.NoError(t, err)
+	requests := new(atomic.Int32)
+	status := new(atomic.Int32)
+	status.Store(http.StatusOK)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/me/messages/immutable-1", r.URL.Path)
+		w.WriteHeader(int(status.Load()))
+		if status.Load() == http.StatusOK {
+			assert.NoError(t, json.MarshalWrite(w, map[string]any{"id": "immutable-1", "categories": []string{"Remote"}}))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	refreshes := 0
+	a := &storeAPIAdapter{
+		store: st, config: lifecycleTestConfig(t.TempDir()), logger: slog.New(slog.DiscardHandler),
+		microsoftTagClientFactory: func(_ context.Context, _ *store.Source, write bool) (*msmail.Client, error) {
+			assert.False(t, write)
+			return msmail.NewClient(srv.URL, func(context.Context) (string, error) { return "synthetic-token", nil }, 1000), nil
+		},
+		draftCacheRefresh: func(context.Context, string) error { refreshes++; return nil },
+	}
+	acquisitions := 0
+	acquire := func(context.Context) (func(), error) { acquisitions++; return func() {}, nil }
+	control, err := a.MessageTags(t.Context(), mid, nil, "", acquire)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), mid)
+	require.NoError(t, err)
+	before, err := st.GetMessage(mid)
+	require.NoError(t, err)
+	require.NotNil(t, before.DeletedAt)
+	got, err := a.MessageTags(t.Context(), mid, nil, "", acquire)
+	require.NoError(t, err)
+	assert.Equal(t, control, got, "the local source marker must not change the provider observation")
+	assert.Equal(t, []string{"Remote"}, got.Tags)
+	assert.Equal(t, mid, got.MessageID)
+	assert.Equal(t, int32(2), requests.Load())
+	for _, change := range []*emailtags.MessageTagChange{
+		{},
+		{Add: []string{"Next"}},
+		{Add: []string{"Next"}, DryRun: true},
+	} {
+		_, err = a.MessageTags(t.Context(), mid, change, "", acquire)
+		require.ErrorIs(t, err, store.ErrMessageNotFound)
+	}
+	assert.Equal(t, int32(2), requests.Load(), "edits and previews must fail before contacting the provider")
+	assert.Zero(t, acquisitions)
+	assert.Zero(t, refreshes)
+
+	status.Store(http.StatusNotFound)
+	got, err = a.MessageTags(t.Context(), mid, nil, "", acquire)
+	var failure *emailtags.MessageTagError
+	require.ErrorAs(t, err, &failure)
+	assert.Equal(t, "stale_identity", failure.Code)
+	assert.Nil(t, got, "provider absence must not become an empty successful result")
+	after, err := st.GetMessage(mid)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "reads must preserve archived state")
 }

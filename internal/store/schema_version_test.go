@@ -105,19 +105,45 @@ func TestInitSchemaUnlessCurrentPostgreSQLFallsThroughToFullInitializer(t *testi
 	}
 }
 
-func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
+func TestSchemaVersionIndexUpgrade(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	if !f.Store.IsPostgreSQL() {
-		t.Skip("PostgreSQL index check")
+	index := "idx_calendar_events_series_id"
+	query := `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_calendar_events_series_id'`
+	if f.Store.IsPostgreSQL() {
+		index = "idx_identity_match_candidates_right"
+		query = `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`
 	}
-	_, err := f.Store.DB().ExecContext(t.Context(), "DROP INDEX idx_identity_match_candidates_right")
+	_, err := f.Store.DB().ExecContext(t.Context(), "DROP INDEX "+index)
 	require.NoError(err)
 	require.NoError(f.Store.InitSchemaContext(t.Context()))
 	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
 	var count int
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`).Scan(&count))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), query).Scan(&count))
 	assert.Equal(t, 1, count)
+}
+
+func TestSchemaVersionMeetingDecisionsPreviousUpgrade(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	_, err := f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_copy_survivors`)
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_link_decisions`)
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = '46' WHERE key = 'schema_version'`)
+	require.NoError(err)
+	require.Error(f.Store.ValidateSchemaContext(ctx))
+	require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
+	var count int
+	require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
+	require.Zero(count)
+	require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM meeting_copy_survivors`).Scan(&count))
+	require.Zero(count)
+	version, err := f.Store.SchemaVersionContext(ctx)
+	require.NoError(err)
+	require.Equal(store.SchemaVersion, version)
+	require.NoError(f.Store.ValidateSchemaContext(ctx))
 }
 
 func TestSchemaVersionDocbankUpgrade(t *testing.T) {
@@ -136,6 +162,59 @@ func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	var count int
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM docbank_attachment_deliveries").Scan(&count))
 	assert.Zero(count)
+}
+
+func TestSchemaVersionFactOutcomeUpgradeFrom45(t *testing.T) {
+	f := storetest.New(t)
+	ctx := t.Context()
+	_, err := f.Store.DB().ExecContext(ctx, "ALTER TABLE person_fact_decisions DROP COLUMN outcome")
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(ctx, "UPDATE archive_metadata SET value='45' WHERE key='schema_version'")
+	require.NoError(t, err)
+	require.Error(t, f.Store.ValidateSchemaContext(ctx))
+	require.NoError(t, f.Store.InitSchemaUnlessCurrentContext(ctx))
+	require.NoError(t, f.Store.ValidateSchemaContext(ctx))
+	var count int
+	require.NoError(t, f.Store.DB().QueryRowContext(ctx, "SELECT COUNT(outcome) FROM person_fact_decisions").Scan(&count))
+	assert.Zero(t, count)
+}
+
+func TestSchemaVersionAddsDisplayNameOwnerOnUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s := testutil.NewTestStore(t)
+	_, err := s.DB().ExecContext(t.Context(), s.Rebind("UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'"),
+		strconv.Itoa(store.SchemaVersion-1))
+	require.NoError(err)
+	var ownerColumns int
+	require.NoError(s.DB().QueryRowContext(t.Context(), displayNameOwnerColumnCountQuery()).Scan(&ownerColumns))
+	if ownerColumns > 0 {
+		_, err = s.DB().ExecContext(t.Context(), `ALTER TABLE persons DROP COLUMN display_name_source_name_id`)
+		require.NoError(err)
+	}
+	_, err = s.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
+		VALUES ('legacy-name-owner-upgrade', 'Legacy Example')`)
+	require.NoError(err)
+
+	require.NoError(s.InitSchemaContext(t.Context()))
+	ownerColumns = 0
+	require.NoError(s.DB().QueryRowContext(t.Context(), displayNameOwnerColumnCountQuery()).Scan(&ownerColumns))
+	assert.Equal(1, ownerColumns)
+	var displayName string
+	require.NoError(s.DB().QueryRowContext(t.Context(), `SELECT display_name FROM persons
+		WHERE vcard_uid = 'legacy-name-owner-upgrade'`).Scan(&displayName))
+	assert.Equal("Legacy Example", displayName,
+		"schema upgrade keeps the existing curated display name")
+}
+
+func displayNameOwnerColumnCountQuery() string {
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		return `SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = 'persons'
+			AND column_name = 'display_name_source_name_id'`
+	}
+	return `SELECT COUNT(*) FROM pragma_table_info('persons')
+		WHERE name = 'display_name_source_name_id'`
 }
 
 func TestSchemaVersionSQLiteFailedUpgrade(t *testing.T) {
@@ -281,12 +360,12 @@ func TestSchemaVersionForgeServicesUpgrade(t *testing.T) {
 	s := testutil.NewTestStore(t)
 	ctx := t.Context()
 
-	// An archive set up by version 39 has no forge services.
+	// An archive set up by version 50 has no forge services.
 	_, err := s.DB().ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = 'communication_services_forges_v1'`)
 	require.NoError(err)
 	_, err = s.DB().ExecContext(ctx, `DELETE FROM communication_services WHERE slug IN ('github', 'gitlab', 'gitea')`)
 	require.NoError(err)
-	_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), "39")
+	_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), "50")
 	require.NoError(err)
 	require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
 
@@ -365,7 +444,18 @@ var (
 		37: "f6d6ae3d753476a4261d54df5d413994ec987dc34137fccf421f215bf0a11b7e",
 		38: "ac18227f57322ed8e822c5406000375e7e3aa2b47c73246ba36e9b0628c9bb66",
 		39: "3b4a4d69ac0ae321fddcd1836b788118f5a7f25cda49d89ef8c327bd7338288d",
-		40: "41b6c04efd34a7badd9fc1ce9489c438fedbec435aacbfadbbc537436d865373",
+		40: "a26d72acc985ec3ca25ab69f8173b6fc2fb050f26298e162a0cc1358abeda0f9",
+		41: "87805b27cac30a9b23f779a8bec0c9d5bf5d5cc463b286fb63f645e60567aa56",
+		42: "d59c2905aca47c18220182ebf5ada7a8e781f5bda3d2cb65d6bdd6d66fd2d936",
+		43: "81541e5c85e1846374020de19a42c4a481af1554161331bb68890c3d0975057b",
+		44: "053a17f434e83a1e31845b1fe434b0f4a46eaf43c2ef9accd915b34323410c7d",
+		45: "976143b6a16bea27c9ddbf2e2c23e3909e3c0fd48b3a3ec65f877afd88c278dd",
+		46: "b461fc6b400cfef51c90d20946d31003ec68190467c137e3eb6adf29af2a881f",
+		47: "446ac2e639d0c49992e416072be4c2d80544325b30d1e90d6e5cee0db2ea7896",
+		48: "07dd36cdfff6c46735a6db924e0f9e3701dd68d8fec798f196c894ba7cdc948d",
+		49: "aba299e2311d826c1db938c2461c3bc9a8d844065695c4f6548af4e0d9a32df8",
+		50: "347d939adf66868ab2e3e0428fb71339805a692ef2d96da15f831d51ac2f91ee",
+		51: "332020dac12b4cd2a6dfe25f1e08d02d85f6a10e4393245c90b35fc19f984fb6",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -402,7 +492,18 @@ var (
 		37: "7620e8c5b65db28a3b5bd6a0f709e53df28c5d7ee2fae42454e372508d9bc10e",
 		38: "5244b660c5b79ef46144ba5a9fa9470f84a15fe6b2cb1a3ffd11d2a39157ec32",
 		39: "77f763ebf58ff6f1df95dac4e187489afb6cc3521177cac60e7eef0894a8306a",
-		40: "8d68eb3dcdc4afb7c230763e6a4a98f91564fab183b83a7a4b1daf1141754eb3",
+		40: "fd168ca80dd687aba404bf05be9a932eb5530303b9ac0cd73f91cc7ee01c14f2",
+		41: "f5438190c64d99d1f9d8f85e6a2d0508a8296aae5dfc5b389c5a1dc3e16c59d6",
+		42: "f3cc0baedce3bb1638cc4a4ecf5443039c176fd069c25975397bb35c41c26167",
+		43: "663fab118e92dbefaf81cd6b9fe01b91643048581f26a756ed3607993c9d1de6",
+		44: "90c8894dd03273a01e067bb094b20f58c97d009d003aa0953d456a1ced6443aa",
+		45: "944577f5687a62a6defc5df8a5e39abd24a3ca1ad42791f9bda550cdbd1dc36d",
+		46: "b66d14fe605ee1d2b7500ed949a5bc40dc60c068a45dafd41099df66312e223b",
+		47: "7f0413f60ff0523e71e0a7c2fbd6e52ff87148c1807e6b7d792bafeecb61bc5a",
+		48: "88e0cabb45d64a8274c254a16a8c5990205c16f8eeca807a579cb38d336bcf04",
+		49: "26e862477d035b98f3c45c39dc90d03383e5adc4bd148790c0efd0b27900ce8c",
+		50: "504e4433a0f6934a24e064cd5605296ec98e2baced32c20584932552130b2f67",
+		51: "a3d585edd930ba83337869a9e1e89e34f052c72d8c9ec393eededa8a4eb1d2c8",
 	}
 )
 

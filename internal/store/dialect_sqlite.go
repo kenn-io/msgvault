@@ -344,6 +344,8 @@ func (d *SQLiteDialect) RFC822CanonicalIDIndexDefinition() string {
 // JSONBindExpr is "?" on SQLite — JSON columns are plain TEXT.
 func (d *SQLiteDialect) JSONBindExpr() string { return "?" }
 
+func (d *SQLiteDialect) JSONTextBindExpr() string { return "?" }
+
 func (d *SQLiteDialect) JSONIsDistinctExpr(col string) string { return col + " IS NOT ?" }
 
 // BuildFTSArg formats search terms as an FTS5 MATCH argument: each
@@ -399,29 +401,33 @@ func (d *SQLiteDialect) InsertOrIgnoreSuffix() string { return "" }
 func (d *SQLiteDialect) FTSUpsert(q querier, doc FTSDoc) error {
 	_, err := q.Exec(
 		`INSERT OR REPLACE INTO messages_fts(rowid, message_id, subject, body, from_addr, to_addr, cc_addr)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ? || COALESCE(char(10) || NULLIF(`+voiceSearchSQL(false, "?")+`, ''), ''))`,
 		doc.MessageID, doc.MessageID, doc.Subject, doc.Body,
-		doc.FromAddr, doc.ToAddrs, doc.CcAddrs,
+		doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.MessageID,
 	)
 	return err
 }
 
 // FTSMatches compares the stored FTS5 columns with doc.
 func (d *SQLiteDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
-	var subject, body, fromAddr, toAddrs, ccAddrs sql.NullString
+	var subject, body, fromAddr, toAddrs, ccAddrs, speech sql.NullString
 	err := q.QueryRow(
-		`SELECT subject, body, from_addr, to_addr, cc_addr FROM messages_fts WHERE rowid = ?`,
+		`SELECT subject, body, from_addr, to_addr, cc_addr, `+voiceSearchSQL(false, "messages_fts.rowid")+` FROM messages_fts WHERE rowid = ?`,
 		doc.MessageID,
-	).Scan(&subject, &body, &fromAddr, &toAddrs, &ccAddrs)
+	).Scan(&subject, &body, &fromAddr, &toAddrs, &ccAddrs, &speech)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
+	voice := speech.String
+	if voice != "" {
+		voice = "\n" + voice
+	}
 	return subject.String == doc.Subject && body.String == doc.Body &&
 		fromAddr.String == doc.FromAddr && toAddrs.String == doc.ToAddrs &&
-		ccAddrs.String == doc.CcAddrs, nil
+		ccAddrs.String == doc.CcAddrs+voice, nil
 }
 
 // FTSSearchClause returns SQL fragments for FTS5 full-text search.
@@ -440,7 +446,8 @@ func (d *SQLiteDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 // PostgreSQL applies setweight 'A'=1.0 to subject and 'B'=0.4 to sender,
 // with explicit C/D rank weights of 0.1 for recipients/body — a 10:4:1 ratio,
 // which bm25 reproduces as 10/1/4/1/1 across (subject, body, from, to,
-// cc). bm25 returns lower (more negative) scores for more relevant rows,
+// cc). Generated voice transcripts share cc_addr to keep body-only search
+// scoped to source text. bm25 returns lower (more negative) scores for more relevant rows,
 // so callers ORDER BY this expression ascending (the default).
 //
 // Known divergence: SQLite's bm25() applies Okapi BM25 document-length
@@ -450,7 +457,7 @@ func (d *SQLiteDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 // docs-site search ranking page ("Where Ordering Can Diverge") and
 // TestFTSRank_KnownDivergence for the expected-behavior pin and
 // rationale.
-func (d *SQLiteDialect) FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int) {
+func (d *SQLiteDialect) FTSSearchClause(rowIDs bool, _ []string) (join, where, orderBy string, orderArgCount int) {
 	where = "messages_fts MATCH ?"
 	if rowIDs {
 		where = SQLiteFTSRowIDCondition(where)
@@ -490,7 +497,7 @@ func (d *SQLiteDialect) FTSBackfillBatchSQL() string {
 	envelope := storedFTSEnvelopeSQL("GROUP_CONCAT")
 	return `INSERT OR REPLACE INTO messages_fts (rowid, message_id, subject, body, from_addr, to_addr, cc_addr)
 		SELECT m.id, m.id, ` + envelope.subject + `, COALESCE(mb.body_text, ''), ` +
-		envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs + `
+		envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs + ` || COALESCE(char(10) || NULLIF(` + voiceSearchSQL(false, "m.id") + `, ''), '')` + `
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.id >= ? AND m.id < ?`
@@ -1962,6 +1969,9 @@ func (d *SQLiteDialect) contentChangedAtDefaultStamps(q querier) (bool, error) {
 // silences these when the column already exists (idempotent migrations).
 func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE meeting_details ADD COLUMN link_key TEXT`, "meeting_details.link_key"},
+		{`ALTER TABLE calendar_events ADD COLUMN ical_uid TEXT NOT NULL DEFAULT ''`, "calendar_events.ical_uid"},
+		{`ALTER TABLE person_fact_decisions ADD COLUMN outcome TEXT`, "person_fact_decisions.outcome"},
 		{`ALTER TABLE carddav_resources ADD COLUMN owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
 		{`ALTER TABLE carddav_resources ADD COLUMN locally_published BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.locally_published"},
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
@@ -2052,6 +2062,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		// Legacy rows stay NULL (unfillable without re-parsing raw MIME) and
 		// discovery falls back to the participant's email for them.
 		{`ALTER TABLE message_recipients ADD COLUMN email_address TEXT`, "message_recipients.email_address"},
+		{`ALTER TABLE message_recipients ADD COLUMN is_relayed BOOLEAN NOT NULL DEFAULT FALSE`, "message_recipients.is_relayed"},
 		{`ALTER TABLE attachments ADD COLUMN attachment_role TEXT NOT NULL DEFAULT 'unknown' CHECK (attachment_role IN ('standalone', 'inline', 'avatar', 'thumbnail', 'preview', 'sticker', 'ui_asset', 'unknown'))`, "attachments.attachment_role"},
 		{`ALTER TABLE attachments ADD COLUMN role_source TEXT NOT NULL DEFAULT 'unknown' CHECK (role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'legacy_api', 'raw_mime_repair', 'unknown'))`, "attachments.role_source"},
 		{`ALTER TABLE attachments ADD COLUMN source_part_key TEXT CHECK (source_part_key IS NULL OR source_part_key != '')`, "attachments.source_part_key"},
@@ -2064,6 +2075,8 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		// write moves it, so no backfill is needed.
 		{`ALTER TABLE persons ADD COLUMN vcard_projection_revision INTEGER NOT NULL DEFAULT 1`,
 			"persons.vcard_projection_revision"},
+		{`ALTER TABLE persons ADD COLUMN display_name_source_name_id INTEGER`,
+			"persons.display_name_source_name_id"},
 		{`ALTER TABLE person_names ADD COLUMN source_resource_uid TEXT`, "person_names.source_resource_uid"},
 		{`ALTER TABLE person_contact_points ADD COLUMN source_resource_uid TEXT`, "person_contact_points.source_resource_uid"},
 		{`ALTER TABLE person_addresses ADD COLUMN source_resource_uid TEXT`, "person_addresses.source_resource_uid"},

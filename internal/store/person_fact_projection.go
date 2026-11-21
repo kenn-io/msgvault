@@ -9,6 +9,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -779,7 +780,78 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 		}
 		changed = changed || retireChanged
 	}
+	var remaining []personfacts.CurrentProjection
+	if projectable {
+		remaining, err = projector.loadCurrent(ctx, generation.PersonID, descriptor)
+		if err != nil {
+			return false, err
+		}
+	}
+	pinnedEmployment := remaining
+	currentEmployment := make(map[string]bool)
+	if descriptor.Kind == personfacts.TargetEmployment && slices.ContainsFunc(resolution.Decisions, func(decision personfacts.Decision) bool {
+		return decision.Reason == personfacts.ReasonPinRetained
+	}) {
+		jobs, loadErr := s.listAllEmploymentsContext(ctx, tx, EmploymentFilter{PersonID: generation.PersonID})
+		if loadErr != nil {
+			return false, loadErr
+		}
+		pinnedEmployment = make([]personfacts.CurrentProjection, 0, len(jobs))
+		for _, job := range jobs {
+			normalized, normalizeErr := normalizedPinnedPersonFactEmployment(ctx, tx, descriptor, job)
+			if normalizeErr != nil {
+				return false, normalizeErr
+			}
+			currentEmployment[normalized.Fingerprint] = currentEmployment[normalized.Fingerprint] || job.IsCurrent
+			pinnedEmployment = append(pinnedEmployment, personfacts.CurrentProjection{Normalized: *normalized})
+		}
+	}
 	for _, decision := range resolution.Decisions {
+		claim := claimByKey[decision.ClaimKey]
+		hasCurrent, matchesCurrent := false, false
+		values := remaining
+		if decision.Reason == personfacts.ReasonPinRetained {
+			values = pinnedEmployment
+		}
+		for _, value := range values {
+			if descriptor.Kind == personfacts.TargetEmployment {
+				if claim.Normalized == nil {
+					continue
+				}
+				claimIdentity, _, identityErr := personFactEmploymentStableIdentity(claim)
+				if identityErr != nil {
+					return false, identityErr
+				}
+				currentIdentity, _, identityErr := personFactEmploymentNormalizedStableIdentity(decision.ClaimKey, value.Normalized)
+				if identityErr != nil {
+					return false, identityErr
+				}
+				if claimIdentity != currentIdentity {
+					continue
+				}
+				if decision.Reason == personfacts.ReasonPinRetained {
+					match, matchErr := samePinnedEmployment(*claim.Normalized, value.Normalized, currentEmployment[value.Normalized.Fingerprint])
+					if matchErr != nil {
+						return false, matchErr
+					}
+					if !match {
+						continue
+					}
+				}
+			}
+			hasCurrent = true
+			matchesCurrent = matchesCurrent || (claim.Normalized != nil && claim.Normalized.Fingerprint == value.Normalized.Fingerprint)
+		}
+		competitor := claimByKey[decision.CompetingClaimKey]
+		duplicate := claim.Normalized != nil && competitor.Normalized != nil && claim.Normalized.Fingerprint == competitor.Normalized.Fingerprint && claim.Claim.Relation == competitor.Claim.Relation
+		closeCompetition := decision.Action == personfacts.DecisionAmbiguousRetained
+		if competingIndex, ok := decisionIndex[decision.CompetingClaimKey]; ok && !duplicate && (decision.Action == personfacts.DecisionRetained || decision.Action == personfacts.DecisionConflictRejected) {
+			difference := decision.Score.Total - resolution.Decisions[competingIndex].Score.Total
+			closeCompetition = difference > -resolver.Policy.ReplacementMargin && difference < resolver.Policy.ReplacementMargin
+		}
+		blockedRemoval := descriptor.Cardinality == personfacts.CardinalitySingle && matchesCurrent && claim.Claim.Relation != personfacts.RelationSupport && decision.Score.Total >= resolver.Policy.ApplyThreshold
+		outcome, _ := personfacts.DecisionOutcomeFor(personfacts.OutcomeFacts{Decision: decision, Relation: claim.Claim.Relation, HasCurrent: hasCurrent, MatchesCurrent: matchesCurrent, CloseCompetition: closeCompetition, BlockedRemoval: blockedRemoval})
+		decision.Outcome = &outcome
 		if err := s.insertPersonFactDecisionTx(ctx, tx, generation.PersonID, shell.ID,
 			resolution.InputFingerprint, decision); err != nil {
 			return false, err
@@ -1754,6 +1826,27 @@ func loadProjectedPersonFactEmploymentClaimsTx(
 		return nil, fmt.Errorf("iterate projected employment claims: %w", err)
 	}
 	return projected, nil
+}
+
+func normalizedPinnedPersonFactEmployment(ctx context.Context, tx *loggedTx, descriptor personfacts.TargetDescriptor, job Employment) (*personfacts.NormalizedValue, error) {
+	organization, err := getOrganizationTx(ctx, tx, job.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	return normalizedPersonFactEmploymentValue(descriptor, job, *organization)
+}
+
+func samePinnedEmployment(left, right personfacts.NormalizedValue, current bool) (bool, error) {
+	var a, b personfacts.EmploymentValue
+	if err := json.Unmarshal(left.JSON, &a); err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(right.JSON, &b); err != nil {
+		return false, err
+	}
+	startMatches := (current && a.EndDate == nil) || (a.StartDate == nil && b.StartDate == nil) || samePersonFactEmploymentDate(storeEmploymentPartialDate(a.StartDate), storeEmploymentPartialDate(b.StartDate))
+	endMatches := (a.EndDate == nil && b.EndDate == nil) || samePersonFactEmploymentDate(storeEmploymentPartialDate(a.EndDate), storeEmploymentPartialDate(b.EndDate))
+	return startMatches && endMatches, nil
 }
 
 func personFactEmploymentStableIdentity(

@@ -37,6 +37,8 @@ type ImportOptions struct {
 	Logger         *slog.Logger
 }
 
+const batchSize = 50
+
 type ImportSummary struct {
 	SourceID                  int64
 	Duration                  time.Duration
@@ -215,6 +217,24 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 	if err != nil {
 		return err
 	}
+	pending := make([]*store.MessagePersistData, 0, batchSize)
+	queued := make(map[string]bool)
+	flush := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		ids, err := st.PersistTelegramMessagesContext(ctx, pending)
+		if err != nil {
+			return fmt.Errorf("telegram: %w", err)
+		}
+		for i, id := range ids {
+			existing[pending[i].Message.SourceMessageID] = id
+		}
+		summary.MessagesAdded += int64(len(ids))
+		pending = pending[:0]
+		clear(queued)
+		return nil
+	}
 	for i := range chat.Messages {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -228,7 +248,10 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			summary.UnsupportedEntriesSkipped++
 			continue
 		}
-		if opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) {
+		if opts.Limit > 0 && summary.MessagesAdded+int64(len(pending)) >= int64(opts.Limit) {
+			if err := flush(); err != nil {
+				return err
+			}
 			return errLimitReached
 		}
 		sender, err := resolve(m.FromID, m.FromName)
@@ -242,6 +265,11 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			}
 		}
 		key := fmt.Sprintf("%s:%d", peer, m.ID)
+		if queued[key] {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
 		if id, ok := existing[key]; ok {
 			writes, err := mediaWrites(ctx, st, id, m, opts, summary)
 			if err != nil {
@@ -294,19 +322,20 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			return err
 		}
 		snippet := textutil.PrefixRunes(strings.TrimSpace(m.Text), 200)
-		id, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
+		pending = append(pending, &store.MessagePersistData{
 			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: MessageType, SentAt: sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: fromMe, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(m.Text))},
 			Conversation: &store.ConversationPersistData{SourceConversationID: peer, ConversationType: chat.ConvType(), Title: chat.Name, Participants: members, PreserveExistingParticipants: true},
 			Edited:       m.Edited != "" || m.EditedUnixtime != "",
 			BodyText:     sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(encoded), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: replacement(writes), FTS: &store.FTSDoc{Body: m.Text},
 		})
-		if err != nil {
-			return fmt.Errorf("telegram: persist %s: %w", key, err)
+		queued[key] = true
+		if len(pending) == batchSize {
+			if err := flush(); err != nil {
+				return err
+			}
 		}
-		existing[key] = id
-		summary.MessagesAdded++
 	}
-	return nil
+	return flush()
 }
 
 // prepareChat keeps a conversation for every exported chat, even one with no

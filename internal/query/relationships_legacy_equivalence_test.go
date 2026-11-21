@@ -288,7 +288,7 @@ func TestRelationshipIndexMatchesLegacyAcrossAdversarialSemantics(t *testing.T) 
 	builder.AddTo(outgoingChatID, contactAliasID, "Contact Chat")
 
 	meetingID := builder.AddMessage(MessageOpt{
-		SourceID: sourceID, MessageType: "calendar_event",
+		SourceID: sourceID, MessageType: "meeting_transcript",
 		SentAt: now.AddDate(0, 0, -1),
 	})
 	builder.AddFrom(meetingID, ownerID, "Owner")

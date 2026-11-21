@@ -74,6 +74,13 @@ func TestInvalidQueryParamsReturn400(t *testing.T) {
 		// the store, so these stay 400 on the mock store used here instead of
 		// being masked by the feed's feature-unavailable 503.
 		{"changes cursor not a token", "/api/v1/messages/changes?cursor=not-a-cursor!!", "invalid_cursor", "cursor"},
+		{"changes person zero", "/api/v1/messages/changes?person_id=0", "invalid_person_id", "person_id"},
+		{"changes person malformed", "/api/v1/messages/changes?person_id=bad", "invalid_person_id", "person_id"},
+		{"changes source zero", "/api/v1/messages/changes?source_id=0", "invalid_source_id", "source_id"},
+		{"changes conversation malformed", "/api/v1/messages/changes?conversation_id=bad", "invalid_conversation_id", "conversation_id"},
+		{"changes incoming malformed", "/api/v1/messages/changes?incoming_only=maybe", "invalid_incoming_only", "incoming_only"},
+		{"changes too many sources", "/api/v1/messages/changes?source_id=" + strings.Repeat("1,", 50) + "1", "invalid_source_id", "source_id"},
+		{"changes too many conversations", "/api/v1/messages/changes?conversation_id=" + strings.Repeat("1,", 50) + "1", "invalid_conversation_id", "conversation_id"},
 		{"changes limit not numeric", "/api/v1/messages/changes?limit=xyz", "invalid_limit", "limit"},
 		{"messages page not numeric", "/api/v1/messages?page=abc", "invalid_page", "page"},
 		{"messages page_size not numeric", "/api/v1/messages?page_size=xyz", "invalid_page_size", "page_size"},

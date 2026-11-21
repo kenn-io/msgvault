@@ -133,6 +133,7 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
+	toolDiscovery        toolDiscovery
 	embeddingStatus      EmbeddingStatusReader
 	delegatedOnly        bool
 	sensitiveConfirm     bool
@@ -158,10 +159,12 @@ type handlers struct {
 	identityReview       IdentityReviewBackend
 	personCardDAV        PersonCardDAVBackend
 	messageTags          MessageTagBackend
+	personCreator        PersonCreator
 	identityScoring      IdentityScoringBackend
 	drafts               DraftRunner
 	contactRoutesBackend ContactRoutesBackend
 	chatDiscoveryBackend ChatDiscoveryBackend
+	emailFamilyBackend   EmailFamilyBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
@@ -1886,7 +1889,7 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 	var snapshot *downloadSnapshot
 	if chunked {
 		snapshot, err = h.downloads.get(ctx, downloadKey{attachment: id}, chunkReq, func() (*downloadSnapshot, error) {
-			payload, err := h.attachmentService().loadBounded(ctx, id, maxDownloadBytes)
+			payload, err := h.attachmentService().loadBounded(ctx, id, MaxDownloadBytes)
 			if err != nil {
 				return nil, err
 			}

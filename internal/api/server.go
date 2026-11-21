@@ -35,6 +35,7 @@ import (
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/tasklinks"
@@ -73,7 +74,7 @@ type TaskLinkOperations interface {
 	Link(ctx context.Context, taskID string, identity tasklinks.MessageIdentity, addedAt time.Time) (taskclient.Task, error)
 	Unlink(ctx context.Context, taskID string, identity tasklinks.MessageIdentity) (taskclient.Task, error)
 	Lookup(ctx context.Context, identity tasklinks.MessageIdentity) tasklinks.LookupResult
-	Search(ctx context.Context, query string) ([]tasklinks.TaskSummary, error)
+	Search(ctx context.Context, query string) ([]tasklinks.TaskSummary, bool, error)
 }
 
 type TaskIdentityResolver func(context.Context, *APIMessage) (tasklinks.MessageIdentity, error)
@@ -197,8 +198,8 @@ type SourceStatusStore interface {
 	ListSources(sourceType string) ([]*store.Source, error)
 	ListSourcesContext(ctx context.Context, sourceType string) ([]*store.Source, error)
 	GetActiveSyncReadOnly(ctx context.Context, sourceID int64) (*store.SyncRun, error)
-	GetLatestSyncContext(ctx context.Context, sourceID, excludeID int64) (*store.SyncRun, error)
-	GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error)
+	GetLatestSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*store.SyncRun, error)
+	GetLastSuccessfulSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*store.SyncRun, error)
 	CountSyncRunItemsContext(ctx context.Context, syncRunID int64, status string) (int64, error)
 	ListSyncRunItemsContext(ctx context.Context, syncRunID int64, status string, limit int) ([]store.SyncRunItem, error)
 }
@@ -315,10 +316,13 @@ type Server struct {
 	idleTracker               *IdleTracker
 	operationGate             OperationGate
 	operationHistoryReader    operations.HistoryReader
+	accountRepairs            map[int64]*accountAttributionRepairJob
 	importContext             context.Context
 	cancelImports             context.CancelFunc
 	importMu                  sync.Mutex
 	importsClosed             bool
+	loopEvidenceRunning       bool
+	loopEvidencePending       []int64
 	importWG                  sync.WaitGroup
 	localEmbeddings           LocalEmbeddingsController
 	localSetup                LocalEmbeddingsStatus
@@ -938,6 +942,17 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 	s.listenerBound = true
 	s.server = server
 	s.serverMu.Unlock()
+	if backend, ok := s.store.(interface{ IsPostgreSQL() bool }); ok && backend.IsPostgreSQL() {
+		if cliStore, ok := s.store.(CLIStore); ok {
+			s.importMu.Lock()
+			if !s.importsClosed {
+				s.importWG.Go(func() {
+					s.ensureCLISearchIndexAsync(bindCLIStoreContext(s.importContext, cliStore), true)
+				})
+			}
+			s.importMu.Unlock()
+		}
+	}
 	s.signalStarted(nil)
 
 	s.logger.Info("starting API server", "addr", ln.Addr().String())
@@ -1202,7 +1217,7 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if cardDAVRequestNeedsProtectiveCeiling(r) ||
-			(r.Method == http.MethodPost && r.URL.Path == "/api/v1/identity/scoring/run") {
+			(r.Method == http.MethodPost && (r.URL.Path == "/api/v1/identity/scoring/run" || r.URL.Path == "/api/v1/identity/cache-refresh")) {
 			serveWithProtectiveRequestDeadline(w, r, next)
 			return
 		}
@@ -1302,6 +1317,7 @@ func isLongDaemonRequest(path string) bool {
 		muesliImportEndpointPath,
 		muesliRecordingEndpointPath,
 		"/api/v1/cli/identities/discover",
+		"/api/v1/cli/messages/export",
 		"/api/v1/cli/rebuild-fts",
 		"/api/v1/cli/repair-encoding",
 		"/api/v1/cli/repair-message",
@@ -1597,13 +1613,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAuthenticatedHealth returns health details that are safe behind the
-// API-key boundary. Delegated callers and remote clients receive the public projection plus
-// APISchemaVersion only, so they can verify version compatibility without
-// seeing internal operation labels that name configured account identifiers.
+// API-key boundary. Delegated callers, remote clients, and callers under a
+// host's source scope receive the public projection plus APISchemaVersion
+// only, so they can verify version compatibility without seeing internal
+// operation labels that name configured account identifiers.
 func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatus(r.Context())
 	auth := s.requestAuthentication(r)
-	if auth.Mode == AuthModeDelegated || auth.Mode == AuthModeRemoteClient {
+	if auth.Mode == AuthModeDelegated || auth.Mode == AuthModeRemoteClient || sourcescope.Restricted(r.Context()) {
 		writeJSON(w, http.StatusOK, HealthResponse{
 			Status:           "ok",
 			Vector:           s.vectorHealthPublic(),

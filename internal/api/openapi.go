@@ -17,6 +17,9 @@ import (
 // (info.version). It tracks the HTTP wire contract, not the binary build
 // version, so clients can reason about compatibility independently of releases.
 //
+// Record each change with a summary in internal/api/testdata/api-version-contracts.
+// See docs/development.md#api-schema-version-maintenance. Do not add entries here.
+//
 // 1.1.0: GET /api/v1/cli/search no longer blocks on the FTS completeness
 // probe/backfill; it returns immediately and reports background index work in
 // the additive index_state field ("checking"/"building"). Clients older than
@@ -409,7 +412,32 @@ import (
 // Docbank owns document processing.
 // 4.1.0 adds recorded names, saved contacts, and reconciled addresses to merge-list and detail responses,
 // registered service labels to current contact points, and identity keys to observations.
-const APISchemaVersion = "4.1.0"
+// 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
+// 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
+// 5.1.0 adds keyed group overviews, time-group item totals, saved view schema 3, and saved view run timezones.
+// 5.2.0 adds open Kata issue search and optional task search queries.
+// 5.3.0 adds the IMAP authentication method to CLI accounts.
+// 5.4.0 allows native tag reads for source-deleted messages.
+// 5.5.0 adds source account matching repair.
+// 5.6.0 adds a refresh-only identity cache operation.
+// 5.7.0 adds first archived appearance to person contact state.
+// 5.8.0 advertises structured person-profile routes to MCP.
+// 5.9.0 adds meeting records.
+// 5.10.0 adds owner meeting link decisions.
+// 5.11.0 adds meeting link suggestions.
+// 5.12.0 adds owner-only email family lookup.
+// 5.13.0 adds fact decision outcomes, evidence filtering, and a person fact summary.
+// 5.14.0 adds each decision's submitted claim value to its history row.
+// 5.15.0 applies media search mode to recordings and reports their actual mode and degradations.
+// 5.16.0 adds standalone person creation at POST /api/v1/people/create.
+// 5.17.0 adds person, source, conversation and incoming filters to the message change feed.
+// 5.18.0 adds Directory cadence filters, ordering, presets and coverage.
+// 5.19.0 adds message export at GET /api/v1/cli/messages/export.
+// 5.20.0 adds message_type to file details.
+// 5.21.0 adds a browser tab title to message details.
+// 5.22.0 adds person attribute value selection by ordinal.
+// 5.23.0 rejects invalid person display names with a client error.
+const APISchemaVersion = "5.23.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1030,6 +1058,8 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"ContactCandidate", "display_name"},
 		{"MediaAttachmentResult", "filename"},
 		{"MediaAttachmentResult", "containing_title"},
+		{"MediaAttachmentResult", "excerpt"},
+		{"MessageDetail", "tab_title"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
 		{"MessagingRoute", "network_label"},
@@ -1051,6 +1081,14 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 				property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
 					"validate": "omitempty",
 				}
+			}
+		}
+	}
+	for _, name := range []string{"FileSearchRow", "FileSuggestionRow", "PersonFileSearchRow", "PersonFileSuggestionRow"} {
+		if schema := schemas[name]; schema != nil {
+			if property := schema.Properties["content_available"]; property != nil {
+				setCodegenGoType(property, "*bool")
+				nullableSchemaProperty(schema, "content_available")
 			}
 		}
 	}
@@ -1157,6 +1195,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
+	nullableSchemaProperty(schemas["FactSummary"], "latest_claim_at")
 	for schemaName, property := range map[string]string{
 		"MeetingPerson":       emailProperty,
 		"Source":              "account_email",

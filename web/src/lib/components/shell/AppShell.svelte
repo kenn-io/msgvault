@@ -99,6 +99,7 @@
   import type { SavedView } from '../../api/generated/models';
   import RunHistoryDialog from './RunHistoryDialog.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
 
   const media = mediaReadiness();
   const visual = visualReadiness();
@@ -116,7 +117,8 @@
       (authority: RelatedOperationStatus) => void,
       () => void,
       OperationsController,
-      () => Promise<void>
+      () => Promise<void>,
+      (personID: number) => void
     ]>;
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
@@ -264,6 +266,7 @@
   }
   let historyDialog = $state<{ restoreFocus: () => Promise<void> }>();
   let sourcesPage = $state<{ refresh: () => void; openAddSource: () => void }>();
+  let filesPage = $state<{ reloadListing: () => void }>();
 
   async function addSource(): Promise<void> {
     commitWorkspace('sources');
@@ -284,6 +287,7 @@
   let displayOpen = $state(false);
   let personMessages = $state<MessagesTable>();
   let resultsWidth = $state(0);
+  let readingTitle = $state('');
   const displayState = $derived(exploreState.current.workspace === 'everything' ? exploreState : exploreState.current.workspace === 'relationships' ? personMessages?.state : undefined);
   const displayResultsWidth = $derived(exploreState.current.workspace === 'everything' ? resultsWidth : exploreState.current.workspace === 'relationships' ? personMessages?.resultsWidth ?? 0 : 0);
   const operationsController = new OperationsController(untrack(() => client));
@@ -383,11 +387,27 @@
     (patch) => commitNavigation(patch),
     async result => {
       if (!result.ok && result.kind !== 'merge_required') flashDecisionError(result.message);
-      if (result.ok) await reconcileIdentity();
+      if (result.ok) { relationshipsController.recordIdentityCacheState(result.identityRevision, result.cacheState); await reconcileIdentity(); }
     },
   );
   async function reconcileIdentity(): Promise<void> {
-    await Promise.all([shellData.refreshDuplicates(), directoryController.loadFirstPage(), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
+    await Promise.all([refreshIdentityProfiles(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
+  }
+  async function refreshIdentityProfiles(): Promise<void> {
+    await Promise.all([shellData.refreshDuplicates(), directoryController.loadFirstPage(), directoryController.refreshSelectedPerson()]);
+  }
+  let mergeCacheError = $state<{ revision: number; message: string; unsupported: boolean; dismissible: boolean }>();
+  const pendingMergeCacheError = $derived(mergeCacheError?.revision === relationshipsController.pendingIdentityCacheRevision ? mergeCacheError : undefined);
+  async function retryMergeCache(): Promise<void> {
+    const revision = relationshipsController.pendingIdentityCacheRevision;
+    const result = await relationshipsController.refreshIdentityCache();
+    if (result.ok && result.cacheState === 'ready') {
+      if (exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' && exploreState.current.groupingChain.length > 0) loader.retry();
+      else if (exploreState.current.workspace === 'files') filesPage?.reloadListing();
+      directoryReviewController.refreshSummaries(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates);
+      await refreshIdentityProfiles();
+    }
+    else if (!result.ok && revision !== null && revision === relationshipsController.pendingIdentityCacheRevision) mergeCacheError = { revision, message: result.message, unsupported: result.code === 'cache_unsupported', dismissible: true };
   }
   async function identityChanged(): Promise<void> {
     await Promise.all([
@@ -494,7 +514,11 @@
   });
 
   $effect(() => {
-    document.title = `${workspaceLabel(exploreState.current.workspace)} · msgvault`;
+    const workspace = exploreState.current.workspace;
+    const meeting = archivedMeeting.detail?.id === archiveMeetingID ? archivedMeeting.detail : undefined;
+    const detail = archiveMeetingID !== undefined ? (meeting ? meeting.tab_title || '(untitled)' : '') :
+      workspace === 'everything' ? readingTitle : workspace === 'relationships' ? personMessages?.readingTitle ?? '' : '';
+    document.title = [detail, workspaceLabel(workspace), 'msgvault'].filter(Boolean).join(' · ');
   });
 
   $effect(() => {
@@ -1101,10 +1125,14 @@
     if (exploreState.current.selectedRow === row.key) return;
     commitNavigation({ selectedRow: row.key });
   }
+  function groupIsDrillable(dimension: ExploreGroupDimension | undefined): boolean {
+    return !!dimension && groupingByDimension(dimension).drillable && (exploreState.current.workspace !== 'files' || dimension !== 'kind');
+  }
+
   function drillGroup(row: ExploreGroupRow): void {
     const [dimension, ...remaining] = exploreState.current.groupingChain;
-    if (!dimension || !groupingByDimension(dimension).drillable) return;
-    const filters = filtersForGroup(exploreState.current.filters, dimension, row.key);
+    if (!dimension || !groupIsDrillable(dimension)) return;
+    const filters = filtersForGroup(exploreState.current.filters, dimension, row.key, exploreState.current.workspace === 'files');
     if (!filters) {
       commitNavigation({ selectedRow: `group:${dimension}:${row.key}` });
       return;
@@ -1310,6 +1338,12 @@
         />
       </div>
     </header>
+    {#if relationshipsController.pendingIdentityCacheRevision !== null}
+      <div class="identity-cache-notice"><InlineNotice tone="warning" message={relationshipsController.identityCacheRefreshing ? 'Refreshing...' : pendingMergeCacheError?.message ?? 'Changes saved, but related views may be out of date.'} actions={[
+          ...(pendingMergeCacheError?.dismissible ? [{ label: 'Dismiss', onclick: () => (relationshipsController.pendingIdentityCacheRevision = null), disabled: relationshipsController.identityCacheRefreshing }] : []),
+          ...(pendingMergeCacheError?.unsupported ? [] : [{ label: 'Retry', onclick: () => void retryMergeCache(), disabled: relationshipsController.identityCacheRefreshing }]),
+        ]} /></div>
+    {/if}
     <div class="app-main">
       {#if exploreState.current.workspace === 'settings'}
         {#if settings}{@render settings(
@@ -1322,7 +1356,8 @@
           openOperationAuthority,
           () => void shellData.jobs.refresh(true),
           operationsController,
-          () => directoryController.reloadFirstPage()
+          () => directoryController.reloadFirstPage(),
+          openDirectoryPerson
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
         <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory, connection) => { cardDAVSettingsRequest = connection ? { connection, key: ++cardDAVSettingsRequestKey } : undefined; commitNavigation({ workspace: 'settings', settingsCategory, settingsAuthority: '' }); }} onOpenOperations={() => openOperations('source_sync')} />
@@ -1442,7 +1477,7 @@
           {#if exploreState.current.groupingChain.length > 0}{@render filesToolbar(undefined, undefined, false)}{/if}
           <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
           {#if exploreState.current.groupingChain.length > 0}
-            <GroupTable
+            <GroupTable sources={shellData.jobs.sources}
               rows={loader.groupRows}
               dimension={exploreState.current.groupingChain[0]!}
               workspaceLabel="Files"
@@ -1454,7 +1489,7 @@
               error={loader.error}
               pageError={loader.pageError}
               unavailable={loader.unavailable}
-              drillable={groupingByDimension(exploreState.current.groupingChain[0]!).drillable}
+              drillable={groupIsDrillable(exploreState.current.groupingChain[0])}
               focusedKey={exploreState.current.activeRow}
               inspectedKey={readingTargetKey}
               scrollAnchor={exploreState.current.scrollAnchor}
@@ -1469,6 +1504,8 @@
             />
           {:else}
             <FilesWorkspace
+              onOpenTaskSettings={() => commitNavigation(tasksSettingsDestination())}
+              bind:this={filesPage}
               onConfigureVisualSearch={openVisualAttachmentSettings}
               bind:submitted={loader.submitted}
               {client}
@@ -1513,8 +1550,8 @@
                   scrollAnchor: null,
                 })}
               onActiveKey={(activeRow) => replaceTransient({ activeRow })}
-              onSelectedKey={(selectedRow) =>
-                selectedRow ? commitNavigation({ selectedRow }) : replaceCommittedNavigation({ selectedRow: null })}
+              onSelectedKey={(selectedRow, options) =>
+                selectedRow ? (options?.replace ? replaceCommittedNavigation({ selectedRow }) : commitNavigation({ selectedRow })) : replaceCommittedNavigation({ selectedRow: null })}
               onOpenItem={openFileItem}
               onOpenConversation={openFileConversation}
             />
@@ -1522,8 +1559,10 @@
         </main>
       {:else}
         <EverythingWorkspace
+          sources={shellData.jobs.sources}
           onAddSource={shellData.jobs.noSources ? addSource : undefined}
           bind:resultsWidth
+          bind:readingTitle
           {client}
           {exploreState}
           {loader}
@@ -1626,7 +1665,7 @@
   {@const merge = directoryReviewController.mergeRequired}
   {#key merge.candidateID}<PersonBindingConflictModal {client} conflict={merge.conflict}
     onOpenProfile={(id) => { directoryReviewController.mergeRequired = null; openDirectoryPerson(id); }}
-    onSuccess={async success => { if (exploreState.current.directoryPersonID === success.result.merge.absorbed_person_id) replaceCommittedNavigation({ directoryPersonID: success.survivor.id }); await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
+    onSuccess={async success => { relationshipsController.recordIdentityCacheState(success.result.identity_revision, success.result.cache_state); if (exploreState.current.directoryPersonID === success.result.merge.absorbed_person_id) replaceCommittedNavigation({ directoryPersonID: success.survivor.id }); await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
     onClose={() => directoryReviewController.mergeRequired = null} />{/key}
 {/if}
 
@@ -1647,6 +1686,7 @@
   <FileViewer
     {client}
     file={contextualViewerFile}
+    onOpenTaskSettings={() => { contextualViewerFile = undefined; commitNavigation(tasksSettingsDestination()); }}
     returnFocus={contextualViewerReturnFocus}
     onClose={() => {
       void closeContextualViewer();
@@ -1689,6 +1729,8 @@
     flex: 1;
     flex-direction: column;
   }
+
+  .identity-cache-notice { padding: var(--space-box); }
 
   .app-top-bar {
     display: flex;

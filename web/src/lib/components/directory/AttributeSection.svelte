@@ -7,7 +7,7 @@
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import { displayAttributeValue, joinDefinitions, isAttributeRevealed } from './attribute-value';
 
-  let { controller }: { controller: DirectoryProfileController } = $props();
+  let { controller, universalIDs, facts = false }: { controller: DirectoryProfileController; universalIDs?: string[]; facts?: boolean } = $props();
   let revealed = $state<Record<string, boolean>>({});
   let owner = untrack(() => controller);
   $effect(() => {
@@ -15,7 +15,7 @@
     owner = controller;
     revealed = {};
   });
-  const visibleFields = $derived(joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []).filter(field => field.current.length > 0 || field.history.length > 0));
+  const visibleFields = $derived(joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []).filter(field => (!universalIDs || universalIDs.includes(field.definition.universal_id)) && (field.current.length > 0 || (!facts && field.history.length > 0))));
   function isRevealed(definition: AttributeDefinition): boolean { return isAttributeRevealed(definition, revealed); }
   function toggleReveal(definition: AttributeDefinition): void {
     revealed = { ...revealed, [definition.universal_id]: !revealed[definition.universal_id] };

@@ -312,3 +312,75 @@ func TestWriterWriteFromRewritesWhenOnlyMetadataOrFormatChanged(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("other_forge_json", format)
 }
+
+func TestWriterKeepsAFeedSendersParticipantFromBeforeTypedScopes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	feed, err := st.GetOrCreateSourceContext(t.Context(), "feed", "feeds")
+	require.NoError(err)
+	write := func(source *store.Source, externalID string) int64 {
+		syncID, err := st.StartSyncContext(t.Context(), source.ID, source.SourceType)
+		require.NoError(err)
+		scoped := st.ScopedToSync(source.ID, syncID)
+		result, err := NewWriter(scoped, source).Write(t.Context(), examplePost(externalID, MessageImportSender{Name: "Alice", ID: "author-1"}))
+		require.NoError(err)
+		require.NoError(scoped.CompleteSyncContext(t.Context(), syncID, ""))
+		var senderID int64
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+			`SELECT sender_id FROM messages WHERE id = ?`), result.MessageID).Scan(&senderID))
+		return senderID
+	}
+	// An archive written before sender scopes named the source's type keyed
+	// the feed's author by the source's identifier alone.
+	alice := write(feed, "item-1")
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
+		UPDATE participant_identifiers SET identifier_value = ? WHERE participant_id = ? AND identifier_type = ?
+	`), "id:feeds:author-1", alice, SenderIdentifierType)
+	require.NoError(err)
+	// A message import of the same identifier has its own sender of that
+	// name, under the same untyped key's form.
+	imported, err := st.GetOrCreateSourceContext(t.Context(), SourceType, "feeds-copy")
+	require.NoError(err)
+	importedAlice := write(imported, "post-1")
+
+	assert.Equal(alice, write(feed, "item-2"), "the feed's sender keeps its participant")
+	owner, _, err := st.ParticipantByIdentifierContext(t.Context(), SenderIdentifierType, "id:feed/feeds:author-1")
+	require.NoError(err)
+	assert.Equal(alice, owner, "and its key is the typed one from now on")
+	assert.Equal(importedAlice, write(imported, "post-2"), "the import's sender is not the feed's")
+
+	// A message import's untyped key that the feed never wrote stays the
+	// import's.
+	shared, err := st.GetOrCreateSourceContext(t.Context(), SourceType, "feeds")
+	require.NoError(err)
+	sharedAlice := write(shared, "post-3")
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
+		DELETE FROM participant_identifiers WHERE participant_id = ? AND identifier_type = ?
+	`), alice, SenderIdentifierType)
+	require.NoError(err)
+	assert.NotEqual(sharedAlice, write(feed, "item-3"), "a feed never takes a message import's sender")
+	assert.Equal(sharedAlice, write(shared, "post-4"))
+}
+
+func TestWriterIndexesTheAddressAnAccountWasJoinedTo(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	writer := startWriter(t, st).WithSenderIdentifierType("example_forge")
+	_, err := writer.Write(t.Context(), examplePost("comment-1", MessageImportSender{ID: "1001", Name: "octo", Email: "addressneedle@example.com"}))
+	require.NoError(err)
+	// A release names its author by account alone.
+	_, err = writer.Write(t.Context(), examplePost("release-1", MessageImportSender{ID: "1001", Name: "octo"}))
+	require.NoError(err)
+
+	for _, rebuilt := range []bool{false, true} {
+		if rebuilt {
+			_, err = st.RebuildFTSContext(t.Context(), nil)
+			require.NoError(err)
+		}
+		_, total, err := st.SearchMessages("addressneedle", 0, 100)
+		require.NoError(err)
+		assert.EqualValues(2, total, "rebuilt %t", rebuilt)
+	}
+}

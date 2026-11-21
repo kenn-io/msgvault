@@ -420,12 +420,12 @@ func (s *Store) insertPersonFactDecisionTx(
 	var insertedID int64
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO person_fact_decisions
-			(person_id, resolution_id, claim_id, decision_key, action, reason, score_json,
+			(person_id, resolution_id, claim_id, decision_key, action, reason, outcome, score_json,
 			 competing_claim_id, projection_kind, projection_row_id, resolved_organization_id)
-		VALUES (?, ?, ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, ?, ?, ?, ?)
 		ON CONFLICT DO NOTHING
 		RETURNING id`,
-		personID, resolutionID, claimID, decisionKey, decision.Action, decision.Reason,
+		personID, resolutionID, claimID, decisionKey, decision.Action, decision.Reason, decision.Outcome,
 		string(scoreJSON), competingClaimID, projectionKind, projectionRowID,
 		resolvedOrganizationID,
 	).Scan(&insertedID)
@@ -486,6 +486,31 @@ func (s *Store) loadPersonFactGenerationTx(
 	}, nil
 }
 
+// PersonFactSummaryContext reads the claim and stored-value summary from one snapshot.
+func (s *Store) PersonFactSummaryContext(ctx context.Context, personID int64) (personfacts.FactSummary, error) {
+	var summary personfacts.FactSummary
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		var latest nullableTimestamp
+		err := tx.QueryRowContext(ctx, `SELECT
+			(SELECT COUNT(*) FROM (SELECT target_kind, target_key FROM person_fact_claims WHERE person_id = ? GROUP BY target_kind, target_key) fields),
+			(SELECT MAX(created_at) FROM person_fact_claims WHERE person_id = ?),
+			(EXISTS(SELECT 1 FROM person_attribute_values WHERE person_id = ? AND active_until IS NULL AND superseded_at IS NULL)
+			 OR EXISTS(SELECT 1 FROM employments WHERE person_id = ?)),
+			(EXISTS(SELECT 1 FROM person_fact_claims WHERE person_id = ?)
+			 OR EXISTS(SELECT 1 FROM person_fact_evidence WHERE person_id = ?)
+			 OR EXISTS(SELECT 1 FROM person_fact_pin_events WHERE person_id = ?))`, personID, personID, personID, personID, personID, personID, personID).Scan(&summary.ClaimedFields, &latest, &summary.HasValues, &summary.HasFactHistory)
+		if err != nil {
+			return fmt.Errorf("load person fact summary: %w", err)
+		}
+		if latest.Valid {
+			value := latest.Time.UTC()
+			summary.LatestClaimAt = &value
+		}
+		return nil
+	})
+	return summary, err
+}
+
 // ListPersonFactEvidenceContext returns a bounded newest-first evidence page
 // with effective support hydrated from the latest immutable status event.
 func (s *Store) ListPersonFactEvidenceContext(
@@ -500,7 +525,7 @@ func (s *Store) ListPersonFactEvidenceContext(
 	evidence := make([]personfacts.Evidence, 0)
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		evidence, err = s.queryPersonFactEvidenceTx(ctx, tx, personID,
-			personfacts.EvidenceFilter{Target: filter.Target, Limit: limit, Offset: offset})
+			personfacts.EvidenceFilter{Target: filter.Target, EvidenceID: filter.EvidenceID, Limit: limit, Offset: offset})
 		if err != nil {
 			return err
 		}
@@ -585,6 +610,10 @@ func (s *Store) queryPersonFactEvidenceTx(
 	query := `SELECT ` + personFactEvidenceColumns + `
 		FROM person_fact_evidence e WHERE e.person_id = ?`
 	args := []any{personID}
+	if filter.EvidenceID != 0 {
+		query += ` AND e.id = ?`
+		args = append(args, filter.EvidenceID)
+	}
 	if filter.Target != nil {
 		query += ` AND EXISTS (
 			SELECT 1 FROM person_fact_claim_evidence ce
@@ -792,6 +821,10 @@ func (s *Store) listPersonFactDecisionsTx(
 		LEFT JOIN person_fact_claims competing ON competing.id = d.competing_claim_id
 		WHERE d.person_id = ?`
 	args := []any{personID}
+	if filter.ClaimKey != "" {
+		query += ` AND c.claim_key = ?`
+		args = append(args, filter.ClaimKey)
+	}
 	if filter.Target != nil {
 		query += ` AND r.target_kind = ? AND r.target_key = ? AND r.target_revision = ?`
 		args = append(args, filter.Target.Kind, filter.Target.Key, filter.Target.Revision)
@@ -921,23 +954,34 @@ func scanPersonFactStatusEvent(row scanner) (personfacts.EvidenceStatusEvent, er
 }
 
 const personFactDecisionColumns = `d.id, d.person_id, d.resolution_id, d.decision_key,
-	COALESCE(c.claim_key, ''), d.action, d.reason, CAST(d.score_json AS TEXT),
+	COALESCE(c.claim_key, ''), COALESCE(CAST(c.submitted_value_json AS TEXT), ''),
+	d.action, d.reason, d.outcome, r.target_kind, r.target_key, r.target_revision, r.resolver_version, CAST(d.score_json AS TEXT),
 	COALESCE(competing.claim_key, ''), d.projection_kind, d.projection_row_id, d.created_at`
 
 func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 	var decision personfacts.Decision
 	var scoreJSON string
+	var outcome sql.NullString
 	var projectionKind sql.NullString
 	var projectionRowID sql.NullInt64
 	var createdAt personFactTimestamp
 	err := row.Scan(
 		&decision.ID, &decision.PersonID, &decision.ResolutionID, &decision.DecisionKey,
-		&decision.ClaimKey, &decision.Action, &decision.Reason, &scoreJSON,
+		&decision.ClaimKey, &decision.ClaimValue, &decision.Action, &decision.Reason, &outcome,
+		&decision.Target.Kind, &decision.Target.Key, &decision.Target.Revision, &decision.ResolverVersion, &scoreJSON,
 		&decision.CompetingClaimKey, &projectionKind, &projectionRowID, &createdAt,
 	)
 	if err != nil {
 		return personfacts.Decision{}, err
 	}
+	value, known, err := personFactStoredOutcome(outcome)
+	if err != nil {
+		return personfacts.Decision{}, err
+	}
+	if known {
+		decision.Outcome = &value
+	}
+	decision.ScoreMaxima = personfacts.ScoreMaxima(decision.ResolverVersion)
 	if err := json.Unmarshal([]byte(scoreJSON), &decision.Score); err != nil {
 		return personfacts.Decision{}, fmt.Errorf("decode score: %w", err)
 	}
@@ -946,6 +990,20 @@ func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 	}
 	decision.CreatedAt = createdAt.Time
 	return decision, nil
+}
+
+func personFactStoredOutcome(outcome sql.NullString) (personfacts.DecisionOutcome, bool, error) {
+	if !outcome.Valid {
+		return "", false, nil
+	}
+	value := personfacts.DecisionOutcome(outcome.String)
+	switch value {
+	case personfacts.OutcomeSaved, personfacts.OutcomeValueRetired, personfacts.OutcomeCurrentValueKept,
+		personfacts.OutcomePinnedValueKept, personfacts.OutcomeTooCloseToChoose, personfacts.OutcomeNotUsed:
+		return value, true, nil
+	default:
+		return "", false, fmt.Errorf("unknown fact decision outcome %q", outcome.String)
+	}
 }
 
 func (s *Store) loadPersonFactGenerationRowTx(
@@ -1119,6 +1177,7 @@ func (s *Store) hydratePersonFactResolutionTx(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT `+personFactDecisionColumns+`
 		FROM person_fact_decisions d
+		JOIN person_fact_resolutions r ON r.id = d.resolution_id
 		LEFT JOIN person_fact_claims c ON c.id = d.claim_id
 		LEFT JOIN person_fact_claims competing ON competing.id = d.competing_claim_id
 		WHERE d.resolution_id = ?
@@ -1161,6 +1220,7 @@ func loadPersonFactDecisionByKeyTx(
 	decision, err := scanPersonFactDecision(tx.QueryRowContext(ctx, `
 		SELECT `+personFactDecisionColumns+`
 		FROM person_fact_decisions d
+		JOIN person_fact_resolutions r ON r.id = d.resolution_id
 		LEFT JOIN person_fact_claims c ON c.id = d.claim_id
 		LEFT JOIN person_fact_claims competing ON competing.id = d.competing_claim_id
 		WHERE d.person_id = ? AND d.decision_key = ?`, personID, decisionKey))
@@ -1261,6 +1321,7 @@ func personFactDecisionMatches(left, right personfacts.Decision) bool {
 	return left.PersonID == right.PersonID && left.ResolutionID == right.ResolutionID &&
 		left.DecisionKey == right.DecisionKey && left.ClaimKey == right.ClaimKey &&
 		left.Action == right.Action && left.Reason == right.Reason &&
+		(left.Outcome == nil || reflect.DeepEqual(left.Outcome, right.Outcome)) &&
 		left.Score == right.Score && left.CompetingClaimKey == right.CompetingClaimKey &&
 		reflect.DeepEqual(left.Projection, right.Projection)
 }

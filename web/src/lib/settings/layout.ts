@@ -61,6 +61,7 @@ export const BLOCKS: Readonly<Partial<Record<CategoryID, readonly Block[]>>> = {
       rows: [
         'integrations.kata.enabled',
         ['integrations.kata.endpoint', 'integrations.kata.default_project'],
+        'integrations.kata.trust_private_network',
         'integrations.kata.api_key',
       ],
     },
@@ -100,6 +101,7 @@ export const LABELS: Readonly<Record<string, string>> = {
   'people.enrichment.schedule': 'Schedule',
   'integrations.kata.enabled': 'Kata tasks and agendas',
   'integrations.kata.endpoint': 'Address',
+  'integrations.kata.trust_private_network': 'Trust private network',
   'integrations.kata.default_project': 'Project',
   'integrations.kata.api_key': 'API key',
   'integrations.tasks.enabled': 'Link messages to tasks',

@@ -1,9 +1,14 @@
+// no-inline keeps Vite from turning the stylesheet into a data: URL, which
+// the frame CSP would reject.
+import kitBrandStylesheetPath from '@kenn-io/kit-ui/brand.css?url&no-inline';
+
 export const ARCHIVED_CONTENT_CHANNEL = 'msgvault-archived-content';
 export const MAX_ARCHIVED_SCROLL_DELTA = 10_000;
 export const MAX_ARCHIVED_FRAME_HEIGHT = 65_536;
 
-// The frame's executable and styling surface is three same-origin
-// static assets. Everything the frame needs beyond archived HTML travels as
+// The frame's executable and styling surface is four same-origin static
+// assets, one of them kit-ui's brand stylesheet so mail inks follow the
+// shell palette. Everything the frame needs beyond archived HTML travels as
 // data attributes on <html>: the message-scoped bridge nonce, the validated
 // shell origin messages are pinned to, and the rendering mode/scheme the
 // stylesheet keys on.
@@ -68,8 +73,10 @@ export async function buildFrameDocument(options: FrameDocumentOptions): Promise
   const appearance = options.appearance ?? { mode: 'canvas' as const, colorScheme: 'light' as const };
   const origin = exactHTTPOrigin(options.targetOrigin);
   const bridgeURL = `${origin}${ARCHIVED_FRAME_SCRIPT_PATH}`;
+  const brandURL = new URL(kitBrandStylesheetPath, origin).href;
   const styleURL = `${origin}${ARCHIVED_FRAME_STYLE_PATH}`;
   const scrollbarURL = `${origin}${ARCHIVED_FRAME_SCROLLBAR_PATH}`;
+  const styleSources = [styleURL, scrollbarURL, brandURL].map(escapeAttribute).join(' ');
   const csp = [
     "default-src 'none'",
     "connect-src 'none'",
@@ -86,8 +93,8 @@ export async function buildFrameDocument(options: FrameDocumentOptions): Promise
     // survived the sanitizer's inline-style allowlist (no url()/position/
     // expression surface). Browsers without -elem/-attr support fall back to
     // the strict style-src and simply render designed mail colorless.
-    `style-src ${escapeAttribute(styleURL)} ${escapeAttribute(scrollbarURL)}`,
-    `style-src-elem ${escapeAttribute(styleURL)} ${escapeAttribute(scrollbarURL)}`,
+    `style-src ${styleSources}`,
+    `style-src-elem ${styleSources}`,
     "style-src-attr 'unsafe-inline'",
     `script-src ${escapeAttribute(bridgeURL)}`,
     "object-src 'none'",
@@ -97,15 +104,18 @@ export async function buildFrameDocument(options: FrameDocumentOptions): Promise
   ].join('; ');
 
   // Original email colors assume a white canvas; themed mail adopts the
-  // shell scheme. archived-frame.css keys on these data attributes.
+  // shell scheme. archived-frame.css keys on these data attributes, and the
+  // dark class selects kit-ui's dark brand tokens as it does in the shell.
+  const scheme = appearance.mode === 'canvas' ? 'light' : appearance.colorScheme;
   return '<!doctype html>' +
-    `<html data-bridge-nonce="${escapeAttribute(options.nonce)}"` +
+    `<html${scheme === 'dark' ? ' class="dark"' : ''} data-bridge-nonce="${escapeAttribute(options.nonce)}"` +
     ` data-bridge-origin="${escapeAttribute(origin)}"` +
     ` data-mode="${appearance.mode}"` +
-    ` data-scheme="${appearance.mode === 'canvas' ? 'light' : appearance.colorScheme}"><head>` +
+    ` data-scheme="${scheme}"><head>` +
     '<meta charset="utf-8">' +
     `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(csp)}">` +
     '<meta name="referrer" content="no-referrer">' +
+    `<link rel="stylesheet" href="${escapeAttribute(brandURL)}">` +
     `<link rel="stylesheet" href="${escapeAttribute(styleURL)}">` +
     `<link rel="stylesheet" href="${escapeAttribute(scrollbarURL)}">` +
     `</head><body>${encodedBody(options.html)}` +

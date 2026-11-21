@@ -322,7 +322,17 @@ func (e *DuckDBEngine) buildFilteredRelationshipsSQL(
 		e.parquetPath(identityindex.DatasetPeople),
 	)
 	queryText := logicalSQL + `,
-relationship_interactions AS (
+meeting_owners AS (
+	` + identityindex.MeetingOwnerGroupsSQL("(SELECT entry_num AS message_id FROM logical_people WHERE NOT is_owner AND message_type = 'meeting_transcript')", "relationship_activity_expanded", "read_parquet('"+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups))+"')") + `
+), relationship_ranked AS (
+	SELECT p.*, ` + identityindex.MeetingCopyRank("p.canonical_id", "p.entry_num", "p.message_type", "p.occurred_at") + ` AS meeting_rank
+	FROM logical_people p
+	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = p.entry_num
+	WHERE NOT p.is_owner AND (p.entry_kind NOT IN ('event','meeting')
+	    OR (p.message_type = 'meeting_transcript'
+	        AND EXISTS (SELECT 1 FROM meeting_owners o WHERE o.meeting_group = coalesce(g.group_id, p.entry_num)))
+	    OR (p.message_type <> 'meeting_transcript' AND p.with_owner))
+), relationship_interactions AS (
 	SELECT p.*,
 	       CASE WHEN p.is_from_me
 	                 AND p.entry_kind IN ('email','conversation','item')
@@ -331,10 +341,10 @@ relationship_interactions AS (
 	                 AND (p.entry_kind = 'conversation'
 	                      OR (p.entry_kind IN ('email','item') AND p.is_author))
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS received_units,
-	       CASE WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
+	       CASE WHEN p.entry_kind IN ('event','meeting') AND p.meeting_rank = 1
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS meeting_units,
 	       CASE
-	           WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
+	           WHEN p.entry_kind IN ('event','meeting') AND p.meeting_rank = 1
 	               THEN ` + strconv.FormatUint(uint64(identityindex.ModalityMeeting), 10) + `::UTINYINT
 	           WHEN p.entry_kind = 'conversation'
 	               THEN ` + strconv.FormatUint(uint64(identityindex.ModalityChat), 10) + `::UTINYINT
@@ -344,9 +354,8 @@ relationship_interactions AS (
 	       END AS modality_mask,
 	       exp(-? * greatest(
 	           0, date_diff('day', p.occurred_at, CAST(? AS TIMESTAMP)))) AS decay
-	FROM logical_people p
-	WHERE NOT p.is_owner
-	  AND NOT (p.entry_kind IN ('event','meeting') AND NOT p.with_owner)
+	FROM relationship_ranked p
+	WHERE p.entry_kind NOT IN ('event','meeting') OR p.meeting_rank = 1
 ), aggregated AS (
 	SELECT canonical_id,
 	       sum(sent_units * decay)::DOUBLE AS sent_decayed,

@@ -76,6 +76,8 @@ type MessageRecordingReader struct {
 	Client        *docbankmedia.Client
 	Destination   string
 	UploadConsent bool
+	// SearchProfile names the Docbank transcript profile for semantic and hybrid search.
+	SearchProfile string
 }
 
 func recordingKey(o store.MessageMediaOccurrence) string {

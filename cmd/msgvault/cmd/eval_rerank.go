@@ -14,11 +14,12 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
-	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/msgvault/internal/eval"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/rerank"
 )
@@ -384,17 +385,6 @@ func validateJevRequestEstimate(topicCount, modeCount int, shapes []string, top,
 	return nil
 }
 
-func truncateUTF8Bytes(value string, limit int) string {
-	if len([]byte(value)) <= limit {
-		return value
-	}
-	value = value[:limit]
-	for len(value) > 0 && !utf8.ValidString(value) {
-		value = value[:len(value)-1]
-	}
-	return value
-}
-
 func prepareEvalCandidates(ctx context.Context, s *store.Store, keys []string, hits map[string]evalHit, preprocess embed.PreprocessConfig, top int) ([]string, error) {
 	if len(keys) == 0 {
 		return nil, nil
@@ -412,7 +402,7 @@ func prepareEvalCandidates(ctx context.Context, s *store.Store, keys []string, h
 		}
 		body := embed.BodyTextForEmbedding(message.BodyText, message.BodyHTML)
 		text, _ := embed.Preprocess(message.Subject, body, 0, preprocess)
-		texts[i] = truncateUTF8Bytes(text, rerank.MaxCandidateBytes)
+		texts[i] = textutil.PrefixBytes(text, rerank.MaxCandidateBytes)
 	}
 	return texts, nil
 }

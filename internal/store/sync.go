@@ -24,6 +24,11 @@ const (
 	// stopped before its importer started a run, so it wrote nothing.
 	SyncTypeNotStarted = "not_started"
 
+	// SyncTypeWebhook marks a run that applied pushed changes between polling
+	// syncs. It does not cover the source, so it says nothing about whether
+	// polling works.
+	SyncTypeWebhook = "webhook"
+
 	SyncRunItemStatusError    = "error"
 	SyncRunItemStatusSkipped  = "skipped"
 	SyncRunItemStatusResolved = "resolved"
@@ -167,10 +172,13 @@ func (s *Store) withSyncMessageWriteContext(
 	messageID int64,
 	write func(querier) error,
 ) error {
-	if s.syncGeneration == nil {
+	if s.syncGeneration == nil && s.dialect.DriverName() != postgresDriverName {
 		return write(boundQuerier{ctx: ctx, q: s.db})
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	// Unscoped attachment updates can invalidate visual publications, whose
+	// foreign-key checks still need messages. Drain them before maintenance
+	// locks those parents, just as scoped sync writes drain on sync_runs.
+	return s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
 			return err
@@ -429,6 +437,39 @@ type SourceImportItem struct {
 	Status          string
 	RecordsImported int
 	ErrorMessage    sql.NullString
+}
+
+// DeleteBeeperRosterReceiptsContext removes the specified room receipts.
+func (s *Store) DeleteBeeperRosterReceiptsContext(ctx context.Context, sourceID int64, provider string, identifiers []string) error {
+	if len(identifiers) == 0 {
+		return nil
+	}
+	args := []any{sourceID, provider}
+	for _, id := range identifiers {
+		args = append(args, id)
+	}
+	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
+		_, err := q.Exec(`DELETE FROM source_import_items WHERE source_id = ? AND provider = ? AND provider_id IN (`+placeholders(len(identifiers))+`)`, args...)
+		return err
+	})
+}
+
+// BeeperRosterReceiptsContext reads the active member receipts for one room.
+func (s *Store) BeeperRosterReceiptsContext(ctx context.Context, sourceID int64, provider string) (map[string]SourceImportItem, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT provider_id, COALESCE(name, ''), COALESCE(checksum, ''), status FROM source_import_items WHERE source_id = ? AND provider = ?`, sourceID, provider)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	items := make(map[string]SourceImportItem)
+	for rows.Next() {
+		item := SourceImportItem{SourceID: sourceID, Provider: provider}
+		if err := rows.Scan(&item.ProviderID, &item.Name, &item.Checksum, &item.Status); err != nil {
+			return nil, err
+		}
+		items[item.ProviderID] = item
+	}
+	return items, rows.Err()
 }
 
 // StartSync creates a new sync run record and returns its ID. It first takes a
@@ -1072,7 +1113,7 @@ func (s *Store) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, st
 // errors. That run supersedes older debt by recording anything still failing.
 func (s *Store) ListUnresolvedSyncItemErrors(ctx context.Context, sourceID int64) ([]SyncRunItem, error) {
 	var lowerBound int64
-	last, err := s.getLastSuccessfulSyncContext(ctx, sourceID, "incremental", true)
+	last, err := s.getLastSuccessfulSyncContext(ctx, sourceID, "=", "incremental")
 	if err != nil && !errors.Is(err, ErrSyncRunNotFound) {
 		return nil, fmt.Errorf("find latest completed incremental: %w", err)
 	}
@@ -1083,17 +1124,29 @@ func (s *Store) ListUnresolvedSyncItemErrors(ctx context.Context, sourceID int64
 		SELECT id, sync_run_id, source_message_id, phase, status,
 		       error_kind, error_message, created_at
 		FROM sync_run_items
-		WHERE id IN (
-			SELECT MAX(i.id)
-			FROM sync_run_items i
-			JOIN sync_runs r ON r.id = i.sync_run_id
-			WHERE r.source_id = ? AND r.id >= ? AND i.phase IN ('fetch', 'ingest')
-			GROUP BY i.source_message_id
-		) AND status = ?
+		WHERE id IN (`+latestSyncItemIDsQuery(false)+`) AND status = ?
 		ORDER BY id
 	`, sourceID, lowerBound, SyncRunItemStatusError)
 	if err != nil {
 		return nil, fmt.Errorf("list unresolved sync item errors: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanSyncRunItems(rows)
+}
+
+// ListAcquisitionOutcomesContext returns every retained fetch or ingest
+// outcome for a source, newest first.
+func (s *Store) ListAcquisitionOutcomesContext(ctx context.Context, sourceID int64) ([]SyncRunItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT i.id, i.sync_run_id, i.source_message_id, i.phase, i.status,
+		       i.error_kind, i.error_message, i.created_at
+		FROM sync_run_items i
+		JOIN sync_runs r ON r.id = i.sync_run_id
+		WHERE r.source_id = ? AND i.phase IN ('fetch', 'ingest')
+		ORDER BY i.id DESC
+	`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("list acquisition outcomes: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	return scanSyncRunItems(rows)
@@ -1315,6 +1368,8 @@ func (s *Store) validateCurrentSyncGeneration(
 // their generation fence. ROW EXCLUSIVE lets syncs proceed together but makes
 // BeginExclusive wait before it holds any of their table locks. Attribution
 // transactions instead gate maintenance on the identity row before their fence.
+// Cascade-child writers use the same gate through
+// withSourceMaintenanceGateContext, before child writes and parent FK checks.
 func (s *Store) lockSyncMaintenanceGate(ctx context.Context, q contextStatementQuerier) error {
 	if !s.IsPostgreSQL() {
 		return nil
@@ -1547,6 +1602,26 @@ func (s *Store) GetLatestSyncContext(ctx context.Context, sourceID, excludeID in
 	return run, err
 }
 
+// GetLatestSyncExcludingTypeContext returns the most recent sync run for a
+// source whose sync_type is not syncType.
+func (s *Store) GetLatestSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*SyncRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, source_id, started_at, completed_at, status,
+		       messages_processed, messages_added, messages_updated, errors_count,
+		       error_message, cursor_before, cursor_after, request_fingerprint
+		FROM sync_runs
+		WHERE source_id = ? AND sync_type <> ?
+		ORDER BY started_at DESC, id DESC
+		LIMIT 1
+	`, sourceID, syncType)
+
+	run, err := scanSyncRun(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("latest non-%s sync for source %d: %w", syncType, sourceID, ErrSyncRunNotFound)
+	}
+	return run, err
+}
+
 // GetLatestStartedSyncContext is GetLatestSyncContext without not-started
 // attempts. Those wrote nothing, so they cannot invalidate an importer's
 // incremental state.
@@ -1735,28 +1810,42 @@ func (s *Store) GetLastSuccessfulSync(sourceID int64) (*SyncRun, error) {
 
 // GetLastSuccessfulSyncContext is the request-aware form of GetLastSuccessfulSync.
 func (s *Store) GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64) (*SyncRun, error) {
-	return s.getLastSuccessfulSyncContext(ctx, sourceID, "", false)
+	return s.getLastSuccessfulSyncContext(ctx, sourceID, "", "")
 }
 
 // GetLastSuccessfulSyncByType returns the most recent successful sync whose
 // sync_type exactly equals syncType, the legacy empty value included; only
 // GetLastSuccessfulSync queries without a type filter.
 func (s *Store) GetLastSuccessfulSyncByType(ctx context.Context, sourceID int64, syncType string) (*SyncRun, error) {
-	return s.getLastSuccessfulSyncContext(ctx, sourceID, syncType, true)
+	return s.getLastSuccessfulSyncContext(ctx, sourceID, "=", syncType)
+}
+
+// GetLastSuccessfulSyncExcludingTypeContext returns the most recent successful
+// sync whose sync_type is not syncType.
+func (s *Store) GetLastSuccessfulSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*SyncRun, error) {
+	return s.getLastSuccessfulSyncContext(ctx, sourceID, "<>", syncType)
 }
 
 // lastSuccessfulSyncQuery reads the newest completed run for a source.
 // idx_sync_runs_completed matches its filter and order, so the lookup stops at
-// the first row instead of sorting every completed run.
-func lastSuccessfulSyncQuery(filterByType bool) string {
-	whereType := ""
-	if filterByType {
-		whereType = " AND sync_type = ?"
-	}
+// the first row instead of sorting every completed run. typeOp is "" for any
+// sync_type, or "=" or "<>" to compare sync_type with a bound type.
+func lastSuccessfulSyncQuery(typeOp string) string {
 	return `
 		SELECT id, source_id, started_at, completed_at, status,
 		       messages_processed, messages_added, messages_updated, errors_count,
 		       error_message, cursor_before, cursor_after, request_fingerprint
+		` + lastSuccessfulSyncSelection(typeOp)
+}
+
+// lastSuccessfulSyncSelection shares the completed-run filter and ordering
+// with the in-transaction boundary lookup used by attachment statistics.
+func lastSuccessfulSyncSelection(typeOp string) string {
+	whereType := ""
+	if typeOp != "" {
+		whereType = " AND sync_type " + typeOp + " ?"
+	}
+	return `
 		FROM sync_runs
 		WHERE source_id = ? AND status = 'completed'` + whereType + `
 		ORDER BY completed_at DESC, id DESC
@@ -1764,17 +1853,20 @@ func lastSuccessfulSyncQuery(filterByType bool) string {
 	`
 }
 
-func (s *Store) getLastSuccessfulSyncContext(ctx context.Context, sourceID int64, syncType string, filterByType bool) (*SyncRun, error) {
+func (s *Store) getLastSuccessfulSyncContext(ctx context.Context, sourceID int64, typeOp, syncType string) (*SyncRun, error) {
 	args := []any{sourceID}
-	if filterByType {
+	if typeOp != "" {
 		args = append(args, syncType)
 	}
-	row := s.db.QueryRowContext(ctx, lastSuccessfulSyncQuery(filterByType), args...)
+	row := s.db.QueryRowContext(ctx, lastSuccessfulSyncQuery(typeOp), args...)
 
 	run, err := scanSyncRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		if filterByType {
+		switch typeOp {
+		case "=":
 			return nil, fmt.Errorf("last successful %s sync for source %d: %w", syncType, sourceID, ErrSyncRunNotFound)
+		case "<>":
+			return nil, fmt.Errorf("last successful non-%s sync for source %d: %w", syncType, sourceID, ErrSyncRunNotFound)
 		}
 		return nil, fmt.Errorf("last successful sync for source %d: %w", sourceID, ErrSyncRunNotFound)
 	}
@@ -1826,28 +1918,9 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 		return nil, fmt.Errorf("get source: %w", err)
 	}
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := lockSourceMaintenance(ctx, tx); err != nil {
-			return err
-		}
-		var shadowed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_settings ss WHERE ss.alias_key = ?
-   AND NOT EXISTS (SELECT 1 FROM sources existing WHERE existing.id = ss.source_id AND existing.source_type = ? AND existing.identifier = ?))`,
-			strings.ToLower(identifier), sourceType, identifier).Scan(&shadowed); err != nil {
-			return err
-		}
-		if shadowed {
-			return fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
-		}
-		now := s.dialect.Now()
-		row := tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources (source_type, identifier, created_at, updated_at)
-   VALUES (?, ?, %s, %s) ON CONFLICT (source_type, identifier) DO UPDATE SET identifier = sources.identifier
-   RETURNING `+sourceCatalogColumns, now, now), sourceType, identifier)
 		var err error
-		source, err = scanSource(row)
-		if err != nil {
-			return fmt.Errorf("upsert source: %w", err)
-		}
-		return requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, source.ID)
+		source, err = s.getOrCreateSourceTx(ctx, tx, sourceType, identifier)
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -1880,6 +1953,32 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 		)
 	}
 
+	return source, nil
+}
+
+func (s *Store) getOrCreateSourceTx(ctx context.Context, tx *loggedTx, sourceType, identifier string) (*Source, error) {
+	if err := lockSourceMaintenance(ctx, tx); err != nil {
+		return nil, err
+	}
+	var shadowed bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_settings ss WHERE ss.alias_key = ?
+   AND NOT EXISTS (SELECT 1 FROM sources existing WHERE existing.id = ss.source_id AND existing.source_type = ? AND existing.identifier = ?))`, strings.ToLower(identifier), sourceType, identifier).Scan(&shadowed); err != nil {
+		return nil, err
+	}
+	if shadowed {
+		return nil, fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
+	}
+	now := s.dialect.Now()
+	row := tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources (source_type, identifier, created_at, updated_at)
+   VALUES (?, ?, %s, %s) ON CONFLICT (source_type, identifier) DO UPDATE SET identifier = sources.identifier
+   RETURNING `+sourceCatalogColumns, now, now), sourceType, identifier)
+	source, err := scanSource(row)
+	if err != nil {
+		return nil, fmt.Errorf("upsert source: %w", err)
+	}
+	if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, source.ID); err != nil {
+		return nil, err
+	}
 	return source, nil
 }
 
@@ -2042,53 +2141,60 @@ func (s *Store) UpdateSourceIdentifier(ctx context.Context, sourceID int64, iden
 	var pending []int64
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
 		pending = nil
-		if reset := s.dialect.MaintenanceTimeoutResetSQL(); reset != "" {
-			if _, err := tx.ExecContext(ctx, reset); err != nil {
-				return fmt.Errorf("disable maintenance statement timeout: %w", err)
-			}
-		}
-		if err := lockSourceMaintenance(ctx, tx); err != nil {
-			return err
-		}
-		if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, sourceID); err != nil {
-			return err
-		}
-		var shadowed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_settings WHERE alias_key = ? AND source_id <> ?)`, strings.ToLower(identifier), sourceID).Scan(&shadowed); err != nil {
-			return fmt.Errorf("check identifier alias conflict: %w", err)
-		}
-		if shadowed {
-			return fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
-		}
-		var sourceType, oldIdentifier string
-		err := tx.QueryRowContext(ctx,
-			`SELECT source_type, COALESCE(identifier, '') FROM sources WHERE id = ?`, sourceID,
-		).Scan(&sourceType, &oldIdentifier)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("read source %d identifier: %w", sourceID, err)
-		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-			UPDATE sources
-			SET identifier = ?, updated_at = %s
-			WHERE id = ?
-		`, s.dialect.Now()), identifier, sourceID); err != nil {
-			return err
-		}
-		oldSink, newSink := accountSink(sourceType, oldIdentifier), accountSink(sourceType, identifier)
-		if oldSink == newSink {
-			return nil
-		}
-		pending, err = s.markAccountAttributionPendingForAddressesTx(ctx, tx, sourceID, []string{oldSink, newSink})
-		return err
+		return s.updateSourceIdentifierTx(ctx, tx, sourceID, identifier, &pending)
 	})
 	if err != nil {
 		return err
 	}
 	s.deriveAccountAttributionAfterCommit(ctx, sourceID, pending)
 	return nil
+}
+
+func (s *Store) updateSourceIdentifierTx(ctx context.Context, tx *loggedTx, sourceID int64, identifier string, pending *[]int64) error {
+	if reset := s.dialect.MaintenanceTimeoutResetSQL(); reset != "" {
+		if _, err := tx.ExecContext(ctx, reset); err != nil {
+			return fmt.Errorf("disable maintenance statement timeout: %w", err)
+		}
+	}
+	if err := lockSourceMaintenance(ctx, tx); err != nil {
+		return err
+	}
+	if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, sourceID); err != nil {
+		return err
+	}
+	var shadowed bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_settings WHERE alias_key = ? AND source_id <> ?)`, strings.ToLower(identifier), sourceID).Scan(&shadowed); err != nil {
+		return fmt.Errorf("check identifier alias conflict: %w", err)
+	}
+	if shadowed {
+		return fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
+	}
+	var sourceType, oldIdentifier string
+	err := tx.QueryRowContext(ctx,
+		`SELECT source_type, COALESCE(identifier, '') FROM sources WHERE id = ?`, sourceID,
+	).Scan(&sourceType, &oldIdentifier)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read source %d identifier: %w", sourceID, err)
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE sources
+		SET identifier = ?, updated_at = %s
+		WHERE id = ?
+	`, s.dialect.Now()), identifier, sourceID); err != nil {
+		return err
+	}
+	oldSink, newSink := accountSink(sourceType, oldIdentifier), accountSink(sourceType, identifier)
+	if oldSink == newSink {
+		return nil
+	}
+	*pending, err = s.markAccountAttributionPendingForAddressesTx(ctx, tx, sourceID, []string{oldSink, newSink})
+	if err != nil {
+		return err
+	}
+	return s.bumpAccountIdentityRevisionContext(ctx, tx)
 }
 
 // GetSourceByIdentifier returns a source by its identifier (email address).

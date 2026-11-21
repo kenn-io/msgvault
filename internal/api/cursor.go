@@ -12,10 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// changesCursorVersion is the only cursor format this server speaks. It is
-// carried as a `<n>.` prefix OUTSIDE the encoded part, and it is the single
-// source of truth for the format — there is deliberately no second version
-// marker inside the payload.
+// Cursor versions are carried as a `<n>.` prefix outside the encoded part.
 //
 // Outside is what makes it useful. A version buried in the payload is
 // unreadable until the reader has already agreed that the payload is
@@ -24,7 +21,10 @@ import (
 // holder as indistinguishable from corruption. Out here it versions the
 // envelope too, so a cursor from any future format is still recognised as one,
 // and its holder is told to restart rather than left guessing.
-const changesCursorVersion = 1
+const (
+	unfilteredChangesCursorVersion = 1
+	filteredChangesCursorVersion   = 2
+)
 
 // changesCursorPayload is the encoded part of a change-feed cursor.
 //
@@ -55,13 +55,14 @@ type changesCursorPayload struct {
 	Time    string `json:"t"`
 	ID      *int64 `json:"i,omitzero" nullable:"false"`
 	Archive string `json:"a"`
+	Filter  string `json:"f,omitzero"`
 }
 
 // encodeChangesCursor renders a feed position in archiveUID as the opaque token
 // clients send back. Both the digits and the `.` are unreserved in a query
 // string and RawURLEncoding keeps the rest so too, so the whole token needs no
 // escaping.
-func encodeChangesCursor(archiveUID string, position store.ChangedMessagesCursor) string {
+func encodeChangesCursor(archiveUID string, position store.ChangedMessagesCursor, digest string) string {
 	var id *int64
 	if after, ok := position.AfterID(); ok {
 		id = &after
@@ -70,12 +71,17 @@ func encodeChangesCursor(archiveUID string, position store.ChangedMessagesCursor
 		Time:    position.At().UTC().Format(changesTimeLayout),
 		ID:      id,
 		Archive: archiveUID,
+		Filter:  digest,
 	}, json.Deterministic(true))
 	if err != nil {
 		// Unreachable: every field of the payload marshals unconditionally.
 		panic(fmt.Sprintf("encode changes cursor: %v", err))
 	}
-	return strconv.Itoa(changesCursorVersion) + "." +
+	version := unfilteredChangesCursorVersion
+	if digest != "" {
+		version = filteredChangesCursorVersion
+	}
+	return strconv.Itoa(version) + "." +
 		base64.RawURLEncoding.EncodeToString(payload)
 }
 
@@ -89,6 +95,7 @@ func encodeChangesCursor(archiveUID string, position store.ChangedMessagesCursor
 type changesPosition struct {
 	cursor  store.ChangedMessagesCursor
 	archive string
+	filter  string
 	present bool
 }
 
@@ -110,19 +117,30 @@ func decodeChangesCursor(raw string) (changesPosition, error) {
 	if !hasPrefix || !numeric {
 		return changesPosition{}, changesCursorError("is not a cursor this API issued")
 	}
-	if version != changesCursorVersion {
+	if version != unfilteredChangesCursorVersion && version != filteredChangesCursorVersion {
 		return changesPosition{}, changesCursorError(fmt.Sprintf(
 			"was issued by an incompatible version of this server (format %d, this "+
-				"server speaks %d); the sync cannot resume from it and must start "+
+				"server speaks through %d); the sync cannot resume from it and must start "+
 				"again from the beginning of the archive",
-			version, changesCursorVersion))
+			version, filteredChangesCursorVersion))
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
 		return changesPosition{}, changesCursorError("is not a cursor this API issued")
 	}
 	var payload changesCursorPayload
-	if err := json.Unmarshal(decoded, &payload); err != nil {
+	if version == unfilteredChangesCursorVersion {
+		// Decode the original shape so unknown fields retain their v1 meaning.
+		var legacy struct {
+			Time    string `json:"t"`
+			ID      *int64 `json:"i,omitzero"`
+			Archive string `json:"a"`
+		}
+		if err := json.Unmarshal(decoded, &legacy); err != nil {
+			return changesPosition{}, changesCursorError("is not a cursor this API issued")
+		}
+		payload.Time, payload.ID, payload.Archive = legacy.Time, legacy.ID, legacy.Archive
+	} else if err := json.Unmarshal(decoded, &payload); err != nil || payload.Filter == "" {
 		return changesPosition{}, changesCursorError("is not a cursor this API issued")
 	}
 	at, err := time.Parse(changesTimeLayout, payload.Time)
@@ -133,7 +151,7 @@ func decodeChangesCursor(raw string) (changesPosition, error) {
 	if payload.ID != nil {
 		cursor = store.ChangedMessagesAfter(at.UTC(), *payload.ID)
 	}
-	return changesPosition{cursor: cursor, archive: payload.Archive, present: true}, nil
+	return changesPosition{cursor: cursor, archive: payload.Archive, filter: payload.Filter, present: true}, nil
 }
 
 // boundTo rejects a position that was issued against a different archive, and is

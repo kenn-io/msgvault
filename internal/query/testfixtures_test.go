@@ -39,6 +39,7 @@ type MessageFixture struct {
 	SizeEstimate        int64
 	HasAttachments      bool
 	HiddenTextPresent   bool
+	ArchiveOnly         bool
 	AttachmentCount     int
 	DeletedAt           *time.Time // nil = NULL
 	InternalDeletedAt   *time.Time // nil = omitted from legacy fixtures / NULL in opted-in fixtures
@@ -103,6 +104,7 @@ type RecipientFixture struct {
 	// participant's current address in email_address, matching what the
 	// exporter writes for cache schema v26.
 	EmailAddress string
+	IsRelayed    bool
 }
 
 // LabelFixture defines a label row for Parquet test data.
@@ -183,6 +185,7 @@ type TestDataBuilder struct {
 	ownerParticipants        []OwnerParticipantFixture
 	participantClusters      []ParticipantClusterFixture
 	unsentMessages           string
+	meetingGroups            string
 
 	emptyAttachments bool // if true, write empty attachments file
 	// legacyRecipientSchema writes message_recipients without the
@@ -257,6 +260,7 @@ type MessageOpt struct {
 	SizeEstimate        int64
 	HasAttachments      bool
 	HiddenTextPresent   bool
+	ArchiveOnly         bool
 	DeletedAt           *time.Time
 	InternalDeletedAt   *time.Time
 	DeletedFromSourceAt *time.Time
@@ -309,6 +313,7 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 		SizeEstimate:           opt.SizeEstimate,
 		HasAttachments:         opt.HasAttachments,
 		HiddenTextPresent:      opt.HiddenTextPresent,
+		ArchiveOnly:            opt.ArchiveOnly,
 		DeletedAt:              opt.DeletedAt,
 		InternalDeletedAt:      opt.InternalDeletedAt,
 		DeletedFromSourceAt:    opt.DeletedFromSourceAt,
@@ -617,9 +622,9 @@ func (b *TestDataBuilder) recipientsSQL() string {
 		} else if email := b.participantEmail(r.ParticipantID); email != "" {
 			resolved = sqlStr(email)
 		}
-		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s, %s, %s)",
+		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s, %s, %s, %t)",
 			r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName),
-			resolved, envelope)
+			resolved, envelope, r.IsRelayed)
 	})
 }
 
@@ -693,7 +698,7 @@ const (
 	// messageRecipientsColsWithEnvelope adds the resolved recipient address
 	// and the raw header address (cache schema v26). messageRecipientsCols
 	// stays for fixtures that model pre-v17 caches without either column.
-	messageRecipientsColsWithEnvelope = "message_id, participant_id, recipient_type, display_name, email_address, envelope_address"
+	messageRecipientsColsWithEnvelope = "message_id, participant_id, recipient_type, display_name, email_address, envelope_address, is_relayed"
 	labelsCols                        = "id, name"
 	messageLabelsCols                 = "message_id, label_id"
 	attachmentsCols                   = "attachment_id, message_id, size, filename, mime_type"
@@ -723,6 +728,8 @@ func (b *TestDataBuilder) Build() (string, func()) {
 
 	pb := newParquetBuilder(b.t)
 	pb.unsentMessages = b.unsentMessages
+	pb.meetingGroups = b.meetingGroups
+	pb.legacyRecipientSchema = b.legacyRecipientSchema
 	b.addMessageTables(pb)
 	b.addAuxiliaryTables(pb)
 	b.addAttachmentsTable(pb)
@@ -754,6 +761,13 @@ func (b *TestDataBuilder) addMessageTables(pb *parquetBuilder) {
 				return formatMessageFixture(b.t, columns, message.sqlValuesWithInternalDeletion())
 			}
 		}
+		if slices.ContainsFunc(msgs, func(message MessageFixture) bool { return message.ArchiveOnly }) {
+			baseFormatter := rowFormatter
+			cols += ", archive_only"
+			rowFormatter = func(message MessageFixture) string {
+				return strings.TrimSuffix(baseFormatter(message), ")") + ", " + strconv.FormatBool(message.ArchiveOnly) + ")"
+			}
+		}
 		rows := joinRows(msgs, rowFormatter)
 		pb.addTable("messages",
 			fmt.Sprintf("messages/year=%d", year), "data.parquet",
@@ -775,7 +789,7 @@ func (b *TestDataBuilder) recipientDummyRow() string {
 	if b.legacyRecipientSchema {
 		return "(0::BIGINT, 0::BIGINT, '', '')"
 	}
-	return "(0::BIGINT, 0::BIGINT, '', '', '', '')"
+	return "(0::BIGINT, 0::BIGINT, '', '', '', '', false)"
 }
 
 // addAuxiliaryTables adds sources, participants, recipients, labels, message_labels, and conversations.
@@ -843,9 +857,11 @@ type parquetTable struct {
 
 // parquetBuilder creates a temp directory with Parquet test data files.
 type parquetBuilder struct {
-	t              testing.TB
-	tables         []parquetTable
-	unsentMessages string
+	t                     testing.TB
+	tables                []parquetTable
+	unsentMessages        string
+	meetingGroups         string
+	legacyRecipientSchema bool
 }
 
 // Like dbtest.schemaTemplates and testutil.sqliteTemplate, retain templates in
@@ -870,7 +886,8 @@ func (b *parquetBuilder) contentKey() [sha256.Size]byte {
 			_, _ = fmt.Fprintf(h, "%d:%s", len(field), field)
 		}
 	}
-	_, _ = fmt.Fprintf(h, "%d:%s", len(b.unsentMessages), b.unsentMessages)
+	_, _ = fmt.Fprintf(h, "%d:%s:%t", len(b.unsentMessages), b.unsentMessages, b.legacyRecipientSchema)
+	_, _ = fmt.Fprintf(h, "%d:%s", len(b.meetingGroups), b.meetingGroups)
 	return [sha256.Size]byte(h.Sum(nil))
 }
 
@@ -958,13 +975,28 @@ func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResul
 	require.NoError(b.t, err, "open duckdb")
 	defer func() { _ = db.Close() }()
 	b.writeParquetFiles(db, tmpDir)
+	var legacyRecipients []byte
+	var recipientPath string
+	if b.legacyRecipientSchema {
+		recipientPath = filepath.Join(tmpDir, "message_recipients", "message_recipients.parquet")
+		legacyRecipients, err = os.ReadFile(recipientPath)
+		require.NoError(b.t, err)
+		currentPath := recipientPath + ".current"
+		_, err = db.ExecContext(b.t.Context(), "COPY (SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address FROM read_parquet('"+escapePath(recipientPath)+"')) TO '"+escapePath(currentPath)+"' (FORMAT PARQUET)")
+		require.NoError(b.t, err)
+		require.NoError(b.t, os.Rename(currentPath, recipientPath))
+	}
 	derived, err := identityindex.Build(b.t.Context(), db, identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,
 		StagedBaseRoot: tmpDir,
 		OutputRoot:     tmpDir,
 		UnsentMessages: b.unsentMessages,
+		MeetingGroups:  b.meetingGroups,
 	})
 	require.NoError(b.t, err, "derive identity fixture datasets")
+	if b.legacyRecipientSchema {
+		require.NoError(b.t, os.WriteFile(recipientPath, legacyRecipients, 0o600))
+	}
 	files := fstest.MapFS{}
 	err = fs.WalkDir(os.DirFS(tmpDir), ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -1069,6 +1101,17 @@ func (b *parquetBuilder) writeParquetFiles(db *sql.DB, tmpDir string) {
 	for _, tbl := range b.tables {
 		path := escapePath(filepath.Join(tmpDir, tbl.subdir, tbl.file))
 		writeTableParquet(b.t, db, path, tbl.columns, tbl.values, tbl.empty)
+		if tbl.name == "message_recipients" && tbl.columns == messageRecipientsCols {
+			// Every cache v36 shard has is_relayed. Only legacy TestDataBuilder
+			// fixtures omit the envelope columns.
+			current := "SELECT *, false AS is_relayed"
+			if !b.legacyRecipientSchema {
+				current = "SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address, false AS is_relayed"
+			}
+			_, err := db.ExecContext(b.t.Context(), "COPY ("+current+" FROM read_parquet('"+path+"')) TO '"+path+".v36' (FORMAT PARQUET)")
+			require.NoError(b.t, err)
+			require.NoError(b.t, os.Rename(filepath.FromSlash(path+".v36"), filepath.FromSlash(path)))
+		}
 	}
 }
 

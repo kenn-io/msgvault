@@ -1,0 +1,12 @@
+Chat History with example_friend:
+Date: 2026-01-02 03:04:05
+From: archive_owner
+Content: Hello café 🌱
+
+Date: 2026-01-02 03:05:05
+From: example_friend
+Content: https://www.tiktok.com/@example/video/9007199254740993
+
+Date: 2026-01-02 03:05:05
+From: example_friend
+Content: https://example.com/shared-image.png

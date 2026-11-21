@@ -4,6 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import type { PersonFileSearchRow } from '../../explore/models';
 import MediaThumbnail, { MAX_THUMBNAIL_BYTES } from './MediaThumbnail.svelte';
+import { readBoundedStream } from './preview-bytes';
+
+vi.mock('./preview-bytes', async importOriginal => {
+  const original = await importOriginal<typeof import('./preview-bytes')>();
+  return { ...original, readBoundedStream: vi.fn(original.readBoundedStream) };
+});
 
 function media(overrides: Partial<PersonFileSearchRow> = {}): PersonFileSearchRow {
   return {
@@ -11,7 +17,7 @@ function media(overrides: Partial<PersonFileSearchRow> = {}): PersonFileSearchRo
     occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
     source_identifier: 'archive@example.com', containing_title: 'Containing item',
     filename: 'photo.png', mime_type: 'image/png', mime_family: 'image', size_bytes: 8,
-    content_state: 'local_content', content_available: true,
+    content_state: 'unverified', content_available: null,
     person_provenance: { participant_ids: [42], roles: ['from'], directions: ['from_person'] },
     ...overrides
   };
@@ -57,21 +63,23 @@ describe('MediaThumbnail', () => {
     await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:person-thumbnail'));
   });
 
-  it('rejects oversized declared or streamed images and isolates the failure to a placeholder', async () => {
-    const declaredFetch = vi.fn<typeof fetch>();
-    const declared = render(MediaThumbnail, {
-      client: createAPIClient(declaredFetch),
-      file: media({ size_bytes: MAX_THUMBNAIL_BYTES + 1 })
-    });
-    expect(await screen.findByText('Image preview unavailable')).toBeDefined();
-    expect(declaredFetch).not.toHaveBeenCalled();
-    declared.unmount();
+  it.each([
+    ['oversized metadata', { size_bytes: MAX_THUMBNAIL_BYTES + 1 }],
+    ['GIF images', { filename: 'animation.gif', mime_type: 'image/gif' }],
+  ])('refuses %s without fetching', async (_label, overrides) => {
+    const fetchFn = vi.fn<typeof fetch>();
+    render(MediaThumbnail, { client: createAPIClient(fetchFn), file: media(overrides) });
+    expect(await screen.findByText('No preview')).toBeDefined();
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(screen.queryByRole('img')).toBeNull();
+  });
 
-    const streamedFetch = vi.fn<typeof fetch>(async () => new Response(new Uint8Array([137]), {
-      headers: { 'Content-Type': 'image/png', 'Content-Length': String(MAX_THUMBNAIL_BYTES + 1) }
-    }));
-    render(MediaThumbnail, { client: createAPIClient(streamedFetch), file: media() });
-    expect(await screen.findByText('Image preview unavailable')).toBeDefined();
+  it('shows a placeholder when the bounded reader rejects the response', async () => {
+    const response = new Response(new Uint8Array(pngBytes()).buffer, { headers: { 'Content-Type': 'image/png' } });
+    vi.mocked(readBoundedStream).mockRejectedValueOnce(new Error('too large'));
+    render(MediaThumbnail, { client: createAPIClient(async () => response), file: media() });
+    expect(await screen.findByText('No preview')).toBeDefined();
+    expect(readBoundedStream).toHaveBeenCalledWith(response.body, response.headers, expect.any(AbortSignal), 5 * 1024 * 1024);
     expect(createObjectURL).not.toHaveBeenCalled();
   });
 
@@ -85,18 +93,6 @@ describe('MediaThumbnail', () => {
     expect(screen.getByText('Video')).toBeDefined();
     expect(fetchFn).not.toHaveBeenCalled();
     expect(screen.queryByRole('video')).toBeNull();
-  });
-
-  it('does not automatically decode image formats with unbounded animation frames', async () => {
-    const fetchFn = vi.fn<typeof fetch>();
-    render(MediaThumbnail, {
-      client: createAPIClient(fetchFn),
-      file: media({ filename: 'animation.gif', mime_type: 'image/gif' })
-    });
-
-    expect(await screen.findByText('Image preview unavailable')).toBeDefined();
-    expect(fetchFn).not.toHaveBeenCalled();
-    expect(screen.queryByRole('img')).toBeNull();
   });
 
   it('waits for viewport proximity and releases the blob again when the card leaves it', async () => {

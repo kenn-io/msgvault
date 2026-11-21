@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/personscope"
 )
 
@@ -215,7 +216,8 @@ func (s *Store) exportMessageSources(
 
 	for _, source := range selected {
 		var completedAt *time.Time
-		run, err := s.GetLastSuccessfulSyncContext(ctx, source.id)
+		// A webhook run applies single changes, so it is no evidence of a sync.
+		run, err := s.GetLastSuccessfulSyncExcludingTypeContext(ctx, source.id, SyncTypeWebhook)
 		if err != nil && !errors.Is(err, ErrSyncRunNotFound) {
 			return fmt.Errorf("load message export source sync: %w", err)
 		}
@@ -348,7 +350,7 @@ func (s *Store) exportMessageRows(
 		                 FROM person_participants person_binding JOIN persons person_name ON person_name.id = person_binding.person_id
 		                 WHERE person_binding.participant_id = p_sender.id), ''),
 		       COALESCE(p_sender.display_name, ''),
-		       COALESCE(p_sender.email_address, p_sender.phone_number, '')
+		       COALESCE(`+identityindex.SenderAddressExpr("mr_from", "p_sender")+`, p_sender.phone_number, '')
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources s ON s.id = m.source_id

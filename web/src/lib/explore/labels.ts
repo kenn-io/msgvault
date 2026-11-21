@@ -1,3 +1,4 @@
+import { sourceDisplayName, sourceIcon } from '../sources/labels';
 import { groupingDimensionLabel, isGroupingDimension } from '../grouping/catalog';
 import type {
   ExploreColumn,
@@ -80,6 +81,7 @@ const KNOWN_MIME: Record<string, string> = {
   'text/plain': 'Text',
   'text/html': 'HTML',
   'text/csv': 'CSV',
+  'text/tab-separated-values': 'TSV',
   'text/calendar': 'Calendar invite',
   'message/rfc822': 'Email message'
 };
@@ -144,9 +146,14 @@ export function groupedByLabel(dimensions: readonly string[]): string {
 
 export function fileTypeLabel(
   mimeType: string | undefined,
-  family: string | undefined
+  family: string | undefined,
+  filename?: string
 ): string {
   const mime = mimeType?.toLowerCase().split(';')[0]?.trim() ?? '';
+  if (mime === '' || mime === 'application/octet-stream') {
+    const extension = filename?.match(/^[^.].*\.([a-z0-9]+)$/i)?.[1];
+    if (extension) return extension.toUpperCase();
+  }
   const known = KNOWN_MIME[mime];
   if (known) return known;
   const [kind, subtype] = mime.split('/');
@@ -155,7 +162,7 @@ export function fileTypeLabel(
   }
   return family && Object.hasOwn(FAMILY_SINGULAR, family)
     ? FAMILY_SINGULAR[family as FileMIMEFamily]
-    : 'Unknown type';
+    : 'File';
 }
 
 export function preflightReasonLabel(action: string, reason: string): string {
@@ -178,9 +185,12 @@ function kindPresentation(icon: string, label: string): EntryKindPresentation {
 // (internal/identityindex/schema.go).
 export const CHAT_MESSAGE_TYPES = new Set([
   'chat', 'text', 'google_chat', 'whatsapp', 'imessage', 'sms', 'mms', 'rcs',
-  'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'inline', 'fbmessenger', 'matrix', 'chatwoot', 'telegram',
+  'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'inline', 'fbmessenger', 'matrix', 'chatwoot', 'telegram', 'x_dm', 'tiktok_export', 'linkedin',
   'facebook_comments',
-  'instagram_comments'
+  'instagram_comments',
+  'instagram_mentions',
+  'facebook_messages',
+  'instagram_messages'
 ]);
 
 // The server-assigned kind wins; the message type covers rows and archive messages without one.
@@ -201,4 +211,32 @@ export function entryKindPresentation(kind: string, messageType = ''): EntryKind
     return kindPresentation('◫', 'Meeting item');
   }
   return kindPresentation('◇', 'Archive item');
+}
+
+export type SourceInventory = ReadonlyMap<string, { type: string; identifier: string; displayName?: string | null }>;
+
+export function groupRowName(dimension: ExploreGroupDimension, key: string, label: string, sources?: SourceInventory) {
+  if (dimension === 'month' && /^\d{4}-\d{2}$/.test(key)) {
+    const [year, month] = key.split('-').map(Number);
+    return { name: new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric' }).format(new Date(year!, month! - 1, 1)) };
+  }
+  if (dimension === 'source') {
+    const source = sources?.get(key);
+    const base = sourceDisplayName(source?.type, source?.identifier ?? label);
+    const collisions = [...(sources ?? [])].filter(([, item]) => sourceDisplayName(item.type, item.identifier) === base);
+    const displaySuffix = (item: { type: string; identifier: string; displayName?: string | null }) =>
+      item.displayName?.trim() || (item.type === 'chatwoot' ? '' :
+      item.type === 'imap' && item.identifier.includes('://') && item.identifier.lastIndexOf('@') > item.identifier.indexOf('://') + 3
+        ? item.identifier.slice(item.identifier.lastIndexOf('@') + 1) : item.identifier);
+    const suffixValue = source && displaySuffix(source);
+    const sameSuffix = collisions.filter(([, item]) => displaySuffix(item) === suffixValue).length > 1;
+    const suffix = !suffixValue || suffixValue === base ? key : `${suffixValue}${sameSuffix ? ` · ${key}` : ''}`;
+    const name = source && collisions.length > 1 ? `${base} (${suffix})` : base;
+    return { name, icon: source?.type ? sourceIcon(source.type) : undefined, title: label };
+  }
+  if (dimension === 'kind' || dimension === 'message_type') {
+    const presentation = dimension === 'kind' ? entryKindPresentation(key) : entryKindPresentation('', key);
+    return { name: dimension === 'kind' ? presentation.name : sentenceCase(key), icon: presentation.icon };
+  }
+  return { name: label };
 }

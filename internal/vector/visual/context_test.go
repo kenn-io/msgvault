@@ -2,9 +2,11 @@ package visual
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -96,6 +98,16 @@ func TestAssembleDocumentTruncatesContextOnRuneBoundary(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, truncated)
 	assert.Equal(t, "αβγ", doc.Parts[0].Text)
+}
+
+func TestAssembleDocumentReportsTruncationOfInvalidUTF8Context(t *testing.T) {
+	request := revisionRequest()
+	request.Context = MessageContext{Body: "\xffxy"}
+	request.Policy.MaxChars = 2
+	doc, truncated, err := AssembleDocument(request)
+	require.NoError(t, err)
+	assert.True(t, truncated)
+	assert.Equal(t, 2, utf8.RuneCountInString(doc.Parts[0].Text))
 }
 
 func revisionRequest() AssembleRequest {

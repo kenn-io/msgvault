@@ -42,7 +42,7 @@
     const family = file.mime_family;
     const mimeType = file.mime_type;
     const size = file.size_bytes;
-    const available = file.content_available && file.content_state === 'local_content';
+    const available = file.content_state === 'unverified' || (file.content_available && file.content_state === 'local_content');
     releaseImage();
 
     if (family === 'video') {
@@ -112,7 +112,7 @@
   {:else if thumbnailState === 'loading'}
     <span class="placeholder" role="status">Loading thumbnail…</span>
   {:else}
-    <span class="placeholder" data-kind="unavailable">Image preview unavailable</span>
+    <span class="placeholder" data-kind="unavailable">No preview</span>
   {/if}
 </div>
 

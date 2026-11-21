@@ -32,6 +32,13 @@ export function formatShortDate(value: string): string {
   }).format(date);
 }
 
+// "Nov 3, 9:00 AM": the short date, with the year only outside this year, then the time.
+export function formatShortDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return value;
+  return `${formatShortDate(value)}, ${new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(date)}`;
+}
+
 const RELATIVE_UNITS: ReadonlyArray<readonly [Intl.RelativeTimeFormatUnit, number]> = [
   ['day', 86_400_000], ['hour', 3_600_000], ['minute', 60_000], ['second', 1_000]
 ];
@@ -45,4 +52,9 @@ export function formatRelativeTime(value: string, now: Date = new Date()): strin
     if (Math.abs(difference) >= size) return format.format(Math.round(difference / size), unit);
   }
   return format.format(0, 'second');
+}
+
+export function formatDate(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
 }

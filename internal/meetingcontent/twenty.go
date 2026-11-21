@@ -21,6 +21,14 @@ func decodeTwenty(fields map[string]jsontext.Value) Content {
 		return unavailableContent("invalid_recording")
 	}
 	c := baseRecognizedContent()
+	var calendar map[string]jsontext.Value
+	if json.Unmarshal(fields["calendar_event"], &calendar) == nil {
+		uid, _ := optionalString(calendar["iCalUid"])
+		c.LinkEvidence.ICalUID = strings.TrimSpace(uid)
+		if at, ok := rawTime(calendar["startsAt"], false); ok {
+			c.LinkEvidence.ScheduledAt = &at
+		}
+	}
 	c.Notes = Section{State: StateUnsupported}
 	c.Actions, c.ActionCoverage, c.ActionReason = []Action{}, CoverageUnsupported, "no_structured_actions"
 	var summary map[string]jsontext.Value
@@ -61,11 +69,10 @@ func decodeTwenty(fields map[string]jsontext.Value) Content {
 		setDuration(&c, end.Sub(start).Seconds(), DurationProvider)
 		return c
 	}
-	var calendar map[string]jsontext.Value
-	if json.Unmarshal(fields["calendar_event"], &calendar) == nil {
-		start, startOK = rawTime(calendar["startsAt"], false)
+	if c.LinkEvidence.ScheduledAt != nil {
+		start = *c.LinkEvidence.ScheduledAt
 		end, endOK = rawTime(calendar["endsAt"], false)
-		if startOK && endOK && end.After(start) {
+		if endOK && end.After(start) {
 			setDuration(&c, end.Sub(start).Seconds(), DurationScheduled)
 			return c
 		}

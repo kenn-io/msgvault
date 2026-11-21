@@ -203,6 +203,10 @@ var buildCacheBeforeStateWriteHook func()
 // export failures before the messages COPY begins.
 var buildCacheBeforeMessagesExportHook func() error
 
+// cacheExportNow supplies the cache watermark. Relationship temperatures decay
+// by whole UTC days from it, so tests that compare two builds pin it.
+var cacheExportNow = time.Now
+
 // cacheSnapshotGOOS selects the platform branch in openCacheSourceSnapshot.
 // Tests override it to exercise platform-specific snapshot behavior.
 var cacheSnapshotGOOS = runtime.GOOS
@@ -1201,7 +1205,7 @@ func buildCacheLockedAttempt(
 	// Record the freshness boundary immediately before the first source read.
 	// A sync or deletion that finishes after this instant may not be represented
 	// by the snapshot and must invalidate the cache on the next check.
-	exportStarted := time.Now()
+	exportStarted := cacheExportNow()
 	cacheWatermark := exportStarted.UTC().Truncate(time.Second)
 
 	var maxMessageID sql.NullInt64
@@ -1314,6 +1318,9 @@ func buildCacheLockedAttempt(
 		if err := sourceSnapshot.Close(); err != nil {
 			return nil, fmt.Errorf("close SQLite snapshot after metadata check: %w", err)
 		}
+		if identityRevision != previousState.IdentityRevision {
+			return refreshDerivedDatasetsOnly(ctx, dbPath, analyticsDir, false, builderOverrides...)
+		}
 		return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 	}
 
@@ -1395,6 +1402,9 @@ func buildCacheLockedAttempt(
 		} else {
 			afterMessageIDs[dataset] = 0
 		}
+	}
+	if err := stageMeetingGroups(ctx, sourceSnapshot, maxID); err != nil {
+		return nil, err
 	}
 	if err := sourceSnapshot.Prepare(ctx, maxID, afterMessageIDs); err != nil {
 		return nil, err
@@ -1594,6 +1604,7 @@ func buildCacheLockedAttempt(
 	}
 	derived, err := identityindex.Build(ctx, exportDB, identityindex.BuildOptions{
 		UnsentMessages:       "tmp_unsent_messages",
+		MeetingGroups:        "tmp_meeting_groups",
 		Mode:                 buildMode,
 		CommittedRoot:        analyticsDir,
 		StagedBaseRoot:       staging.root,
@@ -2004,6 +2015,7 @@ func (s *cacheSourceSnapshot) QueryRowContext(ctx context.Context, query string,
 	if s.sqliteTx != nil {
 		return s.sqliteTx.QueryRowContext(ctx, query, args...)
 	}
+	args = sqliteQueryArgs(args)
 	escapedQuery := strings.ReplaceAll(query, "'", "''")
 	duckQuery := fmt.Sprintf("SELECT * FROM sqlite_query('sqlite_db', '%s'", escapedQuery)
 	if len(args) > 0 {
@@ -2012,6 +2024,62 @@ func (s *cacheSourceSnapshot) QueryRowContext(ctx context.Context, query string,
 	}
 	duckQuery += ")"
 	return s.duckTx.QueryRowContext(ctx, duckQuery, args...)
+}
+
+func (s *cacheSourceSnapshot) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if s.sqliteTx != nil {
+		return s.sqliteTx.QueryContext(ctx, query, args...)
+	}
+	args = sqliteQueryArgs(args)
+	duckQuery := fmt.Sprintf("SELECT * FROM sqlite_query('sqlite_db', '%s'", strings.ReplaceAll(query, "'", "''"))
+	if len(args) > 0 {
+		duckQuery += ", params=row(" + strings.TrimSuffix(strings.Repeat("?,", len(args)), ",") + ")"
+	}
+	return s.duckTx.QueryContext(ctx, duckQuery+")", args...)
+}
+
+func sqliteQueryArgs(args []any) []any {
+	result := append([]any(nil), args...)
+	for i, arg := range result {
+		if at, ok := arg.(time.Time); ok {
+			result[i] = at.UTC().Format("2006-01-02 15:04:05.999999999-07:00")
+		}
+	}
+	return result
+}
+
+var resolveCacheMeetingGroups = store.MeetingTranscriptGroupsSQLiteSnapshotContext
+
+func stageMeetingGroups(ctx context.Context, snapshot *cacheSourceSnapshot, through int64) error {
+	groups, err := resolveCacheMeetingGroups(ctx, snapshot, through)
+	if err != nil {
+		return fmt.Errorf("resolve meeting groups: %w", err)
+	}
+	db := snapshot.DuckDB()
+	if _, err := db.ExecContext(ctx, "CREATE TEMP TABLE tmp_meeting_groups (message_id BIGINT, group_id BIGINT)"); err != nil {
+		return fmt.Errorf("create meeting groups: %w", err)
+	}
+	var values []string
+	flush := func() error {
+		if len(values) == 0 {
+			return nil
+		}
+		_, err := db.ExecContext(ctx, "INSERT INTO tmp_meeting_groups VALUES "+strings.Join(values, ","))
+		values = values[:0]
+		return err
+	}
+	for id, group := range groups {
+		values = append(values, fmt.Sprintf("(%d,%d)", id, group))
+		if len(values) == 1000 {
+			if err := flush(); err != nil {
+				return fmt.Errorf("stage meeting groups: %w", err)
+			}
+		}
+	}
+	if err := flush(); err != nil {
+		return fmt.Errorf("stage meeting groups: %w", err)
+	}
+	return nil
 }
 
 func (s *cacheSourceSnapshot) DuckDB() sqlRunner {
@@ -2151,8 +2219,8 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 		// CSV view that lacks the column and the export fails on Windows.
 		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
 		{"source_merge_archive_only_messages", "SELECT message_id FROM source_merge_archive_only_messages", "types={'message_id': 'BIGINT'}", nil},
-		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients" + childFilter("message_recipients"),
-			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN'}",
+		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + ", is_relayed FROM message_recipients" + childFilter("message_recipients"),
+			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN', 'is_relayed': 'BOOLEAN'}",
 			identityColumns("recipient_type", "email_address")},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels" + childFilter("message_labels"),
 			"types={'message_id': 'BIGINT', 'label_id': 'BIGINT'}", nil},
@@ -2645,6 +2713,9 @@ func globalConfigFlagArgs(options ...invocationOptions) []string {
 	}
 	if o.useLocal {
 		args = append(args, "--local")
+	}
+	if o.remoteName != "" {
+		args = append(args, "--"+remoteFlag, o.remoteName)
 	}
 	// Forward the logging flags so an explicit level survives into subprocesses.
 	// The daemon CLI subprocess otherwise quiets to WARN, defeating a user's

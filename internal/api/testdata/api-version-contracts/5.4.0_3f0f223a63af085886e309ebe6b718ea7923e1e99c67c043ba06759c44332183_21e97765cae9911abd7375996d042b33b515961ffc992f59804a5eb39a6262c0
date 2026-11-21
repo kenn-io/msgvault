@@ -1,0 +1,1 @@
+Allow native tag GET requests for source-deleted messages while retaining edit and identity guards.

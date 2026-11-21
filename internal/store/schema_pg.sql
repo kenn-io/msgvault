@@ -351,6 +351,7 @@ CREATE TABLE IF NOT EXISTS persons (
     id                        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     vcard_uid                 TEXT NOT NULL UNIQUE,
     display_name              TEXT,
+    display_name_source_name_id BIGINT,
     revision                  BIGINT NOT NULL DEFAULT 1,
     vcard_projection_revision BIGINT NOT NULL DEFAULT 1,
     created_at                TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1044,6 +1045,7 @@ CREATE TABLE IF NOT EXISTS person_fact_decisions (
                            'competing-tie', 'explicit-contradiction', 'explicit-supersession',
                            'organization-ambiguous', 'applied-projection', 'evidence-unsupported',
                            'outside-validity')),
+    outcome            TEXT,
     score_json         JSONB NOT NULL,
     competing_claim_id BIGINT REFERENCES person_fact_claims(id) ON DELETE SET NULL,
     projection_kind    TEXT,
@@ -1376,6 +1378,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
     -- Full-text search column
     search_fts TSVECTOR,
+    search_fts_fields TEXT[],
 
     -- Vector-embedding watermark: the index generation this message's
     -- embeddings were last written for. NULL means "needs embedding"
@@ -1402,7 +1405,8 @@ CREATE TABLE IF NOT EXISTS message_recipients (
     -- identity discovery reads it so merges cannot rewrite evidence.
     -- NULL on rows from writers without envelope addresses (non-email
     -- importers, legacy rows).
-    email_address TEXT
+    email_address TEXT,
+    is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 
     -- Uniqueness spans the normalized envelope address so one participant
     -- can carry several alias snapshots on the same message (two aliases of
@@ -1561,6 +1565,10 @@ CREATE TABLE IF NOT EXISTS message_raw (
 
     compression TEXT DEFAULT 'zlib',
     encryption_version INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS email_calendar_pending (
+    message_id BIGINT PRIMARY KEY REFERENCES message_raw(message_id) ON DELETE CASCADE
 );
 
 -- Explicit MIME identifiers (In-Reply-To, References, attached originals),
@@ -2622,7 +2630,7 @@ CREATE TABLE IF NOT EXISTS person_attribute_values (
     value_boolean     BOOLEAN,
     value_date        TEXT,
     value_timestamp   TIMESTAMPTZ,
-    value_json        JSONB,
+    value_json        JSON,
     value_record_type TEXT,
     value_record_id   BIGINT,
     active_from       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2814,7 +2822,7 @@ CREATE TABLE IF NOT EXISTS organization_attribute_values (
     value_boolean     BOOLEAN,
     value_date        TEXT,
     value_timestamp   TIMESTAMPTZ,
-    value_json        JSONB,
+    value_json        JSON,
     value_record_type TEXT,
     value_record_id   BIGINT,
     active_from       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -3611,7 +3619,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_source_message_id ON messages(source_mes
 -- column, not here: a legacy DB missing search_fts would fail this index
 -- during the schema-file Exec and roll back the whole apply. [cr2-10]
 
--- idx_message_recipients_email_from is built concurrently by Store.
+-- Recipient address indexes are built concurrently by Store.
 CREATE INDEX IF NOT EXISTS idx_message_recipients_message ON message_recipients(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_recipients_participant ON message_recipients(participant_id, recipient_type);
 
@@ -3755,6 +3763,17 @@ CREATE INDEX IF NOT EXISTS idx_account_identities_address
 CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
     ON collection_sources(source_id);
 
+CREATE TABLE IF NOT EXISTS voice_transcripts (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    attachment_id BIGINT NOT NULL,
+    vault_uid TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_version_id TEXT NOT NULL,
+    content_version_id TEXT NOT NULL,
+    transcript_text TEXT NOT NULL,
+    PRIMARY KEY (message_id, attachment_id, vault_uid, source_id, source_version_id, content_version_id)
+);
+
 -- Current normalized source evidence, rebuilt from authoritative meeting raw.
 CREATE TABLE IF NOT EXISTS meeting_details (
     message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
@@ -3764,7 +3783,8 @@ CREATE TABLE IF NOT EXISTS meeting_details (
     duration_seconds DOUBLE PRECISION,
     duration_basis TEXT NOT NULL DEFAULT '',
     action_coverage TEXT NOT NULL,
-    transcript_state TEXT NOT NULL
+    transcript_state TEXT NOT NULL,
+    link_key TEXT
 );
 CREATE TABLE IF NOT EXISTS meeting_action_items (
     message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -3913,6 +3933,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     projection_version INTEGER NOT NULL,
     content_hash TEXT NOT NULL,
     provider_event_id TEXT NOT NULL DEFAULT '',
+    ical_uid TEXT NOT NULL DEFAULT '',
     series_provider_id TEXT NOT NULL DEFAULT '',
     kind TEXT NOT NULL DEFAULT '',
     original_start_at TIMESTAMPTZ,
@@ -3994,3 +4015,38 @@ CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
 CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
  ON docbank_attachment_processing(destination_key, fingerprint, next_action_at, content_hash)
  WHERE next_action_at IS NOT NULL;
+
+-- Public replies msgvault posts to archived Facebook and Instagram comments.
+-- A row is written before the send. A row left 'sending' means Meta's answer
+-- was lost, so an identical reply is refused until the owner clears it.
+CREATE TABLE IF NOT EXISTS meta_comment_replies (
+ id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ comment_id TEXT NOT NULL,
+ body TEXT NOT NULL,
+ state TEXT NOT NULL CHECK (state IN ('sending', 'sent', 'failed')),
+ reply_id TEXT,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_meta_comment_replies_comment
+ ON meta_comment_replies(source_id, comment_id);
+CREATE INDEX IF NOT EXISTS idx_meta_comment_replies_sent
+ ON meta_comment_replies(source_id, reply_id) WHERE state = 'sent';
+CREATE TABLE IF NOT EXISTS meeting_link_decisions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    left_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    left_kind TEXT NOT NULL CHECK (left_kind IN ('msg', 'evt')),
+    left_key TEXT NOT NULL,
+    right_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    right_kind TEXT NOT NULL CHECK (right_kind IN ('msg', 'evt')),
+    right_key TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK (decision IN ('link', 'split'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_pair ON meeting_link_decisions(left_message_id, left_kind, left_key, right_message_id, right_kind, right_key);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_right ON meeting_link_decisions(right_message_id);
+CREATE TABLE IF NOT EXISTS meeting_copy_survivors (
+    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    survivor_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_copy_survivors_survivor ON meeting_copy_survivors(survivor_message_id);

@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/kit/embedmodel"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -856,11 +857,11 @@ func trimOwnedChunkText(chunk OwnedChunk, maxBytes int) (OwnedChunk, bool) {
 	// Context is useful, but source text must remain present. Bound the prefix
 	// first and give all remaining bytes to the source suffix.
 	prefixBudget := min(len(prefix), maxBytes/4)
-	prefix = utf8Prefix(prefix, prefixBudget)
-	source = utf8Prefix(source, maxBytes-len(prefix))
+	prefix = textutil.PrefixBytes(prefix, prefixBudget)
+	source = textutil.PrefixBytes(source, maxBytes-len(prefix))
 	if sourceRunes > 0 && source == "" {
 		prefix = ""
-		source = utf8Prefix(string(runes[prefixRunes:]), maxBytes)
+		source = textutil.PrefixBytes(string(runes[prefixRunes:]), maxBytes)
 	}
 	if prefix == "" && source == "" {
 		return OwnedChunk{}, false
@@ -868,20 +869,6 @@ func trimOwnedChunkText(chunk OwnedChunk, maxBytes int) (OwnedChunk, bool) {
 	chunk.Text = prefix + source
 	chunk.SourceCharEnd = chunk.SourceCharStart + utf8.RuneCountInString(source)
 	return chunk, true
-}
-
-func utf8Prefix(value string, maxBytes int) string {
-	if maxBytes <= 0 {
-		return ""
-	}
-	if len(value) <= maxBytes {
-		return value
-	}
-	end := maxBytes
-	for end > 0 && !utf8.RuneStart(value[end]) {
-		end--
-	}
-	return value[:end]
 }
 
 func documentRevision(kind string, row AssemblyMessage, policy AssemblyPolicy, chunks []OwnedChunk) string {

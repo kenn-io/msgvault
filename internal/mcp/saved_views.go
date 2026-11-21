@@ -78,11 +78,12 @@ func getSavedViewDefinition(_ *handlers) toolDefinition {
 func runSavedViewDefinition(_ *handlers) toolDefinition {
 	return savedViewTool(readDefinition(
 		ToolRunSavedView,
-		"Run a persistent reusable msgvault Saved View through its canonical Explore query. Prefer this tool over manually reconstructing a known Saved View. Returns typed entries, groups, or files according to the saved definition; semantic and hybrid views require vector search.",
+		"Run a persistent reusable msgvault Saved View through its canonical Explore query. Prefer this tool over manually reconstructing a known Saved View. Returns typed entries, groups, or files according to the saved definition; semantic and hybrid views require vector search. Calendar groups use the requested timezone or UTC; Month and Year sort newest first, and other groups sort by descending count.",
 		closedObject(map[string]*jsonschema.Schema{
-			"id":     safeIDSchema("Stable Saved View ID returned by list_saved_views"),
-			"limit":  searchLimitProperty(),
-			"cursor": stringSchema("Opaque next_cursor from the previous run_saved_view page; omit for the first page"),
+			"id":       safeIDSchema("Stable Saved View ID returned by list_saved_views"),
+			"limit":    searchLimitProperty(),
+			"cursor":   stringSchema("Opaque next_cursor from the previous run_saved_view page; omit for the first page"),
+			"timezone": stringSchema("IANA timezone for calendar groups; defaults to UTC and must match between pages"),
 		}, "id"),
 		outputSchemaFor[runSavedViewResponse](),
 		(*handlers).runSavedView,
@@ -97,7 +98,7 @@ func createSavedViewDefinition(_ *handlers) toolDefinition {
 			"name":            stringSchema("Unique Saved View name"),
 			"description":     stringSchema("Optional description that helps agents choose the Saved View"),
 			"canonical_state": savedViewStateInputSchema(),
-			"schema_version":  boundedIntegerSchema("Use 2 for new Saved Views; 1 preserves legacy literal pipes", 1, store.CurrentSavedViewSchemaVersion),
+			"schema_version":  boundedIntegerSchema("Use 3 for local date bounds with numeric offsets, or 2 for UTC bounds; 1 preserves legacy literal pipes", 1, store.CurrentSavedViewSchemaVersion),
 		}, "name", "canonical_state", "schema_version"),
 		outputSchemaFor[savedViewDefinition](),
 		(*handlers).createSavedView,
@@ -107,14 +108,14 @@ func createSavedViewDefinition(_ *handlers) toolDefinition {
 func updateSavedViewDefinition(_ *handlers) toolDefinition {
 	return savedViewTool(writeDefinition(
 		ToolUpdateSavedView,
-		"Patch mutable fields on a persistent reusable msgvault Saved View. Supply the latest revision from list_saved_views or get_saved_view; an empty description clears it. Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR. Returns the updated view.",
+		"Patch mutable fields on a persistent reusable msgvault Saved View. Supply the latest revision from list_saved_views or get_saved_view; an empty description clears it. Sending canonical_state without schema_version keeps the stored schema version. Schema 1 keeps pipes as literal text; schemas 2 and 3 support pipe OR. Returns the updated view.",
 		closedObject(map[string]*jsonschema.Schema{
 			"id":              safeIDSchema("Stable Saved View ID"),
 			"revision":        safeIDSchema("Latest Saved View revision for optimistic concurrency"),
 			"name":            stringSchema("Replacement Saved View name"),
 			"description":     stringSchema("Replacement description; use an empty string to clear it"),
 			"canonical_state": savedViewStateInputSchema(),
-			"schema_version":  boundedIntegerSchema("Omit to keep the stored schema version; send 2 to adopt pipe OR", 1, store.CurrentSavedViewSchemaVersion),
+			"schema_version":  boundedIntegerSchema("Omit to keep the stored version; use 3 for local date bounds with numeric offsets, or 2 for UTC bounds", 1, store.CurrentSavedViewSchemaVersion),
 		}, "id", "revision"),
 		outputSchemaFor[savedViewDefinition](),
 		(*handlers).updateSavedView,
@@ -172,7 +173,8 @@ func (h *handlers) runSavedView(ctx context.Context, req toolRequest) (*toolResu
 		return toolErrorResult(err.Error()), nil
 	}
 	cursor, _ := args["cursor"].(string)
-	page, err := h.savedViews.RunSavedView(ctx, id, searchLimitArg(args), cursor)
+	timezone, _ := args["timezone"].(string)
+	page, err := h.savedViews.RunSavedView(ctx, id, searchLimitArg(args), cursor, timezone)
 	if err != nil {
 		return savedViewHandlerError("run Saved View", err)
 	}

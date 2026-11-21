@@ -91,6 +91,45 @@ func TestVectorDateFiltersCompareInstants(t *testing.T) {
 	}
 }
 
+func TestVectorRelayedSenderDrilldowns(t *testing.T) {
+	b, ctx := newFusedBackendForTest(t)
+	gen := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0), 2: unitVec(768, 0), 3: unitVec(768, 0)})
+	_, err := b.mainDB.ExecContext(ctx, `CREATE TABLE participants(id INTEGER PRIMARY KEY,email_address TEXT,phone_number TEXT,display_name TEXT,domain TEXT);
+ ALTER TABLE message_recipients ADD COLUMN display_name TEXT;
+ ALTER TABLE message_recipients ADD COLUMN email_address TEXT;
+ INSERT INTO participants VALUES(10,NULL,NULL,'Alice',NULL),(11,'other@github.com',NULL,'Other','github.com');
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address,is_relayed) VALUES(1,10,'from','notifications@github.com',TRUE),(2,11,'from','old@old.test',FALSE);
+ UPDATE messages SET sender_id=11 WHERE id=3;`)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		filter vector.Filter
+		want   []int64
+	}{
+		{vector.Filter{SenderTerms: []string{"notifications@github.com"}}, []int64{1}},
+		{vector.Filter{SenderTerms: []string{"old@old.test"}}, nil},
+		{vector.Filter{SenderTerms: []string{"@old.test"}}, nil},
+		{vector.Filter{SenderTerms: []string{"old"}}, nil},
+		{vector.Filter{SenderDomain: "github.com"}, []int64{1, 2}},
+		{vector.Filter{SenderDomain: "GitHub.com"}, []int64{1, 2}},
+	} {
+		filter := tc.filter
+		hits, err := b.Search(ctx, gen, unitVec(768, 0), 10, filter)
+		require.NoError(t, err)
+		var ids []int64
+		for _, hit := range hits {
+			ids = append(ids, hit.MessageID)
+		}
+		assert.ElementsMatch(t, tc.want, ids)
+		fused, _, err := b.FusedSearch(ctx, vector.FusedRequest{QueryVec: unitVec(768, 0), Generation: gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: filter})
+		require.NoError(t, err)
+		ids = nil
+		for _, hit := range fused {
+			ids = append(ids, hit.MessageID)
+		}
+		assert.ElementsMatch(t, tc.want, ids)
+	}
+}
+
 func TestVectorFilterMessageIDsBeforeRanking(t *testing.T) {
 	b, ctx := newFusedBackendForTest(t)
 	gen := seedAndEmbed(t, b, map[int64][]float32{
@@ -267,6 +306,7 @@ func TestVectorSenderTermsBeforeRanking(t *testing.T) {
 	gen := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0), 2: unitVec(768, 0), 3: unitVec(768, 1)})
 	_, err := b.mainDB.ExecContext(ctx, `CREATE TABLE participants(id INTEGER PRIMARY KEY,email_address TEXT,phone_number TEXT,display_name TEXT);
  ALTER TABLE message_recipients ADD COLUMN display_name TEXT;
+ ALTER TABLE message_recipients ADD COLUMN email_address TEXT;
  INSERT INTO participants VALUES(10,'alex@example.com',NULL,'Élodie Kim');
  INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,10,'from','Álvaro Header'),(2,10,'from','Other');`)
 	require.NoError(err)
@@ -285,4 +325,23 @@ func TestVectorSenderTermsBeforeRanking(t *testing.T) {
 		ids = append(ids, hit.MessageID)
 	}
 	assert.ElementsMatch([]int64{1}, ids)
+}
+
+func TestExactSenderExcludesRelayedEmail(t *testing.T) {
+	b, ctx := newFusedBackendForTest(t)
+	gen := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0), 2: unitVec(768, 0)})
+	_, err := b.mainDB.ExecContext(ctx, `UPDATE messages SET sender_id = 10, message_type = CASE id WHEN 1 THEN 'whatsapp' ELSE 'email' END;
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type,is_relayed) VALUES(2,10,'from',TRUE);`)
+	require.NoError(t, err)
+	filter := vector.Filter{SenderExactGroups: [][]int64{{10}}}
+	hits, err := b.Search(ctx, gen, unitVec(768, 0), 10, filter)
+	require.NoError(t, err)
+	if assert.Len(t, hits, 1) {
+		assert.Equal(t, int64(1), hits[0].MessageID)
+	}
+	fused, _, err := b.FusedSearch(ctx, vector.FusedRequest{QueryVec: unitVec(768, 0), Generation: gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: filter})
+	require.NoError(t, err)
+	if assert.Len(t, fused, 1) {
+		assert.Equal(t, int64(1), fused[0].MessageID)
+	}
 }

@@ -18,7 +18,11 @@ var _ api.MessageTagStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) MessageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string, acquireWrite func(context.Context) (func(), error)) (*emailtags.MessageTagResult, error) {
 	ctx = a.invocationContext(ctx)
-	target, err := a.store.EmailTagTargetContext(ctx, id, mailbox)
+	resolve := a.store.EmailTagTargetContext
+	if change == nil {
+		resolve = a.store.EmailTagReadTargetContext
+	}
+	target, err := resolve(ctx, id, mailbox)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +96,11 @@ func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store
 		write := change != nil && !change.DryRun
 		state := invocationFromContext(ctx)
 		if write {
-			granted, err := newGraphMailWriteManager(state).HasScopes(source.Identifier)
+			manager, err := newGraphMailWriteManager(state, source)
+			if err != nil {
+				return nil, emailtags.Failure("provider_unavailable", "Cannot connect to the Microsoft mailbox", nil, err)
+			}
+			granted, err := manager.HasScopes(source.Identifier)
 			if err != nil || !granted {
 				return nil, emailtags.Failure("insufficient_scope", "Microsoft category editing requires Mail.ReadWrite; reauthorize with add-o365 --graph --mail-write", nil, err)
 			}
@@ -100,9 +108,12 @@ func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store
 		factory := a.microsoftTagClientFactory
 		if factory == nil {
 			factory = func(ctx context.Context, source *store.Source, write bool) (*msmail.Client, error) {
-				manager := newGraphMailManager(state)
+				manager, err := newGraphMailManager(state, source)
 				if write {
-					manager = newGraphMailWriteManager(state)
+					manager, err = newGraphMailWriteManager(state, source)
+				}
+				if err != nil {
+					return nil, err
 				}
 				token, err := manager.TokenSource(ctx, source.Identifier)
 				if err != nil {

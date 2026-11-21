@@ -86,24 +86,36 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 		_, _ = fmt.Fprintln(out, "  Read Content: not tested (no visible meeting)")
 	} else {
 		meeting := result.Results[0]
-		block, retrieveErr := client.RetrieveBlock(ctx, meeting.ID)
-		if retrieveErr != nil {
-			return fmt.Errorf("probe Notion meeting block access: %w", retrieveErr)
+		block, err := client.RetrieveBlock(ctx, meeting.ID)
+		if err != nil {
+			return fmt.Errorf("probe Notion meeting block access: %w", err)
 		}
 		if block == nil {
 			return errors.New("probe Notion meeting block access returned no response")
 		}
-		pageID := strings.TrimSpace(meeting.Parent.PageID)
-		if pageID == "" {
-			pageID = strings.TrimSpace(block.Parent.PageID)
+		tested := false
+		var missingErr error
+		for _, id := range []string{meeting.MeetingNotes.Children.SummaryBlockID, meeting.MeetingNotes.Children.NotesBlockID, meeting.MeetingNotes.Children.TranscriptBlockID} {
+			if strings.TrimSpace(id) == "" {
+				continue
+			}
+			if _, err := client.RetrieveBlock(ctx, id); err != nil {
+				if api, ok := errors.AsType[*notionmeetings.APIError](err); ok && api.Status == 404 && api.Code == "object_not_found" {
+					missingErr = err
+					continue
+				}
+				return fmt.Errorf("probe Notion Read Content access: %w", err)
+			}
+			tested = true
+			break
 		}
-		if pageID == "" {
-			return errors.New("probe result has no parent page ID")
+		if tested {
+			_, _ = fmt.Fprintln(out, "  Read Content: available")
+		} else if missingErr != nil {
+			return fmt.Errorf("probe Notion Read Content access: %w", missingErr)
+		} else {
+			_, _ = fmt.Fprintln(out, "  Read Content: not tested (no section blocks)")
 		}
-		if _, err := client.RetrievePageMarkdown(ctx, pageID, true); err != nil {
-			return fmt.Errorf("probe Notion Read Content access: %w", err)
-		}
-		_, _ = fmt.Fprintln(out, "  Read Content: available")
 	}
 	if users == nil {
 		if _, err := client.ListUsers(ctx, ""); errors.Is(err, notionmeetings.ErrUserInformation) {
@@ -294,7 +306,7 @@ func writeNotionMeetingsSummary(out io.Writer, summary *notionmeetings.ImportSum
 		_, _ = fmt.Fprintf(out, "  Maintenance items: %d\n", summary.MaintenanceRetries)
 	}
 	if summary.PartialCoverage {
-		_, _ = fmt.Fprintln(out, "  Coverage: partial (Notion reports more than the visible 50-item window)")
+		_, _ = fmt.Fprintln(out, "  Coverage: partial")
 	}
 }
 

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-19"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -27,9 +27,15 @@ browser login, secure remote deployment, search states, and keyboard controls.
 
 Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
 
+### Person fact decisions
+
+`GET /api/v1/people/{id}/fact-decisions` returns decisions in newest-first order. Use `claim_key` to select one claim before applying `limit` and `offset`. Each decision includes its target, resolver version, score, and score maxima for that version. The outcome is `saved`, `value-retired`, `current-value-kept`, `pinned-value-kept`, `too-close-to-choose`, or `not-used`; the reason explains the decision. Older decisions have a null outcome when their history cannot establish the result. An unknown resolver version has no score maxima.
+
+`GET /api/v1/people/{id}/fact-summary` returns `claimed_fields`, `latest_claim_at`, `has_values`, and `has_fact_history`. The count groups claims by target kind and key. The last claim time is null when there are no claims. Values include attribute values and employments; fact history includes claims, evidence, and pin events. Filter `GET /api/v1/people/{id}/fact-evidence` by `evidence_id` to retrieve one evidence row.
+
 ### Filename suggestions
 
-Newer than the latest release, API schema 3.15 adds
+API schema 3.15 adds
 `POST /api/v1/files/suggest` and `POST /api/v1/people/{id}/files/suggest`.
 They suggest attachment filenames without changing existing file or message
 search. Both are read-only operations under existing owner authentication;
@@ -65,8 +71,13 @@ The response contains `suggestions`, `candidate_limit_reached`, and
 `occurred_at` (always present, possibly `null`), the current `filename`,
 `mime_type` (possibly empty), `mime_family`, `filename_match`
 (`exact`, `prefix`, `typo`), `size_bytes`, `content_state`, and
-`content_available`. Content states are `metadata_only`, `url_only`,
-`missing_blob`, and `local_content`. Rows contain no storage paths, download
+`content_available`. File search and suggestion rows derive their content
+states from metadata: `metadata_only`, `url_only`, or `unverified`. An
+`unverified` row records a hash without checking storage and has a null
+`content_available`; the other two states have a false value. File details
+check whether storage can be opened and can return `local_content`,
+`missing_blob`, or an error. Opening storage does not verify the bytes; a read
+or integrity check can still fail. Rows contain no storage paths, download
 URLs or content hashes. Person rows also contain `person_provenance` with the
 matching participant IDs, roles and directions.
 
@@ -161,9 +172,70 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **4.1.0**.
+it is separate from the binary release version. The current schema is **5.20.0**.
+
+Schema 5.20.0 adds `message_type` to file details.
+
+Schema 5.19.0 adds `GET /api/v1/cli/messages/export`, which streams
+`export-messages` output as `application/x-ndjson`. It takes `start`, `end`,
+repeatable `message_type` and `source`, and `person_id`, with the same
+validation as the CLI flags. Bad filters return `400` and an unknown source
+returns `404` before any output; a failure while streaming ends the stream
+without its completion record. Read-only remote client keys may call it.
+
+Schema 5.18.0 adds Directory cadence to `GET /api/v1/people/directory`: the `cadence` filter (`overdue`, `due`, `no_list`, `unknown`), `due_within_days`, the `most_overdue` and `next_due` sorts, a `cadence` object and `last_contact_channel` on each person, and page-level `cadence_presets` and `cadence_coverage`. `expected_value_id` 0 on attribute writes requires that no current value exists. CLI and MCP cadence lookups require a daemon supporting this schema.
+
+Schema 5.17.0 adds person, source, conversation and incoming filters to the
+[message change feed](#get-apiv1messageschanges).
+
+Schema 5.16.0 adds `POST /api/v1/people/create` for standalone curated
+profiles. The MCP `create_person` tool requires this schema version or newer.
+
+Schema 5.15.0 applies the `mode` of [media search](#media-transcript-search)
+to recordings as well as attachments, and adds `actual_mode` and
+`degradations` to recording results.
+
+Schema 5.14.0 adds each fact decision's submitted claim value.
+
+Schema 5.13.0 adds fact decision outcomes, evidence filtering, and a person fact summary.
+
+Schema 5.12.0 adds owner-only [related copies](#get-apiv1messagesidfamily).
+
+Schema 5.11.0 adds meeting link suggestions.
+
+Schema 5.10.0 adds owner meeting link decisions.
+
+Schema 5.9.0 adds meeting records.
+
+Schema 5.8.0 advertises the existing structured person profile routes to MCP:
+`GET` and `PATCH /api/v1/people/{id}/profile`,
+`GET /api/v1/people/{id}/profile/history`, and
+`GET /api/v1/people/{id}/profile/media/{media_id}/content`.
+
+Schema 5.7.0 adds first-appearance evidence to person contact state.
+
+Schema 5.6.0 adds `POST /api/v1/identity/cache-refresh` to rebuild
+identity-derived datasets without changing links or profiles.
+
+Schema 5.5.0 adds `POST /api/v1/sources/{source_id}/account-attribution/repair`
+to retry account matching for one source.
+
+Schema 5.4.0 allows native tag reads for messages from deleted sources.
+
+Schema 5.3.0 adds `auth_method` to IMAP accounts in `GET /api/v1/cli/accounts`:
+`password` or `xoauth2`, present when the source's settings are readable.
+
+Schema 5.2.0 adds open Kata issue search and optional task search queries.
+
+Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
+
+Schema 5.0.0 changes `content_available` in file lists and suggestions from a
+boolean to a nullable boolean. A null value means storage has not been checked;
+older clients can interpret it as false. Upgrade clients and the daemon together.
 
 Schema 4.1.0 adds `labels` on merge-list and merge-detail responses: recorded names and saved contact points from the merge snapshot, reconciled current participant addresses, known participant IDs, and the count of distinct addresses added to the surviving profile. Addresses and current or recorded contact points carry an opaque `identity_key` for comparison across representations, services, and scopes. Current contact points include `service_label`, the registered name of their `service_slug`. History and Split use those labels. Summary labels are decoded from the stored snapshot during list and detail reads; opening the disclosure makes a separate request for its raw snapshot.
+
+Schema 4.2.0 adds semantic/hybrid attachment retrieval and per-list mode, coverage and degradation fields to [media search](#media-transcript-search).
 
 Schema 3.51.0 adds attachment processing outcomes and worker errors.
 
@@ -209,10 +281,6 @@ Schema 3.11.0 adds `GET /media/search/status` to report whether Docbank transcri
 
 Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
 See [scoped archive reads](cli-reference.md#scoped-archive-reads).
-
-Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web, terminal UI, and interactive CLI use to
-report anonymous usage events through the daemon. See
-[Telemetry](configuration.md#telemetry).
 
 Schema 3.22.0 adds account aliases and lifecycle fields, account merging, and
 owner source-maintenance requests. Existing source identifiers and account
@@ -427,6 +495,12 @@ syncs. If the sync ends while the write waits, the write can proceed.
 | `GET /api/v1/messages/{id}/tags` | Read current native tags; optional `mailbox` query selects an exact recorded IMAP copy |
 | `POST /api/v1/messages/{id}/tags` | Apply `add` and `remove` arrays, optional `mailbox`, and optional `dry_run` |
 
+With API schema 5.4.0 or newer, GET can read tags for a message marked deleted
+from its source, such as a message still in Trash. The provider must still
+resolve the stored identity. The read returns the provider's observation and
+leaves the archive unchanged. POST, including `dry_run`, still rejects
+source-deleted messages. Both methods reject locally hidden messages.
+
 `id` is the positive archived message ID. Without `mailbox`, IMAP selects the
 current original copy, then the sole current membership. Multiple surviving
 copies require an explicit mailbox when the original copy is absent.
@@ -480,6 +554,15 @@ Unsupported providers or persistent keyword support return
 501. See the generated OpenAPI contract for response schemas.
 
 ### Identity match review and scoring
+
+`POST /api/v1/identity/cache-refresh` rebuilds identity-derived datasets without
+changing links or profiles. It returns `identity_revision` and
+`cache_state: "ready"` on success. It requires API authentication and the
+mutation gate. When a SQLite cache is absent, it returns HTTP 503 with
+`identity_cache_build_required`; run `msgvault build-cache` before retrying.
+PostgreSQL returns HTTP 503 with `identity_cache_unsupported` because it has
+no Parquet cache. Other build failures return HTTP 500; a missing refresh
+capability returns HTTP 503.
 
 Review identity suggestions through `GET /api/v1/identity/match-candidates`
 and `GET /api/v1/identity/match-candidates/{id}`. Responses include the
@@ -605,7 +688,8 @@ Start a Gmail or IMAP history backfill and poll its progress without keeping an
 HTTP request open. These endpoints use the daemon's existing account
 credentials and full-sync path. They do not accept uploaded archive files.
 See [the importing guide](/docs/usage/importing/#historical-import-jobs) for a
-step-by-step example.
+step-by-step example. For the assistant workflow, see
+[MCP source status and sync](/docs/usage/chat/#source-status-and-sync).
 
 ### Start an import {#post-apiv1imports}
 
@@ -1220,6 +1304,32 @@ Poll it, re-read the rows it returns, and store the cursor it hands back. Unlike
 sent, so a mailbox imported today with ten-year-old mail shows up in the very
 next page.
 
+Use `person_id` to select messages sent by the person's currently linked
+identities, repeated `source_id` or `conversation_id` values to select those
+sources or conversations, and `incoming_only=true` to exclude owner-sent
+messages on a best-effort basis. Direction corrections do not move the change
+watermark, so they can leave a missed or stale result. Different filters combine
+with AND; values within a list combine with OR. Each list accepts up to 50
+positive IDs. The owner can also call the MCP `list_changes` tool. Linking a
+new identity keeps the cursor valid and applies to later changes; use a fresh
+walk to reconcile its older history.
+
+A filtered request examines at most 2,000 changes and can return an empty page
+with `has_more=true`; keep following `next_cursor`. A first walk over 400,000
+non-matching changes therefore needs about 200 requests. Once the available
+range is exhausted, the cursor can advance through the empty tail to the commit
+bound. A filtered cursor is bound to its selectors: changing or removing them
+returns `invalid_cursor`. Start again with an unfiltered cursor or the original
+filter. Older servers reject filtered cursors because they do not understand
+their format.
+
+A filtered feed reports arrivals and in-scope edits. A row that leaves a
+filter's scope, for example through a conversation move, sender re-attribution,
+or source consolidation, is not reported to that filter. Consumers caching
+rows must reconcile them with a periodic unfiltered or wider-scope re-read.
+When a message has no sender ID, the person filter uses its first From recipient;
+changes to recipients alone do not move the watermark.
+
 **What it is.** An invalidation feed over one projection of a message: the
 columns this endpoint returns, plus a body edit and two columns it does not
 return. It tells you *that* a message changed and hands you the current value of
@@ -1811,6 +1921,61 @@ Schema 3.42.0 adds an optional `sender_auth` object to message details and `GET 
 
 ---
 
+### Related copies {#get-apiv1messagesidfamily}
+
+**Endpoint:** `GET /api/v1/messages/{id}/family`
+
+The other archived copies of an email, plus the replies and forwards that name
+it, across accounts and conversations. Owner credentials only; delegated agent
+tokens are refused. The response is never cached.
+
+**Response:**
+
+```json
+{
+  "anchor_message_id": 12345,
+  "truncated": false,
+  "pending_linkage": false,
+  "members": [
+    {
+      "message_id": 12345,
+      "source_id": 1,
+      "source_type": "imap",
+      "source_identifier": "work@example.com",
+      "account_address": "work@example.com",
+      "account_path": "inbound",
+      "draft": false,
+      "conversation_id": 77,
+      "subject": "Q4 Planning",
+      "sent_at": "2024-10-15T09:30:00Z",
+      "linkage_outcome": "complete",
+      "evidence": "anchor"
+    }
+  ]
+}
+```
+
+`members` includes the opened email. `evidence` is the member's relation to it:
+`anchor`, `copy` (the same Message-ID), `reply`, `replied_to`, `forward`,
+`forwarded_original`, `references`, `indirect` (found through another member) or
+`thread` (in the provider's thread for the opened email or one of its exact copies, with no header link). Members are
+in ascending `message_id` order.
+`account_path` is `inbound` or `sent`, and `draft` is true while the copy is a
+draft. `linkage_outcome` is `complete`, `pending` before the copy's identifiers
+are derived, `missing_message_id` when the copy was indexed but has no stored
+Message-ID for replies to match, or the reason its identifiers could not be
+read; anything other than `complete` may hide relations. The lookup follows Message-ID, In-Reply-To, References and
+attached-original identifiers, and, for Gmail and Google Groups, the provider threads of the email and its exact copies. It stops at 500 copies or 5,000 identifiers, setting `truncated`
+and `truncated_reason` (`members` or `identifiers`); the identifier limit can be
+reached with far fewer than 500 copies. When 500 is exceeded, copies with the same
+Message-ID stay first, then direct replies and forwards, then shared references.
+`pending_linkage` is true while any email in the archive has no derived
+identifiers yet; it could be a related copy the lookup cannot see, so an empty or
+short list is not complete. Deleted and non-email messages are
+left out. A missing message returns 404.
+
+---
+
 ### Attachment metadata {#get-apiv1attachmentsid}
 
 **Endpoint:** `GET /api/v1/attachments/{id}`
@@ -1940,15 +2105,43 @@ Successful responses set:
 
 `GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, optional `filename`, `containing_title` and `occurred_at`, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` selects durable person bindings; `participant_id` selects the current identity cluster used by Explore's Person filter. They can't be combined. Repeated `direction` values select `from_person`, `to_person` or `group` relations and require either ID.
 
-The recording search covers the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` or `participant_id` to narrow the scope. A recording with more than 64 distinct current supplied transcript input IDs is left out of the search. Its message occurrences count in `unavailable_occurrences`, and `partial=true`. Repeated occurrences of the same input count once. Semantic and hybrid modes return `media_search_mode_unavailable`. An unconfigured or unreachable integration returns `media_search_unavailable`.
+The recording search covers the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` or `participant_id` to narrow the scope. A recording with more than 64 distinct current supplied transcript input IDs is left out of the search. Its message occurrences count in `unavailable_occurrences`, and `partial=true`. Repeated occurrences of the same input count once. An unconfigured or unreachable integration returns `media_search_unavailable`.
 
-The response has Docbank `coverage`, local `pending_occurrences` and `unavailable_occurrences`, `attribution_unavailable`, `partial`, and `truncated`. Pending counts require durable worker work; unmapped audio counts as unavailable. Coverage state `unknown` stays unknown. `partial` also reports local gaps and withheld excerpts. An empty result with complete coverage and `partial=false` means the query found no transcript match. The output limit applies after shared recordings expand into messages; `truncated` reports remaining occurrences or Docbank's retrieval limit.
+The response has the recording `actual_mode` and `degradations`, Docbank `coverage`, local `pending_occurrences` and `unavailable_occurrences`, `attribution_unavailable`, `partial`, and `truncated`. Pending counts require durable worker work; unmapped audio counts as unavailable. Coverage state `unknown` stays unknown. `partial` also reports local gaps and withheld excerpts. An empty result with complete coverage and `partial=false` means the query found no transcript match. The output limit applies after shared recordings expand into messages; `truncated` reports remaining occurrences or Docbank's retrieval limit.
 
 Selected transcript completeness must be `complete`, `partial`, or `degraded_provenance`. The latter two set `partial=true`; unsupported values report `media_search_unavailable` for recordings.
 
 Recording search requires Docbank's source-selected search contract: `media_sources` selectors, a `media_source_selection` report marker and query-independent `media_selections`, including empty results. The daemon sends each source's current supplied-input set; generated transcripts stay eligible while supplied work is queued. Docbank selects each source's current transcript before ranking and returns build and exact source associations with each plain excerpt; source selections carry origin and supplied-input identity. Pending or missing transcripts leave coverage partial while ready matches remain searchable. Older servers and remote lookup failures report `media_search_unavailable` for recordings. Supplied text requires `supplied_input_id` to match the occurrence's saved delivery; mismatches count as unavailable attribution even when the query has no hits. The daemon validates supplied transcript revisions before search and rechecks visibility, recording identity, supplied text and person scope afterward.
 
 Schema 3.27.0 adds optional `attachments` with `results`, `truncated`, and optional `error` containing `error` and `message`. Each result has `message_id`, `conversation_id`, `attachment_id`, `filename`, `containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches delivered mirror versions using text Docbank has extracted. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. A Docbank result limit or occurrence limit sets `truncated`, meaning more may match. Docbank may include filename-only candidates in its limit even when all extracted-text matches fit. Visibility and Person scope apply to both lists. The limit applies independently to each list. An empty attachment list without an error means no match in extracted text and says nothing about files whose text Docbank hasn't extracted.
+
+Schema 4.2.0 accepts `mode=semantic` and
+`mode=hybrid` for attachment text. `attachments` adds `requested_mode`,
+`actual_mode`, `coverage`, `partial`, and `degradations`. `actual_mode` is
+`unavailable` when no search ran or remote retrieval failed. Coverage describes
+mirrored versions delivered to Docbank and is present even without hits.
+The configured `attachment_search_profile` names an existing Docbank processing
+profile for semantic/hybrid; lexical keeps the built-in `supplied-transcript` profile. Retrieval never schedules processing. Without it, hybrid uses lexical
+with `semantic_unconfigured` degradation, and semantic fails with
+`media_search_mode_unavailable`. Fenced searches submit configured profiles and
+report configuration, consent and runtime failures. Empty scopes contact no service.
+Docbank-reported hybrid downgrade is preserved. Downgrade, degradations,
+or nonlexical coverage other than `complete` set attachment `partial=true`.
+Lexical `unknown` coverage alone does not. Each list reports its own partial
+status; `truncated` remains separate. Files are searched in batches of 4,096.
+
+Schema 5.15.0 applies `mode` to recordings too. Semantic and hybrid recording
+search use `integrations.docbank.recording_search_profile`, which names the
+Docbank profile that embedded the transcripts. Docbank keys embeddings by
+processing profile, and transcripts are processed under `supplied-transcript`
+or the ASR profile rather than the attachment profile. Without a recording
+profile, hybrid uses lexical with `semantic_unconfigured`, and semantic sets
+`recordings_error=media_search_mode_unavailable`. When the selected
+transcripts have no embeddings, Docbank answers with lexical matches and
+`semantic_unavailable`. Recording `actual_mode` is `unavailable` when no
+recording search ran, such as an empty scope. Downgrades and degradations set
+`partial=true`. An empty recording scope validates the query lexically, so the
+query text reaches no encoder.
 
 The attachment field is omitted when attachment mirroring is off. Attachment failures leave recording results intact and set `attachments.error`. Docbank-rejected recording queries return HTTP 400 with `invalid_media_search`. Other recording failures, including oversized scopes and remote timeouts, leave attachment results intact and set `recordings_error` with `error` and `message`. The request fails when both searches fail or its context ends. Recording-only responses retain their existing error behavior.
 
@@ -2415,6 +2608,18 @@ for the user workflow and coverage meanings.
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
 
+`GET /api/v1/meetings/suggestions?ref=...` ranks overlapping meeting notes and calendar events; use `POST /api/v1/meetings/links/decisions` to link a suggested pair. It requires API schema 5.11.0. Without `verification.read`, withheld titles add no title words and withheld partner titles are masked.
+
+`GET /api/v1/meetings/record?ref=...` returns the notes and calendar copies
+for a `msg:<id>` or `evt:<id>[@occurrence key]` reference. It requires API
+schema 5.9.0. A `message.read` grant returns notes and calendar copies from its authorized sources.
+
+`POST /api/v1/meetings/links/decisions` accepts owner requests with `left`,
+`right`, and `decision` (`link`, `unlink`, or `clear`). It returns the canonical refs and
+`state` (`link`, `split`, or `automatic`). Link and unlink replace the saved
+choice; clear restores automatic matching. A conflicting choice returns 409. This
+operation requires API schema 5.10.0.
+
 Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
 `include_transcript` (default false), and `max_bytes` (default 131072, range
 4096–1048576). The budget applies to the UTF-8 bytes of `content`, not the HTTP
@@ -2781,11 +2986,13 @@ Grouping, person filters, semantic and hybrid search, per-row exact-match counts
 `message_type`, `mailing_list`, `kind`, `year`, `month`, or `day`.
 `day` returns `YYYY-MM-DD` keys and counts individual messages; other
 dimensions count entries, with chats collapsed into conversations.
-`timezone` sets the IANA time zone for day grouping and defaults to `UTC`.
+`timezone` sets the IANA time zone for day, month, and year grouping and defaults to `UTC`. It also sets the calendar dates in a keyed group's activity overview.
 Day rows include `level` for calendar shading only when the page contains every day row. It ranks each count across that complete day set; partial pages and keyed lookups omit `level`.
 `sent_only: true` excludes drafts and unsent items from the counts.
 Day grouping is request-only and cannot be stored in a saved view.
 Files grouping (`POST /api/v1/files/groups`) uses UTC days and has no `timezone` parameter.
+
+Month and year rows include `total_items`, the number of entries across all matching time groups before pagination. A `group_key` lookup for a matching non-day group adds `overview` with its `first_at` timestamp, an `activity` series, and up to three `co_participants`. Activity buckets are days for month groups and months for other groups.
 
 ### Preflight an analytical selection {#post-apiv1explorepreflight}
 
@@ -2893,7 +3100,7 @@ by an agent without rebuilding its query.
 | `DELETE` | `/api/v1/saved-views/{id}` | Delete a view definition. Requires `If-Match`. Never touches archive messages. |
 | `POST` | `/api/v1/saved-views/{id}/run` | Execute a view through its canonical Explore definition. |
 
-New definitions use `schema_version: 2`. The daemon reads schema 1 with pipes as literal text in full-text queries. `canonical_state` is a closed object. The daemon rejects a
+Definitions with local-calendar date bounds use `schema_version: 3`; UTC-only definitions use version 2. Numeric offsets in schema 3 preserve local calendar dates; offsets in older definitions retain their UTC meaning. The daemon reads schema 1 with pipes as literal text in full-text queries. `canonical_state` is a closed object. The daemon rejects a
 definition it could not execute, so every stored view can be opened by the
 Web UI and run by the API:
 
@@ -2951,16 +3158,19 @@ that endpoint applies:
 - Every other view runs `POST /api/v1/explore` as a table. Timeline is a
   client-side rendering of the same entry rows.
 
+Grouped runs use UTC by default. Month and Year groups sort newest first; other groups sort by descending count. The saved sort applies to entry results.
+
 ```json
 {
   "limit": 20,
-  "cursor": "eyJvZmZzZXQiOjIwLC..."
+  "cursor": "eyJvZmZzZXQiOjIwLC...",
+  "timezone": "America/New_York"
 }
 ```
 
 `limit` is `1` to `100` and defaults to `100`. `cursor` is the opaque
 `next_cursor` from the previous page and is omitted for the first page. An
-empty object `{}` is a valid body.
+empty object `{}` is a valid body. `timezone` is an optional IANA time zone for calendar groups; use the same zone for each page.
 
 ```json
 {

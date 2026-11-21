@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/mime"
 )
 
@@ -75,6 +76,7 @@ type MergeResult struct {
 }
 
 // ContentHashCandidate holds message metadata for raw-MIME hash scans.
+// ICS payloads use UID identities; their bytes are not email delivery evidence.
 type ContentHashCandidate struct {
 	ID               int64
 	SourceID         int64
@@ -261,7 +263,7 @@ func (s *Store) FindDuplicatesByRFC822ID(ctx context.Context, sourceIDs ...int64
 // can't drift apart; GetDuplicateGroupMessagesBatch prepends
 // m.rfc822_message_id (needed to key its result map) since it has no per-call
 // rfc822ID to bind.
-const duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identifier,
+var duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identifier,
 		       m.source_message_id,
 		       COALESCE(m.subject, ''), m.sent_at, m.archived_at,
 		       COALESCE(m.rfc822_message_id, ''), COALESCE(CAST(m.metadata AS TEXT), ''),
@@ -284,7 +286,7 @@ const duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identi
 		             AND (l.source_label_id = 'SENT' OR UPPER(l.name) = 'SENT')
 		       ) THEN 1 ELSE 0 END AS has_sent_label,
 		       COALESCE((
-		           SELECT p_from.email_address
+		           SELECT ` + identityindex.SenderAddressExpr("mr_from", "p_from") + `
 		           FROM message_recipients mr_from
 		           JOIN participants p_from
 		             ON p_from.id = mr_from.participant_id
@@ -418,7 +420,7 @@ func (s *Store) GetDuplicateGroupMessagesBatchContext(
 		return result, nil
 	}
 
-	const selectCols = "\n\t\tm.rfc822_message_id, " + duplicateGroupMessageColumns
+	selectCols := "\n\t\tm.rfc822_message_id, " + duplicateGroupMessageColumns
 
 	// queryInChunks binds prefixArgs BEFORE the chunked %s placeholder, so
 	// the source_id filter (prefixArgs) must appear textually before the
@@ -573,6 +575,9 @@ func (s *Store) MergeDuplicates(
 			if err := s.copyLoopDecisionTx(ctx, tx, dupID, survivorID); err != nil {
 				return err
 			}
+			if err := recordMeetingCopyTx(ctx, tx, dupID, survivorID); err != nil {
+				return err
+			}
 		}
 		if result.RawMIMEBackfilled > 0 {
 			if _, err := s.refreshEmailLinkageTx(ctx, tx, survivorID, emailLinkageInput{}); err != nil {
@@ -613,7 +618,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		             AND (l.source_label_id = 'SENT' OR UPPER(l.name) = 'SENT')
 		       ) THEN 1 ELSE 0 END AS has_sent_label,
 		       COALESCE((
-		           SELECT p_from.email_address
+		           SELECT ` + identityindex.SenderAddressExpr("mr_from", "p_from") + `
 		           FROM message_recipients mr_from
 		           JOIN participants p_from
 		             ON p_from.id = mr_from.participant_id
@@ -628,7 +633,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		FROM messages m
 		JOIN sources s ON s.id = m.source_id
 		JOIN message_raw mr ON mr.message_id = m.id
-		WHERE ` + LiveMessagesWhere("m", true)
+		WHERE ` + LiveMessagesWhere("m", true) + ` AND COALESCE(mr.raw_format, 'mime') <> 'ics'`
 	var args []any
 	if len(sourceIDs) > 0 {
 		placeholders := make([]string, len(sourceIDs))
@@ -786,6 +791,9 @@ func (s *Store) DeleteDedupedBatchesContext(
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		for _, batchID := range batchIDs {
+			if err := s.preservePurgedMeetingDecisions(ctx, tx, `delete_batch_id = ? AND deleted_at IS NOT NULL`, batchID); err != nil {
+				return err
+			}
 			result, err := tx.ExecContext(ctx, `
 				DELETE FROM messages
 				WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
@@ -893,6 +901,9 @@ func (s *Store) DeleteAllDedupedContext(
 			WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
 		`).Scan(&distinctBatches); err != nil {
 			return fmt.Errorf("delete all dedup-hidden: count batches: %w", err)
+		}
+		if err := s.preservePurgedMeetingDecisions(ctx, tx, `deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL`); err != nil {
+			return err
 		}
 
 		result, err := tx.ExecContext(ctx, `

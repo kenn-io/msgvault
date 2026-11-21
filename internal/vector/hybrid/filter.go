@@ -156,12 +156,16 @@ func ApplyMessageFilter(
 	}
 
 	if structured.Sender != "" {
-		group, err := resolveExactParticipantIDs(ctx, db, rebind,
-			"email_address = ? OR phone_number = ?", structured.Sender, structured.Sender)
-		if err != nil {
-			return err
+		if address, err := search.ParseAccountAddress(structured.Sender); err == nil {
+			f.SenderTerms = append(f.SenderTerms, address)
+		} else {
+			group, err := resolveExactParticipantIDs(ctx, db, rebind,
+				"email_address = ? OR phone_number = ?", structured.Sender, structured.Sender)
+			if err != nil {
+				return err
+			}
+			f.SenderExactGroups = append(f.SenderExactGroups, noMatchGroup(group))
 		}
-		f.SenderExactGroups = append(f.SenderExactGroups, noMatchGroup(group))
 	}
 	if structured.Recipient != "" {
 		group, err := resolveExactParticipantIDs(ctx, db, rebind,
@@ -172,13 +176,7 @@ func ApplyMessageFilter(
 		f.RecipientAnyGroups = append(f.RecipientAnyGroups, noMatchGroup(group))
 	}
 	if structured.Domain != "" {
-		group, err := resolveExactParticipantIDs(ctx, db, rebind, "domain = ?", structured.Domain)
-		if err != nil {
-			return err
-		}
-		// Domain drill-downs intentionally match only explicit `from`
-		// recipient rows, matching query.MessageFilter semantics.
-		f.SenderGroups = append(f.SenderGroups, noMatchGroup(group))
+		f.SenderDomain = structured.Domain
 	}
 	if structured.Label != "" {
 		group, err := resolveExactLabelIDs(ctx, db, rebind, structured.Label)

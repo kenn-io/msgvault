@@ -31,6 +31,7 @@ type Attendee struct {
 }
 type Event struct {
 	ProviderEventID, SeriesProviderID, Kind string
+	ICalUID                                 string
 	Original                                *calrecur.Identity
 	Status                                  string
 	AllDay                                  bool
@@ -44,6 +45,8 @@ type Event struct {
 // Decode reads a provider snapshot with the source calendar's time zone.
 func Decode(rawFormat string, raw, metadata []byte, calendarZone string) (Event, bool, error) {
 	switch rawFormat {
+	case "ics":
+		return DecodeICS(raw, metadata, calendarZone)
 	case gcalmodel.RawFormat:
 		return decodeGoogleEvent(raw, metadata, calendarZone)
 	default:

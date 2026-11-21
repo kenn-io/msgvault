@@ -29,8 +29,8 @@ var personCmd = &cobra.Command{
 	Short: "Find contacts and manage durable person profiles",
 	Long: `A participant is one address or handle seen in messages. A person is a
 durable profile that groups participants and carries notes, attributes,
-relationships, and briefs. People come from 'person promote' or from
-imported CardDAV contacts.
+relationships, and briefs. People come from 'person create', 'person promote',
+or imported CardDAV contacts.
 
 Find saved people without semantic search (read-only):
   msgvault person directory --query "Alex Example"
@@ -89,7 +89,8 @@ var personGetCmd = &cobra.Command{
 	Long: `Show one durable person: id, display_name (when known), vcard_uid,
 participant_ids, revision, created_at, and updated_at. Pass a <person-id>
 from 'msgvault person list --json', or --vcard-uid with the person's vcard_uid
-or a bound CardDAV contact UID. Addresses are in 'person identities'.`,
+or a bound CardDAV contact UID. Addresses are in 'person identities'.
+JSON includes contact_state when history is available.`,
 	Example: `  msgvault person get 1 --json
   msgvault person get --vcard-uid 4f6c1a2e-0000-4000-8000-000000000001 --json`,
 	Args: personGetArgs,
@@ -115,13 +116,13 @@ or a bound CardDAV contact UID. Addresses are in 'person identities'.`,
 			if err != nil {
 				return err
 			}
-			return writeCLIPerson(cmd, resp.JSON200)
+			return writeCLIGetPerson(cmd, client, resp.JSON200)
 		}
 		resp, err := getCLIPerson(cmd, client, id)
 		if err != nil {
 			return err
 		}
-		return writeCLIPerson(cmd, resp.JSON200)
+		return writeCLIGetPerson(cmd, client, resp.JSON200)
 	},
 }
 
@@ -156,8 +157,9 @@ var personListCmd = &cobra.Command{
 	Long: `List durable people as id, participant_ids, revision, vcard_uid,
 created_at, updated_at, and display_name (when known). Addresses
 are not included: use 'person identities <id>'. Filter saved people with
-'person directory --query <name>' or '--address <address>'. Empty until a participant is
-promoted with 'person promote' or a CardDAV contact is imported.`,
+'person directory --query <name>' or '--address <address>'. Empty until a person is
+created with 'person create', a participant is promoted with 'person promote',
+or a CardDAV contact is imported.`,
 	Example: `  msgvault person list --json`,
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
@@ -731,6 +733,27 @@ func getCLIPersonByUID(
 					Query: &generated.GetPersonByUIDQuery{UID: uid},
 				})
 		})
+}
+
+func writeCLIGetPerson(cmd *cobra.Command, client *daemonclient.Client, person *generated.Person) error {
+	if !personJSON {
+		return writeCLIPerson(cmd, person)
+	}
+	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), daemonclient.FirstAppearanceMinAPISchemaVersion)
+	if err != nil || !supported {
+		return writeCLIPerson(cmd, person)
+	}
+	response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.GetPersonContactStateResp, error) {
+		return api.GetPersonContactStateWithResponse(cmd.Context(), &generated.GetPersonContactStateRequestOptions{PathParams: &generated.GetPersonContactStatePath{ID: person.ID}})
+	})
+	if err != nil {
+		return writeCLIPerson(cmd, person)
+	}
+	return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), struct {
+		*generated.Person `json:",inline"`
+
+		ContactState *generated.ContactState `json:"contact_state"`
+	}{person, response.JSON200}, json.Deterministic(true))
 }
 
 func writeCLIPerson(cmd *cobra.Command, person *generated.Person) error {

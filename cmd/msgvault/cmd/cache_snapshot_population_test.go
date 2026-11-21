@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
@@ -138,6 +141,12 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
+			// Relationship temperatures decay by whole UTC days from each
+			// build's watermark, so builds on either side of midnight differ.
+			// One instant for every build keeps the comparison to the data.
+			buildAt := time.Now()
+			cacheExportNow = func() time.Time { return buildAt }
+			t.Cleanup(func() { cacheExportNow = time.Now })
 			tmp := t.TempDir()
 			dbPath := filepath.Join(tmp, "msgvault.db")
 			incDir, fullDir := filepath.Join(tmp, "analytics-inc"), filepath.Join(tmp, "analytics-full")
@@ -153,7 +162,11 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			label, err := st.EnsureLabel(t.Context(), sourceID, "inbox", "Inbox", "system")
 			require.NoError(err)
 			addMessage := func(i int) {
-				_, id := addCacheExportParityMessage(t, st, sourceID, bob, alice, i)
+				messageType := "meeting_transcript"
+				if i == 2 {
+					messageType = "email"
+				}
+				_, id := addCacheExportParityMessage(t, st, sourceID, bob, alice, i, messageType)
 				require.Equal(int64(i), id)
 				require.NoError(st.AddMessageLabels(t.Context(), id, []int64{label}))
 				require.NoError(st.UpsertAttachment(t.Context(), id, "document.txt", "text/plain", "", fmt.Sprintf("hash-%d", i), 42))
@@ -219,6 +232,20 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			require.NoError(err)
 			assert.True(hookCalled)
 			assert.Equal(int64(1), built.StagedCount)
+			duck, err := sql.Open("duckdb", "")
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(duck.Close()) })
+			rows, err := duck.QueryContext(t.Context(), `SELECT message_id, group_id FROM read_parquet(?)`, filepath.Join(incDir, "meeting_groups", "*.parquet"))
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			actualGroups := make(map[int64]int64)
+			for rows.Next() {
+				var messageID, groupID int64
+				require.NoError(rows.Scan(&messageID, &groupID))
+				actualGroups[messageID] = groupID
+			}
+			require.NoError(rows.Err())
+			assert.Equal(map[int64]int64{1: 1, 3: 3}, actualGroups)
 			_, err = buildCache(t.Context(), dbPath, fullDir, true)
 			require.NoError(err)
 			assertCacheExportParity(t, tmp, incDir, fullDir, query.RequiredParquetDirs)

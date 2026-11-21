@@ -87,6 +87,18 @@ func TestDiscoverDescriptorSecurityAndProtocol(t *testing.T) {
 	})
 }
 
+func TestPrivateNetworkDiscoveryStaysStrict(t *testing.T) {
+	path := writeDescriptor(t, descriptor{
+		ProtocolVersion: ProtocolVersion,
+		InstanceID:      "synthetic",
+		Endpoint:        "http://[::1%25eth0]:7777",
+	}, 0o600)
+
+	_, err := Discover(t.Context(), DiscoveryOptions{DescriptorPath: path, APIKey: "synthetic-key"})
+
+	require.ErrorIs(t, err, ErrInsecureEndpoint)
+}
+
 func TestDiscoverLoopbackAuthentication(t *testing.T) {
 	t.Run("configured key", func(t *testing.T) {
 		path := writeDescriptor(t, descriptor{

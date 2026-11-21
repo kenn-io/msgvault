@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // querier is satisfied by both *sql.DB and *sql.Tx, allowing
@@ -54,6 +55,8 @@ type contextQuerier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+const recipientTypeFrom = "from"
+
 // RecipientSet groups participant IDs, display names, and envelope
 // addresses for one recipient type (from, to, cc, bcc). EmailAddresses
 // carries the address as it appeared in the message envelope; unlike the
@@ -64,12 +67,15 @@ type RecipientSet struct {
 	ParticipantIDs []int64
 	DisplayNames   []string
 	EmailAddresses []string
+	IsRelayed      bool
 }
 
 // ParticipantPersistData describes one email participant to resolve inside a
 // message persistence transaction.
 type ParticipantPersistData struct {
-	EmailAddress string
+	IdentifierType  string
+	IdentifierValue string
+	EmailAddress    string
 	// PhoneNumber is an E.164 phone that identifies the participant when
 	// EmailAddress is empty. It is backed by a participant_identifiers row of
 	// type PhoneIdentifierType so owner attribution can match it.
@@ -269,6 +275,7 @@ func (s *Store) gmailAuditPageIDsTx(
 		FROM messages m
 		JOIN sources src ON src.id = m.source_id AND src.source_type = 'gmail'
 		WHERE m.id > ? AND (? = 0 OR m.source_id = ?)
+		AND COALESCE(m.message_type, '') <> 'calendar_event'
 		ORDER BY m.id
 		LIMIT ?
 	`, afterID, sourceID, sourceID, limit)
@@ -1260,6 +1267,9 @@ func (s *Store) MigrateSourceMessageID(ctx context.Context, sourceID, conversati
 				}
 			}
 
+			if err := s.preservePurgedMeetingDecisions(ctx, tx, `source_id = ? AND conversation_id = ? AND source_message_id = ?`, sourceID, conversationID, legacySourceMessageID); err != nil {
+				return fmt.Errorf("preserve meeting decisions: %w", err)
+			}
 			_, err = tx.ExecContext(
 				ctx,
 				`DELETE FROM messages
@@ -1354,6 +1364,35 @@ func (s *Store) MessageMetadataWithRawBatch(
 			return nil
 		},
 	)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// MarkedSourceMessageIDsBatchContext returns marked source message IDs from a
+// provider listing page, including rows whose raw MIME is missing.
+func (s *Store) MarkedSourceMessageIDsBatchContext(
+	ctx context.Context, sourceID int64, sourceMessageIDs []string,
+) (map[string]struct{}, error) {
+	result := make(map[string]struct{})
+	if len(sourceMessageIDs) == 0 {
+		return result, nil
+	}
+
+	err := queryInChunksContext(ctx, s.db, sourceMessageIDs, []any{sourceID}, `
+		SELECT source_message_id
+		FROM messages
+		WHERE source_id = ? AND deleted_from_source_at IS NOT NULL
+		  AND source_message_id IN (%s)`,
+		func(rows *loggedRows) error {
+			var sourceMessageID string
+			if err := rows.Scan(&sourceMessageID); err != nil {
+				return err
+			}
+			result[sourceMessageID] = struct{}{}
+			return nil
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -2176,19 +2215,47 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	return s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
 		nil, nil, func([]int64) *MessagePersistData { return data }, nil,
-		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
-			q := boundQuerier{ctx: ctx, q: tx}
-			if data.MIMEAttachmentReplacement != nil {
-				if err := s.persistAttachmentSnapshotWith(q, id, data.MIMEAttachmentReplacement); err != nil {
-					return err
-				}
-			}
-			if data.Edited {
-				return setMessageEditedStateWith(q, id, true)
-			}
-			return nil
-		},
+		s.persistMessageSnapshotAfter,
 	)
+}
+
+func (s *Store) persistMessageSnapshotAfter(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
+	q := boundQuerier{ctx: ctx, q: tx}
+	if data.MIMEAttachmentReplacement != nil {
+		if err := s.persistAttachmentSnapshotWith(q, id, data.MIMEAttachmentReplacement); err != nil {
+			return err
+		}
+	}
+	if data.Edited {
+		return setMessageEditedStateWith(q, id, true)
+	}
+	return nil
+}
+
+// PersistTelegramMessagesContext persists Telegram snapshots in one transaction.
+func (s *Store) PersistTelegramMessagesContext(ctx context.Context, batch []*MessagePersistData) ([]int64, error) {
+	ids := make([]int64, len(batch))
+	err := s.withAttributionTxContext(ctx, attributionLock{}, func(tx *loggedTx) error {
+		for i, data := range batch {
+			id, err := s.persistMessageWithParticipantsTx(
+				ctx, tx, nil, nil, func([]int64) *MessagePersistData { return data }, nil, s.persistMessageSnapshotAfter,
+			)
+			if err != nil {
+				return fmt.Errorf("persist message %s: %w", data.Message.SourceMessageID, err)
+			}
+			ids[i] = id
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// RelayedFromRecipient preserves the transport sender for an attributed author.
+func RelayedFromRecipient(from mime.Address, id int64) RecipientSet {
+	return RecipientSet{Type: recipientTypeFrom, ParticipantIDs: []int64{id}, DisplayNames: []string{textutil.EnsureUTF8(from.Name)}, EmailAddresses: []string{from.Email}, IsRelayed: true}
 }
 
 func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replacement *[]AttachmentWrite) error {
@@ -2318,19 +2385,34 @@ func (s *Store) persistMessageWithParticipantsTransaction(
 	afterPersist messagePersistAfter,
 ) (int64, error) {
 	for _, participant := range participants {
-		if participant.EmailAddress == "" && participant.PhoneNumber != "" {
+		if participant.IdentifierType != "" || (participant.EmailAddress == "" && participant.PhoneNumber != "") {
 			lock = attributionLock{Exclusive: true}
 			break
 		}
 	}
 	var messageID int64
+	var calendarRaw []byte
+	wrappedAfterPersist := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
+		if afterPersist != nil {
+			if err := afterPersist(ctx, tx, data, id); err != nil {
+				return err
+			}
+		}
+		if IsEmailMessageType(data.Message.MessageType) && (data.RawFormat == "" || data.RawFormat == emailLinkageRawFormat) && hasCalendarToken(data.RawMIME) {
+			calendarRaw = data.RawMIME
+		}
+		return nil
+	}
 	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
 		var err error
 		messageID, err = s.persistMessageWithParticipantsTx(
-			ctx, tx, beforeParticipants, participants, build, prepare, afterPersist,
+			ctx, tx, beforeParticipants, participants, build, prepare, wrappedAfterPersist,
 		)
 		return err
 	})
+	if err == nil && calendarRaw != nil {
+		s.deriveEmailCalendarAfterCommit(ctx, messageID, calendarRaw)
+	}
 	return messageID, err
 }
 
@@ -2357,8 +2439,8 @@ func (s *Store) persistMessageWithParticipantsTx(
 	}
 	hasPhoneParticipant := false
 	for idx, participant := range participants {
-		if participant.EmailAddress == "" && participant.PhoneNumber == "" {
-			return 0, fmt.Errorf("ensure participant %d: an email address or phone number is required", idx)
+		if participant.EmailAddress == "" && participant.PhoneNumber == "" && (participant.IdentifierType == "" || strings.TrimSpace(participant.IdentifierValue) == "") {
+			return 0, fmt.Errorf("ensure participant %d: an identity is required", idx)
 		}
 		if participant.EmailAddress == "" {
 			hasPhoneParticipant = true
@@ -2394,7 +2476,9 @@ func (s *Store) persistMessageWithParticipantsTx(
 		}
 		var participantID int64
 		var err error
-		if participant.EmailAddress == "" {
+		if participant.IdentifierType != "" {
+			participantID, err = s.ensureParticipantByIdentifierTx(ctx, tx, participant.IdentifierType, participant.IdentifierValue, participant.DisplayName)
+		} else if participant.EmailAddress == "" {
 			participantID, err = s.ensureParticipantByPhoneTx(
 				ctx, tx, participant.PhoneNumber, participant.DisplayName, PhoneIdentifierType,
 			)
@@ -2523,7 +2607,7 @@ func (s *Store) persistMessageWith(
 		if rawFormat == "" {
 			rawFormat = "mime"
 		}
-		if err := upsertMessageRawWithFormat(q, messageID, data.RawMIME, rawFormat); err != nil {
+		if err := upsertEmailRaw(q, messageID, data.RawMIME, rawFormat); err != nil {
 			return 0, fmt.Errorf("upsert raw: %w", err)
 		}
 		// Only email has linkage, so other message types skip the refresh's lookups.
@@ -2784,7 +2868,7 @@ func (s *Store) ReplaceMessageRecipientsContext(ctx context.Context, messageID i
 		}); err != nil {
 			return err
 		}
-		if recipientType == "from" {
+		if recipientType == recipientTypeFrom {
 			// 'from' rows are attribution input: the message upsert's CTE could not
 			// see the envelope rows this call just replaced, and importers on this
 			// granular path never reach persistMessageWith's final recompute.
@@ -2831,15 +2915,15 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 
 	return insertInChunks(tx, chunkInsert{
 		totalRows:    len(recipients),
-		valuesPerRow: 5,
-		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES ",
+		valuesPerRow: 6,
+		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address, is_relayed) VALUES ",
 	}, func(start, end int) ([]string, []any) {
 		values := make([]string, end-start)
-		args := make([]any, 0, (end-start)*5)
+		args := make([]any, 0, (end-start)*6)
 		for i := start; i < end; i++ {
-			values[i-start] = "(?, ?, ?, ?, ?)"
+			values[i-start] = "(?, ?, ?, ?, ?, ?)"
 			row := recipients[i]
-			args = append(args, messageID, row.participantID, rs.Type, row.displayName, nullIfEmpty(row.email))
+			args = append(args, messageID, row.participantID, rs.Type, row.displayName, nullIfEmpty(row.email), row.isRelayed)
 		}
 		return values, args
 	})
@@ -2849,6 +2933,7 @@ type messageRecipientRow struct {
 	participantID int64
 	displayName   string
 	email         string
+	isRelayed     bool
 }
 
 func normalizedMessageRecipients(rs RecipientSet) []messageRecipientRow {
@@ -2879,7 +2964,7 @@ func normalizedMessageRecipients(rs RecipientSet) []messageRecipientRow {
 		if i < len(rs.DisplayNames) {
 			name = rs.DisplayNames[i]
 		}
-		rows = append(rows, messageRecipientRow{pid, name, email})
+		rows = append(rows, messageRecipientRow{pid, name, email, rs.IsRelayed})
 	}
 
 	return rows
@@ -2891,7 +2976,7 @@ func (s *Store) MessageRecipientsMatchContext(ctx context.Context, messageID int
 	for _, set := range sets {
 		want[set.Type] = normalizedMessageRecipients(set)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT recipient_type, participant_id, COALESCE(display_name, ''), COALESCE(email_address, '') FROM message_recipients WHERE message_id = ? ORDER BY id`, messageID)
+	rows, err := s.db.QueryContext(ctx, `SELECT recipient_type, participant_id, COALESCE(display_name, ''), COALESCE(email_address, ''), is_relayed FROM message_recipients WHERE message_id = ? ORDER BY id`, messageID)
 	if err != nil {
 		return false, err
 	}
@@ -2900,7 +2985,7 @@ func (s *Store) MessageRecipientsMatchContext(ctx context.Context, messageID int
 	for rows.Next() {
 		var role string
 		var row messageRecipientRow
-		if err := rows.Scan(&role, &row.participantID, &row.displayName, &row.email); err != nil {
+		if err := rows.Scan(&role, &row.participantID, &row.displayName, &row.email, &row.isRelayed); err != nil {
 			return false, err
 		}
 		if _, supplied := want[role]; supplied {
@@ -3636,6 +3721,46 @@ func (s *Store) MarkMessageDeletedContext(ctx context.Context, sourceID int64, s
 	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 }
 
+// MarkMessageThreadDeletedContext marks a source message and every archived
+// reply below it in the same source as deleted from source.
+func (s *Store) MarkMessageThreadDeletedContext(ctx context.Context, sourceID int64, sourceMessageID string) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	write := func(q querier) error {
+		_, err := q.Exec(fmt.Sprintf(`
+			WITH RECURSIVE thread(id) AS (
+				SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
+				UNION
+				SELECT m.id FROM messages m JOIN thread ON m.reply_to_message_id = thread.id
+				WHERE m.source_id = ?
+			)
+			UPDATE messages
+			SET deleted_from_source_at = %s
+			WHERE id IN (SELECT id FROM thread) AND deleted_from_source_at IS NULL
+		`, s.dialect.Now()), sourceID, sourceMessageID, sourceID)
+		return err
+	}
+	if s.syncGeneration == nil {
+		return write(boundQuerier{ctx: ctx, q: s.db})
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
+}
+
+// MessageDeletedFromSourceContext reports whether a source message is archived
+// and marked deleted from its source.
+func (s *Store) MessageDeletedFromSourceContext(ctx context.Context, sourceID int64, sourceMessageID string) (bool, error) {
+	var deleted bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM messages
+			WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NOT NULL)`,
+		sourceID, sourceMessageID).Scan(&deleted)
+	if err != nil {
+		return false, fmt.Errorf("read source deletion: %w", err)
+	}
+	return deleted, nil
+}
+
 // ClearMessageDeletedFromSource clears the upstream tombstone when a message
 // reappears during a provider repair scan.
 func (s *Store) ClearMessageDeletedFromSource(sourceID int64, sourceMessageID string) error {
@@ -3647,18 +3772,23 @@ func (s *Store) ClearMessageDeletedFromSourceContext(ctx context.Context, source
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	write := func(q querier) error {
-		_, err := q.Exec(`
-			UPDATE messages
-			SET deleted_from_source_at = NULL
-			WHERE source_id = ? AND source_message_id = ?
-		`, sourceID, sourceMessageID)
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return s.clearMessageDeletedFromSourceTx(ctx, tx, `source_id = ? AND source_message_id = ?`, sourceID, sourceMessageID)
+	})
+}
+
+// clearMessageDeletedFromSourceTx clears one matching mark and invalidates cached facts.
+func (s *Store) clearMessageDeletedFromSourceTx(ctx context.Context, tx *loggedTx, condition string, args ...any) error {
+	var messageID int64
+	err := tx.QueryRowContext(ctx, `UPDATE messages SET deleted_from_source_at = NULL WHERE deleted_from_source_at IS NOT NULL AND `+condition+` RETURNING id`, args...).Scan(&messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil || s.IsPostgreSQL() {
 		return err
 	}
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
+	_, err = tx.ExecContext(ctx, `INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('message_facts', ?)`, messageID)
+	return err
 }
 
 // MarkMessagesDeletedBatch marks multiple messages as deleted from the source in a single transaction.
@@ -3904,8 +4034,8 @@ func (s *Store) CountMessagesWithRaw(sourceID int64) (int64, error) {
 	err := s.db.QueryRow(fmt.Sprintf(`
 		SELECT COUNT(*) FROM messages m
 		JOIN message_raw mr ON m.id = mr.message_id
-		WHERE m.source_id = ? AND %s
-	`, LiveMessagesWhere("m", true)), sourceID).Scan(&count)
+		WHERE m.source_id = ? AND %s AND %s
+	`, LiveMessagesWhere("m", true), SourceNativeMessagesWhere("m", "sources")), sourceID).Scan(&count)
 	return count, err
 }
 
@@ -3943,7 +4073,7 @@ func (s *Store) CountMessagesPerMailbox(sourceID int64) (map[string]int64, error
 
 // GetRandomMessageIDs returns a random sample of message IDs for a source.
 func (s *Store) GetRandomMessageIDs(sourceID int64, limit int) ([]int64, error) {
-	live := LiveMessagesWhere("", true)
+	live := LiveMessagesWhere("", true) + " AND " + SourceNativeMessagesWhere("messages", "sources")
 	rows, err := s.db.Query(fmt.Sprintf(`
 		SELECT id FROM messages
 		WHERE source_id = ? AND %s
@@ -3973,7 +4103,11 @@ func (s *Store) UpsertFTS(messageID int64, subject, bodyText, fromAddr, toAddrs,
 	return s.UpsertFTSContext(context.Background(), messageID, subject, bodyText, fromAddr, toAddrs, ccAddrs)
 }
 
-// UpsertFTSContext honors cancellation during UpsertFTS.
+// UpsertFTSContext writes caller-supplied search fields, honoring cancellation.
+// It propagates dialect errors, including PostgreSQL overflow, without the
+// terminal policy used by PersistMessageContext. Earlier message commits are
+// outside this write; warning or retry decisions belong to the caller.
+// See docs/architecture/storage.md#full-text-index for the indexing contracts.
 func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, bodyText, fromAddr, toAddrs, ccAddrs string) error {
 	doc := FTSDoc{
 		MessageID: messageID,
@@ -3993,6 +4127,9 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 
 // IndexStoredMessageContext fills or refreshes a message's search entry from stored
 // rows. Unchanged entries are left alone, and unavailable FTS is a no-op.
+// Load, comparison and upsert errors propagate, including PostgreSQL overflow
+// while FTSMatches builds the expected vector. This entry does not use the
+// savepoint/terminal policy of PersistMessageContext; callers own any warning.
 func (s *Store) IndexStoredMessageContext(ctx context.Context, messageID int64) error {
 	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
 		if !s.fts5Available {
@@ -4226,6 +4363,11 @@ func (s *Store) backfillFTSBatchContext(
 	}
 	var affected int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		if s.IsPostgreSQL() {
+			var err error
+			affected, err = s.backfillPostgresFTS(ctx, tx, batchSQL, fromID, toID)
+			return err
+		}
 		result, err := tx.ExecContext(ctx, batchSQL, fromID, toID)
 		if err != nil {
 			return err
@@ -4999,6 +5141,9 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		if _, err := tx.ExecContext(ctx, `UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE source_import_items SET name = ? WHERE provider LIKE 'beeper-roster:%' AND name = ?`, strconv.FormatInt(newID, 10), strconv.FormatInt(oldID, 10)); err != nil {
+			return err
+		}
 		if err := s.rewriteObservationsForMergeTx(
 			ctx, tx, oldID, newID,
 		); err != nil {
@@ -5094,6 +5239,31 @@ func (s *Store) ParticipantByIdentifierContext(ctx context.Context, identifierTy
 		return 0, false, nil
 	}
 	return id, hasPhone, err
+}
+
+// ParticipantSearchAddressContext returns the address search indexes for a
+// message of participantID whose envelope names no sender address: the
+// participant's phone number, else its email, as storedFTSEnvelopeSQL derives
+// it when it rebuilds the index. A participant with neither returns "".
+func (s *Store) ParticipantSearchAddressContext(ctx context.Context, participantID int64) (string, error) {
+	var address string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(phone_number, email_address, '') FROM participants WHERE id = ?
+	`, participantID).Scan(&address)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return address, err
+}
+
+// ParticipantSentInSourceContext reports whether participantID sent any
+// message of sourceID.
+func (s *Store) ParticipantSentInSourceContext(ctx context.Context, participantID, sourceID int64) (bool, error) {
+	var sent bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM messages WHERE sender_id = ? AND source_id = ?)
+	`, participantID, sourceID).Scan(&sent)
+	return sent, err
 }
 
 // AdoptLegacyParticipantIdentifier atomically upgrades one legacy identifier
@@ -5449,80 +5619,86 @@ func (s *Store) EnsureParticipantByIdentifierContext(ctx context.Context, identi
 
 	var participantID int64
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
-		err := tx.QueryRowContext(ctx, `
-			SELECT participant_id FROM participant_identifiers
-			WHERE identifier_type = ? AND identifier_value = ?
-		`, identifierType, identifierValue).Scan(&participantID)
-		if err == nil {
-			if displayName != "" {
-				result, err := tx.ExecContext(ctx, `
-					UPDATE participants SET display_name = ?
-					WHERE id = ? AND (display_name IS NULL OR display_name = '')
-				`, displayName, participantID)
-				if err != nil {
-					return fmt.Errorf("backfill participant display name: %w", err)
-				}
-				changed, err := s.bumpParticipantDisplayNameRevisionIfChangedContext(ctx, tx, result)
-				if err != nil {
-					return err
-				}
-				if changed {
-					return s.invalidateParticipantPersonEnrichmentTx(
-						ctx, tx, participantID)
-				}
-			}
-			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("lookup participant identifier: %w", err)
-		}
-
-		now := s.dialect.Now()
-		if err := tx.QueryRowContext(ctx, fmt.Sprintf(`
-			INSERT INTO participants (display_name, created_at, updated_at)
-			VALUES (?, %s, %s)
-			RETURNING id
-		`, now, now), displayName).Scan(&participantID); err != nil {
-			return fmt.Errorf("insert participant: %w", err)
-		}
-		if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
-			return err
-		}
-		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if !classificationColumns {
-			_, err = tx.ExecContext(ctx, `
-				INSERT INTO participant_identifiers (
-					participant_id, identifier_type, identifier_value, display_value, is_primary
-				) VALUES (?, ?, ?, ?, TRUE)
-			`, participantID, identifierType, identifierValue, identifierValue)
-			if err != nil {
-				return fmt.Errorf("insert participant identifier: %w", err)
-			}
-		} else {
-			serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
-				identifierType, identifierValue,
-			)
-			_, err = tx.ExecContext(ctx, `
-				INSERT INTO participant_identifiers (
-					participant_id, identifier_type, identifier_value, display_value,
-					is_primary, service_id, scope_kind, scope_value
-				) VALUES (?, ?, ?, ?, TRUE,
-					(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
-			`, participantID, identifierType, identifierValue, identifierValue,
-				serviceSlug, scopeKind, scopeValue)
-			if err != nil {
-				return fmt.Errorf("insert participant identifier: %w", err)
-			}
-		}
-		return s.bumpParticipantIdentifierRevision(ctx, tx)
+		var err error
+		participantID, err = s.ensureParticipantByIdentifierTx(ctx, tx, identifierType, identifierValue, displayName)
+		return err
 	})
 	if err != nil {
 		return 0, err
 	}
 	return participantID, nil
+}
+
+func (s *Store) ensureParticipantByIdentifierTx(ctx context.Context, tx *loggedTx, identifierType, identifierValue, displayName string) (participantID int64, err error) {
+	err = tx.QueryRowContext(ctx, `
+		SELECT participant_id FROM participant_identifiers
+		WHERE identifier_type = ? AND identifier_value = ?
+	`, identifierType, identifierValue).Scan(&participantID)
+	if err == nil {
+		if displayName != "" {
+			result, err := tx.ExecContext(ctx, `
+				UPDATE participants SET display_name = ?
+				WHERE id = ? AND (display_name IS NULL OR display_name = '')
+			`, displayName, participantID)
+			if err != nil {
+				return participantID, fmt.Errorf("backfill participant display name: %w", err)
+			}
+			changed, err := s.bumpParticipantDisplayNameRevisionIfChangedContext(ctx, tx, result)
+			if err != nil {
+				return participantID, err
+			}
+			if changed {
+				return participantID, s.invalidateParticipantPersonEnrichmentTx(
+					ctx, tx, participantID)
+			}
+		}
+		return participantID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return participantID, fmt.Errorf("lookup participant identifier: %w", err)
+	}
+
+	now := s.dialect.Now()
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+		INSERT INTO participants (display_name, created_at, updated_at)
+		VALUES (?, %s, %s)
+		RETURNING id
+	`, now, now), displayName).Scan(&participantID); err != nil {
+		return participantID, fmt.Errorf("insert participant: %w", err)
+	}
+	if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
+		return participantID, err
+	}
+	classificationColumns, err := s.participantIdentifierClassificationColumnsTx(ctx, tx)
+	if err != nil {
+		return participantID, err
+	}
+	if !classificationColumns {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO participant_identifiers (
+				participant_id, identifier_type, identifier_value, display_value, is_primary
+			) VALUES (?, ?, ?, ?, TRUE)
+		`, participantID, identifierType, identifierValue, identifierValue)
+		if err != nil {
+			return participantID, fmt.Errorf("insert participant identifier: %w", err)
+		}
+	} else {
+		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
+			identifierType, identifierValue,
+		)
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO participant_identifiers (
+				participant_id, identifier_type, identifier_value, display_value,
+				is_primary, service_id, scope_kind, scope_value
+			) VALUES (?, ?, ?, ?, TRUE,
+				(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
+		`, participantID, identifierType, identifierValue, identifierValue,
+			serviceSlug, scopeKind, scopeValue)
+		if err != nil {
+			return participantID, fmt.Errorf("insert participant identifier: %w", err)
+		}
+	}
+	return participantID, s.bumpParticipantIdentifierRevision(ctx, tx)
 }
 
 // UpdateParticipantDisplayNameByPhone updates the display_name for an existing
@@ -5984,6 +6160,109 @@ func mergeConversationParticipantsWith(
 	return nil
 }
 
+// ConversationParticipantsContext lists the archived membership for a conversation.
+func (s *Store) ConversationParticipantsContext(ctx context.Context, conversationID int64) ([]ConversationParticipantRef, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT participant_id, COALESCE(role, '') FROM conversation_participants WHERE conversation_id = ? ORDER BY participant_id`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	var members []ConversationParticipantRef
+	for rows.Next() {
+		var member ConversationParticipantRef
+		if err := rows.Scan(&member.ParticipantID, &member.Role); err != nil {
+			return nil, errors.Join(err, rows.Close())
+		}
+		members = append(members, member)
+	}
+	return members, errors.Join(rows.Err(), rows.Close())
+}
+
+// ApplyBeeperRosterMemberContext commits current ownership and its receipt together.
+func (s *Store) ApplyBeeperRosterMemberContext(ctx context.Context, sourceID, conversationID int64, identifier, role, provider, checksum string) (int64, error) {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return 0, err
+	}
+	var participantID int64
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		before, err := beginConversationParticipantJournal(q, s.dialect)
+		if err != nil {
+			return err
+		}
+		if err := s.requireSyncConversationSourceTx(q, conversationID); err != nil {
+			return err
+		}
+		query := `SELECT participant_id FROM participant_identifiers WHERE identifier_type = 'beeper' AND identifier_value = ?`
+		if s.dialect.DriverName() == postgresDriverName {
+			query += ` FOR SHARE`
+		}
+		if err := q.QueryRow(query, identifier).Scan(&participantID); err != nil {
+			return err
+		}
+		if err := mergeConversationParticipantsWith(q, s.dialect, conversationID, []ConversationParticipantRef{{ParticipantID: participantID, Role: role}}); err != nil {
+			return err
+		}
+		if err := consolidateConversationParticipantJournal(q, s.dialect, conversationID, before); err != nil {
+			return err
+		}
+		return s.writeBeeperRosterReceipt(q, sourceID, provider, identifier, checksum, participantID)
+	})
+	return participantID, err
+}
+
+func (s *Store) writeBeeperRosterReceipt(q querier, sourceID int64, provider, identifier, checksum string, owner int64) error {
+	if checksum == "" {
+		return nil
+	}
+	_, err := q.Exec(fmt.Sprintf(`INSERT INTO source_import_items (source_id, provider, provider_id, name, checksum, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', %s, %s) ON CONFLICT(source_id, provider, provider_id) DO UPDATE SET name = excluded.name, checksum = excluded.checksum, status = excluded.status, updated_at = %s`, s.dialect.Now(), s.dialect.Now(), s.dialect.Now()), sourceID, provider, identifier, strconv.FormatInt(owner, 10), BeeperRosterReceiptChecksum(checksum, owner))
+	return err
+}
+
+// BeeperRosterRichPrefix marks receipts based on a phone number or email.
+const BeeperRosterRichPrefix = "rich:"
+
+// BeeperRosterReceiptChecksum binds the consumed inputs to their current owner.
+func BeeperRosterReceiptChecksum(inputs string, owner int64) string {
+	prefix := ""
+	if strings.HasPrefix(inputs, BeeperRosterRichPrefix) {
+		prefix = BeeperRosterRichPrefix
+	}
+	return prefix + fmt.Sprintf("%x", sha256.Sum256([]byte(inputs+":"+strconv.FormatInt(owner, 10))))
+}
+
+// BeeperRosterOwnersContext reads current identifier owners in bounded queries.
+func (s *Store) BeeperRosterOwnersContext(ctx context.Context, identifiers []string) (map[string]int64, error) {
+	owners := make(map[string]int64, len(identifiers))
+	err := queryInChunksContext(ctx, s.db, identifiers, nil, `SELECT identifier_value, participant_id FROM participant_identifiers WHERE identifier_type = 'beeper' AND identifier_value IN (%s)`, func(rows *loggedRows) error {
+		var key string
+		var id int64
+		if err := rows.Scan(&key, &id); err != nil {
+			return err
+		}
+		owners[key] = id
+		return nil
+	})
+	return owners, err
+}
+
+// RemoveBeeperRosterMemberContext removes one stale member from a scoped room.
+func (s *Store) RemoveBeeperRosterMemberContext(ctx context.Context, conversationID, participantID int64) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		before, err := beginConversationParticipantJournal(q, s.dialect)
+		if err != nil {
+			return err
+		}
+		if err := s.requireSyncConversationSourceTx(q, conversationID); err != nil {
+			return err
+		}
+		if _, err := q.Exec(`DELETE FROM conversation_participants WHERE conversation_id = ? AND participant_id = ?`, conversationID, participantID); err != nil {
+			return err
+		}
+		return consolidateConversationParticipantJournal(q, s.dialect, conversationID, before)
+	})
+}
+
 // ReplaceConversationParticipants atomically replaces a conversation's
 // membership with a complete source snapshot.
 func (s *Store) ReplaceConversationParticipants(conversationID int64, participants []ConversationParticipantRef) error {
@@ -6010,17 +6289,9 @@ func replaceConversationParticipantsTx(
 	participants []ConversationParticipantRef,
 ) error {
 	q := boundQuerier{ctx: ctx, q: tx}
-	if dialect.DriverName() != postgresDriverName {
-		// Acquire SQLite's writer slot before taking the journal snapshot. A
-		// deferred transaction that reads first cannot upgrade its stale WAL
-		// snapshot if another writer commits before the membership DELETE.
-		if _, err := q.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
-			return fmt.Errorf("lock conversation membership journal: %w", err)
-		}
-	}
-	var journalBefore int64
-	if err := q.QueryRow(`SELECT sequence FROM embedding_change_clock WHERE singleton = 1`).Scan(&journalBefore); err != nil {
-		return fmt.Errorf("read embedding change clock before membership snapshot: %w", err)
+	journalBefore, err := beginConversationParticipantJournal(q, dialect)
+	if err != nil {
+		return err
 	}
 	desired := make(map[int64]string, len(participants))
 	for _, participant := range participants {
@@ -6073,6 +6344,20 @@ func replaceConversationParticipantsTx(
 		}
 	}
 	return consolidateConversationParticipantJournal(q, dialect, conversationID, journalBefore)
+}
+
+func beginConversationParticipantJournal(q querier, dialect Dialect) (int64, error) {
+	// Acquire SQLite's writer slot before reading the journal snapshot.
+	if dialect.DriverName() != postgresDriverName {
+		if _, err := q.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
+			return 0, fmt.Errorf("lock conversation membership journal: %w", err)
+		}
+	}
+	var before int64
+	if err := q.QueryRow(`SELECT sequence FROM embedding_change_clock WHERE singleton = 1`).Scan(&before); err != nil {
+		return 0, fmt.Errorf("read embedding change clock before membership snapshot: %w", err)
+	}
+	return before, nil
 }
 
 func consolidateConversationParticipantJournal(tx querier, dialect Dialect, conversationID, after int64) error {
@@ -6277,7 +6562,7 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 				return errRawNeedsAttributionLock
 			}
 		}
-		if err := upsertMessageRawWithFormat(boundQuerier{ctx: ctx, q: tx}, messageID, rawData, format); err != nil {
+		if err := upsertEmailRaw(boundQuerier{ctx: ctx, q: tx}, messageID, rawData, format); err != nil {
 			return err
 		}
 		// Non-MIME raw has no linkage to derive, and only a replaced MIME payload
@@ -6311,7 +6596,11 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 			return err
 		}
 	}
-	return s.withMessageAttributionTxContext(ctx, messageID, write)
+	err := s.withMessageAttributionTxContext(ctx, messageID, write)
+	if err == nil && format == emailLinkageRawFormat && hasCalendarToken(rawData) {
+		s.deriveEmailCalendarAfterCommit(ctx, messageID, rawData)
+	}
+	return err
 }
 
 // errRawNeedsAttributionLock rolls back a non-MIME raw write that found MIME
@@ -6765,7 +7054,7 @@ func (s *Store) EndWaitingProviderAttachments(ctx context.Context, sourceID int6
 
 // markFTSMessageUnsearchable shares the terminal PostgreSQL overflow policy.
 func markFTSMessageUnsearchable(q querier, messageID int64) error {
-	_, err := q.Exec(`UPDATE messages SET search_fts = ''::tsvector, indexing_version = ? WHERE id = ?`, CurrentFTSIndexingVersion, messageID)
+	_, err := q.Exec(`UPDATE messages SET search_fts = ''::tsvector, search_fts_fields = NULL, indexing_version = ? WHERE id = ?`, CurrentFTSIndexingVersion, messageID)
 	return err
 }
 
@@ -6856,6 +7145,7 @@ func (s *Store) ScanArchivedEmailContext(ctx context.Context, sourceID, afterID,
 		return nil, fmt.Errorf("scan archived email: %w", err)
 	}
 	item.stored.fts.MessageID = item.MessageID
+	item.stored.fts.voiceLoaded = true
 	item.BodyText, item.Snippet = item.stored.body, item.stored.snippet
 	item.decodeArchivedEmail(raw, compression)
 	return item, nil
@@ -6947,6 +7237,7 @@ func (s *Store) ScanArchivedRawMessagesForConversation(
 // UpdateMessageDerivedText atomically updates the text fields derived from one
 // provider payload. A body, snippet, or FTS failure rolls the whole update
 // back, so callers can safely retry every derived field together.
+// It uses the direct FTS writer: overflow is an error, unlike email repair.
 func (s *Store) UpdateMessageDerivedText(
 	ctx context.Context,
 	messageID int64, bodyText, bodyHTML, snippet sql.NullString, fts FTSDoc,
@@ -6980,6 +7271,106 @@ func (s *Store) writeDerivedEmailTextPendingRevision(ctx context.Context, tx *lo
 	return changed, setArchiveMetadataValueTx(ctx, tx, pendingDerivedEmailRevisionKey, "1")
 }
 
+// backfillPostgresFTS locks and indexes bounded pages inside the batch transaction.
+func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query string, fromID, toID int64) (int64, error) {
+	env := storedFTSEnvelopeSQL("STRING_AGG")
+	lockSQL := `SELECT m.id FROM messages m WHERE m.id IN (` + query + `) ORDER BY m.id LIMIT 64 FOR UPDATE OF m`
+	charCap := strconv.Itoa(maxFTSBodyChars)
+	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), ` + voiceSearchSQL(true, "m.id") + `, r.raw_data, r.compression
+		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id LEFT JOIN message_raw r ON r.message_id = m.id AND r.raw_format = 'beeper_json' WHERE m.id = ANY(?::bigint[]) AND ` + postgresFTSStalePredicate("m.") + ` ORDER BY m.id`
+	vector := pgFTSVectorFields("u.subject", "u.body", "u.sender", "u.to_addrs", "u.cc_addrs", "u.voice")
+	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, voice, fields)) UPDATE messages m SET search_fts = ` + vector + `, search_fts_fields = CASE WHEN u.fields::jsonb = 'null'::jsonb THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(u.fields::jsonb)) END, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM u WHERE m.id = u.id`
+	var affected int64
+	for fromID < toID {
+		rows, err := tx.QueryContext(ctx, lockSQL, fromID, toID)
+		if err != nil {
+			return 0, err
+		}
+		lockedIDs, err := scanInt64Rows(rows)
+		if closeErr := rows.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return 0, err
+		}
+		if len(lockedIDs) == 0 {
+			break
+		}
+		// Read the envelope after locking, using a fresh READ COMMITTED snapshot.
+		rows, err = tx.QueryContext(ctx, selectSQL, lockedIDs)
+		if err != nil {
+			return 0, err
+		}
+		var ids []int64
+		var subjects, bodies, senders, tos, ccs, voices []string
+		var canonicalFields []string
+		bytes := 0
+		for rows.Next() {
+			var doc FTSDoc
+			var raw []byte
+			var compression sql.NullString
+			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &doc.voice, &raw, &compression); err != nil {
+				_ = rows.Close()
+				return 0, err
+			}
+			doc.FromAddr = beeperFTSSender(raw, compression, doc.FromAddr)
+			doc, fields := preparePostgresFTSDoc(doc)
+			encoded, err := json.Marshal(fields, json.FormatNilSliceAsNull(true))
+			if err != nil {
+				_ = rows.Close()
+				return 0, err
+			}
+			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs) + len(doc.voice) + len(encoded) + len(raw)
+			if len(ids) > 0 && bytes+size > 4*1024*1024 {
+				break
+			}
+			ids = append(ids, doc.MessageID)
+			subjects = append(subjects, doc.Subject)
+			bodies = append(bodies, doc.Body)
+			senders = append(senders, doc.FromAddr)
+			tos = append(tos, doc.ToAddrs)
+			ccs = append(ccs, doc.CcAddrs)
+			voices = append(voices, doc.voice)
+			canonicalFields = append(canonicalFields, string(encoded))
+			bytes += size
+		}
+		err = rows.Err()
+		if closeErr := rows.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return 0, err
+		}
+		if len(ids) == 0 {
+			fromID = lockedIDs[len(lockedIDs)-1] + 1
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, updateSQL, ids, subjects, bodies, senders, tos, ccs, voices, canonicalFields); err != nil {
+			return 0, err
+		}
+		affected += int64(len(ids))
+		fromID = ids[len(ids)-1] + 1
+	}
+	return affected, nil
+}
+
+func beeperFTSSender(raw []byte, compression sql.NullString, fallback string) string {
+	if len(raw) == 0 {
+		return fallback
+	}
+	decoded, err := decodeMessageRaw(raw, compression)
+	if err != nil {
+		return fallback
+	}
+	var message struct {
+		SenderName string `json:"senderName"`
+	}
+	if json.Unmarshal(decoded, &message) != nil {
+		return fallback
+	}
+	return message.SenderName
+}
+
 // derivedEmailText is a retained email's stored text and the search document
 // FTSUpsert would write for its stored envelope.
 type derivedEmailText struct {
@@ -7000,11 +7391,11 @@ func (s *Store) derivedEmailTextColumns() string {
 	}
 	envelope := storedFTSEnvelopeSQL(aggregate)
 	return `COALESCE(b.body_text, ''), COALESCE(b.body_html, ''), COALESCE(m.snippet, ''), ` +
-		envelope.subject + `, ` + envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs
+		envelope.subject + `, ` + envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs + `, ` + voiceSearchSQL(s.IsPostgreSQL(), "m.id")
 }
 
 func (row *derivedEmailText) scanDest() []any {
-	return []any{&row.body, &row.html, &row.snippet, &row.fts.Subject, &row.fts.FromAddr, &row.fts.ToAddrs, &row.fts.CcAddrs}
+	return []any{&row.body, &row.html, &row.snippet, &row.fts.Subject, &row.fts.FromAddr, &row.fts.ToAddrs, &row.fts.CcAddrs, &row.fts.voice}
 }
 
 func (s *Store) loadDerivedEmailText(q querier, messageID int64) (derivedEmailText, error) {
@@ -7012,6 +7403,7 @@ func (s *Store) loadDerivedEmailText(q querier, messageID int64) (derivedEmailTe
 	err := q.QueryRow(`SELECT `+s.derivedEmailTextColumns()+`
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ?`, messageID).
 		Scan(row.scanDest()...)
+	row.fts.voiceLoaded = err == nil
 	return row, err
 }
 
@@ -7108,9 +7500,11 @@ func (s *Store) updateMessageDerivedText(q querier, messageID int64, bodyText, b
 	return nil
 }
 
-// upsertFTSOrUnsearchable applies the backfill's terminal policy when
-// PostgreSQL rejects the bounded search vector, keeping the caller's other
-// writes. It reports false when the row was already terminal.
+// upsertFTSOrUnsearchable requires an existing transaction and isolates the FTS
+// attempt with derived_fts. Only IsFTSValueTooLargeError permits rolling back
+// that attempt and recording a terminal empty vector; other errors propagate
+// for the caller to roll back. It reports false if overflow finds an already
+// terminal row, but still attempts indexing on every call.
 func (s *Store) upsertFTSOrUnsearchable(q querier, doc FTSDoc) (bool, error) {
 	if _, err := q.Exec("SAVEPOINT derived_fts"); err != nil {
 		return false, err

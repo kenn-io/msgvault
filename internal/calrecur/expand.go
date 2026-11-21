@@ -31,6 +31,16 @@ type Occurrence struct {
 	HasException       bool
 }
 
+// AddNominalDuration advances calendar days in the event's zone, then elapsed time.
+func AddNominalDuration(start time.Time, days int, elapsed time.Duration) (time.Time, error) {
+	wall := time.Date(start.Year(), start.Month(), start.Day()+days, start.Hour(), start.Minute(), start.Second(), 0, time.UTC)
+	end, err := ParseLocalDateTime("20060102T150405", wall.Format("20060102T150405"), start.Location())
+	if err != nil {
+		return time.Time{}, err
+	}
+	return end.Add(elapsed), nil
+}
+
 func nominal(s Set, id Identity, duration time.Duration, durationDays int) (Occurrence, error) {
 	start, err := s.identityStart(id)
 	if err != nil {

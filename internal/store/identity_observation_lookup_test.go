@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -274,4 +275,26 @@ func TestParticipantDisplayNamesAndSharedConversations(t *testing.T) {
 	shared, err = st.SharedConversationCountContext(ctx, alice, bob)
 	require.NoError(err, "second SharedConversationCountContext")
 	assert.Equal(1, shared)
+	require.NoError(st.SetConversationMessagingRouteEvidence(ctx, convID, store.MessagingRouteEvidence{MembershipComplete: false}))
+	shared, err = st.SharedConversationCountContext(ctx, alice, bob)
+	require.NoError(err)
+	assert.Zero(shared)
+	require.NoError(st.SetConversationMessagingRouteEvidence(ctx, convID, store.MessagingRouteEvidence{MembershipComplete: true}))
+	shared, err = st.SharedConversationCountContext(ctx, alice, bob)
+	require.NoError(err)
+	assert.Equal(1, shared)
+	history, err := st.EnsureConversationWithType(source.ID, "!history:example.test", "group_chat", "History")
+	require.NoError(err)
+	require.NoError(st.EnsureConversationParticipant(history, alice, "member"))
+	require.NoError(st.EnsureConversationParticipant(history, bob, "member"))
+	require.NoError(st.SetConversationMetadata(convID, sql.NullString{String: `{"member_count":2}`, Valid: true}))
+	require.NoError(st.SetConversationRosterRepairPendingContext(ctx, convID, true))
+	conversations, err := st.SharedConversationsContext(ctx, alice, bob)
+	require.NoError(err)
+	require.Len(conversations, 1)
+	assert.Equal(history, conversations[0].ConversationID)
+	require.NoError(st.SetConversationMessagingRouteEvidence(ctx, convID, store.MessagingRouteEvidence{MembershipComplete: true}))
+	conversations, err = st.SharedConversationsContext(ctx, alice, bob)
+	require.NoError(err)
+	assert.Len(conversations, 2, "verified membership is usable before the pending marker clears")
 }

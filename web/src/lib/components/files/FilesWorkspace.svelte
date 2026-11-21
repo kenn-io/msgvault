@@ -1,10 +1,5 @@
 <script lang="ts" module>
-  function formatDate(value: string): string {
-    const date = new Date(value);
-    return Number.isNaN(date.valueOf())
-      ? value
-      : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
-  }
+  import { formatDate } from '../../util/format';
   function people(row: FileSearchRow): string {
     const labels = row.participant_labels ?? [];
     const domains = row.participant_domains ?? [];
@@ -24,6 +19,7 @@
   }
   function availability(row: FileSearchRow): string {
     if (row.content_state === 'local_content') return 'Local content';
+    if (row.content_state === 'unverified') return 'Not checked';
     if (row.content_state === 'missing_blob') return 'File missing';
     if (row.content_state === 'url_only') return 'URL only';
     return 'Metadata only';
@@ -31,6 +27,8 @@
 </script>
 
 <script lang="ts">
+  import InlineNotice from '../common/InlineNotice.svelte';
+  import EmptyLine from '../common/EmptyLine.svelte';
   import {
     searchDomainFiles as generatedSearchDomainFiles,
     searchFiles as generatedSearchFiles,
@@ -52,7 +50,7 @@
   import type { APIClient } from '../../api/client';
   import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
-  import { sourceMailbox, sourceTypeLabel } from '../../sources/labels';
+  import { sourceDisplayName } from '../../sources/labels';
   import { analyticalAuthority } from '../../explore/authority';
   import { FILE_FAMILY_LABELS, fileTypeLabel } from '../../explore/labels';
   import type {
@@ -133,13 +131,14 @@
     restorationEpoch?: number;
     onSortChange?: (sort: FileSearchSort) => void;
     onActiveKey?: (key: string) => void;
-    onSelectedKey?: (key: string | null) => void;
+    onSelectedKey?: (key: string | null, options?: { replace?: boolean }) => void;
     onFilenameQueryChange?: (query: string) => void;
     onMIMEFamiliesChange?: (families: FileMIMEFamily[]) => void;
     onPersonPresentationChange?: (presentation: 'media' | 'files') => void;
     onPersonDirectionsChange?: (directions: PersonFileDirection[]) => void;
     onRestorationComplete?: (epoch: number) => void;
     onConfigureVisualSearch?: () => void;
+    onOpenTaskSettings?: () => void;
     onOpenItem?: (entryKey: string) => void;
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
   }
@@ -171,6 +170,7 @@
     onPersonDirectionsChange = undefined,
     onRestorationComplete = undefined,
     onConfigureVisualSearch = undefined,
+    onOpenTaskSettings = undefined,
     onOpenItem = undefined,
     onOpenConversation = undefined,
   }: Props = $props();
@@ -199,8 +199,11 @@
   let scrollTop = $state(0);
   let activeKey = $state<string | null>(untrack(() => providedActiveKey));
   let viewerFile = $state<WorkspaceFileRow>();
+  const viewerIndex = $derived(viewerFile ? rows.findIndex((row) => row.key === viewerFile?.key) : -1);
   let pendingViewerKey = $state<string | null>(null);
   let viewerReturnFocus = $state<HTMLElement>();
+  let returningViewerKey: string | null = null;
+  let previousRestorationEpoch = untrack(() => restorationEpoch);
   let controller: AbortController | undefined;
   let cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
@@ -289,6 +292,8 @@
     if (signature === requestSignature && !submitted) return;
     const isInitialLoad = requestSignature === '';
     requestSignature = signature;
+    const restoring = restorationEpoch !== previousRestorationEpoch;
+    previousRestorationEpoch = restorationEpoch;
     unacknowledgedRestorationEpoch = restorationEpoch;
     // The refreshed context may exclude the file the viewer is showing —
     // close it rather than let its download/open actions keep targeting a
@@ -298,6 +303,7 @@
     // The initial load is exempt: there is no stale viewer yet, and deep
     // restoration owns resolving a mount-time controlled selection.
     if (!isInitialLoad) {
+      if (restoring && !selectedKey) returningViewerKey = untrack(() => viewerFile?.key) ?? null;
       viewerFile = undefined;
       pendingViewerKey = untrack(() => selectedKey) ?? null;
     }
@@ -425,7 +431,7 @@
     loading = true;
     return { generation: currentGeneration, signal: nextController.signal };
   }
-  function reloadListing(): void {
+  export function reloadListing(): void {
     // Reload restarts from page one; when a restoration epoch is still
     // unacknowledged the deep restoration restarts against the fresh listing.
     const epoch = unacknowledgedRestorationEpoch;
@@ -434,7 +440,12 @@
       if (loaded) return restoreDeepState(currentGeneration, epoch, signal);
     });
   }
-  async function loadPage(
+  let pageLoad: Promise<boolean> | undefined;
+  function loadPage(currentGeneration: number, cursor: string | undefined, signal: AbortSignal): Promise<boolean> {
+    pageLoad = requestPage(currentGeneration, cursor, signal);
+    return pageLoad;
+  }
+  async function requestPage(
     currentGeneration: number,
     cursor: string | undefined,
     signal: AbortSignal,
@@ -593,7 +604,8 @@
     signal: AbortSignal | undefined,
   ): Promise<void> {
     if (epoch === undefined || !signal) return;
-    const targets = [providedActiveKey, selectedKey].filter((key): key is string => Boolean(key));
+    const focusKey = returningViewerKey ?? providedActiveKey;
+    const targets = [focusKey, selectedKey].filter((key): key is string => Boolean(key));
     while (
       currentGeneration === generation &&
       !signal.aborted &&
@@ -604,13 +616,13 @@
       if (!(await loadPage(currentGeneration, nextCursor, signal))) return;
     }
     if (currentGeneration !== generation || signal.aborted) return;
-    if (providedActiveKey && rows.some((row) => row.key === providedActiveKey)) {
-      activeKey = providedActiveKey;
+    if (focusKey && rows.some((row) => row.key === focusKey)) {
+      activeKey = focusKey;
     }
     pendingRestoration = {
       generation: currentGeneration,
       epoch,
-      activeKey: providedActiveKey,
+      activeKey: focusKey,
     };
   }
   async function completeDeepRestoration(
@@ -633,6 +645,11 @@
         if (!isCurrentRestoration(pending) || !renderedRows.some((row) => row.key === target.key)) return;
         if (!grid?.querySelector(`#${rowID(target)}`)) return;
       }
+      if (returningViewerKey && target) {
+        onActiveKey?.(target.key);
+        grid.focus();
+      }
+      returningViewerKey = null;
       pendingRestoration = undefined;
       if (unacknowledgedRestorationEpoch === pending.epoch) unacknowledgedRestorationEpoch = undefined;
       onRestorationComplete?.(pending.epoch);
@@ -648,15 +665,17 @@
     );
   }
   async function loadMore(): Promise<void> {
-    if (!nextCursor || loadingMore || !controller) return;
+    if (loadingMore) { await pageLoad; return; }
+    if (!nextCursor || !controller) return;
     pageError = '';
     // A transient cursor failure may have interrupted restoreDeepState. Resume
     // the restoration loop so later-page targets are still found, scrolled to,
     // and the epoch acknowledged only after focus completes. pendingRestoration
     // set means the loop already handed off; page normally in that case.
     if (unacknowledgedRestorationEpoch !== undefined && pendingRestoration === undefined) {
+      const loadedCount = rows.length;
       await restoreDeepState(generation, unacknowledgedRestorationEpoch, controller.signal);
-      return;
+      if (rows.length > loadedCount || pageError || error || !nextCursor) return;
     }
     loadingMore = true;
     await loadPage(generation, nextCursor, controller.signal);
@@ -685,13 +704,26 @@
   function rowID(row: WorkspaceFileRow): string {
     return `file-row-${row.id}`;
   }
-  function open(row: WorkspaceFileRow, returnFocus: HTMLElement | undefined = grid): void {
+  function open(row: WorkspaceFileRow, returnFocus: HTMLElement | undefined = grid, options: { replace?: boolean } | undefined = undefined): void {
     activeKey = row.key;
     onActiveKey?.(row.key);
     viewerReturnFocus = returnFocus;
     viewerFile = row;
     pendingViewerKey = null;
-    onSelectedKey?.(row.key);
+    onSelectedKey?.(row.key, options);
+  }
+  async function step(delta: -1 | 1): Promise<void> {
+    const current = viewerFile;
+    if (!current || viewerIndex < 0) return;
+    const target = viewerIndex + delta;
+    if (target < 0 || target >= totalCount) return;
+    if (target >= rows.length) { await loadMore(); await tick(); }
+    if (viewerFile !== current || !rows[target]) return;
+    move(target);
+    if (nextCursor && !pageError && target >= rows.length - OVERSCAN) void loadMore();
+    const gallery = viewerReturnFocus?.closest('.media-gallery');
+    const returnFocus = gallery?.querySelector<HTMLElement>(`[data-file-id="${rows[target].id}"]`) ?? viewerReturnFocus;
+    open(rows[target], returnFocus, { replace: true });
   }
   function move(index: number): void {
     const height = rowHeight;
@@ -943,24 +975,19 @@
           {#if unavailable?.readiness === 'building'}
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="notice" role="status">Preparing analytical cache…</div>
+                <InlineNotice tone="info" message="Preparing analytical cache…" />
               </div>
             </div>
           {:else if unavailable}
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="notice" role="alert">
-                  <strong>Analytical cache unavailable</strong><span>{unavailable.message}</span>
-                </div>
+                <InlineNotice message={unavailable.message} />
               </div>
             </div>
           {:else if error && rows.length === 0}
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="notice" role="alert">
-                  <span>{error}</span>
-                  <Button size="sm" surface="outline" label="Retry request" onclick={reloadListing} />
-                </div>
+                <InlineNotice message={error} actionLabel="Retry request" onaction={reloadListing} />
               </div>
             </div>
           {:else if loading && rows.length === 0}
@@ -972,7 +999,7 @@
           {:else if rows.length === 0}
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="notice">No files match this view.</div>
+                <EmptyLine message="No files match this view." />
               </div>
             </div>
           {:else if !slice || rowHeight === undefined}
@@ -1019,7 +1046,7 @@
                       <Tooltip text={row.filename || '(unnamed)'}><strong title={row.filename || '(unnamed)'}>{row.filename || '(unnamed)'}</strong></Tooltip>
                     </span>
                     <span class="cell--type" role="gridcell" aria-colindex={3} title={row.mime_type || row.mime_family}
-                      >{fileTypeLabel(row.mime_type, row.mime_family)}</span
+                      >{fileTypeLabel(row.mime_type, row.mime_family, row.filename)}</span
                     >
                     <span class="cell--size" role="gridcell" aria-colindex={4} data-mono>{formatBytes(row.size_bytes)}</span>
                     {#if personScoped}<span class="cell--direction" role="gridcell" aria-colindex={5}>{relationship(row)}</span>{/if}
@@ -1030,7 +1057,7 @@
                         <span class="desktop-people">{people(row)}</span>
                       {/if}
                     </span>
-                    <span class="cell--source" role="gridcell" aria-colindex={personScoped ? 7 : 6}>{row.source_identifier.includes('://') ? row.source_type === 'imap' ? sourceMailbox(row.source_identifier) : sourceTypeLabel(row.source_type) : row.source_identifier}</span>
+                    <span class="cell--source" role="gridcell" aria-colindex={personScoped ? 7 : 6}>{row.source_identifier.includes('://') ? sourceDisplayName(row.source_type, row.source_identifier) : row.source_identifier}</span>
                     <span class="cell--message" role="gridcell" aria-colindex={personScoped ? 8 : 7}>
                       {#if onOpenItem}
                         {@const openItem = onOpenItem}
@@ -1056,25 +1083,14 @@
                restarts the listing from page one. -->
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="page-error" role="alert">
-                  <span>{error}</span>
-                  <Button size="sm" surface="outline" label="Reload files" onclick={reloadListing} />
-                </div>
+                <InlineNotice message={error} actionLabel="Reload files" onaction={reloadListing} />
               </div>
             </div>
           {/if}
           {#if pageError}
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="page-error" role="alert">
-                  <span>{pageError}</span>
-                  <Button
-                    size="sm"
-                    surface="outline"
-                    label="Retry loading more files"
-                    onclick={() => void loadMore()}
-                  />
-                </div>
+                <InlineNotice message={pageError} actionLabel="Retry loading more files" onaction={() => void loadMore()} />
               </div>
             </div>
           {/if}
@@ -1092,9 +1108,7 @@
           {:else if pendingViewerState === 'missing'}
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="page-error" role="alert">
-                  <span>The selected file is not in the current results.</span>
-                </div>
+                <InlineNotice message="The selected file is not in the current results." />
               </div>
             </div>
           {/if}
@@ -1108,12 +1122,17 @@
   <FileViewer
     {client}
     file={viewerFile}
+    position={viewerIndex >= 0 ? { index: viewerIndex, total: totalCount } : undefined}
+    onStep={viewerIndex >= 0 ? (delta) => { void step(delta); } : undefined}
+    canStepForward={viewerIndex + 1 < rows.length || !!nextCursor && !pageError && !error}
+    notice={viewerIndex + 1 >= rows.length && totalCount > rows.length ? pageError || error : ''}
     returnFocus={viewerReturnFocus ?? grid}
     onClose={() => {
       viewerFile = undefined;
       onSelectedKey?.(null);
     }}
     {onOpenItem}
+    {onOpenTaskSettings}
     {onOpenConversation}
   />
 {/if}
@@ -1251,6 +1270,9 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .data-row--active .containing-link {
+    color: var(--active-ink);
+  }
   .containing-link:hover {
     text-decoration: underline;
   }
@@ -1285,14 +1307,6 @@
     gap: var(--space-3);
     flex-direction: column;
     color: var(--text-secondary);
-  }
-  .page-error {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    padding: var(--pane-pad-y) var(--pane-pad-x);
-    color: var(--text-danger);
   }
   .progress {
     position: sticky;

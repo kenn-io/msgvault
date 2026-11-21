@@ -56,17 +56,17 @@ export class RelationshipReviewController {
       if (response.data) {
         const rows = safeRows(response.data.reviews);
         if (!rows) {
-          this.error = 'Unable to load imported relationship reviews.';
+          this.error = "Couldn't load imported connections.";
           return false;
         }
         this.rows = rows;
         return true;
       }
-      this.error = 'Unable to load imported relationship reviews.';
+      this.error = "Couldn't load imported connections.";
       return false;
     } catch {
       if (!this.ownsRequest(abort, request, context)) return false;
-      this.error = 'Unable to load imported relationship reviews.';
+      this.error = "Couldn't load imported connections.";
       return false;
     } finally {
       if (this.ownsRequest(abort, request, context)) {

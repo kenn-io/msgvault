@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -99,6 +100,80 @@ func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 	assert.Equal("imessage", response.Messages[0].MessageType)
 	assert.True(response.Messages[1].IsFromMe)
 	assert.Equal(ids[1], response.AnchorID)
+}
+
+func TestConversationWindowOnlyTitlesAnchor(t *testing.T) {
+	srv, conversationID, ids := seedConversation(t, "email", 3)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, ids[1]), nil)
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var response ConversationResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	require.Len(t, response.Messages, 3)
+	assert.Empty(t, response.Messages[0].TabTitle)
+	assert.Equal(t, "Message 01", response.Messages[1].TabTitle)
+	assert.Empty(t, response.Messages[2].TabTitle)
+	for _, message := range response.Messages {
+		assert.Empty(t, message.ConversationTitle)
+	}
+}
+
+func TestMessageTabTitles(t *testing.T) {
+	for _, tc := range []struct {
+		name, conversationType, messageType, title, subject, body, want string
+		html                                                            bool
+	}{
+		{"verification", "email_thread", "email", "Conversation", "Your verification code is 123456", "", "Verification message", false},
+		{"verification in body", "email_thread", "email", "Conversation", "Account access", "Your verification code is 123456", "Verification message", false},
+		{"large ordinary body", "email_thread", "email", "Conversation", "Quarterly update", strings.Repeat("a", 1<<20), "Quarterly update", false},
+		{"large numeric subject", "email_thread", "email", "Conversation", "Quarterly sales 482913", strings.Repeat("a", 1<<20), "Quarterly sales 482913", false},
+		{"large body with sign-in link subject", "email_thread", "email", "Conversation", "https://example.com/auth/Abcdef1234567890", "Sign in " + strings.Repeat("a", 1<<20), "Verification message", false},
+		{"large body with embedded code", "email_thread", "email", "Conversation", "Account access", "Your verification code is 123456 " + strings.Repeat("a", 1<<20), "Verification message", false},
+		{"large HTML with embedded code", "email_thread", "email", "Conversation", "Account access", "<p>Your verification code is 123456</p>" + strings.Repeat("a", 1<<20), "Verification message", true},
+		{"large body with code cue", "email_thread", "email", "Conversation", "482913", "Your verification code " + strings.Repeat(" ", 1<<20), "Verification message", false},
+		{"verification title", "email_thread", "email", "Your verification code is 123456", "", "", "Verification message", false},
+		{"facebook", "public_comments", "facebook_comments", "Post text", "", "", "", false},
+		{"linkedin", "public_comments", "linkedin", "Post text", "", "", "", false},
+		{"tiktok", "public_comments", "tiktok_export", "https://example.com/video", "", "", "https://example.com/video", false},
+		{"chat", "direct_chat", "linkedin", "Chat title", "", "", "Chat title", false},
+		{"large HTML with code subject", "email_thread", "email", "Conversation", "482913", "Your verification code " + strings.Repeat(" ", 1<<20), "Verification message", true},
+		{"large ordinary HTML", "email_thread", "email", "Conversation", "Quarterly update", strings.Repeat("a", 1<<20), "Quarterly update", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("test", "archive@example.com")
+			require.NoError(t, err)
+			conversationID, err := st.EnsureConversationWithType(source.ID, "conversation", tc.conversationType, tc.title)
+			require.NoError(t, err)
+			id, err := st.UpsertMessage(&store.Message{ConversationID: conversationID, SourceID: source.ID, SourceMessageID: "message", MessageType: tc.messageType, Subject: sql.NullString{String: tc.subject, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
+			require.NoError(t, err)
+			text, html := sql.NullString{String: tc.body, Valid: true}, sql.NullString{}
+			if tc.html {
+				text, html = html, text
+			}
+			require.NoError(t, st.UpsertMessageBody(id, text, html))
+			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+			for _, engine := range []bool{false, true} {
+				if engine {
+					srv.SetAnalyticsEngine(query.NewEngine(st.DB(), st.IsPostgreSQL()), AnalyticsModeSQL)
+				}
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil))
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				var raw map[string]any
+				require.NoError(t, json.NewDecoder(w.Body).Decode(&raw))
+				assert.Equal(t, tc.want, raw["tab_title"], "engine=%t", engine)
+			}
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, id), nil))
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var response ConversationResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+			require.Len(t, response.Messages, 1)
+			assert.Equal(t, tc.want, response.Messages[0].TabTitle)
+		})
+	}
 }
 
 func TestConversationWindowCapsInlineBodiesAndServesOmittedBodiesByID(t *testing.T) {

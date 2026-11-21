@@ -47,33 +47,6 @@ func TestEmailValidation(t *testing.T) {
 	}
 }
 
-func TestResolveParam(t *testing.T) {
-	tests := []struct {
-		name      string
-		flag      string
-		envKey    string
-		envVal    string
-		configVal string
-		want      string
-	}{
-		{"flag wins over all", "from-flag", "TEST_RESOLVE_1", "from-env", "from-config", "from-flag"},
-		{"env wins over config", "", "TEST_RESOLVE_2", "from-env", "from-config", "from-env"},
-		{"config as fallback", "", "TEST_RESOLVE_3", "", "from-config", "from-config"},
-		{"all empty", "", "TEST_RESOLVE_4", "", "", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.envVal != "" {
-				t.Setenv(tt.envKey, tt.envVal)
-			}
-			got := resolveParam(tt.flag, tt.envKey, tt.configVal)
-			assert.Equal(t, tt.want, got, "resolveParam(%q, %q, %q)",
-				tt.flag, tt.envKey, tt.configVal)
-		})
-	}
-}
-
 // newTestExporter creates a tokenExporter backed by the given httptest server.
 func newTestExporter(srv *httptest.Server, tokensDir string) *tokenExporter {
 	return &tokenExporter{

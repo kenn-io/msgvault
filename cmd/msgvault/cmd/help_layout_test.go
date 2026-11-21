@@ -32,6 +32,13 @@ func helpTestSubprocess(t *testing.T) bool {
 	if *updateGolden {
 		args = append(args, "-update")
 	}
+	// Pass rapid's seed, fail-file, and case-count flags to the child, which
+	// is where rapid.Check runs.
+	flag.Visit(func(f *flag.Flag) {
+		if strings.HasPrefix(f.Name, "rapid.") {
+			args = append(args, "-"+f.Name+"="+f.Value.String())
+		}
+	})
 	command := exec.CommandContext(t.Context(), executable, args...)
 	command.Env = append(os.Environ(), "MSGVAULT_HELP_TEST="+t.Name(), "MSGVAULT_HOME="+t.TempDir())
 	output, err := command.CombinedOutput()
@@ -195,7 +202,18 @@ func TestRootHelpGolden(t *testing.T) {
 	expected := strings.ReplaceAll(string(want), "\r\n", "\n")
 	actual := strings.ReplaceAll(output.String(), "\r\n", "\n")
 	assertions.Equal(expected, actual)
-	assertions.LessOrEqual(output.Len(), 13000, "shorten start-here comments if root exceeds its help budget")
+	_, startHere, found := strings.Cut(actual, "Start here:\n")
+	requirements.True(found, "root help must contain the Start here section")
+	startHere, _, found = strings.Cut(startHere, "\nOutput:\n")
+	requirements.True(found, "root help must contain the Output section after Start here")
+	assertions.LessOrEqual(len(startHere), 350, "shorten Start here examples if they exceed the help budget")
+	first, _, _ := strings.Cut(output.String(), "\n")
+	assertions.Equal(`Agents: find the right command with: msgvault cli search "<what you want to do>"`, first)
+	command, rest, err := rootCmd.Find([]string{"cli", "search"})
+	requirements.NoError(err)
+	assertions.Empty(rest)
+	assertions.Equal("msgvault cli search", command.CommandPath())
+	assertions.True(command.Runnable())
 	assertions.Contains(output.String(), "Start here:")
 	assertions.NotContains(output.String(), "/home/")
 	assertions.NotContains(output.String(), "/Users/")
@@ -276,7 +294,7 @@ func TestInheritedHelpFlagsPreserveVisibilityAndOverrides(t *testing.T) {
 	child.SetErr(&output)
 	requirements.NoError(child.Help())
 	assertions.Contains(output.String(), "--scope string")
-	assertions.Contains(output.String(), "Inherited Flags:\n      --json      structured output\n      --verbose   group verbosity\n")
+	assertions.Contains(output.String(), "Inherited Flags:\n      --json[=true|false]      structured output\n      --verbose[=true|false]   group verbosity\n")
 	assertions.Contains(output.String(), "Global Flags: --config (see 'msgvault --help')")
 	assertions.NotContains(output.String(), "hidden")
 }

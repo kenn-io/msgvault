@@ -21,10 +21,10 @@ type ProfileUIDReader interface {
 	GetPersonProfileByUID(ctx context.Context, uid string) (*PersonProfile, error)
 }
 
-// PersonProfile is one durable person's overview. Nil ContactState means the
-// activity projection has not computed a row for the person yet; Tracked is
-// nil when the daemon could not report tracking state; Brief is nil when the
-// person has no current "last time we talked" version.
+// PersonProfile is one durable person's overview. ContactState is nil when no
+// activity state has been computed and no first appearance is available, or
+// when its read fails. Tracked is nil when tracking state is unavailable; Brief
+// is nil when the person has no current "last time we talked" version.
 type PersonProfile struct {
 	Person        store.Person
 	Tracked       *bool
