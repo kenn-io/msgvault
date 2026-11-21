@@ -1906,6 +1906,22 @@ func (s *Store) GetMessageRawContext(ctx context.Context, messageID int64) ([]by
 	return decodeMessageRaw(compressed, compression)
 }
 
+// GetMessageRawWithFormatContext retrieves a message's raw evidence and the
+// format it is stored in.
+func (s *Store) GetMessageRawWithFormatContext(ctx context.Context, messageID int64) ([]byte, string, error) {
+	var compressed []byte
+	var compression sql.NullString
+	var format string
+	err := s.db.QueryRowContext(ctx, s.Rebind(`
+		SELECT raw_data, compression, raw_format FROM message_raw WHERE message_id = ?
+	`), messageID).Scan(&compressed, &compression, &format)
+	if err != nil {
+		return nil, "", err
+	}
+	raw, err := decodeMessageRaw(compressed, compression)
+	return raw, format, err
+}
+
 // GetMessageRawsContext decodes each selected raw message once; missing or invalid data is omitted.
 func (s *Store) GetMessageRawsContext(ctx context.Context, ids []int64) (map[int64][]byte, error) {
 	result := make(map[int64][]byte, len(ids))
@@ -5223,6 +5239,77 @@ func (s *Store) ParticipantByIdentifierContext(ctx context.Context, identifierTy
 		return 0, false, nil
 	}
 	return id, hasPhone, err
+}
+
+// ParticipantSearchAddressContext returns the address search indexes for a
+// message of participantID whose envelope names no sender address: the
+// participant's phone number, else its email, as storedFTSEnvelopeSQL derives
+// it when it rebuilds the index. A participant with neither returns "".
+func (s *Store) ParticipantSearchAddressContext(ctx context.Context, participantID int64) (string, error) {
+	var address string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(phone_number, email_address, '') FROM participants WHERE id = ?
+	`, participantID).Scan(&address)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return address, err
+}
+
+// MessageIDsSentByContext returns the IDs of the messages participantID
+// sent.
+func (s *Store) MessageIDsSentByContext(ctx context.Context, participantID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM messages WHERE sender_id = ? ORDER BY id`, participantID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// RefreshMessageSearchContext rewrites the search entries of messageIDs
+// from what the archive stores, as a rebuild of the index would, after a
+// change such as a sender merge has altered what they index.
+func (s *Store) RefreshMessageSearchContext(ctx context.Context, messageIDs []int64) error {
+	if !s.fts5Available || len(messageIDs) == 0 {
+		return nil
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		for _, id := range messageIDs {
+			if !s.IsPostgreSQL() {
+				if _, err := q.Exec(s.dialect.FTSBackfillBatchSQL(), id, id+1); err != nil {
+					return fmt.Errorf("refresh message %d FTS: %w", id, err)
+				}
+				continue
+			}
+			if err := s.dialect.InvalidateFTSForMessage(q, id); err != nil {
+				return fmt.Errorf("invalidate message %d FTS: %w", id, err)
+			}
+			if _, err := s.backfillPostgresFTS(ctx, tx, s.dialect.FTSBackfillBatchSQL(), id, id+1); err != nil {
+				return fmt.Errorf("refresh message %d FTS: %w", id, err)
+			}
+		}
+		return nil
+	})
+}
+
+// ParticipantSentInSourceContext reports whether participantID sent any
+// message of sourceID.
+func (s *Store) ParticipantSentInSourceContext(ctx context.Context, participantID, sourceID int64) (bool, error) {
+	var sent bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM messages WHERE sender_id = ? AND source_id = ?)
+	`, participantID, sourceID).Scan(&sent)
+	return sent, err
 }
 
 // AdoptLegacyParticipantIdentifier atomically upgrades one legacy identifier

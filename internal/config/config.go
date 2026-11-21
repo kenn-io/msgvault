@@ -646,6 +646,9 @@ type Config struct {
 	Slack              SlackConfig               `toml:"slack"`
 	Inline             InlineConfig              `toml:"inline"`
 	Feeds              FeedsConfig               `toml:"feeds"`
+	GitHub             ForgeConfig               `toml:"github"`
+	GitLab             ForgeConfig               `toml:"gitlab"`
+	Gitea              ForgeConfig               `toml:"gitea"`
 	Omi                []OmiSource               `toml:"omi"`
 	Granola            []GranolaSource           `toml:"granola"`
 	Plaud              []PlaudSource             `toml:"plaud"`

@@ -908,6 +908,9 @@ func validateEditableCandidate(cfg *Config) error {
 		"slack.schedule":                  cfg.Slack.Schedule,
 		"inline.schedule":                 cfg.Inline.Schedule,
 		"feeds.schedule":                  cfg.Feeds.Schedule,
+		"github.schedule":                 cfg.GitHub.Schedule,
+		"gitlab.schedule":                 cfg.GitLab.Schedule,
+		"gitea.schedule":                  cfg.Gitea.Schedule,
 		"imessage.schedule":               cfg.IMessage.Schedule,
 	}
 	for index, account := range cfg.Accounts {

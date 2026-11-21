@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -97,14 +98,19 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		priorConversationID = ref.ConversationID
 	}
 
-	senderID, err := resolveSender(ctx, st, snapshot)
+	senderID, err := resolveSender(ctx, st, sourceID, snapshot)
 	if err != nil {
 		return apiimport.Write{}, err
 	}
 	sender := snapshot.Sender
-	senderAddress := sender.Email
-	if senderAddress == "" {
-		senderAddress = sender.Phone
+	// Search indexes the sender's address as a rebuild of the index derives
+	// it: the envelope's, else the participant's. A post naming an account
+	// alone thus finds the email the account was joined to.
+	searchAddress := envelopeEmail(snapshot)
+	if searchAddress == "" {
+		if searchAddress, err = st.ParticipantSearchAddressContext(ctx, senderID); err != nil {
+			return apiimport.Write{}, fmt.Errorf("lookup message sender address: %w", err)
+		}
 	}
 	metadata := sql.NullString{String: string(snapshot.Metadata), Valid: true}
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
@@ -121,7 +127,7 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		},
 		Conversation: &store.ConversationPersistData{
 			SourceConversationID: snapshot.SourceConversationID,
-			ConversationType:     ConversationType,
+			ConversationType:     snapshot.ConversationType,
 			Title:                snapshot.ConversationTitle,
 			Participants: []store.ConversationParticipantRef{
 				{ParticipantID: senderID, Role: "member"},
@@ -132,18 +138,18 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		BodyText:  sql.NullString{String: snapshot.BodyText, Valid: snapshot.BodyText != ""},
 		BodyHTML:  sql.NullString{String: snapshot.BodyHTML, Valid: snapshot.BodyHTML != ""},
 		RawMIME:   snapshot.Raw,
-		RawFormat: RawFormat,
+		RawFormat: snapshot.RawFormat,
 		Recipients: []store.RecipientSet{{
 			Type:           "from",
 			ParticipantIDs: []int64{senderID},
 			DisplayNames:   []string{sender.Name},
-			EmailAddresses: []string{sender.Email},
+			EmailAddresses: []string{envelopeEmail(snapshot)},
 		}},
 		PreserveLabels: true,
 		FTS: &store.FTSDoc{
 			Subject:  snapshot.Title,
 			Body:     snapshot.BodyText,
-			FromAddr: senderAddress,
+			FromAddr: searchAddress,
 		},
 	})
 	if err != nil {
@@ -177,18 +183,33 @@ func recomputeStats(ctx context.Context, st *store.Store, messageID, priorConver
 	return nil
 }
 
-// storedMatches treats an unreadable stored copy as changed so the write
-// repairs it.
+// envelopeEmail is the address the message's 'from' envelope records. A
+// sender named by a connector's own account identity sent the message from
+// that account, not from its email, which only joins the account to a
+// person: its envelope stays empty, as a chat source's does, so whether the
+// message is the owner's is decided by the account's identifiers.
+func envelopeEmail(snapshot Snapshot) string {
+	if snapshot.SenderIdentifierType != "" && snapshot.Sender.ID != "" {
+		return ""
+	}
+	return snapshot.Sender.Email
+}
+
+// storedMatches reports whether the stored copy has the same evidence: raw
+// bytes, raw format and metadata. An unreadable stored copy counts as changed
+// so the write repairs it.
 func storedMatches(ctx context.Context, st *store.Store, prior store.MessageMetadataRecord, snapshot Snapshot) bool {
-	raw, err := st.GetMessageRawContext(ctx, prior.ID)
-	return err == nil && bytes.Equal(raw, snapshot.Raw) &&
+	raw, format, err := st.GetMessageRawWithFormatContext(ctx, prior.ID)
+	return err == nil && format == snapshot.RawFormat && bytes.Equal(raw, snapshot.Raw) &&
 		meetingarchive.JSONEvidenceEqual([]byte(prior.Metadata.String), snapshot.Metadata)
 }
 
 // resolveSender returns the sender's participant. An email or phone is a
-// global identity shared with every other source; anything else becomes an
-// imported identifier, see senderIdentifier.
-func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int64, error) {
+// global identity shared with every other source, and so is an id of a
+// connector's shared identifier type; anything else becomes an imported
+// identifier, see senderIdentifier. A sender with both an email and an id of
+// the shared type links the two, see linkSenderIdentifier.
+func resolveSender(ctx context.Context, st *store.Store, sourceID int64, snapshot Snapshot) (int64, error) {
 	sender := snapshot.Sender
 	var (
 		id  int64
@@ -203,14 +224,81 @@ func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int
 			// takes this sender's, as the phone and identifier paths do.
 			_, err = st.UpdateParticipantDisplayNameByEmail(ctx, sender.Email, sender.Name)
 		}
+		if err == nil && sender.ID != "" && snapshot.SenderIdentifierType != "" {
+			err = linkSenderIdentifier(ctx, st, id, snapshot.SenderIdentifierType, sender.ID)
+		}
 	case sender.Phone != "":
 		id, err = st.EnsurePhoneParticipantContext(ctx, sender.Phone, sender.Name)
-	default:
+	case sender.ID != "" && snapshot.SenderIdentifierType != "":
 		id, err = st.EnsureParticipantByIdentifierContext(ctx,
-			SenderIdentifierType, senderIdentifier(snapshot.SourceIdentifier, sender), sender.Name)
+			snapshot.SenderIdentifierType, sender.ID, sender.Name)
+	default:
+		identifier := senderIdentifier(snapshot.SourceType, snapshot.SourceIdentifier, sender)
+		err = adoptUntypedSender(ctx, st, sourceID, snapshot, identifier)
+		if err == nil {
+			id, err = st.EnsureParticipantByIdentifierContext(ctx, SenderIdentifierType, identifier, sender.Name)
+		}
 	}
 	if err != nil {
 		return 0, fmt.Errorf("resolve message sender: %w", err)
 	}
 	return id, nil
+}
+
+// adoptUntypedSender moves a sender's key from the form it had before sender
+// scopes named the source's type, which a feed's senders still have in
+// archives written then, to identifier, so the sender keeps its participant,
+// its history and the person it belongs to. Only a participant that sent a
+// message of this source is moved: an untyped key that a message import of
+// the same identifier wrote stays that import's.
+func adoptUntypedSender(ctx context.Context, st *store.Store, sourceID int64, snapshot Snapshot, identifier string) error {
+	untyped := senderIdentifier(SourceType, snapshot.SourceIdentifier, snapshot.Sender)
+	if untyped == identifier {
+		return nil
+	}
+	owner, _, err := st.ParticipantByIdentifierContext(ctx, SenderIdentifierType, untyped)
+	if err != nil || owner == 0 {
+		return err
+	}
+	sent, err := st.ParticipantSentInSourceContext(ctx, owner, sourceID)
+	if err != nil || !sent {
+		return err
+	}
+	_, err = st.AdoptLegacyParticipantIdentifier(ctx, SenderIdentifierType, untyped, identifier, "")
+	return err
+}
+
+// linkSenderIdentifier records a sender's account id as an identifier of
+// the participant its email resolved to, so a later message that names the
+// account by id alone resolves to that participant too. A participant that
+// already owns the id is the same account seen with less metadata, such as
+// earlier messages without an email: its history is merged into this one,
+// as Slack's resolver does. Participants the user keeps as different people
+// are not merged; the id moves to this sender, as Beeper's resolver does.
+func linkSenderIdentifier(ctx context.Context, st *store.Store, participantID int64, identifierType, value string) error {
+	prev, _, err := st.ParticipantByIdentifierContext(ctx, identifierType, value)
+	if err != nil {
+		return err
+	}
+	if prev != 0 && prev != participantID {
+		// The merged participant's messages now index the email's address,
+		// which their search entries were written without.
+		moved, err := st.MessageIDsSentByContext(ctx, prev)
+		if err != nil {
+			return fmt.Errorf("list the messages of a merged sender: %w", err)
+		}
+		err = st.MergeParticipantsContext(ctx, prev, participantID)
+		switch {
+		case err == nil:
+			if err := st.RefreshMessageSearchContext(ctx, moved); err != nil {
+				return fmt.Errorf("refresh the search of a merged sender's messages: %w", err)
+			}
+		case errors.Is(err, store.ErrPersonBindingConflict):
+			slog.WarnContext(ctx, "skipping message sender participant merge across durable persons",
+				"loser_participant_id", prev, "winner_participant_id", participantID, "error", err)
+		default:
+			return err
+		}
+	}
+	return st.SetParticipantIdentifierContext(ctx, participantID, identifierType, value)
 }
