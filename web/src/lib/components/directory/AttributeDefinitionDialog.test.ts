@@ -386,7 +386,10 @@ describe('AttributeDefinitionDialog', () => {
     expect(screen.getByRole('button', { name: 'Create field' })).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
-    await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
+    const overlay = document.querySelector('.kit-modal-overlay')!;
+    await fireEvent.pointerDown(overlay, { pointerId: 1 });
+    await fireEvent.pointerUp(overlay, { pointerId: 1 });
+    await fireEvent.click(overlay);
     await fireEvent.click(screen.getByRole('button', { name: 'Close create attribute field' }));
     expect(onClose).not.toHaveBeenCalled();
 

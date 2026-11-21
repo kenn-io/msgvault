@@ -204,7 +204,10 @@ describe('LinkIdentityDialog', () => {
 
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
     await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
-    await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
+    const overlay = document.querySelector('.kit-modal-overlay')!;
+    await fireEvent.pointerDown(overlay, { pointerId: 1 });
+    await fireEvent.pointerUp(overlay, { pointerId: 1 });
+    await fireEvent.click(overlay);
     expect(onClose, 'no dismissal path may hide a pending confirm').not.toHaveBeenCalled();
 
     // Success still closes the dialog itself once the outcome is known.

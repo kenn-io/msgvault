@@ -656,7 +656,10 @@ describe('PersonBindingConflictModal', () => {
       expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
       expect(screen.queryByRole('button', { name: 'Close person merge' })).toBeNull();
       await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
-      await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
+      const overlay = document.querySelector('.kit-modal-overlay')!;
+      await fireEvent.pointerDown(overlay, { pointerId: 1 });
+      await fireEvent.pointerUp(overlay, { pointerId: 1 });
+      await fireEvent.click(overlay);
       appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
       expect(onClose).not.toHaveBeenCalled();
       expect(rootShortcut).not.toHaveBeenCalled();

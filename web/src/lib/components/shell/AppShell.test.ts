@@ -1791,40 +1791,6 @@ describe('AppShell', () => {
     }
   });
 
-  it('clears a legacy attachment selection when Escape closes its viewer', async () => {
-    const explore = encodeURIComponent(JSON.stringify({ selectedRow: 'attachment:5' }));
-    window.history.replaceState(null, '', `/?workspace=files&explore=${explore}`);
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      if (path.endsWith('/files/5')) return Response.json({
-        id: 5, message_id: 1, conversation_id: 11, filename: 'legacy-report.pdf',
-        mime_type: 'application/pdf', size_bytes: 2048,
-        content_state: 'missing_blob', content_available: false
-      });
-      if (path.endsWith('/files/search')) return Response.json({
-        files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {}
-      });
-      return Response.json(exploreResponse());
-    });
-    const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    try {
-      const viewer = await screen.findByRole('dialog', { name: 'View legacy-report.pdf' });
-      const grid = await screen.findByRole('grid', { name: 'Files results' });
-      await waitFor(() => expect(state.peekRestorationEpoch()).toBeUndefined());
-
-      await fireEvent.keyDown(viewer, { key: 'Escape' });
-
-      await waitFor(() => expect(viewer.isConnected).toBe(false));
-      expect(state.current.selectedRow).toBeNull();
-      expect(new URLSearchParams(window.location.search).get('explore') ?? '').not.toContain('attachment:5');
-      await waitFor(() => expect(document.activeElement).toBe(grid));
-    } finally {
-      rendered.unmount();
-      state.destroy();
-    }
-  });
-
   it('focuses the Files grid when a legacy file viewer closes', async () => {
     const explore = encodeURIComponent(JSON.stringify({ selectedRow: 'attachment:5' }));
     window.history.replaceState(null, '', `/?workspace=files&explore=${explore}`);
@@ -2996,38 +2962,32 @@ describe('AppShell', () => {
       await waitFor(() => expect(isOuterClosed(state)).toBe(true));
     });
 
-    it('closes the reading pane again once the narrow navigation menu is gone', async () => {
+    it.each([
+      { scenario: 'the reading pane', filterWasOpen: false },
+      { scenario: 'a Filter left open, then navigation opened from the keyboard', filterWasOpen: true },
+    ])('closes navigation before $scenario', async ({ filterWasOpen }) => {
       window.innerWidth = 480;
       const state = await openReadingPane();
+      if (filterWasOpen) {
+        await clickFocused(screen.getByRole('button', { name: 'Filter' }));
+        await screen.findByRole('dialog', { name: 'Filter' });
+      }
       const opener = screen.getByRole('button', { name: 'Open navigation' });
       await clickFocused(opener);
       await screen.findByRole('dialog', { name: 'Navigation' });
 
       await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull());
+      if (filterWasOpen) {
+        expect(screen.getByRole('dialog', { name: 'Filter' })).toBeDefined();
+        await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+        await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull());
+      }
       expect(state.current.selectedRow).toBe('message:1');
       expect(appShortcuts.activeScope()).toBe('root');
 
       await fireEvent.keyDown(opener, { key: 'Escape' });
       await waitFor(() => expect(state.current.selectedRow).toBeNull());
-    });
-
-    it('closes navigation before a Filter that was already open', async () => {
-      window.innerWidth = 480;
-      await openReadingPane();
-      await clickFocused(screen.getByRole('button', { name: 'Filter' }));
-      await screen.findByRole('dialog', { name: 'Filter' });
-
-      await clickFocused(screen.getByRole('button', { name: 'Open navigation' }));
-      await screen.findByRole('dialog', { name: 'Navigation' });
-
-      await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
-
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull());
-      expect(screen.getByRole('dialog', { name: 'Filter' })).toBeDefined();
-
-      await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull());
     });
   });
 
