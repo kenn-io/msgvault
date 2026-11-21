@@ -767,7 +767,21 @@ func (s *Store) backfillPersonCardDAVInferenceV2Tx(ctx context.Context, tx *logg
 func (s *Store) personHasPendingUpdateInferenceTx(
 	ctx context.Context, tx *loggedTx, personID int64, history personInferenceExportProjection,
 ) (bool, error) {
-	inferredRows := inferredContactRows(history)
+	inferredRows := map[string]map[int64]bool{
+		personNamesTableName:         {},
+		personContactPointsTableName: {},
+		personAddressesTableName:     {},
+	}
+	for table, components := range map[string][]personInferenceExportComponent{
+		personNamesTableName: history.Names, personContactPointsTableName: history.ContactPoints,
+		personAddressesTableName: history.Addresses,
+	} {
+		for _, component := range components {
+			if component.Inferred {
+				inferredRows[table][component.RowID] = true
+			}
+		}
+	}
 	var pendingMetadata []byte
 	err := tx.QueryRowContext(ctx, `SELECT outgoing_envelope_metadata FROM carddav_publications
         WHERE person_id=? AND pending_operation=?`, personID, CardDAVMutationUpdate).Scan(&pendingMetadata)
