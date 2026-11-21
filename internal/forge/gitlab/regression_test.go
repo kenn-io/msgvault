@@ -178,7 +178,7 @@ func TestAPageOfThreadsUpdatedAtOneInstantIsReadWholeBesideALaterUpdateCreatedWi
 		issue := f.issue(widgets, int64(i), i, "An issue", ann, at, "assigned_to_me")
 		issue.object["created_at"] = at
 	}
-	later := f.issue(widgets, 1000, 1000, "An issue edited later", ann, "2026-11-08T10:00:00Z", "assigned_to_me")
+	later := f.issue(widgets, 1000, 1000, "An issue edited a millisecond later", ann, "2026-11-08T09:00:00.001Z", "assigned_to_me")
 	later.object["created_at"] = at
 	list := listStream{resource: resourceIssues, scope: "assigned_to_me"}
 	state := cursor{Lists: map[string]listCursor{}}
@@ -612,27 +612,47 @@ func TestTheArchivedThreadCheckReadsNothingOfAProjectMovedToAnExcludedOwner(t *t
 	assert.Empty(requestsFor(log, "/api/v4/projects/5/"), "and nothing of an excluded owner's project")
 }
 
-func TestTheArchivedThreadCheckReadsAProjectMovedFromAnExcludedOwner(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newFakeGitLab(t)
-	ann := person(t, 2, "ann", "Ann Example")
-	archivedAt := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
-	// The issue was archived while its project sat under a group the
-	// filters now exclude. The project has since moved to an allowed group,
-	// and the issue got a reply before the last check, which skipped it.
-	f.project(widgets, "acme/widgets")
-	f.issue(widgets, 41, 1, "Widgets break", ann, "2026-11-08T08:00:00Z")
-	known := knownThreads{{Ref: threadRef(resourceIssues, 41, widgets, 1, "secret-corp/widgets", archivedAt)}}
-	state := cursor{Known: knownCursor{Through: time.Date(2026, 11, 9, 8, 0, 0, 0, time.UTC)}}
-	var got []forge.ThreadRef
-	require.NoError(f.forge().checkKnown(t.Context(), &state, excludeSecretCorp().Owners, known,
-		func(refs []forge.ThreadRef, _ []byte) error {
-			got = append(got, refs...)
-			return nil
-		}))
-	require.Len(got, 1, "the thread is checked by its project's current owner, from the version archived")
-	assert.Equal("acme", got[0].Owner)
+func TestTheArchivedThreadCheckReadsWhatChangedWhileItsProjectWasSkipped(t *testing.T) {
+	for _, skipped := range []string{"under an excluded owner", "closed to the token"} {
+		t.Run(skipped, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newFakeGitLab(t)
+			f.project(widgets, "acme/widgets")
+			ann := person(t, 2, "ann", "Ann Example")
+			issue := f.issue(widgets, 41, 1, "Widgets break", ann, "2026-11-07T08:00:00Z")
+			known := knownThreads{{Ref: threadRef(resourceIssues, 41, widgets, 1, "acme/widgets", time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC))}}
+			state := cursor{Known: knownCursor{Through: time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)}}
+			check := func() []forge.ThreadRef {
+				var got []forge.ThreadRef
+				require.NoError(f.forge().checkKnown(t.Context(), &state, excludeSecretCorp().Owners, known,
+					func(refs []forge.ThreadRef, next []byte) error {
+						got = append(got, refs...)
+						state = cursor{}
+						return json.Unmarshal(next, &state)
+					}))
+				return got
+			}
+
+			// The first check can't read the project, and the issue gets a
+			// reply meanwhile.
+			if skipped == "closed to the token" {
+				delete(f.projects, widgets)
+			} else {
+				f.project(widgets, "secret-corp/widgets")
+			}
+			assert.Empty(check())
+			issue.object["updated_at"] = "2026-11-08T08:00:00Z"
+			require.True(state.Known.Through.After(time.Date(2026, 11, 8, 8, 0, 0, 0, time.UTC)), "the check's watermark is past the reply")
+
+			// The project is readable and allowed again.
+			f.project(widgets, "acme/widgets")
+			got := check()
+			require.Len(got, 1, "the reply made while the project was skipped is found")
+			assert.Equal(1, got[0].Number)
+			assert.Empty(state.Known.Unchecked, "and the project counts as read from then on")
+		})
+	}
 }
 
 func TestAProjectMovedToAnExcludedOwnerSinceDiscoveryIsNotFetched(t *testing.T) {

@@ -1,6 +1,7 @@
 package messageimport
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -364,23 +365,34 @@ func TestWriterKeepsAFeedSendersParticipantFromBeforeTypedScopes(t *testing.T) {
 }
 
 func TestWriterIndexesTheAddressAnAccountWasJoinedTo(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	writer := startWriter(t, st).WithSenderIdentifierType("example_forge")
-	_, err := writer.Write(t.Context(), examplePost("comment-1", MessageImportSender{ID: "1001", Name: "octo", Email: "addressneedle@example.com"}))
-	require.NoError(err)
-	// A release names its author by account alone.
-	_, err = writer.Write(t.Context(), examplePost("release-1", MessageImportSender{ID: "1001", Name: "octo"}))
-	require.NoError(err)
-
-	for _, rebuilt := range []bool{false, true} {
-		if rebuilt {
-			_, err = st.RebuildFTSContext(t.Context(), nil)
-			require.NoError(err)
-		}
-		_, total, err := st.SearchMessages("addressneedle", 0, 100)
-		require.NoError(err)
-		assert.EqualValues(2, total, "rebuilt %t", rebuilt)
+	email := MessageImportSender{ID: "1001", Name: "octo", Email: "addressneedle@example.com"}
+	account := MessageImportSender{ID: "1001", Name: "octo"}
+	for _, tc := range []struct {
+		name  string
+		order []MessageImportSender
+	}{
+		// A release names its author by account alone.
+		{"email first", []MessageImportSender{email, account}},
+		{"account first", []MessageImportSender{account, email}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			writer := startWriter(t, st).WithSenderIdentifierType("example_forge")
+			for i, sender := range tc.order {
+				_, err := writer.Write(t.Context(), examplePost("post-"+strconv.Itoa(i), sender))
+				require.NoError(err)
+			}
+			for _, rebuilt := range []bool{false, true} {
+				if rebuilt {
+					_, err := st.RebuildFTSContext(t.Context(), nil)
+					require.NoError(err)
+				}
+				_, total, err := st.SearchMessages("addressneedle", 0, 100)
+				require.NoError(err)
+				assert.EqualValues(2, total, "rebuilt %t", rebuilt)
+			}
+		})
 	}
 }

@@ -281,12 +281,23 @@ func linkSenderIdentifier(ctx context.Context, st *store.Store, participantID in
 		return err
 	}
 	if prev != 0 && prev != participantID {
-		if err := st.MergeParticipantsContext(ctx, prev, participantID); err != nil {
-			if !errors.Is(err, store.ErrPersonBindingConflict) {
-				return err
+		// The merged participant's messages now index the email's address,
+		// which their search entries were written without.
+		moved, err := st.MessageIDsSentByContext(ctx, prev)
+		if err != nil {
+			return fmt.Errorf("list the messages of a merged sender: %w", err)
+		}
+		err = st.MergeParticipantsContext(ctx, prev, participantID)
+		switch {
+		case err == nil:
+			if err := st.RefreshMessageSearchContext(ctx, moved); err != nil {
+				return fmt.Errorf("refresh the search of a merged sender's messages: %w", err)
 			}
+		case errors.Is(err, store.ErrPersonBindingConflict):
 			slog.WarnContext(ctx, "skipping message sender participant merge across durable persons",
 				"loser_participant_id", prev, "winner_participant_id", participantID, "error", err)
+		default:
+			return err
 		}
 	}
 	return st.SetParticipantIdentifierContext(ctx, participantID, identifierType, value)
