@@ -50,6 +50,8 @@ also a separate opt-in because downloading an image can activate email tracking.
 | LinkedIn member export | [LinkedIn import](../usage/linkedin.md) | Local ZIP or extracted folder; DMs, your own posts and comments, and optional connection identities; unreleased |
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
 | RSS, Atom, or JSON feeds | [Feeds](../usage/feeds.md) | Followed feeds fetched on a schedule; each item archived once |
+| GitHub | [Code forges](../usage/forges.md) | Issues, pull requests, reviews, and discussions you take part in, and releases you watch; chosen owners only |
+| GitLab | [Code forges](../usage/forges.md#gitlab) | Issues and merge requests you take part in, with comments, thread replies, diff notes, and approvals, on any instance; chosen owners only |
 | Another source, such as tool notifications | [Messages from any source](../usage/message-import.md) | Provider-neutral ingestion keyed by source and external message ID |
 
 Some chat providers apply size and room-participant limits to media. A message can be archived

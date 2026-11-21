@@ -22,6 +22,14 @@ const EnvDiscordToken = "MSGVAULT_DISCORD_TOKEN" // #nosec G101 -- environment v
 // daemon-owned CLI subprocess.
 const EnvSlackToken = "MSGVAULT_SLACK_TOKEN" // #nosec G101 -- environment variable name, not a credential value
 
+// EnvGitHubToken names the env var used to pass a GitHub personal access
+// token to a daemon-owned CLI subprocess.
+const EnvGitHubToken = "MSGVAULT_GITHUB_TOKEN" // #nosec G101 -- environment variable name, not a credential value
+
+// EnvGitLabToken names the env var used to pass a GitLab personal access
+// token to a daemon-owned CLI subprocess.
+const EnvGitLabToken = "MSGVAULT_GITLAB_TOKEN" // #nosec G101 -- environment variable name, not a credential value
+
 // EnvInlineOAuth passes delegated OAuth credentials to a daemon-owned CLI subprocess.
 const EnvInlineOAuth = "MSGVAULT_INLINE_OAUTH" // #nosec G101 -- environment variable name, not a credential value
 
@@ -30,7 +38,7 @@ const EnvRemoteDeleteOptIn = "MSGVAULT_ENABLE_REMOTE_DELETE"
 
 func EnvAllowed(name string) bool {
 	switch name {
-	case EnvIMAPPassword, EnvBeeperToken, EnvMatrixLoginSecret, EnvMatrixRecoverySecret, EnvDiscordToken, EnvSlackToken, EnvInlineOAuth, EnvRemoteDeleteOptIn:
+	case EnvIMAPPassword, EnvBeeperToken, EnvMatrixLoginSecret, EnvMatrixRecoverySecret, EnvDiscordToken, EnvSlackToken, EnvGitHubToken, EnvGitLabToken, EnvInlineOAuth, EnvRemoteDeleteOptIn:
 		return true
 	default:
 		return false

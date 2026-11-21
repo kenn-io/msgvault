@@ -59,7 +59,8 @@ func manualSyncCLICommand(args []string) bool {
 		// stays free of cache progress.
 		return true
 	case "sync-slack", "sync-teams", "sync-beeper", "sync-chatwoot", "sync-discord", "sync-matrix", "sync-inline", "backfill-inline-media", "sync-circleback", "sync-plaud",
-		"sync-pocket", "sync-notion-meetings", "sync-twenty", "sync-muesli", "sync-granola", "sync-omi", "sync-calendar", "sync-synctech-sms", "sync-twilio", "sync-bland":
+		"sync-pocket", "sync-notion-meetings", "sync-twenty", "sync-muesli", "sync-granola", "sync-omi", "sync-calendar", "sync-synctech-sms", "sync-twilio", "sync-bland",
+		"sync-github", "sync-gitlab":
 		if args[0] == "sync-circleback" || args[0] == "sync-plaud" || args[0] == "sync-pocket" || args[0] == "sync-notion-meetings" || args[0] == "sync-twilio" || args[0] == "sync-bland" || args[0] == "sync-twenty" || args[0] == "sync-inline" {
 			for _, arg := range args[1:] {
 				if arg == "--probe" || arg == "--probe=true" {

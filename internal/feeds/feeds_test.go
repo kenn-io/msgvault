@@ -217,7 +217,7 @@ func TestFollowArchivesAtomItemsAsFeedMessages(t *testing.T) {
 		"a relative link resolves against the feed document, not the site")
 	assert.Contains(release.BodyHTML.String, "<b>widgetsync</b>")
 	assert.Equal("Release Bot", release.Sender)
-	assert.True(strings.HasPrefix(release.SenderValue, "id:feeds:author:"), "a name-only author is scoped to its feed")
+	assert.True(strings.HasPrefix(release.SenderValue, "id:feed/feeds:author:"), "a name-only author is scoped to its feed")
 	assert.Equal(server.url("/releases.atom"), release.Feed)
 	assert.Equal("Example Project releases", release.FeedTitle)
 
