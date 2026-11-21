@@ -51,6 +51,35 @@ func TestCreateStandalonePersonAndPublish(t *testing.T) {
 	assert.NotContains(body, "Alex Example")
 }
 
+func TestDisplayNameEditRejectsCarriageReturnWithoutChangingCard(t *testing.T) {
+	t.Parallel()
+	fixture := &mutationFixture{}
+	service, st, _, _ := seededMutationService(t, fixture)
+	person, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+		Name: "Alex Example", Source: store.ProvenanceEnrichment,
+	})
+	require.NoError(t, err)
+	preview, err := service.PreviewPublication(t.Context(), person.ID)
+	require.NoError(t, err)
+	require.True(t, preview.ReviewRequired)
+	require.NoError(t, service.PublishReviewedPerson(t.Context(), person.ID, preview.ApprovalToken))
+
+	person, err = st.GetPersonContext(t.Context(), person.ID)
+	require.NoError(t, err)
+	_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, new("Alex\rRenamed"))
+	require.ErrorIs(t, err, store.ErrInvalidPersonNameText)
+
+	preview, err = service.PreviewPublication(t.Context(), person.ID)
+	require.NoError(t, err)
+	assert.False(t, preview.ReviewRequired)
+	assert.Contains(t, preview.VCard, "FN:Alex Example\r\n")
+	require.NoError(t, service.PublishPerson(t.Context(), person.ID))
+	fixture.mu.Lock()
+	assert.Equal(t, 1, fixture.puts)
+	assert.Contains(t, string(fixture.body), "FN:Alex Example\r\n")
+	fixture.mu.Unlock()
+}
+
 func TestEnrichmentCreatedPersonPublishesOnlyAfterApproval(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
