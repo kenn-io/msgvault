@@ -500,8 +500,7 @@ func (f *fakeGitLab) serveList(w http.ResponseWriter, r *http.Request, keep func
 			return true
 		}
 		bound, err := time.Parse(time.RFC3339Nano, raw)
-		assert.NoError(f.t, err)
-		return !f.stamp(thread.object["updated_at"]).After(bound)
+		return assert.NoError(f.t, err) && !f.stamp(thread.object["updated_at"]).After(bound)
 	}
 	createdIn := func(thread *fakeThread) bool {
 		created := f.stamp(thread.object["created_at"])
