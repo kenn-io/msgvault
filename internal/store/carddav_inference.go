@@ -619,7 +619,7 @@ func (s *Store) backfillCardDAVInferenceExportStateV2(ctx context.Context) error
 
 func (s *Store) backfillCardDAVInferenceExportStateV3(ctx context.Context) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT id FROM persons ORDER BY id`)
+		rows, err := tx.QueryContext(ctx, `SELECT person_id FROM carddav_resources WHERE person_id IS NOT NULL AND mapping_status='mapped' AND governance='local' GROUP BY person_id ORDER BY person_id`)
 		if err != nil {
 			return fmt.Errorf("list people for CardDAV inference backfill: %w", err)
 		}
@@ -670,7 +670,7 @@ func (s *Store) backfillCardDAVInferenceExportStateV3(ctx context.Context) error
 			if !hasRetired {
 				continue
 			}
-			matches, err := s.contactInferenceMappingsMatchTx(ctx, tx, id, retired, `EXISTS(SELECT 1 FROM carddav_resources r WHERE r.person_id=e.person_id AND r.mapping_status='mapped' AND r.governance='local' AND e.source_ref='carddav:' || CAST(r.address_book_id AS TEXT) AND e.source_resource_uid=r.href)`)
+			matches, err := s.contactInferenceMappingsMatchTx(ctx, tx, id, retired, `EXISTS(SELECT 1 FROM carddav_resources r WHERE r.person_id=e.person_id AND r.mapping_status='mapped' AND r.governance='local' AND e.source_ref='carddav:' || CAST(r.address_book_id AS TEXT) AND e.source_resource_uid=r.href)`, true)
 			if err != nil {
 				return err
 			}
@@ -866,19 +866,23 @@ func (s *Store) personHasPublishedContactInferenceTx(ctx context.Context, tx *lo
 	return s.contactInferenceMappingsMatchTx(ctx, tx, personID, byTable, `EXISTS(SELECT 1 FROM carddav_publications p
             WHERE p.person_id=e.person_id AND p.desired=TRUE
               AND e.source_ref='carddav:' || CAST(p.address_book_id AS TEXT)
-              AND e.source_resource_uid=p.href)`)
+              AND e.source_resource_uid=p.href)`, false)
 }
 
-func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedTx, personID int64, byTable map[string]map[int64]bool, predicate string) (bool, error) {
+func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedTx, personID int64, byTable map[string]map[int64]bool, predicate string, validateMetadata bool) (bool, error) {
 	mappingsExpr := "json_extract(e.resource_metadata, '$.native_mappings')"
 	if s.IsPostgreSQL() {
 		mappingsExpr = "e.resource_metadata ->> 'native_mappings'"
+	}
+	if validateMetadata {
+		mappingsExpr = "e.resource_metadata"
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+mappingsExpr+` FROM vcard_resource_envelopes e WHERE e.person_id=? AND `+predicate, personID)
 	if err != nil {
 		return false, fmt.Errorf("load contact inference mappings: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	matched := false
 	for rows.Next() {
 		var raw sql.NullString
 		if err := rows.Scan(&raw); err != nil {
@@ -888,16 +892,25 @@ func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedT
 			continue
 		}
 		var mappings []vcard.NativeMapping
-		if err := json.Unmarshal([]byte(raw.String), &mappings); err != nil {
+		if validateMetadata {
+			envelope, err := vcard.UnmarshalResourceMetadata([]byte(raw.String))
+			if err != nil {
+				return false, fmt.Errorf("decode contact inference metadata: %w", err)
+			}
+			mappings = envelope.NativeMappings
+		} else if err := json.Unmarshal([]byte(raw.String), &mappings); err != nil {
 			return false, fmt.Errorf("decode contact inference mappings: %w", err)
 		}
 		for _, mapping := range mappings {
 			if byTable[mapping.Table][mapping.RowID] {
-				return true, nil
+				if !validateMetadata {
+					return true, nil
+				}
+				matched = true
 			}
 		}
 	}
-	return false, rows.Err()
+	return matched, rows.Err()
 }
 
 func (s *Store) invalidateLegacyCardDAVConflictCreatesTx(ctx context.Context, tx *loggedTx, personID int64) (bool, error) {

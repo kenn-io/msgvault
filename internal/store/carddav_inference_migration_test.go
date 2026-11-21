@@ -477,7 +477,7 @@ func TestMalformedCurrentInferredEmailCanBeRetired(t *testing.T) {
 }
 
 func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
-	for _, scenario := range []string{"retired", "other person", "unbound", "remote", "unmapped", "declared", "current"} {
+	for _, scenario := range []string{"retired", "other person", "unbound", "remote", "unmapped", "declared", "current", "unsupported metadata"} {
 		t.Run(scenario, func(t *testing.T) {
 			require := require.New(t)
 			st, personID, _ := newPersonFactProjectionStore(t)
@@ -526,8 +526,26 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 			require.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error {
 				return st.approveCardDAVInferenceTx(t.Context(), tx, before.Inference, before.ConnectionGeneration, book.ID)
 			}))
+			var unrelatedID int64
+			require.NoError(st.db.QueryRow(st.Rebind(`INSERT INTO persons(vcard_uid, display_name) VALUES ('unrelated', 'Unrelated') RETURNING id`)).Scan(&unrelatedID))
+			unrelated, err := st.AddPersonContactPointContext(t.Context(), unrelatedID, PersonContactPointInput{AddressKind: ContactAddressEmail, OriginalValue: "unrelated@example.test", Envelope: ValueEnvelopeInput{Source: ProvenanceEnrichment}})
+			require.NoError(err)
+			require.NoError(st.SupersedePersonContactPointContext(t.Context(), unrelatedID, unrelated.Envelope.ID, nil))
+			unrelatedBefore := inferenceRevision(t, st, unrelatedID)
+			if scenario == "unsupported metadata" {
+				_, err = st.db.Exec(st.Rebind(`UPDATE vcard_resource_envelopes SET resource_metadata=`+st.dialect.JSONBindExpr()+` WHERE person_id=?`), `{"format_version":999}`, personID)
+				require.NoError(err)
+			}
 			_, err = st.db.Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name=?`), migrationCardDAVInferenceExportStateV3)
 			require.NoError(err)
+			if scenario == "unsupported metadata" {
+				require.ErrorContains(st.InitSchema(), "unsupported vCard resource metadata format 999")
+				applied, err := st.IsMigrationAppliedContext(t.Context(), migrationCardDAVInferenceExportStateV3, 1)
+				require.NoError(err)
+				assert.False(t, applied)
+				assert.Equal(t, before.Inference.InferenceRevision, inferenceRevision(t, st, personID))
+				return
+			}
 			for range 2 {
 				require.NoError(st.InitSchema())
 				after, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
@@ -536,6 +554,7 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 				if scenario == "retired" {
 					increment = 1
 				}
+				assert.Equal(t, unrelatedBefore, inferenceRevision(t, st, unrelatedID))
 				assert.Equal(t, before.Inference.InferenceRevision+increment, after.Inference.InferenceRevision)
 				assert.Equal(t, scenario == "retired", after.Inference.ReviewRequired(after.ConnectionGeneration, book.ID))
 			}
