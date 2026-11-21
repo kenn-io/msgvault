@@ -315,7 +315,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
-| `list_person_attributes` | read | Pass `slug` and `ordinal` to read one value. | owner-only |
+| `list_person_attributes` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |

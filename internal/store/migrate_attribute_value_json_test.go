@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"encoding/json/jsontext"
 	"os"
 	"strings"
@@ -108,13 +107,11 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchemaContext(t.Context()))
 	var survivorID, absorbedID int64
-	var resolutionID sql.NullInt64
-	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT survivor_value_id, absorbed_value_id, resolution_value_id
+	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT survivor_value_id, absorbed_value_id
 		FROM person_merge_review_candidates WHERE merge_id = ? AND definition_id = ?`,
-		mergeID, definition.ID).Scan(&survivorID, &absorbedID, &resolutionID))
+		mergeID, definition.ID).Scan(&survivorID, &absorbedID))
 	assert.Equal(first.Value.ID, survivorID)
 	assert.Equal(second.Value.ID, absorbedID)
-	assert.False(resolutionID.Valid)
 	for _, table := range []string{"person_attribute_values", "organization_attribute_values"} {
 		var note string
 		require.NoError(st.db.QueryRowContext(t.Context(), `SELECT extra_note FROM `+table+` LIMIT 1`).Scan(&note))
