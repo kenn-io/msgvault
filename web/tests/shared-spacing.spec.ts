@@ -124,6 +124,7 @@ for (const width of [1280, 420]) {
       }] } }));
       await page.reload();
       const opener = page.getByRole('button', { name: 'Open navigation' });
+      const navigation = page.getByRole('dialog', { name: 'Navigation', exact: true });
       if (await opener.isVisible()) await opener.click();
       const view = page.locator('.saved-view').filter({ hasText: 'Long archive search' });
       await expect(view).toBeVisible();
@@ -138,7 +139,7 @@ for (const width of [1280, 420]) {
         await action.click({ trial: true });
       }
       await page.keyboard.press('Escape');
-      if (await opener.isVisible()) await opener.click();
+      if (await opener.isVisible() && !(await navigation.isVisible())) await opener.click();
       await open.click();
       const label = page.locator('.context-chips .kit-chip__label').filter({ hasText: query });
       await expect(label).toBeVisible();

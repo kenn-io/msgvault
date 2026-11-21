@@ -1006,9 +1006,11 @@ it.each(['http', 'network'] as const)('turns on local search once and keeps unre
   let phase = 'idle';
   let enabled = false;
   let failed = false;
-  let recovered = false;
+  let retrying = false;
   let releaseActivation!: () => void;
+  let releaseRetry!: () => void;
   const activation = new Promise<void>(resolve => { releaseActivation = resolve; });
+  const retry = new Promise<void>(resolve => { releaseRetry = resolve; });
   const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
     if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
     if (request.method === 'POST') {
@@ -1019,8 +1021,10 @@ it.each(['http', 'network'] as const)('turns on local search once and keeps unre
       failed = true;
       if (failure === 'network') throw new TypeError('Network interrupted');
       return new Response('', { status: 503 });
+    } else if (phase !== 'idle' && !retrying) {
+      retrying = true;
+      await retry;
     }
-    if (phase !== 'idle' && failed) recovered = true;
     return Response.json(localStatus({ enabled, provider: enabled ? 'builtin' : '', phase, running: phase !== 'idle' }));
   });
   render(SettingsWorkspace, { client, operationsController, category: 'advanced' });
@@ -1034,9 +1038,10 @@ it.each(['http', 'network'] as const)('turns on local search once and keeps unre
   await screen.findByRole('status', { name: 'Search by meaning setup' });
   expect(screen.queryByRole('dialog')).toBeNull();
   await waitFor(() => expect(failed).toBe(true));
-  await waitFor(() => expect(recovered).toBe(true), { timeout: 3000 });
-  expect(screen.getByRole('status', { name: 'Search by meaning setup' })).toBeDefined();
+  await waitFor(() => expect(retrying).toBe(true), { timeout: 3000 });
+  expect(screen.getByText('Keyword search works meanwhile')).toBeDefined();
   phase = 'idle'; enabled = true;
+  releaseRetry();
   await screen.findByText('On', {}, { timeout: 3000 });
   expect(screen.queryByRole('status', { name: 'Search by meaning setup' })).toBeNull();
   expect(screen.getByText('1 unsaved change')).toBeDefined();

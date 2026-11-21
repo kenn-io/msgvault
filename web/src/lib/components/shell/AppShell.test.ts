@@ -1764,14 +1764,7 @@ describe('AppShell', () => {
     }
   });
 
-  it.each([
-    ['the Close button', async () => {
-      await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
-    }],
-    ['Escape', async () => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-    }]
-  ])('clears a legacy attachment selection when its viewer closes with %s', async (_label, close) => {
+  it('clears a legacy attachment selection when its viewer closes', async () => {
     window.history.replaceState(null, '', `/?workspace=everything&explore=${encodeURIComponent(JSON.stringify({
       presentation: 'files', selectedRow: 'attachment:5'
     }))}`);
@@ -1788,7 +1781,7 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
       expect(await screen.findByRole('dialog', { name: 'View legacy-report.pdf' })).toBeDefined();
-      await close();
+      await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'View legacy-report.pdf' })).toBeNull());
       expect(state.current.selectedRow).toBeNull();
       expect(new URLSearchParams(window.location.search).get('explore') ?? '').not.toContain('attachment:5');
@@ -1798,15 +1791,7 @@ describe('AppShell', () => {
     }
   });
 
-  it.each([
-    ['the Close button', async () => {
-      await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
-    }],
-    ['Escape', async () => {
-      const escape = { key: 'Escape', bubbles: true, cancelable: true };
-      window.dispatchEvent(new KeyboardEvent('keydown', escape));
-    }]
-  ])('focuses the Files grid when a legacy file viewer closes with %s', async (_label, close) => {
+  it('focuses the Files grid when a legacy file viewer closes', async () => {
     const explore = encodeURIComponent(JSON.stringify({ selectedRow: 'attachment:5' }));
     window.history.replaceState(null, '', `/?workspace=files&explore=${explore}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -1828,7 +1813,7 @@ describe('AppShell', () => {
       const grid = await screen.findByRole('grid', { name: 'Files results' });
       // Let the Files list finish restoring so its settle-time focus cannot mask the close.
       await waitFor(() => expect(state.peekRestorationEpoch()).toBeUndefined());
-      await close();
+      await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
       await waitFor(() => expect(viewer.isConnected).toBe(false));
       await waitFor(() => expect(document.activeElement).toBe(grid));
     } finally {
@@ -2977,15 +2962,27 @@ describe('AppShell', () => {
       await waitFor(() => expect(isOuterClosed(state)).toBe(true));
     });
 
-    it('closes the reading pane again once the narrow navigation menu is gone', async () => {
+    it.each([
+      { scenario: 'the reading pane', filterWasOpen: false },
+      { scenario: 'a Filter left open, then navigation opened by clicking its focused button', filterWasOpen: true },
+    ])('closes navigation before $scenario', async ({ filterWasOpen }) => {
       window.innerWidth = 480;
       const state = await openReadingPane();
+      if (filterWasOpen) {
+        await clickFocused(screen.getByRole('button', { name: 'Filter' }));
+        await screen.findByRole('dialog', { name: 'Filter' });
+      }
       const opener = screen.getByRole('button', { name: 'Open navigation' });
       await clickFocused(opener);
       await screen.findByRole('dialog', { name: 'Navigation' });
 
       await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull());
+      if (filterWasOpen) {
+        expect(screen.getByRole('dialog', { name: 'Filter' })).toBeDefined();
+        await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+        await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull());
+      }
       expect(state.current.selectedRow).toBe('message:1');
       expect(appShortcuts.activeScope()).toBe('root');
 
