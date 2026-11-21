@@ -52,7 +52,7 @@
   .sync-status {
     display: flex;
     width: 100%;
-    min-height: var(--control-h);
+    min-height: var(--nav-item-height);
     align-items: center;
     gap: var(--control-gap);
     padding: 0 var(--pane-pad-x);
@@ -79,8 +79,8 @@
   }
 
   .sync-status--rail {
-    width: var(--control-h-lg);
-    min-height: var(--control-h-lg);
+    width: var(--nav-item-height);
+    min-height: var(--nav-item-height);
     justify-content: center;
     padding: 0;
   }

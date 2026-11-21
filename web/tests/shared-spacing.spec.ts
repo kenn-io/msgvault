@@ -183,11 +183,20 @@ test('a long sidebar saved view list keeps every row at its full height and scro
   expect(await sidebar.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 });
 
-test('every sidebar item, footer included, is one height', async ({ page }) => {
-  const items = page.getByRole('complementary', { name: 'Sidebar', exact: true }).locator('.sidebar__item');
+test('every sidebar row, including the sync status control, uses the shared height', async ({ page }) => {
+  const sidebar = page.getByRole('complementary', { name: 'Sidebar', exact: true });
+  await expect(sidebar.locator('.sync-status')).toHaveCount(1);
+  const items = sidebar.locator('.sidebar__item, .sync-status');
   const heights = await items.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
   expect(heights.length).toBeGreaterThan(3);
   expect(new Set(heights)).toEqual(new Set([34]));
+
+  await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
+  const railSizes = await items.evaluateAll((elements) => elements.map((element) => {
+    const { width, height } = element.getBoundingClientRect();
+    return [width, height];
+  }));
+  expect(new Set(railSizes.map(([width, height]) => `${width}x${height}`))).toEqual(new Set(['34x34']));
 });
 
 for (const width of [1280, 390]) {
