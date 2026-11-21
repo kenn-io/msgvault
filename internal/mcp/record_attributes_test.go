@@ -40,6 +40,10 @@ func TestAttributeToolContract(t *testing.T) {
 	}
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyAttributes}
 	tools = toolsByName(t, rawListTools(t, opts, true))
+	clearDescription, ok := tools["clear_person_attribute"]["description"].(string)
+	require.True(ok)
+	assert.Contains(clearDescription, "Omitting ordinal targets 0")
+	assert.Contains(clearDescription, "list_person_attributes")
 	data, err := os.ReadFile("../../api/openapi.yaml")
 	require.NoError(err)
 	var doc struct {
