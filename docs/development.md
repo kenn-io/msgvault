@@ -343,7 +343,7 @@ reports its summed top-level test-seconds. Refresh
 main run's `test-postgres-sharded (store)` job with:
 
 ```bash
-gh run view -R kenn-io/msgvault --job <job-id> --log | cut -f3- | sed 's/^[^ ]* //' | grep -E '^--- (PASS|SKIP|FAIL): ' | sort
+gh run view -R kenn-io/msgvault --job <job-id> --log | cut -f3- | sed 's/^[^ ]* //' | grep -E '^--- (PASS|SKIP|FAIL): [^/ ]+ \(' | sort
 ```
 
 In CI, Vitest and Playwright retry a failed test twice and write JSON reports
