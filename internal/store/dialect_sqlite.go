@@ -344,6 +344,8 @@ func (d *SQLiteDialect) RFC822CanonicalIDIndexDefinition() string {
 // JSONBindExpr is "?" on SQLite — JSON columns are plain TEXT.
 func (d *SQLiteDialect) JSONBindExpr() string { return "?" }
 
+func (d *SQLiteDialect) JSONTextBindExpr() string { return "?" }
+
 func (d *SQLiteDialect) JSONIsDistinctExpr(col string) string { return col + " IS NOT ?" }
 
 // BuildFTSArg formats search terms as an FTS5 MATCH argument: each

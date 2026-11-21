@@ -17618,7 +17618,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.21.0
+  version: 5.22.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -29269,6 +29269,13 @@ paths:
           name: slug
           schema:
             type: string
+        - description: Restrict values to one ordinal within a definition
+          in: query
+          name: ordinal
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
         - description: Restrict the response to one portable definition identifier
           in: query
           name: universal_id

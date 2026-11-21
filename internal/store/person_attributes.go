@@ -67,6 +67,7 @@ type PersonAttributeWrite struct {
 // PersonAttributeQuery filters a person's attribute values.
 type PersonAttributeQuery struct {
 	DefinitionSlug string
+	Ordinal        *int64
 	IncludeHistory bool
 }
 
@@ -108,7 +109,7 @@ func (s *Store) listPersonAttributeValuesContext(
 	personID int64, query PersonAttributeQuery,
 ) ([]PersonAttributeValue, error) {
 	rows, err := s.listAttributeValuesContext(ctx, queryer, personAttributeOwner,
-		personID, query.DefinitionSlug, query.IncludeHistory)
+		personID, query.DefinitionSlug, query.Ordinal, query.IncludeHistory)
 	if err != nil {
 		return nil, err
 	}

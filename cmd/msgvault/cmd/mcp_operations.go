@@ -59,6 +59,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, personRecordCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, recordAttributeMCPCapabilities(hasRoute, capabilities)...)
 	return backend
 }
 
@@ -89,6 +90,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		if result, handled, err := b.executeImportJob(ctx, name, args); handled {
 			return result, err
 		}
+		if result, handled, err := b.executeRecordAttributeOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeLoopOperation(ctx, name, args); handled {
 			return result, err
 		}
@@ -105,6 +109,9 @@ func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name stri
 			return disclosure, err
 		}
 		if disclosure, handled, err := b.personRecordDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
+		if disclosure, handled, err := b.recordAttributeDisclosure(ctx, name, args); handled {
 			return disclosure, err
 		}
 		if disclosure, handled, err := b.loopOperationDisclosure(name, args); handled {
@@ -191,19 +198,23 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 }
 
 func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
-	return readMCPOperationResponse[T](ctx, client, method, path, options, classify, false, success...)
+	return readMCPOperationResponse[T](ctx, client, method, path, options, classify, false, false, success...)
 }
 
 // readMCPArchivePageJSON reads a successful archive page without the 1 MiB
 // cap. One stored message can exceed it, and a capped read would leave the
 // caller unable to page past that message. Error responses stay capped.
 func readMCPArchivePageJSON[T any](ctx context.Context, client *daemonclient.Client, path string, options runtime.RequestOptions, classify func(string) bool) (*mcpserver.OperationResult, error) {
-	return readMCPOperationResponse[T](ctx, client, http.MethodGet, path, options, classify, true, http.StatusOK)
+	return readMCPOperationResponse[T](ctx, client, http.MethodGet, path, options, classify, true, false, http.StatusOK)
 }
 
-func readMCPOperationResponse[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, uncappedSuccess bool, success ...int) (*mcpserver.OperationResult, error) {
+func readMCPOperationResponse[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, uncappedSuccess, attributeWrite bool, success ...int) (*mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
-	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
+	request := client.DoGeneratedRequestWithContext
+	if attributeWrite {
+		request = client.DoGeneratedAttributeWriteWithContext
+	}
+	response, err := request(ctx, method, path, options)
 	if err != nil {
 		if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
 			return operationFailure(local.APIErrorCode(), false), err
