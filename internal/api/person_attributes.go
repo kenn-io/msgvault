@@ -82,10 +82,8 @@ func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 	list.Parameters = append(list.Parameters,
 		queryBooleanParam("history", "Include superseded values"),
 		queryStringParam("slug", "Restrict the response to one definition slug", false),
-		queryIntegerParam("limit", "Maximum values per definition"),
-		queryIntegerParam("offset", "Values to skip per definition"),
-		queryStringParam("universal_id",
-			"Restrict the response to one portable definition identifier", false))
+		queryIntegerParam("limit", "Maximum values per definition"), queryIntegerParam("offset", "Values to skip per definition"),
+		queryStringParam("universal_id", "Restrict the response to one portable definition identifier", false))
 	list.Responses = jsonResponsesFor[PersonAttributesResponse](api)
 	addErrorResponses(api, list.Responses, http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, list, s.handleListPersonAttributes)
