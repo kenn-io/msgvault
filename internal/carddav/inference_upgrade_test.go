@@ -2,6 +2,7 @@ package carddav
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -264,6 +265,14 @@ func TestInferenceMigrationV3ReviewsKeptLocalRetiredContact(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepLocal))
 	require.Contains(t, string(fixture.body), "alex@example.com")
+	resolved, err := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
+	require.NoError(t, err)
+	require.NotNil(t, resolved.ResolvedAt)
+	removed, err := st.SweepResolvedCardDAVConflictsContext(t.Context(), resolved.ResolvedAt.Add(30*24*time.Hour+time.Second))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), removed)
+	_, err = st.GetCardDAVConflictContext(t.Context(), conflict.ID)
+	require.ErrorIs(t, err, store.ErrCardDAVConflictNotFound)
 	require.NoError(t, st.SupersedePersonContactPointContext(t.Context(), personID, contact.Envelope.ID, nil))
 	_, err = st.DB().Exec(st.Rebind(`DELETE FROM person_carddav_inference_state WHERE person_id=?`), personID)
 	require.NoError(t, err)
