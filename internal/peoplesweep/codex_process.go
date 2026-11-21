@@ -40,12 +40,15 @@ var ErrCodexProxyUnreleased = errors.New("codex service proxy is not released")
 type codexOwnedProcess struct {
 	RPCProcess
 
-	workRoot      string
-	cleanupMu     sync.Mutex
-	cleaned       bool
-	removeRoot    func(string) error
-	proxy         CodexProxySession
-	cleanupErr    error
+	workRoot   string
+	cleanupMu  sync.Mutex
+	cleaned    bool
+	removeRoot func(string) error
+	proxy      CodexProxySession
+	// proxyReleased records that the proxy was closed, which happens only
+	// once the child has exited: until then it may connect to its address.
+	proxyReleased bool
+	proxyErr      error
 	refreshCommit func() error
 	childExited   chan struct{}
 	childExitOnce sync.Once
@@ -67,26 +70,45 @@ func (p *codexOwnedProcess) Wait() error {
 	return errors.Join(processErr, refreshErr, p.cleanup())
 }
 
+// cleanup runs once the child has exited, or before it started: it releases
+// the proxy and removes the work root.
 func (p *codexOwnedProcess) cleanup() error {
 	p.cleanupMu.Lock()
 	defer p.cleanupMu.Unlock()
+	if !p.proxyReleased {
+		if p.proxy != nil {
+			p.proxyErr = p.proxy.Close()
+		}
+		p.proxyReleased = true
+	}
+	if err := p.removeRootLocked(); err != nil {
+		return errors.Join(p.proxyErr, err)
+	}
+	return p.proxyErr
+}
+
+// abandon removes the work root, and with it the staged credential, when the
+// child's exit could not be confirmed. The proxy stays bound: the pending
+// Wait releases it when the child is reaped.
+func (p *codexOwnedProcess) abandon() error {
+	p.cleanupMu.Lock()
+	defer p.cleanupMu.Unlock()
+	return p.removeRootLocked()
+}
+
+func (p *codexOwnedProcess) removeRootLocked() error {
 	if p.cleaned {
-		return p.cleanupErr
+		return nil
 	}
 	remove := p.removeRoot
 	if remove == nil {
 		remove = os.RemoveAll
 	}
-	var proxyErr error
-	if p.proxy != nil {
-		proxyErr = p.proxy.Close()
-	}
 	if err := remove(p.workRoot); err != nil {
-		return errors.Join(proxyErr, err)
+		return err
 	}
 	p.cleaned = true
-	p.cleanupErr = proxyErr
-	return p.cleanupErr
+	return nil
 }
 
 func (l codexBoundLauncher) Verify(ctx context.Context, executable string) (CodexAttestation, error) {

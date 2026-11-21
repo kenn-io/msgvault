@@ -4,8 +4,10 @@ package peoplesweep
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -480,4 +482,50 @@ func TestCodexSeatbeltProxyOutlivesCancellation(t *testing.T) {
 	assertCodexProxySessionHeld(t, session)
 	requireChecks.Error(process.Wait())
 	assertCodexProxySessionClosed(t, session)
+}
+
+// TestCodexAbandonedWaitKeepsProxyUntilChildIsReaped catches cleanup closing
+// the proxy when a failed kill leaves the child's exit unconfirmed. The child
+// may still connect to the proxy's port, so another process must not be able
+// to listen there until the pending Wait reaps it. The staged credential's
+// root still goes at once.
+func TestCodexAbandonedWaitKeepsProxyUntilChildIsReaped(t *testing.T) {
+	requireChecks := require.New(t)
+	workRoot := t.TempDir()
+	requireChecks.NoError(os.Chmod(workRoot, 0o700))
+	requireChecks.NoError(os.Mkdir(filepath.Join(workRoot, ".codex"), 0o700))
+	requireChecks.NoError(os.WriteFile(filepath.Join(workRoot, ".codex", "auth.json"), []byte("SYNTHETIC_AUTH"), 0o600))
+	session, err := newCodexHostServiceProxy(nil).Attach(t.Context(), workRoot)
+	requireChecks.NoError(err)
+	release := make(chan struct{})
+	reaped := make(chan struct{})
+	process := &codexOwnedProcess{RPCProcess: stuckKillCodexProcess{
+		finishedCodexProcess: finishedCodexProcess{
+			stdin:  discardCodexWriteCloser{Writer: io.Discard},
+			stdout: io.NopCloser(bytes.NewReader(nil)), stderr: io.NopCloser(bytes.NewReader(nil)),
+		},
+		release: release,
+	}, workRoot: workRoot, proxy: session, childExited: make(chan struct{})}
+	client := &CodexRPCClient{Process: process}
+	requireChecks.NoError(client.initialize())
+	go func() {
+		<-process.childExited
+		close(reaped)
+	}()
+
+	err = finishCodexProcess(t.Context(), process, client, true)
+	requireChecks.ErrorContains(err, "process termination failed")
+	assert.NoDirExists(t, workRoot)
+	assertCodexProxySessionHeld(t, session)
+
+	close(release)
+	<-reaped
+	requireChecks.Eventually(func() bool {
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", net.JoinHostPort("127.0.0.1", codexProxySessionPort(t, session)))
+		if err != nil {
+			return false
+		}
+		_ = listener.Close()
+		return true
+	}, 2*time.Second, 10*time.Millisecond, "the reaped child's proxy port is released")
 }

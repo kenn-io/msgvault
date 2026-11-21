@@ -150,7 +150,7 @@ func codexPrivateAuthHome(authHome string) error {
 	if !filepath.IsAbs(authHome) || filepath.Clean(authHome) != authHome {
 		return errors.New("codex dedicated auth home must be an absolute clean path")
 	}
-	info, err := os.Lstat(authHome) //nolint:gosec // The daemon selects this absolute, clean path; ownership and mode are checked below.
+	info, err := os.Lstat(authHome) //nolint:gosec,nolintlint // gosec's taint analysis reports this call in some builds only. The daemon selects this absolute, clean path; ownership and mode are checked below.
 	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 || !codexAuthOwnedByDaemon(info) {
 		return errors.New("codex dedicated auth home must be private and daemon-owned")
 	}

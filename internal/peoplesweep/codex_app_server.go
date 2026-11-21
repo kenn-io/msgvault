@@ -921,7 +921,13 @@ func finishCodexProcess(
 		stderrErr = nil
 	}
 	if owned, ok := process.(*codexOwnedProcess); ok {
-		if err := owned.cleanup(); err != nil {
+		release := owned.cleanup
+		if waitAbandoned {
+			// The Wait still pending above releases the proxy once the child
+			// is reaped; only the credential's root goes now.
+			release = owned.abandon
+		}
+		if err := release(); err != nil {
 			return errors.New("remove codex app-server work root")
 		}
 	}

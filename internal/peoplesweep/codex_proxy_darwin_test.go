@@ -100,3 +100,10 @@ func assertCodexProxySessionHeld(t *testing.T, session CodexProxySession) {
 		require.ErrorIs(t, err, syscall.EADDRINUSE, network)
 	}
 }
+
+func codexProxySessionPort(t *testing.T, session CodexProxySession) string {
+	t.Helper()
+	endpoint, err := url.Parse(session.Endpoint())
+	require.NoError(t, err)
+	return endpoint.Port()
+}
