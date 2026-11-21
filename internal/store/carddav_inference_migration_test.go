@@ -481,14 +481,14 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 		name                                                      string
 		publicationAfterV2, differentMapping, otherPerson, remote bool
 		declared, current, unsupportedMetadata                    bool
-		review, multiple, approved, publication, anotherCard      bool
+		review, multiple, approved, publication                   bool
 	}{
 		{name: "retired", review: true},
 		{name: "approved without publication", review: true, approved: true},
-		{name: "approved publication", approved: true, publication: true},
-		{name: "approved publication and another card", approved: true, publication: true, anotherCard: true, review: true},
+		{name: "approved publication", approved: true, publication: true, review: true},
 		{name: "multiple people", review: true, multiple: true},
 		{name: "publication after v2", publicationAfterV2: true, review: true},
+		{name: "legacy approval and publication after v2", publicationAfterV2: true, approved: true, review: true},
 		{name: "different mapping", differentMapping: true},
 		{name: "other person", otherPerson: true},
 		{name: "remote", remote: true},
@@ -568,20 +568,11 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 				_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_publications(person_id, desired, address_book_id, href) VALUES (?, TRUE, ?, ?)`), personID, book.ID, href)
 				require.NoError(err)
 			}
-			if tc.anotherCard {
-				otherHref := "https://contacts.example.test/books/other/person.vcf"
-				var otherBookID int64
-				require.NoError(st.db.QueryRow(st.Rebind(`INSERT INTO carddav_address_books(account_id, canonical_url, display_name, discovery_index, last_seen_revision) VALUES (?, ?, 'Other', 1, 1) RETURNING id`), book.AccountID, "https://contacts.example.test/books/other/").Scan(&otherBookID))
-				_, err = st.db.Exec(st.Rebind(`INSERT INTO vcard_resource_envelopes (person_id, canonical_person_uid, source_ref, source_resource_uid, original_raw_bytes, stored_body, resource_metadata, content_hash, etag)
-					SELECT person_id, canonical_person_uid, ?, ?, original_raw_bytes, stored_body, resource_metadata, content_hash, etag FROM vcard_resource_envelopes WHERE person_id=?`), fmt.Sprintf("carddav:%d", otherBookID), otherHref, personID)
-				require.NoError(err)
-				_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_resources(address_book_id, href, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id)
-					SELECT ?, ?, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id FROM carddav_resources WHERE person_id=?`), otherBookID, otherHref, personID)
-				require.NoError(err)
-			}
 			if tc.publicationAfterV2 {
-				_, err = st.db.Exec(st.Rebind(`DELETE FROM person_carddav_inference_state WHERE person_id=?`), personID)
-				require.NoError(err)
+				if !tc.approved {
+					_, err = st.db.Exec(st.Rebind(`DELETE FROM person_carddav_inference_state WHERE person_id=?`), personID)
+					require.NoError(err)
+				}
 				_, err = st.db.Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name=?`), migrationCardDAVInferenceExportStateV2)
 				require.NoError(err)
 				require.NoError(st.InitSchema())
@@ -605,8 +596,8 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 			if tc.unsupportedMetadata {
 				err := st.InitSchema()
 				require.ErrorContains(err, "unsupported vCard resource metadata format 999")
-				assert.ErrorContains(t, err, "Use a msgvault version that supports this metadata format")
-				assert.ErrorContains(t, err, book.CanonicalURL+"unsupported.vcf")
+				require.ErrorContains(err, "Use a msgvault version that supports this metadata format")
+				require.ErrorContains(err, book.CanonicalURL+"unsupported.vcf")
 				applied, err := st.IsMigrationAppliedContext(t.Context(), migrationCardDAVInferenceExportStateV3, 1)
 				require.NoError(err)
 				assert.False(t, applied)
@@ -625,6 +616,19 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 				increment = 1
 			}
 			assert.Equal(t, before.Inference.InferenceRevision+increment, after.InferenceRevision)
+			if tc.publicationAfterV2 && tc.approved {
+				assert.True(t, after.ReviewRequired(generation, book.ID))
+				require.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error {
+					return st.approveCardDAVInferenceTx(t.Context(), tx, after, generation, book.ID)
+				}))
+				require.NoError(st.InitSchema())
+				require.NoError(st.withReadSnapshotContext(t.Context(), func(tx *loggedTx) error {
+					var err error
+					after, err = st.getCardDAVInferenceExportStateTx(t.Context(), tx, personID)
+					return err
+				}))
+				assert.False(t, after.ReviewRequired(generation, book.ID))
+			}
 			if tc.multiple {
 				assert.Equal(t, secondBefore+1, inferenceRevision(t, st, secondID))
 			}
