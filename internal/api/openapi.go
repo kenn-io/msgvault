@@ -435,7 +435,6 @@ import (
 // 5.19.0 adds message export at GET /api/v1/cli/messages/export.
 // 5.20.0 adds message_type to file details.
 // 5.21.0 adds a browser tab title to message details.
-// 5.22.0 adds person attribute value pagination.
 const APISchemaVersion = "5.22.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
