@@ -595,7 +595,13 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 			_, err = st.db.Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name=?`), migrationCardDAVInferenceExportStateV3)
 			require.NoError(err)
 			if tc.unsupportedMetadata || tc.laterUnsupported {
-				require.ErrorContains(st.InitSchema(), "unsupported vCard resource metadata format 999")
+				err := st.InitSchema()
+				require.ErrorContains(err, "unsupported vCard resource metadata format 999")
+				if tc.laterUnsupported {
+					assert.ErrorContains(t, err, book.CanonicalURL+"later.vcf")
+				} else {
+					assert.ErrorContains(t, err, href)
+				}
 				applied, err := st.IsMigrationAppliedContext(t.Context(), migrationCardDAVInferenceExportStateV3, 1)
 				require.NoError(err)
 				assert.False(t, applied)

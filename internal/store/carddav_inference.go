@@ -849,15 +849,16 @@ func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedT
 	if validateMetadata {
 		mappingsExpr = "e.resource_metadata"
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT `+mappingsExpr+` FROM vcard_resource_envelopes e WHERE e.person_id=? AND `+predicate, personID)
+	rows, err := tx.QueryContext(ctx, `SELECT e.source_resource_uid, `+mappingsExpr+` FROM vcard_resource_envelopes e WHERE e.person_id=? AND `+predicate, personID)
 	if err != nil {
 		return false, fmt.Errorf("load contact inference mappings: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	matched := false
 	for rows.Next() {
+		var href string
 		var raw sql.NullString
-		if err := rows.Scan(&raw); err != nil {
+		if err := rows.Scan(&href, &raw); err != nil {
 			return false, err
 		}
 		if !raw.Valid {
@@ -867,7 +868,7 @@ func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedT
 		if validateMetadata {
 			envelope, err := vcard.UnmarshalResourceMetadata([]byte(raw.String))
 			if err != nil {
-				return false, fmt.Errorf("decode contact inference metadata: %w", err)
+				return false, fmt.Errorf("decode contact inference metadata for %s: %w", href, err)
 			}
 			mappings = envelope.NativeMappings
 		} else if err := json.Unmarshal([]byte(raw.String), &mappings); err != nil {
