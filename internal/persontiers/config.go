@@ -124,3 +124,29 @@ func matches(value string, patterns []string) bool {
 	}
 	return false
 }
+
+// ExcludesAddress returns "calendar_room" or "automated_address" for an
+// excluded email address, or an empty string. Patterns match case-insensitively
+// against the domain and local part, respectively. Owner and phone/chat
+// exemptions are person-level rules applied by the evaluator.
+func (c Config) ExcludesAddress(address string) string {
+	local, domain, ok := splitEmailAddress(address)
+	if !ok {
+		return ""
+	}
+	if matches(domain, c.ExcludeDomainPatterns) {
+		return "calendar_room"
+	}
+	if matches(local, c.ExcludeAddressPatterns) {
+		return "automated_address"
+	}
+	return ""
+}
+
+func splitEmailAddress(address string) (local, domain string, ok bool) {
+	local, domain, ok = strings.Cut(strings.ToLower(address), "@")
+	if !ok || local == "" || domain == "" || strings.ContainsAny(address, " \t\r\n") {
+		return "", "", false
+	}
+	return local, domain, true
+}
