@@ -307,6 +307,24 @@ func TestMCPAttributeEditDuringApproval(t *testing.T) {
 	}
 }
 
+func TestMCPAttributeLargeConflictDuringApproval(t *testing.T) {
+	b, st, person := recordAttributesFixture(t)
+	attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "large_text", "label": "Large text", "value_type": "text", "field_type": "text"}})
+	large := strings.Repeat("x", 70<<10)
+	session := attributeSession(t, b, nil, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		_, err := st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: "large_text", Value: store.AttributeValue{Type: store.AttributeValueText, Text: &large}, Source: store.ProvenanceUser})
+		return attributeAccept(), err
+	}}, "2025-06-18")
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": "large_text", "value": map[string]any{"type": "text", "text": "chat"}}})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	assert.Contains(t, mcpDraftResultText(t, result), `"error":"attribute_value_conflict"`)
+	assert.Contains(t, mcpDraftResultText(t, result), `"operation_may_have_completed":false`)
+	values := attributeValues(t, st, person, "large_text")
+	require.Len(t, values, 1)
+	assert.Equal(t, large, *values[0].Value.Text)
+}
+
 func TestMCPAttributeExactTokens(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
