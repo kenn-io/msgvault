@@ -18,26 +18,26 @@ msgvault does not acquire tokens or expand their permissions.
 
 1. Store the Page token in a named environment variable on the **daemon host**.
 2. Add an [`[[instagram_comments]]` profile](../configuration.md#instagram-comments)
-   to your configuration:
+    to your configuration:
 
-   ```toml
-   [[instagram_comments]]
-   identifier = "example-account"
-   app_id = "9"
-   page_id = "100"
-   instagram_account_id = "200"
-   token_env = "EXAMPLE_INSTAGRAM_PAGE_TOKEN"
-   enabled = true
-   schedule = "*/30 * * * *"
-   ```
+    ```toml
+    [[instagram_comments]]
+    identifier = "example-account"
+    app_id = "9"
+    page_id = "100"
+    instagram_account_id = "200"
+    token_env = "EXAMPLE_INSTAGRAM_PAGE_TOKEN"
+    enabled = true
+    schedule = "*/30 * * * *"
+    ```
 
 3. Restart the daemon with that environment.
 4. Register and sync the account:
 
-   ```bash
-   msgvault source instagram-comments add example-account
-   msgvault source instagram-comments sync example-account --max-requests 1000
-   ```
+    ```bash
+    msgvault source instagram-comments add example-account
+    msgvault source instagram-comments sync example-account --max-requests 1000
+    ```
 
 During registration and each sync, msgvault verifies both the selected Page and
 its linked `instagram_business_account` against the configured account ID. If
@@ -125,10 +125,10 @@ You can archive media where other accounts tag your linked account.
 2. Restart the daemon.
 3. Register and sync the separate mentions source:
 
-   ```bash
-   msgvault source instagram-mentions add example-account
-   msgvault source instagram-mentions sync example-account
-   ```
+    ```bash
+    msgvault source instagram-mentions add example-account
+    msgvault source instagram-mentions sync example-account
+    ```
 
 The source is `instagram_mentions`, so this media stays apart from the
 account's own comments. The author's `@username` is the subject so you can
