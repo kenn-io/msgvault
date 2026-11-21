@@ -520,6 +520,8 @@ func (s *Server) writePersonError(w http.ResponseWriter, err error) {
 			"Person enrichment is being sent; retry the change after it finishes")
 	case errors.Is(err, store.ErrParticipantNotFound), errors.Is(err, store.ErrInvalidParticipantID):
 		writeError(w, http.StatusBadRequest, "invalid_participant_id", err.Error())
+	case errors.Is(err, store.ErrInvalidPersonNameText):
+		writeError(w, http.StatusBadRequest, "invalid_profile_value", err.Error())
 	default:
 		s.logger.Error("person profile operation failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "person_profile_failed", "Person profile operation failed")

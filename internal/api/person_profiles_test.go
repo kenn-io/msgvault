@@ -28,6 +28,17 @@ type fakePersonSearchEngine struct {
 	limits  []int
 }
 
+func TestPatchPersonRejectsInvalidDisplayName(t *testing.T) {
+	srv, st := newIdentityLinkTestServer(t)
+	person := createDirectoryHTTPPerson(t, st, "Alex Example", "alex@example.test", "friend", "Example", false)
+	path := fmt.Sprintf("%s/%d", peoplePath, person.ID)
+	response := personRequest(t, srv, http.MethodGet, path, nil, "")
+	require.Equal(t, http.StatusOK, response.Code)
+
+	response = personRequest(t, srv, http.MethodPatch, path, []byte(`{"display_name":"Alex\rExample"}`), response.Header().Get("ETag"))
+	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+}
+
 func (e *fakePersonSearchEngine) Search(
 	_ context.Context, query string, limit int,
 ) ([]personsearch.Result, error) {

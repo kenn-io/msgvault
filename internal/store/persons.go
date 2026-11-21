@@ -640,12 +640,12 @@ func (s *Store) UpdatePersonDisplayName(
 func (s *Store) UpdatePersonDisplayNameContext(
 	ctx context.Context, id, expectedRevision int64, displayName *string,
 ) (*Person, error) {
-	displayName = normalizePersonDisplayName(displayName)
 	if displayName != nil {
 		if err := validatePersonNameText("display_name", *displayName); err != nil {
 			return nil, err
 		}
 	}
+	displayName = normalizePersonDisplayName(displayName)
 	// The rename locks the identity row, this person, and then every
 	// relationship counterpart; relationship writes lock the same person
 	// rows in their own order. On PostgreSQL the two can deadlock, so a
