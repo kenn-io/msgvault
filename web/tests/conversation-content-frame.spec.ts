@@ -421,6 +421,19 @@ test.describe('designed archived mail', () => {
     await expect(page.locator('html')).toHaveClass(/dark/);
     await page.getByRole('grid', { name: 'Messages results' }).getByText(row.title).click();
     const content = page.locator('iframe[title="Message body"]').contentFrame();
+    const framePolicy = await content.locator('html').evaluate((html) => {
+      const brandURL = html.querySelector<HTMLLinkElement>('link[href*="brand"]')?.href;
+      const policy = html.querySelector<HTMLMetaElement>(
+        'meta[http-equiv="Content-Security-Policy"]'
+      )?.content ?? '';
+      const styleSource = policy
+        .split(';')
+        .map((directive) => directive.trim())
+        .find((directive) => directive.startsWith('style-src '));
+      return { brandURL, styleSource };
+    });
+    expect(framePolicy.brandURL).toBeTruthy();
+    expect(framePolicy.styleSource?.split(/\s+/)).toContain(framePolicy.brandURL);
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(236, 236, 241)');
     let appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
     await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
