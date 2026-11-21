@@ -627,8 +627,10 @@ func (g knownGroup) compare(other knownGroup) int {
 func (f *Forge) checkKnown(ctx context.Context, state *cursor, owners forge.OwnerFilter, known forge.KnownThreads, page pageFunc) error {
 	groups := map[knownGroup]map[int]forge.KnownThread{}
 	err := known.Each(ctx, func(thread forge.KnownThread) error {
+		// The project's owner may have changed since the thread was
+		// archived, so checkGroup decides by its current owner.
 		loc, ok := locatorOf(thread.Ref)
-		if !ok || !owners.Allows(thread.Ref.Owner) {
+		if !ok {
 			return nil
 		}
 		group := knownGroup{Project: loc.project, Resource: loc.resource}
@@ -694,6 +696,12 @@ func (f *Forge) checkGroup(ctx context.Context, state *cursor, group knownGroup,
 			readFrom := thread.ReadAt.Add(-clockSlack)
 			if readFrom.Before(through) && !thread.CheckedAt.Before(cur.Through.Add(-clockSlack)) {
 				through = readFrom
+			}
+			// A thread archived under an owner the filters exclude went
+			// unchecked while its project stayed there, so its changes
+			// since the version archived are read.
+			if !owners.Allows(thread.Ref.Owner) && thread.Ref.UpdatedAt.Before(through) {
+				through = thread.Ref.UpdatedAt
 			}
 		}
 		items, gone, err := f.changedSince(ctx, through, group, batch)
