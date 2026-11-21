@@ -51,9 +51,9 @@ require (
 	github.com/spf13/pflag v1.1.0
 	github.com/stretchr/testify v1.12.1
 	github.com/teambition/rrule-go v1.8.2
-	go.kenn.io/docbank v0.17.1-0.20261120154700-0519f900df98
+	go.kenn.io/docbank v0.17.1-0.20261121122856-f27c76bbd190
 	go.kenn.io/kata v0.23.0
-	go.kenn.io/kit v0.56.0
+	go.kenn.io/kit v0.58.1
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
