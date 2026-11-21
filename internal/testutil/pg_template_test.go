@@ -1,13 +1,11 @@
 package testutil
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -214,40 +212,19 @@ func TestCloneDropFailureIsLogged(t *testing.T) {
 	address := listener.Addr().String()
 	require.NoError(t, listener.Close())
 
-	reader, writer := io.Pipe()
-	logged := make(chan string, 1)
-	done := make(chan struct{})
 	name := "msgvault_tc_87654321_fedcba0987654321_fedcba0987654321"
-	go func() {
-		defer close(done)
-		scanner := bufio.NewScanner(reader)
-		for scanner.Scan() {
-			if strings.Contains(scanner.Text(), name) {
-				logged <- scanner.Text()
-				return
-			}
-		}
-	}()
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(writer, nil)))
-	t.Cleanup(func() {
-		slog.SetDefault(previous)
-		_ = writer.Close()
-		<-done
-		_ = reader.Close()
-	})
+	session, err := sql.Open("pgx", "postgres://test@"+address+"/test?sslmode=disable")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	var logged bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logged, nil))
+	dropCloneLogged(session, name, logger)
 
-	cloneDrops <- cloneDrop{dbURL: "postgres://test@" + address + "/test?sslmode=disable", name: name}
-	select {
-	case line := <-logged:
-		var record map[string]any
-		require.NoError(t, json.Unmarshal([]byte(line), &record))
-		assert.Equal(t, "WARN", record["level"])
-		assert.Equal(t, name, record["database"])
-		assert.NotEmpty(t, record["error"])
-	case <-time.After(10 * time.Second):
-		assert.Fail(t, "failed clone drop was not logged")
-	}
+	var record map[string]any
+	require.NoError(t, json.Unmarshal(logged.Bytes(), &record))
+	assert.Equal(t, "WARN", record["level"])
+	assert.Equal(t, name, record["database"])
+	assert.NotEmpty(t, record["error"])
 }
 
 // TestPostgresFixtureIssuesNoDDLOnceTemplateExists is the invariant that

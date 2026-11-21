@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"regexp"
 	"sync"
 	"time"
@@ -86,6 +87,7 @@ type cloneDrop struct {
 var cloneDrops = make(chan cloneDrop, 16)
 
 func init() {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	// Start outside any synctest bubble. pgx ties a connection's timers to the
 	// bubble that dialed it, so the worker dials its own session rather than
 	// reuse the owner or admin pool,
@@ -103,18 +105,18 @@ func init() {
 				session = stdlib.OpenDB(*config)
 				sessions[request.dbURL] = session
 			}
-			dropCloneLogged(session, request.name)
+			dropCloneLogged(session, request.name, logger)
 		}
 	}()
 }
 
 // dropCloneLogged drops one clone within a minute and warns when it fails, so
 // a stalled or misconfigured server is visible while tests continue.
-func dropCloneLogged(session *sql.DB, name string) {
+func dropCloneLogged(session *sql.DB, name string, logger *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := dropOwnedDatabaseOn(ctx, session, name); err != nil {
-		slog.Warn("drop PostgreSQL test clone", "database", name, "error", err)
+		logger.Warn("drop PostgreSQL test clone", "database", name, "error", err)
 	}
 }
 
