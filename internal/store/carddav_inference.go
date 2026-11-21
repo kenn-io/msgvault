@@ -767,21 +767,7 @@ func (s *Store) backfillPersonCardDAVInferenceV2Tx(ctx context.Context, tx *logg
 func (s *Store) personHasPendingUpdateInferenceTx(
 	ctx context.Context, tx *loggedTx, personID int64, history personInferenceExportProjection,
 ) (bool, error) {
-	inferredRows := map[string]map[int64]bool{
-		personNamesTableName:         {},
-		personContactPointsTableName: {},
-		personAddressesTableName:     {},
-	}
-	for table, components := range map[string][]personInferenceExportComponent{
-		personNamesTableName: history.Names, personContactPointsTableName: history.ContactPoints,
-		personAddressesTableName: history.Addresses,
-	} {
-		for _, component := range components {
-			if component.Inferred {
-				inferredRows[table][component.RowID] = true
-			}
-		}
-	}
+	inferredRows := inferredContactRows(history)
 	var pendingMetadata []byte
 	err := tx.QueryRowContext(ctx, `SELECT outgoing_envelope_metadata FROM carddav_publications
         WHERE person_id=? AND pending_operation=?`, personID, CardDAVMutationUpdate).Scan(&pendingMetadata)
@@ -868,6 +854,7 @@ func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedT
 		return false, fmt.Errorf("load contact inference mappings: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	matched := false
 	for rows.Next() {
 		var raw sql.NullString
 		if err := rows.Scan(&raw); err != nil {
@@ -888,11 +875,15 @@ func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedT
 		}
 		for _, mapping := range mappings {
 			if byTable[mapping.Table][mapping.RowID] {
-				return true, nil
+				matched = true
+				if !validateMetadata {
+					return true, nil
+				}
+				break
 			}
 		}
 	}
-	return false, rows.Err()
+	return matched, rows.Err()
 }
 
 func (s *Store) invalidateLegacyCardDAVConflictCreatesTx(ctx context.Context, tx *loggedTx, personID int64) (bool, error) {

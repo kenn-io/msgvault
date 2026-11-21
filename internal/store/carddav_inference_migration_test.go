@@ -480,7 +480,8 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 	for _, tc := range []struct {
 		name                                                                 string
 		publicationAfterV2, differentMapping, otherPerson, remote, ambiguous bool
-		declared, current, unsupportedMetadata, review, multiple, approved   bool
+		declared, current, unsupportedMetadata, laterUnsupported             bool
+		review, multiple, approved                                           bool
 	}{
 		{name: "retired", review: true},
 		{name: "approved before retirement tracking", review: true, approved: true},
@@ -493,6 +494,7 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 		{name: "declared", declared: true},
 		{name: "current", current: true},
 		{name: "unsupported metadata", unsupportedMetadata: true},
+		{name: "unsupported metadata after match", laterUnsupported: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -581,9 +583,18 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 				_, err = st.db.Exec(st.Rebind(`UPDATE vcard_resource_envelopes SET resource_metadata=`+st.dialect.JSONBindExpr()+` WHERE person_id=?`), `{"format_version":999}`, personID)
 				require.NoError(err)
 			}
+			if tc.laterUnsupported {
+				otherHref := book.CanonicalURL + "later.vcf"
+				_, err = st.db.Exec(st.Rebind(`INSERT INTO vcard_resource_envelopes (person_id, canonical_person_uid, source_ref, source_resource_uid, original_raw_bytes, stored_body, resource_metadata, content_hash, etag)
+					SELECT person_id, canonical_person_uid, source_ref, ?, original_raw_bytes, stored_body, `+st.dialect.JSONBindExpr()+`, content_hash, etag FROM vcard_resource_envelopes WHERE person_id=?`), otherHref, `{"format_version":999}`, personID)
+				require.NoError(err)
+				_, err = st.db.Exec(st.Rebind(`INSERT INTO carddav_resources(address_book_id, href, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id)
+					SELECT address_book_id, ?, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id FROM carddav_resources WHERE person_id=?`), otherHref, personID)
+				require.NoError(err)
+			}
 			_, err = st.db.Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name=?`), migrationCardDAVInferenceExportStateV3)
 			require.NoError(err)
-			if tc.unsupportedMetadata {
+			if tc.unsupportedMetadata || tc.laterUnsupported {
 				require.ErrorContains(st.InitSchema(), "unsupported vCard resource metadata format 999")
 				applied, err := st.IsMigrationAppliedContext(t.Context(), migrationCardDAVInferenceExportStateV3, 1)
 				require.NoError(err)
