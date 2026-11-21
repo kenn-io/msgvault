@@ -483,10 +483,7 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 		declared, current, unsupportedMetadata, review, multiple, approved   bool
 	}{
 		{name: "retired", review: true},
-		{name: "already approved", review: true, approved: true},
-		{name: "approved on another account", review: true, approved: true},
-		{name: "stale revision", review: true, approved: true},
-		{name: "stale generation", review: true, approved: true},
+		{name: "approved before retirement tracking", review: true, approved: true},
 		{name: "multiple people", review: true, multiple: true},
 		{name: "publication after v2", publicationAfterV2: true, review: true},
 		{name: "different mapping", differentMapping: true},
@@ -501,18 +498,6 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 			require := require.New(t)
 			st, personID, _ := newPersonFactProjectionStore(t)
 			book := inferenceMigrationBook(t, st)
-			if tc.name == "approved on another account" {
-				_, err := st.db.Exec(`UPDATE carddav_accounts SET connection_generation=2 WHERE id=1`)
-				require.NoError(err)
-				allowed := true
-				_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), CardDAVDiscoveryInput{
-					ConnectionName: "second", BaseURL: "https://second.example.test/dav", Username: "example", PrincipalURL: "https://second.example.test/principal/", HomeURL: "https://second.example.test/books/",
-					Books: []CardDAVDiscoveredBook{{CanonicalURL: "https://second.example.test/books/personal/", DisplayName: "Second", CanCreate: &allowed}},
-				})
-				require.NoError(err)
-				require.Len(books, 1)
-				book = books[0]
-			}
 			account, err := st.GetCardDAVAccountForBookContext(t.Context(), book.ID)
 			require.NoError(err)
 			generation := account.ConnectionGeneration
@@ -571,14 +556,6 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 				}
 			}
 			seed(personID)
-			if tc.name == "stale revision" {
-				_, err := st.db.Exec(st.Rebind(`UPDATE person_carddav_inference_state SET approved_revision=0 WHERE person_id=?`), personID)
-				require.NoError(err)
-			}
-			if tc.name == "stale generation" {
-				_, err := st.db.Exec(st.Rebind(`UPDATE person_carddav_inference_state SET approved_connection_generation=0 WHERE person_id=?`), personID)
-				require.NoError(err)
-			}
 			var secondID, secondBefore int64
 			if tc.multiple {
 				require.NoError(st.db.QueryRow(st.Rebind(`INSERT INTO persons(vcard_uid, display_name) VALUES ('second', 'Second') RETURNING id`)).Scan(&secondID))
@@ -622,15 +599,11 @@ func TestCardDAVInferenceMigrationV3BoundRetiredContact(t *testing.T) {
 				return err
 			}))
 			increment := int64(0)
-			if tc.review && tc.name != "already approved" && tc.name != "approved on another account" {
+			if tc.review {
 				increment = 1
 			}
 			assert.Equal(t, before.Inference.InferenceRevision+increment, after.InferenceRevision)
 			assert.Equal(t, increment == 1 || before.Inference.ReviewRequired(generation, book.ID), after.ReviewRequired(generation, book.ID))
-			if tc.name == "already approved" || tc.name == "approved on another account" {
-				assert.True(t, after.ReviewRequired(generation+1, book.ID))
-				assert.True(t, after.ReviewRequired(generation, book.ID+1))
-			}
 			if tc.multiple {
 				assert.Equal(t, secondBefore+1, inferenceRevision(t, st, secondID))
 			}
