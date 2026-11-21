@@ -280,18 +280,21 @@ func TestInferenceMigrationV3ReviewsResolvedKeepLocal(t *testing.T) {
 			require.NoError(err)
 			require.Equal(int64(1), removed)
 			require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{IsWriteTarget: true, IsSubscribed: true}))
+			// Run v2 with v3 deferred, then check the old upgrade missed this card.
+			_, err = st.DB().Exec(`INSERT INTO applied_migrations(name, version) VALUES ('carddav_inference_export_state_v3', 1)`)
+			require.NoError(err)
+			require.NoError(st.InitSchema())
+			review, err := service.PreviewPublication(t.Context(), personID)
+			require.NoError(err)
+			assert.False(t, review.ReviewRequired)
+			_, err = st.DB().Exec(`DELETE FROM applied_migrations WHERE name='carddav_inference_export_state_v3'`)
+			require.NoError(err)
 			if publication {
-				// Run v2 before the desired publication is added.
-				_, err = st.DB().Exec(`INSERT INTO applied_migrations(name, version) VALUES ('carddav_inference_export_state_v3', 1)`)
-				require.NoError(err)
-				require.NoError(st.InitSchema())
-				_, err = st.DB().Exec(`DELETE FROM applied_migrations WHERE name='carddav_inference_export_state_v3'`)
-				require.NoError(err)
 				_, err = st.DB().Exec(st.Rebind(`INSERT INTO carddav_publications(person_id, desired, address_book_id, href) VALUES (?, TRUE, ?, ?)`), personID, book.ID, mapping.Href)
 				require.NoError(err)
 			}
 			require.NoError(st.InitSchema())
-			review, err := service.PreviewPublication(t.Context(), personID)
+			review, err = service.PreviewPublication(t.Context(), personID)
 			require.NoError(err)
 			assert.True(t, review.ReviewRequired)
 			puts := fixture.puts
