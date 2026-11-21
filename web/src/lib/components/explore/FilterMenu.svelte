@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { autoReposition, Button, Checkbox, escapeLayer } from '@kenn-io/kit-ui';
+  import { autoReposition, Button, Checkbox, dismissable } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack, type Snippet } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -80,7 +80,11 @@
 
   $effect(() => {
     if (!open) return;
-    return escapeLayer(() => { open = false; triggerElement?.querySelector('button')?.focus(); }, panelElement);
+    return dismissable({
+      owners: () => [panelElement, triggerElement],
+      dismiss: () => (open = false),
+      escapeFocus: () => triggerElement?.querySelector('button'),
+    });
   });
 
   $effect(() => {
@@ -130,10 +134,6 @@
     else onChange([]);
   }
 </script>
-
-<svelte:document onmousedown={(event) => {
-  if (open && ![panelElement, triggerElement].some((element) => element?.contains(event.target as Node))) open = false;
-}} />
 
 <span class="filter-trigger" bind:this={triggerElement}>
   <Button
