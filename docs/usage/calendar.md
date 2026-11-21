@@ -144,26 +144,26 @@ Authorize writes separately from read-only sync:
 
 1. Request write consent for the account:
 
-   ```bash
-   msgvault add-calendar person@example.com --write
-   ```
+    ```bash
+    msgvault add-calendar person@example.com --write
+    ```
 
-   Re-consent preserves your existing Gmail grant, including a Gmail grant
-   narrowed to read-only, along with other already granted Google scopes. Keep
-   them checked on the consent screen. For headless setup, follow the headless
-   steps below with `--write` on both machines. Workspace service accounts also
-   need the `calendar.events` scope in their domain-wide delegation grant.
+    Re-consent preserves your existing Gmail grant, including a Gmail grant
+    narrowed to read-only, along with other already granted Google scopes. Keep
+    them checked on the consent screen. For headless setup, follow the headless
+    steps below with `--write` on both machines. Workspace service accounts also
+    need the `calendar.events` scope in their domain-wide delegation grant.
 
 2. Enable the source and list the exact writable calendar IDs in `config.toml`:
 
-   ```toml
-   [[gcal]]
-   email = "person@example.com"
-   enabled = true
-   write_calendars = ["team@example.com"]
-   invite_calendars = ["team@example.com"]
-   calendar_aliases = { team = "team@example.com" }
-   ```
+    ```toml
+    [[gcal]]
+    email = "person@example.com"
+    enabled = true
+    write_calendars = ["team@example.com"]
+    invite_calendars = ["team@example.com"]
+    calendar_aliases = { team = "team@example.com" }
+    ```
 
 3. Restart the daemon after changing its configuration.
 
