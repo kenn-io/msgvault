@@ -79,24 +79,9 @@ func (s *Store) migrateAttributeValueJSONSQLite(ctx context.Context) (err error)
 		if err != nil {
 			return fmt.Errorf("inspect %s indexes: %w", table, err)
 		}
-		columns, err := func() ([]string, error) {
-			rows, err := tx.QueryContext(ctx, `SELECT name FROM pragma_table_info(?) ORDER BY cid`, table)
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = rows.Close() }()
-			var columns []string
-			for rows.Next() {
-				var name string
-				if err := rows.Scan(&name); err != nil {
-					return nil, err
-				}
-				columns = append(columns, `"`+strings.ReplaceAll(name, `"`, `""`)+`"`)
-			}
-			return columns, rows.Err()
-		}()
+		columns, err := schemaColumns(ctx, tx, "main", table)
 		if err != nil {
-			return fmt.Errorf("inspect %s columns: %w", table, err)
+			return err
 		}
 		start := strings.Index(definition, "(")
 		if start < 0 || !strings.Contains(definition, "value_json        JSON") {
@@ -104,7 +89,7 @@ func (s *Store) migrateAttributeValueJSONSQLite(ctx context.Context) (err error)
 		}
 		temp := table + "_json_upgrade"
 		definition = "CREATE TABLE " + temp + " " + strings.Replace(definition[start:], "value_json        JSON", "value_json        TEXT", 1)
-		columnList := strings.Join(columns, ", ")
+		columnList := strings.Join(quoteIdentifiers(columns), ", ")
 		for _, statement := range []string{definition, `INSERT INTO ` + temp + ` (` + columnList + `) SELECT ` + columnList + ` FROM ` + table, `UPDATE ` + temp + ` SET value_json = CAST(value_json AS TEXT) WHERE value_json IS NOT NULL`, `DROP TABLE ` + table, `ALTER TABLE ` + temp + ` RENAME TO ` + table} {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("rebuild %s: %w", table, err)

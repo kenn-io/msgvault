@@ -16,7 +16,6 @@ import (
 )
 
 const attributeSourceKey = "source"
-const attributeInvalidArguments = "invalid_arguments"
 const attributeSetOperation = "set_person_attribute"
 
 func recordAttributeMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
@@ -155,7 +154,7 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 	}
 	method, path, options, ok := attributeRequest(name, args)
 	if !ok {
-		return operationFailure(attributeInvalidArguments, false), true, nil
+		return operationFailure(invalidArguments, false), true, nil
 	}
 	var result *mcpserver.OperationResult
 	var err error
@@ -211,7 +210,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 	}
 	_, _, options, ok := attributeRequest(name, args)
 	if !ok {
-		return "", true, &mcpserver.OperationRefusalError{Code: attributeInvalidArguments}
+		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 	}
 	var current any
 	var suppliedByAssistant []string
@@ -224,7 +223,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 			}
 			request, ok := options.(*generated.SetPersonAttributeRequestOptions)
 			if !ok || request.Body == nil || request.Body.Source == nil || request.Body.Actor == nil {
-				return "", true, &mcpserver.OperationRefusalError{Code: attributeInvalidArguments}
+				return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 			}
 			body := request.Body
 			args[attributeSourceKey] = string(*body.Source)
