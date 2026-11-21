@@ -213,20 +213,6 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 	}
 	var current any
 	if name == attributeSetOperation || name == "clear_person_attribute" {
-		slug, _ := args["slug"].(string)
-		listing, _, err := b.executeRecordAttributeOperation(ctx, "list_person_attributes", map[string]any{"person_id": args["person_id"], "slug": strings.TrimSpace(slug)})
-		if err != nil || listing == nil || listing.IsError {
-			return "", true, attributeContextRefusal(listing)
-		}
-		list, ok := listing.Output.(generated.PersonAttributesResponse)
-		if !ok {
-			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
-		}
-		for _, group := range list.Attributes {
-			if group.Definition.UniversalID == store.AttributeUniversalIDNotes {
-				return "", true, &mcpserver.OperationRefusalError{Code: "attribute_notes_use_update_person_notes"}
-			}
-		}
 		if name == attributeSetOperation {
 			request, ok := options.(*generated.SetPersonAttributeRequestOptions)
 			if !ok || request.Body == nil || request.Body.Source == nil || request.Body.Actor == nil {
@@ -245,6 +231,21 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		preview, ok := result.Output.(generated.PersonAttributeWrite)
 		if !ok || (name == attributeSetOperation && preview.Value == nil) || (name == "clear_person_attribute" && preview.Superseded == nil) {
 			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		}
+		value := preview.Value
+		if value == nil {
+			value = preview.Superseded
+		}
+		definition, _, err := b.executeRecordAttributeOperation(ctx, "get_attribute_definition", map[string]any{"definition_id": value.DefinitionID})
+		if err != nil || definition == nil || definition.IsError {
+			return "", true, attributeContextRefusal(definition)
+		}
+		receipt, ok := definition.Output.(mcpserver.AttributeDefinitionReceipt)
+		if !ok {
+			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		}
+		if receipt.Definition.UniversalID == store.AttributeUniversalIDNotes {
+			return "", true, &mcpserver.OperationRefusalError{Code: "attribute_notes_use_update_person_notes"}
 		}
 		var ordinal int64
 		var superseded any

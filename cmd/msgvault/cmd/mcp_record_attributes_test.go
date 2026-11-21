@@ -127,6 +127,9 @@ func TestMCPAttributeNotesFallbackRouting(t *testing.T) {
 		return result
 	}
 	assert.Contains(mcpDraftResultText(t, call("set_person_attribute", map[string]any{"person_id": person, "slug": notes, "value": map[string]any{"type": "text", "text": "x"}})), "attribute_notes_use_update_person_notes")
+	text := "existing note"
+	_, err = st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: notes, Value: store.AttributeValue{Type: store.AttributeValueText, Text: &text}, Source: store.ProvenanceUser})
+	require.NoError(err)
 	assert.Contains(mcpDraftResultText(t, call("clear_person_attribute", map[string]any{"person_id": person, "slug": notes})), "attribute_notes_use_update_person_notes")
 	assert.Empty(approvals)
 
@@ -402,4 +405,30 @@ func TestMCPAttributeExactTokens(t *testing.T) {
 		}
 	}
 	assert.Contains(response, `"json":1e400`)
+}
+
+func TestMCPClearAttributeWithLargeSiblings(t *testing.T) {
+	b, st, person := recordAttributesFixture(t)
+	created := attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "large_multi", "label": "Large multi", "value_type": "text", "field_type": "text", "cardinality": "multi"}})
+	require.False(t, created.IsError)
+	large := strings.Repeat("x", 600<<10)
+	for _, value := range []string{"small", large, large} {
+		_, err := st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: "large_multi", Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}, Source: store.ProvenanceUser})
+		require.NoError(t, err)
+	}
+	values := attributeValues(t, st, person, "large_multi")
+	require.Len(t, values, 3)
+	attributeError(t, attributeOperation(t, b, "list_person_attributes", map[string]any{"person_id": person, "slug": "large_multi"}), "operation_response_limit_exceeded")
+	session := attributeSession(t, b, nil, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		return attributeAccept(), nil
+	}}, "2025-06-18")
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "clear_person_attribute", Arguments: map[string]any{"person_id": person, "slug": "large_multi", "ordinal": values[0].Ordinal}})
+	require.NoError(t, err)
+	require.False(t, result.IsError, "%v", result.Content)
+	remaining := attributeValues(t, st, person, "large_multi")
+	require.Len(t, remaining, 2)
+	assert.Equal(t, values[1].ID, remaining[0].ID)
+	assert.Equal(t, large, *remaining[0].Value.Text)
+	assert.Equal(t, values[2].ID, remaining[1].ID)
+	assert.Equal(t, large, *remaining[1].Value.Text)
 }
