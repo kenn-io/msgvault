@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -9,8 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
-	"go.kenn.io/msgvault/internal/vcard"
-	"go.kenn.io/msgvault/internal/vcardmap"
 )
 
 func TestStandalonePersonDuplicateRefusal(t *testing.T) {
@@ -637,7 +636,7 @@ func TestRetiringInferredNameInvalidatesDisplayNameConsumers(t *testing.T) {
 		"clearing a mirrored display name invalidates related-card snapshots")
 }
 
-func TestEnrichmentCreatedFormattedNameTracksRepeatedDisplayNameEdits(t *testing.T) {
+func TestDisplayNameEditsRetireEnrichmentCreatedName(t *testing.T) {
 	firstName := "Alex First"
 	secondName := "Alex Second"
 	for _, tc := range []struct {
@@ -646,13 +645,13 @@ func TestEnrichmentCreatedFormattedNameTracksRepeatedDisplayNameEdits(t *testing
 		want    *string
 	}{
 		{
-			name:    "second rename updates the current formatted name",
+			name:    "second rename sets the display name",
 			changes: []*string{&firstName, &secondName},
 			want:    &secondName,
 		},
 		{
-			name:    "clearing retires the rename-created formatted name",
-			changes: []*string{&firstName, nil},
+			name:    "clearing removes the display name",
+			changes: []*string{nil},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -670,15 +669,48 @@ func TestEnrichmentCreatedFormattedNameTracksRepeatedDisplayNameEdits(t *testing
 
 			names, err := f.Store.ListPersonNamesContext(t.Context(), person.ID, true)
 			require.NoError(err)
-			if tc.want == nil {
-				assert.Empty(names)
-				return
-			}
-			require.Len(names, 1)
-			assert.Equal(store.PersonNameFormatted, names[0].NameKind)
-			require.NotNil(names[0].Formatted)
-			assert.Equal(*tc.want, *names[0].Formatted)
+			assert.Empty(names)
+			assert.Equal(tc.want, person.DisplayName)
+			history, err := f.Store.GetPersonProfileHistoryContext(t.Context(), person.ID)
+			require.NoError(err)
+			require.Len(history.Names, 1)
+			assert.NotNil(history.Names[0].Envelope.SupersededAt)
 		})
+	}
+}
+
+func TestDisplayNameEditPreservesEqualSavedNames(t *testing.T) {
+	for _, source := range []store.Provenance{store.ProvenanceUser, store.ProvenanceEnrichment} {
+		for _, owner := range []store.Provenance{store.ProvenanceUser, store.ProvenanceEnrichment} {
+			for _, clear := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/clear=%t", source, owner, clear), func(t *testing.T) {
+					f := storetest.New(t)
+					person, err := f.Store.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+						Name: "Alex Example", Source: owner,
+					})
+					require.NoError(t, err)
+					saved, err := f.Store.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{
+						NameKind: store.PersonNameFormatted, Formatted: new("Alex Example"),
+						Language: new("en"), OriginalValue: "Alex Example",
+						Envelope: store.ValueEnvelopeInput{Source: source, VCard: store.VCardIdentity{Property: "FN", PropID: new("saved")}},
+					})
+					require.NoError(t, err)
+					person, err = f.Store.GetPersonContext(t.Context(), person.ID)
+					require.NoError(t, err)
+					var label *string
+					if !clear {
+						label = new("Alex Renamed")
+					}
+					person, err = f.Store.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, label)
+					require.NoError(t, err)
+					assert.Equal(t, label, person.DisplayName)
+					names, err := f.Store.ListPersonNamesContext(t.Context(), person.ID, true)
+					require.NoError(t, err)
+					require.Len(t, names, 1)
+					assert.Equal(t, *saved, names[0])
+				})
+			}
+		}
 	}
 }
 
@@ -704,15 +736,9 @@ func TestDisplayNameEditPreservesIndependentInferredAlternateNames(t *testing.T)
 
 	names, err := f.Store.ListPersonNamesContext(t.Context(), person.ID, true)
 	require.NoError(err)
-	require.Len(names, 2)
-	var preserved *store.PersonName
-	for index := range names {
-		if names[index].Envelope.ID == alternate.Envelope.ID {
-			preserved = &names[index]
-			break
-		}
-	}
-	require.NotNil(preserved)
+	require.Len(names, 1)
+	preserved := &names[0]
+	assert.Equal(alternate.Envelope.ID, preserved.Envelope.ID)
 	assert.Equal(store.ProvenanceEnrichment, preserved.Envelope.Source)
 	assert.Equal("Alexandre Sample", preserved.OriginalValue)
 	require.NotNil(preserved.Formatted)
@@ -721,130 +747,37 @@ func TestDisplayNameEditPreservesIndependentInferredAlternateNames(t *testing.T)
 	assert.Equal("fr", *preserved.Language)
 }
 
-func TestDisplayNameEditPreservesMatchingNameMetadataAndLanguageVariants(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+func TestDisplayNameEditPreservesUnlinkedNamesOnBothPeople(t *testing.T) {
 	f := storetest.New(t)
-	person, err := f.Store.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
-		Name: "Alex Example", Source: store.ProvenanceUser,
-	})
-	require.NoError(err)
-
-	englishPref := 1
-	englishLanguage, englishPropID, englishAltID := "en", "fn-en", "name-1"
-	originalEnglish, err := f.Store.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{
-		NameKind: store.PersonNameFormatted, Formatted: new("Alex Example"),
-		Language: &englishLanguage, OriginalValue: "Alex Example",
-		Envelope: store.ValueEnvelopeInput{
-			Pref:   &englishPref,
-			VCard:  store.VCardIdentity{Property: "FN", PropID: &englishPropID, AltID: &englishAltID},
-			Source: store.ProvenanceEnrichment,
-		},
-	})
-	require.NoError(err)
-	pref := 2
-	language, script, sortAs := "fr", "Latn", "Example,Alex"
-	typeLabel, group, propID, altID := "work", "item2", "fn-fr", "name-2"
-	localized, err := f.Store.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{
-		NameKind: store.PersonNameFormatted, Formatted: new("Alex Example"),
-		Language: &language, Script: &script, SortAs: &sortAs, OriginalValue: "Alex Example",
-		Envelope: store.ValueEnvelopeInput{
-			Pref: &pref, TypeLabel: &typeLabel, TypeTokens: []string{"work", "voice"},
-			VCard: store.VCardIdentity{
-				Property: "FN", Group: &group, PropID: &propID,
-				PID: []string{"1.2"}, AltID: &altID,
-			}, Source: store.ProvenanceEnrichment,
-		},
-	})
-	require.NoError(err)
-	person, err = f.Store.GetPersonContext(t.Context(), person.ID)
-	require.NoError(err)
-
-	_, err = f.Store.UpdatePersonDisplayNameContext(
-		t.Context(), person.ID, person.Revision, new("Alex Renamed"),
-	)
-	require.NoError(err)
-
-	snapshot, err := f.Store.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
-	require.NoError(err)
-	require.Len(snapshot.Profile.Names, 2)
-	var english, localizedSuccessor *store.PersonName
-	for index := range snapshot.Profile.Names {
-		name := &snapshot.Profile.Names[index]
-		require.NotNil(name.Formatted)
-		require.NotNil(name.Language)
-		assert.Equal("Alex Renamed", *name.Formatted)
-		assert.Equal(store.ProvenanceUser, name.Envelope.Source)
-		switch *name.Language {
-		case "en":
-			english = name
-		case "fr":
-			localizedSuccessor = name
-		default:
-			assert.Fail("unexpected language variant", *name.Language)
-		}
+	var people [2]*store.Person
+	var saved [2]*store.PersonName
+	for i := range people {
+		person, err := f.Store.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+			Name: "Alex Example", Source: store.ProvenanceUser,
+		})
+		require.NoError(t, err)
+		people[i] = person
+		saved[i], err = f.Store.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{
+			NameKind: store.PersonNameFormatted, Formatted: new("Alex Example"), OriginalValue: "Alex Example",
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+		})
+		require.NoError(t, err)
+		people[i], err = f.Store.GetPersonContext(t.Context(), person.ID)
+		require.NoError(t, err)
 	}
-	require.NotNil(english)
-	require.NotNil(localizedSuccessor)
-	assert.Equal(originalEnglish.Envelope.VCard, english.Envelope.VCard)
-	require.NotNil(english.Envelope.Pref)
-	assert.Equal(1, *english.Envelope.Pref)
-	assert.Equal(localized.Envelope.VCard, localizedSuccessor.Envelope.VCard)
-	require.NotNil(localizedSuccessor.Envelope.Pref)
-	assert.Equal(2, *localizedSuccessor.Envelope.Pref)
-	require.NotNil(localizedSuccessor.Envelope.TypeLabel)
-	assert.Equal("work", *localizedSuccessor.Envelope.TypeLabel)
-	assert.Equal([]string{"work", "voice"}, localizedSuccessor.Envelope.TypeTokens)
-	require.NotNil(localizedSuccessor.Script)
-	assert.Equal("Latn", *localizedSuccessor.Script)
-	require.NotNil(localizedSuccessor.SortAs)
-	assert.Equal("Example,Alex", *localizedSuccessor.SortAs)
-}
 
-func TestDisplayNameEditKeepsScopedVCardNameIdentityOnItsResource(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	person, err := f.Store.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
-		Name: "Alex Example", Source: store.ProvenanceUser,
-	})
-	require.NoError(err)
-
-	group, propID := "item1", "name-1"
-	sourceRef, sourceUID := "book-origin", "origin.vcf"
-	_, err = f.Store.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{
-		NameKind: store.PersonNameFormatted, Formatted: new("Alex Example"),
-		OriginalValue: "Alex Example",
-		Envelope: store.ValueEnvelopeInput{
-			Source: store.ProvenanceUser, SourceRef: &sourceRef, SourceResourceUID: &sourceUID,
-			VCard: store.VCardIdentity{Property: "FN", Group: &group, PropID: &propID},
-		},
-	})
-	require.NoError(err)
-	person, err = f.Store.GetPersonContext(t.Context(), person.ID)
-	require.NoError(err)
-	_, err = f.Store.UpdatePersonDisplayNameContext(
-		t.Context(), person.ID, person.Revision, new("Alex Renamed"),
-	)
-	require.NoError(err)
-
-	snapshot, err := f.Store.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
-	require.NoError(err)
-	require.Len(snapshot.Profile.Names, 1)
-	name := snapshot.Profile.Names[0]
-	assert.Equal(&sourceRef, name.Envelope.SourceRef)
-	assert.Equal(&sourceUID, name.Envelope.SourceResourceUID)
-
-	otherResource, err := vcard.ParseResourceEnvelope([]byte(
-		"BEGIN:VCARD\r\nVERSION:4.0\r\nitem1.FN;PROP-ID=name-1:Unrelated Card Name\r\nEND:VCARD\r\n",
-	))
-	require.NoError(err)
-	otherResource.SourceRef = "book-other"
-	otherResource.SourceResourceUID = "other.vcf"
-	projected, err := vcardmap.ProjectPersonEnvelope(*snapshot, otherResource)
-	require.NoError(err)
-	assert.Contains(string(projected.StoredBody), "item1.FN;PROP-ID=name-1:Unrelated Card Name\r\n")
-	assert.Contains(string(projected.StoredBody), "FN:Alex Renamed\r\n")
+	renamed, err := f.Store.UpdatePersonDisplayNameContext(t.Context(), people[0].ID, people[0].Revision, new("Alex Renamed"))
+	require.NoError(t, err)
+	assert.Equal(t, new("Alex Renamed"), renamed.DisplayName)
+	other, err := f.Store.GetPersonContext(t.Context(), people[1].ID)
+	require.NoError(t, err)
+	assert.Equal(t, people[1].DisplayName, other.DisplayName)
+	for i, person := range people {
+		names, err := f.Store.ListPersonNamesContext(t.Context(), person.ID, true)
+		require.NoError(t, err)
+		require.Len(t, names, 1)
+		assert.Equal(t, *saved[i], names[0])
+	}
 }
 
 func TestInferredReplacementChangingOnlyARenderedParameterNeedsReview(t *testing.T) {
