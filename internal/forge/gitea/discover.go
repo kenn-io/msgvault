@@ -376,6 +376,16 @@ func threadKey(repoID int64, number int) string {
 	return strconv.FormatInt(repoID, 10) + "#" + strconv.Itoa(number)
 }
 
+// keyRepoID is the repository ID a thread key holds.
+func keyRepoID(key string) (int64, bool) {
+	raw, _, ok := strings.Cut(key, "#")
+	if !ok {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	return id, err == nil && id > 0
+}
+
 // issueHit is one result of GET /repos/issues/search.
 type issueHit struct {
 	ID          int64     `json:"id"`
@@ -566,15 +576,17 @@ func (f *Forge) reconcileKnown(ctx context.Context, state *cursor, owners forge.
 // thread is never read.
 func (f *Forge) recheck(ctx context.Context, k forge.KnownThread, owners forge.OwnerFilter) (forge.ThreadRef, bool, error) {
 	ref := k.Ref
-	if !owners.Allows(ref.Owner) || ref.Number <= 0 {
+	if ref.Number <= 0 {
 		return ref, false, nil
 	}
-	owner, err := f.Owner(ctx, ref)
+	// The owner the thread was archived under may have changed since, so
+	// the repository's current owner decides.
+	repo, err := f.repository(ctx, ref)
 	if err == nil {
-		if !owners.Allows(owner) {
+		if !owners.Allows(repo.Owner.Login) {
 			return ref, false, nil
 		}
-		ref.Owner = owner
+		ref.Owner, ref.Repo = repo.Owner.Login, repo.FullName
 		var issue struct {
 			UpdatedAt time.Time `json:"updated_at"`
 		}

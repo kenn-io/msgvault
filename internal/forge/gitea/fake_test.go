@@ -162,6 +162,8 @@ func (f *fakeGitea) serve(w http.ResponseWriter, r *http.Request) {
 		f.writeJSON(w, map[string]any{"ok": true, "data": []any{}})
 	case len(parts) == 4 && parts[0] == "users" && parts[2] == "activities" && parts[3] == "feeds":
 		f.serveActivity(w, parts[1], query)
+	case len(parts) == 2 && parts[0] == "repositories":
+		f.serveRepoByID(w, parts[1])
 	case len(parts) == 3 && parts[0] == "repos":
 		f.serveRepo(w, parts[1]+"/"+parts[2])
 	case len(parts) >= 5 && parts[0] == "repos":
@@ -243,6 +245,23 @@ func (f *fakeGitea) serveRepo(w http.ResponseWriter, repo string) {
 		owner = moved
 	}
 	f.writeJSON(w, map[string]any{"id": repositoryID(repo), "name": name, "full_name": owner + "/" + name, "owner": giteaUser(9000, owner)})
+}
+
+// serveRepoByID serves the repository with the ID, under the name its
+// issues have now.
+func (f *fakeGitea) serveRepoByID(w http.ResponseWriter, raw string) {
+	id, err := strconv.ParseInt(raw, 10, 64)
+	assert.NoError(f.t, err)
+	for _, issue := range f.issues {
+		repo, ok := issue["repository"].(map[string]any)
+		if ok && repo["id"] == id {
+			name, ok := repo["full_name"].(string)
+			assert.True(f.t, ok, "repository without a full name")
+			f.serveRepo(w, name)
+			return
+		}
+	}
+	f.writeError(w, http.StatusNotFound, "repository does not exist")
 }
 
 func (f *fakeGitea) serveThread(w http.ResponseWriter, repo string, rest []string, query url.Values) {

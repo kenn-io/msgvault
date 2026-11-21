@@ -45,10 +45,14 @@ var reviewActivity = []string{"stale", "updated_at", "comments_count"}
 // continuation is the rest of a thread still to fetch: the pages its
 // earlier pages said remain, in order.
 type continuation struct {
-	Head    forge.ThreadHead `json:"head"`
-	Repo    string           `json:"repo"`
-	Number  int              `json:"number"`
-	Pending []pendingPage    `json:"pending"`
+	Head forge.ThreadHead `json:"head"`
+	// Key is the thread's key, by whose repository ID the next page finds
+	// the repository as it is then; Repo is its full name when the first
+	// page was read.
+	Key     string        `json:"key"`
+	Repo    string        `json:"repo"`
+	Number  int           `json:"number"`
+	Pending []pendingPage `json:"pending"`
 }
 
 // pendingPage is a page a thread still owes: a page of a pull request's
@@ -167,8 +171,12 @@ func (f *Forge) firstPage(ctx context.Context, ref forge.ThreadRef) (continuatio
 	if ref.Number <= 0 {
 		return continuation{}, nil, fmt.Errorf("%w: %s has no number", forge.ErrUnavailable, ref.Name())
 	}
+	current, err := f.repository(ctx, ref)
+	if err != nil {
+		return continuation{}, nil, err
+	}
 	var rawIssue jsontext.Value
-	if _, err := f.get(ctx, issuePath(ref.Repo, ref.Number), nil, &rawIssue); err != nil {
+	if _, err := f.get(ctx, issuePath(current.FullName, ref.Number), nil, &rawIssue); err != nil {
 		return continuation{}, nil, fmt.Errorf("fetch %s: %w", ref.Name(), err)
 	}
 	var issue issueObject
@@ -178,11 +186,7 @@ func (f *Forge) firstPage(ctx context.Context, ref forge.ThreadRef) (continuatio
 	if issue.ID <= 0 || issue.Number <= 0 {
 		return continuation{}, nil, fmt.Errorf("%w: %s", forge.ErrUnavailable, ref.Name())
 	}
-	// The issue names its repository as it is now, after any move.
-	repo := ref.Repo
-	if issue.Repository != nil && issue.Repository.FullName != "" {
-		repo = issue.Repository.FullName
-	}
+	repo := current.FullName
 	kind := postIssue
 	if issue.PullRequest != nil {
 		kind = postPullRequest
@@ -195,7 +199,7 @@ func (f *Forge) firstPage(ctx context.Context, ref forge.ThreadRef) (continuatio
 			Title: fmt.Sprintf("[%s] %s (#%d)", repo, issue.Title, issue.Number),
 			URL:   issue.HTMLURL,
 		},
-		Repo: repo, Number: issue.Number,
+		Key: ref.Key, Repo: repo, Number: issue.Number,
 	}
 	posts := []forge.Post{cont.post(postID(postIssue, issue.ID), kind, author(issue.User, issue.OriginalAuthor),
 		issue.Title, issue.Body, issue.HTMLURL, issue.CreatedAt, evidence(rawIssue, issueActivity...), nil)}
@@ -222,7 +226,11 @@ func (f *Forge) firstPage(ctx context.Context, ref forge.ThreadRef) (continuatio
 func (f *Forge) nextPage(ctx context.Context, cont *continuation) ([]forge.Post, error) {
 	next := cont.Pending[0]
 	cont.Pending = cont.Pending[1:]
-	pull := repoPath(cont.Repo) + "/pulls/" + strconv.Itoa(cont.Number)
+	current, err := f.repository(ctx, forge.ThreadRef{Key: cont.Key, Repo: cont.Repo, Number: cont.Number})
+	if err != nil {
+		return nil, err
+	}
+	pull := repoPath(current.FullName) + "/pulls/" + strconv.Itoa(cont.Number)
 	if next.Reviews > 0 {
 		return f.reviews(ctx, cont, pull, next.Reviews)
 	}

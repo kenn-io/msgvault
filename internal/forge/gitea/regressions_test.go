@@ -386,3 +386,78 @@ func TestASameSecondChangeAfterAFetchIsFetchedAgain(t *testing.T) {
 		})
 	}
 }
+
+func TestAnArchivedThreadIsReadFromItsRepositoryAfterAnotherTakesItsOldName(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGitea(t)
+	ann := giteaUser(2002, "ann")
+	f.issues["acme/old#7"] = issue(70, "acme", "old", 7, "Widgets", "Body.", ann,
+		"2026-11-01T08:00:00Z", "2026-11-01T09:00:00Z")
+	f.notifications = []map[string]any{notified(1, "Issue", "acme", "old", 7, "Widgets", "2026-11-01T09:00:00Z")}
+	source := newGiteaSource(t, st, f.forge())
+	_, err := forge.NewSyncer(st, f.forge(), nil).Sync(t.Context(), source.ID, forge.Options{})
+	require.NoError(err)
+	require.Contains(archived(t, st, source.ID), "issue:70")
+
+	// The repository is renamed, and a new repository takes its old name,
+	// with an issue of the same number.
+	moved := issue(70, "acme", "new", 7, "Widgets", "Body.", ann,
+		"2026-11-01T08:00:00Z", "2026-11-02T08:00:00Z")
+	repository, ok := moved["repository"].(map[string]any)
+	require.True(ok)
+	repository["id"] = repositoryID("acme/old")
+	f.issues["acme/new#7"] = moved
+	other := issue(90, "acme", "old", 7, "Someone else's", "Not this thread.", ann,
+		"2026-11-03T08:00:00Z", "2026-11-03T08:00:00Z")
+	repository, ok = other["repository"].(map[string]any)
+	require.True(ok)
+	repository["id"] = int64(9999)
+	f.issues["acme/old#7"] = other
+	f.notifications = nil
+	before := len(f.requestLog())
+
+	_, err = forge.NewSyncer(st, f.forge(), nil).Sync(t.Context(), source.ID, forge.Options{Full: true})
+	require.NoError(err)
+	assert.Empty(requestsWith(f.requestLog()[before:], "/repos/acme/old/"), "the old name is never read")
+	messages := archived(t, st, source.ID)
+	assert.NotContains(messages, "issue:90")
+	assert.Equal("[acme/new] Widgets (#7)", messages["issue:70"].Conversation)
+}
+
+func TestReconcileChecksAThreadWhoseRepositoryLeftAnExcludedOwner(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGitea(t)
+	ann := giteaUser(2002, "ann")
+	f.issues["secret-corp/widgets#7"] = issue(70, "secret-corp", "widgets", 7, "Widgets", "Body.", ann,
+		"2026-11-01T08:00:00Z", "2026-11-01T09:00:00Z")
+	f.notifications = []map[string]any{notified(1, "Issue", "secret-corp", "widgets", 7, "Widgets", "2026-11-01T09:00:00Z")}
+	source := newGiteaSource(t, st, f.forge())
+	_, err := forge.NewSyncer(st, f.forge(), nil).Sync(t.Context(), source.ID, forge.Options{})
+	require.NoError(err)
+	require.Contains(archived(t, st, source.ID), "issue:70")
+
+	// The owner is excluded now, and the repository has since moved to
+	// another owner, where the thread got a reply nothing else shows.
+	moved := issue(70, "acme", "widgets", 7, "Widgets", "Body.", ann,
+		"2026-11-01T08:00:00Z", "2026-11-05T08:00:00Z")
+	repository, ok := moved["repository"].(map[string]any)
+	require.True(ok)
+	repository["id"] = repositoryID("secret-corp/widgets")
+	delete(f.issues, "secret-corp/widgets#7")
+	f.issues["acme/widgets#7"] = moved
+	f.comments["acme/widgets#7"] = []map[string]any{
+		comment(701, webBase+"acme/widgets/issues/7", "Moved and fixed.", ann, "2026-11-05T08:00:00Z"),
+	}
+	f.notifications = nil
+
+	summary, err := forge.NewSyncer(st, f.forge(), nil).Sync(t.Context(), source.ID, forge.Options{
+		Owners: forge.NewOwnerFilter(nil, []string{"secret-corp"}),
+	})
+	require.NoError(err)
+	assert.Equal(1, summary.Found, "the thread is checked by its repository's current owner")
+	assert.Contains(archived(t, st, source.ID), "comment:701")
+}

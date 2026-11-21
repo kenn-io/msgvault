@@ -45,8 +45,9 @@ type Forge struct {
 	account forge.Account
 	// limit is the effective page size after reading the server's settings.
 	limit int
-	// owners is each repository's current owner, by lowercase full name.
-	owners map[string]string
+	// repos is each repository as it is now, by ID, or by lowercase full
+	// name for a thread whose key names no ID.
+	repos map[string]repository
 }
 
 // New returns the Gitea or Forgejo server at base, for token. base is the
@@ -60,7 +61,7 @@ func New(base *url.URL, token, userAgent string) (*Forge, error) {
 		instance:  instance,
 		now:       time.Now,
 		reconcile: reconcilePerSync,
-		owners:    map[string]string{},
+		repos:     map[string]repository{},
 	}
 	f.api = &forge.API{
 		Base:   base.JoinPath(apiPath),
@@ -131,33 +132,48 @@ func (f *Forge) login(ctx context.Context) (string, error) {
 	return account.Login, err
 }
 
-// Owner returns the current owner of the thread's repository. Gitea
-// redirects a renamed or transferred repository, so the answer follows a
-// move. Each repository is asked once per sync.
+// Owner returns the current owner of the thread's repository.
 func (f *Forge) Owner(ctx context.Context, ref forge.ThreadRef) (string, error) {
-	repo := strings.ToLower(ref.Repo)
+	repo, err := f.repository(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	return repo.Owner.Login, nil
+}
+
+// repository returns the thread's repository as it is now, found by the ID
+// the thread's key holds. A path a repository left can name another
+// repository later, so a path saved with the thread only names it for a
+// key without an ID. Each repository is asked once per sync.
+func (f *Forge) repository(ctx context.Context, ref forge.ThreadRef) (repository, error) {
+	cacheKey, path := strings.ToLower(ref.Repo), repoPath(ref.Repo)
+	if id, ok := keyRepoID(ref.Key); ok {
+		cacheKey, path = strconv.FormatInt(id, 10), repoIDPath(id)
+	}
 	f.mu.Lock()
-	owner, ok := f.owners[repo]
+	repo, ok := f.repos[cacheKey]
 	f.mu.Unlock()
 	if ok {
-		return owner, nil
+		return repo, nil
 	}
-	var data struct {
-		Owner *user `json:"owner"`
+	if _, err := f.get(ctx, path, nil, &repo); err != nil {
+		return repository{}, fmt.Errorf("look up the repository of %s: %w", ref.Name(), err)
 	}
-	if _, err := f.get(ctx, repoPath(ref.Repo), nil, &data); err != nil {
-		return "", fmt.Errorf("look up the owner of %s: %w", ref.Repo, err)
-	}
-	if data.Owner == nil || data.Owner.Login == "" {
-		return "", fmt.Errorf("gitea named no owner of %s", ref.Repo)
+	if repo.Owner == nil || repo.Owner.Login == "" || repo.FullName == "" {
+		return repository{}, fmt.Errorf("gitea named no owner or name of the repository of %s", ref.Name())
 	}
 	f.mu.Lock()
-	f.owners[repo] = data.Owner.Login
+	f.repos[cacheKey] = repo
 	f.mu.Unlock()
-	return data.Owner.Login, nil
+	return repo, nil
 }
 
 // repoPath is a repository's API path, from its "owner/name".
 func repoPath(repo string) string {
 	return "/repos/" + repo
+}
+
+// repoIDPath is a repository's API path, from its ID.
+func repoIDPath(id int64) string {
+	return "/repositories/" + strconv.FormatInt(id, 10)
 }
