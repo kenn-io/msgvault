@@ -1,7 +1,6 @@
 package carddav
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -172,44 +171,67 @@ func TestEnrichmentCreatedPersonRenameUpdatesFormattedNameAndRequiresReview(t *t
 }
 
 func TestDisplayNameEditKeepsSavedNameOnPublishedCard(t *testing.T) {
-	for _, savedName := range []bool{false, true} {
-		t.Run(fmt.Sprintf("saved=%t", savedName), func(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change *string
+	}{
+		{name: "rename", change: new("Alex Renamed")},
+		{name: "clear"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			fixture := &mutationFixture{}
 			service, st, _, _ := seededMutationService(t, fixture)
 			person, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
 				Name: "Alex Example", Source: store.ProvenanceEnrichment,
 			})
 			require.NoError(t, err)
-			if savedName {
-				_, err = st.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{
-					NameKind: store.PersonNameFormatted, Formatted: new("Alex Example"), OriginalValue: "Alex Example",
-					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
-				})
-				require.NoError(t, err)
-			}
-			changes := []*string{new("Alex Renamed"), new("Alex Third")}
-			if savedName {
-				changes[1] = nil
-			}
-			for _, change := range changes {
-				person, err = st.GetPersonContext(t.Context(), person.ID)
-				require.NoError(t, err)
-				_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, change)
-				require.NoError(t, err)
+			_, err = st.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{
+				NameKind: store.PersonNameFormatted, Formatted: new("Alex Example"), OriginalValue: "Alex Example",
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+			})
+			require.NoError(t, err)
+			publish := func() string {
 				preview, err := service.PreviewPublication(t.Context(), person.ID)
 				require.NoError(t, err)
 				require.NoError(t, service.PublishReviewedPerson(t.Context(), person.ID, preview.ApprovalToken))
 				fixture.mu.Lock()
-				body := string(fixture.body)
-				fixture.mu.Unlock()
-				want := "Alex Example"
-				if !savedName {
-					want = *change
-				}
-				assert.Equal(t, 1, strings.Count(body, "\r\nFN"), body)
-				assert.Contains(t, body, "FN:"+want+"\r\n")
+				defer fixture.mu.Unlock()
+				return string(fixture.body)
 			}
+			body := publish()
+			assert.Equal(t, 2, strings.Count(body, "FN:Alex Example\r\n"), body)
+
+			person, err = st.GetPersonContext(t.Context(), person.ID)
+			require.NoError(t, err)
+			_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, tc.change)
+			require.NoError(t, err)
+			body = publish()
+			assert.Equal(t, 1, strings.Count(body, "\r\nFN"), body)
+			assert.Contains(t, body, "FN:Alex Example\r\n")
 		})
+	}
+}
+
+func TestInferredPersonCardFollowsRepeatedDisplayNameEdits(t *testing.T) {
+	fixture := &mutationFixture{}
+	service, st, _, _ := seededMutationService(t, fixture)
+	person, err := st.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+		Name: "Alex Example", Source: store.ProvenanceEnrichment,
+	})
+	require.NoError(t, err)
+	for _, change := range []string{"Alex Renamed", "Alex Third"} {
+		person, err = st.GetPersonContext(t.Context(), person.ID)
+		require.NoError(t, err)
+		_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, &change)
+		require.NoError(t, err)
+		preview, err := service.PreviewPublication(t.Context(), person.ID)
+		require.NoError(t, err)
+		require.NoError(t, service.PublishReviewedPerson(t.Context(), person.ID, preview.ApprovalToken))
+		fixture.mu.Lock()
+		body := string(fixture.body)
+		fixture.mu.Unlock()
+		assert.Equal(t, 1, strings.Count(body, "\r\nFN"), body)
+		assert.Contains(t, body, "FN:"+change+"\r\n")
 	}
 }
 
