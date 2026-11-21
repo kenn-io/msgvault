@@ -5256,6 +5256,52 @@ func (s *Store) ParticipantSearchAddressContext(ctx context.Context, participant
 	return address, err
 }
 
+// MessageIDsSentByContext returns the IDs of the messages participantID
+// sent.
+func (s *Store) MessageIDsSentByContext(ctx context.Context, participantID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM messages WHERE sender_id = ? ORDER BY id`, participantID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// RefreshMessageSearchContext rewrites the search entries of messageIDs
+// from what the archive stores, as a rebuild of the index would, after a
+// change such as a sender merge has altered what they index.
+func (s *Store) RefreshMessageSearchContext(ctx context.Context, messageIDs []int64) error {
+	if !s.fts5Available || len(messageIDs) == 0 {
+		return nil
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		for _, id := range messageIDs {
+			if !s.IsPostgreSQL() {
+				if _, err := q.Exec(s.dialect.FTSBackfillBatchSQL(), id, id+1); err != nil {
+					return fmt.Errorf("refresh message %d FTS: %w", id, err)
+				}
+				continue
+			}
+			if err := s.dialect.InvalidateFTSForMessage(q, id); err != nil {
+				return fmt.Errorf("invalidate message %d FTS: %w", id, err)
+			}
+			if _, err := s.backfillPostgresFTS(ctx, tx, s.dialect.FTSBackfillBatchSQL(), id, id+1); err != nil {
+				return fmt.Errorf("refresh message %d FTS: %w", id, err)
+			}
+		}
+		return nil
+	})
+}
+
 // ParticipantSentInSourceContext reports whether participantID sent any
 // message of sourceID.
 func (s *Store) ParticipantSentInSourceContext(ctx context.Context, participantID, sourceID int64) (bool, error) {
