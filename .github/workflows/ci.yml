@@ -1230,7 +1230,7 @@ jobs:
           POSTGRES_USER: msgvault_test
           POSTGRES_PASSWORD: msgvault_test
           POSTGRES_DB: msgvault_test
-          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256 -c fsync=off -c synchronous_commit=off -c full_page_writes=off"
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256 -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c jit=off"
         ports:
           - 5432:5432
         # CI tmpfs peaks: api 427 MiB, pgvector 258 MiB, test-postgres 214 MiB, cli 213 MiB.
