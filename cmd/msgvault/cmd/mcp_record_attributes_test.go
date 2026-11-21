@@ -234,7 +234,11 @@ func TestMCPAttributePersonDefinitions(t *testing.T) {
 	attributeError(t, attributeOperation(t, b, "get_attribute_definition", map[string]any{"definition_id": created.Definition.ID}), "attribute_definition_not_found")
 	attributeError(t, attributeOperation(t, b, "get_attribute_definition", map[string]any{"definition_id": orgDefinition.ID}), "attribute_definition_not_found")
 	for _, name := range []string{"patch_attribute_definition", "delete_attribute_definition"} {
-		_, err = b.OperationDisclosure(t.Context(), name, map[string]any{"definition_id": orgDefinition.ID, "etag": "example", "changes": map[string]any{"label": "Changed"}})
+		args := map[string]any{"definition_id": orgDefinition.ID, "etag": "example"}
+		if name == "patch_attribute_definition" {
+			args["changes"] = map[string]any{"label": "Changed"}
+		}
+		_, err = b.OperationDisclosure(t.Context(), name, args)
 		attributeRefused(t, err, "attribute_definition_not_found")
 	}
 }
@@ -283,7 +287,7 @@ func (b *attributeRaceBackend) OperationDisclosure(ctx context.Context, name str
 
 func TestMCPAttributeEditDuringApproval(t *testing.T) {
 	for _, modern := range []bool{false, true} {
-		for _, scenario := range []string{"empty", "existing", "multi", "clear"} {
+		for _, scenario := range []string{"empty", "existing", "multi", "clear", "large"} {
 			if modern && scenario != "empty" {
 				continue
 			}
@@ -292,15 +296,27 @@ func TestMCPAttributeEditDuringApproval(t *testing.T) {
 				require := require.New(t)
 				b, st, person := recordAttributesFixture(t)
 				slug := store.AttributeSlugPrimaryChannel
-				if scenario == "multi" {
+				if scenario == "multi" || scenario == "large" {
 					slug = "favorite_tea"
-					attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": slug, "label": "Favorite tea", "value_type": "text", "field_type": "text", "cardinality": "multi"}})
+					definition := map[string]any{"slug": slug, "label": "Favorite tea", "value_type": "text", "field_type": "text"}
+					if scenario == "multi" {
+						definition["cardinality"] = "multi"
+					}
+					attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": definition})
 				}
 				competing := map[string]any{"person_id": person, "slug": slug, "value": map[string]any{"type": "text", "text": "phone"}}
 				if scenario == "existing" || scenario == "clear" {
 					require.False(attributeOperation(t, b, "set_person_attribute", map[string]any{"person_id": person, "slug": slug, "value": map[string]any{"type": "text", "text": "email"}}).IsError)
 				}
 				compete := func() { assert.False(attributeOperation(t, b, "set_person_attribute", competing).IsError) }
+				want := "phone"
+				if scenario == "large" {
+					want = strings.Repeat("x", 70<<10)
+					compete = func() {
+						_, err := st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: slug, Value: store.AttributeValue{Type: store.AttributeValueText, Text: &want}, Source: store.ProvenanceUser})
+						assert.NoError(err)
+					}
+				}
 				args := map[string]any{"person_id": person, "slug": slug, "value": map[string]any{"type": "text", "text": "chat"}}
 				if scenario == "empty" {
 					args["expected_value_id"] = 0
@@ -331,31 +347,16 @@ func TestMCPAttributeEditDuringApproval(t *testing.T) {
 				}
 				require.NoError(err)
 				require.True(result.IsError)
-				assert.Contains(mcpDraftResultText(t, result), "attribute_value_conflict")
+				assert.Contains(mcpDraftResultText(t, result), `"error":"attribute_value_conflict"`)
+				if scenario == "large" {
+					assert.Contains(mcpDraftResultText(t, result), `"operation_may_have_completed":false`)
+				}
 				values := attributeValues(t, st, person, slug)
 				require.Len(values, 1)
-				assert.Equal("phone", *values[0].Value.Text)
+				assert.Equal(want, *values[0].Value.Text)
 			})
 		}
 	}
-}
-
-func TestMCPAttributeLargeConflictDuringApproval(t *testing.T) {
-	b, st, person := recordAttributesFixture(t)
-	attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "large_text", "label": "Large text", "value_type": "text", "field_type": "text"}})
-	large := strings.Repeat("x", 70<<10)
-	session := attributeSession(t, b, nil, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		_, err := st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: "large_text", Value: store.AttributeValue{Type: store.AttributeValueText, Text: &large}, Source: store.ProvenanceUser})
-		return attributeAccept(), err
-	}}, "2025-06-18")
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": "large_text", "value": map[string]any{"type": "text", "text": "chat"}}})
-	require.NoError(t, err)
-	require.True(t, result.IsError)
-	assert.Contains(t, mcpDraftResultText(t, result), `"error":"attribute_value_conflict"`)
-	assert.Contains(t, mcpDraftResultText(t, result), `"operation_may_have_completed":false`)
-	values := attributeValues(t, st, person, "large_text")
-	require.Len(t, values, 1)
-	assert.Equal(t, large, *values[0].Value.Text)
 }
 
 func TestMCPAttributeExactTokens(t *testing.T) {
@@ -363,7 +364,7 @@ func TestMCPAttributeExactTokens(t *testing.T) {
 	require := require.New(t)
 	b, st, person := recordAttributesFixture(t)
 	attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "metadata", "label": "Metadata", "value_type": "json", "field_type": "json"}})
-	session := operationMCPSession(t, b, []mcpserver.OperationFamily{mcpserver.OperationFamilyAttributes}, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}})
+	session := attributeSession(t, b, nil, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}}, "")
 	attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "large_integer", "label": "Large integer", "value_type": "integer", "field_type": "duration"}})
 	integerParams := &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": "large_integer", "value": map[string]any{"type": "integer", "integer": int64(9007199254740993)}}}
 	pending, err := session.CallTool(t.Context(), integerParams)
