@@ -436,7 +436,8 @@ import (
 // 5.20.0 adds message_type to file details.
 // 5.21.0 adds a browser tab title to message details.
 // 5.22.0 adds person attribute value selection by ordinal.
-const APISchemaVersion = "5.22.0"
+// 5.23.0 rejects invalid person display names with a client error.
+const APISchemaVersion = "5.23.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

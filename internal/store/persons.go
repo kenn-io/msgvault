@@ -81,6 +81,11 @@ func (s *Store) CreatePersonFromParticipantWithDisplayNameContext(
 	if participantID <= 0 {
 		return nil, false, fmt.Errorf("promote participant %d: %w", participantID, ErrInvalidParticipantID)
 	}
+	if displayName != nil {
+		if err := validatePersonNameText("display_name", *displayName); err != nil {
+			return nil, false, err
+		}
+	}
 
 	var personID int64
 	var person *Person

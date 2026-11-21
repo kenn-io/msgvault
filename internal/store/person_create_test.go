@@ -747,6 +747,39 @@ func TestDisplayNameEditPreservesIndependentInferredAlternateNames(t *testing.T)
 	assert.Equal("fr", *preserved.Language)
 }
 
+func TestDisplayNameEditPreservesUnlinkedNamesOnBothPeople(t *testing.T) {
+	f := storetest.New(t)
+	var people [2]*store.Person
+	var saved [2]*store.PersonName
+	for i := range people {
+		person, err := f.Store.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+			Name: "Alex Example", Source: store.ProvenanceUser,
+		})
+		require.NoError(t, err)
+		people[i] = person
+		saved[i], err = f.Store.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{
+			NameKind: store.PersonNameFormatted, Formatted: new("Alex Example"), OriginalValue: "Alex Example",
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+		})
+		require.NoError(t, err)
+		people[i], err = f.Store.GetPersonContext(t.Context(), person.ID)
+		require.NoError(t, err)
+	}
+
+	renamed, err := f.Store.UpdatePersonDisplayNameContext(t.Context(), people[0].ID, people[0].Revision, new("Alex Renamed"))
+	require.NoError(t, err)
+	assert.Equal(t, new("Alex Renamed"), renamed.DisplayName)
+	other, err := f.Store.GetPersonContext(t.Context(), people[1].ID)
+	require.NoError(t, err)
+	assert.Equal(t, people[1].DisplayName, other.DisplayName)
+	for i, person := range people {
+		names, err := f.Store.ListPersonNamesContext(t.Context(), person.ID, true)
+		require.NoError(t, err)
+		require.Len(t, names, 1)
+		assert.Equal(t, *saved[i], names[0])
+	}
+}
+
 func TestInferredReplacementChangingOnlyARenderedParameterNeedsReview(t *testing.T) {
 	enrichment := store.ValueEnvelopeInput{Source: store.ProvenanceEnrichment}
 	street := "1 Example Street"
