@@ -107,7 +107,7 @@ func attributeListInputSchema(id, history, slug *jsonschema.Schema) *jsonschema.
 		"history":       history,
 		"slug":          slug,
 		"universal_id":  stringSchema("Portable definition identifier"),
-		"limit":         boundedIntegerSchema("Maximum values per definition", 1, maxJSONSafeInteger),
+		toolArgLimit:    boundedIntegerSchema("Maximum values per definition", 1, maxJSONSafeInteger),
 		"offset":        boundedIntegerSchema("Values to skip per definition", 0, maxJSONSafeInteger),
 	}, toolArgPersonID)
 }
