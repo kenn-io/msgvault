@@ -361,6 +361,7 @@ To connect Claude Desktop to msgvault:
     ```
 
     If `msgvault` is not on your PATH, use the full path to the binary.
+
 3. Save the file and restart Claude Desktop.
 
 ### Native daemon endpoints
