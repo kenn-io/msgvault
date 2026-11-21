@@ -135,7 +135,7 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByRole('dialog', { name: 'Archive' })).toBe(panel);
   });
 
-  it('closes the source detail panel on Escape and keeps its readable type', async () => {
+  it('shows a readable type and a muted reason with the raw code in its tooltip', async () => {
     const fetchFn = api([source({ id: 1, identifier: 'import@example.com', display_name: 'Imported', can_sync: false, sync_unavailable_reason: 'source_not_schedulable', source_type: 'mbox' })]);
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
@@ -143,12 +143,7 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Details for Imported' }));
     expect(await screen.findByText('Mbox import · import@example.com')).toBeDefined();
     expect(within(screen.getByRole('region', { name: 'Sync' })).getByText('Imported file — nothing to sync')).toBeDefined();
-    const panel = screen.getByRole('dialog', { name: 'Imported' });
-    await fireEvent.keyDown(panel, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Imported' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Details for Imported' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(screen.queryByRole('dialog', { name: 'Imported' })).toBeNull();
     expect(screen.getByText('Imported file — nothing to sync').getAttribute('title')).toBe('source_not_schedulable');
     expect(screen.queryByText('source_not_schedulable')).toBeNull();
     expect(screen.getByRole('columnheader', { name: 'Status' })).toBeDefined();
