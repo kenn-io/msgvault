@@ -6,7 +6,6 @@
   --control-h: 28px;
   --field-h: 32px;
   --control-h-lg: var(--field-h);
-  --nav-item-h: 36px;
   --font-reading: Charter, 'Bitstream Charter', Georgia, serif;
   --bg-canvas: var(--bg-surface);
   --bg-subtle: var(--bg-inset);
@@ -242,6 +241,11 @@ body :is(.kit-button.kit-button, .kit-menu__trigger.kit-menu__trigger) {
 :root:root .kit-icon-button--sm:not(.kit-chip__trailing *) {
   width: var(--control-h);
   height: var(--control-h);
+}
+
+:root:root .saved-view__menu .kit-icon-button--sm {
+  width: var(--nav-subitem-height);
+  height: var(--nav-subitem-height);
 }
 
 /* Kit trims button labels to the x-height, which centers lowercase letters
