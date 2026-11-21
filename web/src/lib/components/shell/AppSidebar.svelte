@@ -268,6 +268,7 @@
     .sidebar nav > ul > li,
     .sidebar .sidebar__views > li {
       display: grid;
+      grid-template-columns: minmax(0, 1fr);
       grid-template-rows: minmax(44px, auto);
     }
 

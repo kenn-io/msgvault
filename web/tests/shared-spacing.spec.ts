@@ -225,15 +225,29 @@ test.describe('wide touch sidebar', () => {
     const sidebar = page.getByRole('complementary', { name: 'Sidebar', exact: true });
     const views = sidebar.locator('.saved-view');
     await expect(views).toHaveCount(3);
+    const navRight = await sidebar.locator('nav').evaluate(element => element.getBoundingClientRect().right);
     const expandedTargets = await sidebar.locator('.sidebar__item, .sync-status, .saved-view__open, .saved-view__menu button').evaluateAll(elements => elements.map(element => {
-      const { width, height } = element.getBoundingClientRect();
-      return { width, height };
+      const { right, width, height } = element.getBoundingClientRect();
+      return { right, width, height };
     }));
     expect(expandedTargets.length).toBeGreaterThan(8);
     for (const [index, target] of expandedTargets.entries()) {
       expect(target.width, `expanded touch target ${index + 1} width`).toBeGreaterThanOrEqual(44);
       expect(target.height, `expanded touch target ${index + 1} height`).toBeGreaterThanOrEqual(44);
+      expect(target.right, `expanded touch target ${index + 1} right edge`).toBeLessThanOrEqual(navRight);
     }
+    const firstViewLabel = await sidebar.locator('.saved-view__open span').first().evaluate(element => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth
+    }));
+    expect(firstViewLabel.scrollWidth).toBeLessThanOrEqual(firstViewLabel.clientWidth);
+    const firstView = views.first();
+    const firstViewBounds = await firstView.boundingBox();
+    const actionBounds = await firstView.locator('.saved-view__menu button').boundingBox();
+    const actionRight = actionBounds!.x + actionBounds!.width;
+    const rowRight = firstViewBounds!.x + firstViewBounds!.width;
+    expect(actionRight).toBeLessThanOrEqual(rowRight);
+    expect(actionRight).toBeGreaterThanOrEqual(rowRight - 2);
 
     await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
     const railTargets = await sidebar.locator('.sidebar__item, .sync-status').evaluateAll(elements => elements.map(element => {

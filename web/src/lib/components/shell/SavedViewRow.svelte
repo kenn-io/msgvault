@@ -212,6 +212,17 @@
   @media (hover: none), (pointer: coarse) {
     .saved-view__open {
       height: 44px;
+      padding-right: calc(var(--space-8) + var(--space-1));
+    }
+
+    .saved-view__menu {
+      position: absolute;
+      inset: 0 0 auto auto;
+      display: flex;
+      width: 44px;
+      height: 44px;
+      align-items: center;
+      justify-content: center;
     }
 
     :global(:root:root .saved-view__menu .kit-icon-button--sm) {
