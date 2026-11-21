@@ -619,7 +619,7 @@ func (s *Store) backfillCardDAVInferenceExportStateV2(ctx context.Context) error
 
 func (s *Store) backfillCardDAVInferenceExportStateV3(ctx context.Context) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person_id FROM carddav_resources r WHERE person_id IS NOT NULL AND mapping_status='mapped' AND governance='local' AND NOT EXISTS (SELECT 1 FROM person_carddav_inference_state s JOIN carddav_accounts a ON a.id=1 WHERE s.person_id=r.person_id AND s.inference_revision>0 AND s.approved_revision=s.inference_revision AND s.approved_connection_generation=a.connection_generation AND s.approved_address_book_id IS NOT NULL) GROUP BY person_id ORDER BY person_id`)
+		rows, err := tx.QueryContext(ctx, `SELECT person_id FROM carddav_resources r WHERE person_id IS NOT NULL AND mapping_status='mapped' AND governance='local' AND NOT EXISTS (SELECT 1 FROM person_carddav_inference_state s JOIN carddav_address_books b ON b.id=s.approved_address_book_id JOIN carddav_accounts a ON a.id=b.account_id WHERE s.person_id=r.person_id AND s.inference_revision>0 AND s.approved_revision=s.inference_revision AND s.approved_connection_generation=a.connection_generation) GROUP BY person_id ORDER BY person_id`)
 		if err != nil {
 			return fmt.Errorf("list people for CardDAV inference backfill: %w", err)
 		}
