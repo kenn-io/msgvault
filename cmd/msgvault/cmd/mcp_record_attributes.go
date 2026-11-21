@@ -212,8 +212,14 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		return "", true, &mcpserver.OperationRefusalError{Code: attributeInvalidArguments}
 	}
 	var current any
+	var suppliedByAssistant []string
 	if name == attributeSetOperation || name == "clear_person_attribute" {
 		if name == attributeSetOperation {
+			for _, field := range []string{attributeSourceKey, "actor"} {
+				if value, ok := args[field].(string); ok && strings.TrimSpace(value) != "" {
+					suppliedByAssistant = append(suppliedByAssistant, field)
+				}
+			}
 			request, ok := options.(*generated.SetPersonAttributeRequestOptions)
 			if !ok || request.Body == nil || request.Body.Source == nil || request.Body.Actor == nil {
 				return "", true, &mcpserver.OperationRefusalError{Code: attributeInvalidArguments}
@@ -283,10 +289,11 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		effect = "Preview only; nothing is written. Native value guards apply."
 	}
 	data, err := json.Marshal(struct {
-		Operation string         `json:"operation"`
-		Current   any            `json:"current,omitempty"`
-		Changes   map[string]any `json:"changes"`
-		Effect    string         `json:"effect"`
-	}{name, current, args, effect}, json.Deterministic(true))
+		Operation           string         `json:"operation"`
+		Current             any            `json:"current,omitempty"`
+		Changes             map[string]any `json:"changes"`
+		SuppliedByAssistant []string       `json:"supplied_by_assistant,omitempty"`
+		Effect              string         `json:"effect"`
+	}{name, current, args, suppliedByAssistant, effect}, json.Deterministic(true))
 	return string(data), true, err
 }

@@ -156,23 +156,45 @@ func TestMCPAttributeProvenance(t *testing.T) {
 		return result
 	}
 	// MCP fills blank provenance.
-	for _, tc := range []struct{ source, actor, wantSource, wantActor string }{
-		{"", "", "enrichment", "mcp"},
-		{" ", "  \t ", "enrichment", "mcp"},
-		{"user", "owner", "user", "owner"},
+	for _, tc := range []struct{ source, actor, wantSource, wantActor, supplied string }{
+		{"", "", "enrichment", "mcp", ""},
+		{" ", "  \t ", "enrichment", "mcp", ""},
+		{"user", "", "user", "mcp", `"supplied_by_assistant":["source"]`},
+		{"", "owner", "enrichment", "owner", `"supplied_by_assistant":["actor"]`},
+		{"user", "owner", "user", "owner", `"supplied_by_assistant":["source","actor"]`},
 	} {
 		args := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}}
+		if tc.source != "" {
+			args["source"] = tc.source
+		}
 		if tc.actor != "" {
-			args["source"], args["actor"] = tc.source, tc.actor
+			args["actor"] = tc.actor
 		}
 		require.False(call("set_person_attribute", args).IsError)
 		assert.Contains(approvals[len(approvals)-1], fmt.Sprintf(`"actor":%q`, tc.wantActor))
 		assert.Contains(approvals[len(approvals)-1], fmt.Sprintf(`"source":%q`, tc.wantSource))
+		if tc.supplied == "" {
+			assert.NotContains(approvals[len(approvals)-1], `"supplied_by_assistant"`)
+		} else {
+			assert.Contains(approvals[len(approvals)-1], tc.supplied)
+		}
 		values := attributeValues(t, st, person, store.AttributeSlugPrimaryChannel)
 		require.Len(values, 1)
 		assert.Equal(store.Provenance(tc.wantSource), values[0].Source)
 		assert.Equal(tc.wantActor, *values[0].Actor)
 	}
+	modern := attributeSession(t, b, nil, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}}, "")
+	params := &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "chat"}, "source": "user"}}
+	pending, err := modern.CallTool(t.Context(), params)
+	require.NoError(err)
+	require.NotEmpty(pending.RequestState)
+	prompt, ok := pending.InputRequests["confirm"].(*sdkmcp.ElicitParams)
+	require.True(ok)
+	assert.Contains(prompt.Message, `"supplied_by_assistant":["source"]`)
+	params.RequestState, params.InputResponses = pending.RequestState, sdkmcp.InputResponseMap{"confirm": attributeAccept()}
+	result, err := modern.CallTool(t.Context(), params)
+	require.NoError(err)
+	require.False(result.IsError, "%v", result.Content)
 }
 
 func TestMCPAttributePersonDefinitions(t *testing.T) {
