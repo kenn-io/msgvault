@@ -2964,7 +2964,7 @@ describe('AppShell', () => {
 
     it.each([
       { scenario: 'the reading pane', filterWasOpen: false },
-      { scenario: 'a Filter left open, then navigation opened from the keyboard', filterWasOpen: true },
+      { scenario: 'a Filter left open, then navigation opened by clicking its focused button', filterWasOpen: true },
     ])('closes navigation before $scenario', async ({ filterWasOpen }) => {
       window.innerWidth = 480;
       const state = await openReadingPane();
