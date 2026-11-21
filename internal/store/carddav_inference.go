@@ -623,20 +623,11 @@ func (s *Store) backfillCardDAVInferenceExportStateV3(ctx context.Context) error
 		if err != nil {
 			return fmt.Errorf("list people for CardDAV inference backfill: %w", err)
 		}
-		var ids []int64
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close()
-				return err
-			}
-			ids = append(ids, id)
+		ids, err := scanInt64Rows(rows)
+		if closeErr := rows.Close(); err == nil {
+			err = closeErr
 		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := rows.Close(); err != nil {
+		if err != nil {
 			return err
 		}
 		for _, id := range ids {
@@ -647,22 +638,13 @@ func (s *Store) backfillCardDAVInferenceExportStateV3(ctx context.Context) error
 			if err := s.loadPersonInferenceExportContactsTx(ctx, tx, id, false, false, &history); err != nil {
 				return err
 			}
-			currentRows := map[string]map[int64]bool{}
-			retired := map[string]map[int64]bool{}
-			for table, components := range map[string][]personInferenceExportComponent{personNamesTableName: current.Names, personContactPointsTableName: current.ContactPoints, personAddressesTableName: current.Addresses} {
-				currentRows[table] = map[int64]bool{}
-				retired[table] = map[int64]bool{}
-				for _, c := range components {
-					if c.Inferred {
-						currentRows[table][c.RowID] = true
-					}
-				}
-			}
+			currentRows, retired := inferredContactRows(current), inferredContactRows(history)
 			hasRetired := false
-			for table, components := range map[string][]personInferenceExportComponent{personNamesTableName: history.Names, personContactPointsTableName: history.ContactPoints, personAddressesTableName: history.Addresses} {
-				for _, c := range components {
-					if c.Inferred && !currentRows[table][c.RowID] {
-						retired[table][c.RowID] = true
+			for table, rowIDs := range retired {
+				for rowID := range rowIDs {
+					if currentRows[table][rowID] {
+						delete(rowIDs, rowID)
+					} else {
 						hasRetired = true
 					}
 				}
@@ -850,11 +832,11 @@ func (s *Store) personHasPendingUpdateInferenceTx(
 	return false, rows.Err()
 }
 
-func (s *Store) personHasPublishedContactInferenceTx(ctx context.Context, tx *loggedTx, personID int64, history personInferenceExportProjection) (bool, error) {
+func inferredContactRows(projection personInferenceExportProjection) map[string]map[int64]bool {
 	byTable := map[string]map[int64]bool{}
 	for table, components := range map[string][]personInferenceExportComponent{
-		personNamesTableName: history.Names, personContactPointsTableName: history.ContactPoints,
-		personAddressesTableName: history.Addresses,
+		personNamesTableName: projection.Names, personContactPointsTableName: projection.ContactPoints,
+		personAddressesTableName: projection.Addresses,
 	} {
 		byTable[table] = make(map[int64]bool)
 		for _, component := range components {
@@ -863,7 +845,11 @@ func (s *Store) personHasPublishedContactInferenceTx(ctx context.Context, tx *lo
 			}
 		}
 	}
-	return s.contactInferenceMappingsMatchTx(ctx, tx, personID, byTable, `EXISTS(SELECT 1 FROM carddav_publications p
+	return byTable
+}
+
+func (s *Store) personHasPublishedContactInferenceTx(ctx context.Context, tx *loggedTx, personID int64, history personInferenceExportProjection) (bool, error) {
+	return s.contactInferenceMappingsMatchTx(ctx, tx, personID, inferredContactRows(history), `EXISTS(SELECT 1 FROM carddav_publications p
             WHERE p.person_id=e.person_id AND p.desired=TRUE
               AND e.source_ref='carddav:' || CAST(p.address_book_id AS TEXT)
               AND e.source_resource_uid=p.href)`, false)
@@ -882,7 +868,6 @@ func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedT
 		return false, fmt.Errorf("load contact inference mappings: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	matched := false
 	for rows.Next() {
 		var raw sql.NullString
 		if err := rows.Scan(&raw); err != nil {
@@ -903,14 +888,11 @@ func (s *Store) contactInferenceMappingsMatchTx(ctx context.Context, tx *loggedT
 		}
 		for _, mapping := range mappings {
 			if byTable[mapping.Table][mapping.RowID] {
-				if !validateMetadata {
-					return true, nil
-				}
-				matched = true
+				return true, nil
 			}
 		}
 	}
-	return matched, rows.Err()
+	return false, rows.Err()
 }
 
 func (s *Store) invalidateLegacyCardDAVConflictCreatesTx(ctx context.Context, tx *loggedTx, personID int64) (bool, error) {
