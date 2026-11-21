@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -670,15 +671,47 @@ func TestEnrichmentCreatedFormattedNameTracksRepeatedDisplayNameEdits(t *testing
 
 			names, err := f.Store.ListPersonNamesContext(t.Context(), person.ID, true)
 			require.NoError(err)
-			if tc.want == nil {
-				assert.Empty(names)
-				return
-			}
-			require.Len(names, 1)
-			assert.Equal(store.PersonNameFormatted, names[0].NameKind)
-			require.NotNil(names[0].Formatted)
-			assert.Equal(*tc.want, *names[0].Formatted)
+			assert.Empty(names)
+			assert.Equal(tc.want, person.DisplayName)
+			history, err := f.Store.GetPersonProfileHistoryContext(t.Context(), person.ID)
+			require.NoError(err)
+			require.Len(history.Names, 1)
+			assert.NotNil(history.Names[0].Envelope.SupersededAt)
 		})
+	}
+}
+
+func TestDisplayNameEditPreservesEqualSavedNames(t *testing.T) {
+	for _, source := range []store.Provenance{store.ProvenanceUser, store.ProvenanceEnrichment} {
+		for _, owner := range []store.Provenance{store.ProvenanceUser, store.ProvenanceEnrichment} {
+			for _, clear := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/clear=%t", source, owner, clear), func(t *testing.T) {
+					f := storetest.New(t)
+					person, err := f.Store.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{
+						Name: "Alex Example", Source: owner,
+					})
+					require.NoError(t, err)
+					saved, err := f.Store.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{
+						NameKind: store.PersonNameFormatted, Formatted: new("Alex Example"),
+						Language: new("en"), OriginalValue: "Alex Example",
+						Envelope: store.ValueEnvelopeInput{Source: source, VCard: store.VCardIdentity{Property: "FN", PropID: new("saved")}},
+					})
+					require.NoError(t, err)
+					person, err = f.Store.GetPersonContext(t.Context(), person.ID)
+					require.NoError(t, err)
+					var label *string
+					if !clear {
+						label = new("Alex Renamed")
+					}
+					_, err = f.Store.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, label)
+					require.NoError(t, err)
+					names, err := f.Store.ListPersonNamesContext(t.Context(), person.ID, true)
+					require.NoError(t, err)
+					require.Len(t, names, 1)
+					assert.Equal(t, *saved, names[0])
+				})
+			}
+		}
 	}
 }
 
@@ -704,7 +737,7 @@ func TestDisplayNameEditPreservesIndependentInferredAlternateNames(t *testing.T)
 
 	names, err := f.Store.ListPersonNamesContext(t.Context(), person.ID, true)
 	require.NoError(err)
-	require.Len(names, 2)
+	require.Len(names, 1)
 	var preserved *store.PersonName
 	for index := range names {
 		if names[index].Envelope.ID == alternate.Envelope.ID {
@@ -773,8 +806,8 @@ func TestDisplayNameEditPreservesMatchingNameMetadataAndLanguageVariants(t *test
 		name := &snapshot.Profile.Names[index]
 		require.NotNil(name.Formatted)
 		require.NotNil(name.Language)
-		assert.Equal("Alex Renamed", *name.Formatted)
-		assert.Equal(store.ProvenanceUser, name.Envelope.Source)
+		assert.Equal("Alex Example", *name.Formatted)
+		assert.Equal(store.ProvenanceEnrichment, name.Envelope.Source)
 		switch *name.Language {
 		case "en":
 			english = name
@@ -786,9 +819,11 @@ func TestDisplayNameEditPreservesMatchingNameMetadataAndLanguageVariants(t *test
 	}
 	require.NotNil(english)
 	require.NotNil(localizedSuccessor)
+	assert.Equal(originalEnglish.Envelope.ID, english.Envelope.ID)
 	assert.Equal(originalEnglish.Envelope.VCard, english.Envelope.VCard)
 	require.NotNil(english.Envelope.Pref)
 	assert.Equal(1, *english.Envelope.Pref)
+	assert.Equal(localized.Envelope.ID, localizedSuccessor.Envelope.ID)
 	assert.Equal(localized.Envelope.VCard, localizedSuccessor.Envelope.VCard)
 	require.NotNil(localizedSuccessor.Envelope.Pref)
 	assert.Equal(2, *localizedSuccessor.Envelope.Pref)
@@ -844,7 +879,7 @@ func TestDisplayNameEditKeepsScopedVCardNameIdentityOnItsResource(t *testing.T) 
 	projected, err := vcardmap.ProjectPersonEnvelope(*snapshot, otherResource)
 	require.NoError(err)
 	assert.Contains(string(projected.StoredBody), "item1.FN;PROP-ID=name-1:Unrelated Card Name\r\n")
-	assert.Contains(string(projected.StoredBody), "FN:Alex Renamed\r\n")
+	assert.Contains(string(projected.StoredBody), "FN:Alex Example\r\n")
 }
 
 func TestInferredReplacementChangingOnlyARenderedParameterNeedsReview(t *testing.T) {
