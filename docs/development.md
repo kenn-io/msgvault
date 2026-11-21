@@ -278,10 +278,10 @@ every fixture. Template clones send no schema statements through a store
 connection, and a background worker drops PostgreSQL clones after cleanup.
 Each database is still private to its test and still produced by the same
 `InitSchema()` path. A PostgreSQL template is owned through a session advisory
-lock the server releases when the binary exits, so the next binary reclaims
-whatever an earlier one left behind, including clones whose drops were pending
-at exit, overflowed, or failed; a role without `CREATEDB` falls back to a private
-schema in the configured database.
+lock the server releases when the binary exits. After the owner exits, a later
+same-scope template build attempts to reclaim what it left behind, including
+clones whose drops were pending at exit, overflowed, or failed. A role without
+`CREATEDB` falls back to a private schema in the configured database.
 
 `dbtest.NewTestDB` copies an in-memory `schema.sql` template per test with
 SQLite's backup API.
