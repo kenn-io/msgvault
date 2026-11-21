@@ -618,7 +618,7 @@ describe('PersonBindingConflictModal', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
     await vi.advanceTimersByTimeAsync(0);
     expect(gets).toBe(2);
-    await fireEvent.keyDown(window, { key: 'Escape' });
+    await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(3500);
     expect(gets).toBe(2);
@@ -655,7 +655,7 @@ describe('PersonBindingConflictModal', () => {
 
       expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
       expect(screen.queryByRole('button', { name: 'Close person merge' })).toBeNull();
-      await fireEvent.keyDown(window, { key: 'Escape' });
+      await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
       await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
       appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
       expect(onClose).not.toHaveBeenCalled();

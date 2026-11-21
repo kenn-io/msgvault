@@ -203,7 +203,7 @@ describe('LinkIdentityDialog', () => {
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(2));
 
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
-    await fireEvent.keyDown(window, { key: 'Escape' });
+    await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
     expect(onClose, 'no dismissal path may hide a pending confirm').not.toHaveBeenCalled();
 
@@ -227,7 +227,7 @@ describe('LinkIdentityDialog', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Request failed (500)');
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', false);
 
-    await fireEvent.keyDown(window, { key: 'Escape' });
+    await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledOnce();
   });
 

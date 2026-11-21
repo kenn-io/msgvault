@@ -1769,7 +1769,7 @@ describe('AppShell', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
     }],
     ['Escape', async () => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      screen.getByRole('dialog', { name: 'View legacy-report.pdf' }).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     }]
   ])('clears a legacy attachment selection when its viewer closes with %s', async (_label, close) => {
     window.history.replaceState(null, '', `/?workspace=everything&explore=${encodeURIComponent(JSON.stringify({
@@ -1804,7 +1804,7 @@ describe('AppShell', () => {
     }],
     ['Escape', async () => {
       const escape = { key: 'Escape', bubbles: true, cancelable: true };
-      window.dispatchEvent(new KeyboardEvent('keydown', escape));
+      screen.getByRole('dialog', { name: 'View legacy-report.pdf' }).dispatchEvent(new KeyboardEvent('keydown', escape));
     }]
   ])('focuses the Files grid when a legacy file viewer closes with %s', async (_label, close) => {
     const explore = encodeURIComponent(JSON.stringify({ selectedRow: 'attachment:5' }));

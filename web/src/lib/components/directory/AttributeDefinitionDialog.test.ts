@@ -385,7 +385,7 @@ describe('AttributeDefinitionDialog', () => {
     expect(fetchFn).toHaveBeenCalledOnce();
     expect(screen.getByRole('button', { name: 'Create field' })).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await fireEvent.keyDown(window, { key: 'Escape' });
+    await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
     await fireEvent.click(screen.getByRole('button', { name: 'Close create attribute field' }));
     expect(onClose).not.toHaveBeenCalled();

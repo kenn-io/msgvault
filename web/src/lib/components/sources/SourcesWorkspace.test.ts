@@ -146,6 +146,9 @@ describe('SourcesWorkspace', () => {
     const panel = screen.getByRole('dialog', { name: 'Imported' });
     await fireEvent.keyDown(panel, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: 'Imported' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for Imported' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog', { name: 'Imported' })).toBeNull();
     expect(screen.getByText('Imported file — nothing to sync').getAttribute('title')).toBe('source_not_schedulable');
     expect(screen.queryByText('source_not_schedulable')).toBeNull();
     expect(screen.getByRole('columnheader', { name: 'Status' })).toBeDefined();
