@@ -1057,6 +1057,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"MediaAttachmentResult", "filename"},
 		{"MediaAttachmentResult", "containing_title"},
 		{"MediaAttachmentResult", "excerpt"},
+		{"MessageDetail", "tab_title"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
 		{"MessagingRoute", "network_label"},

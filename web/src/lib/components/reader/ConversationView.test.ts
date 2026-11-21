@@ -294,10 +294,13 @@ describe('ConversationView', () => {
       }
     });
     try {
-      const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
-        id: 7, anchor_id: 2, messages: [message(1), message(2), message(3)],
-        has_before: false, has_after: false, total: 3
-      }));
+      const fetchFn = vi.fn<typeof fetch>(async input => {
+        if (new URL((input as Request).url).pathname === '/api/v1/messages/3') return Response.json(message(3));
+        return Response.json({
+          id: 7, anchor_id: 2, messages: [message(1), message(2), message(3)],
+          has_before: false, has_after: false, total: 3
+        });
+      });
       const client = createAPIClient(fetchFn);
       const rendered = render(ConversationView, {
         props: { client, conversationId: 7, anchorId: 2, titleAnchorId: 2 }
@@ -311,7 +314,10 @@ describe('ConversationView', () => {
 
       expect(await screen.findByRole('article', { name: 'Message 3' })).toBeTruthy();
       await waitFor(() => expect(scroller.scrollTop).toBe(3 * 100 - 8));
-      expect(fetchFn).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(fetchFn.mock.calls.map(([input]) => new URL((input as Request).url).pathname)).toEqual([
+        '/api/v1/conversations/7',
+        '/api/v1/messages/3'
+      ]));
     } finally {
       Object.defineProperty(HTMLElement.prototype, 'offsetTop', offsetTopDescriptor);
     }

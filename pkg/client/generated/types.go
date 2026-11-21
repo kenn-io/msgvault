@@ -8280,7 +8280,7 @@ type MessageDetail struct {
 	Subject           string             `json:"subject" validate:"required"`
 
 	// TabTitle Title suitable for a browser tab; empty when unavailable.
-	TabTitle string   `json:"tab_title" validate:"required"`
+	TabTitle string   `json:"tab_title" validate:"omitempty"`
 	To       []string `json:"to" validate:"required"`
 
 	// ToParticipants Recipient participants, populated for conversation windows.
@@ -8330,9 +8330,6 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.Subject, "required"); err != nil {
 		errors = errors.Append("Subject", err)
-	}
-	if err := typesValidator.Var(m.TabTitle, "required"); err != nil {
-		errors = errors.Append("TabTitle", err)
 	}
 	if err := typesValidator.Var(m.To, "required"); err != nil {
 		errors = errors.Append("To", err)

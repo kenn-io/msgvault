@@ -8345,6 +8345,9 @@ components:
         tab_title:
           description: Title suitable for a browser tab; empty when unavailable.
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         to:
           items:
             type: string
