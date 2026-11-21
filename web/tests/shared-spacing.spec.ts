@@ -164,13 +164,17 @@ test('a long sidebar saved view list keeps every row at its full height and scro
   const sidebar = page.getByRole('complementary', { name: 'Sidebar', exact: true });
   const views = sidebar.locator('.saved-view');
   await expect(views).toHaveCount(40);
+  const first = views.first();
+  await expect(first).toHaveCSS('height', '26px');
+  await first.hover();
+  await expect(first).toHaveCSS('height', '26px');
   const rows = await views.evaluateAll((elements) => elements.map((element) => {
     const box = element.getBoundingClientRect();
     return { top: box.top, bottom: box.bottom, overflow: element.scrollHeight - element.clientHeight };
   }));
   for (const [index, current] of rows.entries()) {
     expect(current.overflow, `row ${index + 1} content overflows its row`).toBeLessThanOrEqual(0);
-    expect(current.bottom - current.top, `row ${index + 1} is squashed`).toBeGreaterThanOrEqual(28);
+    expect(current.bottom - current.top, `row ${index + 1} is squashed`).toBeGreaterThanOrEqual(26);
     if (index > 0) expect(current.top, `row ${index + 1} overlaps the row above`).toBeGreaterThanOrEqual(rows[index - 1]!.bottom - 1);
   }
   const last = sidebar.getByRole('button', { name: 'Saved view 40', exact: true });
@@ -183,7 +187,7 @@ test('every sidebar item, footer included, is one height', async ({ page }) => {
   const items = page.getByRole('complementary', { name: 'Sidebar', exact: true }).locator('.sidebar__item');
   const heights = await items.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
   expect(heights.length).toBeGreaterThan(3);
-  expect(new Set(heights)).toEqual(new Set([36]));
+  expect(new Set(heights)).toEqual(new Set([34]));
 });
 
 for (const width of [1280, 390]) {

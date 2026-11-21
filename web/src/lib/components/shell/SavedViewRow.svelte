@@ -183,7 +183,7 @@
   .saved-view {
     position: relative;
     display: flex;
-    min-height: var(--control-h);
+    min-height: var(--nav-subitem-height);
     align-items: center;
     border-radius: var(--radius-md);
   }
@@ -197,7 +197,7 @@
   .saved-view__open {
     display: flex;
     min-width: 0;
-    height: var(--control-h);
+    height: var(--nav-subitem-height);
     flex: 1;
     align-items: center;
     padding: 0 var(--pane-pad-x) 0 var(--space-6);

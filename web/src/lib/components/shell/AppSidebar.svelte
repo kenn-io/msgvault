@@ -240,7 +240,7 @@
   .sidebar__item {
     display: flex;
     width: 100%;
-    min-height: var(--nav-item-h);
+    min-height: var(--nav-item-height);
     align-items: center;
     gap: var(--control-gap);
     padding: 0 var(--pane-pad-x);
@@ -258,8 +258,8 @@
   }
 
   .sidebar--rail .sidebar__item {
-    width: var(--nav-item-h);
-    min-height: var(--nav-item-h);
+    width: var(--nav-item-height);
+    min-height: var(--nav-item-height);
     justify-content: center;
     padding: 0;
   }
