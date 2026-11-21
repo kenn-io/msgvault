@@ -162,7 +162,7 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 	case "list_person_attributes":
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonAttributesResponse](ctx, b.client, method, path, options, attributeRefusal, http.StatusOK)
 	case attributeSetOperation, "clear_person_attribute":
-		result, err = readMCPOperationJSONWithClassifier[generated.PersonAttributeWrite](ctx, b.client, method, path, options, attributeRefusal, http.StatusOK)
+		result, err = readMCPOperationResponse[generated.PersonAttributeWrite](ctx, b.client, method, path, options, attributeRefusal, false, true, http.StatusOK)
 	case "list_attribute_definitions":
 		result, err = readMCPOperationJSONWithClassifier[generated.AttributeDefinitionsResponse](ctx, b.client, method, path, options, attributeRefusal, http.StatusOK)
 	case "delete_attribute_definition":

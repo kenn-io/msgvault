@@ -246,7 +246,12 @@ func (c *Client) DoGeneratedRequestWithContext(
 	path string,
 	options runtime.RequestOptions,
 ) (*http.Response, error) {
-	return c.doGeneratedRequestWithHTTPClient(ctx, method, path, options, c.httpClient, maxRawErrorBodyBytes)
+	return c.doGeneratedRequestWithHTTPClient(ctx, method, path, options, c.httpClient, maxErrorBodyBytes)
+}
+
+// DoGeneratedAttributeWriteWithContext allows larger conflict responses for attribute writes.
+func (c *Client) DoGeneratedAttributeWriteWithContext(ctx context.Context, method, path string, options runtime.RequestOptions) (*http.Response, error) {
+	return c.doGeneratedRequestWithHTTPClient(ctx, method, path, options, c.httpClient, 1<<20)
 }
 
 // DoGeneratedStreamingRequestWithContext is like DoGeneratedRequestWithContext
@@ -367,7 +372,6 @@ func doRequestWithRootContext(
 }
 
 const maxErrorBodyBytes = 64 << 10
-const maxRawErrorBodyBytes = 1 << 20
 
 // boundErrorBody caps how much of an error response any caller can buffer.
 func boundErrorBody(resp *http.Response, limit int64) *http.Response {

@@ -996,12 +996,28 @@ func TestErrorResponseBodiesAreBounded(t *testing.T) {
 func TestRawRequestErrorResponseIsBounded(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)
-		_, _ = io.WriteString(w, strings.Repeat("x", (1<<20)+1))
+		_, _ = io.WriteString(w, strings.Repeat("x", 70<<10))
 	}))
 	t.Cleanup(srv.Close)
 	client, err := New(Config{URL: srv.URL, AllowInsecure: true})
 	require.NoError(t, err)
 	resp, err := client.DoGeneratedRequestWithContext(t.Context(), http.MethodGet, "/health", &generated.RunCLIRequestOptions{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	_, err = io.ReadAll(resp.Body)
+	require.ErrorContains(t, err, "error response exceeds 64 KiB")
+}
+
+func TestAttributeWriteErrorResponseIsBounded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, strings.Repeat("x", (1<<20)+1))
+	}))
+	t.Cleanup(srv.Close)
+	client, err := New(Config{URL: srv.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	options := &generated.ClearPersonAttributeRequestOptions{PathParams: &generated.ClearPersonAttributePath{ID: 1, Slug: "example"}}
+	resp, err := client.DoGeneratedAttributeWriteWithContext(t.Context(), http.MethodDelete, "/api/v1/people/{id}/attributes/{slug}", options)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	_, err = io.ReadAll(resp.Body)
