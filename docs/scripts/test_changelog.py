@@ -57,10 +57,11 @@ class ChangelogTest(unittest.TestCase):
         output = self.root / "out.md"
         self.assertEqual((0, ""), self.run_command("render", output))
         self.assertIn("- Existing", output.read_text())
-        for name in ("z", "a", "m", "b", "y"):
-            self.note(f"{name}.md", f"### New features\n\n- {name.upper()}\n")
-        self.assertEqual((0, ""), self.run_command("render", output))
-        self.assertIn("### New features\n\n- A\n- B\n- M\n- Y\n- Z\n\n### Improvements", output.read_text())
+        last = self.note("z.md", "### New features\n\n- Z\n")
+        first = self.note("a.md", "### New features\n\n- A\n")
+        with patch.object(Path, "glob", return_value=iter([last, first])):
+            self.assertEqual((0, ""), self.run_command("render", output))
+        self.assertIn("### New features\n\n- A\n- Z\n\n### Improvements", output.read_text())
         self.note(".draft.md", "### Bug fixes\n\n- Private draft\n")
         self.note("note.md", "### Bug fixes\n\n- Public note\n")
         self.assertEqual((0, ""), self.run_command("render", output))
