@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 import changelog
+import check_built_site
 
 
 class ChangelogTest(unittest.TestCase):
@@ -61,11 +62,15 @@ class ChangelogTest(unittest.TestCase):
             self.assertEqual((0, ""), self.run_command("render", output))
         self.assertIn("### New features\n\n- A\n- Z\n\n### Improvements", output.read_text())
 
-    def test_render_assembles_fragment(self):
+    def test_built_site_checks_assembled_changelog(self):
         self.note("note.md", "### Bug fixes\n\n- Fixed a problem\n")
-        rendered = changelog.render()
-        self.assertIn("### Bug fixes\n\n- Fixed a problem", rendered)
-        self.assertNotEqual(self.log.read_text(), rendered)
+        published = self.root / "published.md"
+        published.write_text("# Changelog\n\n## Unreleased\n\n### Improvements\n\n- Existing\n\n### Bug fixes\n\n- Fixed a problem\n\n## 1.0.0\n<small>2020-01-01</small>\n")
+        with patch.object(check_built_site, "ROOT", self.root / "docs"):
+            check_built_site.check_markdown_source("/docs/changelog.md", published)
+            published.write_text(self.log.read_text())
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                check_built_site.check_markdown_source("/docs/changelog.md", published)
 
     def test_release_uses_latest_filename_addition(self):
         self.init()

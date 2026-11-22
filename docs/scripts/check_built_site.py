@@ -435,6 +435,17 @@ def check_public_site_file_inventory(site: pathlib.Path = SITE) -> None:
                 fail(f"forbidden public site credential file: {rel.as_posix()}")
 
 
+def check_markdown_source(markdown_route: str, markdown_file: pathlib.Path) -> None:
+    source = ROOT / markdown_route.removeprefix("/docs/")
+    expected = (
+        changelog.render().encode("utf-8")
+        if markdown_route == "/docs/changelog.md"
+        else source.read_bytes()
+    )
+    if markdown_file.read_bytes() != expected:
+        fail(f"published Markdown differs from its source: {markdown_route}")
+
+
 def main() -> None:
     if not SITE.exists():
         fail("site directory does not exist. Run the Zensical build first.")
@@ -504,14 +515,7 @@ def main() -> None:
         if f"]({markdown_url})" not in llms_text:
             fail(f"llms.txt is missing Markdown page {markdown_url}")
         if markdown_route.startswith("/docs/"):
-            source = ROOT / markdown_route.removeprefix("/docs/")
-            expected = (
-                changelog.render().encode("utf-8")
-                if markdown_route == "/docs/changelog.md"
-                else source.read_bytes()
-            )
-            if markdown_file.read_bytes() != expected:
-                fail(f"published Markdown differs from its source: {markdown_route}")
+            check_markdown_source(markdown_route, markdown_file)
     docs_index = SITE / "docs" / "index.html"
     index_parser = parsed_by_file[docs_index.resolve()]
     web_ui_route = route_to_file("/docs/web-ui/").resolve()
