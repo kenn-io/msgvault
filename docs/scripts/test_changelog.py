@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 import changelog
+import check_markdown_sources
 
 
 class ChangelogTest(unittest.TestCase):
@@ -100,6 +101,36 @@ class ChangelogTest(unittest.TestCase):
         self.assertEqual(1, result)
         self.assertIn("no release notes", error)
         self.assertEqual(original, self.log.read_bytes())
+
+    def test_empty_fragment_does_not_consume_notes(self):
+        self.init()
+        empty = self.note("empty.md", "### Bug fixes\n\n")
+        valid = self.note("valid.md", "### Improvements\n\n- Note\n")
+        original = self.log.read_bytes()
+        result, error = self.run_command("release", "2.0.0", "2026-01-01")
+        self.assertEqual(1, result)
+        self.assertIn("empty.md", error)
+        self.assertEqual(original, self.log.read_bytes())
+        self.assertTrue(empty.exists())
+        self.assertTrue(valid.exists())
+
+    def test_source_checks_fragment_admonitions(self):
+        fragment = self.note("note.md", "### Bug fixes\n\n!!! note\nUnindented body\n")
+        stderr = io.StringIO()
+        with patch.object(check_markdown_sources, "ROOT", self.root / "docs"), patch.object(check_markdown_sources, "PUBLIC_MARKDOWN", set()), contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as exit_code:
+                check_markdown_sources.main()
+        self.assertEqual(1, exit_code.exception.code)
+        self.assertIn("changelog.d/note.md:3", stderr.getvalue())
+        fragment.write_text("### Bug fixes\n\n<Card>\n")
+        stderr = io.StringIO()
+        with patch.object(check_markdown_sources, "ROOT", self.root / "docs"), patch.object(check_markdown_sources, "PUBLIC_MARKDOWN", set()), contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit):
+                check_markdown_sources.main()
+        self.assertIn("unsupported MDX/Starlight marker", stderr.getvalue())
+        fragment.write_text("### Bug fixes\n\n!!! note\n    Indented body\n")
+        with patch.object(check_markdown_sources, "ROOT", self.root / "docs"), patch.object(check_markdown_sources, "PUBLIC_MARKDOWN", set()), contextlib.redirect_stdout(io.StringIO()):
+            check_markdown_sources.main()
 
     def test_existing_version_preserves_fragments(self):
         fragment = self.note("note.md", "### Bug fixes\n\n- Note\n")

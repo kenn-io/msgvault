@@ -17,8 +17,8 @@ def fragments():
     for path in sorted((ROOT / "docs/changelog.d").glob("*.md")):
         text = path.read_text(encoding="utf-8").strip()
         lines = text.splitlines()
-        if not lines or lines[0] not in [f"### {s}" for s in SECTIONS] or any(re.match(r"^#{1,3} ", line) for line in lines[1:]):
-            raise ValueError(f"{path}: expected one known section heading at the start")
+        if len(lines) < 2 or not "\n".join(lines[1:]).strip() or lines[0] not in [f"### {s}" for s in SECTIONS] or any(re.match(r"^#{1,3} ", line) for line in lines[1:]):
+            raise ValueError(f"{path}: expected one known section heading and a non-empty body")
         notes[path] = (lines[0][4:], "\n".join(lines[1:]).strip())
     return notes
 

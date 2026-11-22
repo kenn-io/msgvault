@@ -175,14 +175,14 @@ def check_forbidden_markers(path: pathlib.Path, text: str, errors: list[str]) ->
 def main() -> None:
     errors: list[str] = []
 
-    for path in public_markdown_files():
+    for path in public_markdown_files() + sorted((ROOT / "changelog.d").glob("*.md")):
         if not path.exists():
             errors.append(f"{path.relative_to(ROOT)}: missing public Markdown file")
             continue
         text = path.read_text(encoding="utf-8")
-        lines = text.splitlines()
-        check_frontmatter(path, lines, errors)
-        check_admonitions(path, lines, errors)
+        if path.parent != ROOT / "changelog.d":
+            check_frontmatter(path, text.splitlines(), errors)
+        check_admonitions(path, text.splitlines(), errors)
         check_forbidden_markers(path, text, errors)
 
     if errors:
