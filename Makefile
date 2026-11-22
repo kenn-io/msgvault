@@ -552,13 +552,7 @@ docs-serve: docs-build
 # Fold changelog fragments into a release
 .PHONY: changelog-release
 changelog-release:
-	@if [ "$(origin VERSION)" != "command line" ] || [ -z "$(strip $(VERSION))" ]; then \
-		echo "changelog-release: pass VERSION, e.g. make changelog-release VERSION=v1.2.3 RELEASE_DATE=YYYY-MM-DD" >&2; exit 2; \
-	fi; \
-	if [ -z "$(strip $(RELEASE_DATE))" ]; then \
-		echo "changelog-release: pass RELEASE_DATE, e.g. RELEASE_DATE=YYYY-MM-DD" >&2; exit 2; \
-	fi
-	python3 docs/scripts/changelog.py release "$(VERSION)" "$(RELEASE_DATE)"
+	python3 docs/scripts/changelog.py release "$(RELEASE_VERSION)" "$(RELEASE_DATE)"
 
 # Check docs sources and build output
 docs-check:
@@ -668,7 +662,7 @@ help:
 	@echo "  docs-build     - Build docs site"
 	@echo "  docs-serve     - Build and serve the complete site locally"
 	@echo "  docs-check     - Run docs validation"
-	@echo "  changelog-release - Fold release notes (VERSION=... RELEASE_DATE=...)"
+	@echo "  changelog-release - Fold release notes (RELEASE_VERSION=... RELEASE_DATE=...)"
 	@echo "  docs-screenshots - Regenerate docs screenshots"
 	@echo "  docs-assets-branch - Publish static docs assets branch"
 	@echo "  docs-generated-assets-branch - Publish generated docs assets branch"

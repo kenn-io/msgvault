@@ -58,9 +58,10 @@ The section must be `### Upgrade notes`, `### New features`,
 under **Unreleased**, sorted by filename.
 
 To cut a release, a maintainer runs
-`make changelog-release VERSION=0.27.0 RELEASE_DATE=2026-11-22`. It needs full
-Git history. It moves the notes under the version heading, ordered by when each
-filename was added to `main`, and deletes the files. Renaming a note gives it
+`make changelog-release RELEASE_VERSION=0.27.0 RELEASE_DATE=2026-11-22`. It
+needs full Git history. It moves the notes under the version heading, keeping
+the section headings, and deletes the files. Within each section, notes follow
+the order each filename was added to `main`. Renaming a note gives it
 the rename's position.
 
 ## Living architecture and historical records
