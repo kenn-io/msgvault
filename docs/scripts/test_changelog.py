@@ -119,6 +119,27 @@ class ChangelogTest(unittest.TestCase):
         self.assertIn("write failed", error)
         self.assertTrue(fragment.exists())
 
+    def test_release_rolls_back_after_partial_fragment_deletion(self):
+        self.init()
+        first = self.note("first.md", "### Bug fixes\n\n- First\n")
+        second = self.note("second.md", "### Bug fixes\n\n- Second\n")
+        original = self.log.read_bytes()
+        unlink = Path.unlink
+
+        def fail_second(path):
+            if path == second:
+                raise OSError("delete failed")
+            unlink(path)
+
+        with patch.object(Path, "unlink", fail_second):
+            result, error = self.run_command("release", "2.0", "2026-01-01")
+        self.assertEqual(1, result)
+        self.assertIn("delete failed", error)
+        self.assertEqual(original, self.log.read_bytes())
+        self.assertEqual(b"### Bug fixes\n\n- First\n", first.read_bytes())
+        self.assertEqual(b"### Bug fixes\n\n- Second\n", second.read_bytes())
+        self.assertEqual((0, ""), self.run_command("release", "2.0", "2026-01-01"))
+
     def test_shallow_clone_refuses_release(self):
         self.init()
         with tempfile.TemporaryDirectory() as clone_dir:

@@ -60,7 +60,8 @@ def main():
     args = parser.parse_args()
     try:
         path = ROOT / "docs/changelog.md"
-        changelog = path.read_text(encoding="utf-8")
+        original = path.read_bytes()
+        changelog = original.decode("utf-8")
         notes = fragments()
         if args.command == "render":
             args.output.write_text(fold(changelog, notes, sorted(notes)), encoding="utf-8")
@@ -69,9 +70,20 @@ def main():
                 raise ValueError(f"version {args.version} already exists")
             result = fold(changelog, notes, release_order(notes))
             result = result.replace("## Unreleased\n", f"## Unreleased\n\n## {args.version}\n<small>{args.date}</small>\n", 1)
+            saved = {fragment: (fragment.read_bytes(), fragment.stat().st_mode) for fragment in notes}
             path.write_text(result, encoding="utf-8")
-            for fragment in notes:
-                fragment.unlink()
+            deleted = []
+            try:
+                for fragment in notes:
+                    fragment.unlink()
+                    deleted.append(fragment)
+            except OSError:
+                path.write_bytes(original)
+                for fragment in deleted:
+                    content, mode = saved[fragment]
+                    fragment.write_bytes(content)
+                    fragment.chmod(mode)
+                raise
     except (OSError, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 1
