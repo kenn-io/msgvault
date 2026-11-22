@@ -19,10 +19,9 @@ public site has three levels; keep their responsibilities distinct.
 - Start with the reader's outcome. Explain the smallest amount of context needed
   to take the next step, then put detailed contracts below it or link to them.
 - Separate what works today, its limitations, and future work. A merged change
-  is not necessarily in the latest release. The
-  [changelog](https://msgvault.io/docs/changelog/) owns release changes and
-  upgrade notes; keep unreleased work separate from dated releases. Task guides
-  own current usage, not a second release catalog.
+  is not necessarily in the latest release. The [changelog](changelog.md) owns
+  release changes and upgrade notes; keep unreleased work separate from dated
+  releases. Task guides own current usage, not a second release catalog.
 - Update the owning section. Do not append a running implementation diary or
   copy whole command catalogs into README and indexes.
 - Preserve command spelling, defaults, authorization checks, failure behavior,
@@ -64,19 +63,7 @@ To cut a release, a maintainer runs
 `make changelog-release RELEASE_VERSION=0.27.0 RELEASE_DATE=2026-11-22`. It
 needs full Git history. It moves the notes under the version heading, keeping
 the section headings, and deletes the files. Within each section, notes follow
-the order each filename was added to `main`. Renaming a note gives it
-the rename's position.
-Run it from a clean worktree. If it fails, restore the changelog:
-
-```sh
-git restore docs/changelog.md
-```
-
-If the release had notes in `docs/changelog.d`, also restore them:
-
-```sh
-git restore docs/changelog.d
-```
+the order each filename was added to `main`.
 
 After `make changelog-release`, add the release summary and links, and update
 `last_edited` as usual.
