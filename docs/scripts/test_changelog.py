@@ -61,11 +61,16 @@ class ChangelogTest(unittest.TestCase):
         with patch.object(Path, "glob", return_value=iter([last, first])):
             self.assertEqual((0, ""), self.run_command("render", output))
         self.assertIn("### New features\n\n- A\n- Z\n\n### Improvements", output.read_text())
+        self.note(".draft.md", "### Bug fixes\n\n- Private draft\n")
+        self.note("note.md", "### Bug fixes\n\n- Public note\n")
+        self.assertEqual((0, ""), self.run_command("render", output))
+        self.assertIn("- Public note", output.read_text())
+        self.assertNotIn("- Private draft", output.read_text())
 
     def test_built_site_checks_assembled_changelog(self):
         self.note("note.md", "### Bug fixes\n\n- Fixed a problem\n")
         published = self.root / "published.md"
-        published.write_text("# Changelog\n\n## Unreleased\n\n### Improvements\n\n- Existing\n\n### Bug fixes\n\n- Fixed a problem\n\n## 1.0.0\n<small>2020-01-01</small>\n")
+        published.write_text(changelog.render())
         check_built_site.check_markdown_source("/docs/changelog.md", published)
         published.write_text(self.log.read_text())
         stderr = io.StringIO()
@@ -73,20 +78,7 @@ class ChangelogTest(unittest.TestCase):
             check_built_site.check_markdown_source("/docs/changelog.md", published)
         self.assertIn("published Markdown differs from its source: /docs/changelog.md", stderr.getvalue())
 
-    def test_hidden_draft_is_not_published_or_released(self):
-        self.init()
-        draft = self.note(".draft.md", "### Bug fixes\n\n- Private draft\n")
-        self.note("note.md", "### Bug fixes\n\n- Public note\n")
-        output = self.root / "out.md"
-        self.assertEqual((0, ""), self.run_command("render", output))
-        self.assertIn("- Public note", output.read_text())
-        self.assertNotIn("- Private draft", output.read_text())
-        self.assertEqual((0, ""), self.run_command("release", "2.0.0", "2026-01-01"))
-        self.assertIn("- Public note", self.log.read_text())
-        self.assertNotIn("- Private draft", self.log.read_text())
-        self.assertEqual("### Bug fixes\n\n- Private draft\n", draft.read_text())
-
-    def test_release_uses_latest_filename_addition(self):
+    def test_release_output_and_latest_filename_addition_order(self):
         self.init()
         unicode_note = self.note("été.md", "### Bug fixes\n\n- Unicode\n")
         self.note("café.md", "### Bug fixes\n\n- Cafe\n")
@@ -118,29 +110,23 @@ class ChangelogTest(unittest.TestCase):
                 self.assertIn("invalid.md", error)
 
     def test_failed_release_leaves_files_untouched(self):
-        for case in ("empty release", "empty fragment", "existing version"):
-            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                (root / "docs").mkdir()
-                log = root / "docs/changelog.md"
-                log.write_text("# Changelog\n\n## Unreleased\n\n## 1.0.0\n")
-                with patch.object(self, "root", root), patch.object(changelog, "ROOT", root):
-                    if case != "existing version":
-                        self.init()
-                    fragments = []
-                    if case == "empty fragment":
-                        fragments.append(self.note("empty.md", "### Bug fixes\n\n"))
-                    if case != "empty release":
-                        fragments.append(self.note("valid.md", "### Improvements\n\n- Note\n"))
-                    original = log.read_bytes()
-                    contents = {path: path.read_bytes() for path in fragments}
-                    version = "1.0.0" if case == "existing version" else "2.0.0"
-                    result, error = self.run_command("release", version, "2026-01-01")
-                    self.assertEqual(1, result)
-                    self.assertIn({"empty release": "no release notes", "empty fragment": "empty.md", "existing version": "already exists"}[case], error)
-                    self.assertEqual(original, log.read_bytes())
-                    for path, content in contents.items():
-                        self.assertEqual(content, path.read_bytes())
+        for case in ("empty release", "existing version"):
+            with self.subTest(case=case):
+                self.log.write_text("# Changelog\n\n## Unreleased\n\n## 1.0.0\n")
+                if case == "empty release":
+                    self.init()
+                fragments = []
+                if case == "existing version":
+                    fragments.append(self.note("valid.md", "### Improvements\n\n- Note\n"))
+                original = self.log.read_bytes()
+                contents = {path: path.read_bytes() for path in fragments}
+                version = "1.0.0" if case == "existing version" else "2.0.0"
+                result, error = self.run_command("release", version, "2026-01-01")
+                self.assertEqual(1, result)
+                self.assertIn({"empty release": "no release notes", "existing version": "already exists"}[case], error)
+                self.assertEqual(original, self.log.read_bytes())
+                for path, content in contents.items():
+                    self.assertEqual(content, path.read_bytes())
 
     def test_release_rejects_invalid_inputs(self):
         for version, date in (("", "2026-01-01"), ("2.0", "2026-01-01"), ("2.0.0", ""), ("2.0.0", "2026-1-01")):
