@@ -443,7 +443,8 @@ import (
 // 5.27.0 supports vector and hybrid search under a source scope.
 // 5.28.0 serves CLI account counts from stored per-source totals, so account
 // listings no longer return stale, as_of, or counts_pending.
-const APISchemaVersion = "5.28.0"
+// 5.29.0 accepts include:cold in lexical message search to include Cold rooms.
+const APISchemaVersion = "5.29.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

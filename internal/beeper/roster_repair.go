@@ -157,6 +157,16 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	if err != nil {
 		return failed(fmt.Errorf("repair archived roster: %w", err))
 	}
+	refreshCtx := ctx
+	if opts.stopRequested() {
+		// A requested stop still finishes the room's policy refresh.
+		var cancelRefresh context.CancelFunc
+		refreshCtx, cancelRefresh = opts.finalizeContext(ctx)
+		defer cancelRefresh()
+	}
+	if _, err := imp.store.RefreshConversationPolicy(refreshCtx, []int64{conversationID}, time.Now()); err != nil {
+		return failed(fmt.Errorf("refresh repaired roster policy: %w", err))
+	}
 	if !complete {
 		stop, err := deferRoom("beeper_roster_repair_deferred", store.SyncRunItemStatusSkipped, nil)
 		return stop || opts.budgetExpired(), err

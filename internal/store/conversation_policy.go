@@ -12,8 +12,8 @@ import (
 
 const conversationPolicyRevisionKey = "conversation_policy_revision"
 
-// ConversationPolicy is a source-qualified archived room and its staged policy.
-// EffectiveTier remains full until downstream eligibility support is enabled.
+// ConversationPolicy is a source-qualified archived room and its live policy.
+// EffectiveTier is the current authoritative eligibility tier.
 type ConversationPolicy struct {
 	ConversationID   int64                   `json:"conversation_id"`
 	SourceID         int64                   `json:"source_id"`
@@ -34,7 +34,7 @@ func (s *Store) ListConversationPolicies(ctx context.Context) ([]ConversationPol
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT c.id,c.source_id,src.source_type,src.identifier,
  COALESCE(c.source_conversation_id,''),COALESCE(c.participant_count,0),
  (SELECT COUNT(DISTINCT cp.participant_id) FROM conversation_participants cp WHERE cp.conversation_id=c.id),
- COALESCE(CAST(c.metadata AS TEXT),''),COALESCE(p.effective_tier,'full'),COALESCE(p.override_tier,''),p.last_activity_at
+ COALESCE(CAST(c.metadata AS TEXT),''),COALESCE(p.effective_tier,CASE WHEN src.source_type IN ('beeper','slack','slackdump','discord','teams') THEN 'cold' ELSE 'full' END),COALESCE(p.override_tier,''),p.last_activity_at
  FROM conversations c JOIN sources src ON src.id=c.source_id
  LEFT JOIN conversation_policy p ON p.conversation_id=c.id WHERE 1=1`+scope+` ORDER BY c.id`), args...)
 	if err != nil {
@@ -81,7 +81,7 @@ func (s *Store) bumpConversationPolicyRevision(ctx context.Context, tx contextSt
 
 // SetConversationPolicyOverride saves full/cold or resets with the empty tier.
 // Stub/skip are rejected until explicit retention and purge support is present.
-// Saving settings does not change effective eligibility in this staged release.
+// Effective state, invalidations and cleanup intent commit with the override.
 func (s *Store) SetConversationPolicyOverride(ctx context.Context, sourceID int64, providerID string, tier conversationpolicy.Tier) error {
 	if tier != "" {
 		if _, err := conversationpolicy.ParseTier(string(tier)); err != nil {
@@ -91,7 +91,7 @@ func (s *Store) SetConversationPolicyOverride(ctx context.Context, sourceID int6
 			return fmt.Errorf("tier %s requires retention/purge support, which is not enabled", tier)
 		}
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withConversationPolicyWrite(ctx, func(tx *loggedTx) error {
 		scope, scopeArgs := sourceScopeClause(ctx, "source_id")
 		var id int64
 		err := tx.QueryRowContext(ctx, s.Rebind(`SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=?`+scope), append([]any{sourceID, providerID}, scopeArgs...)...).Scan(&id)
@@ -115,6 +115,11 @@ func (s *Store) SetConversationPolicyOverride(ctx context.Context, sourceID int6
 		if err != nil {
 			return fmt.Errorf("save conversation override: %w", err)
 		}
-		return s.bumpConversationPolicyRevision(ctx, tx)
+		settings, _, err := s.conversationPolicySettingsTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		_, err = s.refreshConversationPolicyTx(ctx, tx, settings, []int64{id}, time.Now(), true)
+		return err
 	})
 }

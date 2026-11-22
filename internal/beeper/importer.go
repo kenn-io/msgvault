@@ -869,6 +869,17 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 				statsErr = fmt.Errorf("clear roster repair pending marker after active sync: %w", clearErr)
 			}
 		}
+		if ctx.Err() == nil {
+			policyCtx := ctx
+			if opts.stopRequested() {
+				var cancelPolicy context.CancelFunc
+				policyCtx, cancelPolicy = opts.finalizeContext(ctx)
+				defer cancelPolicy()
+			}
+			if _, policyErr := imp.store.RefreshConversationPolicy(policyCtx, []int64{convID}, time.Now()); policyErr != nil {
+				statsErr = errors.Join(statsErr, policyErr)
+			}
+		}
 		err = errors.Join(err, statsErr)
 	}()
 	if stopBeforeMessages(cs, opts, err, sum) {
@@ -1185,7 +1196,9 @@ func (imp *Importer) ensureConversation(
 			return convID, work.Verified, membership, err
 		}
 	}
-
+	if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+		return 0, false, chatMembership{}, err
+	}
 	return convID, work.Verified, membership, nil
 }
 
