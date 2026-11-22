@@ -82,11 +82,13 @@ class ChangelogTest(unittest.TestCase):
 
     def test_fragment_source_checks(self):
         self.note("invalid.md", "### Bug fixes\n\n!!! note broken\n\n<Card>\n")
+        self.note(".draft.md", "### Bug fixes\n\n<Card>\n")
         stderr = io.StringIO()
         with patch.object(check_markdown_sources, "ROOT", self.root / "docs"), patch.object(check_markdown_sources, "PUBLIC_MARKDOWN", set()), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
             check_markdown_sources.main()
         self.assertIn("changelog.d/invalid.md:3: malformed or collapsed admonition", stderr.getvalue())
         self.assertIn("changelog.d/invalid.md: contains unsupported MDX/Starlight marker '<Card'", stderr.getvalue())
+        self.assertNotIn(".draft.md", stderr.getvalue())
 
     def test_built_site_checks_assembled_changelog(self):
         self.note("note.md", "### Bug fixes\n\n- Fixed a problem\n")

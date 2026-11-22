@@ -27,9 +27,13 @@ def headings_outside_fences(lines):
     return False
 
 
+def fragment_paths():
+    return sorted(path for path in (ROOT / "docs/changelog.d").glob("*.md") if not path.name.startswith("."))
+
+
 def fragments():
     notes = {}
-    for path in sorted(path for path in (ROOT / "docs/changelog.d").glob("*.md") if not path.name.startswith(".")):
+    for path in fragment_paths():
         text = path.read_text(encoding="utf-8").strip()
         lines = text.splitlines()
         if len(lines) < 2 or not "\n".join(lines[1:]).strip() or lines[0] not in [f"### {s}" for s in SECTIONS] or headings_outside_fences(lines[1:]):
