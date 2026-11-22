@@ -123,6 +123,8 @@ release, from a breaking change to `feat` to `fix`.
 - Release notes state what changed for the reader. Put any required action in
   the entry for that change. Do not add precautionary warnings, upgrade
   checklists, or internals such as schema versions.
+- Add unreleased notes to `docs/changelog.d/` using the format in
+  [docs/README.md](docs/README.md#add-a-release-note).
 - Keep the website, its Markdown companions, README, and documentation on
   message. Distinguish the latest release from newer `main` functionality.
   Follow [docs/README.md](docs/README.md) for the publishing layout and checks.

@@ -19,9 +19,10 @@ public site has three levels; keep their responsibilities distinct.
 - Start with the reader's outcome. Explain the smallest amount of context needed
   to take the next step, then put detailed contracts below it or link to them.
 - Separate what works today, its limitations, and future work. A merged change
-  is not necessarily in the latest release. The [changelog](changelog.md) owns
-  release changes and upgrade notes; keep unreleased work separate from dated
-  releases. Task guides own current usage, not a second release catalog.
+  is not necessarily in the latest release. The
+  [changelog](https://msgvault.io/docs/changelog/) owns release changes and
+  upgrade notes; keep unreleased work separate from dated releases. Task guides
+  own current usage, not a second release catalog.
 - Update the owning section. Do not append a running implementation diary or
   copy whole command catalogs into README and indexes.
 - Preserve command spelling, defaults, authorization checks, failure behavior,
@@ -39,6 +40,28 @@ immediately before the command and put `# Not in the latest release yet` before
 the output in the source. See the
 [release-commands guide](https://github.com/kenn-io/actions/tree/main/release-commands#mark-unreleased-commands)
 for details.
+
+## Add a release note
+
+Add each note as its own file, `docs/changelog.d/<topic>.md`, instead of
+editing `## Unreleased` in `docs/changelog.md`, so two PRs never edit the same
+file. Start with one section heading, then the bullets:
+
+```markdown
+### New features
+
+- Describe the change for the reader.
+```
+
+The section must be `### Upgrade notes`, `### New features`,
+`### Improvements`, or `### Bug fixes`. The published changelog lists the notes
+under **Unreleased**, sorted by filename.
+
+To cut a release, a maintainer runs
+`make changelog-release VERSION=0.27.0 RELEASE_DATE=2026-11-22`. It needs full
+Git history. It moves the notes under the version heading, ordered by when each
+filename was added to `main`, and deletes the files. Renaming a note gives it
+the rename's position.
 
 ## Living architecture and historical records
 
