@@ -103,6 +103,7 @@ done
     --exclude './.zensical-build.*' \
     --exclude './superpowers' \
     --exclude './internal' \
+    --exclude './changelog.d' \
     --exclude './overrides' \
     --exclude './scripts' \
     --exclude './screenshots' \
@@ -118,6 +119,8 @@ done
     --exclude './assets/*.sh' \
     -cf - .
 ) | (cd "$tmp_docs" && tar -xf -)
+
+python3 "$docs_root/scripts/changelog.py" render "$tmp_docs/changelog.md"
 
 # The temporary docs tree is the public publishing boundary. Keep ignored local
 # credentials and dotfiles out even if a future tar implementation misses a glob.

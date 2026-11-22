@@ -549,6 +549,11 @@ docs-build:
 docs-serve: docs-build
 	cd docs && uv run --frozen python -m http.server 8000 --bind 127.0.0.1 --directory site
 
+# Fold changelog fragments into a release
+.PHONY: changelog-release
+changelog-release:
+	python3 docs/scripts/changelog.py release "$(VERSION)" "$(RELEASE_DATE)"
+
 # Check docs sources and build output
 docs-check:
 	bash scripts/check-docs.sh
@@ -657,6 +662,7 @@ help:
 	@echo "  docs-build     - Build docs site"
 	@echo "  docs-serve     - Build and serve the complete site locally"
 	@echo "  docs-check     - Run docs validation"
+	@echo "  changelog-release - Fold release notes (VERSION=... RELEASE_DATE=...)"
 	@echo "  docs-screenshots - Regenerate docs screenshots"
 	@echo "  docs-assets-branch - Publish static docs assets branch"
 	@echo "  docs-generated-assets-branch - Publish generated docs assets branch"
