@@ -6437,8 +6437,21 @@ func (p imessageTitleParticipant) hasRealDisplayName() bool {
 // existing participant identified by email address. Only updates if
 // display_name is currently empty. Returns true if a participant was
 // found and updated, false if not found or name was already set. Does
-// NOT create new participants. The lookup is case-insensitive.
+// NOT create new participants. The lookup is case-insensitive. The name is
+// recorded as an independently imported contact.
 func (s *Store) UpdateParticipantDisplayNameByEmail(ctx context.Context, email, displayName string) (bool, error) {
+	return s.updateParticipantDisplayNameByEmail(ctx, email, displayName, nil)
+}
+
+// UpdateParticipantDisplayNameFromSourceContext is
+// UpdateParticipantDisplayNameByEmail for a sender name read from a message
+// that sourceID imported. The name's support belongs to that source, so
+// deleting the source removes it.
+func (s *Store) UpdateParticipantDisplayNameFromSourceContext(ctx context.Context, sourceID int64, email, displayName string) (bool, error) {
+	return s.updateParticipantDisplayNameByEmail(ctx, email, displayName, &sourceID)
+}
+
+func (s *Store) updateParticipantDisplayNameByEmail(ctx context.Context, email, displayName string, sourceID *int64) (bool, error) {
 	if email == "" || displayName == "" {
 		return false, nil
 	}
@@ -6482,7 +6495,12 @@ func (s *Store) UpdateParticipantDisplayNameByEmail(ctx context.Context, email, 
 	if err != nil {
 		return false, err
 	}
-	if err := s.recordVCardParticipantDisplayNameObservations(namedParticipantIDs, displayName); err != nil {
+	if sourceID != nil {
+		err = s.recordSourceParticipantDisplayNameObservations(ctx, *sourceID, namedParticipantIDs, displayName)
+	} else {
+		err = s.recordVCardParticipantDisplayNameObservations(namedParticipantIDs, displayName)
+	}
+	if err != nil {
 		return false, err
 	}
 	return updated, nil
@@ -6520,6 +6538,22 @@ func (s *Store) recordVCardParticipantDisplayNameObservations(participantIDs []i
 		})
 		if err != nil {
 			return fmt.Errorf("record vCard display name for participant %d: %w", participantID, err)
+		}
+	}
+	return nil
+}
+
+// recordSourceParticipantDisplayNameObservations records a message sender's
+// name as an observation of the source that imported the message.
+func (s *Store) recordSourceParticipantDisplayNameObservations(ctx context.Context, sourceID int64, participantIDs []int64, displayName string) error {
+	sourceRef := "message_sender"
+	for _, participantID := range participantIDs {
+		_, err := s.RecordContactObservationContext(ctx, participantID, ParticipantContactObservationInput{
+			SourceID: &sourceID, AddressKind: ContactAddressDisplayName, OriginalValue: displayName,
+			Envelope: ValueEnvelopeInput{Source: ProvenanceArchiveObservation, SourceRef: &sourceRef},
+		})
+		if err != nil {
+			return fmt.Errorf("record message sender name for participant %d: %w", participantID, err)
 		}
 	}
 	return nil

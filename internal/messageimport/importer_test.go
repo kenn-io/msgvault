@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -348,6 +349,40 @@ func TestImporterResolvesSenders(t *testing.T) {
 		sender, _ := senderOf(t, "feeds", "p1", MessageImportSender{Phone: "+1 555 010 0123"})
 		assert.Equal(t, existing, sender)
 	})
+}
+
+// A sender name read from an imported message is that source's evidence. For a
+// participant that also belongs to a room excluded from people features, the
+// name stays eligible only while the source that supplied it exists.
+func TestImporterSenderNameSupportGoesWithItsSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	chat, err := st.GetOrCreateSource("beeper", "cold-chat")
+	require.NoError(err)
+	room, err := st.EnsureConversation(t.Context(), chat.ID, "cold-room", "Cold room")
+	require.NoError(err)
+	participant, err := st.EnsureParticipantContext(t.Context(), "shared@example.com", "", "example.com")
+	require.NoError(err)
+	require.NoError(st.EnsureConversationParticipant(room, participant, "member"))
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), chat.ID, "cold-room", conversationpolicy.Cold))
+	nameEligible := func() bool {
+		var eligible bool
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT EXISTS(SELECT 1 FROM participants p WHERE p.id = ? AND `+
+			store.FullParticipantNameWhere("p.id", "p.display_name")+`)`), participant).Scan(&eligible))
+		return eligible
+	}
+
+	req := validRequest(t)
+	req.Message.Sender = MessageImportSender{Email: "shared@example.com", Name: "Shared Sender"}
+	result, err := NewImporter(st, Hooks{}).Import(t.Context(), req)
+	require.NoError(err)
+	assert.True(nameEligible(), "the importing source supports the name it supplied")
+
+	var sourceID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT source_id FROM messages WHERE id = ?`), result.MessageID).Scan(&sourceID))
+	require.NoError(st.RemoveSource(sourceID))
+	assert.False(nameEligible(), "deleting the source removes the name's only support")
 }
 
 func TestImporterMovesMessageBetweenConversations(t *testing.T) {
