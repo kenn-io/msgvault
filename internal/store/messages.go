@@ -1526,9 +1526,26 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 	lock := attributionLockForMessage(msg.SourceID, msg.MessageType)
 	id, err := s.upsertMessageLockedContext(ctx, lock, msg)
 	if errors.Is(err, errMovedMessageNeedsExclusive) {
-		id, err = s.upsertMessageLockedContext(ctx, attributionLock{Exclusive: true}, msg)
+		id, err = s.persistMovedMessage(ctx, func() (int64, error) {
+			return s.upsertMessageLockedContext(ctx, attributionLock{Exclusive: true}, msg)
+		})
 	}
 	return id, err
+}
+
+// persistMovedMessage reruns a move that changes whether a message counts as
+// Full. Reconciling its people facts needs the exclusive identity lock. The
+// move locks person rows before their fact generation locks, the reverse of
+// fact writers such as pins, so a PostgreSQL deadlock victim retries.
+func (s *Store) persistMovedMessage(ctx context.Context, persist func() (int64, error)) (int64, error) {
+	id, err := retryBusyWrite(ctx, s, "persist moved message", func() (*int64, error) {
+		id, err := persist()
+		return &id, err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return *id, nil
 }
 
 func (s *Store) upsertMessageLockedContext(ctx context.Context, lock attributionLock, msg *Message) (int64, error) {
@@ -2468,9 +2485,9 @@ func (s *Store) persistMessageWithParticipantsTransaction(
 	}
 	messageID, err := persist(lock)
 	if errors.Is(err, errMovedMessageNeedsExclusive) && !lock.Exclusive {
-		// A move that changes whether the message counts as Full reconciles
-		// people facts, which needs the exclusive identity lock.
-		messageID, err = persist(attributionLock{Exclusive: true})
+		messageID, err = s.persistMovedMessage(ctx, func() (int64, error) {
+			return persist(attributionLock{Exclusive: true})
+		})
 	}
 	if err == nil && calendarRaw != nil {
 		s.deriveEmailCalendarAfterCommit(ctx, messageID, calendarRaw)
