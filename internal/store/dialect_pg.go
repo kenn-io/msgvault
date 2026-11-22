@@ -325,6 +325,8 @@ func (d *PostgreSQLDialect) RFC822CanonicalIDIndexDefinition() string {
 // mismatch on the sources.sync_config write path.
 func (d *PostgreSQLDialect) JSONBindExpr() string { return "?::JSONB" }
 
+func (d *PostgreSQLDialect) JSONTextBindExpr() string { return "?::JSON" }
+
 func (d *PostgreSQLDialect) JSONIsDistinctExpr(col string) string {
 	return col + " IS DISTINCT FROM ?::JSONB"
 }

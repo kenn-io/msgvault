@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-18"
+last_edited: "2026-11-19"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -46,8 +46,7 @@ or import one from a subscribed CardDAV address book.
 
 ## Create a person
 
-Create someone you have never messaged from the CLI. This command is available
-on `main` after the latest release.
+Create someone you have never messaged from the CLI.
 
 ```bash
 msgvault person create --name "Alex Example" \

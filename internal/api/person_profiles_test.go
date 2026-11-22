@@ -28,6 +28,39 @@ type fakePersonSearchEngine struct {
 	limits  []int
 }
 
+func TestPatchPersonRejectsInvalidDisplayName(t *testing.T) {
+	srv, st := newIdentityLinkTestServer(t)
+	person := createDirectoryHTTPPerson(t, st, "Alex Example", "alex@example.test", "friend", "Example", false)
+	path := fmt.Sprintf("%s/%d", peoplePath, person.ID)
+	response := personRequest(t, srv, http.MethodGet, path, nil, "")
+	require.Equal(t, http.StatusOK, response.Code)
+
+	response = personRequest(t, srv, http.MethodPatch, path, []byte(`{"display_name":"Alex\rExample"}`), response.Header().Get("ETag"))
+	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+}
+
+func TestCreatePersonRejectsInvalidDisplayName(t *testing.T) {
+	for _, tc := range []struct {
+		name, displayName string
+	}{
+		{"carriage return", `"\r"`},
+		{"NUL", `"Alex\u0000Example"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, st := newIdentityLinkTestServer(t)
+			participant := st.mustParticipant(t, "alex@example.com", "Alex", "example.com")
+			response := personRequest(t, srv, http.MethodPost, peoplePath,
+				fmt.Appendf(nil, `{"participant_id":%d,"display_name":%s}`, participant, tc.displayName), "")
+			assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			response = personRequest(t, srv, http.MethodGet, peoplePath, nil, "")
+			require.Equal(t, http.StatusOK, response.Code)
+			var listed PeopleResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &listed))
+			assert.Empty(t, listed.People)
+		})
+	}
+}
+
 func (e *fakePersonSearchEngine) Search(
 	_ context.Context, query string, limit int,
 ) ([]personsearch.Result, error) {

@@ -117,6 +117,7 @@
 
   .global-search :global(.search-mode) {
     min-width: 0;
+    max-width: 112px;
     flex: none;
   }
 </style>

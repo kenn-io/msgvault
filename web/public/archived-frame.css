@@ -6,34 +6,16 @@
  * html[data-scheme] attributes:
  *   - canvas: original email colors on a white canvas
  *   - themed: mail rendered transparently with shell inks
- * Mail-body inks retain the reading palette for themed and original colors.
+ * Mail-body inks come from kit-ui's brand.css, linked ahead of this file;
+ * html.dark selects its dark tokens for themed mail in a dark shell.
  */
 
 html {
-  --mail-text: #20242a;
-  --mail-muted: #59626e;
-  --scrollbar-ink: #5f6772;
-  --mail-link: #1a5fce;
-  --mail-border: #d8dade;
-
-  color-scheme: light;
-}
-
-html[data-mode='themed'][data-scheme='light'] {
-  --mail-text: #191b1f;
-  --mail-muted: #555a62;
-  --mail-link: #2257d6;
-  --mail-border: #d8dade;
-}
-
-html[data-mode='themed'][data-scheme='dark'] {
-  --mail-text: #f2f3f5;
-  --mail-muted: #a4a8af;
-  --scrollbar-ink: #92979f;
-  --mail-link: #74acfe;
-  --mail-border: #3a3d42;
-
-  color-scheme: dark;
+  --mail-text: var(--text-primary);
+  --mail-muted: var(--text-muted);
+  --scrollbar-ink: var(--text-muted);
+  --mail-link: var(--accent-blue);
+  --mail-border: var(--border-default);
 }
 
 body {

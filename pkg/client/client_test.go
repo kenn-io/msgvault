@@ -606,6 +606,12 @@ func TestGeneratedExploreGroupingValidatesExactlyOneDimension(t *testing.T) {
 	}}).Validate(), "multiple file grouping dimensions")
 }
 
+func TestGeneratedConversationResponseAcceptsEmptyNonAnchorTabTitle(t *testing.T) {
+	var response generated.ConversationResponse
+	require.NoError(t, json.Unmarshal([]byte(`{"id":1,"anchor_id":1,"messages":[{"id":1,"body":"body","from":"sender","sent_at":"now","snippet":"snippet","subject":"subject","tab_title":"title","attachments":[],"labels":[],"to":[]},{"id":2,"body":"body","from":"sender","sent_at":"now","snippet":"snippet","subject":"subject","tab_title":"","attachments":[],"labels":[],"to":[]}],"total":2,"has_before":false,"has_after":false}`), &response))
+	require.NoError(t, response.Validate())
+}
+
 func TestGeneratedMessageRecordingsAcceptUnnamedAudio(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

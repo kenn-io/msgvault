@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-17"
+last_edited: "2026-11-19"
 title: Meeting Transcripts
 description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Bland, Granola, Plaud, Pocket, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
@@ -15,7 +15,7 @@ emails connect meetings to the people you already know in msgvault.
 |---|---|---|
 | [Omi](#omi) | Developer API key | Completed, non-discarded, unlocked conversations exposed by the backend |
 | [Twilio](#twilio) | Account auth token or API key | Recordings and transcripts Twilio still retains |
-| [Bland](#bland) (unreleased) | Org API key | Calls and the postcall data Bland still retains |
+| [Bland](#bland) | Org API key | Calls and the postcall data Bland still retains |
 | [Chatwoot](../guides/chatwoot.md) calls | Account API token | Calls in selected inboxes; recordings and transcripts refresh for seven days |
 | [Granola](#granola) | API key | Requires access to Granola's public API |
 | [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Meeting PAT or integration, optional users integration | At most 50 attendee-visible meetings per discovery query |
@@ -597,7 +597,7 @@ account archives legacy transcriptions alone.
 
 ## Bland
 
-This integration is unreleased. Each Bland call becomes one meeting with its
+Each Bland call becomes one meeting with its
 summary, transcript and recording, so you keep them after Bland deletes them.
 Sync only reads: it never places calls or sets up webhooks.
 

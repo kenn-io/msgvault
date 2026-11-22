@@ -23,8 +23,9 @@ const currentMonthDate = (() => {
 })();
 const currentMonthDateLabel = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
-  month: 'short',
+  month: 'long',
   day: 'numeric',
+  weekday: 'long',
 }).format(new Date(`${currentMonthDate}T00:00:00`));
 
 afterEach(() => cleanup());
@@ -198,7 +199,7 @@ describe('AttributeEditor', () => {
         field_type: 'date',
         options: undefined,
       }),
-      input: async () => fireEvent.click(screen.getByRole('button', { name: currentMonthDateLabel })),
+      input: async () => fireEvent.click(screen.getByRole('gridcell', { name: currentMonthDateLabel })),
       want: { type: 'date', date: currentMonthDate },
     },
     {

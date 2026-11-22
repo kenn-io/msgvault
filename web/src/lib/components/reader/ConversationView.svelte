@@ -10,6 +10,7 @@
   import type { MessageDetail as GeneratedMessageDetail } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail } from '../../archive/types';
+  import { ArchiveMessageLoader } from '../../archive/message-loader.svelte';
   import type { MessageViewMode } from '../../archive/types';
   import { isEmailMessageType } from '../../explore/models';
   import MessageCard from './MessageCard.svelte';
@@ -22,6 +23,8 @@
     client,
     conversationId,
     anchorId,
+    titleAnchorId,
+    anchorTitle = $bindable(''),
     onAnchorChange = undefined,
     start = undefined,
     end = undefined,
@@ -35,6 +38,10 @@
     onOpenMeeting?: (meeting: import('../../api/generated/models').MeetingRef) => void;
     conversationId: number;
     anchorId: number;
+    /** Stable message ID whose title names the selected thread. */
+    titleAnchorId: number;
+    /** Title of the selected message; empty until the window loads. */
+    anchorTitle?: string;
     onAnchorChange?: (anchorId: number) => void;
     /** Lower UTC bound (RFC3339, inclusive) restricting the window — e.g. a
      * chat burst's local day. Omit for the default unbounded window. */
@@ -84,6 +91,46 @@
       window.removeEventListener('focus', report);
     };
   });
+  // The tab follows the opened item. When that item is outside the loaded
+  // window, the message the thread opened at names it instead, and the title
+  // then stays put while other messages expand.
+  let titleKey = '';
+  let titleRequestKey = '';
+  const titleLoader = new ArchiveMessageLoader();
+  let windowAnchorId = $state(0);
+  let openedAnchorId = 0;
+  let openedTitle = '';
+  let openedTitleId = 0;
+  $effect(() => {
+    const key = `${conversationId}:${titleAnchorId}`;
+    if (key !== titleKey) {
+      titleLoader.cancel();
+      titleKey = key;
+      titleRequestKey = '';
+      openedAnchorId = untrack(() => anchorId);
+      openedTitle = '';
+      openedTitleId = 0;
+    }
+    const anchor = messages.find((message) => message.id === titleAnchorId) ??
+      messages.find((message) => message.id === openedAnchorId);
+    if (anchor?.id === titleAnchorId && anchor.id !== windowAnchorId) {
+      const requestKey = `${key}:${windowAnchorId}`;
+      if (requestKey !== titleRequestKey) {
+        titleRequestKey = requestKey;
+        untrack(() => { void titleLoader.load(apiClient, anchor.id); });
+      }
+      const detail = titleLoader.detail;
+      if (detail?.id === anchor.id) {
+        openedTitle = detail.tab_title || '(untitled)';
+        openedTitleId = detail.id;
+      } else if (openedTitleId !== anchor.id) openedTitle = '';
+    } else if (anchor?.id === windowAnchorId) {
+      openedTitle = anchor.tab_title || '(untitled)';
+      openedTitleId = anchor.id;
+    }
+    anchorTitle = openedTitle;
+  });
+  onDestroy(() => { titleLoader.cancel(); anchorTitle = ''; });
   let loading = $state(true);
   let error = $state('');
   let hasBefore = $state(false);
@@ -189,6 +236,7 @@
         return;
       }
       messages = data.messages ?? [];
+      windowAnchorId = data.anchor_id;
       activeAnchor = data.anchor_id;
       hasBefore = data.has_before;
       hasAfter = data.has_after;

@@ -287,6 +287,7 @@
   let displayOpen = $state(false);
   let personMessages = $state<MessagesTable>();
   let resultsWidth = $state(0);
+  let readingTitle = $state('');
   const displayState = $derived(exploreState.current.workspace === 'everything' ? exploreState : exploreState.current.workspace === 'relationships' ? personMessages?.state : undefined);
   const displayResultsWidth = $derived(exploreState.current.workspace === 'everything' ? resultsWidth : exploreState.current.workspace === 'relationships' ? personMessages?.resultsWidth ?? 0 : 0);
   const operationsController = new OperationsController(untrack(() => client));
@@ -513,7 +514,11 @@
   });
 
   $effect(() => {
-    document.title = `${workspaceLabel(exploreState.current.workspace)} · msgvault`;
+    const workspace = exploreState.current.workspace;
+    const meeting = archivedMeeting.detail?.id === archiveMeetingID ? archivedMeeting.detail : undefined;
+    const detail = archiveMeetingID !== undefined ? (meeting ? meeting.tab_title || '(untitled)' : '') :
+      workspace === 'everything' ? readingTitle : workspace === 'relationships' ? personMessages?.readingTitle ?? '' : '';
+    document.title = [detail, workspaceLabel(workspace), 'msgvault'].filter(Boolean).join(' · ');
   });
 
   $effect(() => {
@@ -1557,6 +1562,7 @@
           sources={shellData.jobs.sources}
           onAddSource={shellData.jobs.noSources ? addSource : undefined}
           bind:resultsWidth
+          bind:readingTitle
           {client}
           {exploreState}
           {loader}

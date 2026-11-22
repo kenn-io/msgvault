@@ -137,6 +137,7 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		{"Evidence", "Excerpt", "e"},
 		{"ContactCandidate", "DisplayName", "c"},
 		{"CardDAVBinding", "RemoteUID", "c"},
+		{"MessageDetail", "TabTitle", "m"},
 		{"MessagingRoute", "MergedIntoChatID", "m"},
 		{"MessagingRoute", "Network", "m"},
 		{"MessagingRoute", "NetworkLabel", "m"},

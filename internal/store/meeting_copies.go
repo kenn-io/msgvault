@@ -36,6 +36,24 @@ func meetingSeriesLinksSQL(condition string) string {
 	return `SELECT e.message_id,series.message_id,e.original_start_at,e.original_start_date FROM calendar_events e JOIN messages em ON em.id=e.message_id JOIN calendar_events series ON series.provider_event_id=e.series_provider_id AND series.kind='series' JOIN messages sm ON sm.id=series.message_id AND sm.source_id=em.source_id WHERE e.kind='exception' AND e.series_provider_id<>''` + condition
 }
 
+// The recursive graph plan can spend more time compiling than executing. Restore
+// the setting afterward because the transaction may serve other reads.
+func (s *Store) meetingGraphWithoutJIT(ctx context.Context, reader SQLReader) (func() error, error) {
+	if !s.IsPostgreSQL() {
+		return func() error { return nil }, nil
+	}
+	var previous, ignored string
+	if err := reader.QueryRowContext(ctx, `SELECT current_setting('jit')`).Scan(&previous); err != nil {
+		return nil, err
+	}
+	if err := reader.QueryRowContext(ctx, `SELECT set_config('jit', 'off', true)`).Scan(&ignored); err != nil {
+		return nil, err
+	}
+	return func() error {
+		return reader.QueryRowContext(ctx, `SELECT set_config('jit', ?, true)`, previous).Scan(&ignored)
+	}, nil
+}
+
 // meetingCopyLookup returns copies and, for a dated event, its series and edits.
 func (s *Store) meetingCopyLookup(ctx context.Context, endpoint meetingDecisionEndpoint) ([]int64, error) {
 	copyScope, args := sourceScopeClause(ctx, "m.source_id")
@@ -64,7 +82,12 @@ func (s *Store) meetingCopyLookup(ctx context.Context, endpoint meetingDecisionE
 	args = append(args, parentArgs...)
 	args = append(args, endpoint.ID)
 	query := `WITH RECURSIVE ` + meetingCopyGraphSQL(`SELECT 0,CAST(? AS BIGINT)`, copyScope, parentScope, series) + ` SELECT id FROM copies ORDER BY id`
-	rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, query, args...)
+	reader := s.meetingSQLReader(ctx)
+	restore, err := s.meetingGraphWithoutJIT(ctx, reader)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := reader.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +100,7 @@ func (s *Store) meetingCopyLookup(ctx context.Context, endpoint meetingDecisionE
 		}
 		ids = append(ids, id)
 	}
-	return ids, errors.Join(rows.Err(), rows.Close())
+	return ids, errors.Join(rows.Err(), rows.Close(), restore())
 }
 
 func (s *Store) meetingCopies(ctx context.Context, id int64) ([]int64, error) {

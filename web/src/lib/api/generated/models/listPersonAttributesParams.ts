@@ -12,6 +12,11 @@ export type ListPersonAttributesParams = {
    */
   slug?: string;
   /**
+   * Restrict values to one ordinal within a definition
+   * @minimum 0
+   */
+  ordinal?: number;
+  /**
    * Restrict the response to one portable definition identifier
    */
   universal_id?: string;

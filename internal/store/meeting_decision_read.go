@@ -187,6 +187,14 @@ func (s *Store) meetingDecisionEdgesBatch(ctx context.Context, endpoints []meeti
 			query := prefix + `
  SELECT i.idx,d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM inputs i JOIN meeting_link_decisions d ON ((d.left_message_id IN (` + matches + `) AND d.left_kind=? AND (d.left_key=? OR (d.left_kind='evt' AND d.left_key=''))) OR (d.right_message_id IN (` + matches + `) AND d.right_kind=? AND (d.right_key=? OR (d.right_kind='evt' AND d.right_key='')))) JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE TRUE` + leftScope + rightScope + ` LIMIT ?`
 			err := func() error {
+				restore := func() error { return nil }
+				if !item.direct {
+					var err error
+					restore, err = s.meetingGraphWithoutJIT(ctx, reader)
+					if err != nil {
+						return err
+					}
+				}
 				rows, err := reader.QueryContext(ctx, query, args...)
 				if err != nil {
 					return err
@@ -201,7 +209,7 @@ func (s *Store) meetingDecisionEdgesBatch(ctx context.Context, endpoints []meeti
 					result[batch[index]] = append(result[batch[index]], edge)
 					*budget--
 				}
-				return errors.Join(rows.Err(), rows.Close())
+				return errors.Join(rows.Err(), rows.Close(), restore())
 			}()
 			if err != nil {
 				return nil, err

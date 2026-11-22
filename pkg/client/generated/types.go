@@ -8278,7 +8278,10 @@ type MessageDetail struct {
 	SourceID          *int64             `json:"source_id,omitempty"`
 	SourceMessageID   *string            `json:"source_message_id,omitzero"`
 	Subject           string             `json:"subject" validate:"required"`
-	To                []string           `json:"to" validate:"required"`
+
+	// TabTitle Title suitable for a browser tab; empty when unavailable.
+	TabTitle string   `json:"tab_title" validate:"omitempty"`
+	To       []string `json:"to" validate:"required"`
 
 	// ToParticipants Recipient participants, populated for conversation windows.
 	ToParticipants []ConversationParticipant `json:"to_participants,omitempty"`

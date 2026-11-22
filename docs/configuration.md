@@ -1761,8 +1761,8 @@ keys, unknown actions, and invalid schedules are rejected. The source identifier
 
 ### `[[facebook_messages]]` and `[[instagram_messages]]` {#meta-inboxes}
 
-Select a Page's Messenger inbox or a linked Instagram account's inbox
-(unreleased). See [Facebook and Instagram messages](usage/meta-messages.md).
+Select a Page's Messenger inbox or a linked Instagram account's inbox.
+See [Facebook and Instagram messages](usage/meta-messages.md).
 `[[facebook_messages]]` takes the keys and rules of
 [`[[facebook_comments]]`](#facebook-comments), and `[[instagram_messages]]`
 those of [`[[instagram_comments]]`](#instagram-comments), except `actions`
@@ -1772,7 +1772,7 @@ and `mentions`. Scheduled jobs are
 
 ### `[meta_webhooks]` {#meta-webhooks}
 
-Start a listener for signed Meta webhook deliveries (unreleased). See
+Start a listener for signed Meta webhook deliveries. See
 [Meta webhooks](usage/meta-webhooks.md) for setup. `listen_addr` is a
 `host:port` address; leave it empty to keep the receiver off. Each
 `[[meta_webhooks.apps]]` entry needs a decimal `app_id` and the names of the
@@ -2252,7 +2252,7 @@ schedule = "15 */6 * * *"
 
 ### Bland Sources
 
-Configure one `[[bland]]` entry per Bland org API key (unreleased). See the
+Configure one `[[bland]]` entry per Bland org API key. See the
 [Bland meeting guide](usage/meetings.md#bland) for what sync stores.
 
 ```toml

@@ -9,6 +9,7 @@
 
 <header>
   {#if onBack}<IconButton ariaLabel="Back to People" onclick={onBack}><ArrowLeft size={16} aria-hidden="true" /></IconButton>{/if}
+  <!-- kit-ui-check-ignore: the custom identity tile is the control that opens the person's details. -->
   <button class="avatar" type="button" tabindex="-1" aria-label="Open details" onclick={onOpenDetails}><IdentityAvatar label={name} seed={email || name} shape={domain ? 'domain' : 'person'} size={40} /></button>
   <div><h2><button type="button" onclick={onOpenDetails}>{name}</button></h2>{#if email && email !== name}<span>{email}</span>{/if}</div>
   <div class="actions">{@render actions?.()}</div>
@@ -22,6 +23,7 @@
   h2 { margin: 0; font-size: var(--type-title-size); font-weight: 600; line-height: var(--type-title-line); }
   button { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
   h2 button:hover { text-decoration: underline; }
+  /* kit-ui-check-ignore: this button frames the custom identity tile. */
   .avatar { display: flex; flex: none; }
   .actions { flex-direction: row; align-items: center; margin-left: auto; display: flex; flex-wrap: wrap; gap: var(--space-group); }
   span { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); overflow-wrap: anywhere; }

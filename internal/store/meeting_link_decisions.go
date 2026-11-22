@@ -574,6 +574,10 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 	// Traverse the copy graph once for all rows being deleted. UNION also
 	// prevents a damaged cycle from making cleanup loop forever.
 	visibilityAfterPurge := calendarEventVisibilityExcluding("e", "m", " AND om.id NOT IN (SELECT id FROM targets)")
+	restore, err := s.meetingGraphWithoutJIT(ctx, reader)
+	if err != nil {
+		return err
+	}
 	rows, err := reader.QueryContext(ctx, `WITH RECURSIVE
  targets(id) AS (SELECT id FROM messages WHERE (`+predicate+`) AND message_type IN ('calendar_event', 'meeting_transcript')),
  `+meetingCopyGraphSQL(`SELECT 0,id FROM targets`, "", "", meetingSeriesLinksSQL(""))+`
@@ -624,7 +628,7 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 			occurrences[series.Int64] = append(occurrences[series.Int64], occurrenceCopy{id, key})
 		}
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+	if err := errors.Join(rows.Err(), rows.Close(), restore()); err != nil {
 		return err
 	}
 	if len(ids) == 0 {
