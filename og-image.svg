@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" fill="none">
+  <style>
+    text { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  </style>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="#0a0a0a"/>
+
+  <!-- Subtle border -->
+  <rect x="20" y="20" width="1160" height="590" fill="none" stroke="#1a1a1a" stroke-width="1"/>
+
+  <!-- Corner accents -->
+  <line x1="20" y1="20" x2="60" y2="20" stroke="#555555" stroke-width="2"/>
+  <line x1="20" y1="20" x2="20" y2="60" stroke="#555555" stroke-width="2"/>
+  <line x1="1140" y1="20" x2="1180" y2="20" stroke="#555555" stroke-width="2"/>
+  <line x1="1180" y1="20" x2="1180" y2="60" stroke="#555555" stroke-width="2"/>
+  <line x1="20" y1="570" x2="20" y2="610" stroke="#555555" stroke-width="2"/>
+  <line x1="20" y1="610" x2="60" y2="610" stroke="#555555" stroke-width="2"/>
+  <line x1="1180" y1="570" x2="1180" y2="610" stroke="#555555" stroke-width="2"/>
+  <line x1="1140" y1="610" x2="1180" y2="610" stroke="#555555" stroke-width="2"/>
+
+  <!-- Envelope + lock icon (scaled from favicon) -->
+  <g transform="translate(130, 185) scale(4.2)">
+    <!-- Envelope body -->
+    <rect x="2" y="7" width="28" height="20" rx="2" fill="#0a0a0a" stroke="#e8e8e8" stroke-width="1.5"/>
+    <!-- Envelope flap (V shape) -->
+    <polyline points="2,7 16,18 30,7" fill="none" stroke="#e8e8e8" stroke-width="1.5" stroke-linejoin="round"/>
+    <!-- Lock body -->
+    <rect x="11" y="15" width="10" height="8" rx="1.5" fill="#e8e8e8"/>
+    <!-- Lock shackle -->
+    <path d="M13.5,15 V12 a2.5,2.5 0 0 1 5,0 V15" fill="none" stroke="#e8e8e8" stroke-width="1.5" stroke-linecap="round"/>
+    <!-- Keyhole -->
+    <circle cx="16" cy="19.5" r="1.5" fill="#0a0a0a"/>
+    <rect x="15.25" y="20" width="1.5" height="2" rx="0.5" fill="#0a0a0a"/>
+  </g>
+
+  <!-- Title -->
+  <text x="340" y="245" fill="#ffffff" font-size="72" font-weight="700" letter-spacing="-0.03em">msgvault</text>
+
+  <!-- Tagline -->
+  <text x="340" y="295" fill="#888888" font-size="24" font-weight="400">Your offline email and chat archive. Secure. Fast.</text>
+
+  <!-- Feature pills -->
+  <g transform="translate(340, 330)">
+    <rect x="0" y="0" width="140" height="32" fill="#1a1a1a" stroke="#2a2a2a" stroke-width="1"/>
+    <text x="70" y="21" text-anchor="middle" fill="#c0c0c0" font-size="13" font-weight="500">SQLite + FTS5</text>
+
+    <rect x="155" y="0" width="170" height="32" fill="#1a1a1a" stroke="#2a2a2a" stroke-width="1"/>
+    <text x="240" y="21" text-anchor="middle" fill="#c0c0c0" font-size="13" font-weight="500">DuckDB + Parquet</text>
+
+    <rect x="340" y="0" width="140" height="32" fill="#1a1a1a" stroke="#2a2a2a" stroke-width="1"/>
+    <text x="410" y="21" text-anchor="middle" fill="#c0c0c0" font-size="13" font-weight="500">MCP Server</text>
+  </g>
+
+  <!-- Bottom URL -->
+  <text x="600" y="560" text-anchor="middle" fill="#555555" font-size="18" font-weight="400">msgvault.io</text>
+</svg>
