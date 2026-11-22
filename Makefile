@@ -552,6 +552,12 @@ docs-serve: docs-build
 # Fold changelog fragments into a release
 .PHONY: changelog-release
 changelog-release:
+	@if [ "$(origin VERSION)" != "command line" ] || [ -z "$(strip $(VERSION))" ]; then \
+		echo "changelog-release: pass VERSION, e.g. make changelog-release VERSION=v1.2.3 RELEASE_DATE=YYYY-MM-DD" >&2; exit 2; \
+	fi; \
+	if [ -z "$(strip $(RELEASE_DATE))" ]; then \
+		echo "changelog-release: pass RELEASE_DATE, e.g. RELEASE_DATE=YYYY-MM-DD" >&2; exit 2; \
+	fi
 	python3 docs/scripts/changelog.py release "$(VERSION)" "$(RELEASE_DATE)"
 
 # Check docs sources and build output
