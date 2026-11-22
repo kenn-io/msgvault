@@ -53,7 +53,7 @@ func (p PersonContactPoint) VCardValue() string {
 	switch p.AddressKind {
 	case ContactAddressEmail, ContactAddressSocial, ContactAddressLanguage:
 		return value
-	case ContactAddressProviderIdentity:
+	case ContactAddressProviderIdentity, ContactAddressDisplayName:
 		return ""
 	case ContactAddressUsername, ContactAddressIMPP, ContactAddressURL,
 		ContactAddressCalendar, ContactAddressContactURI, ContactAddressOrgDirectory:

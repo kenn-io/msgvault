@@ -17,6 +17,9 @@ import (
 
 const rosterMatchFailed = "failed"
 
+// rosterPhaseMembers is the roster phase that resolves members before matching.
+const rosterPhaseMembers = "members"
+
 type rosterWork struct {
 	Phase            string `json:"phase,omitempty"`
 	Next             int    `json:"next,omitzero"`
@@ -115,7 +118,7 @@ func (imp *Importer) matchRosterMembers(ctx context.Context, sourceID, convID in
 		work.Next = i + 1
 	}
 	if !work.Verified {
-		work.Phase = "members"
+		work.Phase = rosterPhaseMembers
 		work.Next = 0
 		return nil
 	}

@@ -1096,7 +1096,7 @@ func (imp *Importer) ensureConversation(
 		}
 		if opts.rosterState != nil && opts.rosterState.Verified && (!ch.Participants.HasMore || opts.rosterState.ListingSignature != listingSignature) {
 			opts.rosterState.Verified = false
-			opts.rosterState.Phase = "members"
+			opts.rosterState.Phase = rosterPhaseMembers
 			opts.rosterState.Next = 0
 		}
 		if err := imp.store.SetConversationRosterRepairPendingContext(ctx, convID, true); err != nil {
@@ -1114,31 +1114,31 @@ func (imp *Importer) ensureConversation(
 	signature := rosterSignature(detail, opts.AccountID)
 	if work.Signature != signature {
 		work.Signature = signature
-		work.Phase = "members"
+		work.Phase = rosterPhaseMembers
 		work.Verified = false
 	}
 	if !opts.rosterDetailFetched {
 		work.ListingSignature = listingSignature
 	}
 	if work.Phase == "" {
-		work.Phase = "members"
+		work.Phase = rosterPhaseMembers
 	}
 	if work.Phase == "done" && !membershipComplete {
-		work.Phase = "members"
+		work.Phase = rosterPhaseMembers
 		work.Verified = false
 	}
 	provider := rosterProvider(ch.ID)
 	items := slices.Clone(detail.Participants.Items)
 	slices.SortStableFunc(items, func(a, b Participant) int { return strings.Compare(a.ID, b.ID) })
 	keys := imp.rosterKeys(items)
-	if work.Verified && work.Phase != "members" {
+	if work.Verified && work.Phase != rosterPhaseMembers {
 		settled, err := imp.refreshRosterProof(ctx, sourceID, convID, provider, detail, items, keys, opts.AccountID, routeEvidence, membership, work)
 		if err != nil {
 			return convID, false, membership, err
 		}
 		if !settled {
 			work.Verified = false
-			work.Phase = "members"
+			work.Phase = rosterPhaseMembers
 		}
 	}
 	// Invalidate earlier proof before any roster writes. Provider self proof
@@ -1146,7 +1146,7 @@ func (imp *Importer) ensureConversation(
 	// anchors are published first. A room that is not yet Full refreshes its
 	// policy with them, so the user's own activity can promote it before its
 	// members are resolved.
-	needsMembers := work.Phase == "members" || !work.Verified
+	needsMembers := work.Phase == rosterPhaseMembers || !work.Verified
 	if needsMembers {
 		owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
 		if err != nil {
@@ -1219,7 +1219,7 @@ func (imp *Importer) ensureConversation(
 			imp.obs = newObservationRecorder(imp.store)
 			imp.matcher = newIdentityMatcher(imp.store)
 		}
-		if verifyErr == nil || work.Phase == "members" {
+		if verifyErr == nil || work.Phase == rosterPhaseMembers {
 			work.Phase = "matching"
 			work.Next = 0
 		}
@@ -1283,7 +1283,7 @@ func (imp *Importer) refreshConversationPolicyAndRoster(ctx context.Context, sou
 	if !current.Route.MembershipComplete {
 		return nil
 	}
-	work.Phase, work.Next = "members", 0
+	work.Phase, work.Next = rosterPhaseMembers, 0
 	if opts.stopRequested() {
 		return nil
 	}

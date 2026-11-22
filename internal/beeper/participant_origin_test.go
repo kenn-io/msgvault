@@ -61,8 +61,9 @@ func TestBeeperRosterDemotionPreservesText(t *testing.T) {
 	requirements.NoError(st.SetConversationPolicyOverride(t.Context(), sourceID, chat.ID, conversationpolicy.Full))
 	requirements.NoError(st.SetConversationPolicyOverride(t.Context(), sourceID, chat.ID, conversationpolicy.Cold))
 	sum := &ImportSummary{}
-	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, chat, ImportOptions{AccountID: "retained-account"}, sum)
+	conversationID, _, _, err := imp.ensureConversation(t.Context(), 0, sourceID, chat, ImportOptions{AccountID: "retained-account"}, sum)
 	requirements.NoError(err)
+	assertions.Equal(room, conversationID)
 	requirements.NoError(imp.persistMessage(t.Context(), &chatScope{convID: room, sourceID: sourceID, cs: &ChatState{}}, &Message{ID: "retained-message", SenderID: "message-only-user", SenderName: "Cold message name", Text: "Retained synthetic text"}, sum))
 	var rich int
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participants WHERE email_address='retained@example.test' OR display_name IN ('Retained directory name','Cold message name')`).Scan(&rich))
