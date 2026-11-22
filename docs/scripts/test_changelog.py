@@ -73,6 +73,19 @@ class ChangelogTest(unittest.TestCase):
             check_built_site.check_markdown_source("/docs/changelog.md", published)
         self.assertIn("published Markdown differs from its source: /docs/changelog.md", stderr.getvalue())
 
+    def test_hidden_draft_is_not_published_or_released(self):
+        self.init()
+        draft = self.note(".draft.md", "### Bug fixes\n\n- Private draft\n")
+        self.note("note.md", "### Bug fixes\n\n- Public note\n")
+        output = self.root / "out.md"
+        self.assertEqual((0, ""), self.run_command("render", output))
+        self.assertIn("- Public note", output.read_text())
+        self.assertNotIn("- Private draft", output.read_text())
+        self.assertEqual((0, ""), self.run_command("release", "2.0.0", "2026-01-01"))
+        self.assertIn("- Public note", self.log.read_text())
+        self.assertNotIn("- Private draft", self.log.read_text())
+        self.assertEqual("### Bug fixes\n\n- Private draft\n", draft.read_text())
+
     def test_release_uses_latest_filename_addition(self):
         self.init()
         unicode_note = self.note("été.md", "### Bug fixes\n\n- Unicode\n")

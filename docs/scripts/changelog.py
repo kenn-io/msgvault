@@ -14,7 +14,7 @@ SECTIONS = ("Upgrade notes", "New features", "Improvements", "Bug fixes")
 
 def fragments():
     notes = {}
-    for path in sorted((ROOT / "docs/changelog.d").glob("*.md")):
+    for path in sorted(path for path in (ROOT / "docs/changelog.d").glob("*.md") if not path.name.startswith(".")):
         text = path.read_text(encoding="utf-8").strip()
         lines = text.splitlines()
         if len(lines) < 2 or not "\n".join(lines[1:]).strip() or lines[0] not in [f"### {s}" for s in SECTIONS] or any(re.match(r"^#{1,3} ", line) for line in lines[1:]):
