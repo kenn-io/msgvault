@@ -662,7 +662,6 @@ help:
 	@echo "  docs-build     - Build docs site"
 	@echo "  docs-serve     - Build and serve the complete site locally"
 	@echo "  docs-check     - Run docs validation"
-	@echo "  changelog-release - Fold release notes (RELEASE_VERSION=... RELEASE_DATE=...)"
 	@echo "  docs-screenshots - Regenerate docs screenshots"
 	@echo "  docs-assets-branch - Publish static docs assets branch"
 	@echo "  docs-generated-assets-branch - Publish generated docs assets branch"

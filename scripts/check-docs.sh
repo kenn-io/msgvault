@@ -58,7 +58,6 @@ fi
 public_doc_globs=(
   --glob '!docs/superpowers/**'
   --glob '!docs/internal/**'
-  --glob '!docs/changelog.d/**'
   --glob '!docs/scripts/**'
   --glob '!docs/screenshots/**'
   --glob '!docs/diagrams/**'

@@ -8,6 +8,8 @@ import re
 import sys
 import urllib.parse
 
+import changelog
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SITE = ROOT / "site"
 
@@ -503,7 +505,12 @@ def main() -> None:
             fail(f"llms.txt is missing Markdown page {markdown_url}")
         if markdown_route.startswith("/docs/"):
             source = ROOT / markdown_route.removeprefix("/docs/")
-            if markdown_file.read_bytes() != source.read_bytes():
+            expected = (
+                changelog.render().encode("utf-8")
+                if markdown_route == "/docs/changelog.md"
+                else source.read_bytes()
+            )
+            if markdown_file.read_bytes() != expected:
                 fail(f"published Markdown differs from its source: {markdown_route}")
     docs_index = SITE / "docs" / "index.html"
     index_parser = parsed_by_file[docs_index.resolve()]

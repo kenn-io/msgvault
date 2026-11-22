@@ -37,6 +37,12 @@ def fold(changelog, notes, paths):
     return before + "## Unreleased\n\n" + (content + "\n" if content else "") + ("\n## " + after if sep else "")
 
 
+def render():
+    changelog = (ROOT / "docs/changelog.md").read_text(encoding="utf-8")
+    notes = fragments()
+    return fold(changelog, notes, notes)
+
+
 def release_order(paths):
     try:
         shallow = subprocess.check_output(["git", "rev-parse", "--is-shallow-repository"], cwd=ROOT, stderr=subprocess.DEVNULL).strip()
@@ -61,12 +67,12 @@ def main():
     try:
         if args.command == "release" and (not re.fullmatch(r"\d+\.\d+\.\d+", args.version) or not re.fullmatch(r"\d{4}-\d\d-\d\d", args.date)):
             raise ValueError("release requires a version X.Y.Z and date YYYY-MM-DD")
-        path = ROOT / "docs/changelog.md"
-        changelog = path.read_text(encoding="utf-8")
-        notes = fragments()
         if args.command == "render":
-            args.output.write_text(fold(changelog, notes, notes), encoding="utf-8")
+            args.output.write_text(render(), encoding="utf-8")
         else:
+            path = ROOT / "docs/changelog.md"
+            changelog = path.read_text(encoding="utf-8")
+            notes = fragments()
             if re.search(rf"(?m)^## {re.escape(args.version)}\s*$", changelog):
                 raise ValueError(f"version {args.version} already exists")
             result = fold(changelog, notes, release_order(notes))
