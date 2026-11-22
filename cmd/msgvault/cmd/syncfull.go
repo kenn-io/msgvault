@@ -621,6 +621,19 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 	}
 	defer func() { _ = apiClient.Close() }()
 
+	// A token-only Gmail account needs a saved source before account settings
+	// can match it. Keep credential setup ahead of the first archive write.
+	if src.ID == 0 {
+		sourceType := src.SourceType
+		if sourceType == "" {
+			sourceType = sourceTypeGmail
+		}
+		src, err = s.GetOrCreateSourceContext(ctx, sourceType, src.Identifier)
+		if err != nil {
+			return fmt.Errorf("get/create source: %w", err)
+		}
+	}
+
 	// Build query from flags (Gmail only; IMAP date filters are
 	// handled via WithDateFilter on the client).
 	query := buildSyncQuery()
@@ -673,21 +686,10 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 		fmt.Printf("Query: %s\n", query)
 	}
 	fmt.Println()
-	syncSource := src
-	if syncSource.ID == 0 {
-		sourceType := syncSource.SourceType
-		if sourceType == "" {
-			sourceType = sourceTypeGmail
-		}
-		syncSource, err = s.GetOrCreateSource(sourceType, syncSource.Identifier)
-		if err != nil {
-			return fmt.Errorf("get/create source: %w", err)
-		}
-	}
 
 	summary, err := syncer.FullWithFinalizer(
 		ctx,
-		syncSource,
+		src,
 		func(summary *gmail.SyncSummary) error {
 			if src.SourceType != sourceTypeIMAP {
 				return nil
