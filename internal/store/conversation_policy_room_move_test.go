@@ -19,12 +19,15 @@ import (
 )
 
 // roomMoveFact is a tracked person with one fact supported only by one
-// message, archived in a Full room. move re-imports that message into room.
+// message, archived in a Full room. move re-imports that message into room;
+// moveWithParticipants does the same through participant resolution, which
+// starts with the exclusive identity lock for identifier participants.
 type roomMoveFact struct {
-	st                 *store.Store
-	fullRoom, coldRoom int64
-	person             int64
-	move               func(room int64) error
+	st                   *store.Store
+	fullRoom, coldRoom   int64
+	person               int64
+	move                 func(room int64) error
+	moveWithParticipants func(room int64) error
 }
 
 func newRoomMoveFact(t *testing.T, name string) roomMoveFact {
@@ -80,7 +83,20 @@ func newRoomMoveFact(t *testing.T, name string) roomMoveFact {
 			Evidence: []personfacts.EvidenceInput{evidence}, Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}}},
 	}, store.PersonSweepEvidenceAligner{Store: st})
 	requirements.NoError(err)
-	return roomMoveFact{st: st, fullRoom: fullRoom, coldRoom: coldRoom, person: person.ID, move: move}
+	moveWithParticipants := func(room int64) error {
+		_, err := st.PersistMessageWithParticipantsContext(t.Context(),
+			[]store.ParticipantPersistData{{IdentifierType: "slack", IdentifierValue: "room-mover", DisplayName: "Room Mover"}},
+			func(ids []int64) *store.MessagePersistData {
+				return &store.MessagePersistData{
+					Message: &store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: "moving-fact",
+						MessageType: "slack", SenderID: sql.NullInt64{Int64: ids[0], Valid: true}, SentAt: sentAt},
+					BodyText:   sql.NullString{String: "Ask me about tidal energy.", Valid: true},
+					Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: ids, DisplayNames: []string{"Room Mover"}}},
+				}
+			})
+		return err
+	}
+	return roomMoveFact{st: st, fullRoom: fullRoom, coldRoom: coldRoom, person: person.ID, move: move, moveWithParticipants: moveWithParticipants}
 }
 
 // A fact supported only by one message must follow that message between
@@ -110,37 +126,47 @@ func TestRoomMoveReconcilesFactsSupportedByTheMessage(t *testing.T) {
 // A move that changes Full eligibility locks the moved sender's tracked person
 // row before that person's fact generation lock, the reverse of fact writers
 // such as pins. On PostgreSQL the move can lose the resulting deadlock. It must
-// retry instead of failing the import.
+// retry instead of failing the import, whichever write path made the move.
 func TestRoomMoveRetriesAfterLosingFactLockDeadlock(t *testing.T) {
-	requirements := require.New(t)
-	fx := newRoomMoveFact(t, "room-move-deadlock")
-	if !fx.st.IsPostgreSQL() {
-		t.Skip("the fact generation lock is a PostgreSQL advisory lock")
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
-	defer cancel()
+	for _, path := range []string{"upsert", "participants"} {
+		t.Run(path, func(t *testing.T) {
+			requirements := require.New(t)
+			fx := newRoomMoveFact(t, "room-move-deadlock")
+			if !fx.st.IsPostgreSQL() {
+				t.Skip("the fact generation lock is a PostgreSQL advisory lock")
+			}
+			move := fx.move
+			if path == "participants" {
+				move = fx.moveWithParticipants
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
 
-	// A fact writer takes the person's generation lock first, as a pin does.
-	writer, err := fx.st.DB().BeginTx(ctx, nil)
-	requirements.NoError(err)
-	defer func() { _ = writer.Rollback() }()
-	id := strconv.FormatInt(fx.person, 10)
-	_, err = writer.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(CAST($1 AS TEXT), 0))`,
-		fmt.Sprintf("person-fact-generation|int64:%d:%s", len(id), id))
-	requirements.NoError(err)
-	var writerPID int
-	requirements.NoError(writer.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&writerPID))
-	moved := make(chan error, 1)
-	go func() { moved <- fx.move(fx.coldRoom) }()
-	requirements.Eventually(func() bool {
-		var blocked bool
-		err := fx.st.DB().QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))`, writerPID).Scan(&blocked)
-		return err == nil && blocked
-	}, 30*time.Second, 10*time.Millisecond, "the move must wait for the generation lock")
-	// The writer then needs the person row the move holds. The move waited
-	// first, so PostgreSQL's deadlock detector aborts the move.
-	_, err = writer.ExecContext(ctx, `UPDATE persons SET updated_at = updated_at WHERE id = $1`, fx.person)
-	requirements.NoError(err)
-	requirements.NoError(writer.Commit())
-	requirements.NoError(<-moved, "a move that loses the deadlock must retry")
+			// A fact writer takes the person's generation lock first, as a pin
+			// does. Its deadlock check waits, so PostgreSQL aborts the move.
+			writer, err := fx.st.DB().BeginTx(ctx, nil)
+			requirements.NoError(err)
+			defer func() { _ = writer.Rollback() }()
+			_, err = writer.ExecContext(ctx, `SET LOCAL deadlock_timeout = '1h'`)
+			requirements.NoError(err)
+			id := strconv.FormatInt(fx.person, 10)
+			_, err = writer.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(CAST($1 AS TEXT), 0))`,
+				fmt.Sprintf("person-fact-generation|int64:%d:%s", len(id), id))
+			requirements.NoError(err)
+			var writerPID int
+			requirements.NoError(writer.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&writerPID))
+			moved := make(chan error, 1)
+			go func() { moved <- move(fx.coldRoom) }()
+			requirements.Eventually(func() bool {
+				var blocked bool
+				err := fx.st.DB().QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))`, writerPID).Scan(&blocked)
+				return err == nil && blocked
+			}, 30*time.Second, 10*time.Millisecond, "the move must wait for the generation lock")
+			// The writer then needs the person row the move holds.
+			_, err = writer.ExecContext(ctx, `UPDATE persons SET updated_at = updated_at WHERE id = $1`, fx.person)
+			requirements.NoError(err)
+			requirements.NoError(writer.Commit())
+			requirements.NoError(<-moved, "a move that loses the deadlock must retry")
+		})
+	}
 }

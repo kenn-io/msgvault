@@ -1526,18 +1526,19 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 	lock := attributionLockForMessage(msg.SourceID, msg.MessageType)
 	id, err := s.upsertMessageLockedContext(ctx, lock, msg)
 	if errors.Is(err, errMovedMessageNeedsExclusive) {
-		id, err = s.persistMovedMessage(ctx, func() (int64, error) {
+		id, err = s.persistExclusiveMessage(ctx, func() (int64, error) {
 			return s.upsertMessageLockedContext(ctx, attributionLock{Exclusive: true}, msg)
 		})
 	}
 	return id, err
 }
 
-// persistMovedMessage reruns a move that changes whether a message counts as
-// Full. Reconciling its people facts needs the exclusive identity lock. The
-// move locks person rows before their fact generation locks, the reverse of
-// fact writers such as pins, so a PostgreSQL deadlock victim retries.
-func (s *Store) persistMovedMessage(ctx context.Context, persist func() (int64, error)) (int64, error) {
+// persistExclusiveMessage runs a message write under the exclusive identity
+// lock, which a move that changes whether a message counts as Full needs to
+// reconcile its people facts. That move locks person rows before their fact
+// generation locks, the reverse of fact writers such as pins, so a PostgreSQL
+// deadlock victim retries.
+func (s *Store) persistExclusiveMessage(ctx context.Context, persist func() (int64, error)) (int64, error) {
 	id, err := retryBusyWrite(ctx, s, "persist moved message", func() (*int64, error) {
 		id, err := persist()
 		return &id, err
@@ -2483,11 +2484,19 @@ func (s *Store) persistMessageWithParticipantsTransaction(
 		})
 		return messageID, err
 	}
-	messageID, err := persist(lock)
-	if errors.Is(err, errMovedMessageNeedsExclusive) && !lock.Exclusive {
-		messageID, err = s.persistMovedMessage(ctx, func() (int64, error) {
-			return persist(attributionLock{Exclusive: true})
-		})
+	var messageID int64
+	var err error
+	if lock.Exclusive {
+		// Identifier and phone participants start exclusive, so a move can
+		// already be reconciling people facts on this first attempt.
+		messageID, err = s.persistExclusiveMessage(ctx, func() (int64, error) { return persist(lock) })
+	} else {
+		messageID, err = persist(lock)
+		if errors.Is(err, errMovedMessageNeedsExclusive) {
+			messageID, err = s.persistExclusiveMessage(ctx, func() (int64, error) {
+				return persist(attributionLock{Exclusive: true})
+			})
+		}
 	}
 	if err == nil && calendarRaw != nil {
 		s.deriveEmailCalendarAfterCommit(ctx, messageID, calendarRaw)
