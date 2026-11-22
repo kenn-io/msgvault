@@ -57,22 +57,15 @@ class ChangelogTest(unittest.TestCase):
         output = self.root / "out.md"
         self.assertEqual((0, ""), self.run_command("render", output))
         self.assertIn("- Existing", output.read_text())
-        self.note("z.md", "### New features\n\n- Z\n")
-        self.note("a.md", "### New features\n\n- A\n")
+        for name in ("z", "a", "m", "b", "y"):
+            self.note(f"{name}.md", f"### New features\n\n- {name.upper()}\n")
         self.assertEqual((0, ""), self.run_command("render", output))
-        self.assertIn("### New features\n\n- A\n- Z\n\n### Improvements", output.read_text())
+        self.assertIn("### New features\n\n- A\n- B\n- M\n- Y\n- Z\n\n### Improvements", output.read_text())
         self.note(".draft.md", "### Bug fixes\n\n- Private draft\n")
         self.note("note.md", "### Bug fixes\n\n- Public note\n")
         self.assertEqual((0, ""), self.run_command("render", output))
         self.assertIn("- Public note", output.read_text())
         self.assertNotIn("- Private draft", output.read_text())
-
-    def test_render_accepts_headings_in_fenced_code(self):
-        self.note("commands.md", "### Improvements\n\nRun this:\n\n```sh\n# comment\necho hello\n```\n\n~~~sh\n## comment\n~~~\n")
-        output = self.root / "out.md"
-        self.assertEqual((0, ""), self.run_command("render", output))
-        self.assertIn("```sh\n# comment\necho hello\n```", output.read_text())
-        self.assertIn("~~~sh\n## comment\n~~~", output.read_text())
 
     def test_render_reports_missing_unreleased_heading(self):
         self.log.write_text("# Changelog\n\n## 1.0.0\n")
@@ -124,39 +117,53 @@ class ChangelogTest(unittest.TestCase):
         self.assertFalse(later.exists())
         self.assertFalse((self.root / "docs/changelog.d/renamed.md").exists())
 
-    def test_invalid_sections_report_filename(self):
-        for text in ("### Bug fixes\n\n", "### Unknown\n\n- Note\n", "### Bug fixes\n\n- Note\n### Improvements\n- Other\n", "### Bug fixes\n\n- Note\n## Oops\n", "### Bug fixes\n\n- Note\n# Oops\n", "### Bug fixes\n\n```sh\n# comment\n```\n### Other\n- Note\n"):
+    def test_fragment_sections(self):
+        cases = (
+            ("### Bug fixes\n\n", False),
+            ("### Unknown\n\n- Note\n", False),
+            ("### Bug fixes\n\n- Note\n### Improvements\n- Other\n", False),
+            ("### Bug fixes\n\n- Note\n## Oops\n", False),
+            ("### Bug fixes\n\n- Note\n# Oops\n", False),
+            ("### Bug fixes\n\n```sh\n# comment\n```\n### Other\n- Note\n", False),
+            ("### Improvements\n\nRun this:\n\n```sh\n# comment\necho hello\n```\n\n~~~sh\n## comment\n~~~\n", True),
+        )
+        for text, valid in cases:
             with self.subTest(text=text):
-                self.note("invalid.md", text)
-                result, error = self.run_command("render", self.root / "out.md")
-                self.assertEqual(1, result)
-                self.assertIn("invalid.md", error)
+                self.note("fragment.md", text)
+                output = self.root / "out.md"
+                result, error = self.run_command("render", output)
+                if valid:
+                    self.assertEqual((0, ""), (result, error))
+                    self.assertIn("```sh\n# comment\necho hello\n```", output.read_text())
+                    self.assertIn("~~~sh\n## comment\n~~~", output.read_text())
+                else:
+                    self.assertEqual(1, result)
+                    self.assertIn("fragment.md", error)
 
     def test_failed_release_leaves_files_untouched(self):
-        for case in ("empty release", "existing version"):
-            with self.subTest(case=case):
-                self.log.write_text("# Changelog\n\n## Unreleased\n\n## 1.0.0\n")
-                if case == "empty release":
-                    self.init()
-                fragments = []
-                if case == "existing version":
-                    fragments.append(self.note("valid.md", "### Improvements\n\n- Note\n"))
+        original_log = self.log.read_text()
+        empty_log = "# Changelog\n\n## Unreleased\n\n## 1.0.0\n<small>2020-01-01</small>\n"
+        cases = (
+            (empty_log, False, "2.0.0", "2026-01-01", "no release notes"),
+            (original_log, True, "1.0.0", "2026-01-01", "already exists"),
+            (original_log, True, "", "2026-01-01", "version X.Y.Z and date YYYY-MM-DD"),
+            (original_log, True, "2.0", "2026-01-01", "version X.Y.Z and date YYYY-MM-DD"),
+            (original_log, True, "2.0.0", "", "version X.Y.Z and date YYYY-MM-DD"),
+            (original_log, True, "2.0.0", "2026-1-01", "version X.Y.Z and date YYYY-MM-DD"),
+        )
+        self.init()
+        for log, with_fragment, version, date, message in cases:
+            with self.subTest(version=version, date=date, message=message):
+                self.log.write_text(log)
+                fragments = [self.note("valid.md", "### Improvements\n\n- Note\n")] if with_fragment else []
                 original = self.log.read_bytes()
                 contents = {path: path.read_bytes() for path in fragments}
-                version = "1.0.0" if case == "existing version" else "2.0.0"
-                result, error = self.run_command("release", version, "2026-01-01")
+                result, error = self.run_command("release", version, date)
                 self.assertEqual(1, result)
-                self.assertIn({"empty release": "no release notes", "existing version": "already exists"}[case], error)
+                self.assertIn(message, error)
                 self.assertEqual(original, self.log.read_bytes())
                 for path, content in contents.items():
                     self.assertEqual(content, path.read_bytes())
-
-    def test_release_rejects_invalid_inputs(self):
-        for version, date in (("", "2026-01-01"), ("2.0", "2026-01-01"), ("2.0.0", ""), ("2.0.0", "2026-1-01")):
-            with self.subTest(version=version, date=date):
-                result, error = self.run_command("release", version, date)
-                self.assertEqual(1, result)
-                self.assertIn("version X.Y.Z and date YYYY-MM-DD", error)
 
     def test_shallow_clone_refuses_release(self):
         self.init()
