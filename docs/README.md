@@ -66,9 +66,18 @@ needs full Git history. It moves the notes under the version heading, keeping
 the section headings, and deletes the files. Within each section, notes follow
 the order each filename was added to `main`. Renaming a note gives it
 the rename's position.
-Run it from a clean worktree. If it fails, run `git restore docs/changelog.md`,
-and if the release had notes in `docs/changelog.d`, also run
-`git restore docs/changelog.d`.
+Run it from a clean worktree. If it fails, restore the changelog:
+
+```sh
+git restore docs/changelog.md
+```
+
+If the release had notes in `docs/changelog.d`, also restore them:
+
+```sh
+git restore docs/changelog.d
+```
+
 After `make changelog-release`, add the release summary and links, and update
 `last_edited` as usual.
 
