@@ -11,7 +11,7 @@ look up a person's history, and work from a browser, terminal, or AI assistant.
 msgvault is usable through the CLI, browser application, terminal interface,
 HTTP API, MCP server, and bundled agent skills. It is alpha software — back up
 your data.
-[See what changed in 0.25.0 and read the upgrade notes](/docs/changelog/#0250).
+[See what changed in 0.26.0 and read the upgrade notes](/docs/changelog/#0260).
 
 ## Install
 
@@ -48,14 +48,16 @@ attachments alongside the records you browse.
 
 - **Mail** — Gmail, IMAP, and Microsoft 365 sync; MBOX, Maildir, Apple Mail, PST, and
   EML imports.
-- **Chat** — Matrix, Slack, Teams, Discord, Inline, Chatwoot, and chats
-  available through Beeper Desktop; WhatsApp, iMessage, Telegram, X, Discord,
-  Google Voice, Messenger, and SMS imports.
-- **Meetings** — Granola, Plaud, Pocket, Circleback, Omi, Twenty, Twilio, Notion
-  AI Meeting Notes, and Muesli in the same searchable record.
+- **Chat** — Matrix, Slack, Teams, Discord, Inline, Chatwoot, Facebook Page
+  and Instagram inboxes, and chats available through Beeper Desktop; WhatsApp,
+  iMessage, Telegram, X, Discord, Google Voice, Messenger, LinkedIn, TikTok,
+  and SMS imports.
+- **Meetings** — Granola, Plaud, Pocket, Circleback, Omi, Twenty, Twilio,
+  Bland, Notion AI Meeting Notes, and Muesli in the same searchable record.
 - **Social and feeds** — Facebook Page and Instagram comments, RSS, Atom, and
   JSON feeds, and messages from any other source through the import API.
-- **Calendar** — Google Calendar events, organizers, and attendees, read-only.
+- **Calendar** — Google Calendar events, organizers, and attendees, read-only,
+  plus invitations found in archived email and imported .ics files.
 - **Contacts** — import contacts from a CardDAV address book and choose which
   saved profiles to sync back.
 

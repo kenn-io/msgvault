@@ -35,16 +35,17 @@ func runRoot(t *testing.T, root *cobra.Command, args ...string) (stdout, stderr 
 	return out.String(), errOut.String(), err
 }
 
-func exportMessagesArgs(home string) []string {
+// exportArgs runs export-discord, a command the daemon runs for the CLI.
+func exportArgs(home string) []string {
 	return []string{
-		"--home", home, "export-messages",
+		"--home", home, "export-discord", "guild-a",
 		"--start", "2026-10-01T00:00:00Z", "--end", "2026-10-02T00:00:00Z",
 	}
 }
 
 func newExportRoot() *cobra.Command {
 	root := newRootCommand()
-	root.AddCommand(newExportMessagesCmd(exportMessagesDeps{}))
+	root.AddCommand(newExportDiscordCmd(discordCommandDeps{}))
 	return root
 }
 
@@ -94,7 +95,7 @@ func TestInvalidDaemonConfigWarnsOnceAndExportReachesDaemon(t *testing.T) { //no
 	server, requests := newDaemonCLIRunnerTestServer(t, nil, exportCompleteEvents)
 	home := writeInvalidKataHome(t, "\n[remote]\nurl = '"+server.URL+"'\nallow_insecure = true\n")
 
-	stdout, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
+	stdout, stderr, err := runRoot(t, newExportRoot(), exportArgs(home)...)
 	require.NoError(err)
 	assert.Equal(int32(1), requests.Load())
 	assert.Contains(stdout, `"record_type":"complete"`)
@@ -114,7 +115,7 @@ func TestInvalidDaemonConfigReusesOlderCompatibleDaemon(t *testing.T) { //nolint
 		return nil, errors.New("unreachable")
 	})
 
-	stdout, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
+	stdout, stderr, err := runRoot(t, newExportRoot(), exportArgs(home)...)
 	require.NoError(err, stderr)
 	assert.Equal(int32(1), requests.Load())
 	assert.Contains(stdout, `"record_type":"complete"`)
@@ -136,7 +137,7 @@ func TestInvalidDaemonConfigWarningAfterProxiedChildFailure(t *testing.T) { //no
 			server, _ := newDaemonCLIRunnerTestServer(t, nil, string(childStderr), string(childExit))
 			home := writeInvalidKataHome(t, "\n[remote]\nurl = '"+server.URL+"'\nallow_insecure = true\n")
 
-			_, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
+			_, stderr, err := runRoot(t, newExportRoot(), exportArgs(home)...)
 			require.ErrorIs(err, errCLISubprocessProxied)
 			require.Equal(1, strings.Count(stderr, "[integrations.kata]"), "report the setting once: %q", stderr)
 		})
@@ -165,7 +166,7 @@ func TestInvalidDaemonConfigRefusesAutostartOnce(t *testing.T) { //nolint:parall
 				return nil, errors.New("unreachable")
 			})
 
-			_, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
+			_, stderr, err := runRoot(t, newExportRoot(), exportArgs(home)...)
 			require.ErrorContains(t, err, tc.wantErr)
 			assert.Equal(1, strings.Count(stderr, "[integrations.kata]"), "report the error once: %q", stderr)
 		})

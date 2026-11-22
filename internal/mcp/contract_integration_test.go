@@ -31,11 +31,13 @@ var task5StableToolNames = []string{
 	ToolFindSimilarMessages,
 	ToolGetAttachment,
 	ToolGetMessage,
+	ToolGetMessageRecords,
 	ToolGetSavedView,
 	ToolGetStats,
 	ToolListMessages,
 	ToolListSavedViews,
 	ToolListThread,
+	ToolSkills,
 	ToolRunSavedView,
 	ToolSearchByDomains,
 	ToolSearchInMessage,
@@ -350,6 +352,8 @@ func task5ToolArguments(name, shape, exportDir string) (map[string]any, bool) {
 	switch name {
 	case ToolSearchTools:
 		return map[string]any{"query": "read one message", "limit": 3}, true
+	case ToolSkills:
+		return map[string]any{}, true
 	case ToolCreateSavedView:
 		return map[string]any{
 			"name": "Created view", "schema_version": 1,
@@ -372,6 +376,8 @@ func task5ToolArguments(name, shape, exportDir string) (map[string]any, bool) {
 		return map[string]any{"query": "needle", "mode": "vector", "limit": 1, "explain": true}, true
 	case ToolGetMessage:
 		return map[string]any{"id": 42, "max_chars": 80, "body_format": "text"}, true
+	case ToolGetMessageRecords:
+		return map[string]any{"message_id": 42}, true
 	case ToolGetSavedView:
 		return map[string]any{"id": 7}, true
 	case ToolGetAttachment:
@@ -552,6 +558,11 @@ func task5AssertRepresentativeResult(
 		checks.NotEmpty(value.Data[0].Matches[0].Snippet)
 		must.NotNil(value.Data[0].Matches[0].Score)
 		checks.InDelta(0.92, *value.Data[0].Matches[0].Score, 0.0001)
+	case ToolGetMessageRecords:
+		value := task5StructuredAs[messageRecordsResponse](t, result)
+		checks.Equal(int64(42), value.MessageID)
+		checks.Equal("none", value.Kind)
+		checks.Empty(value.Records)
 	case ToolGetMessage:
 		value := task5StructuredAs[struct {
 			ID              int64  `json:"id"`
@@ -732,6 +743,12 @@ func TestAllAdvertisedToolOutputs(t *testing.T) {
 						text, ok := result.Content[0].(*sdkmcp.TextContent)
 						must.True(ok, "semantic unavailable content type: %T", result.Content[0])
 						checks.Contains(text.Text, "vector_not_enabled")
+						continue
+					}
+					if tool.Name == ToolSkills {
+						// Guide text is Markdown, not JSON; skills_test.go covers its content.
+						must.False(result.IsError, task5SDKResultText(result))
+						successful[tool.Name] = true
 						continue
 					}
 					task5AssertJSONParity(t, tool.Name, result)

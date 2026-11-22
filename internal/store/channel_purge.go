@@ -130,6 +130,10 @@ func (s *Store) purgeChannelExec(ctx context.Context, q purgeQuerier, purge chan
 			purge.targetMessages()+")"), purge.args...); err != nil {
 		return fmt.Errorf("clear replies to purged channel: %w", err)
 	}
+	ctx = context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, reader: q})
+	if err := s.preservePurgedMeetingDecisionsWith(ctx, q, "conversation_id IN ("+purge.targets()+")", purge.args...); err != nil {
+		return fmt.Errorf("preserve meeting decisions: %w", err)
+	}
 	if _, err := q.ExecContext(ctx, s.dialect.Rebind(
 		"DELETE FROM conversations WHERE id IN ("+purge.targets()+")"), purge.args...); err != nil {
 		return fmt.Errorf("purge channel conversations: %w", err)

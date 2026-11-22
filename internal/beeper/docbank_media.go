@@ -1571,7 +1571,7 @@ func prepareMediaUpload(
 		MaxSheets: 100_000, MaxCells: 10_000_000, MaxSpineItems: 100_000,
 		MaxResources: 1_000_000, MaxDurationMS: 24 * 60 * 60 * 1000,
 	}
-	record, err := media.InspectCapability(file, policy)
+	record, err := media.InspectCapability(ctx, file, policy)
 	if err != nil {
 		return nil, "", fmt.Errorf("%w: inspect media spool: %w", errBeeperMediaSourceUnavailable, err)
 	}

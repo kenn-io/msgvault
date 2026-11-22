@@ -24,6 +24,11 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 		return errors.New("invocation state is unavailable")
 	}
 	logger := state.logger
+	if isRemoteModeFor(state) && len(state.cfg.Remote.CredentialProvider) > 0 {
+		// The helper's bearer covers credentialprovider.ReadOperations, and a
+		// source-scoped archive serves keyword search only.
+		return fmt.Errorf("--mode=%s is not available through a remote with credential_provider; use --mode=fts", mode)
+	}
 	s, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)

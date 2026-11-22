@@ -27,6 +27,8 @@
 </script>
 
 <script lang="ts">
+  import InlineNotice from '../common/InlineNotice.svelte';
+  import EmptyLine from '../common/EmptyLine.svelte';
   import {
     searchDomainFiles as generatedSearchDomainFiles,
     searchFiles as generatedSearchFiles,
@@ -136,6 +138,7 @@
     onPersonDirectionsChange?: (directions: PersonFileDirection[]) => void;
     onRestorationComplete?: (epoch: number) => void;
     onConfigureVisualSearch?: () => void;
+    onOpenTaskSettings?: () => void;
     onOpenItem?: (entryKey: string) => void;
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
   }
@@ -167,6 +170,7 @@
     onPersonDirectionsChange = undefined,
     onRestorationComplete = undefined,
     onConfigureVisualSearch = undefined,
+    onOpenTaskSettings = undefined,
     onOpenItem = undefined,
     onOpenConversation = undefined,
   }: Props = $props();
@@ -971,24 +975,19 @@
           {#if unavailable?.readiness === 'building'}
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="notice" role="status">Preparing analytical cache…</div>
+                <InlineNotice tone="info" message="Preparing analytical cache…" />
               </div>
             </div>
           {:else if unavailable}
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="notice" role="alert">
-                  <strong>Analytical cache unavailable</strong><span>{unavailable.message}</span>
-                </div>
+                <InlineNotice message={unavailable.message} />
               </div>
             </div>
           {:else if error && rows.length === 0}
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="notice" role="alert">
-                  <span>{error}</span>
-                  <Button size="sm" surface="outline" label="Retry request" onclick={reloadListing} />
-                </div>
+                <InlineNotice message={error} actionLabel="Retry request" onaction={reloadListing} />
               </div>
             </div>
           {:else if loading && rows.length === 0}
@@ -1000,7 +999,7 @@
           {:else if rows.length === 0}
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="notice">No files match this view.</div>
+                <EmptyLine message="No files match this view." />
               </div>
             </div>
           {:else if !slice || rowHeight === undefined}
@@ -1047,7 +1046,7 @@
                       <Tooltip text={row.filename || '(unnamed)'}><strong title={row.filename || '(unnamed)'}>{row.filename || '(unnamed)'}</strong></Tooltip>
                     </span>
                     <span class="cell--type" role="gridcell" aria-colindex={3} title={row.mime_type || row.mime_family}
-                      >{fileTypeLabel(row.mime_type, row.mime_family)}</span
+                      >{fileTypeLabel(row.mime_type, row.mime_family, row.filename)}</span
                     >
                     <span class="cell--size" role="gridcell" aria-colindex={4} data-mono>{formatBytes(row.size_bytes)}</span>
                     {#if personScoped}<span class="cell--direction" role="gridcell" aria-colindex={5}>{relationship(row)}</span>{/if}
@@ -1084,25 +1083,14 @@
                restarts the listing from page one. -->
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="page-error" role="alert">
-                  <span>{error}</span>
-                  <Button size="sm" surface="outline" label="Reload files" onclick={reloadListing} />
-                </div>
+                <InlineNotice message={error} actionLabel="Reload files" onaction={reloadListing} />
               </div>
             </div>
           {/if}
           {#if pageError}
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="page-error" role="alert">
-                  <span>{pageError}</span>
-                  <Button
-                    size="sm"
-                    surface="outline"
-                    label="Retry loading more files"
-                    onclick={() => void loadMore()}
-                  />
-                </div>
+                <InlineNotice message={pageError} actionLabel="Retry loading more files" onaction={() => void loadMore()} />
               </div>
             </div>
           {/if}
@@ -1120,9 +1108,7 @@
           {:else if pendingViewerState === 'missing'}
             <div role="row">
               <div role="gridcell" aria-colspan={columnCount}>
-                <div class="page-error" role="alert">
-                  <span>The selected file is not in the current results.</span>
-                </div>
+                <InlineNotice message="The selected file is not in the current results." />
               </div>
             </div>
           {/if}
@@ -1146,6 +1132,7 @@
       onSelectedKey?.(null);
     }}
     {onOpenItem}
+    {onOpenTaskSettings}
     {onOpenConversation}
   />
 {/if}
@@ -1283,6 +1270,9 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .data-row--active .containing-link {
+    color: var(--active-ink);
+  }
   .containing-link:hover {
     text-decoration: underline;
   }
@@ -1317,14 +1307,6 @@
     gap: var(--space-3);
     flex-direction: column;
     color: var(--text-secondary);
-  }
-  .page-error {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    padding: var(--pane-pad-y) var(--pane-pad-x);
-    color: var(--text-danger);
   }
   .progress {
     position: sticky;

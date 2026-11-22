@@ -26,6 +26,8 @@ const (
 
 // BuildOptions identifies committed, staged, and output cache roots.
 type BuildOptions struct {
+	// MeetingGroups names a relation with message_id and group_id columns.
+	MeetingGroups string
 	// UnsentMessages names a message_id relation; empty means no unsent messages.
 	UnsentMessages string
 	Mode           Mode
@@ -67,6 +69,13 @@ type sqlExecutor interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (b builder) meetingGroups() string {
+	if b.opts.MeetingGroups == "" {
+		return "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)"
+	}
+	return b.opts.MeetingGroups
 }
 
 // Build derives the relationship datasets from schema-correct base Parquet.
@@ -153,13 +162,17 @@ func Build(
 		"SELECT * FROM "+logicalBuildRelation); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt)); err != nil {
+	groups := b.meetingGroups()
+	if err := b.copyDataset(ctx, DatasetMeetingGroups, "SELECT message_id::BIGINT AS message_id, group_id::BIGINT AS group_id FROM "+groups); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt, groups)); err != nil {
 		return BuildResult{}, err
 	}
 	if err := b.copyDataset(ctx, DatasetDomains, buildRelationshipDomainsSQL()); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(ctx, DatasetRelationshipDaily, buildRelationshipDailySQL()); err != nil {
+	if err := b.copyDataset(ctx, DatasetRelationshipDaily, buildRelationshipDailySQL(groups)); err != nil {
 		return BuildResult{}, err
 	}
 	validationActivity := activity

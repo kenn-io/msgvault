@@ -13,6 +13,7 @@ import (
 
 type identityCacheFixtureOptions struct {
 	unsentMessages string
+	meetingGroups  string
 }
 
 func identityFixtureProjection(dataset string) string {
@@ -48,6 +49,7 @@ func ensureIdentityCacheFixtureDatasets(
 		StagedBaseRoot: analyticsDir,
 		OutputRoot:     analyticsDir,
 		UnsentMessages: options.unsentMessages,
+		MeetingGroups:  options.meetingGroups,
 	}
 	_, err = identityindex.Build(tb.Context(), db, buildOptions)
 	require.NoError(tb, err, "derive identity fixture datasets")

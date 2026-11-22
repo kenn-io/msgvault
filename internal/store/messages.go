@@ -1266,6 +1266,9 @@ func (s *Store) MigrateSourceMessageID(ctx context.Context, sourceID, conversati
 				}
 			}
 
+			if err := s.preservePurgedMeetingDecisions(ctx, tx, `source_id = ? AND conversation_id = ? AND source_message_id = ?`, sourceID, conversationID, legacySourceMessageID); err != nil {
+				return fmt.Errorf("preserve meeting decisions: %w", err)
+			}
 			_, err = tx.ExecContext(
 				ctx,
 				`DELETE FROM messages
@@ -1360,6 +1363,35 @@ func (s *Store) MessageMetadataWithRawBatch(
 			return nil
 		},
 	)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// MarkedSourceMessageIDsBatchContext returns marked source message IDs from a
+// provider listing page, including rows whose raw MIME is missing.
+func (s *Store) MarkedSourceMessageIDsBatchContext(
+	ctx context.Context, sourceID int64, sourceMessageIDs []string,
+) (map[string]struct{}, error) {
+	result := make(map[string]struct{})
+	if len(sourceMessageIDs) == 0 {
+		return result, nil
+	}
+
+	err := queryInChunksContext(ctx, s.db, sourceMessageIDs, []any{sourceID}, `
+		SELECT source_message_id
+		FROM messages
+		WHERE source_id = ? AND deleted_from_source_at IS NOT NULL
+		  AND source_message_id IN (%s)`,
+		func(rows *loggedRows) error {
+			var sourceMessageID string
+			if err := rows.Scan(&sourceMessageID); err != nil {
+				return err
+			}
+			result[sourceMessageID] = struct{}{}
+			return nil
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -2166,19 +2198,42 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	return s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
 		nil, nil, func([]int64) *MessagePersistData { return data }, nil,
-		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
-			q := boundQuerier{ctx: ctx, q: tx}
-			if data.MIMEAttachmentReplacement != nil {
-				if err := s.persistAttachmentSnapshotWith(q, id, data.MIMEAttachmentReplacement); err != nil {
-					return err
-				}
-			}
-			if data.Edited {
-				return setMessageEditedStateWith(q, id, true)
-			}
-			return nil
-		},
+		s.persistMessageSnapshotAfter,
 	)
+}
+
+func (s *Store) persistMessageSnapshotAfter(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
+	q := boundQuerier{ctx: ctx, q: tx}
+	if data.MIMEAttachmentReplacement != nil {
+		if err := s.persistAttachmentSnapshotWith(q, id, data.MIMEAttachmentReplacement); err != nil {
+			return err
+		}
+	}
+	if data.Edited {
+		return setMessageEditedStateWith(q, id, true)
+	}
+	return nil
+}
+
+// PersistTelegramMessagesContext persists Telegram snapshots in one transaction.
+func (s *Store) PersistTelegramMessagesContext(ctx context.Context, batch []*MessagePersistData) ([]int64, error) {
+	ids := make([]int64, len(batch))
+	err := s.withAttributionTxContext(ctx, attributionLock{}, func(tx *loggedTx) error {
+		for i, data := range batch {
+			id, err := s.persistMessageWithParticipantsTx(
+				ctx, tx, nil, nil, func([]int64) *MessagePersistData { return data }, nil, s.persistMessageSnapshotAfter,
+			)
+			if err != nil {
+				return fmt.Errorf("persist message %s: %w", data.Message.SourceMessageID, err)
+			}
+			ids[i] = id
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // RelayedFromRecipient preserves the transport sender for an attributed author.
@@ -3700,18 +3755,23 @@ func (s *Store) ClearMessageDeletedFromSourceContext(ctx context.Context, source
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	write := func(q querier) error {
-		_, err := q.Exec(`
-			UPDATE messages
-			SET deleted_from_source_at = NULL
-			WHERE source_id = ? AND source_message_id = ?
-		`, sourceID, sourceMessageID)
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return s.clearMessageDeletedFromSourceTx(ctx, tx, `source_id = ? AND source_message_id = ?`, sourceID, sourceMessageID)
+	})
+}
+
+// clearMessageDeletedFromSourceTx clears one matching mark and invalidates cached facts.
+func (s *Store) clearMessageDeletedFromSourceTx(ctx context.Context, tx *loggedTx, condition string, args ...any) error {
+	var messageID int64
+	err := tx.QueryRowContext(ctx, `UPDATE messages SET deleted_from_source_at = NULL WHERE deleted_from_source_at IS NOT NULL AND `+condition+` RETURNING id`, args...).Scan(&messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil || s.IsPostgreSQL() {
 		return err
 	}
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
+	_, err = tx.ExecContext(ctx, `INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('message_facts', ?)`, messageID)
+	return err
 }
 
 // MarkMessagesDeletedBatch marks multiple messages as deleted from the source in a single transaction.

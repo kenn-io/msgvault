@@ -182,6 +182,8 @@ func TestManualSyncProbeDoesNotQueueCacheRefresh(t *testing.T) {
 	assert.False(manualSyncCLICommand([]string{"source", "feeds", "list"}))
 	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe"}))
 	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe=true"}))
+	assert.True(manualSyncCLICommand([]string{"sync-bland", "work"}))
+	assert.False(manualSyncCLICommand([]string{"sync-bland", "--probe"}))
 }
 
 func TestManualSyncCacheRefreshIncludesNativeMeetingProviders(t *testing.T) {

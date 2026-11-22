@@ -269,11 +269,6 @@ func (s *Store) SetPersonMergeAfterSnapshotHookForTest(fn func()) func() {
 	return func() { s.personMergeAfterSnapshotHook = nil }
 }
 
-// SetPersonEnrichmentClockForTest installs a deterministic clock on one Store.
-func SetPersonEnrichmentClockForTest(s *Store, clock func() time.Time) {
-	s.personEnrichmentClock = clock
-}
-
 // SetPersonEnrichmentBudgetBarrierForTest coordinates real concurrent budget
 // reservations after counter creation and before their fixed-order locks.
 func SetPersonEnrichmentBudgetBarrierForTest(s *Store, barrier func()) {
@@ -308,7 +303,7 @@ func ReservePersonEnrichmentBudgetForTest(
 		if err != nil {
 			return err
 		}
-		return s.reservePersonEnrichmentBudgetTx(ctx, tx, policy, start)
+		return s.reservePersonEnrichmentBudgetTx(ctx, tx, policy, start, s.personEnrichmentTime())
 	})
 }
 

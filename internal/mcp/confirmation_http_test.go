@@ -68,8 +68,9 @@ func TestDelegatedCatalogHasNoOwnerArchiveToolsOrResources(t *testing.T) {
 	assertions := assert.New(t)
 	opts := ServeOptions{DelegatedOnly: true}
 	tools := toolsByName(t, rawListTools(t, opts, true))
-	assertions.Len(tools, 1)
+	assertions.Len(tools, 2)
 	assertions.Contains(tools, ToolSearchTools)
+	assertions.Contains(tools, ToolSkills)
 	response := rawModernCall(t, opts, HTTPOptions{}, "server/discover", nil)
 	capabilities, ok := response.Result["capabilities"].(map[string]any)
 	require.True(t, ok)

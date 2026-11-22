@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -147,6 +148,7 @@ type DocbankIntegrationConfig struct {
 	AttachmentUploadConsent bool     `toml:"attachment_upload_consent"`
 	AttachmentFolder        string   `toml:"attachment_folder"`
 	AttachmentSearchProfile string   `toml:"attachment_search_profile"`
+	RecordingSearchProfile  string   `toml:"recording_search_profile"`
 }
 
 // MirrorFolder returns the destination virtual directory.
@@ -302,16 +304,6 @@ func (s *ServerConfig) DaemonAutoStartEnabled() bool {
 	return s.DaemonAutoStart == nil || *s.DaemonAutoStart
 }
 
-// TelemetryConfig controls the daemon's anonymous usage telemetry.
-type TelemetryConfig struct {
-	Enabled *bool `toml:"enabled"` // unset means true; MSGVAULT_TELEMETRY_ENABLED overrides it
-}
-
-// EnabledOrDefault reports the configured telemetry setting, true when unset.
-func (t TelemetryConfig) EnabledOrDefault() bool {
-	return t.Enabled == nil || *t.Enabled
-}
-
 func (s *ServerConfig) Validate() error {
 	if err := s.validateDaemonAutoRestart(); err != nil {
 		return err
@@ -457,7 +449,8 @@ type SynctechSMSSource struct {
 }
 
 // RemoteConfig holds configuration for a remote msgvault server.
-// Remote-capable commands use this destination unless --local is selected.
+// Remote-capable commands use [remote] unless --local is selected, or
+// --remote selects one of the named [remotes.<name>] tables instead.
 type RemoteConfig struct {
 	URL           string `toml:"url"`     // Remote server URL (e.g., http://nas:8080)
 	APIKey        string `toml:"api_key"` // API key for authentication
@@ -465,6 +458,20 @@ type RemoteConfig struct {
 	APIKeyEnv     string `toml:"api_key_env"`
 	credential    runtimeCredential
 	AllowInsecure bool `toml:"allow_insecure"` // Allow HTTP (insecure) for trusted networks
+	// CredentialProvider runs a trusted local helper, as a command and its
+	// arguments, for a short-lived bearer instead of using an API key. It
+	// needs Delegation and excludes every api_key setting.
+	CredentialProvider []string          `toml:"credential_provider,omitempty"`
+	Delegation         *RemoteDelegation `toml:"delegation,omitempty"`
+}
+
+// RemoteDelegation names the access a hosting service approved for this
+// client. The credential helper is asked for exactly this access.
+type RemoteDelegation struct {
+	ArchiveID    string    `toml:"archive_id"`
+	ClientID     uuid.UUID `toml:"client_id"`
+	DelegationID uuid.UUID `toml:"delegation_id"`
+	SourceIDs    []int64   `toml:"source_ids"`
 }
 
 // IdentityConfig holds the user's curated identity addresses.
@@ -618,6 +625,7 @@ type Config struct {
 	Web                WebConfig                 `toml:"web"`
 	Integrations       IntegrationsConfig        `toml:"integrations"`
 	Remote             RemoteConfig              `toml:"remote"`
+	Remotes            map[string]RemoteConfig   `toml:"remotes,omitempty"`
 	Vector             vector.Config             `toml:"vector"`
 	Identity           IdentityConfig            `toml:"identity"`
 	Fastmail           []FastmailSource          `toml:"fastmail"`
@@ -645,6 +653,7 @@ type Config struct {
 	Pocket             []PocketSource            `toml:"pocket"`
 	NotionMeetings     []NotionMeetingsSource    `toml:"notion_meetings"`
 	Twilio             []TwilioSource            `toml:"twilio"`
+	Bland              []BlandSource             `toml:"bland"`
 	Muesli             []MuesliSource            `toml:"muesli"`
 	Twenty             []TwentySource            `toml:"twenty"`
 	Backup             BackupConfig              `toml:"backup"`
@@ -656,7 +665,6 @@ type Config struct {
 	Deletion           DeletionConfig            `toml:"deletion"`
 	IMAP               IMAPConfig                `toml:"imap"`
 	Gmail              GmailConfig               `toml:"gmail"`
-	Telemetry          TelemetryConfig           `toml:"telemetry"`
 
 	// Computed paths (not from config file)
 	HomeDir            string `toml:"-"`
@@ -2428,6 +2436,9 @@ func (c *Config) applyMeetingSourceDefaults() {
 	if len(c.Twilio) == 1 && c.Twilio[0].Identifier == "" {
 		c.Twilio[0].Identifier = defaultMeetingSourceIdentifier
 	}
+	if len(c.Bland) == 1 && c.Bland[0].Identifier == "" {
+		c.Bland[0].Identifier = defaultMeetingSourceIdentifier
+	}
 }
 
 // validateMeetingSources rejects native meeting-source lists with empty
@@ -2627,8 +2638,27 @@ func (c *Config) validateMeetingSources() error {
 		if src.Region == "" {
 			src.Region = "us1"
 		}
-		if src.MaxMediaMB < 0 || int64(src.MaxMediaMB) > math.MaxInt64>>20 {
-			return fmt.Errorf("[[twilio]] identifier %q: max_media_mb must be zero or a positive representable MiB limit", src.Identifier)
+		if err := validateCallRecordingCap("twilio", src.Identifier, src.MaxMediaMB); err != nil {
+			return err
+		}
+	}
+	blandIDs := make([]string, len(c.Bland))
+	for i, s := range c.Bland {
+		blandIDs[i] = s.Identifier
+	}
+	if err := check("bland", blandIDs); err != nil {
+		return err
+	}
+	// Bland API keys are checked when the source is used.
+	for i := range c.Bland {
+		src := &c.Bland[i]
+		email, err := src.EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		src.AccountEmail = email
+		if err := validateCallRecordingCap("bland", src.Identifier, src.MaxMediaMB); err != nil {
+			return err
 		}
 	}
 	return nil

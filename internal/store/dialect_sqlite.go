@@ -344,6 +344,8 @@ func (d *SQLiteDialect) RFC822CanonicalIDIndexDefinition() string {
 // JSONBindExpr is "?" on SQLite — JSON columns are plain TEXT.
 func (d *SQLiteDialect) JSONBindExpr() string { return "?" }
 
+func (d *SQLiteDialect) JSONTextBindExpr() string { return "?" }
+
 func (d *SQLiteDialect) JSONIsDistinctExpr(col string) string { return col + " IS NOT ?" }
 
 // BuildFTSArg formats search terms as an FTS5 MATCH argument: each
@@ -1967,6 +1969,9 @@ func (d *SQLiteDialect) contentChangedAtDefaultStamps(q querier) (bool, error) {
 // silences these when the column already exists (idempotent migrations).
 func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE meeting_details ADD COLUMN link_key TEXT`, "meeting_details.link_key"},
+		{`ALTER TABLE calendar_events ADD COLUMN ical_uid TEXT NOT NULL DEFAULT ''`, "calendar_events.ical_uid"},
+		{`ALTER TABLE person_fact_decisions ADD COLUMN outcome TEXT`, "person_fact_decisions.outcome"},
 		{`ALTER TABLE carddav_sync_runs ADD COLUMN binding_conflicts INTEGER CHECK (binding_conflicts IS NULL OR binding_conflicts >= 0)`, "carddav_sync_runs.binding_conflicts"},
 		{`ALTER TABLE person_participants ADD COLUMN carddav_owned BOOLEAN NOT NULL DEFAULT FALSE`, "person_participants.carddav_owned"},
 		{`ALTER TABLE carddav_resources ADD COLUMN owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
@@ -2072,6 +2077,8 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		// write moves it, so no backfill is needed.
 		{`ALTER TABLE persons ADD COLUMN vcard_projection_revision INTEGER NOT NULL DEFAULT 1`,
 			"persons.vcard_projection_revision"},
+		{`ALTER TABLE persons ADD COLUMN display_name_source_name_id INTEGER`,
+			"persons.display_name_source_name_id"},
 		{`ALTER TABLE person_names ADD COLUMN source_resource_uid TEXT`, "person_names.source_resource_uid"},
 		{`ALTER TABLE person_contact_points ADD COLUMN source_resource_uid TEXT`, "person_contact_points.source_resource_uid"},
 		{`ALTER TABLE person_addresses ADD COLUMN source_resource_uid TEXT`, "person_addresses.source_resource_uid"},

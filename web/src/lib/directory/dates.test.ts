@@ -58,7 +58,6 @@ describe('date readings', () => {
       expect(readablePartialDate('2026-03')).toBe('Mar 2026');
       expect(dateNote('2026-11-06', false)).toBe('Today, Nov 6');
       expect(dateNote('20261105', false)).toBe('Nov 5');
-      expect(dateNote('2025-11-06', false)).toBe('Nov 6, 2025');
       expect(dateNote('2026-02-30', false)).toBe('');
       expect(dateNote('2024-03', true)).toBe(DATE_HINT);
       expect(dateNote('2024-03', false)).toBe('Mar 2024');

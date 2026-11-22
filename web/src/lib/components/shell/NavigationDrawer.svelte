@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { appShortcuts, trapFocus } from '@kenn-io/kit-ui';
+  import { appShortcuts, escapeLayer, trapFocus } from '@kenn-io/kit-ui';
   import { onMount, tick, type Snippet } from 'svelte';
 
   let { onclose, children }: { onclose: () => void; children: Snippet } = $props();
@@ -7,19 +7,15 @@
 
   onMount(() => {
     const popScope = appShortcuts.pushScope('navigation-drawer');
-    const unregister = appShortcuts.register('escape', () => onclose(), {
-      scope: 'navigation-drawer'
-    });
     void tick().then(() => panel?.querySelector<HTMLElement>('[aria-current="page"]')?.focus());
     return () => {
-      unregister();
       popScope();
     };
   });
 </script>
 
 <!-- kit-ui-check-ignore: kit DetailDrawer is a right-side sheet with its own Escape handling; this is a left slide-out that owns the navigation-drawer shortcut scope. -->
-<div class="drawer">
+<div class="drawer" {@attach (drawer) => escapeLayer(onclose, drawer)}>
   <button
     type="button"
     class="drawer__scrim"

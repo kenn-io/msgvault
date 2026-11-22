@@ -19,7 +19,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.ExecContext(t.Context(), `
 		CREATE TEMP TABLE synthetic_temperature_activity AS
-		SELECT *, false AS unsent, false AS email_invite FROM (VALUES
+		SELECT *, CASE WHEN entry_kind = 'meeting' THEN 'meeting_transcript' WHEN is_chat THEN 'imessage' ELSE entry_kind END AS message_type, false AS unsent, false AS email_invite FROM (VALUES
 			-- Direct chat written by the owner: the explicit edge identifies
 			-- person 2 even when the importer has no conversation roster.
 			(1::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 12:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, false, true),
@@ -41,6 +41,9 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 			(6::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 17:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, true),
 			(6::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 17:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, false),
 			(7::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 18:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, false),
+			-- Owner listed in the roster without a direct attendance edge.
+			(8::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 19:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, false, true, false, true),
+			(8::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 19:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, false),
 			-- A duplicate linked-alias edge for canonical person 2.
 			(2::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 13:00:00', true, 'item'::VARCHAR, 'group_chat'::VARCHAR, false, true, false, true, false)
 		) AS t(message_id, canonical_id, occurred_at, is_chat, entry_kind,
@@ -48,15 +51,10 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 			is_author, is_owner)
 	`)
 	require.NoError(err)
-	_, err = db.ExecContext(t.Context(), `INSERT INTO synthetic_temperature_activity
-		SELECT * REPLACE (8::BIGINT AS message_id, true AS email_invite, 'event' AS entry_kind, 'calendar' AS conversation_type)
-		FROM synthetic_temperature_activity WHERE message_id = 6`)
-	require.NoError(err)
-
 	var sent, received, meetings, email, chat, total int64
 	var modality uint8
 	query := buildRelationshipTemperatureDailySQL(
-		"synthetic_temperature_activity",
+		"synthetic_temperature_activity", "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)",
 		time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC),
 	)
 	err = db.QueryRowContext(t.Context(), `
@@ -80,7 +78,7 @@ func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.ExecContext(t.Context(), `
 		CREATE TEMP TABLE synthetic_unsent_activity AS
-		SELECT *, false AS email_invite FROM (VALUES
+		SELECT *, 'imessage' AS message_type, false AS email_invite FROM (VALUES
 			(8::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, true, true, true),
 			(8::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, true, true, false, false, true)
 		) AS t(message_id, canonical_id, occurred_at, is_chat, entry_kind,
@@ -88,7 +86,7 @@ func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 			is_author, is_owner, unsent)
 	`)
 	require.NoError(err)
-	query := buildRelationshipTemperatureDailySQL("synthetic_unsent_activity", time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC))
+	query := buildRelationshipTemperatureDailySQL("synthetic_unsent_activity", "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)", time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC))
 	var count int
 	require.NoError(db.QueryRowContext(t.Context(), "SELECT count(*) FROM ("+query+")").Scan(&count))
 	assert.Zero(t, count, "an owner-authored unsent chat contributes no daily contact activity")

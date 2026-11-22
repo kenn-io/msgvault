@@ -255,12 +255,14 @@ func TestStoreAPIAdapterDeletePersonRejectsRecordedAttemptKeyMismatch(t *testing
 	assert.NotEmpty(t, attempts)
 }
 
-// serveLifecycleTestTimeout bounds waits for daemon-startup milestones (API
-// seam entered, analytics build started, health ready). Every use is a
-// positive wait, so the value only stretches the failure path — passing runs
-// are unaffected. It must absorb a full InitSchema on the slowest CI
-// environment: the sharded Windows runner has been observed taking over two
-// minutes to execute schema.sql under filesystem load.
+// serveLifecycleTestTimeout bounds waits for daemon lifecycle milestones (API
+// seam entered, analytics build started, health ready, runServe returning
+// after cancellation). Every use is a positive wait, so the value only
+// stretches the failure path — passing runs are unaffected. It must absorb a
+// full InitSchema on the slowest CI environment: the sharded Windows runner
+// has been observed taking over two minutes to execute schema.sql under
+// filesystem load, and stalling for over five seconds between two
+// non-blocking steps of shutdown.
 const serveLifecycleTestTimeout = 180 * time.Second
 
 func TestServeOAuthValidationAllowsMicrosoftOnly(t *testing.T) {
@@ -306,7 +308,7 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	select {
 	case err := <-errCh:
 		require.NoError(t, err, "runServe")
-	case <-time.After(5 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow(t, "runServe did not stop after context cancellation")
 	}
 }
@@ -352,7 +354,7 @@ func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
 	select {
 	case err := <-errCh:
 		require.NoError(err, "runServe")
-	case <-time.After(5 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow("runServe did not stop after context cancellation")
 	}
 }
@@ -468,7 +470,7 @@ func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 	select {
 	case err := <-errCh:
 		require.NoError(err, "runServe")
-	case <-time.After(5 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow("runServe did not stop after context cancellation")
 	}
 }
@@ -2073,6 +2075,12 @@ func TestCLISyncSubprocessArgs(t *testing.T) {
 	)
 	assert.Equal([]string{"sync-full", "--", "-reader@example.org"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, Email: "-reader@example.org"}))
+	assert.Equal(
+		[]string{"sync-full", "--query", "label:example", "--noresume", "--before", "2024-03-01", "--after", "2024-01-01", "--limit", "2"},
+		cliSyncSubprocessArgs(api.CLISyncRequest{
+			Full: true, Query: "label:example", NoResume: true, Before: "2024-03-01", After: "2024-01-01", Limit: 2,
+		}),
+	)
 }
 
 func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {

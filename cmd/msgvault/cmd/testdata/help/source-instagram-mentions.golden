@@ -8,8 +8,8 @@ Available Commands:
   sync        Archive media that tags the Instagram account
 
 Flags:
-  -h, --help   help for instagram-mentions
+  -h, --help[=true|false]   help for instagram-mentions
 
-Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, --remote, -v/--verbose (see 'msgvault --help')
 
 Use "msgvault source instagram-mentions [command] --help" for more information about a command.

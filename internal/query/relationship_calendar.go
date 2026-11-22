@@ -264,9 +264,18 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		strings.Join(canonicalIDs, ","),
 		request.CanonicalID, strings.Join(years, ","),
 	)
-	facts := identityindex.RelationshipTemperatureFactsSQL(activity, cutoff)
+	// The facts SQL names each relation at several places, and DuckDB expands
+	// the activity view at every textual reference. Naming the window and the
+	// transcript rows once as CTEs keeps planning from repeating that work.
+	// Owner meeting evidence reads only transcript rows.
+	facts := identityindex.RelationshipTemperatureFactsSQL("calendar_activity", "calendar_transcripts", "read_parquet('"+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups))+"')", cutoff)
 	rows, err := e.db.QueryContext(ctx, `
-		WITH relationship_facts AS (
+		WITH calendar_activity AS MATERIALIZED `+activity+`,
+		calendar_transcripts AS (
+		  SELECT * FROM relationship_activity_expanded
+		  WHERE message_type = 'meeting_transcript'
+		),
+		relationship_facts AS (
 		`+facts+`
 		)
 		SELECT strftime(timezone(?, timezone('UTC', occurred_at)), '%Y-%m-%d') AS local_date,

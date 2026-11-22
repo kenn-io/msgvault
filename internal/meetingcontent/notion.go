@@ -109,6 +109,13 @@ func decodeNotionActions(fields map[string]jsontext.Value, discovery notionDisco
 		}
 		referenced = true
 		blocks, complete := notionTreeBlocks(fields[tree.key], tree.id)
+		var warnings []string
+		_ = json.Unmarshal(fields["warnings"], &warnings)
+		for _, warning := range warnings {
+			if strings.HasPrefix(warning, tree.key+" incomplete:") {
+				complete = false
+			}
+		}
 		if !complete {
 			incomplete = true
 		} else {
@@ -187,8 +194,8 @@ func notionTreeBlocks(raw jsontext.Value, expectedRootID string) ([]jsontext.Val
 	if !rootHasChildren {
 		return traversal.blocks, len(tree.Pages) == 0
 	}
-	complete := traversal.readChildren(1)
-	return traversal.blocks, complete && traversal.nextPage == len(traversal.pages)
+	complete := traversal.readChildren(1) && traversal.nextPage == len(traversal.pages)
+	return traversal.blocks, complete
 }
 
 type notionTreeTraversal struct {
@@ -215,9 +222,14 @@ func (t *notionTreeTraversal) readChildren(depth int) bool {
 		if results == nil {
 			return false
 		}
-
 		childrenComplete := true
 		for _, child := range results {
+			var header struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(child, &header) == nil && header.Type == "meeting_notes" {
+				continue
+			}
 			if t.blockVisits >= maxNotionTraversalBlocks {
 				return false
 			}

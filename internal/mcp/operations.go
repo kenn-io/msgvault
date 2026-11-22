@@ -41,10 +41,12 @@ func (e *OperationRefusalError) Error() string { return e.Code }
 type OperationFamily string
 
 const (
-	OperationFamilySources OperationFamily = "sources"
-	OperationFamilyRecords OperationFamily = "records"
-	OperationFamilyLoops   OperationFamily = "loops"
-	OperationFamilyCurated OperationFamily = "curated"
+	OperationFamilySources    OperationFamily = "sources"
+	OperationFamilyRecords    OperationFamily = "records"
+	OperationFamilyLoops      OperationFamily = "loops"
+	OperationFamilyImports    OperationFamily = "imports"
+	OperationFamilyCurated    OperationFamily = "curated"
+	OperationFamilyAttributes OperationFamily = "attributes"
 )
 
 type operationalDefinition struct {
@@ -61,7 +63,7 @@ type chunkedOperation struct {
 // Roots are built once, independent of capability combinations. Selecting any
 // subset retains pointer identity for the official SDK's shared schema cache.
 var fixedOperationalDefinitions = sync.OnceValue(func() []operationalDefinition {
-	return append(append(append(append(sourceOperationalDefinitions(), loopOperationalDefinitions()...), deletionReviewOperationalDefinitions()...), personRecordDefinitions()...), personExportDefinitions()...)
+	return append(append(append(append(append(append(sourceOperationalDefinitions(), loopOperationalDefinitions()...), deletionReviewOperationalDefinitions()...), personRecordDefinitions()...), personExportDefinitions()...), importJobDefinitions()...), recordAttributeDefinitions()...)
 })
 
 func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefinition {
@@ -83,7 +85,7 @@ func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefini
 
 func newOperationalDefinition(name, description string, family OperationFamily, input, output *jsonschema.Schema, writes bool) operationalDefinition {
 	definition := toolDefinition{name: name, description: description, inputSchema: input, outputSchema: operationalOutputSchema(output), annotations: toolAnnotations(!writes)}
-	openWorld := writes && family == OperationFamilySources
+	openWorld := writes && (family == OperationFamilySources || family == OperationFamilyImports)
 	definition.annotations.OpenWorldHint = &openWorld
 	return operationalDefinition{definition: definition, family: family, writes: writes}
 }

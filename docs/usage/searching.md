@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-11"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -156,8 +156,9 @@ address and calendar events of that calendar.
   import. For a file import you will not run again, use
   [`msgvault repair-derived`](../cli-reference.md#repair-derived).
 - Confirming or removing an address updates the messages it affects before
-  the command returns. If that update is interrupted, the next sync finishes
-  it.
+  the command returns. If that update is interrupted, the running daemon or
+  the next sync finishes it.
+  Explore lists each source with messages still waiting and offers Retry.
 - Both operators work in full-text, vector, and hybrid search.
 
 In the TUI account picker and the Web UI's Explore account filter, a source
@@ -168,7 +169,6 @@ same entries as their `account` argument: the keys that `get_stats` lists
 (`identity:...` or `unattributed:...`). A source's own address or display
 name, in any letter case, still selects that whole source; any other confirmed
 address selects the mail attributed to it on every source.
-Explore refreshes pending account matching and offers Retry for each affected source. Matching also resumes automatically after an identity change.
 
 Delivery headers are routing hints, not proof that you own an address, and
 attribution never lets msgvault send from it. The
@@ -234,6 +234,43 @@ msgvault search "conversation_id:123 budget"
 `conversation_id:` takes the positive local conversation ID shown in message
 metadata, not the provider's thread or room ID. It works with keyword, vector,
 and hybrid search. Vector and hybrid queries still need free text.
+
+### Search one copy of overlapping chats
+
+If you imported a Telegram Desktop export and also sync Telegram through
+Beeper, search returns both archived copies of most messages. msgvault does
+not merge the two copies.
+
+To search only one source, pass its identifier or display name from
+`msgvault list-accounts` to the
+[`--account` filter](#account-and-collection-filters).
+
+To pick one copy of particular chats:
+
+1. Find the candidates:
+
+   ```bash
+   msgvault find-chat "Example Group" --json
+   ```
+
+   Each result has a `conversation_id`, plus `source_type` and
+   `source_identifier` to tell you which source it came from. A matching
+   title doesn't prove two results are the same chat, so check their messages
+   if you're unsure. If `has_more` is true, raise `--limit` (up to 100),
+   narrow the name, or pass `--source-id`.
+
+2. Search the copies you chose. Repeated `conversation_id:` filters match any
+   of the listed conversations:
+
+   ```bash
+   msgvault search 'conversation_id:41 conversation_id:52 budget' --mode fts --json
+   ```
+
+   With `|`, repeat the filters in each alternative, because an alternative
+   without them searches the whole archive.
+
+Choosing the export leaves out newer messages that only Beeper has, and
+choosing Beeper leaves out older history that only the export has.
 
 ## Repairing Existing Archives
 
@@ -350,7 +387,7 @@ msgvault search from:alice@example.com --json
 
 `msgvault media search "quarterly numbers"` finds matching recording transcripts as their visible messages. A shared recording returns each live message occurrence. Add `--person 7 --direction from_person` to search recordings from one person, or `--json` for IDs, origin, plain excerpts, timing, coverage and optional `filename`, `containing_title` and `occurred_at` fields.
 
-Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Recording retrieval supports lexical mode. Semantic and hybrid modes search attachments and return `recordings_error=media_search_mode_unavailable`. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Messages search](../web-ui.md#recording-matches).
+Media search uses lexical retrieval through the configured Docbank integration by default. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Add `--mode semantic` to find transcripts that say the same thing in other words, or `--mode hybrid` for meaning and keywords. Set [`recording_search_profile`](../configuration.md#send-stored-audio-to-docbank) to the Docbank profile that embedded your transcripts. Without it, hybrid falls back to keywords with `semantic_unconfigured`. If Docbank has no embeddings for the transcripts, the result reports `semantic_unavailable` and keyword matches. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Messages search](../web-ui.md#recording-matches).
 
 ## Search mirrored attachment text
 

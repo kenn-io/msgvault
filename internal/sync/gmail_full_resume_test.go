@@ -125,8 +125,8 @@ func TestGmailFullResumeHistoryContinuity(t *testing.T) {
 				f.history += 100
 				f.arrivals[fmt.Sprintf("arrival%d", attempt+1)] = f.history - 50
 			}
-			wantHistoryStart := uint64(1000)
-			wantHistoryStarts := []uint64{1000}
+			wantHistoryStart := uint64(900)
+			wantHistoryStarts := []uint64{900}
 			if scenario.incrementalBetween {
 				_, err := e.Syncer.Incremental(t.Context(), gmailCoverageSource(t.Context(), t, e))
 				require.NoError(err)
@@ -181,4 +181,99 @@ func TestGmailFullResumeHistoryExpiration(t *testing.T) {
 	assert.False(summary.WasResumed)
 	require.NotEmpty(f.listTokens)
 	assert.Empty(f.listTokens[0], "History recovery cannot reuse an ordinary full checkpoint")
+	assert.Equal(f.history, summary.FinalHistoryID)
+	assert.Equal(strconv.FormatUint(f.history, 10), gmailCoverageSource(t.Context(), t, e).SyncCursor.String, "recovery publishes after catch-up")
+}
+
+type backfillHistoryTransport struct {
+	gmailCoverageTransport
+
+	historyStarts []uint64
+}
+
+func (f *backfillHistoryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	switch {
+	case f.history == 2000 && strings.HasSuffix(r.URL.Path, "/messages"):
+		// normal2 disappeared before the backfill. A full listing can find
+		// the remaining messages, but only History reports that deletion.
+		return gmailJSONResponse(r, http.StatusOK, map[string]any{"messages": []any{
+			map[string]string{"id": "normal1", "threadId": "thread_normal1"},
+			map[string]string{"id": "spam", "threadId": "thread_spam"},
+			map[string]string{"id": "trash", "threadId": "thread_trash"},
+		}})
+	case strings.HasSuffix(r.URL.Path, "/history"):
+		start, err := strconv.ParseUint(r.URL.Query().Get("startHistoryId"), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse Gmail backfill history start: %w", err)
+		}
+		f.historyStarts = append(f.historyStarts, start)
+		events := []any{}
+		if start < 1500 {
+			events = append(events, map[string]any{
+				"id": "1500",
+				"labelsAdded": []any{map[string]any{
+					"message": map[string]string{"id": "normal1"}, "labelIds": []string{"TRASH"},
+				}},
+				"labelsRemoved": []any{map[string]any{
+					"message": map[string]string{"id": "normal1"}, "labelIds": []string{"INBOX"},
+				}},
+				"messagesDeleted": []any{map[string]any{"message": map[string]string{"id": "normal2"}}},
+			})
+		}
+		return gmailJSONResponse(r, http.StatusOK, map[string]any{
+			"historyId": strconv.FormatUint(f.history, 10), "history": events,
+		})
+	default:
+		return f.gmailCoverageTransport.RoundTrip(r)
+	}
+}
+
+func TestGmailFullBackfillPreservesPendingHistory(t *testing.T) {
+	// Serial: gmailTransportClient replaces http.DefaultClient.
+	e := acquisitionDurabilityEnv(t)
+	f := &backfillHistoryTransport{history: 1000}
+	api := gmailTransportClient(t, f)
+	e.Syncer = New(api, e.Store, nil)
+	first, err := e.Syncer.Full(t.Context(), testEmail)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1000), first.FinalHistoryID, "first full sync seeds its starting History point")
+
+	f.history = 2000
+	reopenAcquisitionStore(t, e)
+	e.Syncer = New(api, e.Store, nil)
+	backfill, err := e.Syncer.Full(t.Context(), testEmail)
+	require.NoError(t, err)
+	assert.Zero(t, backfill.MessagesAdded)
+	assert.Empty(t, f.historyStarts, "full backfill does not consume History")
+	assert.Equal(t, "1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String,
+		"backfill must not advance past unconsumed changes")
+
+	reopenAcquisitionStore(t, e)
+	e.Syncer = New(api, e.Store, nil)
+	_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t.Context(), t, e))
+	require.NoError(t, err)
+	assert.Equal(t, []uint64{1000}, f.historyStarts)
+	assertMessageHasLabel(t, e.Store, "normal1", "TRASH")
+	assertMessageNotHasLabel(t, e.Store, "normal1", "INBOX")
+	assertDeletedFromSource(t, e.Store, "normal2", true)
+	for _, id := range []string{"normal1", "normal2"} {
+		gmailCoverageRaw(t, e, id)
+	}
+	assert.Equal(t, "2000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+}
+
+func TestGmailFullBackfillWithoutValidCursor(t *testing.T) {
+	// Serial: gmailTransportClient replaces http.DefaultClient.
+	for _, cursor := range []string{"", "0", "invalid"} {
+		t.Run(cursor, func(t *testing.T) {
+			e := acquisitionDurabilityEnv(t)
+			e.CreateSourceWithHistory(t, cursor)
+			f := &gmailCoverageTransport{history: 1000}
+			e.Syncer = New(gmailTransportClient(t, f), e.Store, nil)
+			summary, err := e.Syncer.Full(t.Context(), testEmail)
+			require.NoError(t, err)
+			assert.Equal(t, uint64(1000), summary.FinalHistoryID)
+			assert.Equal(t, "1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+		})
+	}
 }

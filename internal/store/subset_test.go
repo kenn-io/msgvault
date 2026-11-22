@@ -5815,3 +5815,363 @@ func TestSubsetKeepsMergedMatrixRoomsOutOfSync(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(pending, "the merged room's placeholder is not retried")
 }
+
+func TestCopySubsetMeetingDecisionOnDeduplicatedCopy(t *testing.T) {
+	r := require.New(t)
+	sourcePath := filepath.Join(t.TempDir(), "source.db")
+	source, err := Open(sourcePath)
+	r.NoError(err)
+	r.NoError(source.InitSchemaContext(t.Context()))
+	_, survivor := projectionFixture(t, source, "subset-kept", "meeting_json", `{}`)
+	_, duplicate := projectionFixture(t, source, "subset-hidden", "meeting_json", `{}`)
+	_, other := projectionFixture(t, source, "subset-other", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err = source.DecideMeetingLinkContext(t.Context(), ref(duplicate), ref(other), "link")
+	r.NoError(err)
+	_, err = source.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "subset")
+	r.NoError(err)
+	r.NoError(source.Close())
+	dir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), sourcePath, dir, 2, false)
+	r.NoError(err)
+	destination, err := Open(filepath.Join(dir, "msgvault.db"))
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(destination.Close()) })
+	record, err := destination.MeetingRecordContext(t.Context(), ref(other))
+	r.NoError(err)
+	assert.Equal(t, []int64{survivor, other}, record.MessageIDs)
+
+	limited := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), sourcePath, limited, 1, false)
+	r.NoError(err)
+	partial, err := Open(filepath.Join(limited, "msgvault.db"))
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(partial.Close()) })
+	record, err = partial.MeetingRecordContext(t.Context(), ref(other))
+	r.NoError(err)
+	assert.Equal(t, []int64{other}, record.MessageIDs)
+}
+
+func TestCopySubsetPreservesUndatedChoice(t *testing.T) {
+	for _, tc := range []struct{ name, updated string }{
+		{"single", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`},
+		{"series", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			path := filepath.Join(t.TempDir(), "source.db")
+			source, err := Open(path)
+			r.NoError(err)
+			r.NoError(source.InitSchemaContext(t.Context()))
+			initial := `{"id":"event","status":"cancelled"}`
+			data, event := calendarFixture(t, source, "subset-undated-event", initial)
+			_, note := projectionFixture(t, source, "subset-undated-note", "meeting_json", `{}`)
+			noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+			_, err = source.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, noteRef, "link")
+			r.NoError(err)
+			data.RawMIME = []byte(tc.updated)
+			_, err = source.PersistMessage(data)
+			r.NoError(err)
+			before, err := source.MeetingRecordContext(t.Context(), noteRef)
+			r.NoError(err)
+			r.Empty(before.Links)
+			r.NoError(source.Close())
+			dir := filepath.Join(t.TempDir(), "subset")
+			_, err = CopySubset(t.Context(), path, dir, 2, false)
+			r.NoError(err)
+			dst, err := Open(filepath.Join(dir, "msgvault.db"))
+			r.NoError(err)
+			t.Cleanup(func() { r.NoError(dst.Close()) })
+			var key string
+			r.NoError(dst.DB().QueryRowContext(t.Context(), `SELECT left_key FROM meeting_link_decisions WHERE left_kind='evt'`).Scan(&key))
+			r.Empty(key)
+			record, err := dst.MeetingRecordContext(t.Context(), noteRef)
+			r.NoError(err)
+			r.Empty(record.Links)
+			data.RawMIME = []byte(initial)
+			_, err = dst.PersistMessage(data)
+			r.NoError(err)
+			record, err = dst.MeetingRecordContext(t.Context(), noteRef)
+			r.NoError(err)
+			r.Contains(record.MessageIDs, note)
+			r.Len(record.Links, 1)
+			r.Equal(event, record.Links[0].MessageID)
+		})
+	}
+}
+
+func TestCopySubsetUndatedEditGainsOriginalTime(t *testing.T) {
+	r := require.New(t)
+	path := filepath.Join(t.TempDir(), "source.db")
+	source, err := Open(path)
+	r.NoError(err)
+	r.NoError(source.InitSchemaContext(t.Context()))
+	data, edit := calendarFixture(t, source, "subset-undated-edit", `{"id":"edit","recurringEventId":"series","status":"cancelled"}`)
+	_, note := projectionFixture(t, source, "subset-undated-edit-note", "meeting_json", `{}`)
+	eventRef := MeetingLinkRef{Kind: "evt", MessageID: edit}
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err = source.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "link")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`)
+	_, err = source.PersistMessage(data)
+	r.NoError(err)
+	r.NoError(source.Close())
+	dir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), path, dir, 2, false)
+	r.NoError(err)
+	dst, err := Open(filepath.Join(dir, "msgvault.db"))
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(dst.Close()) })
+	var key string
+	r.NoError(dst.DB().QueryRowContext(t.Context(), `SELECT left_key FROM meeting_link_decisions WHERE left_kind='evt'`).Scan(&key))
+	r.Empty(key)
+	record, err := dst.MeetingRecordContext(t.Context(), eventRef)
+	r.NoError(err)
+	r.Contains(record.MessageIDs, note)
+	record, err = dst.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	r.Equal(edit, record.Links[0].MessageID)
+}
+
+func TestCopySubsetRetainsInactiveSingleChoice(t *testing.T) {
+	r := require.New(t)
+	path := filepath.Join(t.TempDir(), "source.db")
+	source, err := Open(path)
+	r.NoError(err)
+	r.NoError(source.InitSchemaContext(t.Context()))
+	initial := `{"id":"single","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	data, event := calendarFixture(t, source, "subset-inactive-single", initial)
+	_, note := projectionFixture(t, source, "subset-inactive-note", "meeting_json", `{}`)
+	eventRef := MeetingLinkRef{Kind: "evt", MessageID: event}
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err = source.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "link")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"single","start":{"dateTime":"2027-03-21T10:00:00Z"},"end":{"dateTime":"2027-03-21T11:00:00Z"}}`)
+	_, err = source.PersistMessage(data)
+	r.NoError(err)
+	_, err = source.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "unlink")
+	r.NoError(err)
+	var oldID, newID int64
+	r.NoError(source.DB().QueryRowContext(t.Context(), `SELECT id FROM meeting_link_decisions WHERE decision='link'`).Scan(&oldID))
+	r.NoError(source.DB().QueryRowContext(t.Context(), `SELECT id FROM meeting_link_decisions WHERE decision='split'`).Scan(&newID))
+	r.Less(oldID, newID)
+	r.NoError(source.Close())
+	dir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), path, dir, 2, false)
+	r.NoError(err)
+	dst, err := Open(filepath.Join(dir, "msgvault.db"))
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(dst.Close()) })
+	var copiedOld, copiedNew int64
+	r.NoError(dst.DB().QueryRowContext(t.Context(), `SELECT id FROM meeting_link_decisions WHERE decision='link'`).Scan(&copiedOld))
+	r.NoError(dst.DB().QueryRowContext(t.Context(), `SELECT id FROM meeting_link_decisions WHERE decision='split'`).Scan(&copiedNew))
+	r.Equal(oldID, copiedOld)
+	r.Equal(newID, copiedNew)
+	data.RawMIME = []byte(initial)
+	_, err = dst.PersistMessage(data)
+	r.NoError(err)
+	record, err := dst.MeetingRecordContext(t.Context(), eventRef)
+	r.NoError(err)
+	r.Contains(record.MessageIDs, note)
+	record, err = dst.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	r.Equal(event, record.Links[0].MessageID)
+}
+
+func TestCopySubsetRetainsInactiveChoiceOnMergedCopy(t *testing.T) {
+	r := require.New(t)
+	path := filepath.Join(t.TempDir(), "source.db")
+	source, err := Open(path)
+	r.NoError(err)
+	r.NoError(source.InitSchemaContext(t.Context()))
+	initial := `{"id":"single","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	originalData, original := calendarFixture(t, source, "subset-inactive-original", initial, "a@example.com")
+	keptData, kept := calendarFixture(t, source, "subset-inactive-kept", initial, "b@example.com")
+	_, note := projectionFixture(t, source, "subset-inactive-copy-note", "meeting_json", `{}`)
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err = source.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: original}, noteRef, "link")
+	r.NoError(err)
+	changed := `{"id":"single","start":{"dateTime":"2027-03-21T10:00:00Z"},"end":{"dateTime":"2027-03-21T11:00:00Z"}}`
+	originalData.RawMIME = []byte(changed)
+	keptData.RawMIME = []byte(changed)
+	_, err = source.PersistMessage(originalData)
+	r.NoError(err)
+	_, err = source.PersistMessage(keptData)
+	r.NoError(err)
+	_, err = source.MergeDuplicates(t.Context(), kept, []int64{original}, "subset-inactive-copy")
+	r.NoError(err)
+	r.NoError(source.Close())
+	dir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), path, dir, 2, false)
+	r.NoError(err)
+	dst, err := Open(filepath.Join(dir, "msgvault.db"))
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(dst.Close()) })
+	var count int
+	r.NoError(dst.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE id=?`, original).Scan(&count))
+	r.Zero(count)
+	keptData.RawMIME = []byte(initial)
+	_, err = dst.PersistMessage(keptData)
+	r.NoError(err)
+	record, err := dst.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	r.Equal(kept, record.Links[0].MessageID)
+}
+
+func TestCopySubsetMeetingDecisionAcrossOccurrenceRepresentations(t *testing.T) {
+	for _, keep := range []string{"exception", "series"} {
+		t.Run(keep, func(t *testing.T) {
+			r := require.New(t)
+			sourcePath := filepath.Join(t.TempDir(), "source.db")
+			source, err := Open(sourcePath)
+			r.NoError(err)
+			r.NoError(source.InitSchemaContext(t.Context()))
+			seriesRaw := `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
+			editRaw := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`
+			var series, edit int64
+			if keep == "exception" {
+				_, series = calendarFixture(t, source, "subset-series", seriesRaw)
+			}
+			_, edit = calendarFixture(t, source, "subset-edit", editRaw)
+			_, note := projectionFixture(t, source, "subset-note", "meeting_json", `{}`)
+			_, err = source.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: edit}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+			r.NoError(err)
+			if keep == "series" {
+				_, series = calendarFixture(t, source, "subset-series", seriesRaw)
+			}
+			selected, excluded := edit, series
+			if keep == "series" {
+				selected, excluded = series, edit
+			}
+			_, err = source.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = CASE WHEN id = ? THEN '2020-01-01T00:00:00Z' ELSE '2029-01-01T00:00:00Z' END WHERE id IN (?, ?, ?)`, excluded, series, edit, note)
+			r.NoError(err)
+			r.NoError(source.Close())
+			dir := filepath.Join(t.TempDir(), "subset")
+			_, err = CopySubset(t.Context(), sourcePath, dir, 2, false)
+			r.NoError(err)
+			destination, err := Open(filepath.Join(dir, "msgvault.db"))
+			r.NoError(err)
+			t.Cleanup(func() { r.NoError(destination.Close()) })
+			record, err := destination.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+			r.NoError(err)
+			if keep == "series" {
+				r.Empty(record.Links)
+				return
+			}
+			r.Len(record.Links, 1)
+			assert.Equal(t, selected, record.Links[0].MessageID)
+		})
+	}
+}
+
+func TestCopySubsetMeetingDecisionKeepsNewestOccurrenceChoice(t *testing.T) {
+	r := require.New(t)
+	sourcePath := filepath.Join(t.TempDir(), "source.db")
+	source, err := Open(sourcePath)
+	r.NoError(err)
+	r.NoError(source.InitSchemaContext(t.Context()))
+	seriesRaw := `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
+	editRaw := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`
+	_, oldSeries := calendarFixture(t, source, "priority-old", seriesRaw, "old@example.com")
+	_, note := projectionFixture(t, source, "priority-note", "meeting_json", `{}`)
+	occurrence := MeetingLinkRef{Kind: "evt", MessageID: oldSeries, Identity: occurrenceIdentity(t, "20270314T100000Z")}
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err = source.DecideMeetingLinkContext(t.Context(), occurrence, noteRef, "unlink")
+	r.NoError(err)
+	_, edit := calendarFixture(t, source, "priority-edit", editRaw)
+	_, err = source.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: edit}, noteRef, "link")
+	r.NoError(err)
+	_, series := calendarFixture(t, source, "priority-series", seriesRaw)
+	_, err = source.MergeDuplicates(t.Context(), series, []int64{oldSeries}, "priority-subset")
+	r.NoError(err)
+	_, err = source.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at=CASE WHEN id IN (?, ?) THEN '2029-01-01T00:00:00Z' ELSE '2020-01-01T00:00:00Z' END`, edit, note)
+	r.NoError(err)
+	r.NoError(source.Close())
+	dir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), sourcePath, dir, 2, false)
+	r.NoError(err)
+	destination, err := Open(filepath.Join(dir, "msgvault.db"))
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(destination.Close()) })
+	record, err := destination.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	assert.Equal(t, edit, record.Links[0].MessageID)
+}
+
+func TestCopySubsetMeetingDecisionOnEditedCopyInAnotherCalendar(t *testing.T) {
+	r := require.New(t)
+	sourcePath := filepath.Join(t.TempDir(), "source.db")
+	source, err := Open(sourcePath)
+	r.NoError(err)
+	r.NoError(source.InitSchemaContext(t.Context()))
+	seriesRaw := `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
+	editRaw := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`
+	_, series := calendarFixture(t, source, "subset-series-cross", seriesRaw, "original@example.com")
+	_, original := calendarFixture(t, source, "subset-edit-cross", editRaw, "original@example.com")
+	_, survivor := calendarFixture(t, source, "subset-edit-survivor", editRaw, "other@example.com")
+	_, note := projectionFixture(t, source, "subset-cross-note", "meeting_json", `{}`)
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err = source.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: survivor}, noteRef, "unlink")
+	r.NoError(err)
+	_, err = source.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: original}, noteRef, "link")
+	r.NoError(err)
+	_, err = source.MergeDuplicates(t.Context(), survivor, []int64{original}, "subset-cross")
+	r.NoError(err)
+	before, err := source.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Len(before.Links, 1)
+	_, err = source.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at=CASE WHEN id IN (?, ?) THEN '2029-01-01T00:00:00Z' ELSE '2020-01-01T00:00:00Z' END`, survivor, note)
+	r.NoError(err)
+	r.NoError(source.Close())
+	dir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), sourcePath, dir, 2, false)
+	r.NoError(err)
+	destination, err := Open(filepath.Join(dir, "msgvault.db"))
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(destination.Close()) })
+	record, err := destination.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	r.Equal(survivor, record.Links[0].MessageID)
+	var storedID int64
+	r.NoError(destination.DB().QueryRowContext(t.Context(), `SELECT left_message_id FROM meeting_link_decisions WHERE left_kind='evt'`).Scan(&storedID))
+	r.Equal(survivor, storedID)
+	var count int
+	r.NoError(destination.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE id=?`, series).Scan(&count))
+	r.Zero(count)
+}
+
+func TestCopySubsetNoteOnlyAfterOccurrenceEdit(t *testing.T) {
+	r := require.New(t)
+	path := filepath.Join(t.TempDir(), "source.db")
+	source, err := Open(path)
+	r.NoError(err)
+	r.NoError(source.InitSchemaContext(t.Context()))
+	seriesData, series := calendarFixture(t, source, "subset-excluded-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "excluded@example.com")
+	_, note := projectionFixture(t, source, "subset-only-note", "meeting_json", `{}`)
+	slot := MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270314T100000Z")}
+	_, err = source.DecideMeetingLinkContext(t.Context(), slot, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+	r.NoError(err)
+	_, edit := calendarFixture(t, source, "subset-excluded-edit", `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`, "excluded@example.com")
+	_, err = source.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at=CASE WHEN id=? THEN '2029-01-01T00:00:00Z' ELSE '2020-01-01T00:00:00Z' END`, note)
+	r.NoError(err)
+	r.NoError(source.Close())
+	dir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), path, dir, 1, false)
+	r.NoError(err)
+	dst, err := Open(filepath.Join(dir, "msgvault.db"))
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(dst.Close()) })
+	var count int
+	r.NoError(dst.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE id IN (?,?)`, series, edit).Scan(&count))
+	r.Zero(count)
+	r.NoError(dst.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sources WHERE id=?`, seriesData.Message.SourceID).Scan(&count))
+	r.Zero(count)
+	record, err := dst.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	r.NoError(err)
+	r.Empty(record.Links)
+}

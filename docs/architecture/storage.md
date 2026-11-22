@@ -33,7 +33,7 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | Column | Type | Description |
 |---|---|---|
 | `id` | INTEGER PK | Auto-increment |
-| `source_type` | TEXT | Provider/import type, for example `gmail`, `imap`, `gcal`, `teams`, `discord`, `beeper`, `chatwoot`, `mbox`, `whatsapp`, `omi`, `granola`, `plaud`, `circleback`, `notion_meetings`, `muesli`, `twilio`, or `twenty` |
+| `source_type` | TEXT | Provider/import type, for example `gmail`, `imap`, `gcal`, `teams`, `discord`, `beeper`, `chatwoot`, `mbox`, `whatsapp`, `omi`, `granola`, `plaud`, `circleback`, `notion_meetings`, `muesli`, `twilio`, `bland`, or `twenty` |
 | `identifier` | TEXT | Provider-stable identifier such as an email address, phone number, or Discord guild ID |
 | `display_name` | TEXT | Account display name |
 | `sync_cursor` | TEXT | Sync cursor (Gmail history ID for Gmail accounts) |
@@ -70,6 +70,12 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | `has_attachments` | BOOLEAN | Attachment flag |
 | `deleted_at` | DATETIME | Soft-delete timestamp |
 | `deleted_from_source_at` | DATETIME | Records removal from the source; content may remain archived |
+
+Msgvault sets `deleted_from_source_at` when it deletes or trashes a message,
+or sync finds the message missing from its source. For Gmail, IMAP, and Graph,
+sync keeps the mark while a msgvault-trashed message stays in Trash and clears
+it when sync confirms the message outside Trash. A restored IMAP copy without
+a Message-ID is ingested as a new message; the original remains marked.
 
 The Store derives `account_address` and `account_path` in the same transaction
 as every message write that changes their inputs: raw MIME, recipients, and

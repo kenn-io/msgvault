@@ -82,6 +82,11 @@ func (s *Store) CreatePersonFromParticipantWithDisplayNameContext(
 	if participantID <= 0 {
 		return nil, false, fmt.Errorf("promote participant %d: %w", participantID, ErrInvalidParticipantID)
 	}
+	if displayName != nil {
+		if err := validatePersonNameText("display_name", *displayName); err != nil {
+			return nil, false, err
+		}
+	}
 
 	var personID int64
 	var person *Person
@@ -665,6 +670,11 @@ func (s *Store) UpdatePersonDisplayName(
 func (s *Store) UpdatePersonDisplayNameContext(
 	ctx context.Context, id, expectedRevision int64, displayName *string,
 ) (*Person, error) {
+	if displayName != nil {
+		if err := validatePersonNameText("display_name", *displayName); err != nil {
+			return nil, err
+		}
+	}
 	displayName = normalizePersonDisplayName(displayName)
 	// The rename locks the identity row, this person, and then every
 	// relationship counterpart; relationship writes lock the same person
@@ -685,41 +695,59 @@ func (s *Store) updatePersonDisplayNameOnce(
 			return err
 		}
 		var previousName sql.NullString
+		var ownerID sql.NullInt64
 		err := tx.QueryRowContext(ctx,
-			`SELECT display_name FROM persons WHERE id = ? AND revision = ?`,
+			`SELECT display_name, display_name_source_name_id FROM persons WHERE id = ? AND revision = ?`,
 			id, expectedRevision,
-		).Scan(&previousName)
+		).Scan(&previousName, &ownerID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return s.personCASMissTx(ctx, tx, id)
 		}
 		if err != nil {
 			return fmt.Errorf("read person %d display name: %w", id, err)
 		}
-		var updatedID int64
-		err = tx.QueryRowContext(ctx, fmt.Sprintf(`
-			UPDATE persons
-			SET display_name = ?, revision = revision + 1,
-			    vcard_projection_revision = vcard_projection_revision + 1,
-			    updated_at = %s
-			WHERE id = ? AND revision = ?
-			RETURNING id
-		`, s.dialect.Now()), displayName, id, expectedRevision).Scan(&updatedID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return s.personCASMissTx(ctx, tx, id)
-		}
-		if err != nil {
-			return fmt.Errorf("update person %d: %w", id, err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`, updatedID); err != nil {
-			return fmt.Errorf("retain local display-name ownership: %w", err)
-		}
-
-		// Preserve the person revision contract, but invalidate analytics only
-		// when the normalized display name actually changed.
 		nameChanged := previousName.Valid
 		if displayName != nil {
 			nameChanged = !previousName.Valid || previousName.String != *displayName
 		}
+
+		// An unchanged name keeps its owning inferred row, so the link stays.
+		releaseOwner := ""
+		if nameChanged {
+			releaseOwner = "display_name_source_name_id = NULL,"
+		}
+		var updatedID int64
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, id, func() error {
+			err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+				UPDATE persons
+				SET display_name = ?, %s
+				    revision = revision + 1,
+				    vcard_projection_revision = vcard_projection_revision + 1,
+				    updated_at = %s
+				WHERE id = ? AND revision = ?
+				RETURNING id
+			`, releaseOwner, s.dialect.Now()), displayName, id, expectedRevision).Scan(&updatedID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return s.personCASMissTx(ctx, tx, id)
+			}
+			if err != nil {
+				return fmt.Errorf("update person %d: %w", id, err)
+			}
+			if nameChanged && ownerID.Valid {
+				if err := s.supersedePersonNameTx(ctx, tx, id, ownerID.Int64, nil); err != nil {
+					return fmt.Errorf("supersede formatted name for person %d: %w", id, err)
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`, updatedID); err != nil {
+				return fmt.Errorf("retain local display-name ownership: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		// Preserve the person revision contract, but invalidate analytics only
+		// when the normalized display name actually changed.
 		if nameChanged {
 			if err := s.bumpPersonDisplayNameRevisionContext(ctx, tx); err != nil {
 				return err

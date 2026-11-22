@@ -223,6 +223,8 @@ their counts. A merge target outside the scope is omitted from
 `merged_into_source_id`. Objects outside the scope return the same not-found
 response as missing objects. The archive releases its read snapshot before
 response writes, so slow response delivery does not occupy database connections.
+Message export is the exception: it streams from its snapshot and holds it
+until the stream ends.
 
 At most two scoped or agent read snapshots are open at once, which leaves
 database connections for synchronization and unrestricted reads. Additional
@@ -239,6 +241,20 @@ Scoped requests support these operations:
 | `getConversation` | `GET /api/v1/conversations/{id}` |
 | `getAttachment` | `GET /api/v1/attachments/{id}` (metadata) |
 | `listCLIAccounts` | `GET /api/v1/cli/accounts` |
+| `getCLIStats` | `GET /api/v1/cli/stats` |
+| `searchCLI` | `GET /api/v1/cli/search` |
+| `getCLIMessage` | `GET /api/v1/cli/message` |
+| `getCLIMessageThread` | `GET /api/v1/cli/message/thread` |
+| `exportCLIMessages` | `GET /api/v1/cli/messages/export` |
+| `getHealth` | `GET /api/v1/health` |
+
+The CLI operations serve `list-accounts`, `stats`, `search`, `show-message`,
+`show-thread`, and `export-messages` against a remote, so a scoped caller can
+use those commands. Their statistics, results, and export records cover only
+authorized sources, and an export source selector outside the scope returns
+404. An export `person_id` that does not exist returns an empty export, as
+one with no messages in authorized sources does. `getHealth` returns the
+public health view plus the API schema version.
 
 Other operations return 403 under a source scope. These include attachment
 downloads, inline MIME parts, and vector or hybrid search. Message bodies are

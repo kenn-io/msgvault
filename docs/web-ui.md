@@ -95,7 +95,7 @@ warns that its session cookie travels without TLS. `HttpOnly` and
 At 640px or narrower, message rows show the sender and time, subject, and a one-line preview. Conversation rows show their participants. Group rows show the name, item count, size, and latest date. Columns still chooses which parts appear.
 
 <figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Archived email table with global search, Save view button, and compact email rows in light theme" loading="lazy">
+  <img src="/docs/assets/generated/web/messages-light-compact.png" alt="Archived email table with global search, Save view button, and compact email rows in light theme" loading="lazy">
   <figcaption>Browse archived email. Select the image to view it at full size.</figcaption>
 </figure>
 
@@ -208,7 +208,31 @@ background, and border colors. Images keep their original colors. Choose
 background, or **Use app colors** to return to dark reading. This override
 applies to the open message. Light mode preserves designed email colors.
 
-Each expanded message lists its files, recordings, linked tasks, and Kata issues below the body. Click a linked sender or recipient to open that exact person; Back returns to the message. The **⋯** menu offers **Add to task…**, **Download original** for email, **Export meeting…** for a meeting transcript, and plain text or HTML when available. **Add to task…** keeps task creation, existing-task search, priority, labels, and the outbound metadata disclosure together. Disabled Tasks connections offer **Set up**; other service or index failures offer **Open Settings**.
+Each expanded message lists its files and recordings below the body, and groups linked Tasks and Kata issues under **Tasks**. Click a linked sender or recipient to open that exact person; Back returns to the message. The **⋯** menu offers **Add to task…**, **Download original** for email, **Export meeting…** for a meeting transcript, and plain text or HTML when available. **Add to task…** offers task creation, existing-task search, priority, and labels; outbound task metadata appears under **What's sent**. Disabled Tasks connections offer **Set up**; other service or index failures offer **Open Settings**.
+
+### Related copies
+
+Choose **Related copies** above a message to see its other archived copies,
+and the replies and forwards that name it, across accounts and conversations.
+Each row shows the account, whether that account sent or received the copy (or
+holds it as a draft), the date, and the evidence that connects it: the same
+message, a reply, a forward, shared references, a relation through another copy,
+or, for sources that keep the provider's own threads such as Gmail, the same
+thread as the email or one of its exact copies. Messages already shown in the
+conversation have no row; messages outside its loaded window still appear.
+Open a row to read that copy. The panel loads when you open it and makes no
+request while closed.
+
+A warning appears when the opened email, a copy, or any email in the archive
+hasn't been indexed yet, because it could be a related copy the panel cannot
+see. It also explains when an original message is missing, its format or
+identifiers could not be read, or it has no stored Message-ID. Replies naming
+a copy without a stored Message-ID cannot find it. The next sync indexes
+pending emails; for a source that no longer syncs, run
+`msgvault repair-derived`. When the lookup stops at its
+500-email or 5,000-identifier limit, the panel says which. An empty panel
+reports what the search found, so it never claims that no related copy exists.
+Only the owner can use the panel.
 
 ## Meeting context and follow-ups
 
@@ -237,7 +261,7 @@ availability. Archived images, PDFs, text, CSV/TSV, and audio open in the file v
 Use Previous/Next or the ←/→ keys to move through the current results.
 The list marks file contents as not checked when the archive records a hash. Opening a file checks whether its storage can be opened; reading its bytes can still fail. The viewer distinguishes missing files, open errors, metadata-only files, unsupported files, and previewable content.
 From a file, navigate to its containing item and then its email or chat
-conversation.
+conversation. Choose **⋯ → Add to task…** to file the file's message to Tasks or Kata.
 
 Files uses the same toolbar as Messages, with **Show as** set to Files. Choose Table
 or Timeline there to return to Messages. **Sort** offers Newest first, Oldest
@@ -277,7 +301,7 @@ separate choices.
 ## People and domains
 
 <figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="People workspace showing a person list, the selected person's activity calendar, and their messages in dark theme" loading="lazy">
+  <img src="/docs/assets/generated/web/people-dark-comfortable.png" alt="People workspace showing a person list, the selected person's activity calendar, and their messages in dark theme" loading="lazy">
   <figcaption>Select a person to explore their activity and messages.</figcaption>
 </figure>
 
@@ -315,7 +339,9 @@ Manage organizations, connection types, and field definitions under **Settings �
 
 Choose **Filter → Possible duplicates** to compare names, addresses, activity, and evidence. The People badge counts waiting pairs, showing **500+** at 500. **Merge** and **Keep separate** offer Undo before recording the decision; **History** lists earlier decisions. Two saved profiles require a survivor choice, followed by confirmation of the refreshed pair. **Evidence and notes** keeps the reviewed details and decision note beside the pair.
 
-Facts lives in the person's Details. Choose **Show** to inspect evidence, claims, decisions, and pins. Imported address-book connections appear beneath Connections with their status and source, including unmatched values. Linked addresses lists archive identities, including addresses a merge brought in, with **Unlink** for linked profiles. It leaves out this profile's own emails and phones already shown in the profile fields; linked profiles keep their **Unlink** controls. To separate saved profiles after a merge, open **More actions → History** and choose the merge, such as "Neri Bloom merged into Mira Vale": its two profiles show side by side with their addresses. **Split…** opens the next step in the same dialog, where you check the addresses that move to a new person; **Split into new person** ends with **Split complete** and the two people that now exist. Merge history and reversal follow the boundaries documented in [People](/docs/usage/people/).
+Facts lives in the person's Details. Open **Facts** to inspect claims, evidence, and decisions. Claims opens first. Choose a field to see its saved value before its claims. Claim Details links to its decision and sources. Scored decisions show the claim score and its maximum, with each score part in Details. Older decisions without a result say **Result unavailable**. The closed title shows how many fields Facts found and when it last found them. **Manage fields…** opens Settings → People → Fields.
+
+Imported address-book connections appear beneath Connections with their status and source, including unmatched values. Linked addresses lists archive identities, including addresses a merge brought in, with **Unlink** for linked profiles. It leaves out this profile's own emails and phones already shown in the profile fields; linked profiles keep their **Unlink** controls. To separate saved profiles after a merge, open **More actions → History** and choose the merge, such as "Neri Bloom merged into Mira Vale": its two profiles show side by side with their addresses. **Split…** opens the next step in the same dialog, where you check the addresses that move to a new person; **Split into new person** ends with **Split complete** and the two people that now exist. Merge history and reversal follow the boundaries documented in [People](/docs/usage/people/).
 
 Domains provides the same activity-and-files analysis for an exact domain
 fact. A domain is not treated as an inferred organization identity. Selecting

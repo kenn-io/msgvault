@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,7 +108,6 @@ func TestPostgresFixturesGetPrivateEmptyDatabases(t *testing.T) {
 // removal of the clone it was handed.
 func TestPostgresFixtureDatabaseDroppedAfterCleanup(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	dbURL := requirePostgresTestURL(t)
 	requireTemplate(t, dbURL)
 
@@ -118,14 +120,116 @@ func TestPostgresFixtureDatabaseDroppedAfterCleanup(t *testing.T) {
 	})
 
 	require.NotEmpty(database, "subtest recorded its database")
-	assert.False(databaseExists(t, adminDB, database), "clone is gone after the owning test's cleanup")
+	require.Eventually(func() bool {
+		var exists bool
+		err := adminDB.QueryRowContext(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", database).Scan(&exists)
+		return err == nil && !exists
+	}, time.Minute, 100*time.Millisecond, "clone is gone after the owning test's cleanup")
+
+	// The worker captured the original channel before dropping the first clone.
+	originalDrops := cloneDrops
+	fullDrops := make(chan cloneDrop, cap(originalDrops))
+	for range cap(fullDrops) {
+		fullDrops <- cloneDrop{}
+	}
+	cloneDrops = fullDrops
+	t.Cleanup(func() { cloneDrops = originalDrops })
+	t.Run("full queue", func(sub *testing.T) {
+		database = currentDatabaseOf(sub, NewTestStore(sub))
+	})
+	cloneDrops = originalDrops
+	require.NotEmpty(database)
+	t.Cleanup(func() { dropOwnedDatabase(context.WithoutCancel(t.Context()), adminDB, database) })
+	require.True(databaseExists(t, adminDB, database), "overflow clone remains for the next sweep")
+}
+
+func TestPostgresCloneDropsRecoverFromStalledHandshake(t *testing.T) {
+	dbURL := requirePostgresTestURL(t)
+	tmpl := requireTemplate(t, dbURL)
+	admin, err := pgAdminDB(dbURL)
+	require.NoError(t, err)
+	var clones []string
+	for range 2 {
+		name, err := tmpl.clone(t.Context())
+		require.NoError(t, err)
+		clones = append(clones, name)
+		t.Cleanup(func() { dropOwnedDatabase(context.WithoutCancel(t.Context()), admin, name) })
+	}
+
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			accepted <- conn
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
+	cloneDrops <- cloneDrop{dbURL: "postgres://test@" + listener.Addr().String() + "/test?sslmode=disable", name: "msgvault_tc_12345678_1234567890abcdef_1234567890abcdef"}
+	select {
+	case conn := <-accepted:
+		t.Cleanup(func() { _ = conn.Close() })
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "worker did not connect")
+	}
+	next, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = next.Close() })
+	nextAccepted := make(chan struct{})
+	go func() {
+		conn, err := next.Accept()
+		if err == nil {
+			_ = conn.Close()
+			close(nextAccepted)
+		}
+	}()
+	cloneDrops <- cloneDrop{dbURL: "postgres://test@" + next.Addr().String() + "/test?sslmode=disable", name: "msgvault_tc_12345678_1234567890abcdef_1234567890abcdef"}
+	for _, name := range clones {
+		cloneDrops <- cloneDrop{dbURL: dbURL, name: name}
+	}
+	select {
+	case <-nextAccepted:
+	case <-time.After(20 * time.Second):
+		require.FailNow(t, "worker did not advance after the stalled handshake")
+	}
+	// The server side of the stalled handshake stays open during recovery.
+	require.Eventually(t, func() bool {
+		for _, name := range clones {
+			var exists bool
+			err := admin.QueryRowContext(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", name).Scan(&exists)
+			if err != nil || exists {
+				return false
+			}
+		}
+		return true
+	}, time.Minute, 100*time.Millisecond, "worker must drop healthy clones after the stalled handshake")
+}
+
+func TestCloneDropFailureIsLogged(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	name := "msgvault_tc_87654321_fedcba0987654321_fedcba0987654321"
+	session, err := sql.Open("pgx", "postgres://test@"+address+"/test?sslmode=disable")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	var logged bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logged, nil))
+	dropCloneLogged(session, name, logger)
+
+	var record map[string]any
+	require.NoError(t, json.Unmarshal(logged.Bytes(), &record))
+	assert.Equal(t, "WARN", record["level"])
+	assert.Equal(t, name, record["database"])
+	assert.NotEmpty(t, record["error"])
 }
 
 // TestPostgresFixtureIssuesNoDDLOnceTemplateExists is the invariant that
 // decides the fixture's shape. Several tests capture slog.Default() and assert
-// over the whole buffer, so once the template is built no fixture may put
-// schema statements on the wire — not in its own setup, and never while a test
-// body is running.
+// over the whole buffer, so fixture store queries must not include schema DDL.
 func TestPostgresFixtureIssuesNoDDLOnceTemplateExists(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

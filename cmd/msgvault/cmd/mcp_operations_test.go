@@ -47,6 +47,11 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 			path: "/api/v1/settings", status: http.StatusInternalServerError, read: settings,
 		},
 		{
+			name: "unlisted no-content status", method: http.MethodDelete,
+			body: ``, want: `{"error":"operation_refused","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusNoContent, read: settings,
+		},
+		{
 			name: "known pre-commit conflict", method: http.MethodPatch,
 			body: `{"error":"settings_conflict"}`, want: `{"error":"settings_conflict","operation_may_have_completed":false}`,
 			path: "/api/v1/settings", status: http.StatusPreconditionFailed, read: settings,
@@ -116,6 +121,20 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 			assertions.JSONEq(tt.want, string(encoded))
 		})
 	}
+}
+
+func TestMCPOperationAcceptsNoContent(t *testing.T) {
+	t.Parallel()
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodDelete, r.Method)
+		assert.Equal(t, "/api/v1/example", r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	result, err := readMCPOperationJSON[struct{}](t.Context(), client, http.MethodDelete, "/api/v1/example", nil, http.StatusNoContent)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
+	assert.Equal(t, struct{}{}, result.Output)
 }
 
 func TestDaemonMCPLaunchDiscoversRealOperationalTools(t *testing.T) {

@@ -92,6 +92,9 @@ Output:
 				if inv.options.cfgFile != "" {
 					return errors.New("--config is not allowed in agent-delegated mode")
 				}
+				if inv.options.remoteName != "" {
+					return errors.New("--remote is not allowed in agent-delegated mode")
+				}
 				if inv.options.homeDir != "" {
 					return errors.New("--home is not allowed in agent-delegated mode")
 				}
@@ -117,6 +120,14 @@ Output:
 			inv.cfg, err = load(inv.options.cfgFile, inv.options.homeDir, serveRuntimeOverrides(cmd))
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
+			}
+			if inv.options.remoteName != "" {
+				if inv.options.useLocal {
+					return errors.New("--local and --remote are incompatible")
+				}
+				if err := inv.cfg.SelectRemote(inv.options.remoteName); err != nil {
+					return err
+				}
 			}
 			if err := inv.cfg.EnsureHomeDir(); err != nil {
 				return fmt.Errorf(
@@ -875,6 +886,7 @@ func registerRootFlags(root *cobra.Command) {
 	flags.String("config", "", "config file (default: ~/.msgvault/config.toml)")
 	flags.String("home", "", "home directory (overrides MSGVAULT_HOME)")
 	flags.Bool(localValue, false, "use local daemon instead of configured remote")
+	flags.String(remoteFlag, "", "use the named remote from a [remotes.<name>] config table")
 	flags.String("log-file", "",
 		"override log file path (default: <data dir>/logs/msgvault-YYYY-MM-DD.log)")
 	flags.Bool("no-log-file", false,

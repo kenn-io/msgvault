@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-11"
+last_edited: "2026-11-19"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -14,7 +14,8 @@ Google resource addresses not linked to a person are excluded from observed peop
 
 | I want to… | Start here |
 |---|---|
-| Save someone's name, details, or notes | [Create a profile](#promote-a-durable-person) |
+| Save someone you have never messaged | [Create a person](#create-a-person) |
+| Save an observed contact's details or notes | [Promote a profile](#promote-a-durable-person) |
 | See which conversations still need an answer | [Open loops](open-loops.md) |
 | Remember what they recently shared | [Person briefs](/docs/usage/people-briefs/) |
 | Review meeting time and recorded follow-ups | [Meeting activity](meetings.md#export-context-and-read-follow-ups) |
@@ -40,8 +41,69 @@ need separate provider configuration and consent. You can edit saved profiles wi
 
 Observed contacts use **participant IDs**. Saved profiles use **person IDs**.
 Commands name the ID they require; the two are not interchangeable. Promotion
-creates a profile from an observed person. Subscribed CardDAV contacts can also
-create profiles when imported.
+creates a profile from an observed person. You can create a profile directly,
+or import one from a subscribed CardDAV address book.
+
+## Create a person
+
+Create someone you have never messaged from the CLI.
+
+```bash
+msgvault person create --name "Alex Example" \
+  --email alex@example.com:work --phone '+12025550123:cell' \
+  --org "Example Company" --title "Engineer" \
+  --address "123 Example Street" --note "Met at a conference" --json
+```
+
+Only `--name` is required. Repeat `--email` and `--phone` for multiple contact
+methods; append `:type` to label a method, such as `work`, `home`, or `cell`.
+A type uses 1-64 letters, digits, or hyphens. Creation accepts up to 200 emails
+and 200 phones. Phones must normalize to the international
+`+<country-code><number>` format (E.164).
+
+`--org` creates a current, primary employment record. It reuses the company
+that employment facts would match by name or alias, and creates a company when
+none matches. If the name matches several companies, creation stops; create the
+person without `--org`, then add the employment with
+`msgvault employment add --person <id> --organization <id>`. `--title` requires
+`--org` and becomes that employment's title.
+
+Text limits are 256 characters for the name and organization, 280 for the
+title, 1,000 for the address, and 10,000 for the note.
+The person receives a stable ID and a new vCard UID,
+with no message participants. All supplied details are user-curated data.
+
+Creation refuses an email or phone already on a current person profile or an
+observed participant cluster. The error identifies the match. Use that saved
+person, or run `msgvault person promote <participant-id>` for an observed
+contact. Use [explicit identity linking](#review-identity-matches) to combine
+observed identities; creation never links them silently.
+
+Without `--publish`, creation stays in your archive. Add `--publish` to send
+the new person to your configured [CardDAV write target](people-carddav.md#sync-and-publish-selected-people).
+If publication fails, the person remains saved. The command prints its ID and
+reports how to retry publication or review its preview.
+
+API clients use `POST /api/v1/people/create` with `name`, optional `emails` and
+`phones` arrays of `{ "value": "...", "type": "work" }`, and optional `org`,
+`title`, `address`, and `note`. Optional `source` is `user` (the default) or
+`enrichment`. CardDAV publishes an enrichment-created person only after
+[publication review](people-carddav.md#review-inferred-changes-before-they-are-exported). Success returns the person with HTTP 201 and its
+ETag; invalid input returns 400 and an existing contact returns 409. The endpoint
+does not publish. Publish separately through the CardDAV publication API.
+`POST /api/v1/people` continues to promote observed participants.
+
+The MCP `create_person` tool accepts the same creation fields except `source`.
+It requires both MCP writes and profile writes to be enabled, like
+`promote_person`, and is absent from the read-only catalog and from daemons
+older than API schema 5.16.0. It records every value with enrichment
+provenance, like other MCP profile writes, so CardDAV publication requires
+review. It never publishes.
+
+People and Relationships count a meeting once for a person with a transcript;
+linked calendar events add no separate count. Filters count each meeting with a
+matching transcript, and saved link changes take effect after the next cache refresh.
+Calendar events without a transcript add no meeting count or relationship signal.
 
 Each saved profile also has a vCard UID. A new profile imported from a subscribed
 CardDAV book adopts the card's UID when it is a UUID that no other profile uses
@@ -233,6 +295,34 @@ msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor
 ```
 
 `person list` continues to show the full unpaginated profile collection. Its `--json` output remains an array of profiles.
+
+### Keep in touch with contact lists
+
+A contact list is the person's `contact_frequency` attribute, an interval in days. Lists A, B, C and D are 21, 60, 180 and 365 days. Any other interval stays a custom list. Set a list with `person attributes set`; `--list` writes the matching interval through the same audited attribute writer:
+
+```bash
+msgvault person attributes set 7 contact_frequency --list A
+msgvault person attributes set 7 contact_frequency --value 45
+```
+
+The Directory derives each person's due date from their last contact plus the interval. Nothing else is stored. Filter and order the roster by that cadence to get a reach-out queue:
+
+```bash
+msgvault person directory --cadence overdue --sort most_overdue
+msgvault person directory --cadence due --due-within-days 7 --sort next_due
+msgvault person directory --cadence no_list
+```
+
+| `--cadence` | Matches |
+|---|---|
+| `overdue` | Due date has passed |
+| `due` | Due on or before the end of the UTC date `--due-within-days` days from today (0 to 3660) |
+| `no_list` | No contact list |
+| `unknown` | Has a list but no trustworthy due date: no last contact yet, or contact state is still being recomputed |
+
+`most_overdue` and `next_due` both put the earliest due date first; people without a due date come last. Cadence filters combine with the other Directory filters, and each page carries the presets and a coverage count of the matching people before the cadence filter. A stale contact projection never produces a due date, so a person whose contact state is being recomputed reads as `unknown` until it settles. Cadence filters and sorts require daemon API schema 5.18.0; the CLI reports an upgrade error for older daemons.
+
+MCP clients read the same queue through `list_directory_people` and set lists with `set_person_contact_list`. Signal tiers never assign a list automatically.
 
 ## Keep private notes
 

@@ -48,7 +48,9 @@ import (
 // so committed caches never mix shards of different shapes.
 // Version 36 rebuilds sender projections for relayed authors.
 // Version 37 retains email invitation edges while marking them as non-activity.
-const CacheSchemaVersion = 37
+// Version 38 stores resolved meeting groups and each person's owning transcript for meeting counts.
+// Version 39 groups attendance after filtering and rebuilds relationship counts.
+const CacheSchemaVersion = 39
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

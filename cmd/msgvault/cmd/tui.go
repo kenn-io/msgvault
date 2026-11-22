@@ -126,8 +126,8 @@ HTTP Mode:
 			AnalyticsNotice:       notice,
 			SettingsBackend:       backend.settings,
 			CollectionScopeLister: collectionScopes,
-			ReportScreen:          tuiScreenReporter(gate, backend.client, currentCfg),
-			ReportAction:          tuiActionReporter(gate, backend.client, currentCfg),
+			ReportScreen:          tuiScreenReporter(gate, backend.client),
+			ReportAction:          tuiActionReporter(gate, backend.client),
 		})
 		p := tea.NewProgram(model)
 		noticeCtx, stopNoticeRefresh := context.WithCancel(cmd.Context())
@@ -166,7 +166,7 @@ HTTP Mode:
 }
 
 func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInfo, duration time.Duration, gate *tuiTelemetryGate) {
-	if !clientTelemetryEnabled(cfg) {
+	if !clientTelemetryEnabled() {
 		return
 	}
 	inv := invocationFromContext(ctx)
@@ -189,9 +189,9 @@ func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInf
 	})
 }
 
-func tuiScreenReporter(gate *tuiTelemetryGate, client *daemonclient.Client, cfg *config.Config) func(context.Context, string) error {
+func tuiScreenReporter(gate *tuiTelemetryGate, client *daemonclient.Client) func(context.Context, string) error {
 	return func(ctx context.Context, screen string) error {
-		if !clientTelemetryEnabled(cfg) {
+		if !clientTelemetryEnabled() {
 			return nil
 		}
 		return gate.report(ctx, client, telemetry.EventScreenViewed, "screen", screen)
@@ -372,6 +372,9 @@ func openTUIBackendWithLocal(ctx context.Context, forceLocal bool) (*tuiBackend,
 		if inv == nil {
 			return nil, errors.New("configuration is unavailable")
 		}
+		if inv.options.remoteName != "" {
+			return nil, errors.New("--local and --remote are incompatible")
+		}
 		local := *inv
 		local.options.useLocal = true
 		ctx = withInvocation(ctx, &local)
@@ -405,9 +408,9 @@ func init() {
 	_ = tuiCmd.Flags().MarkHidden("no-sqlite-scanner")
 }
 
-func tuiActionReporter(gate *tuiTelemetryGate, client *daemonclient.Client, cfg *config.Config) func(context.Context, string, string, string) error {
+func tuiActionReporter(gate *tuiTelemetryGate, client *daemonclient.Client) func(context.Context, string, string, string) error {
 	return func(ctx context.Context, event, property, value string) error {
-		if !clientTelemetryEnabled(cfg) {
+		if !clientTelemetryEnabled() {
 			return nil
 		}
 		return gate.report(ctx, client, event, property, value)

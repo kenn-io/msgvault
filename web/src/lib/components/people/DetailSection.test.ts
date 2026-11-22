@@ -1,7 +1,22 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
 import { expect, it, vi } from 'vitest';
 import DetailSection from './DetailSection.svelte';
+
+it('shows the summary while collapsed and restores the content when expanded', async () => {
+  const summary = '73 fields · last found Nov 1';
+  const children = createRawSnippet(() => ({ render: () => '<p>Current facts</p>' }));
+  const view = render(DetailSection, { title: 'Facts', summary, expanded: false, children });
+  const facts = screen.getByRole('region', { name: 'Facts' });
+
+  expect(within(facts).getByText(summary)).toBeDefined();
+  expect(within(facts).queryByText('Current facts')).toBeNull();
+
+  await view.rerender({ title: 'Facts', summary: undefined, expanded: true, children });
+
+  expect(within(facts).getByText('Current facts')).toBeDefined();
+  expect(within(facts).queryByText(summary)).toBeNull();
+});
 
 it('runs Add from the header, folds history between current and imported rows, and lets a custom control replace Add', async () => {
   const onadd = vi.fn();

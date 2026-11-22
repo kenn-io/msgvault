@@ -50,6 +50,7 @@ func Validate(
 		DatasetTemperatureContributions: activityRelation(
 			filepath.Join(opts.OutputRoot, DatasetTemperatureContributions, "*.parquet"), false,
 		),
+		DatasetMeetingGroups: activityRelation(filepath.Join(opts.OutputRoot, DatasetMeetingGroups, "*.parquet"), false),
 	}
 	if opts.ActivityRelation != "" {
 		relations[DatasetActivity] = opts.ActivityRelation
@@ -138,8 +139,8 @@ func Validate(
 			    OR (SELECT sum(item.file_count)::BIGINT
 			        FROM unnest(p.source_rollups) AS source(item))
 			       IS DISTINCT FROM p.file_count
-			    OR (SELECT sum(item.meeting_count)::BIGINT
-			        FROM unnest(p.source_rollups) AS source(item))
+			    OR (SELECT count(DISTINCT group_id)::BIGINT
+			        FROM unnest(p.source_rollups) AS source(item), unnest(item.meeting_groups) AS groups(group_id))
 			       IS DISTINCT FROM p.meeting_count
 			    OR (SELECT min(item.first_at)::TIMESTAMP
 			        FROM unnest(p.source_rollups) AS source(item))
@@ -256,6 +257,7 @@ const duckDBTypeBoolean = "BOOLEAN"
 const duckDBTypeVarchar = "VARCHAR"
 
 var datasetSchemas = map[string][]schemaColumn{
+	DatasetMeetingGroups: {{"message_id", duckDBTypeBigInt}, {"group_id", duckDBTypeBigInt}},
 	DatasetActivity: {
 		{"message_id", duckDBTypeBigInt},
 		{"conversation_id", duckDBTypeBigInt},
@@ -300,7 +302,7 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"source_counts", "STRUCT(source_type VARCHAR, count BIGINT)[]"},
 		{
 			"source_rollups",
-			"STRUCT(source_id BIGINT, source_type VARCHAR, activity_count BIGINT, meeting_count BIGINT, file_count BIGINT, first_at TIMESTAMP, last_at TIMESTAMP)[]",
+			"STRUCT(source_id BIGINT, source_type VARCHAR, activity_count BIGINT, meeting_groups BIGINT[], file_count BIGINT, first_at TIMESTAMP, last_at TIMESTAMP)[]",
 		},
 		{"current_temperature", "INTEGER"},
 		{"current_temperature_rank", duckDBTypeBigInt},
@@ -355,6 +357,7 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"is_owner", duckDBTypeBoolean},
 		{"with_owner", duckDBTypeBoolean},
 		{"domain", duckDBTypeVarchar},
+		{"deleted_from_source", duckDBTypeBoolean},
 	},
 	DatasetTemperatureContributions: {
 		{"canonical_id", duckDBTypeBigInt},

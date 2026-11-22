@@ -61,6 +61,8 @@ const cmdUseConsent = "consent"
 
 const localValue = "local"
 
+const remoteFlag = "remote"
+
 // outputFormatJSON is the "json" value accepted by the --format flag.
 const outputFormatJSON = "json"
 

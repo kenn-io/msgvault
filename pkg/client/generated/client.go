@@ -331,6 +331,10 @@ type ClientInterface interface {
 	GetCLIMessageThread(ctx context.Context, options *GetCLIMessageThreadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageThreadResponse, error)
 	GetCLIMessageThreadWithResponse(ctx context.Context, options *GetCLIMessageThreadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageThreadResp, error)
 
+	// ExportCLIMessages Stream messages in a time window as msgvault-message-export/1 JSON Lines
+	ExportCLIMessages(ctx context.Context, options *ExportCLIMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportCLIMessagesResponse, error)
+	ExportCLIMessagesWithResponse(ctx context.Context, options *ExportCLIMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportCLIMessagesResp, error)
+
 	// RebuildCLIFTS Rebuild the CLI full-text search index
 	RebuildCLIFTS(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RebuildCLIFTSResponse, error)
 	RebuildCLIFTSWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RebuildCLIFTSResp, error)
@@ -675,9 +679,21 @@ type ClientInterface interface {
 	GetMeetingContext(ctx context.Context, options *GetMeetingContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingContextResponse, error)
 	GetMeetingContextWithResponse(ctx context.Context, options *GetMeetingContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingContextResp, error)
 
+	// DecideMeetingLink Link or split archived meeting copies
+	DecideMeetingLink(ctx context.Context, options *DecideMeetingLinkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecideMeetingLinkResponse, error)
+	DecideMeetingLinkWithResponse(ctx context.Context, options *DecideMeetingLinkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecideMeetingLinkResp, error)
+
 	// GetMeetingMetrics Get archived meeting duration metrics
 	GetMeetingMetrics(ctx context.Context, options *GetMeetingMetricsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingMetricsResponse, error)
 	GetMeetingMetricsWithResponse(ctx context.Context, options *GetMeetingMetricsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingMetricsResp, error)
+
+	// GetMeetingRecord Read an archived meeting from a note or event
+	GetMeetingRecord(ctx context.Context, options *GetMeetingRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingRecordResponse, error)
+	GetMeetingRecordWithResponse(ctx context.Context, options *GetMeetingRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingRecordResp, error)
+
+	// SuggestMeetingLinks Suggest links between meeting notes and calendar events
+	SuggestMeetingLinks(ctx context.Context, options *SuggestMeetingLinksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SuggestMeetingLinksResponse, error)
+	SuggestMeetingLinksWithResponse(ctx context.Context, options *SuggestMeetingLinksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SuggestMeetingLinksResp, error)
 
 	// ListMessages List messages
 	ListMessages(ctx context.Context, options *ListMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMessagesResponse, error)
@@ -698,6 +714,10 @@ type ClientInterface interface {
 	// GetMessage Get one message
 	GetMessage(ctx context.Context, options *GetMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageResponse, error)
 	GetMessageWithResponse(ctx context.Context, options *GetMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageResp, error)
+
+	// GetEmailFamily Read the other archived copies, replies and forwards of an email
+	GetEmailFamily(ctx context.Context, options *GetEmailFamilyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailFamilyResponse, error)
+	GetEmailFamilyWithResponse(ctx context.Context, options *GetEmailFamilyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailFamilyResp, error)
 
 	// GetMessageInlinePart Get an inline MIME part
 	GetMessageInlinePart(ctx context.Context, options *GetMessageInlinePartRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageInlinePartResponse, error)
@@ -855,6 +875,10 @@ type ClientInterface interface {
 	FindContactCandidates(ctx context.Context, options *FindContactCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindContactCandidatesResponse, error)
 	FindContactCandidatesWithResponse(ctx context.Context, options *FindContactCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindContactCandidatesResp, error)
 
+	// CreateStandalonePerson Create a person without message participants
+	CreateStandalonePerson(ctx context.Context, options *CreateStandalonePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateStandalonePersonResponse, error)
+	CreateStandalonePersonWithResponse(ctx context.Context, options *CreateStandalonePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateStandalonePersonResp, error)
+
 	// ListDirectoryPeople Query durable people for the Directory
 	ListDirectoryPeople(ctx context.Context, options *ListDirectoryPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDirectoryPeopleResponse, error)
 	ListDirectoryPeopleWithResponse(ctx context.Context, options *ListDirectoryPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDirectoryPeopleResp, error)
@@ -978,6 +1002,10 @@ type ClientInterface interface {
 	// SetPersonFactPin Replace an effective person fact pin
 	SetPersonFactPin(ctx context.Context, options *SetPersonFactPinRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPersonFactPinResponse, error)
 	SetPersonFactPinWithResponse(ctx context.Context, options *SetPersonFactPinRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPersonFactPinResp, error)
+
+	// GetPersonFactSummary Get person fact summary
+	GetPersonFactSummary(ctx context.Context, options *GetPersonFactSummaryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonFactSummaryResponse, error)
+	GetPersonFactSummaryWithResponse(ctx context.Context, options *GetPersonFactSummaryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonFactSummaryResp, error)
 
 	// SearchPersonFiles Search one durable person's analytical files
 	SearchPersonFiles(ctx context.Context, options *SearchPersonFilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPersonFilesResponse, error)
@@ -1279,7 +1307,7 @@ type ClientInterface interface {
 	TriggerSync(ctx context.Context, options *TriggerSyncRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TriggerSyncResponseJSON, error)
 	TriggerSyncWithResponse(ctx context.Context, options *TriggerSyncRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TriggerSyncResp, error)
 
-	// CaptureTelemetryEvent Report a web, terminal UI, or interactive CLI usage event
+	// CaptureTelemetryEvent Record an interface event
 	CaptureTelemetryEvent(ctx context.Context, options *CaptureTelemetryEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CaptureTelemetryEventResponse, error)
 	CaptureTelemetryEventWithResponse(ctx context.Context, options *CaptureTelemetryEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CaptureTelemetryEventResp, error)
 
@@ -5885,6 +5913,55 @@ func (c *Client) GetCLIMessageThread(ctx context.Context, options *GetCLIMessage
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/message/thread")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ExportCLIMessages Stream messages in a time window as msgvault-message-export/1 JSON Lines
+func (c *Client) ExportCLIMessages(ctx context.Context, options *ExportCLIMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportCLIMessagesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/cli/messages/export",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ExportCLIMessagesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ExportCLIMessagesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ExportCLIMessagesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		result := ExportCLIMessagesResponse(bodyBytes)
+		return &result, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/messages/export")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -11178,6 +11255,70 @@ func (c *Client) GetMeetingContext(ctx context.Context, options *GetMeetingConte
 	return responseParser(ctx, resp)
 }
 
+// DecideMeetingLink Link or split archived meeting copies
+func (c *Client) DecideMeetingLink(ctx context.Context, options *DecideMeetingLinkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecideMeetingLinkResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/meetings/links/decisions",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*DecideMeetingLinkResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(DecideMeetingLinkErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "DecideMeetingLinkErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(DecideMeetingLinkResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "DecideMeetingLinkResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/meetings/links/decisions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetMeetingMetrics Get archived meeting duration metrics
 func (c *Client) GetMeetingMetrics(ctx context.Context, options *GetMeetingMetricsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingMetricsResponse, error) {
 	var err error
@@ -11236,6 +11377,132 @@ func (c *Client) GetMeetingMetrics(ctx context.Context, options *GetMeetingMetri
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/meetings/metrics")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetMeetingRecord Read an archived meeting from a note or event
+func (c *Client) GetMeetingRecord(ctx context.Context, options *GetMeetingRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingRecordResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/meetings/record",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetMeetingRecordResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetMeetingRecordErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetMeetingRecordErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetMeetingRecordResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetMeetingRecordResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/meetings/record")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SuggestMeetingLinks Suggest links between meeting notes and calendar events
+func (c *Client) SuggestMeetingLinks(ctx context.Context, options *SuggestMeetingLinksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SuggestMeetingLinksResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/meetings/suggestions",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SuggestMeetingLinksResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(SuggestMeetingLinksErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SuggestMeetingLinksErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SuggestMeetingLinksResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SuggestMeetingLinksResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/meetings/suggestions")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -11551,6 +11818,69 @@ func (c *Client) GetMessage(ctx context.Context, options *GetMessageRequestOptio
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetEmailFamily Read the other archived copies, replies and forwards of an email
+func (c *Client) GetEmailFamily(ctx context.Context, options *GetEmailFamilyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailFamilyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/messages/{id}/family",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetEmailFamilyResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetEmailFamilyErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetEmailFamilyErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetEmailFamilyResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetEmailFamilyResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/{id}/family")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -13963,6 +14293,70 @@ func (c *Client) FindContactCandidates(ctx context.Context, options *FindContact
 	return responseParser(ctx, resp)
 }
 
+// CreateStandalonePerson Create a person without message participants
+func (c *Client) CreateStandalonePerson(ctx context.Context, options *CreateStandalonePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateStandalonePersonResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/create",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateStandalonePersonResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 201 {
+			target := new(CreateStandalonePersonErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "CreateStandalonePersonErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(CreateStandalonePersonResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "CreateStandalonePersonResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/create")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListDirectoryPeople Query durable people for the Directory
 func (c *Client) ListDirectoryPeople(ctx context.Context, options *ListDirectoryPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDirectoryPeopleResponse, error) {
 	var err error
@@ -15903,6 +16297,69 @@ func (c *Client) SetPersonFactPin(ctx context.Context, options *SetPersonFactPin
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/fact-pins/{kind}/{key}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonFactSummary Get person fact summary
+func (c *Client) GetPersonFactSummary(ctx context.Context, options *GetPersonFactSummaryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonFactSummaryResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/{id}/fact-summary",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonFactSummaryResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonFactSummaryErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonFactSummaryErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetPersonFactSummaryResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetPersonFactSummaryResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/fact-summary")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -20582,7 +21039,7 @@ func (c *Client) TriggerSync(ctx context.Context, options *TriggerSyncRequestOpt
 	return responseParser(ctx, resp)
 }
 
-// CaptureTelemetryEvent Report a web, terminal UI, or interactive CLI usage event
+// CaptureTelemetryEvent Record an interface event
 func (c *Client) CaptureTelemetryEvent(ctx context.Context, options *CaptureTelemetryEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CaptureTelemetryEventResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

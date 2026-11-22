@@ -67,16 +67,16 @@ export const test = base.extend<{ daemon: MeetingDaemon }>({
           TZ: "UTC",
           MSGVAULT_TELEMETRY_ENABLED: "0",
         };
-        // Reuse immutable compiler caches without giving the daemon any ambient
-        // provider/remote/archive configuration or credentials.
+        // Match the parent build flags as well as its caches. Dropping -trimpath
+        // forces Go to rebuild dependencies within the fixture setup timeout.
         const cacheEnv = Object.fromEntries(
-          ["PATH", "HOME", "GOPATH", "GOCACHE", "GOMODCACHE"].flatMap((key) =>
+          ["PATH", "HOME", "GOPATH", "GOCACHE", "GOMODCACHE", "GOFLAGS"].flatMap((key) =>
             process.env[key] ? [[key, process.env[key]]] : [],
           ),
         );
         const caches = JSON.parse(
           (
-            await run("go", ["env", "-json", "GOCACHE", "GOMODCACHE"], {
+            await run("go", ["env", "-json", "GOCACHE", "GOMODCACHE", "GOFLAGS"], {
               cwd: repo,
               env: cacheEnv,
               timeout: 10_000,

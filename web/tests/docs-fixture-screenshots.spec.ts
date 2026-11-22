@@ -5,7 +5,6 @@ import { captureScreenshot, type ScreenshotOptions } from './docs-fixture-screen
 import { selectWorkspace, setKitTheme, setTemporaryDensity } from './kit-ui';
 
 const outputDir = process.env.MSGVAULT_DOCS_SCREENSHOT_OUTPUT ?? '';
-const platform = process.env.MSGVAULT_DOCS_SCREENSHOT_PLATFORM ?? 'darwin';
 
 const exploreURL = (workspace: 'everything') => `/?workspace=${workspace}`;
 
@@ -65,39 +64,35 @@ test.describe('documentation fixture capture', () => {
         const grid = await waitForOverview(page);
         const firstRow = grid.locator('[data-row-key]').first();
         await expect(firstRow).toContainText(/\S/);
-        await captureEvidence(page, `analytical-${theme}-${density}-${platform}.png`);
+        await captureEvidence(page, `messages-${theme}-${density}.png`);
       }
     }
 
-    // The relationships-* filenames predate the People workspace. They stay
-    // because published docs builds hydrate these exact asset names.
-    if (platform === 'darwin') {
-      for (const [theme, density, filename] of [
-        ['dark', 'comfortable', 'relationships-dark-comfortable-darwin.png'],
-        ['light', 'compact', 'relationships-light-compact-darwin.png']
-      ] as const) {
-        await page.goto(exploreURL('everything'));
-        await setKitTheme(page, theme);
-        await setTemporaryDensity(page, density === 'compact' ? 'Compact' : 'Comfortable');
-        await waitForOverview(page);
-        await selectWorkspace(page, 'People');
-        await expect(page.getByRole('main', { name: 'People' })).toBeVisible();
-        const list = page.getByRole('grid', { name: 'People results' });
-        await expect.poll(async () => await list.getByRole('row').count()).toBeGreaterThan(1);
-        const selectedRow = list.getByRole('row').first();
-        await expect(selectedRow).toContainText(/\S/);
-        await selectedRow.click();
-        const person = page.getByRole('group', { name: 'Person page' });
-        await expect(person.getByRole('heading').first()).toContainText(/\S/);
-        // The calendar opens on the person's latest active year.
-        const calendar = person.getByRole('region', { name: 'Relationship activity calendar' });
-        await expect(calendar.locator('.calendar-graphs')).toBeVisible();
-        await expect(calendar.getByText(/^No interactions in/)).toHaveCount(0);
-        const messages = person.getByRole('grid', { name: 'Messages results' });
-        await expect.poll(async () => await messages.locator('[data-row-key]').count()).toBeGreaterThan(0);
-        await expect(messages.locator('[data-row-key]').first()).toContainText(/\S/);
-        await captureEvidence(page, filename);
-      }
+    for (const [theme, density] of [
+      ['dark', 'comfortable'],
+      ['light', 'compact']
+    ] as const) {
+      await page.goto(exploreURL('everything'));
+      await setKitTheme(page, theme);
+      await setTemporaryDensity(page, density === 'compact' ? 'Compact' : 'Comfortable');
+      await waitForOverview(page);
+      await selectWorkspace(page, 'People');
+      await expect(page.getByRole('main', { name: 'People' })).toBeVisible();
+      const list = page.getByRole('grid', { name: 'People results' });
+      await expect.poll(async () => await list.getByRole('row').count()).toBeGreaterThan(1);
+      const selectedRow = list.getByRole('row').first();
+      await expect(selectedRow).toContainText(/\S/);
+      await selectedRow.click();
+      const person = page.getByRole('group', { name: 'Person page' });
+      await expect(person.getByRole('heading').first()).toContainText(/\S/);
+      // The calendar opens on the person's latest active year.
+      const calendar = person.getByRole('region', { name: 'Relationship activity calendar' });
+      await expect(calendar.locator('.calendar-graphs')).toBeVisible();
+      await expect(calendar.getByText(/^No interactions in/)).toHaveCount(0);
+      const messages = person.getByRole('grid', { name: 'Messages results' });
+      await expect.poll(async () => await messages.locator('[data-row-key]').count()).toBeGreaterThan(0);
+      await expect(messages.locator('[data-row-key]').first()).toContainText(/\S/);
+      await captureEvidence(page, `people-${theme}-${density}.png`);
     }
   });
 });

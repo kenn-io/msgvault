@@ -325,6 +325,8 @@ func (d *PostgreSQLDialect) RFC822CanonicalIDIndexDefinition() string {
 // mismatch on the sources.sync_config write path.
 func (d *PostgreSQLDialect) JSONBindExpr() string { return "?::JSONB" }
 
+func (d *PostgreSQLDialect) JSONTextBindExpr() string { return "?::JSON" }
+
 func (d *PostgreSQLDialect) JSONIsDistinctExpr(col string) string {
 	return col + " IS DISTINCT FROM ?::JSONB"
 }
@@ -615,6 +617,9 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 //	TEXT → TEXT, DATETIME → TIMESTAMPTZ, JSON → JSONB.
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE meeting_details ADD COLUMN IF NOT EXISTS link_key TEXT`, "meeting_details.link_key"},
+		{`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS ical_uid TEXT NOT NULL DEFAULT ''`, "calendar_events.ical_uid"},
+		{`ALTER TABLE person_fact_decisions ADD COLUMN IF NOT EXISTS outcome TEXT`, "person_fact_decisions.outcome"},
 		{`ALTER TABLE carddav_sync_runs ADD COLUMN IF NOT EXISTS binding_conflicts BIGINT CHECK (binding_conflicts IS NULL OR binding_conflicts >= 0)`, "carddav_sync_runs.binding_conflicts"},
 		{`ALTER TABLE person_participants ADD COLUMN IF NOT EXISTS carddav_owned BOOLEAN NOT NULL DEFAULT FALSE`, "person_participants.carddav_owned"},
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
@@ -721,6 +726,8 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// projection write moves it, so no backfill is needed.
 		{`ALTER TABLE persons ADD COLUMN IF NOT EXISTS vcard_projection_revision BIGINT NOT NULL DEFAULT 1`,
 			"persons.vcard_projection_revision"},
+		{`ALTER TABLE persons ADD COLUMN IF NOT EXISTS display_name_source_name_id BIGINT`,
+			"persons.display_name_source_name_id"},
 		{`ALTER TABLE person_names ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_names.source_resource_uid"},
 		{`ALTER TABLE person_contact_points ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_contact_points.source_resource_uid"},
 		{`ALTER TABLE person_addresses ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_addresses.source_resource_uid"},
@@ -2276,7 +2283,7 @@ var exclusiveLockTables = []string{
 	// uses the reverse order, so table ordering alone cannot fence both safely.
 	"recording_references",
 	"message_delivery_addresses", "email_link_keys",
-	"meeting_details", "meeting_action_items",
+	"meeting_link_decisions", "meeting_copy_survivors", "meeting_details", "meeting_action_items",
 	"calendar_events", "calendar_event_attendees",
 	"attachments", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	// Ungated attachment updates invalidate publications through triggers.

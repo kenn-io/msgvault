@@ -28,7 +28,7 @@
 </script>
 
 <script lang="ts">
-  import { formatDate } from '../../util/format';
+  import { formatShortDate } from '../../util/format';
   import GroupOverview from './GroupOverview.svelte';
   import { groupedByLabel } from '../../explore/labels';
   import { messageTitle } from '../../archive/message-title';
@@ -62,6 +62,7 @@
     back = false,
     onRetry = undefined,
     conversationAnchorId = undefined,
+    anchorTitle = $bindable(''),
     conversationStart = undefined,
     conversationEnd = undefined,
     onConversationAnchorChange = undefined,
@@ -84,6 +85,8 @@
     /** Overrides the entry's own anchor when the reader navigated within the
      * thread (URL-carried, so Back/Forward restore the same message). */
     conversationAnchorId?: number;
+    /** Title of the selected message once its conversation window has loaded. */
+    anchorTitle?: string;
     /** Lower UTC bound (RFC3339, inclusive) restricting the conversation
      * window opened for this selection — e.g. a chat burst's local day. */
     conversationStart?: string;
@@ -118,9 +121,9 @@
   const threadAnchorId = $derived(conversationAnchorId ?? archiveMessage?.id ?? conversationRow?.anchor_message_id);
   const metaStrip = $derived.by((): string => {
     if (!selection) return '';
-    if (selection.kind === 'archive') return `${entryKindPresentation('', selection.message.message_type).name} · ${formatDate(selection.message.sent_at)}`;
+    if (selection.kind === 'archive') return `${entryKindPresentation('', selection.message.message_type).name} · ${formatShortDate(selection.message.sent_at)}`;
     if (selection.kind === 'entry') {
-      const { row } = selection, parts = [entryKindPresentation(row.kind, row.message_type).name, row.source_identifier, formatDate(row.occurred_at)];
+      const { row } = selection, parts = [entryKindPresentation(row.kind, row.message_type).name, row.source_identifier, formatShortDate(row.occurred_at)];
       if (row.message_count > 1) parts.push(`${row.message_count.toLocaleString()} items`);
       if (row.attachment_count > 0) parts.push(`${row.attachment_count.toLocaleString()} ${row.attachment_count === 1 ? 'file' : 'files'}`);
       return parts.filter(Boolean).join(' · ');
@@ -228,6 +231,8 @@
         {client}
         conversationId={conversationID}
         anchorId={threadAnchorId}
+        titleAnchorId={archiveMessage?.id ?? conversationRow?.anchor_message_id ?? threadAnchorId}
+        bind:anchorTitle
         start={conversationStart}
         end={conversationEnd}
         onAnchorChange={(anchorId) => onConversationAnchorChange?.(anchorId)}

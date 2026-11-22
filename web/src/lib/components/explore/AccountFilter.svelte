@@ -115,14 +115,16 @@
     const scheduleRetry = (failed = false): void => {
       clearTimeout(timer);
       if (blocked || lifetime.signal.aborted) return;
-      const waiting = pending.length > 0 || unavailable || failed;
-      if (!waiting) {
+      // Reread only while something is still settling; an idle catalog stays put.
+      if (pending.length === 0 && !unavailable && !failed) {
         attempt = 0;
         retryUntil = Date.now() + retryWindowMs;
+        retrying = false;
+        return;
       }
-      const delay = waiting ? retryDelaysMs[Math.min(attempt++, retryDelaysMs.length - 1)] : 30000;
-      retrying = waiting && ((!failed && !unavailable) || Date.now() + delay <= retryUntil);
-      if (retrying || !waiting) timer = setTimeout(load, delay);
+      const delay = retryDelaysMs[Math.min(attempt++, retryDelaysMs.length - 1)];
+      retrying = (!failed && !unavailable) || Date.now() + delay <= retryUntil;
+      if (retrying) timer = setTimeout(load, delay);
     };
     const load = (): void => {
       controller.abort();

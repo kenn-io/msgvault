@@ -61,8 +61,11 @@ describe('CardDAVConflictDecisionModal', () => {
       expect(screen.queryByRole('button', { name: 'Close contact choice' })).toBeNull();
 
       await fireEvent.click(screen.getByRole('button', { name: 'Saving…' }));
-      await fireEvent.keyDown(window, { key: 'Escape' });
-      await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
+      await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+      const overlay = document.querySelector('.kit-modal-overlay')!;
+      await fireEvent.pointerDown(overlay, { pointerId: 1 });
+      await fireEvent.pointerUp(overlay, { pointerId: 1 });
+      await fireEvent.click(overlay);
       appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
       expect(onConfirm).toHaveBeenCalledOnce();
       expect(onClose).not.toHaveBeenCalled();

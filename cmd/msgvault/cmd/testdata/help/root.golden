@@ -21,6 +21,7 @@ Usage:
   msgvault [command]
 
 Search and read:
+  family        Read an email's related copies
   find-chat     Find archived chats by name or title
   list-accounts List archive accounts with type, message count, last sync
   list-domains  List top sender domains by message count
@@ -58,6 +59,7 @@ People, organizations, and identity:
 Add and sync sources:
   add-account            Add a Gmail account via OAuth
   add-beeper             Add Beeper Desktop as an archive source
+  add-bland              Register and validate a Bland recorded calls source
   add-calendar           Authorize Google Calendar and register its calendars
   add-carddav            Discover and configure a CardDAV account
   add-chatwoot           Register Chatwoot inboxes
@@ -92,6 +94,7 @@ Add and sync sources:
   source                 Add and sync provider sources
   sync                   Sync new mail from Gmail, IMAP, and Microsoft accounts
   sync-beeper            Sync chats from Beeper Desktop (all connected networks)
+  sync-bland             Sync Bland recorded calls
   sync-calendar          Sync Google Calendar events for an account
   sync-carddav           Synchronize enabled CardDAV connections
   sync-chatwoot          Sync Chatwoot inboxes
@@ -122,6 +125,7 @@ Import local exports:
   import-ics             Import local ICS events
   import-imazing-csv     Import Messages CSV exports created by iMazing
   import-imessage        Import iMessages from local database
+  import-linkedin        Import a LinkedIn member data export
   import-maildir         Import a Maildir or Maildir++ archive
   import-mbox            Import an MBOX export into msgvault
   import-messenger       Import Facebook Messenger from a Meta data export
@@ -129,6 +133,7 @@ Import local exports:
   import-slackdump       Import a Slackdump export
   import-synctech-sms    Import SMS Backup & Restore exports
   import-telegram        Import a Telegram export
+  import-tiktok          Import TikTok DMs and your own comments from a data export
   import-whatsapp        Import WhatsApp messages from an Android or Apple database
   import-x               Import X direct-message archives
 
@@ -206,18 +211,19 @@ Setup, daemon, and integrations:
   version      Print version information
 
 Flags:
-      --agent-allow-insecure      Allow plain HTTP for agent-delegated connections (trusted networks only)
-      --agent-token-file string   Path to a file containing the agent grant secret (requires --agent-url)
-      --agent-url string          Daemon URL for agent-delegated mode (requires --agent-token-file)
-      --config string             config file (default: ~/.msgvault/config.toml)
-  -h, --help                      help for msgvault
-      --home string               home directory (overrides MSGVAULT_HOME)
-      --local                     use local daemon instead of configured remote
-      --log-file string           override log file path (default: <data dir>/logs/msgvault-YYYY-MM-DD.log)
-      --log-level string          log level: debug, info, warn, error (default: info)
-      --log-sql                   log every SQL query at info level (verbose; for debugging)
-      --log-sql-slow-ms int       threshold in ms above which a SQL query is logged as slow (default 100; 0 uses the default)
-      --no-log-file               disable the log file for this run (stderr output stays on)
-  -v, --verbose                   verbose output (implies --log-level=debug)
+      --agent-allow-insecure[=true|false]   Allow plain HTTP for agent-delegated connections (trusted networks only)
+      --agent-token-file string             Path to a file containing the agent grant secret (requires --agent-url)
+      --agent-url string                    Daemon URL for agent-delegated mode (requires --agent-token-file)
+      --config string                       config file (default: ~/.msgvault/config.toml)
+  -h, --help[=true|false]                   help for msgvault
+      --home string                         home directory (overrides MSGVAULT_HOME)
+      --local[=true|false]                  use local daemon instead of configured remote
+      --log-file string                     override log file path (default: <data dir>/logs/msgvault-YYYY-MM-DD.log)
+      --log-level string                    log level: debug, info, warn, error (default: info)
+      --log-sql[=true|false]                log every SQL query at info level (verbose; for debugging)
+      --log-sql-slow-ms int                 threshold in ms above which a SQL query is logged as slow (default 100; 0 uses the default)
+      --no-log-file[=true|false]            disable the log file for this run (stderr output stays on)
+      --remote string                       use the named remote from a [remotes.<name>] config table
+  -v, --verbose[=true|false]                verbose output (implies --log-level=debug)
 
 Use "msgvault [command] --help" for more information about a command.

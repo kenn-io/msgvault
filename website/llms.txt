@@ -48,17 +48,19 @@ Run `msgvault agent setup` to connect Claude Code and Codex.
 - [IMAP Mail](https://msgvault.io/docs/usage/imap.md): sync folders and prepare, edit, recover, or delete managed reply drafts
 - [Local Email](https://msgvault.io/docs/usage/importing.md)
 - [Remote Email Images](https://msgvault.io/docs/usage/remote-images.md): opt-in downloads and offline display
+- [LinkedIn Export](https://msgvault.io/docs/usage/linkedin.md)
 - [Text Messages](https://msgvault.io/docs/usage/text-messages.md)
+- [TikTok Export](https://msgvault.io/docs/usage/tiktok-export.md): local DM and own-comment imports
 - [Google Calendar](https://msgvault.io/docs/usage/calendar.md)
 - [Microsoft Teams](https://msgvault.io/docs/usage/teams.md)
 - [Discord](https://msgvault.io/docs/usage/discord.md)
 - [Beeper](https://msgvault.io/docs/usage/beeper.md)
 - [Inline](https://msgvault.io/docs/usage/inline.md): all accessible chats through OAuth MCP or the authenticated Inline CLI, with optional chat filters and a complete-catalog prerequisite
 - [Chatwoot](https://msgvault.io/docs/guides/chatwoot.md): shared inboxes, employee attribution, media, and calls
-- [Facebook Page comments](https://msgvault.io/docs/usage/facebook-comments.md): `source facebook-comments add` and `source facebook-comments sync`, coverage, cursor recovery, hiding or deleting comments with `comment moderate`, and public replies with `comment reply` (moderation and replies unreleased)
+- [Facebook Page comments](https://msgvault.io/docs/usage/facebook-comments.md): `source facebook-comments add` and `source facebook-comments sync`, coverage, cursor recovery, hiding or deleting comments with `comment moderate`, and public replies with `comment reply`
 - [Instagram comments](https://msgvault.io/docs/usage/instagram-comments.md): `source instagram-comments add` and `source instagram-comments sync`, linked professional account comments and resumable media conversations
-- [Facebook and Instagram messages](https://msgvault.io/docs/usage/meta-messages.md): `source facebook-messages` and `source instagram-messages` add and sync for Page and Instagram inbox chats (unreleased)
-- [Meta webhooks](https://msgvault.io/docs/usage/meta-webhooks.md): `[meta_webhooks]` receiver that archives Facebook Page comment changes as they happen (unreleased)
+- [Facebook and Instagram messages](https://msgvault.io/docs/usage/meta-messages.md): `source facebook-messages` and `source instagram-messages` add and sync for Page and Instagram inbox chats
+- [Meta webhooks](https://msgvault.io/docs/usage/meta-webhooks.md): `[meta_webhooks]` receiver that archives Page and Instagram inbox messages, comment changes, and mentions as they happen
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)
 - [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)

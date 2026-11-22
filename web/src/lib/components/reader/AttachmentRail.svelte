@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatBytes, formatDate } from '../../util/format';
+  import { formatBytes, formatShortDate } from '../../util/format';
   import type { ExploreFileFact } from '../../explore/models';
 
   let {
@@ -36,7 +36,7 @@
       {#each chronological as file (file.key)}
         <li>
           <div><strong>{file.filename || '(unnamed file)'}</strong><span>{formatBytes(file.size)}</span></div>
-          <div><time datetime={file.occurred_at} data-mono>{formatDate(file.occurred_at)}</time><span>{file.title || file.source_identifier}</span></div>
+          <div><time datetime={file.occurred_at} data-mono>{formatShortDate(file.occurred_at)}</time><span>{file.title || file.source_identifier}</span></div>
         </li>
       {/each}
     </ol>

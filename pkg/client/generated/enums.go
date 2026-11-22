@@ -1308,6 +1308,24 @@ func (m MeetingContextRequestFormat) Validate() error {
 	}
 }
 
+type MeetingDecisionRequestDecision string
+
+const (
+	Clear  MeetingDecisionRequestDecision = "clear"
+	Link   MeetingDecisionRequestDecision = "link"
+	Unlink MeetingDecisionRequestDecision = "unlink"
+)
+
+// Validate checks if the MeetingDecisionRequestDecision value is valid
+func (m MeetingDecisionRequestDecision) Validate() error {
+	switch m {
+	case Clear, Link, Unlink:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingDecisionRequestDecision value, got: %v", m))
+	}
+}
+
 type MeetingImportResponseStatus string
 
 const (
@@ -2260,6 +2278,24 @@ func (p PeopleInferencePresetCreateRequestPresetID) Validate() error {
 	}
 }
 
+// PersonCreateInputSource Provenance of every created value; defaults to user
+type PersonCreateInputSource string
+
+const (
+	PersonCreateInputSourceEnrichment PersonCreateInputSource = "enrichment"
+	PersonCreateInputSourceUser       PersonCreateInputSource = "user"
+)
+
+// Validate checks if the PersonCreateInputSource value is valid
+func (p PersonCreateInputSource) Validate() error {
+	switch p {
+	case PersonCreateInputSourceEnrichment, PersonCreateInputSourceUser:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonCreateInputSource value, got: %v", p))
+	}
+}
+
 type PersonEnrichmentProviderSettingKind string
 
 const (
@@ -2291,6 +2327,27 @@ func (p PersonEnrichmentProviderUpdateKind) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonEnrichmentProviderUpdateKind value, got: %v", p))
+	}
+}
+
+type PersonFactDecisionOutcome string
+
+const (
+	CurrentValueKept PersonFactDecisionOutcome = "current-value-kept"
+	NotUsed          PersonFactDecisionOutcome = "not-used"
+	PinnedValueKept  PersonFactDecisionOutcome = "pinned-value-kept"
+	Saved            PersonFactDecisionOutcome = "saved"
+	TooCloseToChoose PersonFactDecisionOutcome = "too-close-to-choose"
+	ValueRetired     PersonFactDecisionOutcome = "value-retired"
+)
+
+// Validate checks if the PersonFactDecisionOutcome value is valid
+func (p PersonFactDecisionOutcome) Validate() error {
+	switch p {
+	case CurrentValueKept, NotUsed, PinnedValueKept, Saved, TooCloseToChoose, ValueRetired:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFactDecisionOutcome value, got: %v", p))
 	}
 }
 
@@ -2836,14 +2893,14 @@ func (s SecretSettingStateSource) Validate() error {
 type SecretSettingUpdateAction string
 
 const (
-	Clear SecretSettingUpdateAction = "clear"
-	Set   SecretSettingUpdateAction = "set"
+	SecretSettingUpdateActionClear SecretSettingUpdateAction = "clear"
+	Set                            SecretSettingUpdateAction = "set"
 )
 
 // Validate checks if the SecretSettingUpdateAction value is valid
 func (s SecretSettingUpdateAction) Validate() error {
 	switch s {
-	case Clear, Set:
+	case SecretSettingUpdateActionClear, Set:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SecretSettingUpdateAction value, got: %v", s))
@@ -3037,7 +3094,7 @@ func (t TaskIntegrationStatusResponseState) Validate() error {
 	}
 }
 
-// TelemetryEventResponseStatus queued when accepted, including suppressed daily screen_viewed and message_opened duplicates or invalid screen names; disabled when telemetry is off
+// TelemetryEventResponseStatus queued when accepted; disabled otherwise
 type TelemetryEventResponseStatus string
 
 const (
@@ -3124,12 +3181,14 @@ const (
 	LastContactAsc                   ListDirectoryPeopleQuerySort = "last_contact_asc"
 	LastContactDesc                  ListDirectoryPeopleQuerySort = "last_contact_desc"
 	ListDirectoryPeopleQuerySortName ListDirectoryPeopleQuerySort = "name"
+	MostOverdue                      ListDirectoryPeopleQuerySort = "most_overdue"
+	NextDue                          ListDirectoryPeopleQuerySort = "next_due"
 )
 
 // Validate checks if the ListDirectoryPeopleQuerySort value is valid
 func (l ListDirectoryPeopleQuerySort) Validate() error {
 	switch l {
-	case LastContactAsc, LastContactDesc, ListDirectoryPeopleQuerySortName:
+	case LastContactAsc, LastContactDesc, ListDirectoryPeopleQuerySortName, MostOverdue, NextDue:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListDirectoryPeopleQuerySort value, got: %v", l))

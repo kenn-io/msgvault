@@ -961,7 +961,7 @@ func (s cliScope) displayName() string {
 }
 
 func (s *Server) handleCLIStats(w http.ResponseWriter, r *http.Request) {
-	if s.requestAuthentication(r).Grant != nil {
+	if agentReadScoped(r) {
 		s.agentScopedStats(w, r, true)
 		return
 	}
@@ -1787,6 +1787,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-synctech-sms-drive",
 		"add-teams",
 		"add-twilio",
+		"add-bland",
 		"backfill-beeper-media",
 		"backfill-discord-media",
 		"backfill-inline-media",
@@ -1814,7 +1815,9 @@ func cliRunCommandAllowed(args []string) bool {
 		"import-pst",
 		"import-slackdump",
 		"import-telegram",
+		"import-tiktok",
 		"import-discord-package",
+		"import-linkedin",
 		"import-x",
 		"import-synctech-sms",
 		"import-whatsapp",
@@ -1851,7 +1854,8 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams",
-		"sync-twilio":
+		"sync-twilio",
+		"sync-bland":
 		return true
 	default:
 		return false
@@ -2385,9 +2389,8 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var scope cliScope
-	grant := s.requestAuthentication(r).Grant
-	admitted, _ := r.Context().Value(agentReadScopeKey{}).(agentReadScope)
-	if grant != nil {
+	admitted, scoped := r.Context().Value(agentReadScopeKey{}).(agentReadScope)
+	if scoped {
 		scope = admitted.scope
 		if scope.Collection != nil {
 			collection = scope.Collection.Name
@@ -2410,7 +2413,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "empty_search", "empty search query")
 		return
 	}
-	if grant != nil {
+	if scoped {
 		parsed.AccountIDs = admitted.ids
 	}
 	resp := cliSearchResponse{
@@ -2418,14 +2421,14 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		ScopeSourceCount: len(scope.sourceIDs()),
 	}
 
-	if grant != nil {
+	if scoped {
 		resp.ScopeSourceCount = admitted.sourceCount()
 		if admitted.scope.Account.Input == "" {
-			resp.ScopeLabel = "agent grant"
+			resp.ScopeLabel = s.agentReadScopeLabel(r)
 		}
 	}
 	resp.IndexState = admitted.indexState
-	if grant == nil {
+	if !scoped {
 		resp.IndexState = s.ensureCLISearchIndexAsync(cliStore, true)
 	}
 	results, err := s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit+1, offset)
@@ -2459,7 +2462,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	}
 	// Search leaves summary BodyText empty; /cli/message serves full bodies.
 	resp.Results = results
-	if grant == nil && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
+	if !scoped && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
 		len(parsed.AccountAddrs) == 0 && len(parsed.ReceivedAddrs) == 0 &&
 		parsed.DeletionScope != search.DeletionScopeDeleted && parsed.DeletionScope != search.DeletionScopeAny {
 		resp.HybridAvailable = s.hybridHintAvailable(r.Context(), parsed.MessageTypes)

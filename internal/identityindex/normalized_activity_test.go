@@ -32,13 +32,17 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 				startDate: "2026-01-01 00:00:00", messageType: tc.messageType, conversationType: tc.conversationType,
 			})
 			messageType := "message_type"
+			senderID := "CASE WHEN id % 4 = 0 THEN NULL ELSE 2 END::BIGINT"
+			isFromMe := "id % 3 = 0"
 			if tc.mixed {
 				messageType = "CASE WHEN id % 5 = 0 THEN 'email' WHEN id % 7 = 0 THEN 'meeting_transcript' WHEN id % 6 = 0 THEN 'calendar_event' ELSE message_type END"
+				senderID = "CASE WHEN id IN (7, 14) THEN 1::BIGINT WHEN id % 4 = 0 THEN NULL ELSE 2 END::BIGINT"
+				isFromMe = "id % 3 = 0 OR id IN (7, 14)"
 			}
 			_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE equivalence_messages AS
 				SELECT * REPLACE (
-					CASE WHEN id % 4 = 0 THEN NULL ELSE 2 END::BIGINT AS sender_id,
-					(id % 3 = 0) AS is_from_me,
+					`+senderID+` AS sender_id,
+					(`+isFromMe+`) AS is_from_me,
 					(1 + id % 2)::BIGINT AS source_id,
 					(TIMESTAMP '2026-01-01' + (id // 4) * INTERVAL '1 second') AS sent_at,
 					(id % 3)::INTEGER AS attachment_count,
@@ -84,9 +88,13 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 				base("participants"), base("participant_clusters"), base("owner_participants"))
 			bounded := buildActivityRelation("sparse", base("conversation_participants"),
 				base("participants"), base("participant_clusters"), base("owner_participants"))
+			groups := "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)"
+			if tc.mixed {
+				groups = "(SELECT 7::BIGINT AS message_id, 7::BIGINT AS group_id UNION ALL SELECT 14, 7)"
+			}
 			if tc.mixed {
 				var meetingFacts, earlierRosterAttendeeFacts int64
-				facts := RelationshipTemperatureFactsSQL(bounded, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+				facts := RelationshipTemperatureFactsSQL(bounded, bounded, groups, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
 				requirements.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FILTER (WHERE meeting),
 					count(*) FILTER (WHERE meeting AND canonical_id = 4 AND message_id < 19)
 					FROM (`+facts+`)`).Scan(&meetingFacts, &earlierRosterAttendeeFacts))
@@ -99,7 +107,7 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 			}{
 				{"logical", buildLogicalActivityMaterializationSQL},
 				{"temperature", func(activity string) string {
-					return RelationshipTemperatureFactsSQL(activity, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+					return RelationshipTemperatureFactsSQL(activity, activity, groups, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
 				}},
 			} {
 				t.Run(reduction.name, func(t *testing.T) {

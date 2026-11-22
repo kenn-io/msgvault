@@ -1,7 +1,7 @@
 ---
 title: Agent quickstart
 description: Connect an agent to msgvault and work safely with an archive.
-last_edited: "2026-11-13"
+last_edited: "2026-11-17"
 ---
 
 Use msgvault's MCP server to find and read conversations, analyze archive
@@ -56,6 +56,13 @@ to see its tools. A missing tool or denied call can
 mean the grant is too narrow or a write class is disabled; ask the owner to
 review access instead of attempting to bypass it. A grant without `stats.read`
 cannot use `get_stats` as a universal connection check.
+
+Call `msgvault.skills {}` to list the bundled guides and
+`msgvault.skills {"name":"<guide-name>"}` to read one. They include this
+quickstart as `workflow` and every [agent skill](../guides/agent-skills.md). The
+tool works in every session, including delegated ones, and reads no archive data.
+
+Use owner tool `list_changes` to follow filtered message changes with a cursor.
 
 ## Find people and read conversations
 
@@ -159,7 +166,8 @@ Continue with the same `id` and advance `offset` by `body_returned` while
   using the profile selected by
   `integrations.docbank.attachment_search_profile`. Check the
   attachment list's actual mode, coverage, partial status and degradations.
-  Recordings support lexical mode only. See [attachment search](../usage/searching.md#search-mirrored-attachment-text).
+  Recordings use `integrations.docbank.recording_search_profile` and report
+  their own actual mode and degradations. See [attachment search](../usage/searching.md#search-mirrored-attachment-text).
 - Page search results with `offset` and `limit`; check `has_more`. See
   [search syntax](../usage/searching.md) and the tool schema for supported filters.
 - Use `aggregate` with `group_by`, such as `sender` or `time`, for grouped
@@ -224,6 +232,11 @@ backend checks for action permissions, source scope, and sender identity;
 <!-- BEGIN GENERATED tools -->
 | Tool | Class | Opt-in flag | Delegated access |
 | --- | --- | --- | --- |
+| `clear_person_attribute` | attribute_write | `--allow-attribute-writes` | owner-only |
+| `create_attribute_definition` | attribute_write | `--allow-attribute-writes` | owner-only |
+| `delete_attribute_definition` | attribute_write | `--allow-attribute-writes` | owner-only |
+| `patch_attribute_definition` | attribute_write | `--allow-attribute-writes` | owner-only |
+| `set_person_attribute` | attribute_write | `--allow-attribute-writes` | owner-only |
 | `calendar_create` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `calendar_delete` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `calendar_move` | calendar_write | `--allow-calendar-writes` | backend-dependent |
@@ -235,13 +248,16 @@ backend checks for action permissions, source scope, and sender identity;
 | `accept_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `reject_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |
+| `create_import_job` | import_write | `--allow-import-writes` | owner-only |
 | `create_kata_issue` | kata_write | `--allow-kata-writes` | owner-only |
 | `link_kata_evidence` | kata_write | `--allow-kata-writes` | owner-only |
 | `close_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `reopen_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `snooze_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `merge_person` | person_merge | `--allow-person-merges` | owner-only |
+| `create_person` | profile_write | `--allow-profile-writes` | owner-only |
 | `promote_person` | profile_write | `--allow-profile-writes` | owner-only |
+| `set_person_contact_list` | profile_write | `--allow-profile-writes` | owner-only |
 | `set_person_display_name` | profile_write | `--allow-profile-writes` | owner-only |
 | `update_person_notes` | profile_write | `--allow-profile-writes` | owner-only |
 | `aggregate` | read | — | search.read |
@@ -257,17 +273,22 @@ backend checks for action permissions, source scope, and sender identity;
 | `find_kata_issues` | read | — | owner-only |
 | `find_similar_messages` | read | — | owner-only |
 | `get_attachment` | read | — | attachment.read |
+| `get_attribute_definition` | read | — | owner-only |
 | `get_cache_build_status` | read | — | owner-only |
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
 | `get_deletion` | read | — | owner-only |
+| `get_email_family` | read | — | owner-only |
 | `get_embeddings_status` | read | — | owner-only |
 | `get_identity_match` | read | — | owner-only |
 | `get_identity_scoring_status` | read | — | owner-only |
+| `get_import_job` | read | — | owner-only |
 | `get_kata_issue_context` | read | — | owner-only |
 | `get_meeting_context` | read | — | owner-only |
 | `get_meeting_metrics` | read | — | owner-only |
+| `get_meeting_record` | read | — | message.read |
 | `get_message` | read | — | message.read |
+| `get_message_records` | read | — | message.read |
 | `get_message_tags` | read | — | owner-only |
 | `get_participant_identity` | read | — | owner-only |
 | `get_person_agenda` | read | — | owner-only |
@@ -285,6 +306,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_source_identities` | read | — | owner-only |
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
+| `list_attribute_definitions` | read | — | owner-only |
+| `list_changes` | read | — | owner-only |
 | `list_deletions` | read | — | owner-only |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |
@@ -292,9 +315,11 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
+| `list_person_attributes` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
+| `msgvault.skills` | read | — | guidance-only |
 | `prepare_kata_evidence` | read | — | owner-only |
 | `preview_carddav_publication` | read | — | owner-only |
 | `preview_person_tiers` | read | — | owner-only |
@@ -311,6 +336,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `search_tools` | read | — | metadata-only |
 | `search_visual_attachments` | read | — | owner-only |
 | `semantic_search_messages` | read | — | owner-only |
+| `suggest_meeting_links` | read | — | message.read |
 | `sync_source` | source_write | `--allow-source-writes` | owner-only |
 | `update_slack_sync_policy` | source_write | `--allow-source-writes` | owner-only |
 | `create_saved_view` | write | — | owner-only |
@@ -322,7 +348,10 @@ backend checks for action permissions, source scope, and sender identity;
 | `draft_recover` | write | — | backend-dependent |
 | `draft_reply` | write | — | backend-dependent |
 | `export_attachment` | write | — | owner-only |
+| `link_meeting` | write | — | owner-only |
+| `reset_meeting_link` | write | — | owner-only |
 | `stage_deletion` | write | — | owner-only |
+| `unlink_meeting` | write | — | owner-only |
 | `update_message_tags` | write | — | owner-only |
 | `update_saved_view` | write | — | owner-only |
 <!-- END GENERATED tools -->

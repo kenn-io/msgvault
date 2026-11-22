@@ -6,6 +6,26 @@ import TaskIssuePicker from './TaskIssuePicker.svelte';
 const item = { id: 'one', label: 'Send the budget' };
 
 describe('TaskIssuePicker', () => {
+  it.each([
+    ['garden#w3fa', true], ['  garden#w3fa  ', true],
+    ['other#w3fa', false], ['garden#w3fa#x', false],
+    ['garden#', false], ['garden#w3 fa', false],
+  ])('handles reference %s when lookup fails', async (query, valid) => {
+    const load = vi.fn(async (_query: string) => { throw new Error('Unavailable'); });
+    render(TaskIssuePicker, { load, noun: 'open issues', empty: 'No open issues.', project: 'garden' });
+    await screen.findByRole('alert');
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: query } });
+    await waitFor(() => expect(load.mock.calls.at(-1)?.[0]).toBe(query.trim()));
+    if (valid) {
+      const choice = await screen.findByRole('radio', { name: 'garden#w3fa · Not checked yet' });
+      await fireEvent.click(choice);
+      expect(choice).toHaveProperty('checked', true);
+    } else {
+      await screen.findByRole('alert');
+      expect(screen.queryByRole('radio')).toBeNull();
+    }
+  });
+
   it('keeps issue search guidance visible while filtering', async () => {
     let respond!: (result: { items: typeof item[]; truncated: boolean }) => void;
     const load = (query: string) => query ? new Promise<{ items: typeof item[]; truncated: boolean }>(resolve => { respond = resolve; }) : Promise.resolve({ items: [item], truncated: true });

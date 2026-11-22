@@ -2,6 +2,7 @@
   import { Button, SegmentedControl, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
   import { createKataIssue, linkKataEvidence, prepareKataEvidence, listOpenKataIssues } from '../../api/generated/api/api';
+  import { kataReadiness } from '../../kata/kata-ready.svelte';
   import TaskIssuePicker from '../common/TaskIssuePicker.svelte';
   import type { APIClient } from '../../api/client';
   import type { KataIssueCreateRequest, KataIssueReceipt } from '../../api/generated/models';
@@ -19,6 +20,7 @@
     onclose?: () => void;
   } = $props();
 
+  const kata = kataReadiness();
   let mode = $state<'create' | 'link'>('create');
   // The dialog is mounted per source, so props seed its editable state once.
   let title = $state(untrack(() => defaultTitle));
@@ -142,26 +144,14 @@
 
   <div class="kata-dialog" class:has-receipt={!!receipt}>
     {#if receipt}
-      {#if replayed}
-        <p role="status">Already filed as <strong>{receipt.qualified_ref}</strong> ({receipt.status}).</p>
-      {:else}
-        <p role="status">Saved to <strong>{receipt.qualified_ref}</strong>.</p>
-      {/if}
+      <div role="status"><p>{replayed ? `Already filed (${receipt.status}).` : 'Saved.'}</p><p>Kata · <strong>{receipt.qualified_ref}</strong></p></div>
       {#if receipt.web_url}<a href={receipt.web_url} target="_blank" rel="noreferrer">Open in Kata</a>{/if}
       {#if replayed}<Button label="File as a new issue" disabled={busy} onclick={() => void fileAgain()} />{/if}
       {#if error}<p role="alert">{error}</p>{/if}
     {:else}
       <form onsubmit={(event) => { event.preventDefault(); void submit(); }} aria-busy={busy}>
-        {#snippet issueMode()}<SegmentedControl variant="borderless" ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} />{/snippet}
-        {#if modeLabel}<div class="issue-mode"><span>Issue</span>{@render issueMode()}</div>{:else}{@render issueMode()}{/if}
-        {#if mode === 'create'}
-          <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>
-          <label>Brief<textarea aria-label="Brief" bind:value={brief} disabled={busy} rows="3" maxlength="2000"></textarea></label>
-        {:else}
-          <TaskIssuePicker load={loadIssues} noun="open issues" hint="Search by whole word. The list is capped at 25." empty="No open issues yet." disabled={busy} bind:selected />
-        {/if}
         <section aria-label="Quoted passage">
-          <p class="disclosure">Quote saved in Kata</p>
+          <p class="disclosure">Message quote</p>
           {#if loading}<p role="status">Preparing the passage…</p>{/if}
           {#if preview}<pre bind:this={excerptElement}>{preview.excerpt}</pre>{/if}
           {#if windowed}
@@ -176,9 +166,17 @@
             </div>
           {/if}
         </section>
+        {#snippet issueMode()}<SegmentedControl variant="borderless" ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} />{/snippet}
+        {#if modeLabel}<div class="issue-mode"><span>Issue</span>{@render issueMode()}</div>{:else}{@render issueMode()}{/if}
+        {#if mode === 'create'}
+          <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>
+          <label>Description<textarea aria-label="Description" bind:value={brief} disabled={busy} rows="3" maxlength="2000"></textarea></label>
+        {:else}
+          <TaskIssuePicker load={loadIssues} noun="open issues" hint="Search by whole word. The list is capped at 25." empty="No open issues yet." project={kata?.project} disabled={busy} bind:selected />
+        {/if}
         {#if error}<p role="alert">{error}</p>{/if}
         {#if deletedKey}<Button label="File as a new issue" disabled={busy} onclick={() => void fileAgain()} />{/if}
-        <p class="disclosure">Only the quoted passage is sent; attachments stay out.</p>
+        <p class="disclosure">{mode === 'create' ? 'The quote, title, and description are sent; attachments stay out.' : 'Only the quote is sent; attachments stay out.'}</p>
         <div class="actions"><Button label="Cancel" surface="soft" disabled={busy} onclick={onclose} />
         <Button type="submit" tone={canSubmit ? 'info' : 'neutral'} surface={canSubmit ? 'solid' : 'soft'} label={mode === 'create' ? 'Create issue' : 'Add quote'} disabled={!canSubmit} /></div>
       </form>
@@ -190,7 +188,8 @@
   .kata-dialog, form { display: grid; gap: var(--space-6); min-width: 0; }
   form { --field-text-size: 16px; }
   .kata-dialog { width: 100%; }
-  .kata-dialog.has-receipt { gap: var(--space-7); }
+  .kata-dialog.has-receipt { gap: var(--space-5); }
+  .has-receipt [role="status"] { display: grid; gap: var(--space-2); }
   p { margin: 0; }
   .disclosure { color: var(--text-secondary); font-size: var(--font-size-sm); }
   .issue-mode { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
@@ -200,6 +199,6 @@
   textarea { resize: vertical; padding: var(--space-2); color: var(--text-primary); background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
   section { display: grid; gap: var(--space-2); }
   pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 30px; max-height: 14rem; overflow: auto; font: inherit; font-family: var(--font-field); font-size: 16px; line-height: var(--type-body-line); padding: var(--space-2) var(--space-4); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
-  .passage-controls { display: flex; gap: var(--space-2); }
+  .passage-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }
 </style>

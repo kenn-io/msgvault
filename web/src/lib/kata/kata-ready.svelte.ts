@@ -50,11 +50,16 @@ export class IntegrationReadiness {
 }
 
 export class KataReadiness extends IntegrationReadiness {
+  project = $state('');
+
   constructor(client: APIClient) {
+    let setProject: (value: string) => void = () => undefined;
     super(async signal => {
       const { data } = await getKataIntegrationStatus({ ...client, signal });
+      if (data?.project) setProject(data.project);
       return !data || data.state === 'unreachable' ? undefined : data.state === 'ready';
     });
+    setProject = value => { this.project = value; };
   }
 }
 

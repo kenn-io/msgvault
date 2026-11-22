@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-22"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -359,9 +359,11 @@ profile.
 When the card uses the person's display name, changing that name updates the
 card on the next publish or sync. A formatted or structured profile name takes
 priority over the display label, including a formatted name imported from an
-address book. Edit that profile name to change the card's name. If another
-device removes or blanks the card's name and msgvault would otherwise upload
-the display name in its place, sync records a conflict instead.
+address book. Renaming the display label retires only the inferred profile name
+behind that label. Separately saved names remain and keep priority on the card.
+Edit that profile name to change the card's name. If another device removes or
+blanks the card's name and msgvault would otherwise upload the display name in
+its place, sync records a conflict instead.
 
 Cards published by earlier msgvault versions keep the name from their first
 upload as a separate formatted-name (`FN`) line. On the next publish or sync,
@@ -376,6 +378,19 @@ The same actions are available from the CLI:
 msgvault person publish 7
 msgvault person unpublish 7
 ```
+
+You can create and publish someone you have never messaged in one command:
+
+```bash
+msgvault person create --name "Alex Example" --email alex@example.com --publish
+```
+
+Creation saves the person first, then uses the same publication path as
+`person publish`. A publication failure leaves the local person saved and
+reports its ID. Retry with `msgvault person publish <person-id>`; when review
+is required, use the preview and approval steps below. Omitting `--publish`
+keeps creation local. See [Create a person](people.md#create-a-person) for
+contact types, duplicate refusal, and the API and MCP contracts.
 
 For integrations, the publication API is:
 
@@ -405,6 +420,12 @@ inferred facts against the last approved export. When they differ, sync skips
 that person, the publication response reports
 `inference_review_required: true`, and a plain publish fails with HTTP 409
 `carddav_inference_review_required`.
+
+Inferred facts include attributes such as Notes, the current employment,
+names, contact points, and postal addresses. Adding, replacing, or removing one,
+including through profile edits, requires a new review. A merge or split that
+moves an inferred fact to another person requires review of that person's card
+too.
 
 To review and approve, preview the card and then publish with its token:
 

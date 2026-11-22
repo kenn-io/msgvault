@@ -52,8 +52,14 @@ describe('explore labels', () => {
       )
     ).toBe('Word document');
     expect(fileTypeLabel('', 'archive')).toBe('Archive');
-    expect(fileTypeLabel(undefined, undefined)).toBe('Unknown type');
-    expect(fileTypeLabel('', 'unrecognized-family')).toBe('Unknown type');
+    expect(fileTypeLabel('application/octet-stream', 'other', 'report.DOCX')).toBe('DOCX');
+    expect(fileTypeLabel('application/octet-stream', 'other', 'archive.sqlite3')).toBe('SQLITE3');
+    expect(fileTypeLabel('text/plain', 'text', 'notes.pdf')).toBe('Text');
+    for (const name of ['Meeting notes. Final', '.bashrc']) {
+      expect(fileTypeLabel('application/octet-stream', 'other', name)).toBe('File');
+    }
+    expect(fileTypeLabel(undefined, undefined)).toBe('File');
+    expect(fileTypeLabel('', 'unrecognized-family')).toBe('File');
   });
 
   it('turns every server preflight reason into a sentence', () => {
@@ -95,6 +101,7 @@ describe('entryKindPresentation', () => {
     ['facebook_messages', 'Conversation'],
     ['instagram_messages', 'Conversation'],
     ['fbmessenger', 'Conversation'],
+    ['linkedin', 'Conversation'],
     ['matrix', 'Conversation'],
     ['telegram', 'Conversation'],
     ['x_dm', 'Conversation'],

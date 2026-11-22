@@ -374,10 +374,11 @@ func isPersonProfileValidationError(err error) bool {
 	for _, target := range []error{
 		store.ErrInvalidProvenance, store.ErrConfidenceScope,
 		store.ErrInvalidProfilePref, store.ErrInvalidProfileOrdinal, store.ErrInvalidPartialDate,
-		store.ErrInvalidPersonNameKind, store.ErrPersonNameValueMissing,
+		store.ErrInvalidPersonNameKind, store.ErrInvalidPersonNameText, store.ErrPersonNameValueMissing,
 		store.ErrInvalidContactAddressKind, store.ErrContactPointValueMissing,
 		store.ErrProviderIdentityNotExportable,
 		store.ErrInvalidPersonAddressKind, store.ErrPersonAddressValueMissing,
+		store.ErrInvalidPersonAddressExtendedComponents,
 		store.ErrInvalidPersonDateKind, store.ErrPersonDateValueMissing,
 		store.ErrPersonCategoryEmpty, store.ErrInvalidPersonMediaKind,
 		store.ErrPersonMediaEmpty, store.ErrPersonMediaTooLarge,

@@ -71,6 +71,7 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 		return Event{}, false, errors.New("stored ICS requires one VEVENT")
 	}
 	e := components[0].Event
+	e.ICalUID = components[0].UID
 	if meta.Status != "" {
 		e.Status = meta.Status
 		if e.Status == "cancelled" && e.Kind == "exception" {

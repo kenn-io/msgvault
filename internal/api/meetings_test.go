@@ -514,6 +514,7 @@ func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *test
 	requirements := require.New(t)
 	st := &meetingRouteStore{
 		mockStore:     &mockStore{},
+		contextResult: &meetingcontent.PacketResult{SchemaVersion: 1, Format: meetingcontent.FormatJSON, Content: "{}", ContentBytes: 2, OmittedMessageIDs: []int64{}},
 		actionsResult: &meetingcontent.ActionsPage{Rows: []meetingcontent.ActionRow{}},
 	}
 	engine := &meetingRouteEngine{MockEngine: &querytest.MockEngine{}, result: &query.ExploreMeetingSelection{
@@ -529,6 +530,15 @@ func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *test
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &failure))
 	assertions.Equal("selection_not_all_meetings", failure.Error)
 	assertions.Zero(st.contextCalls)
+
+	engine.result = &query.ExploreMeetingSelection{
+		SelectedCount: 2, MeetingCount: 1, MessageIDs: []int64{41, 42}, CacheRevision: "cache-r1",
+	}
+	explicit := `{"selection":{"mode":"explicit","predicate":{},"row_keys":["source:1:message:41","source:1:message:42"],"cache_revision":"cache-r1","search_provenance":{}}}`
+	response = httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", explicit))
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Equal([]int64{41, 42}, st.contextIDs)
 
 	engine.result = &query.ExploreMeetingSelection{
 		SelectedCount: 1, MeetingCount: 1, MessageIDs: []int64{41}, CacheRevision: "cache-r1",

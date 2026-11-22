@@ -35,6 +35,7 @@ import (
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/tasklinks"
@@ -1316,6 +1317,7 @@ func isLongDaemonRequest(path string) bool {
 		muesliImportEndpointPath,
 		muesliRecordingEndpointPath,
 		"/api/v1/cli/identities/discover",
+		"/api/v1/cli/messages/export",
 		"/api/v1/cli/rebuild-fts",
 		"/api/v1/cli/repair-encoding",
 		"/api/v1/cli/repair-message",
@@ -1611,13 +1613,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAuthenticatedHealth returns health details that are safe behind the
-// API-key boundary. Delegated callers and remote clients receive the public projection plus
-// APISchemaVersion only, so they can verify version compatibility without
-// seeing internal operation labels that name configured account identifiers.
+// API-key boundary. Delegated callers, remote clients, and callers under a
+// host's source scope receive the public projection plus APISchemaVersion
+// only, so they can verify version compatibility without seeing internal
+// operation labels that name configured account identifiers.
 func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatus(r.Context())
 	auth := s.requestAuthentication(r)
-	if auth.Mode == AuthModeDelegated || auth.Mode == AuthModeRemoteClient {
+	if auth.Mode == AuthModeDelegated || auth.Mode == AuthModeRemoteClient || sourcescope.Restricted(r.Context()) {
 		writeJSON(w, http.StatusOK, HealthResponse{
 			Status:           "ok",
 			Vector:           s.vectorHealthPublic(),

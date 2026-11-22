@@ -31,16 +31,17 @@ type PersonAttributeValue struct {
 
 // PersonAttributeValueInput sets one typed person attribute value.
 type PersonAttributeValueInput struct {
-	PersonID        int64
-	DefinitionSlug  string
-	Ordinal         *int64
-	Value           AttributeValue
-	ActiveFrom      *time.Time
-	ActiveUntil     *time.Time
-	Source          Provenance
-	SourceRef       *string
-	Confidence      *float64
-	Actor           *string
+	PersonID       int64
+	DefinitionSlug string
+	Ordinal        *int64
+	Value          AttributeValue
+	ActiveFrom     *time.Time
+	ActiveUntil    *time.Time
+	Source         Provenance
+	SourceRef      *string
+	Confidence     *float64
+	Actor          *string
+	// ExpectedValueID compares the current slot; zero requires an empty slot.
 	ExpectedValueID *int64
 	DryRun          bool
 }
@@ -66,6 +67,7 @@ type PersonAttributeWrite struct {
 // PersonAttributeQuery filters a person's attribute values.
 type PersonAttributeQuery struct {
 	DefinitionSlug string
+	Ordinal        *int64
 	IncludeHistory bool
 }
 
@@ -107,7 +109,7 @@ func (s *Store) listPersonAttributeValuesContext(
 	personID int64, query PersonAttributeQuery,
 ) ([]PersonAttributeValue, error) {
 	rows, err := s.listAttributeValuesContext(ctx, queryer, personAttributeOwner,
-		personID, query.DefinitionSlug, query.IncludeHistory)
+		personID, query.DefinitionSlug, query.Ordinal, query.IncludeHistory)
 	if err != nil {
 		return nil, err
 	}
@@ -148,12 +150,9 @@ func (s *Store) SetPersonAttributeValueContext(
 			if err := s.lockEmploymentPeopleTx(ctx, tx, input.PersonID); err != nil {
 				return nil, err
 			}
-			var inferenceProjectionBefore map[int64]personInferenceExportProjection
-			if provenanceIsInferred(input.Source) {
-				inferenceProjectionBefore, err = s.captureInferenceExportPeopleTx(ctx, tx, input.PersonID)
-				if err != nil {
-					return nil, fmt.Errorf("load inference export projection before attribute write: %w", err)
-				}
+			inferenceProjectionBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, input.PersonID)
+			if err != nil {
+				return nil, fmt.Errorf("load inference export projection before attribute write: %w", err)
 			}
 			write, err := s.setAttributeValueTx(ctx, tx, personAttributeOwner,
 				*definition, personAttributeInput(input), activeFrom, now)
@@ -173,6 +172,10 @@ func (s *Store) SetPersonAttributeValueContext(
 				if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceProjectionBefore); err != nil {
 					return nil, err
 				}
+			} else if err := s.invalidateInferenceFullNameExposureChangesTx(
+				ctx, tx, inferenceProjectionBefore,
+			); err != nil {
+				return nil, err
 			}
 			return write, nil
 		})
@@ -251,6 +254,10 @@ func (s *Store) SupersedePersonAttributeValueContext(
 			if err != nil {
 				return nil, err
 			}
+			inferenceProjectionBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, input.PersonID)
+			if err != nil && !errors.Is(err, ErrPersonNotFound) {
+				return nil, fmt.Errorf("load inference export projection before attribute supersede: %w", err)
+			}
 			closed, err := s.supersedeAttributeValueTx(ctx, tx, personAttributeOwner, *definition,
 				input.PersonID, input.Ordinal, input.ExpectedValueID, at, now)
 			if err != nil {
@@ -261,6 +268,11 @@ func (s *Store) SupersedePersonAttributeValueContext(
 				return nil, err
 			}
 			if err := s.bumpPersonVCardProjectionsTx(ctx, tx, input.PersonID); err != nil {
+				return nil, err
+			}
+			if err := s.invalidateInferenceFullNameExposureChangesTx(
+				ctx, tx, inferenceProjectionBefore,
+			); err != nil {
 				return nil, err
 			}
 			return &attributeValueWrite{Superseded: closed}, nil

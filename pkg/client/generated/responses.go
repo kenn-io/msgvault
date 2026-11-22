@@ -679,6 +679,22 @@ type GetCLIMessageThreadErrorResponseJSON503 = ErrorResponse
 
 type GetCLIMessageThreadErrorResponseJSONDefault = ErrorResponse
 
+type ExportCLIMessagesResponse = []byte
+
+type ExportCLIMessagesErrorResponse = ErrorResponse
+
+type ExportCLIMessagesErrorResponseJSON = ErrorResponse
+
+type ExportCLIMessagesErrorResponseJSON403 = ErrorResponse
+
+type ExportCLIMessagesErrorResponseJSON404 = ErrorResponse
+
+type ExportCLIMessagesErrorResponseJSON500 = ErrorResponse
+
+type ExportCLIMessagesErrorResponseJSON503 = ErrorResponse
+
+type ExportCLIMessagesErrorResponseJSONDefault = ErrorResponse
+
 type RebuildCLIFTSResponse = []byte
 
 type RebuildCLIFTSErrorResponse = ErrorResponse
@@ -2015,6 +2031,26 @@ type GetMeetingContextErrorResponseJSON503 = ErrorResponse
 
 type GetMeetingContextErrorResponseJSONDefault = ErrorResponse
 
+type DecideMeetingLinkResponse = MeetingLinkDecisionResult
+
+type DecideMeetingLinkErrorResponse = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON404 = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON409 = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON413 = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON415 = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON500 = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON503 = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSONDefault = ErrorResponse
+
 type GetMeetingMetricsResponse = Metrics
 
 type GetMeetingMetricsErrorResponse = ErrorResponse
@@ -2035,6 +2071,38 @@ type GetMeetingMetricsErrorResponseJSON503 = ErrorResponse
 
 type GetMeetingMetricsErrorResponseJSONDefault = ErrorResponse
 
+type GetMeetingRecordResponse = MeetingRecord
+
+type GetMeetingRecordErrorResponse = ErrorResponse
+
+type GetMeetingRecordErrorResponseJSON = ErrorResponse
+
+type GetMeetingRecordErrorResponseJSON403 = ErrorResponse
+
+type GetMeetingRecordErrorResponseJSON404 = ErrorResponse
+
+type GetMeetingRecordErrorResponseJSON500 = ErrorResponse
+
+type GetMeetingRecordErrorResponseJSON503 = ErrorResponse
+
+type GetMeetingRecordErrorResponseJSONDefault = ErrorResponse
+
+type SuggestMeetingLinksResponse = MeetingSuggestionPage
+
+type SuggestMeetingLinksErrorResponse = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON403 = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON404 = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON500 = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON503 = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSONDefault = ErrorResponse
+
 type ListMessagesResponse = MessageListResponse
 
 type ListMessagesErrorResponse = ErrorResponse
@@ -2044,6 +2112,12 @@ type ListChangedMessagesResponse = ChangesResponse
 type ListChangedMessagesErrorResponse = ErrorResponse
 
 type ListChangedMessagesErrorResponseJSON = ErrorResponse
+
+type ListChangedMessagesErrorResponseJSON404 = ErrorResponse
+
+type ListChangedMessagesErrorResponseJSON409 = ErrorResponse
+
+type ListChangedMessagesErrorResponseJSON422 = ErrorResponse
 
 type ListChangedMessagesErrorResponseJSON429 = ErrorResponse
 
@@ -2064,6 +2138,20 @@ type GetGmailIDsByFilterErrorResponse = ErrorResponse
 type GetMessageResponse = MessageDetail
 
 type GetMessageErrorResponse = ErrorResponse
+
+type GetEmailFamilyResponse = EmailFamily
+
+type GetEmailFamilyErrorResponse = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON403 = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON404 = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON503 = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSONDefault = ErrorResponse
 
 type GetMessageInlinePartResponse = runtime.File
 
@@ -2665,6 +2753,16 @@ type FindContactCandidatesErrorResponseJSON503 = ErrorResponse
 
 type FindContactCandidatesErrorResponseJSONDefault = ErrorResponse
 
+type CreateStandalonePersonResponse = Person
+
+type CreateStandalonePersonErrorResponse = ErrorResponse
+
+type CreateStandalonePersonErrorResponseJSON = ErrorResponse
+
+type CreateStandalonePersonErrorResponseJSON503 = ErrorResponse
+
+type CreateStandalonePersonErrorResponseJSONDefault = ErrorResponse
+
 type ListDirectoryPeopleResponse = DirectoryPeopleResponse
 
 type ListDirectoryPeopleErrorResponse = ErrorResponse
@@ -3030,6 +3128,16 @@ type SetPersonFactPinErrorResponseJSON409 = ErrorResponse
 type SetPersonFactPinErrorResponseJSON503 = ErrorResponse
 
 type SetPersonFactPinErrorResponseJSONDefault = ErrorResponse
+
+type GetPersonFactSummaryResponse = FactSummary
+
+type GetPersonFactSummaryErrorResponse = ErrorResponse
+
+type GetPersonFactSummaryErrorResponseJSON = ErrorResponse
+
+type GetPersonFactSummaryErrorResponseJSON503 = ErrorResponse
+
+type GetPersonFactSummaryErrorResponseJSONDefault = ErrorResponse
 
 type SearchPersonFilesResponse = PersonFileSearchHTTPResponse
 
@@ -5005,6 +5113,19 @@ type GetCLIMessageThreadResp struct {
 	JSONDefault  *GetCLIMessageThreadErrorResponseJSONDefault
 }
 
+type ExportCLIMessagesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *ExportCLIMessagesErrorResponse
+	JSON401      *ExportCLIMessagesErrorResponseJSON
+	JSON403      *ExportCLIMessagesErrorResponseJSON403
+	JSON404      *ExportCLIMessagesErrorResponseJSON404
+	JSON500      *ExportCLIMessagesErrorResponseJSON500
+	JSON503      *ExportCLIMessagesErrorResponseJSON503
+	JSONDefault  *ExportCLIMessagesErrorResponseJSONDefault
+}
+
 type RebuildCLIFTSResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5965,6 +6086,22 @@ type GetMeetingContextResp struct {
 	JSONDefault  *GetMeetingContextErrorResponseJSONDefault
 }
 
+type DecideMeetingLinkResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *DecideMeetingLinkResponse
+	JSON400      *DecideMeetingLinkErrorResponse
+	JSON401      *DecideMeetingLinkErrorResponseJSON
+	JSON404      *DecideMeetingLinkErrorResponseJSON404
+	JSON409      *DecideMeetingLinkErrorResponseJSON409
+	JSON413      *DecideMeetingLinkErrorResponseJSON413
+	JSON415      *DecideMeetingLinkErrorResponseJSON415
+	JSON500      *DecideMeetingLinkErrorResponseJSON500
+	JSON503      *DecideMeetingLinkErrorResponseJSON503
+	JSONDefault  *DecideMeetingLinkErrorResponseJSONDefault
+}
+
 type GetMeetingMetricsResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5979,6 +6116,34 @@ type GetMeetingMetricsResp struct {
 	JSON500      *GetMeetingMetricsErrorResponseJSON500
 	JSON503      *GetMeetingMetricsErrorResponseJSON503
 	JSONDefault  *GetMeetingMetricsErrorResponseJSONDefault
+}
+
+type GetMeetingRecordResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMeetingRecordResponse
+	JSON400      *GetMeetingRecordErrorResponse
+	JSON401      *GetMeetingRecordErrorResponseJSON
+	JSON403      *GetMeetingRecordErrorResponseJSON403
+	JSON404      *GetMeetingRecordErrorResponseJSON404
+	JSON500      *GetMeetingRecordErrorResponseJSON500
+	JSON503      *GetMeetingRecordErrorResponseJSON503
+	JSONDefault  *GetMeetingRecordErrorResponseJSONDefault
+}
+
+type SuggestMeetingLinksResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SuggestMeetingLinksResponse
+	JSON400      *SuggestMeetingLinksErrorResponse
+	JSON401      *SuggestMeetingLinksErrorResponseJSON
+	JSON403      *SuggestMeetingLinksErrorResponseJSON403
+	JSON404      *SuggestMeetingLinksErrorResponseJSON404
+	JSON500      *SuggestMeetingLinksErrorResponseJSON500
+	JSON503      *SuggestMeetingLinksErrorResponseJSON503
+	JSONDefault  *SuggestMeetingLinksErrorResponseJSONDefault
 }
 
 type ListMessagesResp struct {
@@ -5996,6 +6161,9 @@ type ListChangedMessagesResp struct {
 	JSON200      *ListChangedMessagesResponse
 	JSON400      *ListChangedMessagesErrorResponse
 	JSON401      *ListChangedMessagesErrorResponseJSON
+	JSON404      *ListChangedMessagesErrorResponseJSON404
+	JSON409      *ListChangedMessagesErrorResponseJSON409
+	JSON422      *ListChangedMessagesErrorResponseJSON422
 	JSON429      *ListChangedMessagesErrorResponseJSON429
 	JSON500      *ListChangedMessagesErrorResponseJSON500
 	JSON503      *ListChangedMessagesErrorResponseJSON503
@@ -6024,6 +6192,19 @@ type GetMessageResp struct {
 	StatusCode   int
 	JSON200      *GetMessageResponse
 	JSONDefault  *GetMessageErrorResponse
+}
+
+type GetEmailFamilyResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetEmailFamilyResponse
+	JSON400      *GetEmailFamilyErrorResponse
+	JSON401      *GetEmailFamilyErrorResponseJSON
+	JSON403      *GetEmailFamilyErrorResponseJSON403
+	JSON404      *GetEmailFamilyErrorResponseJSON404
+	JSON503      *GetEmailFamilyErrorResponseJSON503
+	JSONDefault  *GetEmailFamilyErrorResponseJSONDefault
 }
 
 type GetMessageInlinePartResp struct {
@@ -6487,6 +6668,22 @@ type FindContactCandidatesResp struct {
 	JSONDefault  *FindContactCandidatesErrorResponseJSONDefault
 }
 
+type CreateStandalonePersonResp201Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type CreateStandalonePersonResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateStandalonePersonResponse
+	Headers201   *CreateStandalonePersonResp201Headers
+	JSON400      *CreateStandalonePersonErrorResponse
+	JSON409      *CreateStandalonePersonErrorResponseJSON
+	JSON503      *CreateStandalonePersonErrorResponseJSON503
+	JSONDefault  *CreateStandalonePersonErrorResponseJSONDefault
+}
+
 type ListDirectoryPeopleResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -6864,6 +7061,17 @@ type SetPersonFactPinResp struct {
 	JSON409      *SetPersonFactPinErrorResponseJSON409
 	JSON503      *SetPersonFactPinErrorResponseJSON503
 	JSONDefault  *SetPersonFactPinErrorResponseJSONDefault
+}
+
+type GetPersonFactSummaryResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonFactSummaryResponse
+	JSON400      *GetPersonFactSummaryErrorResponse
+	JSON404      *GetPersonFactSummaryErrorResponseJSON
+	JSON503      *GetPersonFactSummaryErrorResponseJSON503
+	JSONDefault  *GetPersonFactSummaryErrorResponseJSONDefault
 }
 
 type SearchPersonFilesResp struct {
