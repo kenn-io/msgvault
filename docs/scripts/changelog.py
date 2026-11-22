@@ -7,18 +7,9 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 SECTIONS = ("Upgrade notes", "New features", "Improvements", "Bug fixes")
-
-
-def replace(path, data):
-    with tempfile.TemporaryDirectory(dir=path.parent) as directory:
-        temporary = Path(directory) / path.name
-        temporary.write_bytes(data)
-        temporary.chmod(path.stat().st_mode)
-        os.replace(temporary, path)
 
 
 def fragments():
@@ -26,7 +17,7 @@ def fragments():
     for path in sorted((ROOT / "docs/changelog.d").glob("*.md")):
         text = path.read_text(encoding="utf-8").strip()
         lines = text.splitlines()
-        if not lines or lines[0] not in [f"### {s}" for s in SECTIONS] or any(line.startswith("### ") for line in lines[1:]):
+        if not lines or lines[0] not in [f"### {s}" for s in SECTIONS] or any(re.match(r"^#{1,3} ", line) for line in lines[1:]):
             raise ValueError(f"{path}: expected one known section heading at the start")
         notes[path] = (lines[0][4:], "\n".join(lines[1:]).strip())
     return notes
@@ -71,30 +62,20 @@ def main():
         if args.command == "release" and (not re.fullmatch(r"\d+\.\d+\.\d+", args.version) or not re.fullmatch(r"\d{4}-\d\d-\d\d", args.date)):
             raise ValueError("release requires a version X.Y.Z and date YYYY-MM-DD")
         path = ROOT / "docs/changelog.md"
-        original = path.read_bytes()
-        changelog = original.decode("utf-8")
+        changelog = path.read_text(encoding="utf-8")
         notes = fragments()
         if args.command == "render":
-            args.output.write_text(fold(changelog, notes, sorted(notes)), encoding="utf-8")
+            args.output.write_text(fold(changelog, notes, notes), encoding="utf-8")
         else:
             if re.search(rf"(?m)^## {re.escape(args.version)}\s*$", changelog):
                 raise ValueError(f"version {args.version} already exists")
             result = fold(changelog, notes, release_order(notes))
+            if not result.split("## Unreleased\n", 1)[1].partition("\n## ")[0].strip():
+                raise ValueError("no release notes")
             result = result.replace("## Unreleased\n", f"## Unreleased\n\n## {args.version}\n<small>{args.date}</small>\n", 1)
-            saved = {fragment: (fragment.read_bytes(), fragment.stat().st_mode) for fragment in notes}
-            replace(path, result.encode("utf-8"))
-            deleted = []
-            try:
-                for fragment in notes:
-                    fragment.unlink()
-                    deleted.append(fragment)
-            except OSError:
-                for fragment in deleted:
-                    content, mode = saved[fragment]
-                    fragment.write_bytes(content)
-                    fragment.chmod(mode)
-                replace(path, original)
-                raise
+            path.write_text(result, encoding="utf-8")
+            for fragment in notes:
+                fragment.unlink()
     except (OSError, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 1
