@@ -166,14 +166,19 @@ func TestConversationPolicySubsetKeepsConfiguredClassification(t *testing.T) {
 	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: "message", MessageType: "beeper"})
 	requirements.NoError(err)
 	requirements.NoError(st.SetConversationMemberCountContext(t.Context(), room, 21))
-	// Classification, not an override, makes this quiet large room Cold.
-	_, err = st.ConfigureConversationPolicy(t.Context(), conversationpolicy.RecommendedSettings(), time.Now())
+	// Classification, not an override, makes this quiet large room Cold. The
+	// configured overrides name one copied room and one room outside the subset.
+	settings := conversationpolicy.RecommendedSettings()
+	settings.Overrides = []conversationpolicy.Override{
+		{SourceType: "beeper", SourceIdentifier: "configured-subset-policy", ConversationID: "large-room", Tier: conversationpolicy.Cold},
+		{SourceType: "beeper", SourceIdentifier: "excluded-account", ConversationID: "excluded-room", Tier: conversationpolicy.Full},
+	}
+	_, err = st.ConfigureConversationPolicy(t.Context(), settings, time.Now())
 	requirements.NoError(err)
 	rows, err := st.ListConversationPolicies(t.Context())
 	requirements.NoError(err)
 	requirements.Len(rows, 1)
 	requirements.Equal(conversationpolicy.Cold, rows[0].EffectiveTier)
-	requirements.Empty(rows[0].Override)
 	dest := filepath.Join(dir, "subset")
 	_, err = store.CopySubset(t.Context(), path, dest, 1, false)
 	requirements.NoError(err)
@@ -185,6 +190,12 @@ func TestConversationPolicySubsetKeepsConfiguredClassification(t *testing.T) {
 	requirements.Len(rows, 1)
 	assertions.Equal(conversationpolicy.Cold, rows[0].EffectiveTier,
 		"the subset must classify copied rooms with the source's policy settings")
+	copiedSettings, err := copied.ConversationPolicySettingsContext(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(settings.MaxParticipants, copiedSettings.MaxParticipants)
+	assertions.Equal(settings.ActivityWindowDays, copiedSettings.ActivityWindowDays)
+	assertions.Equal(settings.Overrides[:1], copiedSettings.Overrides,
+		"overrides for rooms outside the subset must not reveal their accounts or rooms")
 }
 
 func TestConversationPolicySubsetBootstrapsLegacySource(t *testing.T) {
