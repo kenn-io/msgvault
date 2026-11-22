@@ -7,9 +7,18 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 SECTIONS = ("Upgrade notes", "New features", "Improvements", "Bug fixes")
+
+
+def replace(path, data):
+    with tempfile.TemporaryDirectory(dir=path.parent) as directory:
+        temporary = Path(directory) / path.name
+        temporary.write_bytes(data)
+        temporary.chmod(path.stat().st_mode)
+        os.replace(temporary, path)
 
 
 def fragments():
@@ -59,6 +68,8 @@ def main():
     release.add_argument("date")
     args = parser.parse_args()
     try:
+        if args.command == "release" and (not re.fullmatch(r"\d+\.\d+\.\d+", args.version) or not re.fullmatch(r"\d{4}-\d\d-\d\d", args.date)):
+            raise ValueError("release requires a version X.Y.Z and date YYYY-MM-DD")
         path = ROOT / "docs/changelog.md"
         original = path.read_bytes()
         changelog = original.decode("utf-8")
@@ -71,18 +82,18 @@ def main():
             result = fold(changelog, notes, release_order(notes))
             result = result.replace("## Unreleased\n", f"## Unreleased\n\n## {args.version}\n<small>{args.date}</small>\n", 1)
             saved = {fragment: (fragment.read_bytes(), fragment.stat().st_mode) for fragment in notes}
-            path.write_text(result, encoding="utf-8")
+            replace(path, result.encode("utf-8"))
             deleted = []
             try:
                 for fragment in notes:
                     fragment.unlink()
                     deleted.append(fragment)
             except OSError:
-                path.write_bytes(original)
                 for fragment in deleted:
                     content, mode = saved[fragment]
                     fragment.write_bytes(content)
                     fragment.chmod(mode)
+                replace(path, original)
                 raise
     except (OSError, ValueError) as exc:
         print(exc, file=sys.stderr)

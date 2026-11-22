@@ -26,7 +26,7 @@ class ChangelogTest(unittest.TestCase):
         self.addCleanup(self.root_patch.stop)
         (self.root / "docs").mkdir()
         self.log = self.root / "docs/changelog.md"
-        self.log.write_text("# Changelog\n\n## Unreleased\n\n### Improvements\n\n- Existing\n\n## 1.0\n<small>2020-01-01</small>\n")
+        self.log.write_text("# Changelog\n\n## Unreleased\n\n### Improvements\n\n- Existing\n\n## 1.0.0\n<small>2020-01-01</small>\n")
 
     def git(self, *args):
         return subprocess.check_output(["git", *args], cwd=self.root, stderr=subprocess.PIPE).decode().strip()
@@ -65,8 +65,8 @@ class ChangelogTest(unittest.TestCase):
         self.git("checkout", "main")
         self.git("merge", "--no-ff", "first", "-m", "merge first")
         self.git("merge", "--no-ff", "second", "-m", "merge second")
-        self.assertEqual((0, ""), self.run_command("release", "2.0", "2026-01-01"))
-        self.assertIn("## Unreleased\n\n## 2.0\n<small>2026-01-01</small>\n\n### Improvements\n\n- Existing\n- First\n- Second\n", self.log.read_text())
+        self.assertEqual((0, ""), self.run_command("release", "2.0.0", "2026-01-01"))
+        self.assertIn("## Unreleased\n\n## 2.0.0\n<small>2026-01-01</small>\n\n### Improvements\n\n- Existing\n- First\n- Second\n", self.log.read_text())
         self.assertFalse(first.exists())
         self.assertFalse(second.exists())
 
@@ -95,7 +95,7 @@ class ChangelogTest(unittest.TestCase):
         self.note("later.md", "### Bug fixes\n\n- Re-added\n")
         self.git("add", ".")
         self.git("commit", "-m", "re-add")
-        self.assertEqual((0, ""), self.run_command("release", "2.0", "2026-01-01"))
+        self.assertEqual((0, ""), self.run_command("release", "2.0.0", "2026-01-01"))
         self.assertIn("- Unicode\n- Cafe\n- Re-added", self.log.read_text())
 
     def test_invalid_sections_report_filename(self):
@@ -106,18 +106,43 @@ class ChangelogTest(unittest.TestCase):
                 self.assertEqual(1, result)
                 self.assertIn("invalid.md", error)
 
-    def test_existing_version_and_write_failure_preserve_fragments(self):
+    def test_existing_version_preserves_fragments(self):
         self.init()
         fragment = self.note("note.md", "### Bug fixes\n\n- Note\n")
-        result, error = self.run_command("release", "1.0", "2026-01-01")
+        result, error = self.run_command("release", "1.0.0", "2026-01-01")
         self.assertEqual(1, result)
         self.assertIn("already exists", error)
         self.assertTrue(fragment.exists())
-        with patch.object(Path, "write_text", side_effect=OSError("write failed")):
-            result, error = self.run_command("release", "2.0", "2026-01-01")
+
+    def test_partial_write_preserves_changelog_and_fragments(self):
+        self.init()
+        fragment = self.note("note.md", "### Bug fixes\n\n- Note\n")
+        original = self.log.read_bytes()
+        mode = self.log.stat().st_mode
+        write_bytes = Path.write_bytes
+
+        def fail_write(path, data):
+            write_bytes(path, data[:10])
+            raise OSError("write failed")
+
+        with patch.object(Path, "write_bytes", fail_write):
+            result, error = self.run_command("release", "2.0.0", "2026-01-01")
         self.assertEqual(1, result)
         self.assertIn("write failed", error)
-        self.assertTrue(fragment.exists())
+        self.assertEqual(original, self.log.read_bytes())
+        self.assertEqual(b"### Bug fixes\n\n- Note\n", fragment.read_bytes())
+        self.assertEqual((0, ""), self.run_command("release", "2.0.0", "2026-01-01"))
+        self.assertEqual(mode, self.log.stat().st_mode)
+
+    def test_release_rejects_invalid_inputs_before_reading_files(self):
+        for version, date in (("", "2026-01-01"), ("2.0", "2026-01-01"), ("2.0.0", ""), ("2.0.0", "2026-1-01")):
+            with self.subTest(version=version, date=date):
+                original = self.log.read_bytes()
+                with patch.object(Path, "read_bytes", side_effect=AssertionError("read before validation")):
+                    result, error = self.run_command("release", version, date)
+                self.assertEqual(1, result)
+                self.assertIn("version X.Y.Z and date YYYY-MM-DD", error)
+                self.assertEqual(original, self.log.read_bytes())
 
     def test_release_rolls_back_after_partial_fragment_deletion(self):
         self.init()
@@ -132,13 +157,13 @@ class ChangelogTest(unittest.TestCase):
             unlink(path)
 
         with patch.object(Path, "unlink", fail_second):
-            result, error = self.run_command("release", "2.0", "2026-01-01")
+            result, error = self.run_command("release", "2.0.0", "2026-01-01")
         self.assertEqual(1, result)
         self.assertIn("delete failed", error)
         self.assertEqual(original, self.log.read_bytes())
         self.assertEqual(b"### Bug fixes\n\n- First\n", first.read_bytes())
         self.assertEqual(b"### Bug fixes\n\n- Second\n", second.read_bytes())
-        self.assertEqual((0, ""), self.run_command("release", "2.0", "2026-01-01"))
+        self.assertEqual((0, ""), self.run_command("release", "2.0.0", "2026-01-01"))
 
     def test_shallow_clone_refuses_release(self):
         self.init()
@@ -146,7 +171,7 @@ class ChangelogTest(unittest.TestCase):
             clone = Path(clone_dir) / "clone"
             self.git("clone", "--depth=1", f"file://{self.root}", str(clone))
             with patch.object(changelog, "ROOT", clone):
-                result, error = self.run_command("release", "2.0", "2026-01-01")
+                result, error = self.run_command("release", "2.0.0", "2026-01-01")
         self.assertEqual(1, result)
         self.assertIn("release needs full Git history", error)
 
