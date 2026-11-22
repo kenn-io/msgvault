@@ -135,6 +135,54 @@ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message
 		"coverage remains a partition when an embedding batch commits between reads")
 }
 
+func TestFillFullCoverageKeepsSnapshotAcrossReplacementRestamp(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	vecPath := newEmbeddingMetadataTestDBFileAt(t, filepath.Join(dataDir, "vectors.db"))
+	main := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dataDir, "msgvault.db"))
+	_, err := main.DB().ExecContext(t.Context(), `
+INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
+INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
+INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES
+	(1, 1, 1, 'active-stamped', 'email', 2);
+`)
+	require.NoError(err)
+	require.NoError(main.Close())
+	ctx, cfg := withEmbeddingCommandConfigDataDir(t, vecPath, dataDir)
+	backend, closeBackend, err := openEmbeddingsBackend(ctx)
+	require.NoError(err, "open embeddings backend")
+	t.Cleanup(closeBackend)
+	require.NoError(backend.Upsert(ctx, 2, []vector.Chunk{
+		{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
+	}), "seed the active generation's vector")
+	snapshot, ok := backend.(vector.CoverageSnapshotBackend)
+	require.True(ok, "SQLite coverage backend supports a scoped message-ID intersection")
+
+	// A replacement build stamps the message for its own generation after the
+	// coverage snapshot captured it as stamped for the active one.
+	interleaved := &interleavingCoverageBackend{
+		Backend:  backend,
+		snapshot: snapshot,
+		commit: func(ctx context.Context) error {
+			main, err := store.OpenContext(ctx, cfg.DatabaseDSN())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = main.Close() }()
+			_, err = main.DB().ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = ?`, 3, 1)
+			return err
+		},
+	}
+
+	row := embeddingGenerationRow{ID: 2}
+	require.NoError(fillFullCoverage(ctx, interleaved, cfg.Vector.Embed.Scope.BuildScope(), &row))
+	assert.Equal(int64(1), row.LiveCount)
+	assert.Equal(int64(1), row.EmbeddedCount,
+		"the snapshot's stamped message keeps its still-valid active vector")
+	assert.Equal(int64(0), row.BlankCount)
+}
+
 type interleavingCoverageBackend struct {
 	vector.Backend
 
@@ -152,10 +200,10 @@ func (b *interleavingCoverageBackend) commitBeforeCount(ctx context.Context) err
 }
 
 func (b *interleavingCoverageBackend) EmbeddedMessageCountForSnapshot(
-	ctx context.Context, gen vector.GenerationID, stampedMessageIDs []int64,
+	ctx context.Context, gen vector.GenerationID, stampedRevisions map[int64]int64,
 ) (int64, error) {
 	if err := b.commitBeforeCount(ctx); err != nil {
 		return 0, err
 	}
-	return b.snapshot.EmbeddedMessageCountForSnapshot(ctx, gen, stampedMessageIDs)
+	return b.snapshot.EmbeddedMessageCountForSnapshot(ctx, gen, stampedRevisions)
 }

@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -179,8 +181,8 @@ func TestScanEmbeddingCoverageStreamsStampedLiveIDsInBatches(t *testing.T) {
 	live, stamped, err := st.ScanEmbeddingCoverage(ctx, 7, store.EmbeddingCoverageScan{
 		SourceIDs: []int64{fx.srcA.ID},
 		BatchSize: 2,
-		VisitStamped: func(messageIDs []int64) error {
-			batches = append(batches, append([]int64(nil), messageIDs...))
+		VisitStamped: func(revisions map[int64]int64) error {
+			batches = append(batches, slices.Sorted(maps.Keys(revisions)))
 			return nil
 		},
 	})
@@ -200,7 +202,7 @@ func TestScanEmbeddingCoverageStopsOnVisitError(t *testing.T) {
 
 	_, _, err := st.ScanEmbeddingCoverage(ctx, 7, store.EmbeddingCoverageScan{
 		BatchSize:    10,
-		VisitStamped: func([]int64) error { return visitErr },
+		VisitStamped: func(map[int64]int64) error { return visitErr },
 	})
 	require.ErrorIs(t, err, visitErr)
 }
@@ -208,7 +210,7 @@ func TestScanEmbeddingCoverageStopsOnVisitError(t *testing.T) {
 func TestScanEmbeddingCoverageRejectsNonPositiveBatchSize(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	_, _, err := st.ScanEmbeddingCoverage(t.Context(), 7, store.EmbeddingCoverageScan{
-		VisitStamped: func([]int64) error { return nil },
+		VisitStamped: func(map[int64]int64) error { return nil },
 	})
 	require.ErrorContains(t, err, "batch size must be positive")
 }

@@ -494,12 +494,13 @@ type FilteredCoverageBackend interface {
 	EmbeddedMessageCountForIDs(ctx context.Context, gen GenerationID, messageIDs []int64) (int64, error)
 }
 
-// CoverageSnapshotBackend intersects a generation with live, stamped message
-// IDs captured from one main-database read snapshot. Implementations count only
-// the supplied population and do not re-read mutable message lifecycle state.
-// Callers page at FilteredCoverageBatchSize.
+// CoverageSnapshotBackend intersects a generation with live, stamped messages
+// captured from one main-database read snapshot, each mapped to the embedding
+// revision that snapshot read. Implementations count only vectors for the
+// supplied population at those revisions and do not re-read mutable message
+// lifecycle state. Callers page at FilteredCoverageBatchSize.
 type CoverageSnapshotBackend interface {
-	EmbeddedMessageCountForSnapshot(ctx context.Context, gen GenerationID, stampedMessageIDs []int64) (int64, error)
+	EmbeddedMessageCountForSnapshot(ctx context.Context, gen GenerationID, stampedRevisions map[int64]int64) (int64, error)
 }
 
 // EmbeddingCoverage partitions the in-scope live messages for one generation:

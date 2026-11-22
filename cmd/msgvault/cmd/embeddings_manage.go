@@ -117,8 +117,8 @@ func countEmbeddingCoverage(
 		MessageTypes: scope.MessageTypes,
 		SourceIDs:    scope.SourceIDs,
 		BatchSize:    vector.FilteredCoverageBatchSize,
-		VisitStamped: func(messageIDs []int64) error {
-			embedded, err := snapshotBackend.EmbeddedMessageCountForSnapshot(ctx, gen, messageIDs)
+		VisitStamped: func(revisions map[int64]int64) error {
+			embedded, err := snapshotBackend.EmbeddedMessageCountForSnapshot(ctx, gen, revisions)
 			if err != nil {
 				return fmt.Errorf("count embedded messages for generation %d: %w", gen, err)
 			}

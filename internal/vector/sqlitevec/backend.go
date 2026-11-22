@@ -2316,47 +2316,16 @@ func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.Gen
 // EmbeddedMessageCountForSnapshot counts generation vectors among the
 // live, stamped message IDs captured by a main-database read snapshot.
 func (b *Backend) EmbeddedMessageCountForSnapshot(
-	ctx context.Context, gen vector.GenerationID, stampedMessageIDs []int64,
+	ctx context.Context, gen vector.GenerationID, stampedRevisions map[int64]int64,
 ) (int64, error) {
-	if len(stampedMessageIDs) == 0 {
+	if len(stampedRevisions) == 0 {
 		return 0, nil
 	}
-	if len(stampedMessageIDs) > vector.FilteredCoverageBatchSize {
+	if len(stampedRevisions) > vector.FilteredCoverageBatchSize {
 		return 0, fmt.Errorf("%w: got %d, maximum %d",
-			vector.ErrCoverageBatchTooLarge, len(stampedMessageIDs), vector.FilteredCoverageBatchSize)
+			vector.ErrCoverageBatchTooLarge, len(stampedRevisions), vector.FilteredCoverageBatchSize)
 	}
-	if b.mainDB == nil {
-		return 0, errors.New("snapshot coverage requires the main message database")
-	}
-	encoded, err := json.Marshal(stampedMessageIDs, json.Deterministic(true))
-	if err != nil {
-		return 0, fmt.Errorf("encode coverage snapshot message ids: %w", err)
-	}
-	rows, err := b.mainDB.QueryContext(ctx, `
-		SELECT m.id, m.embedding_revision
-		FROM messages m
-		WHERE m.id IN (SELECT value FROM json_each(?))
-		  AND m.embed_gen = ?
-		  AND `+b.liveMessageWhere("m"), string(encoded), int64(gen))
-	if err != nil {
-		return 0, fmt.Errorf("list current snapshot coverage messages: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	revisions := make(map[int64]int64, len(stampedMessageIDs))
-	for rows.Next() {
-		var id, revision int64
-		if err := rows.Scan(&id, &revision); err != nil {
-			return 0, fmt.Errorf("scan current snapshot coverage message: %w", err)
-		}
-		revisions[id] = revision
-	}
-	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("iterate current snapshot coverage messages: %w", err)
-	}
-	if len(revisions) == 0 {
-		return 0, nil
-	}
-	revisionPairs, err := encodeEmbeddingRevisionPairs(revisions)
+	revisionPairs, err := encodeEmbeddingRevisionPairs(stampedRevisions)
 	if err != nil {
 		return 0, err
 	}

@@ -3,7 +3,6 @@
 package sqlitevec
 
 import (
-	"context"
 	"database/sql"
 	"path/filepath"
 	"strings"
@@ -491,14 +490,18 @@ func TestSnapshotCoverageCountsSuppliedIDsWithinBatchLimit(t *testing.T) {
 	_, err = mainDB.ExecContext(t.Context(), `UPDATE messages SET embed_gen = ? WHERE id IN (1, 2, 3)`, int64(gen))
 	require.NoError(err)
 
-	count, err := b.EmbeddedMessageCountForSnapshot(ctx, gen, []int64{1, 3})
+	count, err := b.EmbeddedMessageCountForSnapshot(ctx, gen, map[int64]int64{1: 0, 3: 0})
 	require.NoError(err)
 	assert.Equal(int64(1), count, "a multi-chunk message counts once; unsupplied vectors are ignored")
-	count, err = b.EmbeddedMessageCountForSnapshot(ctx, gen, []int64{1, 2, 3})
+	count, err = b.EmbeddedMessageCountForSnapshot(ctx, gen, map[int64]int64{1: 0, 2: 0, 3: 0})
 	require.NoError(err)
 	assert.Equal(int64(2), count, "message 2 counts once it is supplied")
 
-	_, err = b.EmbeddedMessageCountForSnapshot(ctx, gen, make([]int64, vector.FilteredCoverageBatchSize+1))
+	tooMany := make(map[int64]int64, vector.FilteredCoverageBatchSize+1)
+	for id := range int64(vector.FilteredCoverageBatchSize + 1) {
+		tooMany[id+1] = 0
+	}
+	_, err = b.EmbeddedMessageCountForSnapshot(ctx, gen, tooMany)
 	assert.ErrorIs(err, vector.ErrCoverageBatchTooLarge)
 }
 
@@ -533,16 +536,23 @@ func TestFilteredCoverageRejectsStaleEmbeddingRevisions(t *testing.T) {
 	second.ChunkIndex = 1
 	require.NoError(t, b.Upsert(t.Context(), gen, []vector.Chunk{chunk, second}))
 	require.NoError(t, st.SetEmbedGen(t.Context(), []int64{id}, int64(gen)))
-	for _, count := range []func(context.Context, vector.GenerationID, []int64) (int64, error){b.EmbeddedMessageCountForIDs, b.EmbeddedMessageCountForSnapshot} {
-		got, err := count(t.Context(), gen, []int64{id, id})
-		require.NoError(t, err)
-		assert.Equal(t, int64(1), got, "chunks and repeated IDs count once")
+	snapshotRevision := func() map[int64]int64 {
+		var revision int64
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT embedding_revision FROM messages WHERE id=?`), id).Scan(&revision))
+		return map[int64]int64{id: revision}
 	}
-	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET embedding_revision=embedding_revision+1 WHERE id=?`), id)
+	got, err := b.EmbeddedMessageCountForIDs(t.Context(), gen, []int64{id, id})
 	require.NoError(t, err)
-	for _, count := range []func(context.Context, vector.GenerationID, []int64) (int64, error){b.EmbeddedMessageCountForIDs, b.EmbeddedMessageCountForSnapshot} {
-		got, err := count(t.Context(), gen, []int64{id})
-		require.NoError(t, err)
-		assert.Zero(t, got, "a generation stamp cannot admit vectors from an old revision")
-	}
+	assert.Equal(t, int64(1), got, "chunks and repeated IDs count once")
+	got, err = b.EmbeddedMessageCountForSnapshot(t.Context(), gen, snapshotRevision())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), got, "chunks count once")
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET embedding_revision=embedding_revision+1 WHERE id=?`), id)
+	require.NoError(t, err)
+	got, err = b.EmbeddedMessageCountForIDs(t.Context(), gen, []int64{id})
+	require.NoError(t, err)
+	assert.Zero(t, got, "a generation stamp cannot admit vectors from an old revision")
+	got, err = b.EmbeddedMessageCountForSnapshot(t.Context(), gen, snapshotRevision())
+	require.NoError(t, err)
+	assert.Zero(t, got, "a snapshot at a newer revision cannot admit vectors from an old revision")
 }

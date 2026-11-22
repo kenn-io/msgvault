@@ -550,9 +550,9 @@ type EmbeddingCoverageScan struct {
 	SourceIDs    []int64
 	// BatchSize caps how many IDs one VisitStamped call receives.
 	BatchSize int
-	// VisitStamped receives the stamped live message IDs in ascending order
-	// while the read snapshot is still open.
-	VisitStamped func(messageIDs []int64) error
+	// VisitStamped receives stamped live messages, mapped to the embedding
+	// revision the snapshot read for each, while the snapshot is still open.
+	VisitStamped func(revisions map[int64]int64) error
 }
 
 // ScanEmbeddingCoverage counts live and stamped messages for activeGen from
@@ -589,26 +589,26 @@ func visitStampedMessages(
 	ctx context.Context, tx *loggedTx, activeGen int64, scan EmbeddingCoverageScan,
 ) (int64, error) {
 	liveWhere, liveArgs := liveMessagesWhereScoped(scan.MessageTypes, scan.SourceIDs)
-	query := `SELECT id FROM messages WHERE embed_gen = ? AND ` + liveWhere + ` ORDER BY id`
+	query := `SELECT id, embedding_revision FROM messages WHERE embed_gen = ? AND ` + liveWhere + ` ORDER BY id`
 	rows, err := tx.QueryContext(ctx, query, append([]any{activeGen}, liveArgs...)...)
 	if err != nil {
 		return 0, fmt.Errorf("list stamped live messages: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var stamped int64
-	batch := make([]int64, 0, scan.BatchSize)
+	batch := make(map[int64]int64, scan.BatchSize)
 	for rows.Next() {
-		var messageID int64
-		if err := rows.Scan(&messageID); err != nil {
+		var messageID, revision int64
+		if err := rows.Scan(&messageID, &revision); err != nil {
 			return 0, fmt.Errorf("scan stamped live message: %w", err)
 		}
 		stamped++
-		batch = append(batch, messageID)
+		batch[messageID] = revision
 		if len(batch) == scan.BatchSize {
 			if err := scan.VisitStamped(batch); err != nil {
 				return 0, err
 			}
-			batch = batch[:0]
+			batch = make(map[int64]int64, scan.BatchSize)
 		}
 	}
 	if err := rows.Err(); err != nil {

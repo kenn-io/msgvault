@@ -402,7 +402,13 @@ func TestContextWorkerPublishesVectorsAtCurrentEmbeddingRevision(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result.Contextual)
 	assert.True(t, result.Contextual.Converged)
-	count, err := f.backend.EmbeddedMessageCountForSnapshot(t.Context(), f.gen, []int64{messageID})
+	stampedRevision := func() map[int64]int64 {
+		var current int64
+		require.NoError(t, f.store.DB().QueryRowContext(t.Context(),
+			f.store.Rebind(`SELECT embedding_revision FROM messages WHERE id = ?`), messageID).Scan(&current))
+		return map[int64]int64{messageID: current}
+	}
+	count, err := f.backend.EmbeddedMessageCountForSnapshot(t.Context(), f.gen, stampedRevision())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 	beforeDocuments := f.client.Documents()
@@ -415,7 +421,7 @@ func TestContextWorkerPublishesVectorsAtCurrentEmbeddingRevision(t *testing.T) {
 	assert.True(t, result.Contextual.Converged)
 	assert.Equal(t, beforeDocuments+1, f.client.Documents(),
 		"a changed input revision must rebuild vectors even when rendered document text is unchanged")
-	count, err = f.backend.EmbeddedMessageCountForSnapshot(t.Context(), f.gen, []int64{messageID})
+	count, err = f.backend.EmbeddedMessageCountForSnapshot(t.Context(), f.gen, stampedRevision())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count, "published vectors must match the stamped input revision")
 }
