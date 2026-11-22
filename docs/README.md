@@ -19,7 +19,7 @@ public site has three levels; keep their responsibilities distinct.
 - Start with the reader's outcome. Explain the smallest amount of context needed
   to take the next step, then put detailed contracts below it or link to them.
 - Separate what works today, its limitations, and future work. A merged change
-  is not necessarily in the latest release. The [changelog](changelog.md) owns
+  is not necessarily in the latest release. The [changelog](https://msgvault.io/docs/changelog/) owns
   release changes and upgrade notes; keep unreleased work separate from dated
   releases. Task guides own current usage, not a second release catalog.
 - Update the owning section. Do not append a running implementation diary or
@@ -54,14 +54,16 @@ other note uses. Start with one section heading, then the bullets:
 
 The section must be `### Upgrade notes`, `### New features`,
 `### Improvements`, or `### Bug fixes`. The published changelog lists the notes
-under **Unreleased**, sorted by filename.
+under **Unreleased**, sorted by filename. Dot-prefixed files such as
+`.draft.md` stay out of the published changelog.
 
 If an open PR still edits `docs/changelog.md`, move its note into a fragment
 when you rebase it.
 
 To cut a release, a maintainer runs
-`make changelog-release RELEASE_VERSION=0.27.0 RELEASE_DATE=2026-11-22`. It
-needs full Git history. It moves the notes under the version heading, keeping
+`make changelog-release RELEASE_VERSION=0.27.0 RELEASE_DATE=2026-11-22`. Use
+`X.Y.Z` for `RELEASE_VERSION` and `YYYY-MM-DD` for `RELEASE_DATE`. It needs
+full Git history. It moves the notes under the version heading, keeping
 the section headings, and deletes the files. Within each section, notes follow
 the order each filename was added to `main`.
 
