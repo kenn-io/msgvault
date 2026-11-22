@@ -12,18 +12,35 @@ ROOT = Path(__file__).resolve().parents[2]
 SECTIONS = ("Upgrade notes", "New features", "Improvements", "Bug fixes")
 
 
+def headings_outside_fences(lines):
+    fence = None
+    for line in lines:
+        if fence:
+            if re.match(r"^ {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}\s*$", line):
+                fence = None
+        else:
+            opening = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+            if opening:
+                fence = opening.group(1)
+            elif re.match(r"^#{1,3} ", line):
+                return True
+    return False
+
+
 def fragments():
     notes = {}
     for path in sorted(path for path in (ROOT / "docs/changelog.d").glob("*.md") if not path.name.startswith(".")):
         text = path.read_text(encoding="utf-8").strip()
         lines = text.splitlines()
-        if len(lines) < 2 or not "\n".join(lines[1:]).strip() or lines[0] not in [f"### {s}" for s in SECTIONS] or any(re.match(r"^#{1,3} ", line) for line in lines[1:]):
+        if len(lines) < 2 or not "\n".join(lines[1:]).strip() or lines[0] not in [f"### {s}" for s in SECTIONS] or headings_outside_fences(lines[1:]):
             raise ValueError(f"{path}: expected one known section heading and a non-empty body")
         notes[path] = (lines[0][4:], "\n".join(lines[1:]).strip())
     return notes
 
 
 def fold(changelog, notes, paths):
+    if "## Unreleased\n" not in changelog:
+        raise ValueError("changelog requires a ## Unreleased heading")
     before, rest = changelog.split("## Unreleased\n", 1)
     unreleased, sep, after = rest.partition("\n## ")
     sections = re.split(r"(?m)^### (.+)\n", unreleased)

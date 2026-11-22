@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import changelog
 import check_built_site
+import check_markdown_sources
 
 
 class ChangelogTest(unittest.TestCase):
@@ -56,16 +57,36 @@ class ChangelogTest(unittest.TestCase):
         output = self.root / "out.md"
         self.assertEqual((0, ""), self.run_command("render", output))
         self.assertIn("- Existing", output.read_text())
-        last = self.note("z.md", "### New features\n\n- Z\n")
-        first = self.note("a.md", "### New features\n\n- A\n")
-        with patch.object(Path, "glob", return_value=iter([last, first])):
-            self.assertEqual((0, ""), self.run_command("render", output))
+        self.note("z.md", "### New features\n\n- Z\n")
+        self.note("a.md", "### New features\n\n- A\n")
+        self.assertEqual((0, ""), self.run_command("render", output))
         self.assertIn("### New features\n\n- A\n- Z\n\n### Improvements", output.read_text())
         self.note(".draft.md", "### Bug fixes\n\n- Private draft\n")
         self.note("note.md", "### Bug fixes\n\n- Public note\n")
         self.assertEqual((0, ""), self.run_command("render", output))
         self.assertIn("- Public note", output.read_text())
         self.assertNotIn("- Private draft", output.read_text())
+
+    def test_render_accepts_headings_in_fenced_code(self):
+        self.note("commands.md", "### Improvements\n\nRun this:\n\n```sh\n# comment\necho hello\n```\n\n~~~sh\n## comment\n~~~\n")
+        output = self.root / "out.md"
+        self.assertEqual((0, ""), self.run_command("render", output))
+        self.assertIn("```sh\n# comment\necho hello\n```", output.read_text())
+        self.assertIn("~~~sh\n## comment\n~~~", output.read_text())
+
+    def test_render_reports_missing_unreleased_heading(self):
+        self.log.write_text("# Changelog\n\n## 1.0.0\n")
+        result, error = self.run_command("render", self.root / "out.md")
+        self.assertEqual(1, result)
+        self.assertIn("requires a ## Unreleased heading", error)
+
+    def test_fragment_source_checks(self):
+        self.note("invalid.md", "### Bug fixes\n\n!!! note broken\n\n<Card>\n")
+        stderr = io.StringIO()
+        with patch.object(check_markdown_sources, "ROOT", self.root / "docs"), patch.object(check_markdown_sources, "PUBLIC_MARKDOWN", set()), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+            check_markdown_sources.main()
+        self.assertIn("changelog.d/invalid.md:3: malformed or collapsed admonition", stderr.getvalue())
+        self.assertIn("changelog.d/invalid.md: contains unsupported MDX/Starlight marker '<Card'", stderr.getvalue())
 
     def test_built_site_checks_assembled_changelog(self):
         self.note("note.md", "### Bug fixes\n\n- Fixed a problem\n")
@@ -102,7 +123,7 @@ class ChangelogTest(unittest.TestCase):
         self.assertFalse((self.root / "docs/changelog.d/renamed.md").exists())
 
     def test_invalid_sections_report_filename(self):
-        for text in ("### Bug fixes\n\n", "### Unknown\n\n- Note\n", "### Bug fixes\n\n- Note\n### Improvements\n- Other\n", "### Bug fixes\n\n- Note\n## Oops\n", "### Bug fixes\n\n- Note\n# Oops\n"):
+        for text in ("### Bug fixes\n\n", "### Unknown\n\n- Note\n", "### Bug fixes\n\n- Note\n### Improvements\n- Other\n", "### Bug fixes\n\n- Note\n## Oops\n", "### Bug fixes\n\n- Note\n# Oops\n", "### Bug fixes\n\n```sh\n# comment\n```\n### Other\n- Note\n"):
             with self.subTest(text=text):
                 self.note("invalid.md", text)
                 result, error = self.run_command("render", self.root / "out.md")

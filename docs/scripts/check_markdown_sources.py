@@ -185,6 +185,13 @@ def main() -> None:
         check_admonitions(path, lines, errors)
         check_forbidden_markers(path, text, errors)
 
+    for path in sorted((ROOT / "changelog.d").glob("*.md")):
+        if path.name.startswith("."):
+            continue
+        text = path.read_text(encoding="utf-8")
+        check_admonitions(path, text.splitlines(), errors)
+        check_forbidden_markers(path, text, errors)
+
     if errors:
         print("docs markdown source check failed:", file=sys.stderr)
         for error in errors:
