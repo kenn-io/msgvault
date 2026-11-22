@@ -57,12 +57,19 @@ The section must be `### Upgrade notes`, `### New features`,
 `### Improvements`, or `### Bug fixes`. The published changelog lists the notes
 under **Unreleased**, sorted by filename.
 
+If an open PR still edits `docs/changelog.md`, move its note into a fragment
+when you rebase it.
+
 To cut a release, a maintainer runs
 `make changelog-release RELEASE_VERSION=0.27.0 RELEASE_DATE=2026-11-22`. It
 needs full Git history. It moves the notes under the version heading, keeping
 the section headings, and deletes the files. Within each section, notes follow
 the order each filename was added to `main`. Renaming a note gives it
 the rename's position.
+Run it from a clean worktree, and if it fails, run
+`git restore docs/changelog.md docs/changelog.d`.
+After `make changelog-release`, add the release summary and links, and update
+`last_edited` as usual.
 
 ## Living architecture and historical records
 
