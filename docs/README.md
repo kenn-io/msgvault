@@ -44,8 +44,8 @@ for details.
 ## Add a release note
 
 Add each note as its own file, `docs/changelog.d/<topic>.md`, instead of
-editing `## Unreleased` in `docs/changelog.md`, so two PRs never edit the same
-file. Start with one section heading, then the bullets:
+editing `## Unreleased` in `docs/changelog.md`. Choose a `<topic>` that no
+other note uses. Start with one section heading, then the bullets:
 
 ```markdown
 ### New features
@@ -66,8 +66,9 @@ needs full Git history. It moves the notes under the version heading, keeping
 the section headings, and deletes the files. Within each section, notes follow
 the order each filename was added to `main`. Renaming a note gives it
 the rename's position.
-Run it from a clean worktree, and if it fails, run
-`git restore docs/changelog.md docs/changelog.d`.
+Run it from a clean worktree. If it fails, run `git restore docs/changelog.md`,
+and if the release had notes in `docs/changelog.d`, also run
+`git restore docs/changelog.d`.
 After `make changelog-release`, add the release summary and links, and update
 `last_edited` as usual.
 
