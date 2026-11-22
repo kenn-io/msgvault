@@ -4696,16 +4696,20 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	}
 	defer func() { _ = client.Close() }()
 
-	opts := sync.DefaultOptions()
-	opts.GmailSkipSpamTrash = cfg.GmailSkipSpamTrash(accountEmail)
-	opts.AttachmentsDir = cfg.AttachmentsDir()
-
-	syncer := newMessageSyncer(client, s, opts, state).WithLogger(logger)
-
 	source, err := s.GetOrCreateSource(sourceTypeGmail, accountEmail)
 	if err != nil {
 		return nil, fmt.Errorf("get source: %w", err)
 	}
+
+	opts := sync.DefaultOptions()
+	opts.GmailSkipSpamTrash, err = gmailSkipsSpamTrash(ctx, cfg, s, source)
+	if err != nil {
+		return nil, err
+	}
+	opts.AttachmentsDir = cfg.AttachmentsDir()
+
+	syncer := newMessageSyncer(client, s, opts, state).WithLogger(logger)
+
 	// Auto-default-identity must run BEFORE the legacy migration retry
 	// — see comment in account_identity.go. serve is a daemon, so the
 	// confirmation message has no terminal; discard it. Helper logs any

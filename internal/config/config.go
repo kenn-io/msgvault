@@ -374,7 +374,7 @@ func (s *ServerConfig) ValidateSecure() error {
 
 // AccountSchedule defines sync settings for a single account.
 type AccountSchedule struct {
-	Email              string `toml:"email"`    // Account identifier
+	Email              string `toml:"email"`    // Account identifier, display name, or alias
 	Schedule           string `toml:"schedule"` // Cron expression (e.g., "0 2 * * *" for 2am daily)
 	Enabled            bool   `toml:"enabled"`  // Whether scheduled sync is active
 	GmailSkipSpamTrash bool   `toml:"gmail_skip_spam_trash"`
@@ -1825,8 +1825,8 @@ func (c *Config) ScheduledAccounts() []AccountSchedule {
 	return scheduled
 }
 
-// GetAccountSchedule returns sync settings for the given account identifier,
-// or nil if the account has no entry.
+// GetAccountSchedule returns the schedule for a specific account email.
+// Returns nil if the account is not configured for scheduling.
 // The returned value is a copy, so mutations won't affect the config.
 func (c *Config) GetAccountSchedule(email string) *AccountSchedule {
 	for i := range c.Accounts {
@@ -1836,12 +1836,6 @@ func (c *Config) GetAccountSchedule(email string) *AccountSchedule {
 		}
 	}
 	return nil
-}
-
-// GmailSkipSpamTrash reports whether Gmail acquisition excludes Spam and Trash.
-func (c *Config) GmailSkipSpamTrash(email string) bool {
-	account := c.GetAccountSchedule(email)
-	return account != nil && account.GmailSkipSpamTrash
 }
 
 // BeeperConfig configures the Beeper Desktop archive source ([beeper] table).

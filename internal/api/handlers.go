@@ -2076,29 +2076,39 @@ func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 
 	s.cfgMu.Lock()
 
-	// Check if account already exists
-	for _, acc := range s.cfg.Accounts {
-		if acc.Email == req.Email {
-			s.cfgMu.Unlock()
-			writeJSON(w, http.StatusOK, StatusMessageResponse{
-				Status:  "exists",
-				Message: "Account already configured for " + req.Email,
-			})
-			return
-		}
+	// An existing entry without a schedule holds other account settings, such
+	// as gmail_skip_spam_trash. Keep them and add the schedule to that entry.
+	index := slices.IndexFunc(s.cfg.Accounts, func(acc config.AccountSchedule) bool {
+		return acc.Email == req.Email
+	})
+	if index >= 0 && s.cfg.Accounts[index].Schedule != "" {
+		s.cfgMu.Unlock()
+		writeJSON(w, http.StatusOK, StatusMessageResponse{
+			Status:  "exists",
+			Message: "Account already configured for " + req.Email,
+		})
+		return
 	}
-
-	// Add account to config
-	newAccount := config.AccountSchedule{
-		Email:    req.Email,
-		Schedule: req.Schedule,
-		Enabled:  req.Enabled,
+	var previous config.AccountSchedule
+	if index >= 0 {
+		previous = s.cfg.Accounts[index]
+		s.cfg.Accounts[index].Schedule = req.Schedule
+		s.cfg.Accounts[index].Enabled = req.Enabled
+	} else {
+		s.cfg.Accounts = append(s.cfg.Accounts, config.AccountSchedule{
+			Email:    req.Email,
+			Schedule: req.Schedule,
+			Enabled:  req.Enabled,
+		})
 	}
-	s.cfg.Accounts = append(s.cfg.Accounts, newAccount)
 
 	// Save config; rollback in-memory state on failure
 	if err := s.cfg.Save(); err != nil {
-		s.cfg.Accounts = s.cfg.Accounts[:len(s.cfg.Accounts)-1]
+		if index >= 0 {
+			s.cfg.Accounts[index] = previous
+		} else {
+			s.cfg.Accounts = s.cfg.Accounts[:len(s.cfg.Accounts)-1]
+		}
 		s.cfgMu.Unlock()
 		s.logger.Error("failed to save config", "error", err)
 		message := "Failed to save configuration"

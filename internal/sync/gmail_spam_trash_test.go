@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"errors"
 	"net/url"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func TestGmailSkipSpamTrashFullAndRecovery(t *testing.T) {
 	assert.Equal(t, int64(2), summary.MessagesAdded)
 	gmailCoverageAbsent(t, env, "spam")
 	gmailCoverageAbsent(t, env, "trash")
-	assertGmailAcquisitionAndPresenceLists(t, provider.requests, []string{"false", "false"})
+	assert.Equal(t, []string{"false ", "false "}, gmailMessageLists(t, provider.requests))
 
 	// Seed an archive that previously included Spam and Trash.
 	env.Syncer = New(client, env.Store, nil)
@@ -32,29 +33,78 @@ func TestGmailSkipSpamTrashFullAndRecovery(t *testing.T) {
 	gmailCoverageRaw(t, env, "spam")
 	gmailCoverageRaw(t, env, "trash")
 
-	// Resume with the exclusion enabled after Gmail expires the History cursor.
+	// An archived message moves to Trash while the History cursor expires.
 	provider.requests = nil
+	provider.labels = map[string]string{"normal1": "TRASH"}
 	provider.history, provider.expire = 2000, true
 	env.Syncer = New(client, env.Store, opts)
 	summary, err := env.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t.Context(), t, env), nil)
 	require.NoError(t, err)
 	assert.Zero(t, summary.Errors)
-	assertGmailAcquisitionAndPresenceLists(t, provider.requests, []string{"false", "false", "true", "true"})
-	assertDeletedFromSource(t, env.Store, "spam", false)
-	assertDeletedFromSource(t, env.Store, "trash", false)
+	assert.Equal(t, []string{
+		"false ", "false ",
+		"true " + gmailSpamTrashQuery, "true " + gmailSpamTrashQuery,
+		"true ", "true ",
+	}, gmailMessageLists(t, provider.requests))
+	assertMessageHasLabel(t, env.Store, "normal1", "TRASH")
+	assertMessageNotHasLabel(t, env.Store, "normal1", "INBOX")
+	for _, id := range []string{"normal1", "spam", "trash"} {
+		assertDeletedFromSource(t, env.Store, id, false)
+	}
 }
 
-func assertGmailAcquisitionAndPresenceLists(t *testing.T, requests, want []string) {
+// gmailMessageLists returns "includeSpamTrash q" for each message listing.
+func gmailMessageLists(t *testing.T, requests []string) []string {
 	t.Helper()
 	var got []string
 	for _, request := range requests {
 		u, err := url.ParseRequestURI(request)
 		require.NoError(t, err)
 		if strings.HasSuffix(u.Path, "/messages") {
-			got = append(got, u.Query().Get("includeSpamTrash"))
+			got = append(got, u.Query().Get("includeSpamTrash")+" "+u.Query().Get("q"))
 		}
 	}
-	assert.Equal(t, want, got)
+	return got
+}
+
+func TestGmailSkipSpamTrashFullSkipsMessageMovedAfterListing(t *testing.T) {
+	env := gmailCoverageEnv(t)
+	provider := &gmailCoverageTransport{history: 1000, moveOnList: map[string]string{"normal2": "SPAM"}}
+	opts := DefaultOptions()
+	opts.GmailSkipSpamTrash = true
+	env.Syncer = New(gmailTransportClient(t, provider), env.Store, opts)
+
+	summary := runFullSync(t, env)
+	assert.Equal(t, int64(1), summary.MessagesAdded)
+	gmailCoverageRaw(t, env, "normal1")
+	gmailCoverageAbsent(t, env, "normal2")
+}
+
+func TestGmailSkipSpamTrashReplayStopsRetrying(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	seedMessages(env, 1, 1000, "archived")
+	runFullSync(t, env)
+	env.SetOptions(t, func(opts *Options) { opts.GmailSkipSpamTrash = true })
+	source := gmailCoverageSource(t.Context(), t, env)
+
+	env.Mock.AddMessage("lost", testMIME(), []string{"INBOX"})
+	env.Mock.GetMessageError["lost"] = errors.New("synthetic fetch failure")
+	env.SetHistory(1001, historyAdded("lost"))
+	runIncrementalSync(t, env)
+	items, err := env.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+
+	// The retry finds the message in Spam and drops it from the retry list.
+	delete(env.Mock.GetMessageError, "lost")
+	env.Mock.Messages["lost"].LabelIDs = []string{"SPAM"}
+	summary := runIncrementalSync(t, env)
+	assert.Zero(t, summary.MessagesAdded)
+	assertMessageCount(t, env.Store, 1)
+	items, err = env.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
+	require.NoError(t, err)
+	assert.Empty(t, items)
 }
 
 func TestGmailSkipSpamTrashHistory(t *testing.T) {

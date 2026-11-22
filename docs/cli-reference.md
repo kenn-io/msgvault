@@ -1016,12 +1016,11 @@ the reconciliation commit and that checkpoint repeats reconciliation safely.
 The source cursor advances only after catch-up succeeds. If the saved recovery
 cursor also expires, msgvault starts a new complete recovery; one invocation
 attempts at most one such restart.
-Recovery re-reads the labels of archived messages in the acquisition listing
-with one metadata request per message, without downloading MIME again. When
-Spam and Trash are excluded, archived messages in those folders keep their
-stored labels until a later sync sees a label change or lists them again.
-A failed label read or save stops recovery at
-that page. The next `sync` retries it. Other per-message fetch and ingest errors
+Recovery re-reads each archived message's labels with one metadata request,
+without downloading MIME again. When the account excludes Spam and Trash,
+recovery also lists both folders to re-read the labels of archived messages
+there; it doesn't acquire new messages from them. A failed label read or save
+stops recovery at that page. The next `sync` retries it. Other per-message fetch and ingest errors
 are recorded without stopping. Fetches that fail during catch-up are retried by
 the next `sync`.
 

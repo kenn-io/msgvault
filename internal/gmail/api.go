@@ -39,6 +39,12 @@ type CompleteMessageSnapshotReader interface {
 	ListCompleteMessageSnapshot(ctx context.Context, pageToken string) (*MessageListResponse, error)
 }
 
+// SpamTrashExcludingLister lists messages matching a query outside Spam and
+// Trash.
+type SpamTrashExcludingLister interface {
+	ListMessagesExcludingSpamTrash(ctx context.Context, query, pageToken string) (*MessageListResponse, error)
+}
+
 // ErrBatchUnsupported tells the executor to delete messages individually.
 var ErrBatchUnsupported = errors.New("batch deletion is unsupported")
 

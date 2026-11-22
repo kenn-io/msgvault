@@ -1656,6 +1656,12 @@ func (s *Syncer) full(
 		}
 	}
 	if reconcilePresence && state.recoveryPhase == recoveryReconcile {
+		if s.opts.GmailSkipSpamTrash {
+			if err := s.refreshArchivedSpamTrashLabels(ctx, state, source.ID, labelMap, summary); err != nil {
+				s.failStoppedSync(state.syncID, err)
+				return nil, err
+			}
+		}
 		present, err := s.listCompleteMessageSnapshot(ctx)
 		if err != nil {
 			s.failStoppedSync(state.syncID, err)

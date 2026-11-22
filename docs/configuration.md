@@ -1354,9 +1354,10 @@ and may be duplicated.
 | `enabled` | `true` | Whether scheduled sync is active for this account |
 | `gmail_skip_spam_trash` | `false` | Skip acquiring messages in Gmail Spam or Trash during full, incremental, and History recovery syncs |
 
-To exclude Spam and Trash for a Gmail account, use its account email. The
-setting also applies when the account has no schedule. Add the key to the
-existing entry if one already exists.
+To exclude Spam and Trash for a Gmail account, set the key on its entry. As
+with schedules, `email` matches the account's identifier, display name, or
+alias, ignoring case. The setting also applies when the entry has no schedule.
+Add the key to the existing entry if one already exists.
 
 ```toml
 [[accounts]]
