@@ -98,6 +98,16 @@ func TestModerateComment(t *testing.T) {
 	}
 }
 
+func TestResolveCommentTargetInColdRoom(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	src := archiveFacebookComment(t, st)
+	id := message(t, st, src.ID, "100_201").ID
+	markRoomCold(t, st, src.ID, id)
+	target, err := ResolveCommentTarget(t.Context(), st, id)
+	require.NoError(t, err)
+	assert.Equal(t, "100_201", target.CommentID)
+}
+
 func TestModerateCommentDeleteMarksReplies(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)

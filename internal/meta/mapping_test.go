@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestImportReplayKeepsAnalyticsCacheCurrent(t *testing.T) {
@@ -91,6 +93,21 @@ func TestImportReplayKeepsAnalyticsCacheCurrent(t *testing.T) {
 	baseline = clock()
 	replay()
 	assert.Zero(factsSince(baseline))
+
+	markRoomCold(t, st, src.ID, child.ID)
+	replay()
+	require.NoError(st.DB().QueryRowContext(t.Context(), fromSnapshotSQL, child.ID).Scan(&fromName))
+	assert.Equal(updatedActor, fromName, "a cold room's omitted provider author must retain its known snapshot")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT from_addr FROM messages_fts WHERE message_id = ?`, child.ID).Scan(&indexedName))
+	assert.Equal(updatedActor, indexedName)
+}
+
+// markRoomCold sets a cold override on the room that holds messageID.
+func markRoomCold(t *testing.T, st *store.Store, sourceID, messageID int64) {
+	t.Helper()
+	var room string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT source_conversation_id FROM conversations WHERE id = (SELECT conversation_id FROM messages WHERE id = ?)`, messageID).Scan(&room))
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), sourceID, room, conversationpolicy.Cold))
 }
 
 func TestImportReplayPreservesGenericStoreReplyEdit(t *testing.T) {
