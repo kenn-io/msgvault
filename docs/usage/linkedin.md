@@ -5,7 +5,7 @@ last_edited: "2026-11-18"
 ---
 
 Import a LinkedIn member data export to search your DMs, posts, and comments
-in msgvault. This importer is **unreleased**. It reads local files without an
+in msgvault. It reads local files without an
 API app, token, or network request.
 
 ## Get and import an export

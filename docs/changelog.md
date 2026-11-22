@@ -8,9 +8,29 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+### New features
+
+- Read the order, delivery, invoice and reservation details an email carries as schema.org markup with the MCP tool `get_message_records`, without sending the message anywhere.
+- Let owner MCP clients read person attributes and definitions, and enable attribute edits with `--allow-attribute-writes`. The owner approves the previewed value, and the write refuses if that value or empty slot changes before saving. The tools require an updated daemon. Existing archives migrate attribute JSON on writable open; upgrade applications using embedded archive readers alongside the daemon. Numbers stored before this change may have already lost their original spelling.
+
+### Improvements
+
+- In a 14,000-message Telegram import benchmark on SQLite, saving up to 50 messages at once reduced import time from 326 seconds to 119 seconds, about 2.7 times faster.
+
+## 0.26.0
+<small>2026-11-19</small>
+
+File messages to Tasks and Kata from the reader and the Files viewer, find an
+email's related copies across accounts, and import LinkedIn and TikTok exports.
+Facebook Page and Instagram inboxes archive as searchable chats, Bland calls
+and emailed calendar invitations join your meetings, and one config can reach
+several servers with `--remote <name>`.
+
+[GitHub release](https://github.com/kenn-io/msgvault/releases/tag/v0.26.0) ·
+[All changes since 0.25.0](https://github.com/kenn-io/msgvault/compare/v0.25.0...v0.26.0)
+
 ### Upgrade notes
 
-- `[telemetry] enabled = false` is now ignored. To keep [usage telemetry](configuration.md#usage-reporting) off, set `MSGVAULT_TELEMETRY_ENABLED=0` instead.
 - **The archive upgrades to schema 49 on first start.** 0.25.0 archives are at
   schema 42. The upgrade also fills in the outcome of earlier fact decisions
   where their history shows it; decisions it can't settle show
@@ -22,156 +42,186 @@ All notable changes to msgvault, grouped by release.
 - **Upgrade servers before clients.** `export-messages` against a remote needs
   server API schema 5.19.0. An older server makes the CLI stop and ask you to
   upgrade the server.
+- **`[telemetry] enabled = false` is now ignored.** Usage reporting is off
+  unless you opt in through Kenn or set `TELEMETRY_ENABLED=1`. To keep it off
+  after opting in, set `MSGVAULT_TELEMETRY_ENABLED=0`; see
+  [Usage reporting](configuration.md#usage-reporting). Consent changes take
+  effect at the next start.
 
 ### New features
 
-- Read the order, delivery, invoice and reservation details an email carries as schema.org markup with the MCP tool `get_message_records`, without sending the message anywhere.
+- File a message in Tasks or quote it in a Kata issue with
+  [**Add to task…**](web-ui.md#read-messages) in the reader or the
+  [Files viewer](web-ui.md#files-and-containing-context). Linked work appears
+  under **Tasks** on each message. When you add a message to an existing task,
+  **What's sent** shows the details that leave msgvault, including the full
+  sent timestamp.
+- Open [**Related copies**](web-ui.md#related-copies) beside an email to find
+  archived copies, replies, and forwards across accounts and conversations.
+  Each result shows its account and why it matches. Archive owners can also use
+  `msgvault family show <id>`, the MCP `get_email_family` tool, or the
+  [family read endpoint](api-server.md#get-apiv1messagesidfamily).
 - Import a LinkedIn member data export with
-  [`import-linkedin`](usage/linkedin.md). DMs, your posts, and your own
-  comments become searchable conversations. `--me` takes your profile URL and
-  ties the source to it.
-- Import a TikTok **Download your data** export with
-  [`import-tiktok`](usage/tiktok-export.md). DMs and the comments you wrote
-  become searchable. Include Profile Information in the export so your own
-  messages count as sent by you.
-- Calendar invites in archived email appear in `calendar events` as one event
-  per meeting, with updates and cancellations applied. Only invites sent by the
-  meeting's organizer count. Import `.ics` files with
-  [`import-ics`](cli-reference.md#import-ics). Mail you already archived gets
-  its invites on the next re-derivation, which `msgvault repair-derived` runs.
-- Reach several servers from one config. Add
-  [`[remotes.<name>]`](configuration.md#remotesname) tables and pick one per
-  command with `--remote <name>`; `[remote]` stays the default.
-- A remote can get short-lived bearers from a local
-  [credential helper](configuration.md#credential-helper) instead of an API
-  key. Set `credential_provider` and the approved `delegation`. Such a remote
-  serves `list-accounts`, `stats`, keyword `search`, `show-message`,
-  `show-thread`, and `export-messages`. `stats` counts only the sources the
-  host allows and reports scope kind `authorized_sources`.
+  [`import-linkedin`](usage/linkedin.md): DMs, your posts, and your own
+  comments. Import a TikTok **Download your data** export with
+  [`import-tiktok`](usage/tiktok-export.md): DMs and the comments you wrote.
+  Both accept a ZIP or an extracted folder and update existing entries when you
+  import again.
+- Archive a Page's Messenger inbox or a linked Instagram account's direct
+  messages as searchable chats with
+  [Facebook and Instagram messages](usage/meta-messages.md). Inbox polling
+  imports the 20 most recent messages of each conversation.
+- Capture new Meta activity as it arrives with the
+  [Meta webhook receiver](usage/meta-webhooks.md): inbox messages, Facebook
+  Page comment changes and mentions, and Instagram comments, live comments, and
+  mentions. Polling sync stays available for backfill.
+- Archive media in which other accounts tag a linked Instagram professional
+  account with
+  [Instagram mentions sync](usage/instagram-comments.md#archive-media-that-tags-the-account),
+  and archive comments on the account's
+  [ads](usage/instagram-comments.md#include-ad-media).
+- [Hide, unhide, or delete](usage/facebook-comments.md#hide-or-delete-comments)
+  an archived Facebook Page or Instagram comment with `msgvault comment moderate`,
+  or [reply publicly](usage/facebook-comments.md#reply-to-comments) with
+  `msgvault comment reply`. Each profile opts in with `actions`; delete needs
+  `--yes`, and msgvault refuses to send the same reply to a comment twice.
+- Archive [Bland calls](usage/meetings.md#bland) with `add-bland` and
+  `sync-bland`. Summaries, transcripts, and recordings are saved locally, so
+  they stay available after Bland's links expire.
+- See emailed meeting invitations, updates, and cancellations in
+  `calendar events`. Import `.ics` files with
+  [`import-ics`](cli-reference.md#import-ics), and run
+  `msgvault repair-derived` to extract invitations from email already in your
+  archive. Only invitations sent by the meeting's organizer count.
+- Open linked meeting notes and calendar events as one record, including a
+  single occurrence of a recurring meeting, with `msgvault meetings links` or
+  the MCP `get_meeting_record` tool. `meetings suggest` finds likely matches,
+  `meetings link` and `meetings unlink` correct them, and your choices survive
+  sync and rebuilds. See
+  [Link calendar events and notes](usage/meetings.md#link-calendar-events-and-notes).
+- Find Beeper voice memos by their spoken words in ordinary message search.
+  Set `voice_transcript_search = true` under `[integrations.docbank]` and
+  restart the daemon; see
+  [Send audio to Docbank](usage/beeper.md#send-audio-to-docbank).
+- Search recording transcripts by meaning with
+  [`media search --mode semantic`](usage/searching.md#search-spoken-words), or
+  combine meaning and keywords with `--mode hybrid`. This needs a Docbank server
+  with semantic transcript search and `recording_search_profile` set under
+  `[integrations.docbank]`.
+- [Save someone you have never messaged](usage/people.md#create-a-person) with
+  `msgvault person create`, then add contact details, employment, an address,
+  and a note. `--publish` requests CardDAV publication. Creation refuses an
+  email or phone msgvault already knows and names the match.
+- Find people due for a check-in with
+  [contact lists](usage/people.md#keep-in-touch-with-contact-lists). Assign a
+  21-, 60-, 180-, or 365-day list or a custom interval, then run
+  `msgvault person directory --cadence due` or sort by `most_overdue`. The same
+  filters work over the API and MCP.
+- Choose a server per command with `--remote <name>`, defining each archive
+  under [`[remotes.<name>]`](configuration.md#remotesname) in one config.
+  `[remote]` stays the default. A remote can get short-lived bearers from a
+  local [credential helper](configuration.md#credential-helper) for read
+  commands limited to approved sources.
 - Run [`export-messages`](cli-reference.md#export-messages) against a remote,
   including with a
   [read-only client key](guides/remote-deployment.md#read-only-remote-clients).
-  The server streams the same JSONL as a local export.
+  The server streams the same JSONL as a local export, and the CLI exits with
+  an error if the stream ends before its completion record.
 - Apps that embed msgvault's archive server and limit callers with
-  `archive.WithSourceScope` can serve the same CLI read commands to those
-  callers, each covering only its authorized sources. See
+  `archive.WithSourceScope` can serve the CLI read commands to those callers,
+  each covering only its authorized sources. See
   [Restrict reads to authorized sources](guides/embedding.md#restrict-reads-to-authorized-sources).
-- [Save someone you have never messaged](usage/people.md#create-a-person) with
-  `msgvault person create`, `POST /api/v1/people/create`, or the MCP
-  `create_person` tool. Creation refuses an email or phone msgvault already
-  knows and names the match. The MCP tool needs `--allow-profile-writes`.
-- Find recordings by meaning with
-  [`media search --mode semantic`](usage/searching.md#search-spoken-words), or
-  `--mode hybrid` for meaning and keywords. Set
-  `recording_search_profile` under `[integrations.docbank]` to the profile
-  that embedded your transcripts. Older Docbank servers report recording
-  search as unavailable.
-- Find Beeper voice memos with ordinary keyword search by the words in
-  Docbank's generated transcripts. Set `voice_transcript_search = true` under
-  `[integrations.docbank]` and restart the daemon; see
-  [Send audio to Docbank](usage/beeper.md#send-audio-to-docbank).
-- List Gmail downloads, processing steps, and file saves that sync still
+- Filter the owner [message change feed](api-server.md#get-apiv1messageschanges)
+  by person, source, conversation, or incoming direction, over HTTP or with the
+  MCP `list_changes` tool. A filtered page can be empty while more changes
+  remain, so keep paging while `has_more` is true.
+- Start and follow a bounded Gmail or IMAP historical import over MCP with
+  `create_import_job`. Owners set a message limit and can narrow the import by
+  date or Gmail query. Starting a job needs `--allow-import-writes` and
+  confirmation.
+- Read structured person profiles, their history, and stored photos over MCP
+  with `get_person_record` and related tools. With `--allow-curated-writes` and
+  explicit confirmation, an assistant can apply profile patches; the client is
+  responsible for obtaining your approval.
+- Find the right command by describing a task with
+  [`msgvault cli search`](cli-reference.md#cli-search), for example
+  `msgvault cli search "find email by sender"`. MCP clients can read the
+  quickstart and every bundled [agent skill](guides/agent-skills.md#skills-and-the-mcp-server)
+  through `msgvault.skills`.
+- See which Gmail downloads, processing steps, and file saves sync still
   retries with
   [`msgvault diagnose-acquisition --source-id N`](cli-reference.md#diagnose-acquisition).
-  `--all` adds failures that were fixed, retired, or are unknown. An empty list
-  doesn't prove the archive is complete.
-- Describe a task to find the command for it with
-  [`msgvault cli search`](cli-reference.md#cli-search), for example
-  `msgvault cli search "find email by sender"`. It runs locally and needs no
-  archive or daemon.
-- [Facts](web-ui.md#saved-profiles-and-possible-duplicates) shows each field's
-  saved value above its claims, where each claim came from, and why a claim
-  wasn't used.
-- MCP `get_message` segments recognize Thunderbird reply and forward markers
-  in Spanish, Italian, and Portuguese. `segments_version` is now `seg-v2`;
-  refresh any cached `seg-v1` ranges.
-- File messages to Tasks or Kata from the reader, and see linked work together under **Tasks**.
-- Archive [Bland calls](usage/meetings.md#bland) as meetings with their summaries, retained transcripts and recordings saved locally, up to 1 GiB each by default (`max_media_mb`).
-- Filter the message change feed by person, source, conversation, or incoming direction, and read it from an owner MCP agent with `list_changes`.
-- Contact lists turn `contact_frequency` into a reach-out queue. `msgvault person attributes set <id> contact_frequency --list A` sets the 21/60/180/365-day A/B/C/D presets, and `person directory --cadence overdue|due|no_list|unknown` with `--sort most_overdue|next_due` lists who is due. MCP `list_directory_people` takes the same filters, and `set_person_contact_list` sets a list after confirmation. See [contact lists](usage/people.md#keep-in-touch-with-contact-lists).
-- Start bounded Gmail or IMAP historical imports through MCP with `--allow-import-writes`, and follow their durable job status.
-- MCP clients can list and read msgvault's bundled guides with `msgvault.skills`: the MCP quickstart as `workflow` and every [agent skill](guides/agent-skills.md#skills-and-the-mcp-server). Delegated sessions can use it too.
-- Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose.
-- Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.
-  With `--allow-curated-writes` and explicit client confirmation, it can apply
-  atomic profile patches. The client is responsible for obtaining user approval.
-- Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
-- Join or separate archived meeting copies with `meetings link` and `meetings unlink`, the API, or MCP. Choices survive sync and rebuilds. `meetings reset-link` restores automatic matching. Requires HTTP API schema 5.10.0.
-- Open linked calendar copies and notes with `msgvault meetings links`,
-  `GET /api/v1/meetings/record`, or MCP `get_meeting_record`. Copy an
-  occurrence reference from `msgvault calendar events` to select a specific
-  week.
-- New Messenger and Instagram inbox messages, including the ones the Page or
-  account sends, are archived as they arrive when the
-  [Meta webhook receiver](usage/meta-webhooks.md#inbox-messages) gets the
-  `messages` and `message_echoes` fields.
-- [Facebook and Instagram messages](usage/meta-messages.md) archive a Page's
-  Messenger inbox or a linked Instagram account's direct messages as searchable
-  chats. Configure `[[facebook_messages]]` or `[[instagram_messages]]`, then run
-  `msgvault source facebook-messages` or `instagram-messages` `add` and `sync`.
-  Meta returns the 20 most recent messages of each conversation.
-- Posts and comments by others that mention a Facebook Page are archived in
-  its comment source when the [Meta webhook receiver](usage/meta-webhooks.md)
-  gets the Page `mention` field.
-- Instagram captions and comments that @-mention a linked account are archived
-  into its [mentions source](usage/instagram-comments.md#archive-media-that-tags-the-account)
-  when the Meta webhook receiver gets the `mentions` field.
-- [Meta webhooks](usage/meta-webhooks.md) archive new Instagram comments and
-  live comments as they arrive. Subscribe the Instagram object to `comments`
-  and `live_comments`.
-- [Meta webhooks](usage/meta-webhooks.md) archive new, edited, hidden and
-  removed Facebook Page comments as they happen. Configure `[meta_webhooks]`
-  and subscribe the Page to the `feed` field; polling sync stays available for
-  backfill.
-- [Instagram mentions sync](usage/instagram-comments.md#archive-media-that-tags-the-account)
-  archives media in which other accounts tag a linked professional account, in a
-  separate opt-in source. Set `mentions = true` on the profile, then run
-  `msgvault source instagram-mentions add` and `sync`.
-- [Reply publicly](usage/facebook-comments.md#reply-to-comments) to an archived
-  Facebook Page or Instagram comment with `msgvault comment reply`. The reply
-  is archived straight away, and msgvault refuses to send the same text to a
-  comment twice. Each profile opts in with `"reply"` in `actions`.
-- [Hide, unhide, or delete](usage/facebook-comments.md#hide-or-delete-comments)
-  an archived Facebook Page or Instagram comment with `msgvault comment moderate`.
-  Each profile opts in with `actions`, and delete needs `--yes`.
-- Instagram comment sync can also archive comments on the account's ads that
-  its media list leaves out. Set `ad_account_id` and `ad_token_env` on the
-  profile; see [Include ad media](usage/instagram-comments.md#include-ad-media).
-- Let owner MCP clients read person attributes and definitions, and enable attribute edits with `--allow-attribute-writes`. The owner approves the previewed value, and the write refuses if that value or empty slot changes before saving. The tools require an updated daemon. Existing archives migrate attribute JSON on writable open; upgrade applications using embedded archive readers alongside the daemon. Numbers stored before this change may have already lost their original spelling.
-- Use `msgvault family show <id>`, the MCP tool `get_email_family`, or the family read endpoint to find an email's archived copies, replies and forwards across accounts. Results identify the evidence connecting each copy and report when the lookup is incomplete. These reads are available to the archive owner.
-- Open **Related copies** beside an email to find copies in other accounts and conversations. The panel loads when opened and leaves out messages already shown in the conversation.
+  `--all` adds failures that were resolved, retired, or could not be
+  classified. An empty list doesn't prove the archive is complete.
 
 ### Improvements
 
-- Incomplete open-loop lists continue checking history in the background.
-- MCP operation tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unusable. This replaces `operation_response_limit_exceeded`, `operation_response_failed`, and `invalid_operation_response` for those write receipts. Read current state before retrying.
-- An interrupted `sync-full` prints a command to run again with the same account, filters, configuration, and logging flags. It exits with status 130; on Windows, run the command in PowerShell 7.3 or later.
-- Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
-- In a 14,000-message Telegram import benchmark on SQLite, saving up to 50 messages at once reduced import time from 326 seconds to 119 seconds, about 2.7 times faster.
+- Search [Files](web-ui.md#files-and-containing-context) by filename beside the
+  file type filters. The viewer shows the source message's title, date, and
+  participants.
+- [Facts](web-ui.md#saved-profiles-and-possible-duplicates) shows each field's
+  saved value above its competing claims, where each claim came from, and why
+  msgvault kept or changed the value. `person get --json` reports
+  [when and how a saved person first appeared](usage/people.md#see-a-persons-first-archived-appearance).
+- People and Relationships count each attended meeting once, even when linked
+  notes and transcripts come from different sources or only one copy matches a
+  filter. Meeting counts include occurrences with a transcript.
+- Incomplete lists of unresolved follow-ups keep scanning history in the
+  background, so later requests return more of them.
+- An interrupted `sync-full` prints a command that resumes it with the same
+  account, filters, configuration, and logging flags. It exits with status 130;
+  on Windows, run the command in PowerShell 7.3 or later.
+- MCP `get_message` segments recognize Thunderbird reply headers and quoted or
+  forwarded history in Spanish, Italian, and Portuguese plain-text mail.
+  `segments_version` is now `seg-v2`; refresh any cached `seg-v1` ranges.
+- Email imports and repairs index explicit header links for related-copy
+  lookups. Existing emails are indexed on their next sync or with
+  `msgvault repair-derived`.
 
 ### Bug fixes
 
-- Circleback syncs wait and retry when Circleback answers `429 Too Many Requests`, instead of failing every remaining meeting in the run.
-- Count linked transcripts once in People and Relationships, including when a source or date filter selects only one copy.
-- Account matching recovers after identity changes. Explore refreshes pending counts and lets you retry matching for each source.
-- A message you restore from Trash in Gmail or IMAP returns to search after the
-  next sync. If you restored a Gmail message earlier and it is still hidden,
-  run `msgvault sync-full you@example.com`.
-- An unfiltered Gmail `sync-full` no longer skips label changes and deletions
-  that were waiting in Gmail's history; the next incremental sync applies them.
+- A message you restore from Trash in Gmail or IMAP returns to search after
+  the next sync confirms the restore. If a Gmail message you restored earlier
+  is still hidden, run `msgvault sync-full you@example.com`.
+- An unfiltered Gmail `sync-full` keeps label changes and deletions waiting in
+  Gmail's history, so the next incremental sync applies them.
 - `msgvault message-tags` reads a source-deleted message's current tags when
   the provider still has the message. Editing its tags is still refused.
-- When an identity change saves but its cache refresh fails, **Retry**
-  refreshes the related views without repeating the change, and the warning
-  stays while you move between views.
-- Scheduled Beeper imports stop between members of a large group chat when
-  their time runs out, so other sources no longer wait on them. Imported
-  messages are kept and the roster work finishes on a later run.
 - An IMAP sync no longer crashes when the server drops the connection and
   reconnecting fails, as DavMail does when it restarts. The mailbox is skipped
   or the run ends with an error.
-- Scheduled person enrichment no longer stops when a request or cost budget
-  runs out at UTC midnight.
+- Circleback syncs wait and retry for up to about two minutes when Circleback
+  answers `429 Too Many Requests`, instead of failing every remaining meeting.
+- Scheduled Beeper imports stop between members of a large group chat when
+  their time runs out, so other sources get a turn. Imported messages are kept
+  and later runs finish the roster.
+- Explore shows which sources are waiting for account matching and lets you
+  retry each one. When an identity change saves but its cache refresh fails,
+  **Retry** in People refreshes the related views without repeating the change.
+- Clicking a Messages row near the bottom of a person page opens it without
+  scrolling the row out from under the pointer.
+- Scheduled person enrichment defers work to the next budget day when a
+  request or cost budget runs out around midnight UTC.
+- MCP operation tools report `operation_receipt_unavailable` when they cannot
+  confirm a write's outcome, replacing `operation_response_limit_exceeded`,
+  `operation_response_failed`, and `invalid_operation_response`. Read current
+  state before retrying.
+
+### Acknowledgements
+
+Thanks to everyone who contributed to this release:
+
+- [@AndrewWiggins](https://github.com/AndrewWiggins) for `msgvault diagnose-acquisition`.
+- [@cpcloud](https://github.com/cpcloud) for opening Messages rows at the bottom of a person page, deferring enrichment at the budget boundary, and making the test suite and package installs more reliable.
+- [@franklintra](https://github.com/franklintra) for clean IMAP failures when the connection is gone.
+- [@mariusvniekerk](https://github.com/mariusvniekerk) for Facebook and Instagram inboxes, Meta webhooks, comment moderation and replies, Bland calls, a quieter Explore account catalog, and the release notes and telemetry documentation.
+- [@rodboev](https://github.com/rodboev) for filing messages to Tasks and Kata from the reader and Files viewer, linked meeting records, suggestions, links, and splits, counting each meeting once, Facts sources and outcomes, first archived appearances, background follow-up scans, resuming `sync-full`, restoring Trash messages to search, account matching and identity refresh retries, uncertain MCP receipts, and opt-in usage reporting.
+- [@salmonumbrella](https://github.com/salmonumbrella) for LinkedIn and TikTok imports, calendar invitations and `import-ics`, contact-list cadence, `person create`, semantic recording search, voice memo search, change feed filters, MCP historical imports, person records, and bundled guides, `msgvault cli search`, Thunderbird markers in three more languages, fairer Beeper scheduling, and property tests with rapid.
+- [@sweenzor](https://github.com/sweenzor) for retrying Circleback rate limits.
+- [@turian](https://github.com/turian) for keeping pending Gmail history through full backfills and reading tags of source-deleted messages.
+- [@wesm](https://github.com/wesm) for named remotes, credential helpers, source-scoped CLI reads, remote `export-messages`, related email copies, and a faster person calendar.
+
+---
 
 ## 0.25.0
 <small>2026-11-14</small>

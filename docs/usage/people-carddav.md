@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-19"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -318,8 +318,7 @@ msgvault person publish 7
 msgvault person unpublish 7
 ```
 
-On `main` after the latest release, you can create and publish someone you have
-never messaged in one command:
+You can create and publish someone you have never messaged in one command:
 
 ```bash
 msgvault person create --name "Alex Example" --email alex@example.com --publish

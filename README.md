@@ -26,7 +26,7 @@ Use the browser, terminal, CLI, HTTP API, or an AI assistant through MCP.
 
 > **Alpha software.** APIs, storage format, and CLI flags may change. Back up
 > your data. This README follows current `main`; see the
-> [0.25.0 changelog](docs/changelog.md#0250) for features and upgrade steps.
+> [0.26.0 changelog](docs/changelog.md#0260) for features and upgrade steps.
 
 ## What you can do
 

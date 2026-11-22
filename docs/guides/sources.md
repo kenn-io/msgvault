@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-19"
 title: Choose a Source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
@@ -40,14 +40,14 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Chatwoot | [Chatwoot sync](chatwoot.md) | Shared inboxes, contact and employee messages, media, and linked call meetings |
 | Facebook Page comments | [Page comment sync](../usage/facebook-comments.md) | Selected Page token and app/Page IDs; returned organic, visitor, and ad-post comment conversations |
 | Instagram comments | [Professional account sync](../usage/instagram-comments.md) | Selected Page token and linked professional account; returned media comments and replies |
-| Facebook and Instagram messages | [Inbox sync](../usage/meta-messages.md) | Page token; Page Messenger or linked Instagram inbox, the 20 most recent messages per conversation; unreleased |
-| Instagram mentions | [Tagged media sync](../usage/instagram-comments.md#archive-media-that-tags-the-account) | Same profile with `mentions = true`; media where other accounts tag the account; unreleased |
+| Facebook and Instagram messages | [Inbox sync](../usage/meta-messages.md) | Page token; Page Messenger or linked Instagram inbox, the 20 most recent messages per conversation |
+| Instagram mentions | [Tagged media sync](../usage/instagram-comments.md#archive-media-that-tags-the-account) | Same profile with `mentions = true`; media where other accounts tag the account |
 | Beeper Desktop | [Beeper sync](../usage/beeper.md) | History and media exposed by the running local Beeper API |
 | Inline | [Inline sync](../usage/inline.md) | All accessible chats, including hidden, archived, and child threads; optional exact chat filter; requires a complete catalog from the connected backend |
 | Matrix | [Matrix sync](../usage/matrix.md) | Joined-room history on any homeserver, with encrypted messages recovered from the account's key backup |
 | WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger, Telegram, X DMs | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
-| TikTok data export | [TikTok export import](../usage/tiktok-export.md) | Local ZIP or extracted folder; DMs, your own comments, and profile identity; unreleased |
-| LinkedIn member export | [LinkedIn import](../usage/linkedin.md) | Local ZIP or extracted folder; DMs, your own posts and comments, and optional connection identities; unreleased |
+| TikTok data export | [TikTok export import](../usage/tiktok-export.md) | Local ZIP or extracted folder; DMs, your own comments, and profile identity |
+| LinkedIn member export | [LinkedIn import](../usage/linkedin.md) | Local ZIP or extracted folder; DMs, your own posts and comments, and optional connection identities |
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
 | RSS, Atom, or JSON feeds | [Feeds](../usage/feeds.md) | Followed feeds fetched on a schedule; each item archived once |
 | Another source, such as tool notifications | [Messages from any source](../usage/message-import.md) | Provider-neutral ingestion keyed by source and external message ID |
