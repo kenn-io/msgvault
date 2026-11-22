@@ -296,15 +296,17 @@ func syncDestinationParents(destination, analyticsDir string) error {
 }
 
 func publishCache(
+	ctx context.Context,
 	staging *cacheStaging,
 	analyticsDir string,
 	plan cachePublishPlan,
 	stateData []byte,
 ) error {
-	return publishCacheWithBeforeMarker(staging, analyticsDir, plan, stateData, nil)
+	return publishCacheWithBeforeMarker(ctx, staging, analyticsDir, plan, stateData, nil)
 }
 
 func publishCacheWithBeforeMarker(
+	ctx context.Context,
 	staging *cacheStaging,
 	analyticsDir string,
 	plan cachePublishPlan,
@@ -343,7 +345,9 @@ func publishCacheWithBeforeMarker(
 			return fmt.Errorf("open publication policy authority: %w", err)
 		}
 		defer func() { _ = authority.Close() }()
-		release, err := authority.AcquireSQLiteConversationPolicyFence(context.Background(), store.ConversationPolicyShared)
+		// Waiting behind a policy change must honor the build's cancellation.
+		// Nothing committed has changed before the moves below.
+		release, err := authority.AcquireSQLiteConversationPolicyFence(ctx, store.ConversationPolicyShared)
 		if err != nil {
 			return err
 		}
@@ -361,7 +365,7 @@ func publishCacheWithBeforeMarker(
 	defer func() { _ = readerLock.Unlock() }()
 
 	if authority != nil {
-		live, err := authority.ConversationPolicyRevision(context.Background())
+		live, err := authority.ConversationPolicyRevision(ctx)
 		if err != nil {
 			return err
 		}

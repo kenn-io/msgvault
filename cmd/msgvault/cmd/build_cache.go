@@ -1733,7 +1733,7 @@ func buildCacheLockedAttempt(
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}
-	if err := publishCache(staging, analyticsDir, publicationPlan, stateData); err != nil {
+	if err := publishCache(ctx, staging, analyticsDir, publicationPlan, stateData); err != nil {
 		return nil, err
 	}
 	reportCacheTextRepairs(os.Stderr, textRepairs)

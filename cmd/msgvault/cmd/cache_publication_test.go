@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -48,6 +49,7 @@ func TestCachePublicationCommitsDatasetsBeforeMarker(t *testing.T) {
 	data, err := json.Marshal(state)
 	requirements.NoError(err)
 	requirements.NoError(publishCache(
+		t.Context(),
 		staging,
 		analyticsDir,
 		cachePublishPlanForMode(true),
@@ -90,7 +92,7 @@ func TestCachePublicationInterruptionLeavesOldMarkerAndDetectableDrift(t *testin
 	})
 	requirements.NoError(err)
 
-	err = publishCache(staging, analyticsDir, cachePublishPlanForMode(true), stateData)
+	err = publishCache(t.Context(), staging, analyticsDir, cachePublishPlanForMode(true), stateData)
 	requirements.ErrorIs(err, interrupted)
 	currentMarker, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
 	requirements.NoError(readErr)
@@ -240,4 +242,44 @@ func TestCacheLocksAllowReadersDuringStagingAndMaintenanceWhileExcludingBuilders
 	defer cancelBlocked()
 	_, err = acquireCacheBuildLock(blockedCtx, analyticsDir)
 	requirements.ErrorIs(err, context.DeadlineExceeded, "other builders stay excluded")
+}
+
+// A build canceled while a policy change holds the room-policy fence must stop
+// waiting and leave the committed cache as it was.
+func TestCachePublicationHonorsCancellationWhileWaitingForPolicyFence(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "archive.db")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	release, err := st.AcquireSQLiteConversationPolicyFence(t.Context(), store.ConversationPolicyExclusive)
+	requirements.NoError(err)
+	t.Cleanup(release)
+
+	analyticsDir := filepath.Join(t.TempDir(), "analytics")
+	writePublicationTree(t, analyticsDir, "old.parquet")
+	writeCommittedPublicationFixtureState(t, analyticsDir, 1)
+	oldMarker, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+	requirements.NoError(err)
+	staging, err := newCacheStaging(analyticsDir)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = staging.cleanup() })
+	staging.policyDBPath = dbPath
+	writePublicationTree(t, staging.root, "new.parquet")
+	stateData, err := json.Marshal(query.CacheSyncState{LastMessageID: 2, SchemaVersion: query.CacheSchemaVersion})
+	requirements.NoError(err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- publishCache(ctx, staging, analyticsDir, cachePublishPlanForMode(true), stateData) }()
+	cancel()
+	select {
+	case err := <-done:
+		requirements.ErrorIs(err, context.Canceled)
+	case <-time.After(30 * time.Second):
+		requirements.FailNow("publication kept waiting for the policy fence after cancellation")
+	}
+	currentMarker, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+	requirements.NoError(err)
+	assertions.Equal(oldMarker, currentMarker)
+	assertions.Equal(query.CacheReady, mustInspectCacheReadiness(t, analyticsDir))
 }

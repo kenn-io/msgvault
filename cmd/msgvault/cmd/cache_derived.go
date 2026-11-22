@@ -307,7 +307,7 @@ func refreshDerivedDatasetsOnly(
 			Append:  map[string]bool{},
 			Replace: relatedReplacements,
 		}
-		if err := publishDerivedCache(staging, analyticsDir, plan, state); err != nil {
+		if err := publishDerivedCache(ctx, staging, analyticsDir, plan, state); err != nil {
 			return nil, err
 		}
 		reportCacheTextRepairs(os.Stderr, textRepairs)
@@ -430,7 +430,7 @@ func refreshDerivedDatasetsOnly(
 			plan.Replace[dataset] = true
 		}
 	}
-	if err := publishDerivedCache(staging, analyticsDir, plan, state); err != nil {
+	if err := publishDerivedCache(ctx, staging, analyticsDir, plan, state); err != nil {
 		return nil, err
 	}
 	reportCacheTextRepairs(os.Stderr, textRepairs)
@@ -606,6 +606,7 @@ func derivedCachePublishPlan(
 }
 
 func publishDerivedCache(
+	ctx context.Context,
 	staging *cacheStaging,
 	analyticsDir string,
 	plan cachePublishPlan,
@@ -616,6 +617,7 @@ func publishDerivedCache(
 		return fmt.Errorf("encode derived cache marker: %w", err)
 	}
 	return publishCacheWithBeforeMarker(
+		ctx,
 		staging,
 		analyticsDir,
 		plan,
