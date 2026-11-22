@@ -44,11 +44,9 @@ func TestConversationPolicySearchDefaultAndIncludeCold(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Len(listed, 1)
 	assertions.Equal(int64(1), listTotal)
-	// Vector hits are hydrated by ID. Vector search does not apply room policy
-	// until embeddings do, so hydration keeps every hit rather than shorten pages.
 	summaries, err := s.GetMessagesSummariesByIDsContext(t.Context(), []int64{ids["full"], ids["cold"]})
 	requirements.NoError(err)
-	assertions.Len(summaries, 2)
+	assertions.Len(summaries, 1)
 	detail, err := s.GetMessageContext(t.Context(), ids["cold"])
 	requirements.NoError(err)
 	requirements.NotNil(detail)

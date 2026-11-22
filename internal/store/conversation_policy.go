@@ -73,6 +73,15 @@ func (s *Store) ConversationPolicyRevision(ctx context.Context) (int64, error) {
 	return revision, err
 }
 
+// InvalidateConversationPolicyWorkTx advances the policy revision inside the
+// caller's transaction. Cleanup calls it in the transaction that resets
+// discovery progress: a worker that captured work before then would
+// otherwise pass the revision check and write its older progress over the
+// reset, skipping newly eligible messages until a backstop.
+func (s *Store) InvalidateConversationPolicyWorkTx(ctx context.Context, tx ConversationPolicyTx) error {
+	return s.bumpConversationPolicyRevision(ctx, tx)
+}
+
 func (s *Store) bumpConversationPolicyRevision(ctx context.Context, tx contextStatementQuerier) error {
 	_, err := tx.ExecContext(ctx, s.Rebind(`INSERT INTO archive_metadata(key,value) VALUES (?,'1')
  ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(archive_metadata.value AS BIGINT)+1 AS TEXT)`), conversationPolicyRevisionKey)

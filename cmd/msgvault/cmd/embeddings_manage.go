@@ -838,25 +838,31 @@ func openEmbeddingsBackendWithMode(ctx context.Context, readOnly bool) (vector.B
 	cfg := state.cfg
 	dsn := cfg.DatabaseDSN()
 	if store.IsPostgresURL(dsn) {
-		db, cleanup, err := openEmbeddingsPostgres(ctx, dsn, readOnly)
+		var mainStore *store.Store
+		var err error
+		if readOnly {
+			mainStore, err = store.OpenReadOnlyContext(ctx, dsn)
+		} else {
+			mainStore, err = store.OpenPostgresContext(ctx, dsn)
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("open postgres for embeddings backend: %w", err)
 		}
 		// Writable management opens still apply extension-less upgrades. Listing
 		// sets both ReadOnly and SkipMigrate to avoid schema work and backfills.
 		b, err := pgvector.Open(ctx, pgvector.Options{
-			DB:          db,
+			DB:          mainStore.DB(),
+			PolicyStore: mainStore,
 			Dimension:   cfg.Vector.Embeddings.Dimension,
 			SkipMigrate: true,
 			ReadOnly:    readOnly,
 			BuildScope:  cfg.Vector.Embed.Scope.BuildScope(),
 		})
 		if err != nil {
-			_ = db.Close()
-			cleanup()
+			_ = mainStore.Close()
 			return nil, nil, fmt.Errorf("open pgvector backend: %w", err)
 		}
-		return b, func() { _ = b.Close(); _ = db.Close(); cleanup() }, nil
+		return b, func() { _ = b.Close(); _ = mainStore.Close() }, nil
 	}
 
 	if err := sqlitevec.RegisterExtension(); err != nil {
@@ -890,6 +896,7 @@ func openEmbeddingsBackendWithMode(ctx context.Context, readOnly bool) (vector.B
 		return nil, nil, fmt.Errorf("open main db for embeddings backend: %w", err)
 	}
 	b, err := sqlitevec.Open(ctx, sqlitevec.Options{
+		PolicyStore:      mainStore,
 		Path:             vecPath,
 		MetadataReadOnly: readOnly,
 		MainPath:         dsn,

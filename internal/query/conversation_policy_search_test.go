@@ -125,10 +125,9 @@ func TestConversationPolicySearchDefaultAndIncludeCold(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Len(delegatedStats.Messages, 2)
 	assertions.Equal(int64(2), delegatedStats.TotalCount)
-	// Hydration serves vector hits, which are not policy-filtered until embeddings are.
 	hydrated, err := e.GetMessageSummariesByIDs(t.Context(), ids)
 	requirements.NoError(err)
-	assertions.Len(hydrated, len(ids))
+	assertions.Len(hydrated, 1)
 	_, err = e.GetDeletionTargetsBySearch(t.Context(), search.Parse("needle include:cold"), query.MessageFilter{}, query.DeletionSearchDeep)
 	requirements.ErrorContains(err, "lexical")
 }
@@ -176,7 +175,7 @@ func TestConversationPolicySearchDeletionScopeIndependent(t *testing.T) {
 	assertions.Equal(int64(2), coldCount)
 	hydrated, err := e.GetMessageSummariesByIDs(t.Context(), []int64{ids["full"], ids["cold"]})
 	requirements.NoError(err)
-	assertions.ElementsMatch([]int64{ids["full"], ids["cold"]}, coldSearchIDs(hydrated))
+	assertions.Equal(wantIDs, coldSearchIDs(hydrated))
 	for _, mode := range []query.DeletionSearchMode{query.DeletionSearchFast, query.DeletionSearchDeep} {
 		targets, err := searchResolver.GetDeletionTargetsBySearch(t.Context(), parsed, filter, mode)
 		requirements.NoError(err)

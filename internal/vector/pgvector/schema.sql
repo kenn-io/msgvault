@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS embeddings (
     chunk_char_end   INTEGER NOT NULL DEFAULT 0,
     source_basis     SMALLINT NOT NULL DEFAULT 0,
     truncated        BOOLEAN NOT NULL DEFAULT FALSE,
+    embedding_revision BIGINT NOT NULL DEFAULT 0,
     dimension        INTEGER NOT NULL,
     embedding        vector NOT NULL,
     PRIMARY KEY (generation_id, message_id, chunk_index)

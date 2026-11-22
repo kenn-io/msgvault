@@ -86,32 +86,32 @@ func (s *Store) ScanForEmbeddingScoped(ctx context.Context, target int64, afterI
 // embedding. Idempotent: re-stamping an already-stamped row is a no-op.
 //
 // The ids are processed in chunks (see embedGenStampChunkRows) to stay
-// under the driver's bind limit; chunks are not wrapped in a single
-// transaction because each chunk's UPDATE is independently idempotent and
-// the cross-DB worker contract already tolerates a partial stamp (the
-// next scan re-finds any unstamped rows and re-runs an idempotent batch).
+// under the driver's bind limit. One policy-fenced transaction validates the
+// captured revision and prevents a transition from interleaving with stamps.
 func (s *Store) SetEmbedGen(ctx context.Context, ids []int64, target int64) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	for start := 0; start < len(ids); start += embedGenStampChunkRows {
-		end := min(start+embedGenStampChunkRows, len(ids))
-		chunk := ids[start:end]
+	return s.withConversationPolicyPublication(ctx, func(tx *sql.Tx) error {
+		for start := 0; start < len(ids); start += embedGenStampChunkRows {
+			end := min(start+embedGenStampChunkRows, len(ids))
+			chunk := ids[start:end]
 
-		placeholders := make([]string, len(chunk))
-		args := make([]any, 0, 1+len(chunk))
-		args = append(args, target)
-		for i, id := range chunk {
-			placeholders[i] = "?"
-			args = append(args, id)
+			placeholders := make([]string, len(chunk))
+			args := make([]any, 0, 1+len(chunk))
+			args = append(args, target)
+			for i, id := range chunk {
+				placeholders[i] = "?"
+				args = append(args, id)
+			}
+			q := `UPDATE messages SET embed_gen = ? WHERE id IN (` +
+				strings.Join(placeholders, ",") + `) AND ` + FullMessageWhere("messages")
+			if _, err := tx.ExecContext(ctx, s.Rebind(q), args...); err != nil {
+				return fmt.Errorf("set embed_gen: %w", err)
+			}
 		}
-		q := `UPDATE messages SET embed_gen = ? WHERE id IN (` +
-			strings.Join(placeholders, ",") + `)`
-		if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
-			return fmt.Errorf("set embed_gen: %w", err)
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // EmbedGenStamp pairs a message id with the last_modified token captured
@@ -127,8 +127,9 @@ func (s *Store) SetEmbedGen(ctx context.Context, ids []int64, target int64) erro
 // time.Time back. The WHERE comparison runs entirely server-side against the
 // stored value.
 type EmbedGenStamp struct {
-	ID           int64
-	LastModified any
+	ID                int64
+	LastModified      any
+	EmbeddingRevision int64
 }
 
 // EmbedGenMetadataVersion is the store-owned compare-and-set token for
@@ -188,6 +189,14 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 		return orderedVersions[i].ID < orderedVersions[j].ID
 	})
 
+	if !s.IsPostgreSQL() {
+		release, err := s.AcquireSQLiteConversationPolicyFence(ctx, ConversationPolicyShared)
+		if err != nil {
+			return false, 0, err
+		}
+		defer release()
+	}
+
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return false, 0, fmt.Errorf("acquire embed_gen group connection: %w", err)
@@ -209,6 +218,15 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 		}
 	}()
 	if s.IsPostgreSQL() {
+		if err := s.LockPostgresConversationPolicyTx(ctx, conn, ConversationPolicyShared); err != nil {
+			return false, 0, err
+		}
+	}
+	if err := s.CheckConversationPolicyPublicationTx(ctx, conn, nil); err != nil {
+		return false, 0, err
+	}
+
+	if s.IsPostgreSQL() {
 		if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_xact_lock(
 			hashtextextended('msgvault.embedding_change_clock', 0))`); err != nil {
 			return false, 0, fmt.Errorf("lock embed_gen group journal boundary: %w", err)
@@ -221,10 +239,11 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 	}
 	newlyCovered := 0
 	for _, version := range orderedVersions {
-		query := fmt.Sprintf(`SELECT id, embed_gen FROM messages
+		query := fmt.Sprintf(`SELECT id, embed_gen, embedding_revision FROM messages
 			WHERE id = ? AND %s = ?
-			  AND deleted_at IS NULL AND deleted_from_source_at IS NULL`, lastModified)
-		args := []any{version.ID, version.LastModified}
+			  AND embedding_revision = ?
+			  AND deleted_at IS NULL AND deleted_from_source_at IS NULL AND `+FullMessageWhere("messages"), lastModified)
+		args := []any{version.ID, version.LastModified, version.EmbeddingRevision}
 		if metadataVersion.ConversationID != 0 {
 			query += ` AND conversation_id = ?`
 			args = append(args, metadataVersion.ConversationID)
@@ -232,7 +251,8 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 		query += s.dialect.SelectForUpdate()
 		var id int64
 		var previousGen sql.NullInt64
-		err := conn.QueryRowContext(ctx, s.dialect.Rebind(query), args...).Scan(&id, &previousGen)
+		var currentEmbeddingRevision int64
+		err := conn.QueryRowContext(ctx, s.dialect.Rebind(query), args...).Scan(&id, &previousGen, &currentEmbeddingRevision)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, 0, nil
 		}
@@ -256,8 +276,8 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 
 	for _, version := range orderedVersions {
 		res, err := conn.ExecContext(ctx, s.dialect.Rebind(
-			`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`),
-			target, version.ID, version.LastModified)
+			`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ? AND embedding_revision = ?`),
+			target, version.ID, version.LastModified, version.EmbeddingRevision)
 		if err != nil {
 			return false, 0, fmt.Errorf("stamp embed_gen group member %d: %w", version.ID, err)
 		}
@@ -376,12 +396,12 @@ func (s *Store) embedGenMetadataDigest(
 // re-finds it on account of the bumped last_modified.
 //
 // Each row is a separate UPDATE because every message carries a distinct
-// last_modified token. The UPDATEs share one transaction, so a driver error
-// stamps nothing: the worker counts the whole batch as failed, and the next
-// scan re-finds every row and re-runs the idempotent batch. A partial stamp
-// would leave rows covered that the worker counted as failed. Used by the
-// embed worker's content read→stamp path; the backfill path keeps the plain
-// SetEmbedGen (it has no read→stamp window).
+// last_modified token. The UPDATEs share one policy-fenced transaction that
+// validates the original work revision and stamps only currently full
+// messages, so a driver error stamps nothing: the worker counts the whole batch
+// as failed, and the next scan re-finds every row and re-runs the idempotent
+// batch. Used by the embed worker's content read→stamp path; the backfill path
+// keeps the plain SetEmbedGen (it has no read→stamp window).
 //
 // Returns newly covered rows and IDs whose content token no longer matches. A miss
 // means last_modified moved between the worker's content read and this stamp
@@ -406,39 +426,47 @@ func (s *Store) embedGenMetadataDigest(
 // full rebuild or the auto-backstop re-embeds it regardless. See
 // docs/usage/vector-search.md ("CAS resolution").
 func (s *Store) SetEmbedGenIfUnchanged(ctx context.Context, items []EmbedGenStamp, target int64) (missed []int64, covered int, err error) {
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
-		for _, it := range items {
-			res, err := tx.ExecContext(ctx,
-				`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ? AND (embed_gen IS NULL OR embed_gen <> ?)`,
-				target, it.ID, it.LastModified, target)
-			if err != nil {
-				return fmt.Errorf("set embed_gen if unchanged (id=%d): %w", it.ID, err)
+	type stampResult struct {
+		missed  []int64
+		covered int
+	}
+	result, err := retryBusyWrite(ctx, s, "set embed_gen if unchanged", func() (*stampResult, error) {
+		attempt := &stampResult{}
+		err := s.withConversationPolicyPublication(ctx, func(tx *sql.Tx) error {
+			for _, it := range items {
+				q := `UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ? AND embedding_revision = ? AND (embed_gen IS NULL OR embed_gen <> ?)` + " AND " + FullMessageWhere("messages")
+				res, err := tx.ExecContext(ctx, s.dialect.Rebind(q), target, it.ID, it.LastModified, it.EmbeddingRevision, target)
+				if err != nil {
+					return fmt.Errorf("set embed_gen if unchanged (id=%d): %w", it.ID, err)
+				}
+				n, err := res.RowsAffected()
+				if err != nil {
+					return fmt.Errorf("rows affected (id=%d): %w", it.ID, err)
+				}
+				if n == 0 {
+					var alreadyCovered bool
+					err := tx.QueryRowContext(ctx, s.dialect.Rebind(`SELECT EXISTS(SELECT 1 FROM messages WHERE id = ? AND last_modified = ? AND embedding_revision = ? AND embed_gen = ? AND `+FullMessageWhere("messages")+`)`), it.ID, it.LastModified, it.EmbeddingRevision, target).Scan(&alreadyCovered)
+					if err != nil {
+						return fmt.Errorf("read existing embed_gen (id=%d): %w", it.ID, err)
+					}
+					if !alreadyCovered {
+						attempt.missed = append(attempt.missed, it.ID)
+					}
+				} else {
+					attempt.covered++
+				}
 			}
-			n, err := res.RowsAffected()
-			if err != nil {
-				return fmt.Errorf("rows affected (id=%d): %w", it.ID, err)
-			}
-			if n != 0 {
-				covered++
-				continue
-			}
-			var alreadyCovered bool
-			err = tx.QueryRowContext(ctx,
-				`SELECT EXISTS(SELECT 1 FROM messages WHERE id = ? AND last_modified = ? AND embed_gen = ?)`,
-				it.ID, it.LastModified, target).Scan(&alreadyCovered)
-			if err != nil {
-				return fmt.Errorf("read existing embed_gen (id=%d): %w", it.ID, err)
-			}
-			if !alreadyCovered {
-				missed = append(missed, it.ID)
-			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
 		}
-		return nil
+		return attempt, nil
 	})
 	if err != nil {
 		return nil, 0, err
 	}
-	return missed, covered, nil
+	return result.missed, result.covered, nil
 }
 
 // ResetEmbedGen clears embed_gen (sets it back to NULL) on the given
@@ -447,6 +475,18 @@ func (s *Store) SetEmbedGenIfUnchanged(ctx context.Context, items []EmbedGenStam
 // worker re-embeds it with the corrected content on its next run. Chunked
 // to stay under the driver's bind limit; idempotent.
 func (s *Store) ResetEmbedGen(ctx context.Context, ids []int64) error {
+	return s.resetEmbedGen(ctx, ids, true)
+}
+
+// ResetEmbedGenCoverage clears generation coverage without changing the
+// message input revision. Contextual generation builds use this when a
+// provider rejects an unchanged document: an active generation can still have
+// a valid vector for the current inputs.
+func (s *Store) ResetEmbedGenCoverage(ctx context.Context, ids []int64) error {
+	return s.resetEmbedGen(ctx, ids, false)
+}
+
+func (s *Store) resetEmbedGen(ctx context.Context, ids []int64, advanceRevision bool) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -460,8 +500,11 @@ func (s *Store) ResetEmbedGen(ctx context.Context, ids []int64) error {
 			placeholders[i] = "?"
 			args = append(args, id)
 		}
-		q := `UPDATE messages SET embed_gen = NULL WHERE id IN (` +
-			strings.Join(placeholders, ",") + `)`
+		set := `embed_gen = NULL`
+		if advanceRevision {
+			set += `, embedding_revision = embedding_revision + 1`
+		}
+		q := `UPDATE messages SET ` + set + ` WHERE id IN (` + strings.Join(placeholders, ",") + `)`
 		if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
 			return fmt.Errorf("reset embed_gen: %w", err)
 		}
@@ -708,7 +751,7 @@ func (s *Store) countLiveMessagesScoped(ctx context.Context, messageTypes []stri
 // embed build scope: message_type IN (...) and/or source_id IN (...). Empty
 // slices leave that dimension unrestricted.
 func liveMessagesWhereScoped(messageTypes []string, sourceIDs []int64) (string, []any) {
-	where := LiveMessagesWhere("", true)
+	where := LiveMessagesWhere("", true) + " AND " + FullMessageWhere("messages")
 	var args []any
 	types := normalizeMessageTypes(messageTypes)
 	if len(types) > 0 {
