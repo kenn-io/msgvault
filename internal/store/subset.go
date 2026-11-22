@@ -448,6 +448,8 @@ func copyData(ctx context.Context, db *sql.DB, tx *sql.Tx, rowCount int, options
 		}
 	}
 	// Route lookup reports a Beeper source awaiting re-anchor from this marker.
+	// Room policy settings travel too: the bootstrap after the copy classifies
+	// rooms with them, and default settings would promote every Cold room.
 	hasArchiveMetadata, err := sourceTableExists(ctx, tx, "archive_metadata")
 	if err != nil {
 		return nil, fmt.Errorf("check archive metadata schema: %w", err)
@@ -458,6 +460,11 @@ func copyData(ctx context.Context, db *sql.DB, tx *sql.Tx, rowCount int, options
 			WHERE key IN (SELECT ? || CAST(source_id AS TEXT) FROM selected_message_sources)
 			ON CONFLICT (key) DO UPDATE SET value = excluded.value`, beeperReanchorMarkerPrefix); err != nil {
 			return nil, fmt.Errorf("copy Beeper re-anchor markers: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata (key, value)
+			SELECT key, value FROM src.archive_metadata WHERE key = ?
+			ON CONFLICT (key) DO UPDATE SET value = excluded.value`, conversationPolicySettingsKey); err != nil {
+			return nil, fmt.Errorf("copy conversation policy settings: %w", err)
 		}
 	}
 

@@ -151,6 +151,42 @@ func TestConversationPolicySubset(t *testing.T) {
 	assertions.Equal(conversationpolicy.Cold, rows[0].EffectiveTier)
 }
 
+func TestConversationPolicySubsetKeepsConfiguredClassification(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "source.db")
+	st, err := store.OpenForTest(t.Context(), path)
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(st.Close()) })
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	source, err := st.GetOrCreateSource("beeper", "configured-subset-policy")
+	requirements.NoError(err)
+	room, err := st.EnsureConversation(t.Context(), source.ID, "large-room", "Large room")
+	requirements.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: "message", MessageType: "beeper"})
+	requirements.NoError(err)
+	requirements.NoError(st.SetConversationMemberCountContext(t.Context(), room, 21))
+	// Classification, not an override, makes this quiet large room Cold.
+	_, err = st.ConfigureConversationPolicy(t.Context(), conversationpolicy.RecommendedSettings(), time.Now())
+	requirements.NoError(err)
+	rows, err := st.ListConversationPolicies(t.Context())
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	requirements.Equal(conversationpolicy.Cold, rows[0].EffectiveTier)
+	requirements.Empty(rows[0].Override)
+	dest := filepath.Join(dir, "subset")
+	_, err = store.CopySubset(t.Context(), path, dest, 1, false)
+	requirements.NoError(err)
+	copied, err := store.OpenForTest(t.Context(), filepath.Join(dest, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(copied.Close()) })
+	rows, err = copied.ListConversationPolicies(t.Context())
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	assertions.Equal(conversationpolicy.Cold, rows[0].EffectiveTier,
+		"the subset must classify copied rooms with the source's policy settings")
+}
+
 func TestConversationPolicySubsetBootstrapsLegacySource(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	dir := t.TempDir()
