@@ -1454,6 +1454,50 @@ func TestRecipientSupportRefreshRestagesParticipantProjection(t *testing.T) {
 	assertions.False(cacheNeedsBuild(c.DatabaseDSN(), analyticsDir).NeedsBuild)
 }
 
+func TestPersonLinkRefreshRestagesParticipantProjection(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	c, st := policyCacheFixture(t)
+	person, _, err := st.CreatePersonFromParticipant(1)
+	requirements.NoError(err)
+	_, err = st.AddPersonContactPointContext(t.Context(), person.ID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "cold@example.com",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	requirements.NoError(err)
+	analyticsDir := c.AnalyticsDir()
+	_, err = buildCache(t.Context(), c.DatabaseDSN(), analyticsDir, true)
+	requirements.NoError(err)
+
+	duckDB, err := duckdbutil.Open(
+		t.Context(),
+		duckdbutil.BuilderPolicy(filepath.Join(c.Data.DataDir, "person-link-refresh-duckdb-tmp")),
+	)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(duckDB.Close()) }()
+	cachedEmail := func() string {
+		var email string
+		requirements.NoError(duckDB.QueryRowContext(t.Context(), `
+			SELECT email_address FROM read_parquet(?) WHERE id = 2
+		`, filepath.Join(analyticsDir, tableParticipants, "*.parquet")).Scan(&email))
+		return email
+	}
+	assertions.Empty(cachedEmail(), "a cold-room email stays hidden until a saved contact backs it")
+
+	// Linking the cold-room participant to the person whose saved contact
+	// point matches makes its email eligible without a display-name change.
+	_, err = st.LinkParticipants(1, 2)
+	requirements.NoError(err)
+	staleness := cacheNeedsBuild(c.DatabaseDSN(), analyticsDir)
+	requirements.True(staleness.NeedsBuild)
+	assertions.False(staleness.HasParticipantDisplayNameDrift)
+	result, err := buildCacheAuto(t.Context(), c.DatabaseDSN(), analyticsDir)
+	requirements.NoError(err)
+	assertions.True(result.IdentityOnly)
+	assertions.Equal("cold@example.com", cachedEmail(),
+		"a person link that backs the email must restage participants.parquet")
+}
+
 func TestRecipientOnlyRefreshRestagesParticipantIdentifiers(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
