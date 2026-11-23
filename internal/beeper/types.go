@@ -324,9 +324,10 @@ type ImportSummary struct {
 	// FetchErrors counts Beeper API fetch failures (a subset of Errors). Any
 	// fetch failure keeps the discovery watermark from advancing so the
 	// affected chats are re-visited next run.
-	FetchErrors int64
-	Errors      int64
-	FailedChats map[string]*ChatFailure
+	FetchErrors            int64
+	Errors                 int64
+	mediaErrorsWithMarkers int64
+	FailedChats            map[string]*ChatFailure
 }
 
 // ChatFailure counts a chat's fetch and attachment errors during one run.

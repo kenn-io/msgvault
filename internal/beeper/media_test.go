@@ -385,6 +385,9 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 	assert.Zero(cf.FetchErrors)
 	assert.NotEmpty(cf.LastError)
 	assert.EqualValues(1, sum.Errors)
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "signal")
+	require.NoError(err)
+	assert.True(source.LastSyncAt.Valid, "a stored retry marker must not hold source freshness")
 
 	var msgCount int
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
@@ -419,8 +422,6 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 
 	// History-only accounts can finish downloading already archived media.
 	historyOnly := true
-	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "signal")
-	require.NoError(err)
 	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{HistoryOnly: &historyOnly})
 	require.NoError(err)
 
@@ -1223,13 +1224,22 @@ func TestBackfillMediaGoneMessageKeepsDownloadedRows(t *testing.T) {
 }
 
 func TestImportMediaUnavailableIsTerminal(t *testing.T) {
+	t.Run("WhatsApp", func(t *testing.T) {
+		testImportMediaUnavailableIsTerminal(t, http.StatusInternalServerError, expiredAssetBody)
+	})
+	t.Run("Instagram", func(t *testing.T) {
+		testImportMediaUnavailableIsTerminal(t, http.StatusBadGateway, `{"message":"Failed to download asset: Media no longer exists","code":"SERVE_ASSET_ERROR"}`)
+	})
+}
+
+func testImportMediaUnavailableIsTerminal(t *testing.T, status int, body string) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
 	f := newFakeBeeper(t)
 	f.addChat(mediaChat())
-	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadGateway, `{"message":"Failed to download asset: Media no longer exists","code":"SERVE_ASSET_ERROR"}`)
+	f.setAssetError("mxc://beeper.local/photo1", status, body)
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 

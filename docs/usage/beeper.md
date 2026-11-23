@@ -166,6 +166,8 @@ reports `Media is no longer available`. msgvault requests such a file once,
 records it as `unavailable` with reason `source_unavailable`, and never retries
 it.
 
+Beeper's `Media no longer exists` response is also terminal after one request.
+
 Beeper can also report `Media not found`, `M_NOT_FOUND`, or
 `failed to download file: HTTP 404`, sometimes wrapped in an HTTP 502 response.
 A plain HTTP 404 that names none of these counts as an ordinary failed
