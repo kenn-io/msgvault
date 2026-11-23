@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-
-	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 // ErrAlreadyLinked is returned by LinkParticipants when the requested edge
@@ -365,6 +363,26 @@ func (s *Store) linkParticipantsContextGuarded(
 	return s.linkParticipantsContextGuardedOwned(ctx, a, b, 0, guard, nil)
 }
 
+func (s *Store) restoreConfirmedMembershipsTx(ctx context.Context, tx *loggedTx, personID, lo, hi int64, members []int64, edges []linkEdge) (bool, error) {
+	if err := extendActivePersonMergeLineageTx(ctx, tx, personID, lo, hi, edges, false); err != nil {
+		return false, err
+	}
+	changed, err := s.bindPersonParticipantsOwnedTx(ctx, tx, personID, members, false)
+	if err != nil || !changed {
+		return changed, err
+	}
+	if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
+		return false, err
+	}
+	if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID); err != nil {
+		return false, err
+	}
+	if err := s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // linkParticipantsContextGuardedOwned is the guarded link transaction with an
 // optional identity-match-candidate owner. A zero owner preserves the
 // ordinary user/import link path. The owner is written with the edge itself,
@@ -391,6 +409,14 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 				return err
 			}
 		}
+		confirmMembership := ownerCandidateID == 0
+		if ownerCandidateID != 0 {
+			var decidedBy string
+			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(decided_by, 'system') FROM identity_match_candidates WHERE id = ?`, ownerCandidateID).Scan(&decidedBy); err != nil {
+				return err
+			}
+			confirmMembership = decidedBy != string(AttributeOwnershipSystem)
+		}
 		if err := s.verifyParticipantsExistTxContext(ctx, tx, lo, hi); err != nil {
 			return err
 		}
@@ -404,8 +430,21 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		if err != nil {
 			return err
 		}
+		if confirmMembership && personID != 0 {
+			if err := confirmCardDAVParticipantBindingsTx(ctx, tx, personID, unionMembers); err != nil {
+				return err
+			}
+		}
 		for _, e := range edges {
 			if e.a == lo && e.b == hi {
+				membershipChanged := false
+				if confirmMembership && personID != 0 {
+					withoutEdge := slices.DeleteFunc(slices.Clone(edges), func(edge linkEdge) bool { return edge == e })
+					membershipChanged, err = s.restoreConfirmedMembershipsTx(ctx, tx, personID, lo, hi, unionMembers, withoutEdge)
+					if err != nil {
+						return err
+					}
+				}
 				if ownerCandidateID == 0 {
 					result, updateErr := tx.ExecContext(ctx, `UPDATE participant_links
 						SET identity_match_candidate_id = NULL
@@ -429,7 +468,11 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 						return nil
 					}
 				}
-				revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
+				if membershipChanged {
+					revision, err = s.bumpIdentityRevisionContext(ctx, tx)
+				} else {
+					revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
+				}
 				if err != nil {
 					return err
 				}
@@ -445,7 +488,18 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 			// have cleared durable recovery state, so commit that update while
 			// preserving ErrAlreadyLinked for ordinary manual link callers.
 			if ownerCandidateID > 0 {
-				revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
+				changed := false
+				if confirmMembership && personID != 0 {
+					changed, err = s.restoreConfirmedMembershipsTx(ctx, tx, personID, lo, hi, unionMembers, edges)
+					if err != nil {
+						return err
+					}
+				}
+				if changed {
+					revision, err = s.bumpIdentityRevisionContext(ctx, tx)
+				} else {
+					revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
+				}
 				if err != nil {
 					return err
 				}
@@ -472,16 +526,31 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		}
 		if personID != 0 {
 			if err := extendActivePersonMergeLineageTx(
-				ctx, tx, personID, lo, hi, edges,
+				ctx, tx, personID, lo, hi, edges, !confirmMembership,
 			); err != nil {
 				return err
 			}
-			changed, err := s.bindPersonParticipantsTx(
-				ctx, tx, personID, unionMembers)
+			var changed bool
+			if confirmMembership {
+				changed, err = s.bindPersonParticipantsTx(ctx, tx, personID, unionMembers)
+			} else {
+				var owned bool
+				owned, err = cardDAVBindingOwnershipTx(ctx, tx, personID, unionMembers)
+				if err != nil {
+					return err
+				}
+				changed, err = s.bindPersonParticipantsOwnedTx(ctx, tx, personID, unionMembers, owned)
+			}
 			if err != nil {
 				return err
 			}
 			if changed {
+				if !confirmMembership {
+					if err := s.advanceCardDAVAutomaticBindingBaselineTx(ctx, tx, personID); err != nil {
+						return err
+					}
+				}
+
 				if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
 					return err
 				}
@@ -496,9 +565,7 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		if err == nil {
 			linked = true
 			if personID != 0 {
-				err = s.publishPersonIdentityScopeChangesTx(
-					ctx, tx, []int64{personID},
-					peoplesweep.EvidenceEffectIdentityReassigned)
+				err = s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID})
 			}
 		}
 		if err == nil && afterLink != nil {
@@ -519,12 +586,14 @@ type activePersonMergeLineageState struct {
 // its one unambiguous state. A lineage-free component inherits the state of
 // the participant it is directly linked to, which remains deterministic even
 // when that participant's existing component contains both merge origins.
+// Automatic memberships can be undone, so system links omit them from lineage.
 func extendActivePersonMergeLineageTx(
 	ctx context.Context,
 	tx *loggedTx,
 	personID int64,
 	lo, hi int64,
 	edges []linkEdge,
+	skipAutomatic bool,
 ) error {
 	left := sortedComponentMembers(lo, edges)
 	right := sortedComponentMembers(hi, edges)
@@ -610,9 +679,12 @@ func extendActivePersonMergeLineageTx(
 			state := assignments[participantID]
 			if _, err := tx.ExecContext(ctx, `INSERT INTO person_merge_participants
 				(merge_id, participant_id, origin_side, split_id)
-				VALUES (?, ?, ?, ?)
+				SELECT ?, ?, ?, ? WHERE ? = FALSE OR NOT EXISTS (
+					SELECT 1 FROM person_participants
+					WHERE person_id = ? AND participant_id = ? AND carddav_owned = TRUE
+				)
 				ON CONFLICT (merge_id, participant_id) DO NOTHING`,
-				mergeID, participantID, state.origin, state.splitID); err != nil {
+				mergeID, participantID, state.origin, state.splitID, skipAutomatic, personID, participantID); err != nil {
 				return fmt.Errorf("extend person merge lineage for linked participant: %w", err)
 			}
 		}
@@ -716,9 +788,7 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 		if err != nil {
 			return err
 		}
-		if err := s.publishPersonIdentityScopeChangesTx(
-			context.Background(), tx, trackedPeople,
-			peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+		if err := s.publishPersonIdentityScopeChangesTx(context.Background(), tx, trackedPeople); err != nil {
 			return err
 		}
 		return s.invalidatePersonEnrichmentIdentitiesTx(

@@ -5,6 +5,8 @@ import type { ConnectionSyncOutcome } from "./connectionSyncOutcome";
 import type { SyncResultStatus } from "./syncResultStatus";
 
 export interface SyncResult {
+  /** CardDAV binding conflicts archive-wide at this run. */
+  binding_conflicts?: number;
   books: number;
   connections?: ConnectionSyncOutcome[];
   created: number;

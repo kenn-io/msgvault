@@ -232,6 +232,12 @@ msgvault person set-display-name 7 "Alex Example"
 
 You can edit or clear this saved name with `set-display-name`. Repeating
 promotion returns the same profile and preserves an edited or cleared name.
+Subscribed CardDAV cards also bind exact email and phone matches to their saved
+profiles on sync, including participants that arrive later. Preview the changes
+with `msgvault carddav bind-participants --dry-run`. See
+[CardDAV identity binding](people-carddav.md#connect-cards-to-archived-identities)
+for conflicts, manual confirmation, and undo.
+
 Archive observation alone does not promote people. Sources that assert a stable
 identity link addresses automatically: Beeper user IDs, Notion user IDs, Apple
 Contacts cards for Muesli attendees, and person `id` values in meeting imports.

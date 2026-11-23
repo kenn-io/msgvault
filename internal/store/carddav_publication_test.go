@@ -188,7 +188,7 @@ func TestCardDAVPublicationRejectsAmbiguousMappedResource(t *testing.T) {
 	require := require.New(t)
 
 	st, account, book := newCardDAVResourceStore(t)
-	first := remoteResource(book.CanonicalURL+"first.vcf", "first", "Duplicate",
+	first := remoteResource(book.CanonicalURL+"first.vcf", "10000000-0000-4000-8000-000000000001", "Duplicate",
 		"duplicate@example.test", `"one"`)
 	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -198,7 +198,7 @@ func TestCardDAVPublicationRejectsAmbiguousMappedResource(t *testing.T) {
 	firstResource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, first.Href)
 	require.NoError(err)
 	require.NotNil(firstResource.PersonID)
-	second := remoteResource(book.CanonicalURL+"second.vcf", "second", "Duplicate",
+	second := remoteResource(book.CanonicalURL+"second.vcf", first.RemoteUID, "Duplicate",
 		"duplicate@example.test", `"two"`)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,

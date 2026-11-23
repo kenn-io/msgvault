@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
-	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -5050,6 +5049,10 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 				return err
 			}
 			if changed {
+				if err := s.advanceCardDAVAutomaticBindingBaselineTx(ctx, tx, personID); err != nil {
+					return err
+				}
+
 				if err := s.bumpPersonRevisionsTx(
 					ctx, tx, personID); err != nil {
 					return err
@@ -5125,6 +5128,28 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		if _, err := tx.ExecContext(ctx, `UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
 			return err
 		}
+		if oldEmail.Valid {
+			// Preserve the absorbed primary email as an unscoped identifier. A
+			// survivor with its own primary address cannot store this value in
+			// email_address, and CardDAV reconciliation needs the alias to support
+			// transferred bindings.
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO participant_identifiers (
+					participant_id, identifier_type, identifier_value, is_primary
+				) SELECT ?, 'email', ?, FALSE
+				WHERE NOT EXISTS (SELECT 1 FROM participants WHERE id = ? AND LOWER(email_address) = LOWER(?))
+				ON CONFLICT (identifier_type, identifier_value) DO NOTHING
+			`, newID, oldEmail.String, newID, oldEmail.String); err != nil {
+				return fmt.Errorf("preserve absorbed participant email: %w", err)
+			}
+			var retained bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM participants WHERE id = ? AND LOWER(email_address) = LOWER(?)) OR EXISTS (SELECT 1 FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND identifier_value = ?)`, newID, oldEmail.String, newID, oldEmail.String).Scan(&retained); err != nil {
+				return err
+			}
+			if !retained {
+				return fmt.Errorf("absorbed participant email belongs to another identity: %w: %w", ErrIdentifierAddressConflict, ErrPersonBindingConflict)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE source_import_items SET name = ? WHERE provider LIKE 'beeper-roster:%' AND name = ?`, strconv.FormatInt(newID, 10), strconv.FormatInt(oldID, 10)); err != nil {
 			return err
 		}
@@ -5189,9 +5214,7 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 			return err
 		}
 		if personID != 0 {
-			if err := s.publishPersonIdentityScopeChangesTx(
-				ctx, tx, []int64{personID},
-				peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+			if err := s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}); err != nil {
 				return err
 			}
 			if personRevisionBumped {

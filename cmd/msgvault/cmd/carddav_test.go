@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -242,6 +243,7 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 	assertions := assert.New(t)
 
 	var full bool
+	conflicts := 2
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertions.Equal(http.MethodPost, r.Method)
 		assertions.Equal("/api/v1/carddav/sync", r.URL.Path)
@@ -251,7 +253,7 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 		assertions.NoError(json.NewDecoder(r.Body).Decode(&body))
 		full = body.Full
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"books":1,"created":2,"updated":3,"removed":4}`))
+		_, _ = fmt.Fprintf(w, `{"books":1,"created":2,"updated":3,"removed":4,"binding_conflicts":%d}`, conflicts)
 	}))
 	t.Cleanup(server.Close)
 
@@ -268,6 +270,13 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 	cmd.SetArgs([]string{"--full"})
 	require.NoError(t, cmd.Execute())
 	assertions.True(full)
+	assertions.Equal("CardDAV sync: 1 books, 2 created, 3 updated, 4 removed\n2 CardDAV binding conflicts archive-wide at this run. Run msgvault carddav bind-participants --dry-run for details.\n", stdout.String())
+	conflicts = 0
+	stdout.Reset()
+	cmd = newSyncCardDAVCmd()
+	cmd.SetContext(testCtx)
+	cmd.SetOut(&stdout)
+	require.NoError(t, cmd.Execute())
 	assertions.Equal("CardDAV sync: 1 books, 2 created, 3 updated, 4 removed\n", stdout.String())
 }
 
@@ -383,5 +392,57 @@ func TestAddCardDAVMicrosoftFlagsAreCheckedBeforeSignIn(t *testing.T) {
 		command.SetErr(&bytes.Buffer{})
 		command.SetArgs(tc.args)
 		require.ErrorContains(t, command.Execute(), tc.want)
+	}
+}
+
+func TestCardDAVParticipantBindingCLIUsesDaemonAndPrintsCounts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		undo bool
+	}{{"dry run", false}, {"undo", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			undo := tc.undo
+			assert := assert.New(t)
+			require := require.New(t)
+			var seen bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = true
+				assert.Equal(http.MethodPost, r.Method)
+				assert.Equal("/api/v1/carddav/participant-bindings", r.URL.Path)
+				var body map[string]bool
+				assert.NoError(json.NewDecoder(r.Body).Decode(&body))
+				assert.Equal(!undo, body["dry_run"])
+				assert.Equal(undo, body["undo"])
+				w.Header().Set("Content-Type", "application/json")
+				if undo {
+					_, _ = w.Write([]byte(`{"cards_scanned":0,"participants_bound":0,"participants_unbound":3,"conflicts":0,"conflict_details":[]}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"cards_scanned":2,"participants_bound":0,"participants_unbound":0,"conflicts":2,"conflict_details":[{"participant_id":7,"person_ids":[1,2],"reason":"shared_address"},{"participant_id":8,"person_ids":[2,3],"reason":"existing_person"}]}`))
+			}))
+			t.Cleanup(server.Close)
+			home := t.TempDir()
+			testCtx := withStoreResolverConfig(t, &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+			var out bytes.Buffer
+			command := newCardDAVCmd()
+			command.SetContext(testCtx)
+			command.SetOut(&out)
+			args := []string{"bind-participants"}
+			if undo {
+				args = append(args, "--undo")
+			} else {
+				args = append(args, "--dry-run")
+			}
+			command.SetArgs(args)
+			require.NoError(command.Execute())
+			assert.True(seen)
+			if undo {
+				assert.Contains(out.String(), "CardDAV bindings: 0 cards scanned, 0 participants bound, 3 participants unbound, 0 conflicts")
+				return
+			}
+			assert.Contains(out.String(), "CardDAV bindings (dry run): 2 cards scanned, 0 participants bound, 0 participants unbound, 2 conflicts")
+			assert.Contains(out.String(), "participant 7, people [1 2]: address shared by multiple people")
+			assert.Contains(out.String(), "participant 8, people [2 3]: participant already belongs to another person")
+		})
 	}
 }

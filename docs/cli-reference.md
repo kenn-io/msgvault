@@ -3866,6 +3866,7 @@ book; see the [CardDAV guide](/docs/usage/people-carddav/).
 | `person publish <person-id> --approve <token>` | Approve reviewed changes; conflict previews also need explicit `keep_local` resolution |
 | `carddav books [--connection <name>]` | List discovered books, owning connection names and roles |
 | `carddav books set-role <book-id> [--write-target] [--subscribed] [--lookup-source]` | Replace all three roles; omitted flags become false |
+| `carddav bind-participants [--dry-run] [--undo] [--json]` | Reconcile exact archived email/phone matches from retained subscribed cards; preview counts without writes, or undo only automatic memberships |
 | `carddav conflicts list` | List unresolved conflicts |
 | `carddav conflicts show <conflict-id>` | Compare bounded base, local, and remote summaries |
 | `carddav conflicts resolve <conflict-id> <keep_local\|keep_remote>` | Choose the local or remote side explicitly |
@@ -3876,6 +3877,8 @@ with no enabled connection fails as unavailable. Aggregate sync prints counts
 and safe failure codes per connection, and exits nonzero for partial or failed
 outcomes. Book IDs, publication commands and conflict commands remain global;
 network operations use the owning connection's credentials.
+Sync reports binding conflicts archive-wide at the time of the run, including
+conflicts from other connections.
 
 Directory and integrations can also use the
 [publication API](/docs/usage/people-carddav/#sync-and-publish-selected-people).
@@ -3883,6 +3886,14 @@ CardDAV commands do not expose a general `--json` flag; role changes,
 publication previews, and conflict list/show commands already print JSON.
 
 ---
+
+`bind-participants` uses the selected daemon and makes no CardDAV network requests.
+Its JSON contains `cards_scanned`, `participants_bound`, `participants_unbound`,
+`conflicts`, and `conflict_details` with numeric participant/person IDs and a
+`reason`. Conflicting ownership is reported without merging people. `--undo`
+releases feature-owned memberships; the next sync may recreate them. See
+[CardDAV identity binding](usage/people-carddav.md#connect-cards-to-archived-identities)
+for persistent corrections and manual confirmation.
 
 ## identity
 

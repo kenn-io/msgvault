@@ -157,6 +157,9 @@ func TestCardDAVMultipleConnectionsAggregateSyncReportsActiveAndUnavailable(t *t
 	assertions.Equal("sync_active", result.Connections[2].ErrorCode)
 	assertions.Nil(result.Connections[2].RunID, "another request's run must not be reported as this request's run")
 	assertions.NotEqual(active.ID, *result.Connections[0].RunID)
+	// Only one run starts here, so this checks that its count reaches the result.
+	require.NotNil(result.BindingConflicts)
+	assertions.Zero(*result.BindingConflicts)
 	runs, err := controller.store.ListCardDAVSyncRunsContext(t.Context(), 25, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	assertions.Len(runs, 2, "unavailable and leased connections do not insert additional runs")

@@ -258,6 +258,7 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 				}
 			}
 			if _, err := s.recordCardDAVConflictTx(ctx, tx, capture, cardDAVConflictRecordOptions{
+				deferParticipantCleanup:        true,
 				supersedePendingIntent:         !capture.RemoteTombstone,
 				preserveExistingLocalTombstone: !capture.RemoteTombstone,
 			}); err != nil {
@@ -328,6 +329,10 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 			if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET local_hash = ? WHERE id = ?`, snapshot.Fingerprint, resource.ID); err != nil {
 				return err
 			}
+		}
+
+		if err := s.reconcileCardDAVParticipantBindingsTx(ctx, tx, false); err != nil {
+			return err
 		}
 
 		updated, err := tx.ExecContext(ctx, `UPDATE carddav_address_books SET
@@ -583,6 +588,11 @@ func (s *Store) cardDAVResourceNeedsConflictTx(
 func (s *Store) CardDAVRemoteUpdateNeedsConflictContext(ctx context.Context, bookID int64, href string, input CardDAVRemoteResource) (bool, error) {
 	var needed bool
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		// Match participant reconciliation's identity-first order before this
+		// preflight locks a CardDAV resource or its person.
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		var err error
 		needed, _, err = s.cardDAVResourceNeedsConflictTx(ctx, tx, bookID, href, input.SemanticHash, input.EquivalentLocalHash, input.RemoteBody)
 		return err
@@ -1058,6 +1068,9 @@ func (s *Store) acceptCardDAVIdentityMatchCandidateReviewedContext(
 				return err
 			}
 		}
+		if err := s.cleanupCardDAVParticipantBindingsTx(ctx, tx); err != nil {
+			return err
+		}
 		accepted, err = getIdentityMatchCandidateTx(ctx, tx, candidate.ID)
 		return err
 	})
@@ -1154,10 +1167,14 @@ func (s *Store) resolveCardDAVPersonTx(
 			if err != nil {
 				continue
 			}
+			// An address shared by two cards does not establish that they are one person.
 			rows, err := tx.QueryContext(ctx, `SELECT person_id, uri FROM person_contact_points
 				WHERE address_kind = ? AND service_id IS NULL
 				  AND normalized_value = ? AND active_until IS NULL AND superseded_at IS NULL
-				ORDER BY person_id`, candidate.kind, normalized)
+				  AND NOT EXISTS (SELECT 1 FROM carddav_resources existing
+				    WHERE existing.person_id = person_contact_points.person_id AND existing.id <> ?
+				    AND (existing.remote_uid IS NULL OR existing.remote_uid <> ? OR ? = ''))
+				ORDER BY person_id`, candidate.kind, normalized, resourceID, input.RemoteUID, input.RemoteUID)
 			if err != nil {
 				return nil, nil, fmt.Errorf("match CardDAV contact point: %w", err)
 			}
@@ -2046,17 +2063,45 @@ func (s *Store) deleteUntouchedCardDAVImportedPersonTx(
 		return nil
 	}
 	var revision, otherMappings int64
+	var hasMemberships bool
 	err := tx.QueryRowContext(ctx, `SELECT revision,
-		(SELECT COUNT(*) FROM carddav_resources WHERE person_id = persons.id)
-		FROM persons WHERE id = ?`, *resource.PersonID).Scan(&revision, &otherMappings)
+		(SELECT COUNT(*) FROM carddav_resources WHERE person_id = persons.id),
+		EXISTS (SELECT 1 FROM person_participants WHERE person_id = persons.id AND carddav_owned = FALSE)
+		FROM persons WHERE id = ?`, *resource.PersonID).Scan(&revision, &otherMappings, &hasMemberships)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("check CardDAV imported person tombstone: %w", err)
 	}
-	if revision != *resource.PersonRevisionAtBind || otherMappings != 0 {
+	// Membership removal must pass through revision and enrichment bookkeeping,
+	// rather than disappear through the profile's foreign-key cascade.
+	if revision != *resource.PersonRevisionAtBind || otherMappings != 0 || hasMemberships {
 		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT participant_id FROM person_participants WHERE person_id = ? AND carddav_owned = TRUE`, *resource.PersonID)
+	if err != nil {
+		return err
+	}
+	plan := &cardDAVParticipantBindingPlan{}
+	for rows.Next() {
+		var participantID int64
+		if err := rows.Scan(&participantID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		plan.remove = append(plan.remove, cardDAVParticipantBinding{personID: *resource.PersonID, participantID: participantID, owned: true})
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	if err := s.applyCardDAVParticipantBindingsTx(ctx, tx, plan); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM persons WHERE id = ?`, *resource.PersonID).Scan(&revision); err != nil {
+		return err
 	}
 	if err := s.deleteIdentityMatchCandidatesForPersonTx(ctx, tx, *resource.PersonID); err != nil {
 		return err

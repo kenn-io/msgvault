@@ -365,6 +365,23 @@ func (c CardDAVContactSummaryResponseState) Validate() error {
 	}
 }
 
+type CardDAVParticipantBindingConflictReason string
+
+const (
+	ExistingPerson CardDAVParticipantBindingConflictReason = "existing_person"
+	SharedAddress  CardDAVParticipantBindingConflictReason = "shared_address"
+)
+
+// Validate checks if the CardDAVParticipantBindingConflictReason value is valid
+func (c CardDAVParticipantBindingConflictReason) Validate() error {
+	switch c {
+	case ExistingPerson, SharedAddress:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVParticipantBindingConflictReason value, got: %v", c))
+	}
+}
+
 type CardDAVPublicationPreviewResponseKind string
 
 const (
