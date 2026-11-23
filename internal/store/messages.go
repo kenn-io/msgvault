@@ -1704,6 +1704,12 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, sql.NullInt64
 	var movedFrom sql.NullInt64
 	if prior.conversationID.Valid && prior.conversationID.Int64 != msg.ConversationID {
 		movedFrom = prior.conversationID
+		// A move into a Full room gives the envelope new support, which the
+		// invalidation before the move could not see. Rebuild contexts built
+		// without it, as a restore does.
+		if err := invalidateEnvelopeContextOnlyWith(q, "support.source_id=? AND support.source_message_id=?", msg.SourceID, msg.SourceMessageID); err != nil {
+			return 0, sql.NullInt64{}, err
+		}
 	}
 	return id, movedFrom, nil
 }

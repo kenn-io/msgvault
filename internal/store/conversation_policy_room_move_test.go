@@ -170,3 +170,41 @@ func TestRoomMoveRetriesAfterLosingFactLockDeadlock(t *testing.T) {
 		})
 	}
 }
+
+// Moving an envelope from a Cold room to a Full room gives its participants
+// new Full support. Contextual embeddings built without it in other Full rooms
+// that share those participants must be rebuilt.
+func TestRoomMoveIntoFullInvalidatesSharedContext(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	source, err := st.GetOrCreateSource("beeper", "shared-context-move")
+	requirements.NoError(err)
+	rooms := map[string]int64{}
+	for name, tier := range map[string]conversationpolicy.Tier{"cold": conversationpolicy.Cold, "target": conversationpolicy.Full, "shared": conversationpolicy.Full} {
+		rooms[name], err = st.EnsureConversation(ctx, source.ID, name, name)
+		requirements.NoError(err)
+		requirements.NoError(st.SetConversationPolicyOverride(ctx, source.ID, name, tier))
+	}
+	member, err := st.EnsureParticipantByIdentifier("beeper", "shared-member", "Shared Member")
+	requirements.NoError(err)
+	requirements.NoError(st.EnsureConversationParticipant(rooms["shared"], member, "member"))
+	shared, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: rooms["shared"], SourceMessageID: "shared-message",
+		MessageType: "beeper", SenderID: sql.NullInt64{Int64: member, Valid: true}})
+	requirements.NoError(err)
+	moving := func(room int64) int64 {
+		id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: "moving-envelope", MessageType: "beeper"})
+		requirements.NoError(err)
+		return id
+	}
+	requirements.NoError(st.ReplaceMessageRecipients(moving(rooms["cold"]), "to", []int64{member}, []string{"Shared Member"}))
+	revision := func() int64 {
+		var value int64
+		requirements.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT embedding_revision FROM messages WHERE id=?`), shared).Scan(&value))
+		return value
+	}
+	before := revision()
+	moving(rooms["target"])
+	assertions.Greater(revision(), before, "the shared room's context must be rebuilt with the newly eligible envelope")
+}
