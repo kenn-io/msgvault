@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-22"
+last_edited: "2026-11-23"
 title: Changelog
 description: Release history for msgvault
 ---

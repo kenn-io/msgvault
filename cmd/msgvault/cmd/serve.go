@@ -1370,6 +1370,10 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 		Name: jobName, Schedule: cardDAVConfig.Schedule,
 		Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 			_, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
+			// Completed books remain committed after cancellation.
+			if refreshErr := rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), jobName); refreshErr != nil {
+				logger.Error("identity cache refresh failed", "error", refreshErr)
+			}
 			return recordSyncAttempt(ctx, "carddav", name, err)
 		}),
 	}); err != nil {
@@ -4024,10 +4028,12 @@ func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, e
 		return 0, api.ErrIdentityCacheUnsupported
 	}
 	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
+		a.QueueCardDAVIdentityCacheRefresh(ctx)
 		return 0, err
 	}
 	state, err := query.ReadCacheSyncState(a.analyticsDir)
 	if err != nil {
+		a.QueueCardDAVIdentityCacheRefresh(ctx)
 		return 0, fmt.Errorf("read refreshed cache revision: %w", err)
 	}
 	if a.activateAnalyticsCache != nil {
@@ -4036,6 +4042,16 @@ func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, e
 		}
 	}
 	return state.IdentityRevision, nil
+}
+
+func (a *storeAPIAdapter) QueueCardDAVIdentityCacheRefresh(ctx context.Context) {
+	if daemonCacheRefresher == nil {
+		return
+	}
+	// The identity write is durable even when the request or sync context ends.
+	if err := rebuildCacheAfterScheduledSync(context.WithoutCancel(a.invocationContext(ctx)), "carddav"); err != nil {
+		repairLogger(a.logger).Warn("failed to queue CardDAV identity cache recovery", "error", err)
+	}
 }
 
 func (a *storeAPIAdapter) GetActiveSyncReadOnly(ctx context.Context, sourceID int64) (*store.SyncRun, error) {

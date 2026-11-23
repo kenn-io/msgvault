@@ -4,67 +4,78 @@ title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
 
-## Config File
+## Config file
 
-Default location:
+msgvault looks for `config.toml` in a platform-specific default location:
 
 | Platform | Path |
 |---|---|
 | **macOS / Linux** | `~/.msgvault/config.toml` |
 | **Windows** | `C:\Users\<you>\.msgvault\config.toml` |
 
-Override the data directory with the `MSGVAULT_HOME` environment variable or the `--home` flag (see below).
+To override the data directory, set the `MSGVAULT_HOME` environment variable or pass the `--home` flag.
 
-For a first archive, add only the sections required by your source. Optional
-provider setup is covered in [recommended configuration](usage/recommended-configuration.md).
-The [complete example](#example-configuration) below illustrates the available
-sections; it is not a required starting configuration.
+For your first archive, add only the sections your source needs. For optional
+provider setup, see [recommended configuration](usage/recommended-configuration.md).
+The [complete example](#example-configuration) at the end of this page shows
+the available sections, though you do not need all of them to start.
 
 ### Validation
 
-Invalid TOML, wrong-typed values, and invalid values in sections that commands
-read themselves fail every command. An invalid value in a setting only the
-daemon reads does not. These are `[server]` and `MSGVAULT_API_PORT` and
-`MSGVAULT_CORS_CREDENTIALS` (but not `daemon_auto_start`,
-`daemon_auto_restart`, or the other `MSGVAULT_*` overrides), `[web]`,
+Invalid TOML, wrong-typed values, and invalid values in sections that CLI
+commands read directly cause every command to fail. Invalid values in settings
+that only the daemon reads behave differently and do not fail every command.
+Those daemon-only settings are `[server]`, `MSGVAULT_API_PORT`, and
+`MSGVAULT_CORS_CREDENTIALS` (excluding `daemon_auto_start`,
+`daemon_auto_restart`, and the other `MSGVAULT_*` overrides), `[web]`,
 `[integrations.*]`, `[carddav]`, `[carddav_connections]`,
-`[people.identity_scoring]`, `[[imap.drafts]]`, `[[gmail.drafts]]`,
+`[people.identity_scoring]`, `[people.tiers]`, `[sync]`
+(`imap_max_commands_per_minute` and `imap_skip_folders`), the `phone` of
+enabled `[[whatsapp_apple]]` entries, `[[imap.drafts]]`, `[[gmail.drafts]]`,
 `[[beeper.drafts]]`, and `[[fastmail]]`.
 
-A command that hits one still runs, and prints
-`Warning: invalid daemon config: ...` to stderr after it finishes. With
-`MSGVAULT_API_PORT=invalid`, `msgvault stats` warns and still reaches the
-running daemon, even an older compatible one, which is never replaced while the
-config is invalid. `msgvault serve`, `msgvault daemon start`, and
-`msgvault daemon restart` fail with the config error before they stop or start
-anything. When no usable daemon is running, the on-demand start fails with the
-config error instead of launching one. Saving configuration is refused while
-the file on disk would not load cleanly, the daemon's add-account API returns
-the reason when it refuses, and `msgvault add-synctech-sms-drive` fails at
-start. `msgvault update` also stays strict.
+When a command encounters an invalid value in one of those daemon-only settings,
+it still runs and prints `Warning: invalid daemon config: ...` to stderr after
+finishing. For example, if you set `MSGVAULT_API_PORT=invalid`, `msgvault stats`
+prints the warning and still talks to the running daemon, including an older
+compatible one, which msgvault never replaces while the config is invalid.
 
-## Remote Deletion Consent
+These cases stay strict:
 
-Starting in v0.20.0, remote deletion remains permanently opt-in. The invoking
-CLI may enable it durably with `[deletion] remote_enabled = true` or for one
-command with `MSGVAULT_ENABLE_REMOTE_DELETE=1`. Both mechanisms are permanent;
-there is no planned automatic removal of the guardrail.
+- `msgvault serve`, `msgvault daemon start`, and `msgvault daemon restart` fail
+  with the config error before stopping or starting anything.
+- If no usable daemon is running, on-demand startup fails with the config error
+  instead of launching a daemon.
+- Saving configuration is rejected while the file on disk cannot load cleanly.
+- The daemon's add-account API returns the reason when it refuses a request, and
+  `msgvault add-synctech-sms-drive` fails at startup.
+- `msgvault update` also stays strict.
 
-Consent belongs to the invoking CLI. When a command uses a remote daemon, the
-CLI forwards its effective consent for that operation; the remote daemon's own
-`[deletion]` section is not server policy for a command invoked elsewhere.
-Staging, listing, inspecting, and dry-running deletion batches remain ungated.
+## Remote deletion consent
+
+Starting in v0.20.0, remote deletion is permanently opt-in. You can enable it
+durably in your CLI config with `[deletion] remote_enabled = true`, or for a
+single command by setting `MSGVAULT_ENABLE_REMOTE_DELETE=1`. Both mechanisms
+are permanent, with no planned automatic removal of this guardrail.
+
+Consent belongs to the CLI that invokes the command. When you run a command
+against a remote daemon, the CLI forwards its effective consent for that
+operation. The remote daemon's own `[deletion]` section does not act as server
+policy for commands invoked from elsewhere. Staging, listing, inspecting, and
+dry-running deletion batches do not require consent.
 
 ## Choose optional processing
 
-Use [recommended configuration](usage/recommended-configuration.md) for a guided
-setup, then return here for exact keys and defaults. Each processing feature has
-a separate scope and consent contract.
+If you want a guided setup, start with
+[recommended configuration](usage/recommended-configuration.md), then come back
+here for exact keys and defaults. Each processing feature has its own scope and
+consent contract.
 
-The defaults in this reference apply when a key is absent. They differ from the
-values `setup providers` writes after confirmation: embeddings and people sweeps
-start disabled, while setup can enable them and add schedules. Existing explicit
-values remain in effect. Provider keys alone do not enable processing.
+The defaults in this reference apply when you omit a key, and they differ from
+what `setup providers` writes after you confirm. By default, embeddings and
+people sweeps start disabled, while `setup providers` can enable them and add
+schedules. Any explicit values you already set stay in effect, and adding
+provider keys alone never turns on processing.
 
 - [Profile automation](usage/people-automation.md): tracked people, sweep
   providers, budgets, and fact resolution.
@@ -76,9 +87,9 @@ values remain in effect. Provider keys alone do not enable processing.
 
 ## People identity scoring
 
-Identity scoring is disabled by default. An operator starts each batch and
-consents to the exact disclosure shown by `msgvault person scoring status`.
-Scoring creates review suggestions and records judgments; it never accepts
+Identity scoring is disabled by default. You start each batch manually and
+consent to the exact disclosure printed by `msgvault person scoring status`.
+Scoring creates review suggestions and records judgments, and it never accepts
 matches or links participants.
 
 ```toml
@@ -100,39 +111,46 @@ retention_declaration = "provider retention policy accepted by the operator"
 | `batch_size` | `20` | Default and maximum scoring batch size, from 1 through 100. |
 | `retention_declaration` | empty | Operator's exact declaration of the provider retention policy. Required when enabled and included in the consent fingerprint. |
 
-The provider endpoint is fixed at `https://api.typesafe.ai/v1/systemone`, with
-model `jev-1.13.0`. The disclosure binds that endpoint, model, packet schema,
-retention declaration, policy version, and question version. A change to any
-of them requires consent to the new fingerprint. `status` also prints the raw
+Scoring always uses the fixed endpoint `https://api.typesafe.ai/v1/systemone`
+and model `jev-1.13.0`. The consent disclosure binds that endpoint, model,
+packet schema, retention declaration, policy version, and question version. If
+any of those change, you must consent to the new fingerprint. Running
+`msgvault person scoring status` also prints the raw
 identity fields and limits covered by the packet schema.
 
-`msgvault person scoring revoke <fingerprint>` withdraws consent for that
-disclosure. It leaves the configuration enabled and retains prior judgments.
-Set `enabled = false` to disable scoring in the configuration. See
-[identity scoring](usage/people.md#optional-identity-scoring) for the workflow
-and [the API reference](api-server.md#identity-match-review-and-scoring) for
-endpoints.
+To withdraw consent for a disclosure, run
+`msgvault person scoring revoke <fingerprint>`. Revoking consent leaves scoring
+enabled in `config.toml` and keeps prior judgments. To turn scoring off in your
+config, set `enabled = false`. For the full workflow, see
+[identity scoring](usage/people.md#optional-identity-scoring), and for HTTP
+endpoints, see [the API reference](api-server.md#identity-match-review-and-scoring).
 
 ## People tiers
 
-`msgvault person tiers preview` needs no configuration. Add `[people.tiers]`
-only to change which saved people it lists. Tier 1 is sustained two-way contact
-in the short window. Tier 2 is two-way contact in the long window, or meetings.
-Counts cover meetings, the email and chat messages that were sent or received,
-and Synctech and Google Voice calls that stayed connected for at least
-`min_call_seconds`. A call counts as one message each way, whoever dialed.
-Drafts, texts that never left your phone, missed calls, voicemail, and shorter
-calls don't count. Archives imported before this change keep counting unsent
-texts, and count no calls, until you import the backup again: run
-`msgvault import-synctech-sms <path> --owner-phone <number>` for Synctech, and
-run the Google Voice Takeout import again for Google Voice. A Drive source
-doesn't re-download files it already imported, so download the Synctech backup
-from your Drive folder and run the import locally with the source's owner
-phone. The import updates the existing messages in place. A group chat at or under `[activity]
-max_direct_counterparts` counts for each member. By default, newsletter and
-list messages are left out (`exclude_list_messages = false` counts them), and so
-are messages sent to more people than that limit. A person whose address is one
-of your own in any account is never listed.
+You can run `msgvault person tiers preview` without adding any configuration.
+Add `[people.tiers]` only when you want to adjust which saved people it lists.
+Tier 1 captures sustained two-way contact in the short window, while tier 2
+captures two-way contact in the long window or meetings.
+
+Contact counts include meetings, sent or received email and chat messages, and
+Synctech and Google Voice calls that stayed connected for at least
+`min_call_seconds`. Each counted call adds one message in each direction,
+regardless of who dialed. Drafts, texts that never left your phone, missed
+calls, voicemails, and shorter calls do not count.
+
+If your archive was imported before call and unsent-text filtering shipped, it
+continues counting unsent texts and skips calls until you re-import the backup.
+For Synctech, run `msgvault import-synctech-sms <path> --owner-phone <number>`,
+and for Google Voice, run the Google Voice Takeout import again. Because a Drive
+source does not re-download files it already imported, download the Synctech
+backup from your Drive folder and run the import locally with the source's owner
+phone. Re-importing updates the existing messages in place.
+
+Group chats at or under `[activity] max_direct_counterparts` count for each
+member, while messages sent to more people than that limit are excluded.
+Newsletter and mailing-list messages are also excluded by default unless you set
+`exclude_list_messages = false`. Anyone whose address matches one of your own
+addresses in any account is never listed.
 
 ```toml
 [people.tiers]
@@ -173,20 +191,21 @@ min_meeting_days_long = 2
 | `tier2.min_active_days_long` | `3` | Distinct days with contact in the long window. |
 | `tier2.min_meeting_days_long` | `2` | Meeting days that alone make tier 2. `0` turns it off. |
 
-The counts come from the activity projection. The windows end on today's date in
-its timezone, and the large-audience cut uses its direct limit. After you change
-`[activity] timezone` or `max_direct_counterparts`, counts follow the stored
-values and the commands warn until `msgvault activity build` rebuilds it. See
+Tier counts come from the activity projection, with windows ending on today's
+date in the projection's timezone and the large-audience cutoff using its direct
+limit. If you change `[activity] timezone` or `max_direct_counterparts`, counts
+keep using the stored projection values and the commands print a warning until
+you rebuild the projection with `msgvault activity build`. See
 [choose people to maintain](usage/people-automation.md#choose-people-to-maintain).
 
 ## People sweep inference
 
-People sweeps use one named protocol profile at a time. A profile records the
+People sweeps use one named protocol profile at a time. Each profile records the
 exact endpoint, model, wire protocol, negotiated output mode, privacy posture,
-and source scope. Built-in OpenAI, OpenRouter, and Venice presets bind the
-protocol, endpoint, and authentication scheme; you still choose the model and
-privacy policy. Msgvault never changes the active profile or switches providers
-automatically.
+and source scope. Built-in OpenAI, OpenRouter, and Venice presets fill in the
+protocol, endpoint, and authentication scheme, while you choose the model and
+privacy policy. msgvault never changes the active profile or switches providers
+on its own.
 
 ```toml
 [people.sweep]
@@ -211,22 +230,24 @@ source_since = "2026-01-01"
 allow_sensitive = true
 ```
 
-`allow_sensitive = true` is required for real sweeps: any packet that
-carries seed or context evidence is marked sensitive, so a profile set to
-`false` fails on every real sweep. `true` permits sending that verbatim
-archive text to the selected provider; `false` leaves only the synthetic
-capability check, which sends no archive text.
+Real sweeps require `allow_sensitive = true` because every packet that carries
+seed or context evidence is marked sensitive. A profile with
+`allow_sensitive = false` fails on every real sweep and can only run the
+synthetic capability check, which sends no archive text. Setting
+`allow_sensitive = true` permits sending verbatim archive text to your selected
+provider.
 
-Usable protocols are `openai_chat`, `openai_responses`,
+You can use four protocols today: `openai_chat`, `openai_responses`,
 `anthropic_messages`, and `google_generate_content`. A fifth protocol,
-`codex_app_server`, is defined but release-gated and cannot run yet; see the
-Codex app-server profiles section below. Onboarding negotiates and saves
-`native_json_schema`, `json_object`, or `prompt_json`. OpenAI Chat profiles
-also save either `max_completion_tokens` or `max_tokens`; the other protocols
-use their defined token-limit field.
+`codex_app_server`, is defined but release-gated and cannot run yet (see
+[Codex app-server profiles](#codex-app-server-profiles) below). During
+onboarding, msgvault negotiates and saves `native_json_schema`, `json_object`,
+or `prompt_json`. OpenAI Chat profiles also save either `max_completion_tokens`
+or `max_tokens`, while the other protocols use their own defined token-limit
+field.
 
-Other providers use explicit protocol profiles; OpenRouter, Venice, and OpenAI
-also have built-in presets:
+Other providers use explicit protocol profiles, and OpenRouter, Venice, and
+OpenAI also offer built-in presets:
 
 | Example profile | Protocol | Typical profile choice |
 |---|---|---|
@@ -239,46 +260,50 @@ also have built-in presets:
 | Anthropic | `anthropic_messages` | Anthropic API base and one Claude model ID |
 | OpenAI Responses | `openai_responses` | OpenAI API base and one Responses model ID |
 
-Confirm current endpoints, model identifiers, privacy terms, and subscription
-rules with the selected operator before saving a profile. OpenRouter and Venice
-may route a request to another upstream operator, so the profile's retention
-and training declarations must cover that full path. Logged-in or
-subscription-backed endpoints, including local gateways, must be used within
-their provider terms.
+Before saving a profile, verify current endpoints, model identifiers, privacy
+terms, and subscription rules with your provider. Because OpenRouter and Venice
+can route requests to another upstream operator, make sure your retention and
+training declarations cover that entire path. If you use a logged-in or
+subscription-backed endpoint, including a local gateway, stay within its
+provider terms.
 
-Credentials are not stored in this TOML. `credential = "stored"` keeps a
-profile-specific secret in `tokens/provider-credentials.json` on every
-platform, sent only to the endpoint origin of the profile it was saved for.
-If you edit a profile's endpoint to a different origin, its stored key stops
-working; remove the profile and add it again with the new endpoint.
-Keys that an older release stored under `tokens/people-providers/` on Linux or
-macOS move into that file the first time msgvault uses the profile.
-`credential = "env"` stores only the selected environment-variable name.
-Environment-variable names are host-only settings: configure them through the
-CLI or TOML, not the Web UI.
-`credential = "none"` is restricted to credentialless local or Codex paths.
-Changing a credential value does not change the profile fingerprint, but
+People-sweep provider profile credentials are not stored in `config.toml`:
+
+- `credential = "stored"` saves a profile-specific secret in
+  `tokens/provider-credentials.json` on every platform and sends it only to the
+  endpoint origin you saved it for. If you edit a profile's endpoint to a
+  different origin, its stored key stops working; remove the profile and add it
+  again with the new endpoint. Keys saved by an older release under
+  `tokens/people-providers/` on Linux or macOS move into
+  `tokens/provider-credentials.json` the first time msgvault uses the profile.
+- `credential = "env"` stores only the environment-variable name. Because
+  environment-variable names are host-only settings, configure them through the
+  CLI or TOML rather than the Web UI.
+- `credential = "none"` is limited to credentialless local or Codex paths.
+
+Changing a credential's value does not change the profile fingerprint, though
 changing its source or reference does.
 
-Only `msgvault person provider add` may contact models.dev, and only when a
-transport field (`--protocol`, `--endpoint`, `--model`, `--auth`) is missing
-or `--accept-catalog-prices` is set; it sends no archive data or provider
-credential. `--custom` skips that catalog entirely; the required synthetic
-check still contacts the endpoint selected in the profile. The catalog is never used
-by scheduled or manual sweeps. A catalog suggestion also never chooses where a
-credential is sent: onboarding pairs a credential only with an endpoint you
-passed explicitly via `--endpoint` or with the first-party API hosts compiled
-into msgvault, so a compromised catalog cannot redirect your key. A successful check does not grant consent:
-`msgvault person provider consent <name> --yes` is a separate explicit step.
-Live credential checks are optional developer or operator verification and are
-never CI requirements.
+Only `msgvault person provider add` contacts models.dev, and only when you omit
+a transport field (`--protocol`, `--endpoint`, `--model`, `--auth`) or pass
+`--accept-catalog-prices`. That lookup sends no archive data or provider
+credential. Passing `--custom` skips the catalog completely, though the required
+synthetic check still contacts the endpoint in your profile. Scheduled and
+manual sweeps never contact the catalog. A catalog suggestion also never decides
+where a credential is sent: onboarding pairs a credential only with an endpoint
+you passed explicitly with `--endpoint` or with the first-party API hosts
+compiled into msgvault, so a compromised catalog cannot redirect your key. A
+passing check does not grant consent on its own; run
+`msgvault person provider consent <name> --yes` as a separate step. Live
+credential checks are optional developer or operator verification and are never
+CI requirements.
 
 ### `[people.sweep]`
 
-Enable model-assisted profile maintenance only after configuring, checking, and
-consenting to a provider. A person must also be tracked before the sweep
-maintains their facts. [Conversation briefs](usage/people-briefs.md) use this
-same provider and schedule, with separate enrollment and interval controls.
+Before enabling model-assisted profile maintenance, configure, check, and
+consent to a provider. You also need to track a person before the sweep
+maintains their facts. [Conversation briefs](usage/people-briefs.md) share this
+provider and schedule, with separate enrollment and interval controls.
 
 | Key                      | Default      | Description                                                                                                                                                                                        |
 | ------------------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -292,19 +317,21 @@ same provider and schedule, with separate enrollment and interval controls.
 | `evidence_max_items`     | `200`        | Item limit for an evidence packet.                                                                                                                                                                 |
 | `backstop_interval`      | `24h`        | Interval before checking tracked people for changes missed by incremental work.                                                                                                                    |
 
-Hosted people inference requires an explicit `setup providers --provider
-<openai|openrouter|venice> --model <model>` choice, a credential source, and
-explicit retention, training, and sensitive-content decisions. An
-`OPENAI_API_KEY` alone configures only eligible embedding lanes. With no OpenAI
-key or explicit provider choice, setup can offer the configured loopback Ollama
-chat model when `--allow-sensitive` is supplied. An enabled sweep is preserved;
-`--provider` then fails with instructions to use `person provider add` and
-`person provider use`. See [setup flags](cli-reference.md#setup-providers).
+Hosted people inference requires an explicit
+`setup providers --provider <openai|openrouter|venice> --model <model>` choice,
+a credential source, and explicit retention, training, and sensitive-content
+decisions. Setting `OPENAI_API_KEY` alone configures only eligible embedding
+lanes. When you have no OpenAI key or explicit provider choice, setup can offer
+the configured loopback Ollama chat model if you pass `--allow-sensitive`. If a
+sweep is already enabled, setup preserves it and `--provider` fails with
+instructions to use `person provider add` and `person provider use`. See
+[setup flags](cli-reference.md#setup-providers).
 
 ### `[people.sweep.budgets]`
 
-Request and token limits apply to sweeps and briefs. Setup keeps these defaults;
-it does not obtain provider prices or set a monetary limit.
+These request and token limits apply to both sweeps and briefs. Setup leaves
+these defaults in place and does not fetch provider prices or set a monetary
+limit.
 
 | Scope      | Request key and default       | Input-token key and default            | Output-token key and default           |
 | ---------- | ----------------------------- | -------------------------------------- | -------------------------------------- |
@@ -312,27 +339,27 @@ it does not obtain provider prices or set a monetary limit.
 | One run    | `max_requests_per_run = 100`  | `max_input_tokens_per_run = 1000000`   | `max_output_tokens_per_run = 160000`   |
 | One day    | `max_requests_per_day = 500`  | `max_input_tokens_per_day = 5000000`   | `max_output_tokens_per_day = 800000`   |
 
-`max_estimated_cost_microusd_per_run` and `max_estimated_cost_microusd_per_day`
-both default to `0`, which disables those cost limits. To use either, supply
-positive `input_cost_microusd_per_million_tokens` and
-`output_cost_microusd_per_million_tokens`; both price assumptions also default
-to `0`. Values are integer millionths of a US dollar. These are local estimates
-from the prices you provide, not a provider billing limit.
+Both `max_estimated_cost_microusd_per_run` and
+`max_estimated_cost_microusd_per_day` default to `0`, which disables cost
+limits. To enable either limit, set positive values for
+`input_cost_microusd_per_million_tokens` and
+`output_cost_microusd_per_million_tokens`, which also default to `0`. All four
+keys take integer millionths of a US dollar. These caps are local estimates
+based on the prices you enter, not provider billing limits.
 
 ### `[people.sweep.brief]`
 
-Control how often enrolled people receive a "Last time we talked" brief and
-how much text each generation uses. Briefs use the selected sweep provider and
-share its budgets. The profile must permit sensitive content and include
-`conversation_text` in `allowed_sources`.
+Use `[people.sweep.brief]` to control how often enrolled people get a "Last time
+we talked" brief and how much text each generation uses. Briefs use your
+selected sweep provider and share its budgets. Your provider profile must allow
+sensitive content and include `conversation_text` in `allowed_sources`.
 
-Only supported chat and text-message sources supply brief evidence; email,
-meeting transcripts, documents, and your own replies are excluded. See the
-[brief guide](usage/people-briefs.md) for
-supported sources and enrollment instructions.
+Only supported chat and text-message sources supply brief evidence. Email,
+meeting transcripts, documents, and your own replies are excluded. For supported
+sources and enrollment steps, see the [brief guide](usage/people-briefs.md).
 
-Generation is enabled here by default, but each person must be enrolled
-separately. These settings apply to everyone; there are no per-person overrides.
+Brief generation is enabled here by default, though you still enroll each person
+individually. These settings apply globally without per-person overrides.
 Restart the daemon after changing them.
 
 ```toml
@@ -358,32 +385,33 @@ max_rendered_runes = 560
 | `max_output_tokens` | `2048` | Output cap for the brief call. Must be positive and must not exceed `[people.sweep.budgets] max_output_tokens_per_person`, because a brief is one more call against the same per-person ceiling. |
 | `max_rendered_runes` | `560` | Maximum length of the rendered paragraph, in Unicode runes. Msgvault enforces it after the model answers by dropping structured items from the tail: uncertainties first, then follow-ups, then highlights, never the last-interaction sentence and never mid-sentence. Every dropped item is counted in the version's `dropped_item_count`, and the stored structure and evidence pointers are the trimmed ones. Must be at least 240, which is the interaction summary's own maximum length. |
 
-An invalid value fails configuration validation with the offending key named,
-rather than being clamped.
+If you set an invalid value, configuration validation fails and names the
+offending key instead of clamping it.
 
 ### Codex app-server profiles
 
 The `codex_app_server` protocol is not usable in this release. Its transport
-stays unavailable until the executable isolation gate releases a verified
-build, and until then every Codex operation fails closed with
+stays unavailable until the executable isolation gate releases a verified build,
+and every Codex operation fails closed with
 `codex app-server isolation is not released`. The profile shape is documented
-here so the configuration is ready when the gate ships. Codex sign-in and
-model routes return HTTP 503 before changing credentials or consent. The
+here so your configuration is ready when the gate ships. Codex sign-in and model
+routes return HTTP 503 before changing credentials or consent. Both the
 terminal-only [`person provider enroll-codex`](cli-reference.md#person-provider-enroll-codex)
-command creates a new profile through the daemon; host-side `person provider
-login` reauthenticates the selected existing Codex profile. Both remain gated.
+command (which creates a new profile through the daemon) and host-side
+`person provider login` (which reauthenticates the selected existing Codex
+profile) remain gated.
 
-The Linux launcher disables Codex's local execution environment and shell
-tools. The app server can manage its staged OAuth credential, but its command
-and filesystem interfaces cannot access it. Command-execution requests or
-events abort inference. Enabling a release still requires a real authenticated
+The Linux launcher disables Codex's local execution environment and shell tools.
+While the app server can manage its staged OAuth credential, its command and
+filesystem interfaces cannot access it, and any command-execution request or
+event aborts inference. Enabling a release still requires a real authenticated
 structured-inference check through this launcher.
 
-`codex_app_server` profiles are also the one protocol `person provider add`
-cannot create: generic onboarding negotiates HTTP capabilities through an
-endpoint, while codex_app_server has no endpoint to negotiate against and
-runs through an attested local Codex executable instead. The following is
-a reference shape for that gated implementation, not a working setup procedure:
+`codex_app_server` is also the one protocol `person provider add` cannot create.
+Generic onboarding negotiates HTTP capabilities against an endpoint, whereas
+`codex_app_server` has no endpoint and runs through an attested local Codex
+executable instead. The snippet below shows the reference shape for that gated
+implementation, not a working setup procedure:
 
 ```toml
 [people.sweep.providers.codex]
@@ -399,19 +427,20 @@ source_since = "2026-01-01"
 allow_sensitive = true
 ```
 
-`endpoint` is not allowed, and `auth` and `credential` must both be set to
-`"none"`: the transport is the local Codex app server, authenticated by its
-own ChatGPT login. Sensitivity policy is protocol-agnostic: real Codex sweeps
-send the same seed and context packets, so `allow_sensitive = true` is
-required here as well. Login, model discovery, checks, and consent cannot make
-this profile usable while the release gate is closed. Use one of the available
-HTTP protocols for current [profile automation](usage/people-automation.md).
+Omit `endpoint`, and set both `auth` and `credential` to `"none"`, because the
+transport is the local Codex app server authenticated by its own ChatGPT login.
+Sensitivity policy works the same across protocols: real Codex sweeps send the
+same seed and context packets, so `allow_sensitive = true` is required here too.
+Login, model discovery, checks, and consent cannot make this profile usable
+while the release gate is closed. Use one of the available HTTP protocols for
+[profile automation](usage/people-automation.md) today.
 
-### Windows Paths
+### Windows paths
 
-TOML treats backslashes inside double-quoted strings as escape characters. On Windows, this means native paths like `"C:\Users\you\..."` will cause a parse error.
+TOML treats backslashes inside double-quoted strings as escape characters, so
+native Windows paths like `"C:\Users\you\..."` cause a parse error.
 
-Use one of these formats instead:
+Use forward slashes or single-quoted strings instead:
 
 ```toml
 # Forward slashes (recommended)
@@ -423,10 +452,11 @@ client_secrets = 'C:\Users\you\Downloads\client_secret.json'
 
 ## Cron schedules
 
-Every `schedule` and `cron` key in this file uses the same five-field cron
-format. msgvault parses it with [go-cron](https://github.com/netresearch/go-cron)
-and keeps go-cron's rules as they are, so go-cron's documentation answers edge
-cases. The Web UI schedule editor follows the same rules.
+Every `schedule` and `cron` key in `config.toml` uses the same five-field cron
+format. msgvault parses schedules with
+[go-cron](https://github.com/netresearch/go-cron) and keeps its rules as they
+are, so check go-cron's documentation for edge cases. The Web UI schedule editor
+follows the same rules.
 
 | Field | Values |
 |---|---|
@@ -436,41 +466,41 @@ cases. The Web UI schedule editor follows the same rules.
 | Month | 1-12 or `jan`-`dec` |
 | Day of week | 0-7 or `sun`-`sat`; 0 and 7 are both Sunday |
 
-Each field takes `*` or `?`, a number or name, a range (`9-17`), a comma list
+Each field accepts `*` or `?`, a number or name, a range (`9-17`), a comma list
 (`0,30`), or a step (`*/15`, `5/20`, `0-30/10`).
 
-- A range whose start comes after its end wraps around. `22-2` in the hour
-  field covers 22:00 to 02:59, and `fri-mon` covers Friday to Monday.
+- Ranges where the start comes after the end wrap around. For example, `22-2` in
+  the hour field covers 22:00 to 02:59, and `fri-mon` covers Friday to Monday.
 - A step must be smaller than the range it steps through. go-cron rejects
-  `*/60 * * * *` and `0 */24 * * *`; write `0 * * * *` and `0 0 * * *`.
-- When both day fields are restricted, a day that matches either one runs.
-  `0 4 1 * mon` runs on the 1st of the month and on every Monday.
-- Descriptors such as `@hourly`, seconds and year fields, and the `L`, `W`,
-  `#`, and `H` extensions are rejected.
-- msgvault adds one check of its own. A field made only of commas, such as
-  `,`, is rejected because go-cron accepts it but never runs it.
+  `*/60 * * * *` and `0 */24 * * *`; write `0 * * * *` and `0 0 * * *` instead.
+- When you restrict both day fields, a day that matches either one runs. For
+  example, `0 4 1 * mon` runs on the 1st of the month and on every Monday.
+- Descriptors such as `@hourly`, seconds and year fields, and the `L`, `W`, `#`,
+  and `H` extensions are rejected.
+- msgvault adds one check of its own: a field made only of commas, such as `,`,
+  is rejected because go-cron accepts it but never runs it.
 
-Schedules run in the daemon's local time. To run one in another zone, start it
-with `CRON_TZ=` or `TZ=`, an IANA zone name, and a space:
-`CRON_TZ=Europe/Berlin 0 3 * * *`. The zone name may be quoted, as in
-`TZ="UTC" 0 3 * * *`. An empty name, such as `CRON_TZ= 0 3 * * *`, is
-rejected.
+Schedules run in the daemon's local time zone. To run a schedule in another
+zone, prefix it with `CRON_TZ=` or `TZ=`, an IANA zone name, and a space, such
+as `CRON_TZ=Europe/Berlin 0 3 * * *`. You can quote the zone name, as in
+`TZ="UTC" 0 3 * * *`. An empty name, such as `CRON_TZ= 0 3 * * *`, is rejected.
 
-Daylight saving time changes how a schedule in the affected hour runs:
+Daylight saving time changes how schedules in the affected hour run:
 
-- When clocks skip an hour, a run in that hour starts after the jump at the
-  same minute. In New York, `30 2 * * *` runs at 03:30 on the spring-forward
-  day.
-- When clocks repeat an hour, `msgvault serve` runs a schedule in that hour
-  once, on the first pass. `sync-muesli --watch` runs it on both passes.
+- When clocks spring forward and skip an hour, a run scheduled in that hour
+  starts after the jump at the same minute. In New York, `30 2 * * *` runs at
+  03:30 on the spring-forward day.
+- When clocks fall back and repeat an hour, `msgvault serve` runs a schedule in
+  that hour once, on the first pass. `sync-muesli --watch` runs it on both
+  passes.
 
 ## Sections
 
-`msgvault setup providers` writes recommended values for the `[vector]`
-and `[people.sweep]` sections from the API keys in
-your environment, and `msgvault setup status` reports every lane with its
-provider, model, consent state, and next step. The values it chooses are
-listed in [Recommended Configuration](/docs/usage/recommended-configuration/).
+You can run `msgvault setup providers` to write recommended `[vector]` and
+`[people.sweep]` values from the API keys in your environment, and
+`msgvault setup status` to see every lane's provider, model, consent state, and
+next step. The values it picks are listed in
+[Recommended Configuration](/docs/usage/recommended-configuration/).
 
 ### `[data]`
 
@@ -481,12 +511,14 @@ listed in [Recommended Configuration](/docs/usage/recommended-configuration/).
 | `database_url` | `{data_dir}/msgvault.db` | SQLite database path or PostgreSQL DSN |
 | `loose_attachments` | `false` | Keep attachments as loose files and reject pack/repack commands instead of creating immutable packs |
 
-Attachments and OAuth tokens are stored in subdirectories of `data_dir` (`attachments/` and `tokens/` respectively). These paths are not independently configurable.
+msgvault stores attachments in `{data_dir}/attachments/` and OAuth tokens in
+`{data_dir}/tokens/`. You cannot configure those two subdirectories
+independently.
 
-Setting `loose_attachments = true` prevents new pack files but does not
-convert existing packs. Stop the daemon and run `msgvault unpack-attachments`
-once to materialize their contents as loose files. Backup restore also restores
-attachments loose while this setting is enabled.
+Setting `loose_attachments = true` stops msgvault from creating new pack files,
+but it does not convert existing packs. To turn existing packs into loose files,
+stop the daemon and run `msgvault unpack-attachments` once. Backup restore also
+restores attachments as loose files while this setting is enabled.
 
 ### `[oauth]`
 
@@ -498,7 +530,10 @@ attachments loose while this setting is enabled.
 
 #### `[oauth.apps.<name>]`
 
-Named OAuth apps for Google Workspace organizations that require their own OAuth credentials. Each entry can define a separate browser OAuth `client_secret.json`, service account key, or both. Use `--oauth-app <name>` with `add-account` to bind an account to a named app.
+Use named OAuth apps when a Google Workspace organization requires its own
+OAuth credentials. Each entry can define a separate browser OAuth
+`client_secret.json`, a service account key, or both. Pass `--oauth-app <name>`
+to `add-account` to bind an account to a named app.
 
 | Key | Default | Description |
 |---|---|---|
@@ -508,20 +543,25 @@ Named OAuth apps for Google Workspace organizations that require their own OAuth
 
 See [OAuth Setup: Google Workspace Accounts](/docs/guides/oauth-setup/#google-workspace-accounts) for when and why you need named apps.
 
-Discord's `--oauth-app` value is only a protected bot-token binding label. It
-is not resolved from this section and does not require an `[oauth.apps]` entry.
-`export-messages` uses the same daemon and database configuration as other
-archive commands. It does not load provider credentials or make provider API
-calls. It reads one database snapshot and runs alongside imports and syncs.
-The older `export-discord` compatibility command has the same read-only
-provider behavior.
+Discord's `--oauth-app` flag is only a protected bot-token binding label.
+msgvault does not resolve it from `[oauth.apps]`, and you do not need an entry
+here to use it. `export-messages` uses the same daemon and database
+configuration as other archive commands, loads no provider credentials, and
+makes no provider API calls. It reads a single database snapshot and can run
+alongside imports and syncs. The older `export-discord` compatibility command
+has the same read-only provider behavior.
 
-When `service_account_key` is configured, `msgvault add-account <email>` validates the delegated Gmail profile and registers the account without storing a per-user refresh token. The service account key file must be owner-only on Unix-like systems, for example `chmod 600 /path/to/service-account.json`.
+When you configure `service_account_key`, `msgvault add-account <email>`
+validates the delegated Gmail profile and registers the account without saving
+a per-user refresh token. On Unix-like systems, the service account key file
+must be readable only by its owner, for example with
+`chmod 600 /path/to/service-account.json`.
 
 #### Command-backed Google credentials and tokens
 
-Use commands to keep Google client credentials and tokens in your secret store.
-Gmail, Calendar, Drive, and Google Contacts use the same configuration.
+To keep Google client credentials and tokens in your own secret store instead
+of local files, configure command-backed storage. Gmail, Calendar, Drive, and
+Google Contacts share this configuration.
 
 ```toml
 [oauth]
@@ -534,16 +574,16 @@ delete_command = ["/path/to/token-store", "delete"]
 list_command = ["/path/to/token-store", "list"]
 ```
 
-`client_secrets_command` prints the complete Google `client_secret.json` on
-stdout. You can also set it under `[oauth.apps.<name>]`. Each application must
-choose either `client_secrets` or `client_secrets_command`. Named applications
-do not inherit the default application's client credentials. Service account
-keys remain files.
+`client_secrets_command` prints the complete Google `client_secret.json` to
+stdout, and you can also set it under `[oauth.apps.<name>]`. Each application
+must use either `client_secrets` or `client_secrets_command`. Named
+applications do not inherit the default application's client credentials.
+Service account keys remain files.
 
 Token commands replace Google token files for every application, including
 separate Google Contacts authorizations. Configure all four commands together,
-or omit all four to keep file storage. Other providers keep their existing
-storage. msgvault validates configuration without executing commands.
+or omit all four to keep file storage; other providers keep their existing
+storage. msgvault validates this configuration without running the commands.
 
 | Command | Input | Successful output or effect |
 |---|---|---|
@@ -552,85 +592,92 @@ storage. msgvault validates configuration without executing commands.
 | `delete_command` | Account and namespace environment variables | Remove the token; succeed if already absent |
 | `list_command` | Namespace environment variable | JSON array of every stored account spelling in this namespace, such as `["reader@example.com"]`; use `[]` when empty |
 
-If a read command returns malformed JSON or no token fields, fix `read_command` or the stored token JSON and retry. msgvault leaves the stored record unchanged.
+If `read_command` returns malformed JSON or omits token fields, msgvault leaves
+the stored record unchanged. Fix `read_command` or the stored token JSON, then
+retry.
 
-Token commands receive these environment variables:
+Each token command receives two environment variables:
 
 | Variable | Meaning |
 |---|---|
 | `MSGVAULT_TOKEN_NAMESPACE` | Token namespace: empty for Gmail, Calendar, and Drive tokens; `carddav-google/<hash>` for a separate Google Contacts authorization, where `<hash>` is the lowercase hex SHA-256 of the OAuth app name (empty for the default app) |
 | `MSGVAULT_ACCOUNT` | Account spelling used for this token; empty for listing |
 
-Key each record by namespace and account. These values do not depend on the data
-directory or machine, so moving the data directory or reading the store from
-another machine finds the same records. Preserve
-namespaces: a Google Contacts token can have the same account as its Gmail token
-in a different namespace. Do not collapse distinct account spellings or
-namespaces in a wrapper.
+Key each stored record by namespace and account. Because these values do not
+depend on the data directory or host, moving the data directory or reading the
+store from another machine finds the same records. Keep namespaces separate: a
+Google Contacts token can share an account name with its Gmail token in a
+different namespace, so your wrapper must not collapse distinct account
+spellings or namespaces.
 
-Only token reads may exit with status **3** to report a missing record. Other
-nonzero exits fail the operation. Successful empty or malformed JSON is an error.
-If `write_command` fails after a token refresh, the sync or request that needed
-the token fails instead of continuing with a token msgvault couldn't save.
-Listing must include credentials without registered source rows so Gmail alias
-checks can detect them. Read or listing failures stop those decisions.
+Only `read_command` may exit with status **3** to report a missing record. Any
+other nonzero exit fails the operation, and empty or malformed JSON on a zero
+exit is also an error. If `write_command` fails after a token refresh, the sync
+or request fails instead of continuing with an unsaved token. `list_command`
+must include credentials that do not have registered source rows so Gmail alias
+checks can find them; read or listing failures stop those checks.
 
-Commands are executable-and-argument arrays. msgvault does not invoke a shell or
-expand tildes, environment variables, redirects, or pipes. Executables use `PATH`;
-relative executables use the process working directory. Use absolute paths for
-scripts that must run from the daemon. A command that cannot start, such as a
-missing or non-executable program, is a configuration error; for
-`client_secrets_command`, msgvault asks you to fix the OAuth app settings.
-Commands inherit the user's environment and run with the user's privileges. They must work unattended for scheduled sync.
+Specify each command as an executable-and-argument array. msgvault does not
+invoke a shell or expand tildes, environment variables, redirects, or pipes. It
+resolves executable names through `PATH` and relative executable paths against
+the process working directory. Use absolute paths for scripts that must run
+from the daemon. A
+command that cannot start, such as a missing or non-executable binary, is
+reported as a configuration error; for `client_secrets_command`, msgvault prompts
+you to fix the OAuth app settings. Commands inherit the user's environment and
+privileges and must run unattended for scheduled syncs.
 
-Each invocation has a 30-second deadline and a 1 MiB stdout limit, and stops
-when the operation that needs it is cancelled. When msgvault's stderr is a
-terminal, a command's stderr is shown there; otherwise, including in the daemon,
-msgvault discards it. msgvault never includes command output or arguments in its
-errors. Write and delete stdout is ignored.
-Pass secrets through stdin rather than placing them in command arguments.
+Every command invocation has a 30-second deadline and a 1 MiB stdout limit, and
+stops if the calling operation is cancelled. When msgvault's stderr is a
+terminal, command stderr appears there; otherwise, including inside the daemon,
+msgvault discards it. msgvault never puts command output or arguments in error
+messages, and ignores stdout from `write_command` and `delete_command`. Pass
+secrets over stdin rather than in command arguments.
 
-Google Contacts reuses an access token until it expires, so the daemon runs these
-commands about once per token lifetime rather than for every contacts request.
-Saving or authorizing a Google Contacts connection, or Google rejecting the
-token, reads the stored token again.
+Google Contacts reuses an access token until it expires, so the daemon runs
+these commands roughly once per token lifetime rather than on every contacts
+request. Saving or authorizing a Google Contacts connection, or having Google
+reject the token, triggers a fresh read.
 
-Keep token JSON unchanged, including `scopes` and `client_id`. A write followed by
-a read must return the same bytes. msgvault uses private local lock files to
-coordinate its processes and compares snapshots before replacing a token. It
-never writes secret temporary files in command mode.
+Keep token JSON unchanged, including `scopes` and `client_id`. A write followed
+by a read must return the same bytes. msgvault coordinates local
+processes with private lock files and compares snapshots before replacing a
+token, and it never writes temporary secret files in command mode.
 
-The lock files coordinate only processes on one machine. msgvault reads the
-token to compare it and then calls `write_command` as a separate step, so a
-store cannot make that sequence atomic. If msgvault runs on more than one
-machine against the same store, a refresh on one machine can overwrite a
-sign-in saved by another at the same moment. Run msgvault against a store from
-only one machine at a time. Other programs that change the store need to avoid
-writing while msgvault runs.
+Those lock files coordinate only processes on the same machine. Because
+msgvault reads the token to compare it and then calls `write_command` in a
+separate step, the backing store cannot make that sequence atomic. If msgvault
+runs on more than one machine against the same store, a refresh on one machine
+can overwrite a sign-in saved by another at the same moment. Run msgvault
+against a
+given store from only one machine at a time, and keep other programs from
+writing to the store while msgvault runs.
 
-Configure the command backend separately on each machine. To migrate a file
-credential, move its JSON into your store under its namespace and account
-and verify a sync before removing the old file. Changing configuration leaves
-existing plaintext files in place; msgvault does not migrate them automatically.
-`export-token` reads the selected backend, and the receiving server's token-upload
-endpoint writes its configured backend. Configure the receiving backend before
-uploading. Client credentials remain separately configured; setup does not put
-command output into a NAS bundle.
+Configure the command backend on each machine separately. Changing the config
+leaves existing plaintext token files in place rather than migrating them
+automatically. To migrate a file credential, copy its JSON into your store
+under its namespace and account and verify a sync before deleting the old file.
+`export-token` reads from the active backend, and the receiving server's
+token-upload endpoint writes to its own configured backend, so configure the
+receiving backend before uploading. Client credentials stay configured
+separately, and setup does not put command output into a NAS bundle.
 
 ### `[carddav]` and `[carddav_connections.<name>]` {#carddav}
 
-`[carddav]` is the `default` connection. Add named tables for other accounts;
-each uses the keys below and has its own credential binding, discovery,
-retry state and schedule. Names use 1–64 lowercase ASCII letters, digits,
-underscores or hyphens, starting with a letter. `default` is reserved for
-`[carddav]`.
+`[carddav]` defines the `default` connection. Add named tables under
+`[carddav_connections.<name>]` for additional accounts; each uses the keys
+below and keeps its own credential binding, discovery state, retry state, and
+schedule. Connection names must be 1 to 64 lowercase ASCII letters, digits,
+underscores, or hyphens, starting with a letter. The name `default` is reserved
+for `[carddav]`.
 
-Connect through the [CardDAV account workflow](usage/people-carddav.md) so the
-daemon validates discovery before saving these settings. The same `base_url`
-and `username` cannot belong to two connections, including disabled connections.
-For Google, account email is case insensitive and the OAuth app does not create
-a separate CardDAV account. Config edits and account saves reject duplicates.
-Removing a config table retains the account's archive data; see
+Set up accounts through the [CardDAV account workflow](usage/people-carddav.md)
+so the daemon verifies discovery before saving these settings. Two connections
+cannot share the same `base_url` and `username`, even if one is disabled. For
+Google, the account email is case-insensitive and the OAuth app does not create
+a separate CardDAV account. Both config edits and account saves reject
+duplicates. If you remove a config table, msgvault keeps that account's archive
+data; see
 [recovering an orphaned connection](usage/people-carddav.md#recover-a-connection-removed-from-config).
 
 | Key | Default | Description |
@@ -644,7 +691,7 @@ Removing a config table retains the account's archive data; see
 | `trusted_origin` | `""` | Exact HTTPS origin approved for private access, including its port; a trailing `/` is accepted. Applies only when it matches the account URL's origin. |
 | `trusted_addresses` | `[]` | Private IP addresses to dial for `trusted_origin`, without DNS. Accepts `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, and `fc00::/7`; rejects duplicates, IPv6 zones, loopback, and link-local addresses. |
 
-For example, a second connection uses:
+For example, to configure a second connection:
 
 ```toml
 [carddav_connections.work]
@@ -654,25 +701,28 @@ enabled = true
 schedule = "0 */6 * * *"
 ```
 
-Use `add-carddav --connection work` or **Add connection** in Settings to save
-its credential and discover books. Passwords are rejected in these TOML tables.
-The default binding remains `tokens/carddav.json`; named bindings use
+Run `add-carddav --connection work` or click **Add connection** in **Settings**
+to save its credential and discover address books. Passwords are not allowed in
+these TOML tables. The default connection stores its binding in
+`tokens/carddav.json`, and named connections store theirs in
 `tokens/carddav-connections/<name>/carddav.json`. Google authorizations are
-shared by account email and OAuth app, separately from these connection bindings.
-Scheduler job names are `carddav` for default and `carddav:<name>` otherwise.
+shared by account email and OAuth app, separate from these connection bindings.
+The scheduler names the default job `carddav` and named jobs `carddav:<name>`.
 
-Set both trusted-destination keys together. See the
+When you configure a private server, set `trusted_origin` and
+`trusted_addresses` together. See
 [private-server setup](usage/people-carddav.md#private-servers) for an example,
-restart requirements, and behavior when the origin does not match.
+restart requirements, and what happens when the origin does not match.
 
-Passwords and Google tokens stay in the configured token directory, outside
-`config.toml`. See [Google Contacts setup](usage/people-carddav.md#google-contacts)
-for browser and terminal authorization.
+Passwords and Google tokens stay in the configured token directory outside
+`config.toml`. For browser and terminal authorization steps, see
+[Google Contacts setup](usage/people-carddav.md#google-contacts).
 
 ### `[microsoft]`
 
-Configuration for Microsoft 365 / Outlook.com OAuth and Microsoft Teams Graph
-sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
+This section configures Microsoft 365 / Outlook.com OAuth and Microsoft Teams
+Graph sync. It is required only if you use `add-o365`, `add-teams`, or
+`sync-teams`.
 
 | Key | Default | Description |
 |---|---|---|
@@ -680,15 +730,27 @@ sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
 | `redirect_uri` | `http://localhost:8089/callback/microsoft` | OAuth redirect URI registered in the Azure AD app |
 | `tenant_id` | `common` | Azure AD tenant ID; `common` allows both personal and org accounts |
 
-For a mailbox in another organization, configure a separate app under `[microsoft.apps.<name>]` with its own `client_id`, `tenant_id`, and `redirect_uri`. Omitted tenant and redirect values use the defaults in the table, independently of `[microsoft]`. Restart the daemon after changing Microsoft app settings so scheduled syncs use the updated configuration. Bind a mail source with `msgvault add-o365 user@org-b.example --oauth-app orgb`. Teams, contacts, and the Web add-source template use `[microsoft]`.
+To archive a mailbox in another organization, add a separate app under
+`[microsoft.apps.<name>]` with its own `client_id`, `tenant_id`, and
+`redirect_uri`. If you omit `tenant_id` or `redirect_uri`, msgvault applies the
+table defaults above rather than inheriting from `[microsoft]`. Restart the
+daemon after editing Microsoft app settings so scheduled syncs pick up the
+changes. Bind a mail source with
+`msgvault add-o365 user@org-b.example --oauth-app orgb`. Teams, contacts, and
+the Web add-source template always use `[microsoft]`.
 
-See [OAuth Setup: Microsoft 365](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the default `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth with the default app uses `tokens/microsoft_<email>.json`.
+For app registration steps, see
+[OAuth Setup: Microsoft 365](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail).
+Teams uses the default `client_id` with Microsoft Graph scopes and saves tokens
+to `tokens/teams_<email>.json`, while Outlook/Hotmail IMAP OAuth with the
+default app saves tokens to `tokens/microsoft_<email>.json`.
 
 ### `[[fastmail]]`
 
-Optional source-scoped Fastmail JMAP identity inventory. This does not replace
-IMAP ingestion credentials: add and sync the mailbox normally, then use the API
-token only to discover masked and send-as addresses that belong to that source.
+Add `[[fastmail]]` entries for an optional, source-scoped Fastmail JMAP
+identity inventory. This does not replace IMAP credentials: add and sync your
+mailbox as usual, then use the API token only to discover masked and send-as
+addresses belonging to that source.
 
 | Key | Default | Description |
 |---|---|---|
@@ -697,17 +759,18 @@ token only to discover masked and send-as addresses that belong to that source.
 | `api_token` | (required) | Fastmail API token used for the JMAP identity inventory |
 | `auto_confirm_identities` | `false` | Refresh and apply strong provider identity evidence after successful mailbox syncs |
 
-Exactly one source selector is required. Prefer `source_id` when two sources
-share an identifier or display name. With automatic confirmation disabled,
-`msgvault identity discover --source-id <id> --provider` fetches the inventory
-for an explicit preview; add `--apply` only after reviewing it. See [People,
-Profiles, and Source Identities](/docs/usage/people/#fastmail-alias-inventory).
+You must set exactly one of `source_id` or `account`. Use `source_id` when two
+sources share an identifier or display name. With `auto_confirm_identities`
+disabled, run `msgvault identity discover --source-id <id> --provider` to
+preview the inventory, and add `--apply` only after you review it. See
+[People, Profiles, and Source Identities](/docs/usage/people/#fastmail-alias-inventory).
 
 ### `[discord]`
 
-Provider-wide Discord import settings and optional message-container filters.
-Register guilds and store their bot credential first with `msgvault
-add-discord`; tokens and binding labels do not belong in `config.toml`.
+Use `[discord]` for provider-wide Discord import settings and optional
+message-container filters. Register guilds and store their bot credentials
+first with `msgvault add-discord`; never put tokens or binding labels in
+`config.toml`.
 
 | Key | Default | Description |
 |---|---|---|
@@ -718,9 +781,10 @@ add-discord`; tokens and binding labels do not belong in `config.toml`.
 | `media_max_participants` | `20` | Skip media from conversations with more participants than this; `0` disables the cap. See [Media policy](#media-policy) |
 | `edit_rescan_window` | `168h` (seven days) | Trailing per-channel/thread window refreshed for edits, deletions, and reaction summaries |
 
-Use an exact guild ID for a per-guild filter block. The same block also takes
-the per-account media overrides (`media`, `max_media_mb`) that the other chat
-providers put under `accounts_config`:
+To filter channels or override media settings for a specific guild, add a block
+keyed by its exact guild ID. That block also accepts the per-account media
+overrides (`media` and `max_media_mb`) that other chat providers place under
+`accounts_config`:
 
 ```toml
 [discord.guilds."123456789012345678"]
@@ -730,17 +794,18 @@ exclude = ["567890123456789012"]
 # max_media_mb = 25
 ```
 
-An empty `include` means every accessible text or announcement channel, thread,
-and forum post. Top-level channels match directly. A child inherits its
-parent's state unless its own ID appears explicitly. An explicit child include
-can override an excluded parent; an explicit child exclude can override an
-included parent. `exclude` wins when the same ID is in both lists. See
+An empty `include` list matches every accessible text or announcement channel,
+thread, and forum post. Top-level channels match directly, and child threads or
+posts inherit their parent's state unless you list their own ID explicitly. An
+explicit child `include` can override an excluded parent, and an explicit child
+`exclude` can override an included parent. If the same ID appears in both lists,
+`exclude` wins. See
 [Discord](/docs/usage/discord/#configure-media-repairs-and-channel-filters).
 
 ### Conversation archive tiers (staged)
 
-Conversation policy uses the provider's archived roster, including the same
-participant-count rules as media policy. The model defines four tiers:
+Conversation policy uses the provider's archived roster and applies the same
+participant-count rules as media policy. Four tiers are defined:
 
 | Tier | Intended behavior |
 | --- | --- |
@@ -749,17 +814,18 @@ participant-count rules as media policy. The model defines four tiers:
 | `stub` | Keep your own messages, direct replies and explicit mentions of you, plus room metadata. |
 | `skip` | Stop importing room history. |
 
-This release adds settings and inspection only. Every effective tier remains
-`full`; automatic classification and cold exclusions are not enabled yet.
-`stub` and `skip` settings are rejected until retention and purge support ships.
-Saving a `cold` override does not yet hide messages or remove vectors.
+This release adds only configuration and inspection. Every room's effective
+tier stays `full`. Automatic classification and cold exclusions are not enabled
+yet. `stub` and `skip` are rejected until retention and purge support
+ships, and saving a `cold` override does not yet hide messages or remove
+vectors.
 
-Automatic classification is off by default. To turn it on for Beeper, Slack
-(including Slackdump imports), Discord or Teams, set that provider's
-`max_participants` to the largest room you want kept `full`, such as `20`.
-Omitting the key or setting `0` keeps every room `full` unless an override
-says otherwise. This setting is separate from `media_max_participants` and
-`max_media_mb`, which continue to govern attachments.
+Automatic classification is off by default. To enable it for Beeper, Slack
+(including Slackdump imports), Discord, or Teams, set that provider's
+`max_participants` to the largest room size you want kept `full`, such as `20`.
+Omitting the key or setting `0` keeps every room `full` unless an override says
+otherwise. This key is separate from `media_max_participants` and
+`max_media_mb`, which continue to control attachments.
 
 ```toml
 [beeper]
@@ -775,15 +841,16 @@ conversation_id = "example-room"
 tier = "cold"
 ```
 
-The model selects `full` for a known roster at or below the limit, or recent
-activity: your own post, an explicit mention of you, or a direct reply to your
-message. The activity cutoff is inclusive; future timestamps do not establish
-activity. Larger rooms and rooms with unknown size select `cold` without that
-activity. The activity window defaults to 180 days (also when set to `0`);
-negative values and windows beyond 106751 days are rejected. Other providers
-keep their current behavior.
+The policy selects `full` when a room's known roster is at or below the limit,
+or when you have recent activity there: your own post, an explicit mention of
+you, or a direct reply to one of your messages. The activity cutoff is
+inclusive, and future timestamps do not count as activity. Larger rooms and
+rooms with an unknown size select `cold` without that activity.
+`activity_window_days` defaults to 180 days (including when set to `0`);
+negative values and values above 106751 days are rejected. Other providers keep
+their existing behavior.
 
-Inspect archived rooms and save overrides through the daemon:
+You can inspect archived rooms and save overrides through the daemon:
 
 ```sh
 msgvault policy list
@@ -791,24 +858,25 @@ msgvault policy set 1 example-room cold
 msgvault policy reset 1 example-room
 ```
 
-`list` prints JSON with source IDs, provider room IDs, roster status, effective
-tiers and selected overrides. Use its source ID and provider ID with `set` or
-`reset`. A saved CLI override wins over config. Reset removes that saved value
-and restores config or automatic selection. Config overrides match the exact
-source type, source identifier and provider room ID; duplicate keys are rejected.
-All saved values are marked staged in this release. These commands do not purge
-messages or contact a provider.
+`msgvault policy list` prints JSON with source IDs, provider room IDs, roster
+status, effective tiers, and selected overrides. Pass those source and provider
+IDs to `set` or `reset`. A saved CLI override takes precedence over config, and
+`reset` removes it so config or automatic selection applies again. Config
+overrides match the exact source type, source identifier, and provider room ID,
+and duplicate keys are rejected. All saved values are marked staged in this
+release, and these commands neither purge messages nor contact any provider.
 
 ### Media policy
 
-`[beeper]`, `[inline]`, `[matrix]`, `[slack]`, `[discord]`, `[teams]`, and `[imessage]` share
-one attachment policy vocabulary. It decides which chat media is downloaded
-during sync and backfill; message text is always archived. For attachment policy,
-`[imessage]` accepts `media_max_participants` and `max_media_mb`. It also accepts
-`enabled`, `schedule`, `db_path`, and `me`; see the [iMessage settings](#imessage).
+`[beeper]`, `[inline]`, `[matrix]`, `[slack]`, `[discord]`, `[teams]`, and
+`[imessage]` share a common set of attachment-policy keys that decide which chat
+media to download during sync and backfill. Message text is always archived. For
+attachment policy, `[imessage]` accepts `media_max_participants` and
+`max_media_mb`, along with `enabled`, `schedule`, `db_path`, and `me`; see the
+[iMessage settings](#imessage).
 
-[Chatwoot](#chatwoot) supports `media` and `max_media_mb` for each configured
-account. Its `media = false` records an `account_policy` skip marker.
+[Chatwoot](#chatwoot) supports `media` and `max_media_mb` per configured
+account, and `media = false` records an `account_policy` skip marker.
 
 | Key | Default | Description |
 |---|---|---|
@@ -818,13 +886,13 @@ account. Its `media = false` records an `account_policy` skip marker.
 | `max_media_mb` | `250` (Discord `50`) | Per-attachment size cap in MiB. Sized for long voice notes, screen recordings, and phone video from direct chats now that the participant cap keeps large-room volume out |
 | `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by Beeper accountID, Inline canonical account identifier, Matrix user ID, Slack team ID, or Teams account email. Discord uses `[discord.guilds."<id>"]` instead |
 
-The participant cap exists because most attachment bytes in a real chat
-archive come from large rooms whose forwarded videos nobody wants kept. Direct
-chats and small groups keep their photos, voice notes, and files. A skipped
-occurrence is recorded with a typed marker (`participant_threshold`,
-`policy_scope`, `account_policy`, or `size_cap`) that distinguishes a
-deliberate skip from a failed download, so the `backfill-*-media` commands do
-not retry it unless the policy changes.
+The participant cap exists because most attachment bytes in a real chat archive
+come from large rooms whose forwarded videos nobody wants kept. Direct chats
+and small groups keep their photos, voice notes, and files. When msgvault skips an
+attachment under policy, it records a typed marker (`participant_threshold`,
+`policy_scope`, `account_policy`, or `size_cap`) so `backfill-*-media` commands
+can tell a deliberate skip apart from a failed download and do not retry it
+unless you change the policy.
 
 ```toml
 [beeper]
@@ -842,24 +910,27 @@ max_media_mb = 500
 media = false
 ```
 
-Policy changes apply to future downloads. Media already stored under an
-earlier policy stays until you run `msgvault purge-excluded-media`, which
-removes attachment bytes the current policy would no longer collect.
+Policy changes affect future downloads only. Media already downloaded under an
+earlier policy stays on disk until you run `msgvault purge-excluded-media`,
+which removes attachment bytes that the current policy no longer collects.
 
-Participant limits use provider membership, not the number of senders observed
-in archived messages. A normal Beeper sync refreshes missing or unreadable
-membership for quiet archived conversations, even when their activity has not
-changed. Repairs follow message sync in bounded batches. Failed repairs retry
-after a day and do not hold up new messages; a full sync retries sooner. Discord
-records its guild member estimate when a participant limit is configured,
-including syncs with media downloading disabled. If the provider
-still cannot report membership, `purge-excluded-media` retains that room's media
-and reports the unresolved count. Sync again after access is restored, then
-preview the purge again.
+Participant limits use provider membership rather than the number of senders
+seen in archived messages. During a normal Beeper sync, msgvault refreshes
+missing or unreadable membership for quiet archived conversations even when
+they have no new activity. Those repairs run in bounded batches after message
+sync; failed repairs retry after a day without holding up new messages, and a
+full sync retries sooner. Discord records its guild member estimate whenever a
+participant limit is configured, even if media downloading is disabled. If the
+provider still cannot report membership, `purge-excluded-media` keeps that
+room's media and prints the unresolved count. Once access is restored, sync
+again and re-run the purge preview.
 
 ### `[log]`
 
-Structured file logging. Disabled by default. Enable it to get persistent, machine-readable logs for troubleshooting. Every CLI invocation writes a unique `run_id` on every log line so you can trace a single run across shared daily log files.
+Structured file logging is disabled by default. Turn it on when you want
+persistent, machine-readable logs for troubleshooting. Every CLI run writes a
+unique `run_id` on each log line so you can follow a single invocation across
+shared daily log files.
 
 | Key | Default | Description |
 |---|---|---|
@@ -869,11 +940,16 @@ Structured file logging. Disabled by default. Enable it to get persistent, machi
 | `sql_trace` | `false` | Log every SQL query at info level (verbose, for debugging) |
 | `sql_slow_ms` | `100` | Threshold in ms above which SQL queries are logged at warn level. `0` uses the built-in default (100 ms). |
 
-Log files are named `msgvault-YYYY-MM-DD.log` (UTC date), written as newline-delimited JSON. When a daily log exceeds 50 MiB it rotates to `.log.1`, `.log.2`, etc. (up to 5 rotated files).
+msgvault writes daily logs as newline-delimited JSON in
+`msgvault-YYYY-MM-DD.log` (UTC date). When a daily file exceeds 50 MiB, it
+rotates to `.log.1`, `.log.2`, and so on, keeping up to 5 rotated files.
 
-When SQL logging is enabled, slow/error entries include query arguments and streaming query durations, which makes it easier to diagnose expensive reads without enabling full trace output.
+With SQL logging enabled, slow and error entries include query arguments and
+streaming query durations, which helps you diagnose expensive reads without
+enabling full trace output.
 
-Use `msgvault logs` to view and tail log files from the selected local or remote daemon. See [CLI Reference: logs](/docs/cli-reference/#logs).
+To view and tail logs from the selected local or remote daemon, run
+`msgvault logs`. See [CLI Reference: logs](/docs/cli-reference/#logs).
 
 ### `[sync]`
 
@@ -893,58 +969,68 @@ identifier printed by `msgvault list-accounts`:
 imap_skip_folders = { "imaps://user@example.com@imap.example.com:993" = ["Trash", "Junk"] }
 ```
 
-Folder names match exactly and case-insensitively. Use the full name for nested
-folders, with no wildcards. Restart the daemon after editing the file.
-Either `--folder` or `--skip-folder` replaces the saved filter for one run.
-Sync warns when an account key matches no stored IMAP source or a folder name
-matches no selectable mailbox. Unmatched folders stay configured and will be
-excluded if created later. Blank saved folder names prevent daemon startup.
-See [IMAP folder filtering](usage/imap.md#what-filtering-changes) for the effects
-on archive membership, deletion tracking, cursor advancement, and `gc`.
+Folder names match exactly and case-insensitively. Use the full path for nested
+folders, without wildcards, and restart the daemon after editing the file.
+Passing `--folder` or `--skip-folder` replaces the saved filter for that single
+run. Sync prints a warning when an account key matches no stored IMAP source or
+a folder name matches no selectable mailbox; unmatched folders stay configured
+and are excluded if they appear later. Blank saved folder names prevent the
+daemon from starting. See
+[IMAP folder filtering](usage/imap.md#what-filtering-changes) for how filtering
+affects archive membership, deletion tracking, cursor advancement, and `gc`.
 
 Remote image archiving is **off by default**. Enabling it contacts
-sender-controlled servers and can activate tracking pixels or disclose the
-archive server's IP address. Restart the daemon after changing the setting.
-It applies to new ingestion; existing mail needs an explicit backfill.
+sender-controlled servers, which can activate tracking pixels or reveal the
+archive server's IP address. Restart the daemon after changing this setting. It
+applies only to new ingestion; existing mail needs an explicit backfill.
 
-See [remote email images](usage/remote-images.md) for the opt-in workflow,
-supported formats, download limits, and effect on attachment counts.
+For the opt-in workflow, supported formats, download limits, and how remote
+images affect attachment counts, see
+[remote email images](usage/remote-images.md).
 
-`trusted_imap_sent_mailboxes` names each IMAP account's Sent folder for
-servers — such as some Exchange/Outlook accounts — whose (possibly localized)
-Sent folder advertises no RFC 6154 `\Sent` special-use role. A survivor copy in
-that unadvertised folder never replaces the archived snapshot by default:
-the sync adopts the surviving location but keeps the previously archived
-body, raw MIME, recipients, and attachments, because a sender can forge any
-RFC822 `Message-ID`. Placement the server does advertise — an unambiguous
-`\Sent` or `\Drafts` role — remains trusted automatically regardless of
-this setting. Naming a mailbox here states that it is that account's Sent
-folder and holds only mail the account itself authored, which re-enables
+Use `trusted_imap_sent_mailboxes` to name an IMAP account's Sent folder on
+servers, such as some Exchange or Outlook accounts, whose (possibly localized)
+Sent folder does not advertise an RFC 6154 `\Sent` special-use role. By
+default, a surviving copy in an unadvertised folder never replaces an archived
+snapshot: sync adopts the surviving location but keeps the previously archived
+body, raw MIME, recipients, and attachments, because any sender can forge an
+RFC822 `Message-ID`. Placement that the server advertises with an unambiguous
+`\Sent` or `\Drafts` role is always trusted automatically regardless of this
+setting. Listing a mailbox here tells msgvault that it is that account's Sent
+folder and holds only mail authored by that account, which re-enables
 refreshing the archived snapshot from an edited copy found there.
 
-The mapping is keyed by the exact source identifier — copy the `ACCOUNT`
-value printed by `msgvault list-accounts` (for example
-`imaps://user@example.com@imap.example.com:993`), not the email or display
-name. Trust never crosses accounts: a same-named mailbox in another synced
-account stays untrusted, and an account with no entry has no explicit trust.
+Key this map by the exact source identifier from the `ACCOUNT` column of
+`msgvault list-accounts` (for example,
+`imaps://user@example.com@imap.example.com:993`), not by email address or
+display name. Trust never crosses accounts: a same-named mailbox in another
+synced account stays untrusted, and an account with no entry has no explicit
+trust.
 
 ```toml
 [sync]
 trusted_imap_sent_mailboxes = { "imaps://user@example.com@imap.example.com:993" = ["Gesendete Elemente"] }
 ```
 
-This is an explicit trust assumption, not evidence: filters or IMAP rules
-that file received mail into the listed mailbox would let that mail replace
-an archived snapshot under the same Message-ID. Advertised unambiguous
-`\Sent` and `\Drafts` placement is trusted automatically, and a mailbox
-that carries `\All`, `\Junk`, or `\Trash` roles, or INBOX, is never
-trusted — not even when listed here explicitly. A configured name the server
-itself advertises as `\Drafts` keeps its Drafts meaning: explicit
-configuration cannot turn a Drafts folder into the account's Sent folder.
+Keep in mind that this is an explicit trust assumption, not proof: if a filter
+or IMAP rule files received mail into a listed mailbox, that mail can replace
+an archived snapshot under the same Message-ID. Advertised unambiguous `\Sent`
+and `\Drafts` folders are trusted automatically, while `INBOX` and any mailbox
+carrying `\All`, `\Junk`, or `\Trash` roles are never trusted, even if you list
+them here. If the server advertises a listed folder as `\Drafts`, it keeps its
+Drafts meaning and cannot be treated as the account's Sent folder.
 
 ### `[server]`
 
-Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. The owner key also authenticates [native MCP endpoints](usage/chat.md#native-daemon-endpoints). The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/docs/api-server/) for API endpoint documentation and [MCP Server](/docs/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
+Configure the Web UI and API server started by `msgvault serve`. Remote CLI
+access uses this same HTTP server, and the local background daemon runs it for
+archive-access CLI commands. The owner key also authenticates
+[native MCP endpoints](usage/chat.md#native-daemon-endpoints), and `api_key`
+doubles as the inbound bearer token when `msgvault mcp --http` starts a
+separate Streamable HTTP listener (whose address comes from `--http`). For API
+endpoint details, see [Web UI & API Server](/docs/api-server/); for MCP client
+setup, see [MCP Server](/docs/usage/chat/#streamablehttp-transport), or fetch
+`/openapi.json` from a running server for the generated OpenAPI contract.
 
 | Key | Default | Description |
 |---|---|---|
@@ -973,82 +1059,113 @@ Each `[[server.remote_clients]]` entry gives one remote CLI its own read-only ke
 | `api_key_file` | — | Owner-only file holding the client's key; relative paths resolve like the server's `api_key_file`. Must differ from the server key and other clients' keys. |
 | `collections_write` | `false` | Also allow creating, editing, and deleting collections |
 
-`msgvault serve` reads these files after it settles the server key, whether that key comes from `api_key`, a file, an environment variable, or is created at startup. It fails to start if a file is missing or empty or a key repeats another. CLI commands that start a local daemon also trigger these checks. Restart to add, remove, or rotate a key.
+`msgvault serve` reads these files after resolving the server key from
+`api_key`, a file, an environment variable, or startup generation. Startup
+fails if a file is missing or empty, or if any key repeats another. Local CLI
+commands that start a background daemon run the same checks. Restart the daemon
+whenever you add, remove, or rotate a key.
 
-`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. An automatically started daemon does not idle out while a [Meta webhook receiver](#meta-webhooks) is listening. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
+`daemon_idle_timeout` applies only to automatically started daemons. Daemons
+started with `msgvault daemon start` or `msgvault daemon restart` stay running
+until you stop them, and foreground `msgvault serve` runs until interrupted. An
+automatically started daemon does not idle out while a
+[Meta webhook receiver](#meta-webhooks) is listening. To override the timeout
+for automatic starts, set `MSGVAULT_DAEMON_IDLE_TIMEOUT`.
 
-Flags and environment variables can configure the server
-without `config.toml`. `serve --bind` and `serve --port` take priority over
-environment variables, then TOML, then defaults. `iface:NAME` resolves at
-startup, preferring a usable IPv4 address and otherwise IPv6. An unknown, down,
-or unaddressed interface fails before opening a listener. Startup logs report
-the bound address and whether the bind came from a flag, environment, a config
-file, or the default.
+You can also configure the server with flags and environment variables instead
+of `config.toml`. `serve --bind` and `serve --port` take priority over
+environment variables, which take priority over TOML, followed by defaults.
+`iface:NAME` resolves at startup, preferring a usable IPv4 address and falling
+back to IPv6; an unknown, down, or unaddressed interface fails before opening a
+listener. Startup logs record the bound address and where it came from (flag,
+environment, config file, or default).
 
-Config edits validate the saved settings without resolving network interfaces
-or reading server credentials. These resources must be available when the
-server starts; an unavailable interface or key does not block unrelated edits.
+Config edits validate saved settings without resolving network interfaces or
+reading server credentials. Those resources must be available when the server
+starts. An unavailable interface or key does not block unrelated edits.
 
-Credentials use `api_key`, then `api_key_file`, then `api_key_env`. A selected
-file or named variable that is missing, empty, or unsafe fails without trying
-another source. Files must be regular, owned by the process user, at most
-64 KiB, and readable only by that user (`0400` or `0600` on Unix). Symlinks are
-rejected. Windows files require an owner-only ACL. File reads trim surrounding
-whitespace and leave mounted permissions unchanged. Relative secret paths in
-TOML or environment variables resolve beside `config.toml`, including before
-the default file exists. With `--config`, they resolve beside the selected file.
-Saving configuration preserves the original credential path strings, so relative
-paths continue to work when the configuration directory moves.
+Server credentials check `api_key`, then `api_key_file`, then `api_key_env`. If
+the selected file or environment variable is missing, empty, or unsafe,
+msgvault fails without trying another source. Key files must be regular
+files owned by the process user, at most 64 KiB, and readable only by that user
+(`0400` or `0600` on Unix). Symlinks are rejected, and Windows files need an
+owner-only ACL. msgvault trims surrounding whitespace when reading a file and
+leaves mounted permissions unchanged. Relative secret paths in TOML or
+environment variables resolve next to `config.toml` (even before the default
+file exists), or next to the file passed to `--config`. Saving configuration
+preserves the original path strings so relative paths keep working if you move
+the configuration directory.
 
-Container secret mounts must meet these same rules. Docker Swarm can set the
-secret's `uid` to the process user and its `mode` to `0400`; see
-[Swarm secret options](https://docs.docker.com/reference/cli/docker/service/create/#create-a-service-with-secrets---secret).
-The default root-owned `0444` mount is rejected. With Docker Compose file
-mounts, set the host file's ownership and mode before mounting it.
-Kubernetes Secret volumes use symlinks and are not accepted directly. Use a
-Secret-backed environment variable, or provide a regular owner-only file.
-These restrictions apply to `api_key_file`, MCP's `--http-token-file`, and
+Container secret mounts must follow the same rules:
+
+- In Docker Swarm, set the secret's `uid` to the process user and its `mode` to
+  `0400` (see [Swarm secret options](https://docs.docker.com/reference/cli/docker/service/create/#create-a-service-with-secrets---secret)).
+  The default root-owned `0444` mount is rejected.
+- In Docker Compose file mounts, set the host file's ownership and mode before
+  mounting it.
+- Kubernetes Secret volumes use symlinks and are rejected directly. Use a
+  Secret-backed environment variable or provide a regular owner-only file
+  instead.
+
+These file restrictions apply to `api_key_file`, MCP's `--http-token-file`, and
 `credentials set --from-file`. `credentials set --stdin` reads a stream and
 can import a readable mounted secret through shell input redirection.
 
-When a secure non-loopback server has no configured credential source, it
-creates `<data_dir>/tokens/server-api-key` with an unpredictable key and
-owner-only permissions. Persist `data_dir` to retain the key across restarts.
-It reuses that key on later starts, including loopback-only starts. The Web UI
-then requires login on `127.0.0.1` too; use the key from that file. An invalid
-existing key fails instead of being replaced. Local CLI clients discover the
-persisted key, including when they start the daemon themselves.
-`allow_insecure = true` skips this default key and retains the explicit
-unauthenticated mode; explicitly configured keys are still enforced. Startup
-logs name the credential file without printing its contents.
+If a secure non-loopback server has no configured credential source, it creates
+`<data_dir>/tokens/server-api-key` with an unpredictable key and owner-only
+permissions. Persist `data_dir` to keep that key across restarts. Later starts
+reuse that file, including loopback-only starts, which means the Web UI then
+requires login on `127.0.0.1` as well using the key from that file. An invalid
+existing key causes startup to fail instead of being overwritten. Local CLI
+clients discover the persisted key automatically, even when they start the
+daemon themselves. Setting `allow_insecure = true` skips generating this
+default key and keeps unauthenticated mode, though any explicitly configured
+key is still enforced. Startup logs name the credential file without printing
+its contents.
 
-Run local CLI commands as the daemon's operating-system user and provide the
-same selected credential sources. A different user, including root through
-`sudo` or `docker exec`, fails the key file's ownership check. For a container,
-use `docker exec --user <daemon-uid> ...`. If `api_key_env` names a variable
-provided only to the supervised daemon, also provide it to the CLI process;
-the CLI does not inherit the daemon's environment.
+Run local CLI commands as the same OS user as the daemon with the same
+credential sources. Running as a different user, including root through `sudo`
+or `docker exec`, fails the key file's ownership check. Inside a container, run
+`docker exec --user <daemon-uid> ...`. If `api_key_env` names an environment
+variable set only for a supervised daemon, pass that variable to the CLI
+process too, because the CLI does not inherit the daemon's environment.
 
-`daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
+With `daemon_auto_restart = "newer"`, a local CLI replaces an older compatible
+daemon with its own binary. A source-build CLI also replaces the release daemon
+it was built from or any earlier release, while a daemon from a different
+source build of the same release keeps running and the command prints the
+restart command. Set `"never"` when an external supervisor manages the daemon,
+or `"always"` to restart whenever the recorded daemon version differs. A CLI
+client never auto-restarts a remote server. When automatic replacement is
+suppressed for a daemon that would otherwise be replaced, local commands print
+both versions and `msgvault daemon restart` to stderr.
 
-`daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start` and `msgvault daemon restart` still start a daemon when you run them. `msgvault update` restarts only a daemon msgvault started in the background, unless you pass `--no-restart`. Commands routed to `[remote].url` are unaffected.
+Set `daemon_auto_start = false` when a supervisor such as launchd, systemd, or
+Docker runs `msgvault serve`. Local archive commands then connect to the
+running daemon, wait for one that is starting up, or fail with an error instead
+of launching their own. They also never replace a running daemon, regardless of
+`daemon_auto_restart`, because the supervisor owns restarts. Running
+`msgvault daemon start` or `msgvault daemon restart` still starts a daemon on
+request. `msgvault update` restarts only a daemon that msgvault started in the
+background, unless you pass `--no-restart`. Commands routed to `[remote].url`
+are unaffected.
 
-Browser sessions are additive to API-key authentication. Existing CLI and
-programmatic clients continue to send the configured key. For remote browser
-access, terminate TLS at a reverse proxy and list that proxy—not arbitrary
-clients—in `trusted_proxies`. See [Web UI](/docs/web-ui/) for the complete security
-model and the plain-HTTP warning.
+Browser sessions work alongside API-key authentication, while CLI and
+programmatic clients continue sending the configured key. For remote browser
+access, terminate TLS at a reverse proxy and list only that proxy, not
+arbitrary clients, in `trusted_proxies`. See [Web UI](/docs/web-ui/) for the
+full security model and the plain-HTTP warning.
 
-For MCP Streamable HTTP, send the effective `[server]` key, or the key selected
-by `--http-token-file` or `--http-token-env`, as `Authorization: Bearer <key>`
-on every `/mcp` request. This inbound credential is independent of
+For MCP Streamable HTTP, send the effective `[server]` key, or the key from
+`--http-token-file` or `--http-token-env`, as `Authorization: Bearer <key>` on
+every `/mcp` request. This inbound credential is separate from
 `[remote].api_key`, which authenticates `msgvault mcp` when it connects to a
 remote daemon.
 
 ### `[web]`
 
-Defaults for the daemon-served browser application. These values can also be
-changed from Settings; `config.toml` remains authoritative.
+Set defaults for the daemon-served browser application. You can also change
+these values in **Settings**, while `config.toml` stays authoritative.
 
 | Key | Default | Description |
 |---|---|---|
@@ -1056,21 +1173,21 @@ changed from Settings; `config.toml` remains authoritative.
 | `theme` | `system` | Color theme: `system`, `light`, or `dark` |
 | `density` | `compact` | Table density: `compact` or `comfortable` |
 
-Browser-managed settings are validated and written with optimistic concurrency.
-Use **Save changes** for setting values. Provider API keys, providers, contact
-accounts, and People sweep profiles save through their own buttons.
+Settings edited in the browser are validated and written with optimistic
+concurrency. Click **Save changes** for general settings; provider API keys,
+providers, contact accounts, and People sweep profiles each save through their
+own buttons.
 
-The `[web]` values, person-enrichment provider keys, and contact accounts apply
-right away. Other settings and embedding provider keys take effect after the
-daemon restarts. A restart banner appears after saving when the running daemon
-still has an old value.
-Changing `server.api_key` takes effect after restart, which also invalidates
-browser sessions.
+Changes to `[web]` values, person-enrichment provider keys, and contact
+accounts take effect right away. Other settings and embedding provider keys
+take effect after you restart the daemon, and the UI shows a restart banner
+when the running daemon still holds an old value. Changing `server.api_key`
+also requires a restart and invalidates existing browser sessions.
 
 ### `[integrations.tasks]`
 
-Optional provider-neutral integration for message-to-task links. Person agendas
-use the separate Kata connection below.
+Configure an optional, provider-neutral integration for linking messages to
+tasks. Person agendas use the separate `[integrations.kata]` connection below.
 
 | Key | Default | Description |
 |---|---|---|
@@ -1079,17 +1196,18 @@ use the separate Kata connection below.
 | `api_key` | — | Server-side credential; the browser sees only a masked hint of it, never the key |
 | `default_project` | `msgvault` | Fixed project used for create/link/search operations |
 
-Remote plaintext HTTP is rejected. An endpoint is usable only when it supports
-the required idempotency and compare-and-swap capabilities; the UI distinguishes
-disabled, authentication required, incompatible, partial, stale, unavailable,
-and ready states.
+Remote plaintext HTTP endpoints are rejected. An endpoint works only if it
+supports the required idempotency and compare-and-swap capabilities, and the UI
+distinguishes disabled, authentication required, incompatible, partial, stale,
+unavailable, and ready states.
 
 ### `[integrations.kata]`
 
-Optional live person agendas backed by Kata, and the connection that files
-[Kata issues from archive evidence](usage/kata-issues.md). Tasks stay in Kata;
-msgvault shows their current state when you open a person's agenda. This integration is built
-against Kata v0.18.0 and requires Kata API schema version 0.21.0 or later.
+Connect to Kata for live person agendas and for filing
+[Kata issues from archive evidence](usage/kata-issues.md). Tasks remain in
+Kata, and msgvault fetches their current state when you open a person's agenda.
+This integration targets Kata v0.18.0 and requires Kata API schema version
+0.21.0 or later.
 
 | Key | Default | Description |
 |---|---|---|
@@ -1110,31 +1228,34 @@ api_key = "replace-with-your-kata-api-key"
 default_project = "msgvault"
 ```
 
-Restart the msgvault daemon after saving. These settings are also editable in
-Settings and take effect after restart. Changing the endpoint to a different
-origin in Settings clears its saved key unless you provide a replacement key
-in the same save. For containers on a trusted private network, set
-`endpoint = "http://kata:7777"` and `trust_private_network = true` in this
-section. This sends traffic, including the API key, in plaintext on that network.
-Without the opt-in, non-loopback HTTP is rejected. Kata does not use local
-endpoint discovery, and `[integrations.tasks]` does not configure person agendas.
+Restart the msgvault daemon after saving. You can also edit these fields in
+**Settings** and restart afterward. If you change the endpoint to a different
+origin in **Settings**, msgvault clears the saved key unless you supply a
+replacement key in the same save. For containers on a trusted private network,
+set `endpoint = "http://kata:7777"` and `trust_private_network = true`; keep in
+mind that this sends traffic, including your API key, in plaintext over that
+network. Without `trust_private_network = true`, non-loopback HTTP is rejected.
+Kata does not use local endpoint discovery, and `[integrations.tasks]` does not
+configure person agendas.
 
 Each Kata task can belong to one person. The scalar metadata value
-`msgvault.person` is the person's canonical vCard UID, not their numeric
-msgvault person ID. `msgvault.list` names its list and defaults to `agenda`.
-Reads and unlink operations also recognize the person's UID aliases after a
-merge.
+`msgvault.person` stores the person's canonical vCard UID rather than their
+numeric msgvault person ID, and `msgvault.list` names the list (defaulting to
+`agenda`). Reads and unlink operations also recognize the person's UID aliases
+after a merge.
 
-Agendas show open tasks only, with at most 100 returned items. A `truncated`
-response means more remain; open Kata to see them. The transport also limits
-each response to 1 MiB and reports an error when it exceeds that limit.
-Create, link, move between lists, and unlink tasks through msgvault; edit task
-content or priority, complete tasks, and reopen them in Kata. See
+Agendas show open tasks only, returning up to 100 items. If a response is
+marked `truncated`, open Kata to see the rest. The transport also caps each
+response at 1 MiB and returns an error above that limit. You can create, link,
+move between lists, and unlink tasks in msgvault; to edit task content or
+priority, complete tasks, or reopen them, use Kata. See
 [person agenda commands](cli-reference.md#person-agenda).
 
 ### `[analytics]`
 
-Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, and aggregate list commands use these settings through the local daemon or a configured remote server.
+Control daemon-side aggregate query behavior. The Web UI, TUI, MCP server, and
+aggregate list commands all use these settings through the local daemon or a
+configured remote server.
 
 | Key | Default | Description |
 |---|---|---|
@@ -1148,107 +1269,117 @@ Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, 
 | `query_threads` | min(CPUs, 4) | DuckDB threads for daemon aggregate queries; zero keeps the default |
 | `query_temp_limit` | `2GB` | Maximum spill-to-disk size for daemon aggregate queries; a query that spills past it fails with a DuckDB out-of-memory error |
 
-Each thread setting limits both DuckDB's query worker
-pool and its separate asynchronous I/O pool from database creation. It is a
-limit per pool, not a cap on all threads in the process.
+Each thread setting caps both DuckDB's query worker pool and its separate
+asynchronous I/O pool from database creation. It is a per-pool limit rather
+than a cap on all threads in the process.
 
-If a Web UI query runs out of memory or temporary disk space, its error names
-the query-limit settings above. Try filters that narrow the results. On the
-machine running msgvault, check available memory and free disk space before
-raising these limits in `config.toml`. Restart the daemon to apply the change,
-then retry the query. The limits cap resource use; they do not reserve memory
-or disk space. Cache builds have separate `builder_*` limits.
+If a Web UI query runs out of memory or temporary disk space, the error names
+the query-limit keys above. Try narrowing your filters first. Before raising
+these limits in `config.toml`, check available memory and free disk space on
+the host running msgvault, then restart the daemon and retry the query. These
+limits cap resource use and do not pre-reserve memory or disk space. Cache
+builds use the separate `builder_*` limits.
 
-The builder defaults to one quarter of currently available memory, bounded
-between `256MiB` and `16GiB`. Releases before 0.23.0 used a fixed `2GB`
-default. Linux builds also account for remaining memory under visible
-cgroup v2 ancestor limits. When host memory cannot be detected, the fallback is
+By default, the builder budgets one quarter of currently available memory,
+clamped between `256MiB` and `16GiB` (releases before 0.23.0 used a fixed
+`2GB` default). On Linux, it also accounts for remaining memory under visible
+cgroup v2 ancestor limits. If host memory cannot be detected, it falls back to
 `2GB`; unsupported or unreadable Linux container limits cap the default at
-`2GB` while retaining any lower headroom already detected. The `256MiB` minimum
-is an attempt budget and can exceed available memory on an exhausted host.
-An explicit `builder_memory_limit` bypasses memory detection.
+`2GB` while keeping any lower headroom already detected. The `256MiB` floor is
+an attempt budget and can exceed available memory on an exhausted host. Setting
+`builder_memory_limit` explicitly skips memory detection.
 
-Start with the builder defaults, including at most two threads. More threads
-can increase peak memory use. DuckDB's memory budget covers its buffer manager;
-native allocations and Go memory add to the process total. A `24GB` budget
-therefore does not guarantee that a build stays below 24 GB of resident memory.
-Leave room for the daemon, syncs, other applications, and those allocations.
-For a constrained host, lower `builder_memory_limit` and set
-`builder_threads = 1` before raising the memory budget. See
+Start with the builder defaults, including at most two threads. More threads can
+increase peak memory use. DuckDB's memory budget covers only its
+buffer manager, while native allocations and Go memory add to total process
+memory. A `24GB` budget therefore does not guarantee that a build stays under
+24 GB of resident memory, so leave headroom for the daemon, syncs, other
+processes, and those allocations. On a constrained host, lower
+`builder_memory_limit` and set `builder_threads = 1` before raising the memory
+budget. See
 [DuckDB's memory guidance](https://duckdb.org/docs/stable/guides/performance/oom).
 
-If a cache build exhausts memory or spill space, its error names the effective
-`builder_memory_limit`, `builder_threads`, and `builder_temp_limit`. Check memory
-and free disk space before raising the relevant limit in `config.toml`, then
-retry `msgvault build-cache`. A large archive may need an explicit budget above
-the adaptive cap. Failed builds leave the previously published cache intact.
+If a cache build runs out of memory or spill space, its error reports the
+effective `builder_memory_limit`, `builder_threads`, and `builder_temp_limit`.
+Check available memory and disk space before raising the relevant key in
+`config.toml`, then run `msgvault build-cache` again. A large archive may need
+an explicit budget above the adaptive cap. Failed builds leave the last
+published cache intact.
 
-Builders spill temporary work under the cache staging directory, beside the
-analytics cache. Check free space on that filesystem before increasing
-`builder_temp_limit`. The default allows up to `32GB` of spill in addition to
-the existing cache and the new generation being staged. When DuckDB's SQLite
+Builders spill temporary work under the cache staging directory beside the
+analytics cache. Check free space on that filesystem before raising
+`builder_temp_limit`. The default allows up to `32GB` of spill on top of the
+existing cache and the new generation being staged. When DuckDB's SQLite
 scanner is unavailable, the CSV fallback also writes a temporary copy of the
-source tables beside the database, or in the system temporary directory if that
-fails. A larger disk budget can help a large archive finish with a smaller
-memory budget; it does not reserve space.
+source tables beside the database (or in the system temp directory if that
+fails). A larger disk budget can help a large archive finish with a smaller
+memory budget, and it does not reserve space upfront.
 
-The relationship cache stores one fact per message and its direct sender or
-recipient edges. Group-chat builds join the full member roster once per logical
-conversation entry. Earlier messages retain their direct edges and owner
-presence for relationship scores. Large groups therefore keep every member in
-people searches without multiplying every message by the whole roster.
-Direct chats and meetings retain their per-message participant attribution.
-The `[activity].max_direct_counterparts` broadcast threshold continues to govern
-the activity projection; changing it does not change relationship membership.
+The relationship cache stores one fact per message along with its direct sender
+or recipient edges. Group-chat builds join the full member roster once per
+logical conversation entry, while earlier messages keep their direct edges and
+owner presence for relationship scores. Large groups therefore keep every
+member searchable in People without multiplying every message by the full
+roster, while direct chats and meetings keep per-message participant
+attribution. `[activity].max_direct_counterparts` still controls the activity
+projection; changing it does not affect relationship membership.
 
-The daemon starts HTTP health and API routing before analytics cache
-maintenance. With `engine = "duckdb"`, analytics remain unavailable until a
-usable cache is ready. If no usable cache can be built or opened, `msgvault serve`
-fails instead of silently falling back. A failed automatic refresh after a sync
-keeps serving the last usable publication, and the daemon checks again 15
-minutes later even if later syncs write nothing. With `auto_build_cache = false`, use
-`msgvault build-cache`, `query --fresh`, or sync `--build-cache` for explicit
-cache maintenance. Deprecated in 0.17.0:
-per-command analytics flags such as `msgvault tui --force-sql`,
+The daemon brings up HTTP health and API routing before running analytics cache
+maintenance. With `engine = "duckdb"`, analytics stay unavailable until a
+usable cache is ready, and `msgvault serve` fails instead of silently falling
+back if no usable cache can be built or opened. If an automatic refresh fails
+after a sync, the daemon keeps serving the last usable cache and tries again 15
+minutes later even if subsequent syncs write nothing. With
+`auto_build_cache = false`, run `msgvault build-cache`, `query --fresh`, or
+sync `--build-cache` to maintain the cache explicitly. Per-command analytics
+flags deprecated in 0.17.0 (`msgvault tui --force-sql`,
 `msgvault mcp --force-sql`, `msgvault tui --no-cache-build`, and
-`--no-sqlite-scanner` were replaced by this daemon-level section. Use
-`engine = "sql"` to force live SQL.
+`--no-sqlite-scanner`) were replaced by `[analytics]`; set `engine = "sql"` to
+force live SQL.
 
-`min_rebuild_interval` limits automatic refreshes requested by syncs, queries,
-and daemon startup. A restart or sync within the interval leaves the existing
-publication in service and schedules a rebuild check when the interval ends.
-A busy archive can therefore serve Parquet analytics that lag SQLite by
-approximately the configured interval plus cache build time. Deleted messages
-can remain visible in analytics query results until the next cache publication,
-including while the interval has not elapsed and while a build runs. A zero
-interval still allows stale rows during the build. Use `query --fresh` to wait
-for analytics that include deletions committed before the request.
+`min_rebuild_interval` throttles automatic refreshes triggered by syncs,
+queries, and daemon startup. A restart or sync within that window keeps serving
+the existing publication and schedules a rebuild check once the interval ends.
+On a busy archive, Parquet analytics can therefore lag SQLite by roughly the
+configured interval plus cache build time, and deleted messages can stay
+visible in analytics results until the next publication (both during the
+interval and while a build is in progress). Even a zero interval allows stale
+rows while a build runs. To wait for analytics that include deletions committed
+before your request, run `query --fresh`.
 
-Explicit refresh requests and recovery of an absent, interrupted, incompatible,
-or otherwise unusable cache are not delayed.
+Explicit refresh requests and recovery of a missing, interrupted, incompatible,
+or otherwise unusable cache are never delayed by `min_rebuild_interval`.
 
-The daemon runs automatic rebuilds in the background, outside the scheduled
-sync that requested them, so syncs keep their cadence while a build runs. A
-sync that finishes during a build does not discard it: the build publishes
-one consistent read snapshot with that snapshot's counters and message boundary.
-The next build appends later messages and repairs journaled child-row changes.
-Participant links can refresh relationship data while retaining existing
-message shards, including when new messages arrive in the same sync. Changes
-to baked message facts, account identities, deletions, and failed syncs still
-require a full rebuild. Archives without the child-row repair journal use a
-conservative full rebuild after an overlapping sync. The published snapshot
-remains usable across daemon restarts, and automatic follow-up builds still
-honor `min_rebuild_interval`.
-Cache build memory and temporary disk usage scale with archive size, so a
-minimum interval can prevent repeated archive-scale work when sources sync
-frequently. Changes under `[analytics]` take effect after the daemon restarts.
+Automatic rebuilds run in the background outside the scheduled sync that
+requested them, so syncs stay on schedule while a build runs. A sync finishing
+mid-build does not abort it: the build publishes one consistent read snapshot
+with that snapshot's counters and message boundary, and the next build appends
+later messages and repairs journaled child-row changes. Participant links can
+refresh relationship data while keeping existing message shards, even when new
+messages arrive in the same sync. Changes to baked message facts, account
+identities, deletions, and failed syncs still trigger a full rebuild, and
+archives without the child-row repair journal fall back to a full rebuild after
+an overlapping sync. The published snapshot stays usable across daemon
+restarts, and automatic follow-up builds still respect `min_rebuild_interval`.
+Because cache build memory and temporary disk usage grow with archive size,
+setting a minimum interval helps avoid repeated full-scale work on frequently
+synced archives. Restart the daemon for `[analytics]` changes to take effect.
 
-This setting governs the aggregate views (Senders/Domains/Labels/Time) and is ignored entirely when `[data].database_url` points at PostgreSQL — a PostgreSQL backend always uses live SQL for those views, and `build-cache` refuses to run against it. In auto mode on SQLite, Messages serves live archive rows while the cache rebuilds and after a failed build. Grouping, person filters, semantic search, per-row exact-match counts, bulk actions, Files, People/domains, and the reader’s Open person action still require the analytical cache. Messages shows a recovery notice after a failed build. These workspaces remain unavailable on PostgreSQL; see [PostgreSQL Backend](/docs/architecture/postgresql/) for the current scope.
+These settings control aggregate views (Senders, Domains, Labels, and Time) on
+SQLite and are ignored when `[data].database_url` points at PostgreSQL, because
+a PostgreSQL backend always uses live SQL for those views and `build-cache`
+refuses to run against it. In `auto` mode on SQLite, **Messages** serves live
+archive rows while the cache rebuilds and after a failed build, showing a
+recovery notice if a build fails. Grouping, person filters, semantic search,
+per-row exact-match counts, bulk actions, **Files**, **People/domains**, and
+the reader's **Open person** action still require the analytical cache. Those
+workspaces remain unavailable on PostgreSQL; see
+[PostgreSQL Backend](/docs/architecture/postgresql/) for current scope.
 
 ### `[backup]`
 
-Default settings for `msgvault backup`. See [Backup](/docs/usage/backup/) for the
-capture, verify, and restore workflow.
+Set defaults for `msgvault backup`. For the capture, verify, and restore
+workflow, see [Backup](/docs/usage/backup/).
 
 | Key | Default | Description |
 |---|---|---|
@@ -1257,7 +1388,9 @@ capture, verify, and restore workflow.
 
 ### `[remote]`
 
-When set, archive-access CLI commands use the remote server by default. Without `[remote].url`, they use the local background daemon instead. Pass `--local` to use the local daemon instead of the configured remote.
+When you set `[remote].url`, archive-access CLI commands talk to that remote
+server by default instead of the local background daemon. To target the local
+daemon for a single command, pass `--local`.
 
 | Key | Default | Description |
 |---|---|---|
@@ -1267,20 +1400,26 @@ When set, archive-access CLI commands use the remote server by default. Without 
 | `api_key_env` | — | Name of an environment variable holding the remote API key |
 | `allow_insecure` | `false` | Allow HTTP remote connections |
 
-Affected CLI commands include `search` (FTS mode), `query`, `show-message`, `stats`, `list-accounts`, `list-senders`, `list-domains`, `list-labels`, `identity` subcommands, `collection` subcommands, `export-eml`, `export-attachment`, `export-attachments`, and `tui`. With a [read-only remote client](guides/remote-deployment.md#read-only-remote-clients) key, `list-senders`, `list-domains`, `list-labels`, `query`, vector search, `tui`, and `mcp` aren't available.
+Commands that use `[remote]` include `search` (FTS mode), `query`,
+`show-message`, `stats`, `list-accounts`, `list-senders`, `list-domains`,
+`list-labels`, `identity` subcommands, `collection` subcommands, `export-eml`,
+`export-attachment`, `export-attachments`, and `tui`. With a
+[read-only remote client](guides/remote-deployment.md#read-only-remote-clients)
+key, `list-senders`, `list-domains`, `list-labels`, `query`, vector search,
+`tui`, and `mcp` are not available.
 
-The same settings route `mcp` to a remote daemon. Secret precedence and file
-requirements match [server credentials](#server). `--local` ignores the remote
-destination and its secret sources. An unused destination's secret is not read.
-Runtime keys from files or environment variables are never copied into saved
-`api_key` fields by `setup` or `export-token`.
+These settings also route `mcp` to a remote daemon. Secret precedence and file
+rules match [server credentials](#server). Passing `--local` ignores the remote
+destination and its secret sources, and msgvault never reads secrets for an
+unused destination. `setup` and `export-token` never copy runtime keys from
+files or environment variables into saved `api_key` fields.
 
 ### `[remotes.<name>]`
 
-Named remotes let one config reach several servers, such as a home archive in
-`[remote]` and a second archive server. Each table takes the same keys as
-`[remote]`; `url` is required. Pass `--remote <name>` to use that server for one
-command:
+Use named remotes when one config needs to reach multiple servers, such as a
+home archive in `[remote]` and a separate work archive. Each table accepts the
+same keys as `[remote]`, and `url` is required. Pass `--remote <name>` to
+target that server for one command:
 
 ```toml
 [remotes.work]
@@ -1292,19 +1431,20 @@ api_key_file = "work.key"
 msgvault --remote work search "quarterly plan"
 ```
 
-`[remote]` stays the default when `--remote` is absent. `--remote` replaces the
-whole `[remote]` destination for that run, including `MSGVAULT_REMOTE_URL` and
-`MSGVAULT_REMOTE_API_KEY`. A relative `api_key_file` resolves next to the
-config file. `export-token --remote <name>` uploads to the named server and saves
-no settings to `[remote]`. `--remote` cannot be combined with `--local` or
-agent-delegated mode, and an unknown name fails the command.
+When you omit `--remote`, `[remote]` stays the default. Passing `--remote`
+replaces the entire `[remote]` destination for that run, including
+`MSGVAULT_REMOTE_URL` and `MSGVAULT_REMOTE_API_KEY`. A relative `api_key_file`
+resolves next to the config file. `export-token --remote <name>` uploads to the
+named server without saving anything to `[remote]`. You cannot combine
+`--remote` with `--local` or agent-delegated mode, and an unknown remote name
+fails the command.
 
 #### Credential helper
 
-A hosted archive can hand out short-lived bearers instead of an API key. Set
-`credential_provider` to a trusted local helper, as a command and its
-arguments, and describe the access the hosting service approved in a
-`delegation` table. The hosting service's own setup tool usually writes both:
+A hosted archive can issue short-lived bearer tokens instead of a static API
+key. Set `credential_provider` to a trusted local helper (as an executable and
+arguments) and describe the approved access in a `delegation` table. The
+hosting service's setup tool usually writes both blocks for you:
 
 ```toml
 [remotes.hosted]
@@ -1326,32 +1466,32 @@ source_ids = [17, 23]
 | `delegation.delegation_id` | The approval record |
 | `delegation.source_ids` | The approved sources |
 
-`url` must use HTTPS. Each command asks the helper for a bearer covering the
-read operations that `list-accounts`, `stats`, `search`, `show-message`,
-`show-thread`, and `export-messages` call, and sends it only to `url`. The
-bearer stays in memory and is renewed before it expires. If the helper fails
-or refuses, the command fails; it never falls back to an API key. `search`
-supports `--mode fts` only, and `export-token` needs `--to` and `--api-key`
-for a server where you hold the owner key. msgvault
-keeps a journal of requests, without credentials, in `remote-credentials/`
-under the msgvault home so an interrupted request can be resumed. The
+`url` must use HTTPS. Each command asks the helper for a bearer token covering
+the read operations called by `list-accounts`, `stats`, `search`,
+`show-message`, `show-thread`, and `export-messages`, and sends that token only
+to `url`. msgvault keeps the bearer in memory and renews it before expiry. If
+the helper fails or refuses, the command fails without falling back to an API
+key. `search` supports `--mode fts` only, and `export-token` requires `--to`
+and `--api-key` for a server where you hold the owner key. msgvault writes a
+credential-free request journal in `remote-credentials/` under the msgvault
+home so an interrupted request can resume. See the
 [credential provider guide](guides/credential-providers.md#read-a-remote-through-a-helper)
-describes the helper's side.
+for how the helper works.
 
 ### `[[accounts]]`
 
-Per-account sync settings, including cron schedules for automatic background
-syncing. Gmail, IMAP, Microsoft Teams,
-and Discord sources are supported. For IMAP or Teams, use the account display
-name/email when available rather than a raw provider identifier. Discord
-schedules must use the exact guild ID because guild display names are mutable
-and may be duplicated.
+Use `[[accounts]]` entries to configure sync for individual accounts. You can
+schedule automatic background syncs for Gmail, IMAP, Microsoft Teams, and
+Discord sources. For IMAP or Teams, use the account
+display name or email when available instead of a raw provider identifier. For
+Discord, always use the exact guild ID because guild display names can change
+or collide.
 
 | Key | Default | Description |
 |---|---|---|
 | `email` | (required) | Account identifier/display name, or exact Discord guild ID, to sync |
 | `schedule` | — | Cron expression for sync schedule (e.g., `0 * * * *`) |
-| `enabled` | `true` | Whether scheduled sync is active for this account |
+| `enabled` | `false` | Whether scheduled sync is active for this account |
 | `gmail_skip_spam_trash` | `false` | Skip acquiring messages in Gmail Spam or Trash during full, incremental, and History recovery syncs |
 
 To exclude Spam and Trash for a Gmail account, set the key on its entry. As
@@ -1372,7 +1512,7 @@ acquired when Gmail History reports that they have left Spam or Trash. To
 backfill messages still in those folders, disable the setting and run an
 unrestricted `sync-full`.
 
-For example, schedule one previously registered Discord guild independently:
+For example, to schedule a registered Discord guild on its own cadence:
 
 ```toml
 [[accounts]]
@@ -1381,14 +1521,16 @@ schedule = "*/30 * * * *"
 enabled = true
 ```
 
-### SyncTech SMS Sources
+### SyncTech SMS sources
 
-Scheduled SMS Backup & Restore sources are configured with `[[synctech_sms.sources]]` entries. These are created automatically by `msgvault add-synctech-sms-drive`, but can also be edited directly.
+Configure scheduled SMS Backup & Restore sources with `[[synctech_sms.sources]]`
+entries. Running `msgvault add-synctech-sms-drive` creates these entries for
+you, and you can also edit them directly.
 
 | Key | Default | Description |
 |---|---|---|
 | `name` | (required) | Source name used by `sync-synctech-sms <name>` and scheduler logs |
-| `enabled` | `true` | Whether the source is active |
+| `enabled` | `false` | Whether the source is active |
 | `backend` | `local` | `local` for a path on disk, or `drive` for Google Drive |
 | `path` | — | Local XML/ZIP file or directory when `backend = "local"` |
 | `folder_id` | — | Google Drive folder ID when `backend = "drive"` |
@@ -1398,13 +1540,16 @@ Scheduled SMS Backup & Restore sources are configured with `[[synctech_sms.sourc
 | `include_sms` | `true` | Import SMS records |
 | `include_mms` | `true` | Import MMS records |
 | `include_calls` | `true` | Import call logs |
-| `include_attachments` | `true` | Import MMS attachments |
+| `include_attachments` | `false` | Import MMS attachments |
 | `stable_after` | `10m` | How long Drive files must remain unchanged before import |
 | `oauth_app` | — | Named Google OAuth app to use |
 
-### Google Calendar Sources
+### Google Calendar sources
 
-Scheduled Google Calendar sync is configured with top-level `[[gcal]]` entries. Each entry is one OAuth account; `msgvault serve` runs it on the given cron schedule (first run full-syncs and registers calendars, later runs are incremental). Authorize the account first with `msgvault add-calendar`.
+Add top-level `[[gcal]]` entries to schedule Google Calendar syncs. Authorize
+each account first with `msgvault add-calendar`, then add one entry per OAuth
+account. `msgvault serve` runs each entry on its cron schedule. The first run
+performs a full sync and registers calendars, and later runs are incremental.
 
 ```toml
 [[gcal]]
@@ -1432,18 +1577,19 @@ invite_calendars = []            # subset allowed to change guests or notify the
 | `calendar_aliases` | `{}` | Names mapped to exact calendar IDs for live control; aliases do not expand permissions |
 
 Event control also requires [write consent](usage/calendar.md#control-events).
-`calendars` selects sync targets; it does not grant write authority. `email` selects
-the OAuth token, while `write_calendars` selects the calendar that owns the event.
-For example, `person@example.com` can create on `team@example.com` when Google
-currently reports `owner` or `writer` for that calendar. `primary` resolves to the
-live primary calendar ID before the daemon checks policy. List the actual ID in
-both permission lists; neither list supports wildcards or alias names.
+`calendars` controls only which calendars sync and does not grant write
+permission. `email` selects the OAuth token, while `write_calendars` lists the
+calendars that own the events. For example, `person@example.com` can create
+events on `team@example.com` when Google currently reports `owner` or `writer`
+for that calendar. `primary` resolves to the live primary calendar ID before
+the daemon checks policy. Put the actual calendar ID in both permission lists,
+because neither list accepts wildcards or alias names.
 
 ### `[matrix]`
 
-Archive joined rooms from native [Matrix](/docs/usage/matrix/) accounts. One
-block controls every account registered with `msgvault add-matrix`; credentials
-never belong in `config.toml`.
+Archive joined rooms from native [Matrix](/docs/usage/matrix/) accounts. This
+single block applies to every account you register with `msgvault add-matrix`;
+never put credentials in `config.toml`.
 
 ```toml
 [matrix]
@@ -1475,10 +1621,10 @@ max_media_mb = 250                # per-file download cap (MiB)
 
 ### `[beeper]`
 
-Archive chats from a locally running [Beeper Desktop](/docs/usage/beeper/). A single
-block (not a list): the Beeper Desktop API is loopback-only, so there is one
-instance per machine and the daemon must run beside it. Authorize first with
-`msgvault add-beeper`.
+Archive chats from a locally running [Beeper Desktop](/docs/usage/beeper/).
+Because the Beeper Desktop API is loopback-only, there is one instance per
+machine and the daemon must run beside it, so `[beeper]` is a single block
+rather than a list. Authorize first with `msgvault add-beeper`.
 
 ```toml
 [beeper]
@@ -1514,9 +1660,9 @@ max_media_mb = 250                # per-attachment download cap (MiB)
 
 #### Mirror stored attachments to Docbank
 
-Msgvault can mirror stored attachment bytes from every source to a Docbank
-folder. Enable the integration and its separate attachment upload consent.
-The daemon drains the backlog at upload speed, in passes of about 50 seconds:
+msgvault can mirror stored attachment bytes from every source to a Docbank
+folder. Enable the integration and its separate attachment upload consent; the
+daemon then drains the backlog at upload speed in passes of about 50 seconds:
 
 ```toml
 [integrations.docbank]
@@ -1535,62 +1681,125 @@ document_profile = "documents"
 | `attachment_folder` | `/msgvault` | Clean absolute virtual directory path; missing directories are created in Docbank |
 | `attachment_search_profile` | `""` | Name an existing Docbank processing profile for semantic/hybrid attachment retrieval. Does not queue processing or embeddings |
 
-Set `document_profile` to a Docbank profile with a rendition stage that extracts text. Processing covers mirrored files except declared images, audio, and video, while a live message holds them. Attachment search also includes images with text already processed in Docbank. In Docbank, run `docbank processing plan <path-or-id> --profile <name>` on one mirrored file, review the plan, then run `docbank processing build <path-or-id> --profile <name> --plan-fingerprint <fp> --consent`. This grants consent for that profile across documents. msgvault always sends `consent:false`; consent stays in Docbank.
+Point `document_profile` at a Docbank profile that has a text-extraction
+rendition stage. Processing covers all mirrored files except declared images,
+audio, and video, as long as a live message references them. Attachment search
+also returns images whose text was already processed in Docbank. To grant
+consent in Docbank across documents for that profile:
 
-The mirror requests processing for files uploaded before this setting was enabled or before an upgrade. Changing the profile in Docbank requests processing again. `msgvault docbank attachments status` reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors. `msgvault docbank attachments backfill` retries failed uploads and restarts discovery. Backfill requests processing again for files that failed for missing consent, stale authority, a missing PDF password, an unreadable password file, a quarantined job, or a malformed Docbank answer. Backfill clears only settled recoverable failures. A job that fails after backfill needs another backfill. Other outcomes wait for a profile change.
+1. Run `docbank processing plan <path-or-id> --profile <name>` on one mirrored
+   file and review the plan.
+2. Run `docbank processing build <path-or-id> --profile <name> --plan-fingerprint <fp> --consent`.
 
-The mirror includes files retained after source deletion or hidden by deduplication. It excludes files whose attachment rows were removed.
-A hashless Slack or Discord attachment uses the content hash in its local storage path.
-The mirror uses the same URL and credential rules as the audio route below.
-Its consent covers file transport; Docbank controls document processing consent
-and profiles. `all_sources_upload_consent` continues to control the existing
-audio and transcript route independently.
-Audio files are mirrored as files as well as sent to the audio route when both are enabled.
+msgvault always sends `consent:false`, keeping processing consent inside
+Docbank.
 
-Run `msgvault docbank attachments status` for consent, folder, delivered, sending and failed file counts, failure reasons, and remaining distinct eligible files. Add `--json` for structured output. `msgvault docbank attachments backfill` retries failed files and discovers existing attachments. Both commands use the selected daemon. Backfill requires attachment upload consent and the attachment mirror job.
+The mirror also requests processing for files uploaded before you enabled
+`document_profile` or before an upgrade, and changing the profile in Docbank
+triggers processing again. Run `msgvault docbank attachments status` to see
+extracted, processing, and waiting counts, per-code counts for files without
+text, and worker errors. Run `msgvault docbank attachments backfill` to retry
+failed uploads and restart discovery. Backfill re-requests processing for files
+that failed due to missing consent, stale authority, a missing PDF password, an
+unreadable password file, a quarantined job, or a malformed Docbank response.
+Backfill clears only settled recoverable failures. A job that fails after
+backfill needs another backfill. Other outcomes wait for a profile change.
 
-The daemon discovers newly stored attachments and restored messages automatically. Discovery queues each new file as `sending` without contacting Docbank, so it finishes even while Docbank is unreachable; uploads then drain the queue. Folder errors retry automatically. Temporary I/O or upload errors wait at least five minutes before retrying; status keeps these files under `sending` with their failure reason. Attempts interrupted before recording a result show `retrying`. Missing or corrupt bytes fail only that file. Restoring a message or updating its attachment makes unavailable files eligible again. HTTP 400, 413, 415 or 422 responses and invalid receipts need backfill after you fix the cause.
+The mirror includes files retained after source deletion or hidden by
+deduplication, and excludes files whose attachment rows were removed. Hashless
+Slack or Discord attachments use the content hash from their local storage
+path. The mirror shares the same URL and credential rules as the audio route
+below. Its consent covers file transport only, while Docbank owns document
+processing consent and profiles. `all_sources_upload_consent` controls the
+audio and transcript route independently. When both routes are enabled, audio
+files are both mirrored as files and sent to the audio route.
 
-Purging messages from msgvault preserves mirrored copies and delivery receipts. To start over against a rebuilt Docbank at the same URL, change `attachment_folder`. Restart the daemon after changing consent, the destination, or `attachment_search_profile`.
+Run `msgvault docbank attachments status` (with `--json` for structured output)
+to inspect consent, folder, delivered, sending, and failed file counts, failure
+reasons, and remaining distinct eligible files. Run
+`msgvault docbank attachments backfill` to retry failed files and discover
+existing attachments. Both commands talk to the selected daemon, and backfill
+requires attachment upload consent and the attachment mirror job.
 
-Each unique file uploads once per destination under `<first 12 hex of hash>-<sanitized basename>`.
-Docbank resolves filename collisions and replays. Attachment and message details
-show the resulting Docbank file.
+The daemon discovers newly stored attachments and restored messages
+automatically, queueing each new file as `sending` without contacting Docbank
+so discovery finishes even while Docbank is unreachable. Uploads then drain the
+queue, retrying folder errors automatically. Temporary I/O or upload errors
+wait at least five minutes before retrying and stay under `sending` in status
+output with their failure reason, while attempts interrupted before recording a
+result show `retrying`. Missing or corrupt bytes fail only that file, and
+restoring a message or updating its attachment makes unavailable files eligible
+again. HTTP 400, 413, 415, or 422 responses and invalid receipts need a
+backfill after you fix the underlying cause.
+
+Purging messages from msgvault leaves mirrored copies and delivery receipts in
+place. To start fresh against a rebuilt Docbank at the same URL, change
+`attachment_folder`. Restart the daemon after changing consent, the
+destination, or `attachment_search_profile`.
+
+Each unique file uploads once per destination under
+`<first 12 hex of hash>-<sanitized basename>`, and Docbank handles filename
+collisions and replays. Attachment and message details display the resulting
+Docbank file.
 
 Each content hash has one durable delivery per archive, Docbank URL, and
-folder. Duplicate bytes in many messages share the same file. Completed
-deliveries make no further upload requests. Changing the destination
-starts a separate mirror. Disabling the mirror or changing its destination
-keeps the stored delivery records and the remote files, but attachment and
-message details show receipts only for the active destination. Re-enabling
-the same destination shows its receipts again without uploading delivered
-files.
+folder. Duplicate bytes across many messages share the same file. Completed
+deliveries make no further upload requests. Changing the destination starts a
+new mirror. Disabling the mirror or changing its destination keeps existing
+delivery records and remote files, while attachment and message details show
+receipts only for the active destination. If you re-enable the earlier
+destination, its receipts reappear without re-uploading delivered files.
 
-Docbank's digest-checked upload endpoint accepts one file part and does not
-accept message metadata. The upload name prefixes the first filename basename with the first 12 hex characters of the content hash and a hyphen. Control characters become underscores; invalid basenames become `attachment`.
-Msgvault retains exact filename, message, source, sender,
-and date provenance in the archive. Attachment and message details in CLI,
-HTTP API, and MCP expose `docbank` receipts containing `endpoint`, `folder`,
-`node_id`, `version_id`, and `blob_hash`, so callers can open the corresponding
-Docbank file. List and search views omit these receipts. URL-only attachments are excluded from discovery. Details recover a hashless Slack or Discord attachment's hash from its trusted CAS storage path. The mirror reads these aliases from loose files or retained pack entries and verifies their SHA-256. It sends attachment content and excludes thumbnails from `thumbnail_hash`. Missing or corrupt archive bytes fail only that file. Docbank processes mirrored documents and supplies their searchable text.
+Docbank's digest-checked upload endpoint takes one file part and no message
+metadata. The upload filename prefixes the first filename's basename with the
+first 12 hex characters of the content hash and a hyphen; control characters
+become underscores and invalid basenames become `attachment`. msgvault keeps
+exact filename, message, source, sender, and date provenance in the archive.
+Attachment and message details in the CLI, HTTP API, and MCP include `docbank`
+receipts with `endpoint`, `folder`, `node_id`, `version_id`, and `blob_hash` so
+callers can open the file in Docbank, while list and search views omit them.
+URL-only attachments are excluded from discovery. Details recover a hashless
+Slack or Discord attachment's hash from its trusted CAS storage path, and the
+mirror reads these aliases from loose files or retained pack entries while
+verifying their SHA-256. It uploads attachment content and excludes thumbnails
+from `thumbnail_hash`. Missing or corrupt archive bytes fail only that file,
+and Docbank processes mirrored documents to supply their searchable text.
 
 #### Search document text through Docbank
 
-Configure a Docbank rendition profile, such as a Docling profile, and set its name in `[integrations.docbank] document_profile`. Docbank's daemon must support the chosen processor. A Mistral profile needs Docbank v0.17.0 or later. Create the five seed files and run `docbank processing probe --profile <name> --seeds <dir>` to write its capability manifest, as [Docbank's Mistral OCR configuration](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#document-ocr-with-mistral) describes. It replaces `msgvault documents probe-mistral`.
+To search document text, configure a Docbank rendition profile (such as a
+Docling profile) and set its name in `[integrations.docbank] document_profile`.
+Your Docbank daemon must support the chosen processor, and a Mistral profile
+requires Docbank v0.17.0 or later. For Mistral, create the five seed files and
+run `docbank processing probe --profile <name> --seeds <dir>` to write its
+capability manifest, as described in
+[Docbank's Mistral OCR configuration](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#document-ocr-with-mistral).
+This replaces `msgvault documents probe-mistral`.
 
-Follow the [attachment mirror setup](https://msgvault.io/docs/configuration/#mirror-stored-attachments-to-docbank) to review the processing plan and grant consent in Docbank. Msgvault requests that profile for mirrored files. Docbank owns extraction, text, and embeddings. Check processing progress with `msgvault docbank attachments status`.
+Follow the [attachment mirror setup](https://msgvault.io/docs/configuration/#mirror-stored-attachments-to-docbank)
+to review the processing plan and grant consent in Docbank. msgvault requests
+that profile for mirrored files, while Docbank owns extraction, text, and
+embeddings. Check progress with `msgvault docbank attachments status`.
 
-Search with `msgvault media search "project proposal"`, `GET /api/v1/media/search`, MCP `search_media`, or the Web Everything panel. Add `--person <id>` and `--direction from_person` to the CLI search to scope results to a person.
+Search extracted text with `msgvault media search "project proposal"`,
+`GET /api/v1/media/search`, MCP `search_media`, or the Web **Everything**
+panel. To scope CLI results to one person, add `--person <id>` and
+`--direction from_person`.
 
-Remove `[attachments.documents]` from old configuration files. The loader warns and ignores that section with guidance to use `document_profile`. The upgrade drops the local document text, chunk, and consent tables. Snapshots made before the upgrade keep them and still restore; `msgvault backup list` marks them in the `DOCUMENT TEXT` column. Docbank processes the mirrored files again, which incurs OCR charges when using Mistral.
+Remove `[attachments.documents]` from older configuration files; the loader
+warns and ignores that section and points you to `document_profile`. Upgrading
+drops the local document text, chunk, and consent tables. Backup snapshots
+taken before the upgrade keep them and can still restore, and
+`msgvault backup list` marks them in the `DOCUMENT TEXT` column. Docbank
+processes the mirrored files again, which incurs OCR charges if you use
+Mistral.
 
 #### Send stored audio to Docbank
 
-The daemon can send stored WAV and MP3 audio from any captured source, including
-messaging and email imports, to a separately running Docbank media service. The
-service needs Docbank's media HTTP routes. See
-[Send audio to Docbank](/docs/usage/beeper/#send-audio-to-docbank) for the
-capture and processing rules.
+The daemon can send stored WAV and MP3 audio from any captured source,
+including messaging and email imports, to a separate Docbank media service that
+exposes Docbank's media HTTP routes. For capture and processing rules, see
+[Send audio to Docbank](/docs/usage/beeper/#send-audio-to-docbank).
 
 ```toml
 [integrations.docbank]
@@ -1619,61 +1828,66 @@ all_sources_upload_consent = true # allow audio from every captured source to le
 | `reference_origins` | `[]` | Exact origins for self-hosted Cap, such as `https://cap.example.test`. Include only scheme, host and optional port. Register each origin in Docbank too. |
 
 For containers on a trusted private network, set `url = "http://docbank:8485"`
-and `trust_private_network = true` in `[integrations.docbank]`. This sends traffic,
-including the API key, in plaintext on that network. The Docbank and Kata
-opt-ins are independent; each defaults to `false`.
+and `trust_private_network = true` in `[integrations.docbank]`. Keep in mind
+that this sends traffic, including your API key, in plaintext on that network.
+The Docbank and Kata opt-ins are independent and each defaults to `false`.
 
-With `enabled = true` and `reference_consent = true`, the daemon routes Loom and
-Cap links from normalized message text and HTML across every message source,
-including existing messages and links behind display text. It also routes native
-Teams recording pointers from typed attachment records.
-HTML messages use actual link destinations and surrounding text; the plain body is used when HTML is absent.
-Beeper imports and repairs retain HTML outside quoted replies, so links behind display text and changes to link targets remain discoverable.
-It submits references with acquisition disabled. Docbank records outcome
-`access_required` or `unsupported`. Coverage stays `unprocessed` until media is imported.
-Delivery log events include delivery state and Docbank's
-`source_id` and `occurrence_id` for `docbank media import-artifact`.
+With `enabled = true` and `reference_consent = true`, the daemon routes Loom
+and Cap links from normalized message text and HTML across every message
+source, including existing messages and links behind display text, along with
+native Teams recording pointers from typed attachment records. For HTML
+messages, it reads actual link destinations and surrounding text, falling back
+to the plain body when HTML is absent. Beeper imports and repairs keep HTML
+outside quoted replies so links behind display text and updated link targets
+stay discoverable. References are submitted with acquisition disabled; Docbank
+records `access_required` or `unsupported`, and coverage stays `unprocessed`
+until media is imported. Delivery log events include the delivery state along
+with Docbank's `source_id` and `occurrence_id` for
+`docbank media import-artifact`.
 
-Each run attempts at most 20 deliveries. HTTP requests time out after 30 seconds; slow Docbank responses delay backfill, and the scheduler skips overlapping runs.
+Each run attempts up to 20 deliveries, and HTTP requests time out after 30
+seconds. Slow Docbank responses delay backfill, and the scheduler skips
+overlapping runs.
 
-Removing a recording link or deleting its message stops future submissions once
-the worker sees the change. A request already prepared for sending can still
-finish. The local `withdrawn` state does not retract an occurrence or delete media
-already retained by Docbank; manage those records in Docbank separately.
+If you remove a recording link or delete its message, future submissions stop
+once the worker sees the change, though a request already prepared can still
+finish. The local `withdrawn` state does not retract an occurrence or delete
+media already retained in Docbank; manage those records in Docbank separately.
 
-A definite submission rejection leaves the reference blocked until the daemon restarts
-and sets up the enabled, consented route. Fix the rejection, then restart the
-daemon to reconsider it. Waiting for the next scheduled minute leaves it blocked.
-Transient failures and uncertain sends keep their scheduled retry and receipt recovery.
+When a submission is definitively rejected, that reference stays blocked until
+you fix the cause and restart the daemon with the enabled, consented route.
+Waiting for the next scheduled minute does not unblock it. Transient failures
+and uncertain sends keep their scheduled retry and receipt recovery.
 
-The former Beeper-only `upload_consent` setting no longer enables uploads.
-Existing users must explicitly set `all_sources_upload_consent = true` to resume
-sending audio, including Beeper recordings.
+The older Beeper-only `upload_consent` key no longer enables uploads. If you
+used it before, set `all_sources_upload_consent = true` to resume sending
+audio, including Beeper recordings.
 
-Restart the daemon after changing these settings, including `reference_consent` or `reference_origins`. A new
-`url` starts a separate delivery record; earlier rows stay. Disabling the route
-stops the job and keeps its rows. A failed setup, such as an invalid `url`,
-does the same and logs a warning. `all_sources_upload_consent` covers transport only; the
-Docbank daemon's processing consent still decides whether a configured profile
-may run. The route inspects stored CAS bytes, so MIME claims do not expand
-Docbank's WAV and MP3 capability. Capture gaps and unsupported formats remain
-typed local states.
+Restart the daemon after changing any of these settings, including
+`reference_consent` or `reference_origins`. Pointing to a new `url` starts a
+separate delivery record while keeping earlier rows. Disabling the route stops
+the job and keeps its rows. A failed setup, such as an invalid `url`, does the
+same and logs a warning. `all_sources_upload_consent` covers transport only;
+the Docbank daemon's processing consent still decides whether a configured
+profile can run. The route inspects stored CAS bytes, so MIME claims do not
+expand Docbank's WAV and MP3 capability. Capture gaps and unsupported formats
+remain typed local states.
 
-Msgvault's Docbank audio route delivers files up to 1 GiB, even when a source's
-capture limit is higher. Larger files remain in the msgvault archive.
+msgvault's Docbank audio route delivers files up to 1 GiB even if a source's
+capture limit is higher; larger files remain in your msgvault archive.
 
-Agents can quote the transcripts of delivered files in
+Agents can quote transcripts of delivered files in
 [Kata issues](usage/kata-issues.md#cite-a-docbank-transcript).
 
 ### `[inline]`
 
 Archive [all accessible Inline chats](usage/inline.md) by default, including
-hidden and archived chats and accessible child threads. `add-inline` verifies
-the account and adds it to `[[inline.accounts]]`. Optional chat IDs restrict
-capture to an exact filter. One provider block controls scheduling and media
-policy for all registered Inline accounts. Credentials are separate from this
-file.
-Restart the daemon after changing scheduled accounts or chat selections.
+hidden and archived chats and accessible child threads. Run `add-inline` to
+verify your account and add it to `[[inline.accounts]]`. You can optionally
+limit capture to specific chat IDs. One `[inline]` block controls scheduling
+and media policy for all registered Inline accounts, while credentials live
+outside `config.toml`. Restart the daemon after changing scheduled accounts or
+chat selections.
 
 ```toml
 [inline]
@@ -1717,21 +1931,22 @@ Each `[[inline.accounts]]` entry has:
 | `endpoint` | `https://mcp.inline.chat/mcp/v2` | Only this production URL is accepted; omit the key to use the default |
 | `cli_path` | `inline` | CLI executable path on the daemon host, used only for `transport = "cli"` |
 
-An explicit filter pauses future capture outside that filter without removing
-archived records. Re-running `add-inline` with IDs merges existing explicit
-filters; running it without IDs restores all-chat mode. Changing transports
-retains the canonical account, conversation, and message identities. All-chat
-mode requires a complete catalog from the deployed Inline backend
-and MCP server or CLI. Deploy the backend first: an older backend can ignore
-the subthread request and silently omit child chats. Unsupported CLI commands
-and malformed MCP catalogs fail explicitly. Read the [connection and capture limits](usage/inline.md)
-before choosing media caps or configuring a remote daemon.
+An explicit `chat_ids` filter pauses future capture outside those chats without
+removing already archived records. Running `add-inline` again with chat IDs
+merges them with your existing filter, while running it without IDs restores
+all-chat mode. Switching transports keeps the same canonical account,
+conversation, and message identities. All-chat mode requires a complete catalog
+from the deployed Inline backend and MCP server or CLI; deploy the backend
+first, because an older backend can ignore the subthread request and silently
+omit child chats. Unsupported CLI commands and malformed MCP catalogs fail
+explicitly. Review [connection and capture limits](usage/inline.md) before
+setting media caps or configuring a remote daemon.
 
 ### `[[facebook_comments]]` {#facebook-comments}
 
-Select one Facebook Page for comment ingestion. See
-[Facebook Page comments](usage/facebook-comments.md) for token setup, coverage,
-and recovery. Tokens are read only from the named daemon environment variable.
+Configure a Facebook Page for comment ingestion. For token setup, coverage, and
+recovery, see [Facebook Page comments](usage/facebook-comments.md). msgvault
+reads tokens only from the named daemon environment variable.
 
 ```toml
 [[facebook_comments]]
@@ -1753,64 +1968,65 @@ schedule = "*/30 * * * *"
 | `schedule` | empty | Five-field cron expression; empty means manual sync only |
 | `actions` | empty | Comment changes allowed on Meta: `"hide"` (also allows unhide), `"delete"`, and `"reply"`. Empty means read only. See [Hide or delete comments](usage/facebook-comments.md#hide-or-delete-comments) and [Reply to comments](usage/facebook-comments.md#reply-to-comments) |
 
-`identifier` is trimmed and must be nonempty and unique ignoring case.
-`app_id` and `page_id` must be positive decimal IDs without leading zeros.
-Duplicate app/Page pairs, invalid environment variable names, unknown profile
-keys, unknown actions, and invalid schedules are rejected. The source identifier is
-`app:<app_id>:page:<page_id>`; scheduled jobs use
-`facebook_comments:<source-identifier>`, independently of email account dispatch.
+msgvault trims `identifier` and requires it to be nonempty and case-insensitively
+unique. Both `app_id` and `page_id` must be positive decimal IDs with no leading
+zeros. Duplicate app/Page pairs, invalid environment variable names, unknown
+keys, unknown actions, and invalid schedules are rejected. The canonical source
+identifier is `app:<app_id>:page:<page_id>`, and scheduled jobs run as
+`facebook_comments:<source-identifier>`, separate from email account dispatch.
 
 ### `[[facebook_messages]]` and `[[instagram_messages]]` {#meta-inboxes}
 
-Select a Page's Messenger inbox or a linked Instagram account's inbox.
+Configure a Page's Messenger inbox or a linked Instagram account's inbox.
 See [Facebook and Instagram messages](usage/meta-messages.md).
-`[[facebook_messages]]` takes the keys and rules of
+`[[facebook_messages]]` follows the same keys and rules as
 [`[[facebook_comments]]`](#facebook-comments), and `[[instagram_messages]]`
-those of [`[[instagram_comments]]`](#instagram-comments), except `actions`
-and `mentions`. Scheduled jobs are
+follows [`[[instagram_comments]]`](#instagram-comments), except that neither
+supports `actions` or `mentions`. Scheduled jobs are named
 `facebook_messages:<source-identifier>` and
 `instagram_messages:<source-identifier>`.
 
 ### `[meta_webhooks]` {#meta-webhooks}
 
-Start a listener for signed Meta webhook deliveries. See
-[Meta webhooks](usage/meta-webhooks.md) for setup. `listen_addr` is a
-`host:port` address; leave it empty to keep the receiver off. Each
-`[[meta_webhooks.apps]]` entry needs a decimal `app_id` and the names of the
-daemon environment variables that hold the app secret (`app_secret_env`) and
-the verify token (`verify_token_env`). App IDs must be unique, and a
-`listen_addr` needs at least one app. Unknown keys are rejected.
+Run a listener for signed Meta webhook deliveries; see
+[Meta webhooks](usage/meta-webhooks.md) for setup. Set `listen_addr` to a
+`host:port` address, or leave it empty to keep the receiver off. Each
+`[[meta_webhooks.apps]]` entry requires a decimal `app_id` plus the daemon
+environment variable names holding the app secret (`app_secret_env`) and verify
+token (`verify_token_env`). App IDs must be unique, setting `listen_addr`
+requires at least one app, and unknown keys are rejected.
 
 ### `[[instagram_comments]]` {#instagram-comments}
 
-Select a professional Instagram account linked to an explicitly selected Page.
-See [Instagram comments](usage/instagram-comments.md) for setup
-and coverage. Each profile requires `identifier`, `app_id`, `page_id`,
-`instagram_account_id`, and `token_env`; `enabled` defaults to `false`, and
-an empty `schedule` means manual sync only. `actions` works as in
-`[[facebook_comments]]`. Set `ad_account_id` (decimal, without `act_`) and
-`ad_token_env` together to also archive comments on the account's ads; see
+Configure a professional Instagram account linked to a specific Facebook Page.
+For setup and coverage, see [Instagram comments](usage/instagram-comments.md).
+Each profile requires `identifier`, `app_id`, `page_id`,
+`instagram_account_id`, and `token_env`. `enabled` defaults to `false`, an
+empty `schedule` means manual sync only, and `actions` works the same way as in
+`[[facebook_comments]]`. To also archive comments on the account's ads, set
+`ad_account_id` (decimal, without `act_`) and `ad_token_env` together; see
 [Include ad media](usage/instagram-comments.md#include-ad-media).
 
-The label is trimmed, nonempty, and unique ignoring case. All three IDs must
-be positive decimal IDs without leading zeros. Duplicate app/Page/Instagram
-tuples, unknown keys, invalid environment variable names, and invalid five-field
-cron expressions are rejected. Tokens come only from the named daemon
-environment variable. Renaming the label preserves archive identity.
-The canonical source identifier is
-`app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
+msgvault trims `identifier` and requires it to be nonempty and case-insensitively
+unique; renaming it preserves archive identity. All three IDs must be positive
+decimal IDs with no leading zeros. Duplicate app/Page/Instagram tuples, unknown
+keys, invalid environment variable names, and invalid five-field cron
+expressions are rejected. Tokens come only from the named daemon environment
+variable. The canonical source identifier is
+`app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`, and its generic
 scheduler job is `instagram_comments:<source-identifier>`.
 
-Set `mentions = true` to also archive media in which other accounts tag the
-account, as a separate `instagram_mentions` source with the same identifier.
-It defaults to `false`. When the profile has a schedule, the scheduler job is
-`instagram_mentions:<source-identifier>`. See
+To also archive media where other accounts tag this account, set
+`mentions = true` (default `false`). Mentions sync into a separate
+`instagram_mentions` source with the same identifier, and when the profile has
+a schedule, the scheduler job is `instagram_mentions:<source-identifier>`. See
 [Archive media that tags the account](usage/instagram-comments.md#archive-media-that-tags-the-account).
 
 ### `[feeds]` {#feeds}
 
-Fetch the RSS, Atom, and JSON feeds followed with `msgvault source feeds add`. The
-feeds themselves are kept in the archive, not here; see [Feeds](usage/feeds.md).
+Schedule fetches for the RSS, Atom, and JSON feeds you follow with
+`msgvault source feeds add`. The feed list itself lives in the archive rather
+than `config.toml`; see [Feeds](usage/feeds.md).
 
 ```toml
 [feeds]
@@ -1825,9 +2041,9 @@ schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
 
 ### `[[chatwoot]]` {#chatwoot}
 
-Configure one account per Chatwoot instance. Each registered inbox becomes a
-separate archive source. See [Chatwoot setup](guides/chatwoot.md) for token and
-inbox registration.
+Configure one account per Chatwoot instance. Each registered inbox becomes its
+own archive source. For token and inbox registration, see
+[Chatwoot setup](guides/chatwoot.md).
 
 ```toml
 [[chatwoot]]
@@ -1864,15 +2080,16 @@ reconcile_interval_hours = 24
 | `recording_max_bytes` | `4294967296` (4 GiB) | Per-file cap in bytes for audio on voice-call messages and linked call meetings; zero selects the default; negative values and `MaxInt64` are rejected. Does not enable media downloads or Docbank uploads |
 | `reconcile_interval_hours` | `24` | Interval for listing every conversation and rereading histories with commit-time updates since the previous reconcile began; zero selects the default; negative/overflowing values are rejected |
 
-Duplicate profile labels (case-insensitive) and duplicate canonical instance/account
-pairs are rejected. Scheme, host, default port, and trailing slash normalization
-keep instance identities stable. Add another profile for another account or instance.
+msgvault rejects duplicate profile labels (case-insensitively) and duplicate
+canonical instance/account pairs. Normalization of scheme, host, default port,
+and trailing slashes keeps instance identities consistent. Add another
+`[[chatwoot]]` block for each additional account or instance.
 
 ### `[slack]`
 
-Archive [Slack workspaces](/docs/usage/slack/). A single block covers every
-registered workspace (tokens are per-workspace files). Authorize each
-workspace first with `msgvault add-slack`.
+Archive [Slack workspaces](/docs/usage/slack/). Authorize each workspace first
+with `msgvault add-slack`; tokens stay in per-workspace files, and this single
+block controls every registered workspace.
 
 ```toml
 [slack]
@@ -1907,17 +2124,18 @@ max_media_mb = 250                # per-file download cap (MiB)
 | `max_media_mb` | `250` | Per-file download cap in MiB (over-cap files are recorded as a `size_cap` skip and retried only after the cap changes) |
 | `accounts_config` | — | Per-team-ID `media` and `max_media_mb` overrides |
 
-For public channels only, set `private_channels`, `dms`, and `group_dms` to
-`false`. These settings select what sync archives; the Slack token determines
-what it can access. See [Slack permissions](/docs/usage/slack/#prerequisites)
-for a token restricted to public channels. A restricted token lists all public
-channels, including unjoined ones; broader tokens list your memberships.
+To archive public channels only, set `private_channels`, `dms`, and `group_dms`
+to `false`. These keys filter what sync archives, while your Slack token
+determines what msgvault can read. For a token scoped to public channels, see
+[Slack permissions](/docs/usage/slack/#prerequisites). A restricted token lists
+all public channels (including ones you have not joined), whereas broader
+tokens list your memberships.
 
 ### `[teams]`
 
-Media policy for [Microsoft Teams](/docs/usage/teams/) chats and channels. Teams
-sync itself is scheduled through `[[accounts]]`; this table only decides which
-attachments are downloaded.
+Configure media policy for [Microsoft Teams](/docs/usage/teams/) chats and
+channels. Teams sync schedules live under `[[accounts]]`; `[teams]` controls
+only which attachments msgvault downloads.
 
 ```toml
 [teams]
@@ -1941,10 +2159,10 @@ max_media_mb = 500
 
 ### Apple WhatsApp sources
 
-Keep WhatsApp for Mac current with `msgvault serve`. Add one entry per owner
+Keep WhatsApp for Mac synced with `msgvault serve`. Add one entry per owner
 phone number; `path` defaults to the native WhatsApp `ChatStorage.sqlite`.
-Grant Full Disk Access to the process running the daemon. These imports copy
-message text and metadata; they don't copy media.
+Grant **Full Disk Access** to the process running the daemon. These imports
+copy message text and metadata only, not media.
 
 ```toml
 [[whatsapp_apple]]
@@ -1956,16 +2174,18 @@ schedule = "*/10 * * * *"
 # path = "~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
 ```
 
-`phone` must start with `+`. `path` accepts `~` and resolves relative paths
-against the configuration directory when loaded with `--config`. The Sources page shows run history and
-offers **Sync now** for scheduled stores.
+`phone` must start with `+`. `path` expands `~` and resolves relative paths
+against the configuration directory when you load config with `--config`. The
+**Sources** page shows run history and offers **Sync now** for scheduled
+stores.
 
 ### `[imessage]`
 
 Schedule imports with `msgvault serve` and set media limits for
-[`import-imessage`](/docs/usage/text-messages/). The `--max-media-mb` flag overrides
-`max_media_mb` for one run. [`purge-excluded-media`](cli-reference.md#purge-excluded-media)
-reads the same keys, so it removes stored iMessage attachments that exceed them.
+[`import-imessage`](/docs/usage/text-messages/). Passing `--max-media-mb`
+overrides `max_media_mb` for one run, and
+[`purge-excluded-media`](cli-reference.md#purge-excluded-media) uses the same
+keys to remove stored iMessage attachments above those limits.
 
 ```toml
 [imessage]
@@ -1986,17 +2206,17 @@ max_media_mb = 250
 | `media_max_participants` | `20` | Skip media from chats with more participants than this, counting you; `0` = no cap |
 | `max_media_mb` | `250` | Per-attachment size cap in MiB |
 
-Grant Full Disk Access to the process running the daemon. Every run re-reads
-all of `chat.db` and writes only what changed, including late arrivals
-and edits.
-Choose a schedule interval that allows for the time it takes to read your database.
+Grant **Full Disk Access** to the process running the daemon. Each run re-reads
+all of `chat.db` and writes only what changed, including late arrivals and
+edits. Choose a schedule interval that allows for the time it takes to read
+your database.
 
-### Omi Sources
+### Omi sources
 
-Use one `[[omi]]` entry per hosted or self-hosted Omi account. Register each
-entry with `msgvault add-omi`; see [Omi setup](usage/meetings.md#omi).
-Use HTTPS for non-loopback backends. Plain HTTP is accepted only for loopback
-hosts such as `localhost`, `127.0.0.1`, or `[::1]`.
+Add one `[[omi]]` entry per hosted or self-hosted Omi account and register each
+with `msgvault add-omi`; see [Omi setup](usage/meetings.md#omi). Use HTTPS for
+non-loopback backends; plain HTTP is allowed only for loopback hosts such as
+`localhost`, `127.0.0.1`, or `[::1]`.
 
 ```toml
 [[omi]]
@@ -2017,18 +2237,22 @@ enabled = true
 | `schedule` | empty | Five-field cron expression; empty disables daemon scheduling |
 | `enabled` | `false` | Enables scheduled sync when a schedule is present |
 
-Explicit CLI sync can run entries regardless of `enabled`. Credentials belong
-in the daemon's configuration, including when the CLI connects remotely.
+You can run manual CLI syncs on any entry regardless of `enabled`. Store Omi
+credentials in the daemon's configuration, including when you connect from a
+remote CLI.
 
-Omi sync gives each source a resumable five-minute pass. Schedules continue unfinished creation-date windows; a provider cooldown beyond a pass waits for the next configured trigger. Manual commands report how to continue. See [Omi sync behavior](usage/meetings.md#how-omi-sync-runs).
+Each Omi sync pass runs for up to five minutes and can resume where it left
+off. Scheduled runs continue unfinished creation-date windows, and if a
+provider cooldown lasts longer than a pass, sync waits for the next scheduled
+trigger. Manual commands print instructions for continuing. See
+[Omi sync behavior](usage/meetings.md#how-omi-sync-runs).
 
-### Granola Sources
+### Granola sources
 
-Granola meeting-notes sync is configured with top-level `[[granola]]` entries.
-Each entry is one Granola account. `identifier` is a stable source label;
-`account_email` is the primary identity used for organizer attribution.
-`msgvault serve` runs it on the given cron schedule. Register the account
-first with `msgvault add-granola`. See
+Add one top-level `[[granola]]` entry per Granola account. Register each
+account first with `msgvault add-granola`. `identifier` sets a stable source
+label, `account_email` sets the primary identity used for organizer
+attribution, and `msgvault serve` runs the entry on its cron schedule. See
 [Meeting Transcripts](/docs/usage/meetings/).
 
 ```toml
@@ -2048,20 +2272,20 @@ enabled = true
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |
 
-Config loading preserves `identifier` and rejects labels without an effective
-email, instructing you to add `account_email`. `msgvault add-granola` confirms
-the primary identity even if aliases already exist. Manage aliases with
-`msgvault identity add <identifier> <email>`, then run
-`msgvault sync-granola <identifier> --full` after identity changes to repair
-existing meeting attribution. A scheduled source must still be registered in
-the archive; removing it prevents the scheduler from silently recreating it.
+Config loading keeps `identifier` as written and rejects entries without an
+effective email, prompting you to add `account_email`. Running
+`msgvault add-granola` confirms the primary identity even if aliases already
+exist. Manage aliases with `msgvault identity add <identifier> <email>`, then
+run `msgvault sync-granola <identifier> --full` after identity changes to
+repair existing meeting attribution. A scheduled source must stay registered in
+the archive; if you remove it, the scheduler does not silently recreate it.
 
-### Plaud Sources
+### Plaud sources
 
-Configure one top-level `[[plaud]]` entry per Plaud cloud account. Browser
-OAuth stores credentials separately from this file. Enable Cloud Sync and
-transcription in Plaud before syncing. See the
-[meeting guide](usage/meetings.md#plaud) for setup and preservation rules.
+Add one top-level `[[plaud]]` entry per Plaud cloud account. Browser OAuth
+stores credentials outside `config.toml`. Turn on Cloud Sync and transcription
+in Plaud before syncing. For setup and preservation rules, see the
+[meeting guide](usage/meetings.md#plaud).
 
 ```toml
 [[plaud]]
@@ -2081,19 +2305,20 @@ enabled = true
 | `limit` | `0` (all) | Most recordings a scheduled run checks; works like `sync-plaud --limit` |
 | `enabled` | `false` | Whether a scheduled entry runs in the daemon |
 
-Authorize with `msgvault add-plaud <identifier>` on the daemon host. The callback
-uses `localhost:8091/callback/plaud`; tokens use
-`tokens/plaud_<identifier>.json`. An existing source retains its confirmed
-owner even if configuration changes. Use a new identifier for another account.
-A scheduled entry must be registered; source removal prevents sync from
+Authorize on the daemon host with `msgvault add-plaud <identifier>`. The OAuth
+callback listens on `localhost:8091/callback/plaud`, and tokens are saved to
+`tokens/plaud_<identifier>.json`. An existing source keeps its confirmed owner
+even if configuration changes. Use a new identifier for another account. A
+scheduled entry must stay registered; removing the source stops sync from
 recreating it automatically.
 
-### Twenty Sources
+### Twenty sources
 
-Top-level `[[twenty]]` entries connect Twenty workspaces' call recordings through
-read-only API keys. Keep these entries on the daemon host. Register each source
-with `msgvault add-twenty` before syncing or scheduling it. See
-[Meeting Transcripts](/docs/usage/meetings/#twenty-call-recordings) for API permissions.
+Add top-level `[[twenty]]` entries on the daemon host to archive call
+recordings from Twenty workspaces using read-only API keys. Register each
+source with `msgvault add-twenty` before syncing or scheduling it. For required
+API permissions, see
+[Meeting Transcripts](/docs/usage/meetings/#twenty-call-recordings).
 
 ```toml
 [[twenty]]
@@ -2115,14 +2340,14 @@ enabled = true
 | `enabled` | `false` | Opt into daemon scheduling; manual sync remains available |
 
 Origins require HTTPS except loopback HTTP and cannot include credentials,
-queries, fragments, or path prefixes. Redirects are rejected. Identifiers must
-be unique ignoring case; each entry requires `account_email`. Enabled sources
-without a schedule are not scheduled. Removing a registered source prevents
-scheduled sync from silently recreating it.
+query strings, fragments, or path prefixes. Redirects are rejected. Identifiers
+must be case-insensitively unique, and each entry requires `account_email`. Enabled
+entries without a `schedule` are not scheduled, and removing a registered
+source stops scheduled sync from silently recreating it.
 
-### Pocket Sources
+### Pocket sources
 
-Pocket sync uses top-level `[[pocket]]` entries.
+Add top-level `[[pocket]]` entries to sync Pocket accounts.
 
 ```toml
 [[pocket]]
@@ -2141,23 +2366,23 @@ schedule = "15 */6 * * *"
 | `enabled` | `false` | Enable scheduled sync |
 | `schedule` | Unset | Cron expression; an enabled source without a schedule is not synced automatically |
 
-Set the key in the daemon's environment and restart the daemon after changing
-it. A variable set only in a remote CLI shell does not reach the daemon.
-msgvault sends the key only to Pocket's fixed REST and MCP endpoints. It does
-not store the key in source configuration or raw meeting evidence.
+Set the API key in the daemon's environment and restart the daemon after
+changing it; a variable set only in a remote CLI shell never reaches the
+daemon. msgvault sends the key only to Pocket's fixed REST and MCP endpoints
+and never stores it in source configuration or raw meeting evidence.
 
 Run `msgvault add-pocket personal` to verify access and bind the source to the
-authenticated email and stable Pocket user ID. A replacement key for that same
-account works. Another account requires a new source label, even if the email
-matches. Removing an account does not revoke its Pocket key. See the
-[Pocket workflow](usage/meetings.md#pocket) for coverage and compatibility limits.
+authenticated email and stable Pocket user ID. Replacing the key for the same
+account keeps working, while a different account requires a new source label
+even if the email matches. Removing an account does not revoke its Pocket key.
+For coverage and compatibility limits, see the
+[Pocket workflow](usage/meetings.md#pocket).
 
-### Circleback Sources
+### Circleback sources
 
-Circleback meeting sync is configured with top-level `[[circleback]]`
-entries. Authentication is browser OAuth (`msgvault add-circleback`); no
-secret lives in the config file. See
-[Meeting Transcripts](/docs/usage/meetings/).
+Add top-level `[[circleback]]` entries for Circleback meeting sync. Authorize
+through browser OAuth with `msgvault add-circleback`; no secret lives in
+`config.toml`. See [Meeting Transcripts](/docs/usage/meetings/).
 
 ```toml
 [[circleback]]
@@ -2175,20 +2400,19 @@ enabled = true
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |
 
-Config loading and alias repair follow the same rules as Granola: preserve the
-label, add `account_email`, manage aliases with `msgvault identity`, and run
+Config loading and alias repair work the same way as Granola: keep the label,
+set `account_email`, manage aliases with `msgvault identity`, and run
 `msgvault sync-circleback <identifier> --full` after identity changes.
-Circleback OAuth always confirms the primary identity; there is no identity
-opt-out flag.
+Circleback OAuth always confirms the primary identity without an opt-out flag.
 
-### Notion AI Meeting Notes Sources
+### Notion AI Meeting Notes sources
 
-Notion meeting sync uses one top-level `[[notion_meetings]]` entry per Notion
-identity. The meeting token needs AI Meeting Notes and Read Content access.
-A personal access token (PAT) can read its user's meetings but cannot list users
-or retrieve other users. To resolve Notion attendee IDs, configure a separate
-internal integration with **Read user information including email addresses**.
-The integration must belong to the same workspace.
+Add one top-level `[[notion_meetings]]` entry per Notion identity. The
+meeting token needs **AI Meeting Notes** and **Read Content** access. A
+personal access token (PAT) can read its own user's meetings but cannot list or
+look up other users. To resolve Notion attendee IDs, also configure a separate
+internal integration in the same workspace with **Read user information
+including email addresses**.
 
 ```toml
 [[notion_meetings]]
@@ -2209,21 +2433,21 @@ enabled = true
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |
 
-Manual and scheduled sync use the same optional users token from config.
-Token values stay out of diagnostics and archived evidence. See
-[Notion attendee emails](https://msgvault.io/docs/usage/meetings/#notion-attendee-emails)
-for lookup timeouts, failures, and retries.
+Both manual and scheduled syncs use the optional `users_token` from config, and
+msgvault keeps token values out of diagnostics and archived evidence. For
+lookup timeouts, failures, and retries, see
+[Notion attendee emails](https://msgvault.io/docs/usage/meetings/#notion-attendee-emails).
 
-Run `msgvault add-notion-meetings <identifier>` to validate access and register
-the source before enabling a schedule. Removing the source prevents the
-scheduler from recreating it. See [Meeting Transcripts](/docs/usage/meetings/) for
-the 50-result discovery limit, attendee visibility, transcript retries, and
+Run `msgvault add-notion-meetings <identifier>` to verify access and register
+the source before turning on a schedule. Removing the source stops the
+scheduler from recreating it. See [Meeting Transcripts](/docs/usage/meetings/)
+for the 50-result discovery limit, attendee visibility, transcript retries, and
 stored data.
 
-### Twilio Sources
+### Twilio sources
 
-Configure one `[[twilio]]` entry per Twilio account or subaccount.
-See the [Twilio meeting guide](usage/meetings.md#twilio) for what sync stores.
+Add one `[[twilio]]` entry per Twilio account or subaccount. For what sync
+stores, see the [Twilio meeting guide](usage/meetings.md#twilio).
 
 ```toml
 [[twilio]]
@@ -2251,10 +2475,10 @@ schedule = "15 */6 * * *"
 | `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-twilio --full` to fetch the skipped recordings |
 | `max_media_mb` | `1024` (1 GiB) | Per-recording size cap in MiB; `0` uses the default. Oversized recordings are skipped; raise the cap and run `sync-twilio --full` to retry |
 
-### Bland Sources
+### Bland sources
 
-Configure one `[[bland]]` entry per Bland org API key. See the
-[Bland meeting guide](usage/meetings.md#bland) for what sync stores.
+Add one `[[bland]]` entry per Bland org API key. For what sync stores, see the
+[Bland meeting guide](usage/meetings.md#bland).
 
 ```toml
 [[bland]]
@@ -2276,13 +2500,12 @@ schedule = "15 */6 * * *"
 | `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-bland --full` to fetch the skipped recordings |
 | `max_media_mb` | `1024` (1 GiB) | Per-recording size cap in MiB, shared with Twilio's default; `0` uses the default. Oversized recordings are skipped; raise the cap and run `sync-bland --full` to retry |
 
-### Muesli Sources
+### Muesli sources
 
-Muesli meeting sync uses one top-level `[[muesli]]` entry per Muesli database.
-Configure these entries on the Mac where Muesli records. With `[remote]`
-configured, the native client reads the local database and Contacts, then sends
-selected meetings using the existing remote API credentials. Without remote
-mode, the daemon reads the files on its own host.
+Add one top-level `[[muesli]]` entry per Muesli database on the Mac where
+Muesli records. When `[remote]` is configured, the native client reads the
+local database and Contacts and sends selected meetings with your existing
+remote API credentials. Otherwise, the daemon reads the files on its own host.
 
 ```toml
 [[muesli]]
@@ -2311,15 +2534,19 @@ enabled = true
 
 Run `msgvault add-muesli <identifier>` to check the database and register the
 source before enabling a schedule. On a remote recorder, keep
-`msgvault sync-muesli --watch` running to use enabled schedules. Run
-`msgvault sync-muesli <identifier> --full`
-after identity changes to repair existing meeting attribution. Removing the
-source prevents the scheduler from recreating it. See
-[Meeting Transcripts](/docs/usage/meetings/#muesli) for what gets stored.
+`msgvault sync-muesli --watch` running so enabled schedules execute. After
+identity changes, run `msgvault sync-muesli <identifier> --full` to repair
+existing meeting attribution. Removing the source stops the scheduler from
+recreating it. See [Meeting Transcripts](/docs/usage/meetings/#muesli) for what
+sync stores.
 
 ### `[vector]`
 
-Top-level toggle and backend marker for semantic/hybrid search. SQLite vector search requires a build with `sqlite_vec` support (default via `make build`). PostgreSQL vector search requires a build with the `pgvector` tag and a PostgreSQL `[data].database_url`. See [Vector Search](/docs/usage/vector-search/) for prerequisites, initial embedding, and the full workflow.
+Configure semantic and hybrid search. SQLite vector search requires a build
+with `sqlite_vec` support (the default with `make build`), while PostgreSQL
+vector search requires a build with the `pgvector` tag and a PostgreSQL
+`[data].database_url`. For prerequisites, initial embedding, and the full
+workflow, see [Vector Search](/docs/usage/vector-search/).
 
 | Key | Default | Description |
 |---|---|---|
@@ -2330,7 +2557,12 @@ Top-level toggle and backend marker for semantic/hybrid search. SQLite vector se
 
 #### `[vector.embeddings]`
 
-Text embeddings use a configured endpoint or the shared local `kennembed` server. Run `msgvault setup providers --local-embeddings` to install the local server after confirming any missing downloads. Local requests ignore saved and environment API keys. Local and self-hosted endpoints keep text on your machine or network. Hosted endpoints receive the text being embedded.
+Text embeddings use either a configured endpoint or the shared local
+`kennembed` server. To install the local server (after confirming any missing
+downloads), run `msgvault setup providers --local-embeddings`. Local requests
+ignore saved and environment API keys. Local and self-hosted endpoints keep
+text on your machine or network, whereas hosted endpoints receive the text
+being embedded.
 
 | Key | Default | Description |
 |---|---|---|
@@ -2353,29 +2585,29 @@ For a native 768-dimensional EmbeddingGemma 2 setup, see the
 
 ##### Stored provider credentials
 
-Instead of naming an environment variable in `api_key_env`, you can store a
-provider API key through Settings in the Web UI or the TUI. Stored keys live in
-`tokens/provider-credentials.json` under the data directory with owner-only
-file permissions. They are never written to `config.toml`. After saving,
-Settings shows only a masked hint of the key, its first three and last three
-characters, and whether it comes from the store or from the environment; the
-key itself is never returned.
+Instead of setting `api_key_env`, you can save a provider API key in
+**Settings** in the Web UI or TUI. Stored keys live in
+`tokens/provider-credentials.json` under your data directory with owner-only
+permissions and are never written to `config.toml`. After you save a key,
+**Settings** displays only a masked hint (its first three and last three
+characters) and where it comes from (the credential store or the environment),
+never the key itself.
 
-A stored key takes precedence over the environment variable named by
-`api_key_env`. Each stored key is bound to the endpoint origin (scheme, host,
-and port) it was saved for. If you later change the endpoint to another origin,
-the stored key is removed automatically and must be entered again, so a key
-is never sent to a host it was not entered for.
+A stored key takes precedence over `api_key_env` and is bound to the exact
+endpoint origin (scheme, host, and port) you saved it for. If you later change
+the endpoint to a different origin, msgvault removes the stored key
+automatically and you must enter it again, so a key is never sent to a host it
+was not entered for.
 
-Changing a stored key for vector or multimodal (visual) embeddings requires a daemon
-restart, like the other `[vector]` settings. Person enrichment and sweep keys
-apply on the next run.
+Like other `[vector]` settings, changing a stored key for vector or multimodal
+(visual) embeddings requires a daemon restart. Person enrichment and sweep keys
+take effect on the next run.
 
 A stored person-enrichment suppression key also takes precedence over a custom
-`suppression_key_env`. Before 0.22.0, a custom variable won. When upgrading
-an installation that has both, ensure the stored key
-matches the variable's value. If existing suppression records were made with
-a different key, enrichment stops with `ErrSuppressionKeyMismatch`.
+`suppression_key_env` (before 0.22.0, the custom environment variable won).
+When upgrading an install that has both, make sure the stored key matches the
+environment variable's value; if existing suppression records were created with a
+different key, enrichment stops with `ErrSuppressionKeyMismatch`.
 
 The host owner can also install keys without the Web UI:
 
@@ -2388,26 +2620,33 @@ msgvault credentials list --json
 msgvault credentials import-env
 ```
 
-The CLI lists IDs and bound origins without values. File input follows the
-[server secret-file rules](#server). Standard input is trimmed and limited to
-64 KiB. Suppression keys must contain at least 32 bytes after trimming;
-`set` and `import-env` reject shorter values before saving them.
-`--endpoint` defaults to the configured provider endpoint; suppression
-keys have no endpoint. `import-env` copies present configured vector,
-multimodal, named enrichment, and suppression variables once, preserving
-existing stored keys. These host commands do not start the daemon or change
-provider consent. Run them on the daemon host; `--local` selects a local home
-when remote access is configured.
+`msgvault credentials list` prints IDs and bound origins without secret values.
+File input follows the [server secret-file rules](#server), and stdin input is
+trimmed and capped at 64 KiB. Suppression keys must be at least 32 bytes after
+trimming, or `set` and `import-env` reject them. `--endpoint` defaults to the
+configured provider endpoint (suppression keys have no endpoint). `import-env`
+copies present configured vector, multimodal, named enrichment, and suppression
+environment variables once without overwriting existing stored keys. None of
+these commands start the daemon or change provider consent. Run them on the
+daemon host, passing `--local` to target a local home if remote access is
+configured.
 
-Sweep providers use their own named profile credentials. Use
-`msgvault person provider add --api-key-stdin` or `--credential-env` for them;
-the legacy `people.sweep` store ID is not consumed by current sweep runs.
+Sweep providers manage their own named profile credentials through
+`msgvault person provider add --api-key-stdin` or `--credential-env`; current
+sweep runs ignore the legacy `people.sweep` store ID.
 
-The index generation fingerprint includes the model, dimension, document and query prefixes, preprocessing settings, `max_input_chars`, embedding policy, and scope. Changing those settings triggers a stale-index error on the next vector/hybrid query. If you rebuild after changing the settings while the daemon is running, run `msgvault daemon restart` to use the new index. For an existing account-scoped generation built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild`.
+The index generation fingerprint includes the model, dimension, document and
+query prefixes, preprocessing settings, `max_input_chars`, embedding policy,
+and scope. Changing any of those triggers a stale-index error on the next
+vector or hybrid query. If you rebuild after changing settings while the daemon
+is running, run `msgvault daemon restart` so the daemon picks up the new index.
+For an existing account-scoped generation built with CLI flags, set a matching
+`[vector.embed.scope].accounts` and restart the daemon, or run
+`msgvault embeddings build --full-rebuild`.
 
 #### `[vector.preprocess]`
 
-Controls text normalization before embedding.
+Control how msgvault normalizes message text before embedding.
 
 | Key | Default | Description |
 |---|---|---|
@@ -2420,7 +2659,7 @@ Controls text normalization before embedding.
 
 #### `[vector.search]`
 
-Hybrid ranking parameters applied at query time.
+Tune hybrid ranking parameters applied at query time.
 
 | Key | Default | Description |
 |---|---|---|
@@ -2433,68 +2672,78 @@ Hybrid ranking parameters applied at query time.
 | `ann_oversample` | `8` | Approximate candidates requested per result before exact reranking. Range: 1–128. |
 | `ann_threads` | CPU count, max `128` | Native worker threads used by `msgvault embeddings optimize`. Range: 1–128. |
 
-Accelerator tuning does not change the embedding generation fingerprint. It
-changes how stored vectors are searched or optimized, not how text is sent to
-the embedding provider.
+Tuning accelerator keys does not change the embedding generation fingerprint,
+because they affect only how stored vectors are searched or optimized, not how
+text is sent to the embedding provider.
 
 #### `[vector.embed.scope]`
 
-Optional scope for newly built embedding generations. The zero value embeds the
-full archive. A scoped generation embeds only matching `messages.message_type`
-values:
+Optionally limit newly built embedding generations to a subset of your archive.
+Leaving this section empty embeds the full archive. Setting `message_types`
+embeds only matching `messages.message_type` values:
 
 ```toml
 [vector.embed.scope]
 message_types = ["teams"]
 ```
 
-Scoped generations are intentionally partial. Vector and hybrid queries against
-a scoped index must include a compatible `message_type` filter, such as
-`msgvault search "release planning" --mode hybrid --message-type teams`; an
-unscoped vector/hybrid query returns `index_scope_mismatch` instead of using the
-partial index as if it covered the full archive.
+Scoped generations are intentionally partial. Any vector or hybrid query
+against a message-type-scoped index must include a matching `message_type`
+filter, such as
+`msgvault search "release planning" --mode hybrid --message-type teams`. An
+unscoped vector or hybrid query returns `index_scope_mismatch` instead of
+treating the partial index as covering the full archive.
 
 | Key | Default | Description |
 |---|---|---|
 | `message_types` | `[]` (all types) | Embed only messages of these types. |
 | `accounts` | `[]` (all accounts) | Embed only these accounts' messages, by canonical account identifier (display names are rejected here — they are not stable identities for a privacy boundary). Resolved to source IDs at startup; an unknown identifier fails vector initialization (or the CLI command). The daemon's scheduled embeds honor this scope, so it also acts as a privacy boundary: unlisted accounts' text is never sent to the embedding endpoint. |
 
-`accounts` and `message_types` compose (both filters apply). The CLI flags
-`--account`/`--collection` on `msgvault embeddings build`/`resume` override
-`accounts` for a single run. Either scope dimension is part of the generation
-fingerprint: changing it requires `msgvault embeddings build --full-rebuild`,
-and because the fingerprint records archive-local source IDs, re-adding an
-account under a new source ID also requires a rebuild. Account-scoped indexes
-do not gate search the way message-type scopes do: out-of-scope accounts
-simply have no vector matches and rank on BM25 alone in hybrid mode.
+`accounts` and `message_types` combine so both filters apply. Passing
+`--account` or `--collection` to `msgvault embeddings build` or `resume`
+overrides `accounts` for that single run. Both scope keys are part of the
+generation fingerprint, so changing either requires
+`msgvault embeddings build --full-rebuild`; because the fingerprint stores
+archive-local source IDs, re-adding an account under a new source ID also
+requires a rebuild. Unlike message-type scopes, account-scoped indexes do not
+reject unscoped searches: out-of-scope accounts have no vector matches and rank
+on BM25 alone in hybrid mode.
 
 #### `[vector.embed.schedule]`
 
-Optional background scheduling for the embed worker inside `msgvault serve`.
-Empty config disables scheduled embedding; you can still run
-`msgvault embeddings build` by hand.
+Optionally schedule background embedding inside `msgvault serve`. Leaving this
+section empty disables scheduled embedding, though you can still run
+`msgvault embeddings build` manually.
 
 | Key              | Default | Description                                                                                                                                  |
 | ---------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cron`           | —       | 5-field cron expression. Empty string disables the standalone cron.                                                                          |
 | `run_after_sync` | `false` | Run an embed pass after successful scheduled Gmail, IMAP, Teams, and Discord syncs. Other sources use the standalone cron or a manual build. |
 
-`msgvault setup providers` supplies `run_after_sync = true` and
-`cron = "*/15 * * * *"` when it enables a text lane. It preserves either key
-when explicitly set, including `false` and `""`. Already enabled text lanes keep
-their schedules. See
+When `msgvault setup providers` enables a text lane, it writes
+`run_after_sync = true` and `cron = "*/15 * * * *"`, while preserving either
+key if you already set it explicitly (including `false` and `""`). Text lanes
+that are already enabled keep their schedules. See
 [Recommended Configuration](usage/recommended-configuration.md).
 
-Automatic message and person indexing runs in five-minute passes. When a scheduled sync waits and indexing has held the work slot for one minute, the scheduler asks indexing to yield. Indexing finishes its current provider request, saves the response, and resumes behind the waiting work. At the five-minute limit, the scheduler cancels any request still in flight. Post-sync indexing starts after the sync releases the work slot.
+Automatic message and person indexing runs in five-minute passes. If a
+scheduled sync is waiting and indexing has held the work slot for one minute,
+the scheduler asks indexing to yield; indexing finishes its current provider
+request, saves the response, and resumes behind the waiting work. At five
+minutes, the scheduler cancels any request still in flight. Post-sync indexing
+starts after the sync releases the work slot.
 
-Completed provider responses are saved in the vector store before the next request, so a resumed pass or restarted daemon does not repeat them; unfinished requests run again. See [scheduler status](api-server.md#get-apiv1schedulerstatus) for queue times.
+msgvault saves each completed provider response to the vector store before
+sending the next request, so resumed passes and daemon restarts do not repeat
+completed work; only unfinished requests run again. See
+[scheduler status](api-server.md#get-apiv1schedulerstatus) for queue times.
 
 #### `[vector.people]`
 
-Semantic people search: one curated document per durable person, built from
-searchable non-sensitive attributes, embedded into the text-search generation.
-Requires `[vector] enabled = true` and a separate consent
-(`msgvault person provider consent --semantic-embeddings --yes`).
+Configure semantic people search, which builds one curated document per durable
+person from searchable non-sensitive attributes and embeds it into the
+text-search generation. This requires `[vector] enabled = true` and a separate
+consent with `msgvault person provider consent --semantic-embeddings --yes`.
 
 | Key | Default | Description |
 |---|---|---|
@@ -2504,10 +2753,10 @@ Requires `[vector] enabled = true` and a separate consent
 
 #### `[vector.multimodal]`
 
-Independently consented visual attachment lane over Voyage. Every value has a
-default except the probe manifest; uploads fail closed without it, and a
-daemon started with `enabled = true` and no manifest refuses every vector
-lane until one exists.
+Configure the independently consented visual attachment lane backed by Voyage.
+Every key has a default except `capabilities_file`: uploads fail closed without
+a probe manifest, and a daemon started with `enabled = true` and no manifest
+refuses every vector lane until one exists.
 
 | Key | Default | Description |
 |---|---|---|
@@ -2524,34 +2773,35 @@ lane until one exists.
 | `include_video` | `true` | Embed direct-input MP4 video. |
 | `allow_image_queries` | `true` | Allow `multimodal search --image`. |
 
-`[vector.multimodal.scope]` accepts the same `message_types` and `accounts`
-keys as `[vector.embed.scope]`; `[vector.multimodal.schedule]` accepts the
-same `cron` and `run_after_sync` keys as `[vector.embed.schedule]`. Consent is
-recorded per generation by `msgvault multimodal build --yes`.
+`[vector.multimodal.scope]` accepts the same `message_types` and `accounts` keys
+as `[vector.embed.scope]`, and `[vector.multimodal.schedule]` accepts the same
+`cron` and `run_after_sync` keys as `[vector.embed.schedule]`. Running
+`msgvault multimodal build --yes` records consent per generation.
 
 ### `[activity]`
 
-Dated activity projection and per-person contact state (first and last
-contact, inbound/outbound, interaction count, inferred channel). It is the
-deterministic source of "when did we last talk" for every person and runs
-hourly by default inside `msgvault serve`. `msgvault activity build` runs it
-by hand; `--backstop` rescans the whole archive.
+Configure the dated activity projection and per-person contact state, which
+stores first and last contact, last inbound and last outbound contact,
+interaction count, and inferred channel. This deterministic projection powers
+"when did we last talk" for every person and runs hourly by default inside
+`msgvault serve`. To run it manually, use `msgvault activity build` (add
+`--backstop` to rescan the entire archive).
 
-Scheduled projection commits at most ten batches per pass. When other
-scheduled work has waited for a minute, it stops after its current batch. A
-pass always stops at two minutes. A pass with committed progress releases the
-operation gate and resumes behind queued work without waiting for the next
-cron tick while identity revisions stay stable. If a pass observes an identity
-change since the continuation chain began, it finishes that bounded pass and
-defers clean continuation until the next scheduled or manual trigger. Reaching
-the two-minute limit before any batch commits records an error and waits for
-the next scheduled or manual trigger, avoiding repeated retries of the same
-batch.
+Scheduled projection commits up to ten batches per pass, stops after the
+current batch if other scheduled work has waited for a minute, and always stops
+at two minutes. A pass that commits progress releases the operation gate and
+resumes behind queued work without waiting for the next cron tick as long as
+identity revisions stay stable. If an identity change happens after the
+continuation chain begins, the pass finishes its bounded run and defers clean
+continuation until the next scheduled or manual trigger. If a pass hits the
+two-minute limit before committing any batch, it records an error and waits for
+the next scheduled or manual trigger instead of retrying the same batch
+immediately.
 
-Identity reconciliation and timezone or `max_direct_counterparts` changes save
-their progress in the archive. Identity reconciliation keeps its saved position
-across identity changes and rechecks earlier stale messages before completing.
-Completed batches remain committed. Manual builds are not limited to ten
+Identity reconciliation and changes to `timezone` or `max_direct_counterparts`
+save their progress in the archive. Identity reconciliation keeps its position
+across identity changes and rechecks earlier stale messages before finishing,
+with completed batches staying committed. Manual builds are not limited to ten
 batches or two minutes.
 
 | Key | Default | Description |
@@ -2561,27 +2811,31 @@ batches or two minutes.
 | `max_direct_counterparts` | `25` | Largest conversation still projected as direct activity between its participants. |
 | `batch_size` | `500` | Messages per projection batch. |
 
-## Overriding the Home Directory
+## Overriding the home directory
 
-By default, msgvault stores everything under `~/.msgvault` (macOS/Linux) or `C:\Users\<you>\.msgvault` (Windows). To use a different location, you have two options:
+By default, msgvault stores everything under `~/.msgvault` on macOS and Linux
+or `C:\Users\<you>\.msgvault` on Windows. To use a different directory, choose
+either option:
 
-**`--home` flag** (per-command):
-```bash
-msgvault sync --home /mnt/data/msgvault
-```
+- **Per command (`--home` flag).** Pass the path on the command line:
+  ```bash
+  msgvault sync --home /mnt/data/msgvault
+  ```
+- **Persistent (`MSGVAULT_HOME` environment variable).** Export the path in
+  your shell:
+  ```bash
+  export MSGVAULT_HOME=/mnt/data/msgvault
+  ```
 
-**`MSGVAULT_HOME` environment variable** (persistent):
-```bash
-export MSGVAULT_HOME=/mnt/data/msgvault
-```
+Both options load `config.toml` and store all data (database, tokens, and
+attachments) in the directory you specify. When both are set, `--home` takes
+priority over `MSGVAULT_HOME`.
 
-Both options are equivalent: `config.toml` is loaded from the specified directory, and all data (database, tokens, attachments) is stored there. The `--home` flag takes priority over `MSGVAULT_HOME`.
+The home directory or `[data].data_dir` can be a symlink to an existing
+directory; local daemon bookkeeping resolves the symlink and checks ownership
+and permissions on the target directory.
 
-The home or `[data].data_dir` directory may be a symlink to an existing
-directory. Local daemon bookkeeping resolves the symlink and applies its
-ownership and permission checks to the target directory.
-
-## Environment Variables
+## Environment variables
 
 | Variable | Description |
 |---|---|
@@ -2602,53 +2856,54 @@ ownership and permission checks to the target directory.
 | `MSGVAULT_REMOTE_API_KEY_ENV` | Name of the environment variable holding the remote key |
 | `MSGVAULT_REMOTE_ALLOW_INSECURE` | Allow plaintext HTTP to the remote daemon |
 
-Environment values
-override TOML. For each server or remote credential group, setting any of its
-three environment variables selects that group's environment sources; within
-the group, inline wins over file, then named environment. A supplied empty
-credential variable is an error when that destination is used. Booleans accept
-Go's `strconv.ParseBool` values, such as `true`, `false`, `1`, and `0`; empty or
-invalid values fail. Origin and proxy lists trim whitespace and ignore empty
-entries, including a trailing comma. Explicit `export-token --to`, `--api-key`,
-and `--allow-insecure` choices are saved even when they match an environment
-override; environment-only values are not saved. An explicit
-`--allow-insecure=false` overrides the environment and saved configuration,
-requires HTTPS, and saves `false` after a successful export. The setup wizard also saves
-new choices that match an override; keeping existing settings leaves them
-unchanged on disk.
+Environment variables override `config.toml`. Within each server or remote
+credential group, setting any of its three environment variables selects that
+group's environment sources, with inline winning over file and file winning
+over named environment. Passing an empty credential variable fails when that
+destination is used. Boolean variables accept Go's `strconv.ParseBool` values
+(`true`, `false`, `1`, `0`), and empty or invalid values fail. Origin and proxy
+lists trim whitespace and skip empty entries, including trailing commas.
+Explicit `export-token --to`, `--api-key`, and `--allow-insecure` flags are
+saved even when they match an environment override, whereas environment-only
+values are not saved. Passing `--allow-insecure=false` overrides both the
+environment and saved config, requires HTTPS, and saves `false` after a
+successful export. The setup wizard also saves new choices that match an
+override, while keeping existing settings leaves them untouched on disk.
 
-For example, a supervised daemon can start without a config file:
+For example, you can start a supervised daemon without a config file:
 
 ```sh
 MSGVAULT_HOME=/data MSGVAULT_BIND_ADDR=0.0.0.0 MSGVAULT_API_PORT=8080 msgvault serve
 ```
 
-Persist `/data` across restarts so the archive and generated key survive. The
-published stock image is `ghcr.io/kenn-io/msgvault`; it runs as UID/GID `1000`
-and stores its home at `/data`. No startup hook or entrypoint wrapper is required.
+Persist `/data` across restarts so your archive and generated key survive. The
+published stock image is `ghcr.io/kenn-io/msgvault`, which runs as UID/GID
+`1000`, uses `/data` as its home, and needs no startup hook or entrypoint
+wrapper.
 
 ## Usage reporting
 
-msgvault can send general, anonymous usage telemetry. Usage telemetry is off
-unless you have opted in or set `TELEMETRY_ENABLED=1`.
+msgvault can send general, anonymous usage telemetry, which stays off unless
+you opt in or set `TELEMETRY_ENABLED=1`.
 
-Any of these turns it off, even after you opted in:
+Any of these environment variables turns telemetry off, even after you opt in:
 
 - `MSGVAULT_TELEMETRY_ENABLED=0`
 - `TELEMETRY_ENABLED=0`
 - `DO_NOT_TRACK` set to any value except `0` or `false`
 - `CI` set to any value
 
-Set these where `msgvault serve` starts, then restart a running daemon.
-Development builds never send it.
+Set the variable in the environment where `msgvault serve` runs, then restart
+any running daemon. Development builds never send telemetry.
 
-## File Locations
+## File locations
 
-The default home is `~/.msgvault` on macOS/Linux and `C:\Users\<you>\.msgvault`
-on Windows. It is created automatically; existing directory permissions are
-left unchanged. Configuration stays under the home unless `--config` selects
-another file. The data paths below use `[data].data_dir`, which defaults to the
-home; `[log].dir` can override the log location.
+The default home directory is `~/.msgvault` on macOS and Linux or
+`C:\Users\<you>\.msgvault` on Windows. msgvault creates it automatically and
+leaves existing directory permissions unchanged. `config.toml` lives in the
+home directory unless you select another file with `--config`. The data paths
+below live under `[data].data_dir` (which defaults to the home directory), and
+`[log].dir` can override the log directory.
 
 | File | Description |
 |---|---|
@@ -2823,21 +3078,37 @@ source_id = 1
 trusted_authserv_ids = ["mx.google.com"]
 ```
 
-Use the source ID from `msgvault list-accounts`. IDs must be positive and unique across entries. Authentication service IDs must be nonblank and contain no whitespace. Matching ignores case and requires an exact ID. Restart the daemon after changing these pins.
+Use the `source_id` from `msgvault list-accounts`. Source IDs must be positive
+and unique across entries, and authentication service IDs must be nonblank with
+no whitespace. Matching is case-insensitive and requires an exact ID. Restart
+the daemon after changing these pins.
 
-Single-message HTTP, CLI JSON, and MCP reads return `sender_auth` for pinned email sources. The verdict uses only the topmost `Authentication-Results` header. `verified` means the pinned receiver reported `dmarc=pass` for the domain in both the archived From header and the displayed sender address. It covers the sender domain only. Empty results mean the pinned receiver reported nothing usable, or the archived headers could not be read. Sources without pins and non-email messages omit the field.
+Single-message HTTP, CLI JSON, and MCP reads include `sender_auth` for pinned
+email sources, evaluated from the topmost `Authentication-Results` header only.
+`verified` means the pinned receiver reported `dmarc=pass` for the domain in
+both the archived `From` header and the displayed sender address; it covers the
+sender domain only. Empty results mean either the pinned receiver reported
+nothing usable or msgvault could not read the archived headers. Sources without
+pins and non-email messages omit the field.
 
-A pin trusts the topmost header, so a copy that never passed through the pinned receiver can carry a forged one.
+Because a pin trusts the topmost header, a copy that never passed through the
+pinned receiver can carry a forged one.
 
-Receivers that omit the authserv-id, such as Exchange Online and Outlook.com headers starting with `spf=...`, can't verify. Quoted or spaced property values report no result.
+Receivers that omit the `authserv-id`, such as Exchange Online and Outlook.com
+headers starting with `spf=...`, cannot verify. Quoted or spaced property
+values also return no result.
 
 ### Relayed email senders
 
-GitHub notification email is attributed to the author named in its `X-GitHub-Sender` header. The original From address remains available for searches and authentication checks.
+msgvault attributes GitHub notification emails to the author named in the
+`X-GitHub-Sender` header while keeping the original `From` address available
+for searches and authentication checks.
 
-The header names a person but does not authenticate them, and handles can change.
+The header names a person without authenticating them, and handles can change.
 
-Add rules for other relay addresses in `config.toml`. A rule for an existing address replaces its built-in rule. Each address may appear in only one rule.
+To configure other relay addresses, add `[[relayed_senders]]` rules in
+`config.toml`. A rule for an existing address replaces its built-in rule, and
+each address can appear in only one rule:
 
 ```toml
 [[relayed_senders]]
@@ -2846,4 +3117,9 @@ header = "X-Author"
 identifier_type = "example"
 ```
 
-Each rule requires one mailbox address, a header name, and an identifier type. A missing, repeated, or empty header leaves the message attributed to its From address. Rules apply to new Gmail, IMAP, and Microsoft mail, and mbox, eml, emlx, and PST imports. GitHub bot handles are supported. The recorded From address stays visible on messages. Attribution for already archived messages will be handled separately.
+Each rule requires one mailbox address, a header name, and an identifier type.
+If the header is missing, repeated, or empty, msgvault attributes the message
+to its `From` address. Rules apply to new Gmail, IMAP, and Microsoft mail as
+well as mbox, eml, emlx, and PST imports. GitHub bot handles are supported, and
+the recorded `From` address stays visible on messages. Attribution for already
+archived messages is separate future work.

@@ -528,6 +528,32 @@ func TestRichUpgradeDoesNotAbsorbContactOwner(t *testing.T) {
 	assert.Equal(pid, again, "the identifier now points at the new resolution")
 }
 
+func TestPhoneUpgradeKeepsEmailResolutionOnAliasConflict(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	r := newParticipantResolver(st)
+
+	emailPID, err := r.resolveUser(t.Context(), &User{ID: "@user:beeper.local", Email: "user@example.com"})
+	require.NoError(err)
+	third, err := st.EnsureParticipant("other@example.com", "Other", "example.com")
+	require.NoError(err)
+	require.NoError(st.SetParticipantIdentifier(third, "email", "user@example.com"))
+	phonePID, err := st.EnsureParticipantByPhone(t.Context(), "+15550100021", "Phone", "imessage")
+	require.NoError(err)
+	phoneEmail, err := st.EnsureParticipant("phone@example.com", "Phone", "example.com")
+	require.NoError(err)
+	require.NoError(st.MergeParticipantsContext(t.Context(), phoneEmail, phonePID))
+
+	resolved, err := r.resolveUser(t.Context(), &User{ID: "@user:beeper.local", PhoneNumber: "+15550100021"})
+	require.NoError(err)
+	assert.Equal(emailPID, resolved)
+	again, err := newParticipantResolver(st).resolveID(t.Context(), "@user:beeper.local", "User")
+	require.NoError(err)
+	assert.Equal(emailPID, again)
+}
+
 // Two Beeper IDs that share an email resolve to one participant. When one
 // gains a phone and that participant merges into the phone participant, the
 // other ID's cached owner must follow the merge in either member order.

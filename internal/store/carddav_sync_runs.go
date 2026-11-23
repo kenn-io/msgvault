@@ -46,29 +46,31 @@ type CardDAVSyncRunStart struct {
 }
 
 type CardDAVSyncRunFinish struct {
-	State        CardDAVSyncRunState
-	Books        int64
-	Created      int64
-	Updated      int64
-	Removed      int64
-	ErrorCode    string
-	ErrorMessage string
+	State            CardDAVSyncRunState
+	Books            int64
+	Created          int64
+	Updated          int64
+	Removed          int64
+	BindingConflicts *int64
+	ErrorCode        string
+	ErrorMessage     string
 }
 
 type CardDAVSyncRun struct {
-	AccountID    int64
-	ID           int64
-	Trigger      CardDAVSyncTrigger
-	Full         bool
-	State        CardDAVSyncRunState
-	StartedAt    time.Time
-	FinishedAt   *time.Time
-	Books        int64
-	Created      int64
-	Updated      int64
-	Removed      int64
-	ErrorCode    string
-	ErrorMessage string
+	AccountID        int64
+	ID               int64
+	Trigger          CardDAVSyncTrigger
+	Full             bool
+	State            CardDAVSyncRunState
+	StartedAt        time.Time
+	FinishedAt       *time.Time
+	Books            int64
+	Created          int64
+	Updated          int64
+	Removed          int64
+	BindingConflicts *int64
+	ErrorCode        string
+	ErrorMessage     string
 }
 
 type CardDAVSyncStatus struct {
@@ -92,7 +94,7 @@ var (
 )
 
 const cardDAVSyncRunColumns = `id, account_id, trigger, full_sync, state, started_at, finished_at,
-	books, created, updated, removed, error_code, error_message`
+	books, created, updated, removed, binding_conflicts, error_code, error_message`
 
 func (s *Store) StartCardDAVSyncRunContext(
 	ctx context.Context, input CardDAVSyncRunStart,
@@ -137,9 +139,9 @@ func (s *Store) FinishCardDAVSyncRunContext(
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
 		row := tx.QueryRowContext(ctx, fmt.Sprintf(`UPDATE carddav_sync_runs SET
 			state = ?, finished_at = %s, books = ?, created = ?, updated = ?, removed = ?,
-			error_code = ?, error_message = ?
+			binding_conflicts = ?, error_code = ?, error_message = ?
 			WHERE id = ? AND state = 'running' RETURNING %s`, s.dialect.Now(), cardDAVSyncRunColumns),
-			input.State, input.Books, input.Created, input.Updated, input.Removed, code, message, runID)
+			input.State, input.Books, input.Created, input.Updated, input.Removed, input.BindingConflicts, code, message, runID)
 		run, err = scanCardDAVSyncRun(row)
 		if errors.Is(err, sql.ErrNoRows) {
 			var state CardDAVSyncRunState
@@ -265,6 +267,9 @@ func validateCardDAVSyncRunFinish(input CardDAVSyncRunFinish) (string, string, e
 	if input.Books < 0 || input.Created < 0 || input.Updated < 0 || input.Removed < 0 {
 		return "", "", fmt.Errorf("%w: counters must be nonnegative", ErrCardDAVSyncRunInvalid)
 	}
+	if input.BindingConflicts != nil && *input.BindingConflicts < 0 {
+		return "", "", fmt.Errorf("%w: binding conflict count must be nonnegative", ErrCardDAVSyncRunInvalid)
+	}
 	code := strings.TrimSpace(input.ErrorCode)
 	message := strings.TrimSpace(strings.ToValidUTF8(input.ErrorMessage, "�"))
 	if input.State == CardDAVSyncRunSucceeded {
@@ -324,9 +329,14 @@ func scanCardDAVSyncRun(sc scanner) (*CardDAVSyncRun, error) {
 	var run CardDAVSyncRun
 	var started requiredTimestamp
 	var finished nullableTimestamp
+	var bindingConflicts sql.NullInt64
 	if err := sc.Scan(&run.ID, &run.AccountID, &run.Trigger, &run.Full, &run.State, &started, &finished,
-		&run.Books, &run.Created, &run.Updated, &run.Removed, &run.ErrorCode, &run.ErrorMessage); err != nil {
+		&run.Books, &run.Created, &run.Updated, &run.Removed, &bindingConflicts, &run.ErrorCode, &run.ErrorMessage); err != nil {
 		return nil, err
+	}
+	if bindingConflicts.Valid {
+		value := bindingConflicts.Int64
+		run.BindingConflicts = &value
 	}
 	run.StartedAt = started.Time.UTC()
 	if finished.Valid {

@@ -4,74 +4,67 @@ title: Remote Deployment
 description: Run msgvault in Docker on a remote host and provision it from a machine with a browser.
 ---
 
-Run your archive on an always-on server and use it from your own computer.
-Set up source credentials on a machine with a browser, then copy a deployment
-bundle to a Linux host with Docker, such as a NAS, cloud VM, or Raspberry Pi.
+You can run your archive on an always-on server and use it from your own computer. You set up source credentials on a machine with a browser, then copy a deployment bundle to a Linux host with Docker, such as a NAS, cloud VM, or Raspberry Pi.
 
-The flow is built on three capabilities:
+This setup relies on three pieces:
 
-- `msgvault setup` interactive wizard that can generate a deployment bundle
-- `msgvault export-token` to upload OAuth tokens over API
-- `[remote]` config for running local CLI commands against a remote server
+- `msgvault setup`, an interactive wizard that generates a deployment bundle.
+- `msgvault export-token`, which uploads OAuth tokens over the API.
+- `[remote]` config, which points local CLI commands at your remote server.
 
 !!! note "Version Requirement"
-    Remote deployment requires msgvault with NAS/Docker support (`setup`, `export-token`, and the token upload API). Check that your installed version includes these commands before proceeding.
+    Remote deployment requires a msgvault build with NAS/Docker support (`setup`, `export-token`, and the token upload API). Check that your installed version includes these commands before you begin.
 
-## Setup Flow Overview
+## Setup flow overview
 
-1. Configure OAuth credentials and choose the remote target in `msgvault setup`
-2. Copy the generated `nas-bundle` directory to your remote host
-3. Run `docker-compose up -d` on the remote host
-4. Add a Gmail account locally and export the token to the remote host
-5. Run the initial full sync on the remote host
-6. Use the `msgvault` API or CLI in remote mode
+1. Configure OAuth credentials and choose the remote target in `msgvault setup`.
+2. Copy the generated `nas-bundle` directory to your remote host.
+3. Run `docker-compose up -d` on the remote host.
+4. Add a Gmail account locally and export the token to the remote host.
+5. Run the initial full sync on the remote host.
+6. Use the `msgvault` API or CLI in remote mode.
 
-## Docker Image
+## Docker image
 
-Choose a published image from the [container package](https://github.com/kenn-io/msgvault/pkgs/container/msgvault)
-and set its full name in your Compose file. Version tags omit the leading `v`:
-for example, release 0.19.3 uses `ghcr.io/kenn-io/msgvault:0.19.3`.
+Choose a published image from the [container package](https://github.com/kenn-io/msgvault/pkgs/container/msgvault) and put its full name in your Compose file. Version tags omit the leading `v`. For example, release 0.19.3 uses `ghcr.io/kenn-io/msgvault:0.19.3`.
 
-`latest` is not a stable-release guarantee and can refer to an older development
-snapshot. Repository-owned image publishing has been removed, so a new commit
-or release tag does not automatically update GHCR. Check that the image you
-choose contains the version you need. To deploy current source before a matching
-image is published, follow [Container builds](../development.md#container-builds).
+`latest` is not a stable-release guarantee and can refer to an older development snapshot. Repository-owned image publishing has been removed, so a new commit or release tag does not automatically update GHCR. Verify that the image you pick contains the version you need. To deploy current source before a matching image is published, follow [Container builds](../development.md#container-builds).
 
-**Architectures:** `linux/amd64` (Intel/AMD NAS, standard servers) and `linux/arm64` (Raspberry Pi 4/5, newer NAS). Docker selects the correct one automatically.
+Published images support `linux/amd64` (Intel and AMD NAS devices, standard servers) and `linux/arm64` (Raspberry Pi 4 and 5, newer NAS devices). Docker selects the matching architecture automatically.
 
-## 1) Interactive Setup and Bundle Generation
+## 1) Run interactive setup and generate the bundle
 
-Run the wizard once after installing msgvault:
+After installing msgvault, run the wizard once:
 
 ```bash
 msgvault setup
 ```
 
-If you already have OAuth configured, you can skip that step during the flow.
-If you choose to configure a remote server, the wizard:
+If you already have OAuth configured, you can skip that step during the flow. When you choose to configure a remote server, the wizard:
 
-- prompts for remote hostname/IP and port
-- generates a random API key
-- creates `<MSGVAULT_HOME>/nas-bundle`
-- writes a server-ready `config.toml`
-- copies `client_secret.json` into the bundle
-- writes a `docker-compose.yml` for deployment
-- prints the command for uploading the OAuth token once the account is added
+- Prompts for the remote hostname or IP and port.
+- Generates a random API key.
+- Creates `<MSGVAULT_HOME>/nas-bundle`.
+- Writes a server-ready `config.toml`, including `[activity]` with the timezone you choose and `[oauth]` when OAuth credentials are configured.
+- Copies `client_secret.json` into the bundle when OAuth credentials are configured.
+- Writes a `docker-compose.yml` for deployment.
+- Prints the command for uploading the OAuth token once the account is added.
 
-### Bundle Contents
+### Bundle contents
 
-From the local machine, the wizard creates:
+Inspect the generated directory on your local machine:
 
 ```bash
 ls -la ~/.msgvault/nas-bundle
 ```
 
-- `config.toml` — preconfigured server config for the remote container
-- `client_secret.json` — copied OAuth credentials
-- `docker-compose.yml` — ready-to-run Compose service
+The directory contains:
 
-### Example `config.toml` Generated by Setup
+- `config.toml`: preconfigured server config for the remote container.
+- `client_secret.json`: copied OAuth credentials, included when OAuth credentials are configured.
+- `docker-compose.yml`: ready-to-run Compose service.
+
+### Example `config.toml` generated by setup
 
 ```toml
 [server]
@@ -82,14 +75,23 @@ api_key = "<32-byte-hex-key>"
 [oauth]
 client_secrets = "/data/client_secret.json"
 
+[activity]
+timezone = "<your-timezone>"
+
 [sync]
 rate_limit_qps = 5
 
 # Accounts will be added automatically when you export tokens.
-# [[accounts]] can be added manually if needed.
+# You can also add them manually:
+# [[accounts]]
+# email = "you@example.com"
+# schedule = "0 2 * * *"
+# enabled = true
 ```
 
-### Example `docker-compose.yml` Generated by Setup
+### Example `docker-compose.yml` generated by setup
+
+The host side of the port mapping uses the port you chose in setup (`8080` by default):
 
 ```yaml
 services:
@@ -97,31 +99,29 @@ services:
     image: ghcr.io/kenn-io/msgvault:latest
     pull_policy: always
     container_name: msgvault
-    user: root
+    user: root  # Required for Synology NAS ACLs
     restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
       - ./:/data
     environment:
-      - TZ=America/Los_Angeles
+      - TZ=America/Los_Angeles  # Adjust to your timezone
       - MSGVAULT_HOME=/data
     command: ["serve"]
     healthcheck:
-      test: ["CMD", "wget", "-qO/dev/null", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
 ```
 
-The wizard currently writes `:latest` as shown above. Before deployment, change
-`image` to your chosen published version or digest. For an image built and
-loaded locally, use its local tag and remove `pull_policy: always`.
+The wizard currently writes `:latest` as shown above. Before deploying, change `image` to your chosen published version or digest. If you built and loaded an image locally, use its local tag and remove `pull_policy: always`.
 
-## 2) Deploy to Remote Host
+## 2) Deploy to the remote host
 
-Copy the bundle and start services via SSH:
+Copy the bundle to your remote host and start the service over SSH:
 
 ```bash
 # Copy the generated bundle
@@ -131,45 +131,42 @@ scp -r ~/.msgvault/nas-bundle user@remote-host:/opt/msgvault
 ssh user@remote-host "cd /opt/msgvault && docker-compose up -d"
 ```
 
-Verify the service:
+Verify that the service responds:
 
 ```bash
 curl http://remote-host:8080/health
 curl http://remote-host:8080/openapi.json
 ```
 
-See [Platform Notes](#platform-notes) for Synology, QNAP, and Raspberry Pi-specific paths.
+See [Platform Notes](#platform-notes) for paths specific to Synology, QNAP, and Raspberry Pi.
 
-## 3) Provision Gmail Tokens
+## 3) Provision Gmail tokens
 
-For each mailbox:
+Repeat these steps for each mailbox:
 
-1. Add account locally (requires browser):
+1. Add the account locally on a machine with a browser:
 
-```bash
-msgvault add-account you@gmail.com
-```
+    ```bash
+    msgvault add-account you@gmail.com
+    ```
 
 2. Export the token to the remote endpoint:
 
-```bash
-msgvault export-token you@gmail.com \
-  --to http://nas-ip:8080 --api-key YOUR_API_KEY --allow-insecure
-```
+    ```bash
+    msgvault export-token you@gmail.com \
+      --to http://nas-ip:8080 --api-key YOUR_API_KEY --allow-insecure
+    ```
 
 !!! note "Why `--allow-insecure`?"
-    `export-token` requires HTTPS by default. Most deployments use Tailscale or a home LAN where HTTP is fine — use `--allow-insecure` in these cases.
+    `export-token` requires HTTPS by default. Most deployments use Tailscale or a home LAN where HTTP is fine. Use `--allow-insecure` in those cases.
 
-    If you ran `msgvault setup` and configured a remote server, the wizard already set `allow_insecure = true` in your local config, so `--allow-insecure` is not needed on the command line.
+    If you ran `msgvault setup` and configured a remote server, the wizard already set `allow_insecure = true` in your local config, so you do not need `--allow-insecure` on the command line.
 
-The command uploads to `POST /api/v1/auth/token/{email}` and, by default, also posts to `POST /api/v1/accounts` to register:
+The command uploads the token to `POST /api/v1/auth/token/{email}` and, by default, posts to `POST /api/v1/accounts` to register the account as enabled with the default sync schedule `0 2 * * *`.
 
-- default sync schedule `0 2 * * *`
-- account enabled
+For Calendar-only access, run `msgvault export-token <email> --upload-only` to upload the token without creating a Gmail sync schedule, then register Calendar on the server with `msgvault add-calendar <email>`.
 
-For Calendar-only access, use `msgvault export-token <email> --upload-only` to upload the token without creating a Gmail sync schedule. Then register Calendar on the server with `msgvault add-calendar <email>`.
-
-If you did not configure remote details during setup, you can also set:
+If you did not configure remote details during setup, you can supply them with environment variables instead:
 
 ```bash
 export MSGVAULT_REMOTE_URL=http://nas-ip:8080
@@ -179,9 +176,7 @@ msgvault export-token you@gmail.com --allow-insecure
 
 ## 4) Run Initial Full Sync
 
-Scheduled syncs are incremental, which require a completed full sync to work.
-Run the initial full sync through the daemon-backed CLI so the serving process
-continues to own and serialize archive writes:
+Scheduled syncs are incremental and require a completed full sync first. Run the initial full sync through the daemon-backed CLI so the serving process continues to own and serialize archive writes:
 
 ```bash
 # Required — scheduled sync will not work without this
@@ -191,7 +186,7 @@ docker exec msgvault msgvault sync-full you@gmail.com
 docker exec msgvault msgvault sync-full you@gmail.com --limit 100
 ```
 
-After the full sync completes, scheduled syncs run automatically on the cron schedule registered during token export (`0 2 * * *` by default). The daemon runs these itself, so there is no contention. You can also trigger manual syncs through the CLI or the incremental sync API:
+Once the full sync completes, scheduled syncs run automatically on the cron schedule registered during token export (`0 2 * * *` by default). The daemon runs these itself, so there is no contention. You can also trigger manual syncs through the CLI or the incremental sync API:
 
 ```bash
 # Full or incremental sync through the daemon-backed CLI
@@ -205,14 +200,11 @@ curl -X POST -H "X-API-Key: YOUR_API_KEY" http://remote-host:8080/api/v1/sync/yo
 curl -H "X-API-Key: YOUR_API_KEY" http://remote-host:8080/api/v1/scheduler/status
 ```
 
-Maintenance commands that mutate the archive also go through the daemon-backed
-CLI. For example, `docker exec msgvault msgvault repair-encoding`,
-`docker exec msgvault msgvault build-cache`, and
-`docker exec msgvault msgvault rebuild-fts` send HTTP requests to the serving
-process and stream its output back to the terminal instead of opening SQLite in
-a second writer process.
+Maintenance commands that modify the archive also go through the daemon-backed CLI. For example, `docker exec msgvault msgvault repair-encoding`, `docker exec msgvault msgvault build-cache`, and `docker exec msgvault msgvault rebuild-fts` send HTTP requests to the serving process and stream its output back to the terminal instead of opening SQLite in a second writer process.
 
-## 5) Verify Setup
+## 5) Verify the setup
+
+Check that the token is saved, read the daemon logs, and verify that the scheduled sync is registered:
 
 ```bash
 # Check token was saved
@@ -226,13 +218,9 @@ curl -H "X-API-Key: YOUR_API_KEY" http://remote-host:8080/api/v1/scheduler/statu
 ```
 
 !!! tip "Archive Google Calendar too"
-    The same headless-token workflow archives Google Calendar. Authorize with
-    `msgvault add-calendar you@gmail.com` on a machine with a browser, copy the
-    token to the server (it now carries Gmail + Calendar), then add a `[[gcal]]`
-    entry with a cron `schedule` so the daemon syncs it. See
-    [Google Calendar](/docs/usage/calendar/).
+    The same headless-token workflow archives Google Calendar. Authorize with `msgvault add-calendar you@gmail.com` on a machine with a browser, copy the token to the server (it now carries Gmail and Calendar), then add a `[[gcal]]` entry with a cron `schedule` so the daemon syncs it. See [Google Calendar](/docs/usage/calendar/).
 
-After setup, your data directory contains:
+After setup, your data directory looks like this:
 
 ```
 /opt/msgvault/          # (or wherever you deployed the bundle)
@@ -246,19 +234,13 @@ After setup, your data directory contains:
 └── analytics/            # Parquet cache for fast queries
 ```
 
-## Open the Remote Web UI
+## Open the remote Web UI
 
-Open the daemon URL in a browser and sign in with the configured API key. For
-regular remote use, terminate HTTPS at a reverse proxy and add only that
-proxy's address or CIDR to `server.trusted_proxies`; the daemon uses trusted
-forwarding information to mark its browser session cookie `Secure`. Plain HTTP
-on a private network is supported as an explicit tradeoff and produces a UI
-warning because the cookie is not encrypted in transit. See [Web UI](/docs/web-ui/)
-for the complete session and proxy model.
+Open the daemon URL in a browser and sign in with the configured API key. For regular remote use, terminate HTTPS at a reverse proxy and add only that proxy's address or CIDR to `server.trusted_proxies`; the daemon uses trusted forwarding information to mark its browser session cookie `Secure`. Plain HTTP on a private network is supported as an explicit tradeoff and displays a UI warning because the cookie is not encrypted in transit. See [Web UI](/docs/web-ui/) for the complete session and proxy model.
 
-## Using the Local CLI Against Remote
+## Use the local CLI against a remote server
 
-When your local machine config has:
+Add a `[remote]` block to your local machine's config to point CLI commands at the server:
 
 ```toml
 [remote]
@@ -267,16 +249,16 @@ api_key = "YOUR_API_KEY"
 allow_insecure = true
 ```
 
-HTTP-backed CLI commands automatically use the remote API. This includes `sync`, `sync-full`, `verify`, `search` in FTS mode, `query`, `stats`, `list-accounts`, `list-senders`, `list-domains`, `list-labels`, `identity` subcommands, `collection` subcommands, `show-message`, `export-eml`, `export-attachment`, `export-attachments`, `rebuild-fts`, `build-cache`, `cache-stats`, and `tui`.
+With `[remote]` set, HTTP-backed CLI commands use the remote API automatically. This covers `sync`, `sync-full`, `verify`, `search` in FTS mode, `query`, `stats`, `list-accounts`, `list-senders`, `list-domains`, `list-labels`, `identity` subcommands, `collection` subcommands, `show-message`, `export-eml`, `export-attachment`, `export-attachments`, `rebuild-fts`, `build-cache`, `cache-stats`, and `tui`.
 
-Use `--local` only when you explicitly want the command to talk to this machine's local background daemon instead of the configured remote.
+Pass `--local` only when you want a command to talk to this machine's local background daemon instead of the configured remote.
 
 !!! tip "Remote TUI"
-    The interactive TUI (`msgvault tui`) connects to the remote server automatically when `[remote]` is configured. All views, drill-downs, search, filtering, deletion staging, and attachment export work through the selected daemon. Staged deletion manifests are saved on the daemon host; attachment export streams bytes from the daemon and writes the zip file on the CLI machine. Use `--local` to force the local daemon instead of the configured remote server.
+    The interactive TUI (`msgvault tui`) connects to the remote server automatically when `[remote]` is configured. All views, drill-downs, search, filtering, deletion staging, and attachment export work through the selected daemon. Staged deletion manifests are saved on the daemon host, and attachment export streams bytes from the daemon to write the zip file on your CLI machine. Pass `--local` to use the local daemon instead of the configured remote server.
 
 ### Read-only remote clients
 
-Give a laptop or another person read access without handing out the owner `api_key`. Each remote client gets its own key, and the server accepts it on the same listener as the owner key.
+You can give a laptop or another person read access without sharing the owner `api_key`. Each remote client gets its own key, and the server accepts it on the same listener as the owner key.
 
 1. On the server, generate a key file next to `config.toml` (the folder mounted at `/data` in the generated bundle):
 
@@ -288,7 +270,7 @@ Give a laptop or another person read access without handing out the owner `api_k
 
     Follow [server credential permissions](/docs/configuration/#server), including owner-only ACLs on Windows.
 
-2. List it in the server's `config.toml`. The server needs its own API key too, from any [server credential source](/docs/configuration/#server). Relative paths resolve the same way as the server's `api_key_file`.
+2. Add the client entry to the server's `config.toml`. The server needs its own API key too, from any [server credential source](/docs/configuration/#server). Relative paths resolve the same way as the server's `api_key_file`.
 
     ```toml
     [[server.remote_clients]]
@@ -297,9 +279,9 @@ Give a laptop or another person read access without handing out the owner `api_k
     # collections_write = true
     ```
 
-3. Restart the server. Keys load at startup, so restart after adding, removing, or rotating a key.
+3. Restart the server. Keys load at startup, so restart whenever you add, remove, or rotate a key.
 
-4. Copy the key file to the client machine and point `[remote] api_key_file` at it.
+4. Copy the key file to the client machine and point `[remote] api_key_file` at it:
 
     ```toml
     [remote]
@@ -309,13 +291,13 @@ Give a laptop or another person read access without handing out the owner `api_k
 
     For a plain HTTP URL on a trusted network, such as `http://nas.tail12345.ts.net:8080`, also set `allow_insecure = true`.
 
-Reach the server over the same private network as the owner key, such as Tailscale. If you put an HTTPS reverse proxy on that network in front of the main listener, forward the `X-Api-Key` header unchanged. A reader key still reads the whole archive, so the advice in [Security Notes](#security-notes) about not exposing the server to the internet applies to it too.
+Connect over the same private network as the owner key, such as Tailscale. If you place an HTTPS reverse proxy on that network in front of the main listener, forward the `X-Api-Key` header unchanged. Because a reader key still reads the whole archive, the advice in [Security Notes](#security-notes) about keeping the server off the public internet applies to it too.
 
-A remote client key can search, show messages and whole threads, run `export-messages`, export original or raw MIME and attachments, and list accounts, collections, identities, and stats. With `collections_write = true` it can also create, edit, and delete collections. Aggregate views aren't available, so `list-senders`, `list-domains`, `list-labels`, `query`, vector search, `tui`, and `mcp` fail with a remote client key. Every other request gets HTTP 403, including settings, token upload, SQL queries, sync, backups, agent tokens, the Web UI, `/openapi.json`, and `/debug/pprof/`.
+A remote client key can search, show messages and whole threads, run `export-messages`, export original or raw MIME and attachments, and list accounts, collections, identities, and stats. With `collections_write = true`, it can also create, edit, and delete collections. Aggregate views are not available, so `list-senders`, `list-domains`, `list-labels`, `query`, vector search, `tui`, and `mcp` fail with a remote client key. Every other request returns HTTP 403, including settings, token upload, SQL queries, sync, backups, agent tokens, the Web UI, `/openapi.json`, and `/debug/pprof/`.
 
-Direct connections retain [API rate limiting](/docs/api-server/#rate-limiting), so a throttled thread export keeps files completed before the failed request.
+Direct connections keep [API rate limiting](/docs/api-server/#rate-limiting), so a throttled thread export retains any files completed before the failed request.
 
-Remote client responses have fixed limits:
+Remote client responses enforce fixed limits:
 
 | Limit | Value | Response when exceeded |
 |---|---|---|
@@ -325,19 +307,19 @@ Remote client responses have fixed limits:
 | Whole-thread export (`export-eml --thread`) | 500 messages | 413 `remote_thread_too_large` |
 | Attachment | 1 GiB | 413 `remote_attachment_too_large` |
 
-A reader key can't show a message whose text exceeds 64 MiB or list that message's attachments. When stored text is missing, the raw MIME used to build message details must also fit the 64 MiB limit. `export-eml` still exports raw MIME when it fits that limit.
+A reader key cannot show a message whose text exceeds 64 MiB or list that message's attachments. When stored text is missing, the raw MIME used to build message details must also fit within the 64 MiB limit. `export-eml` still exports raw MIME when it fits that limit.
 
 ## Platform Notes
 
 ### Synology DSM
 
-1. Install **Container Manager** (Docker) from Package Center
-2. Create a shared folder for data (e.g., `/volume1/docker/msgvault`)
-3. Use Container Manager UI or SSH to run docker-compose
+1. Install **Container Manager** (Docker) from **Package Center**.
+2. Create a shared folder for data (for example, `/volume1/docker/msgvault`).
+3. Start the service using the **Container Manager** UI or over SSH.
 
-Synology uses ACLs that can override standard Unix permissions. The generated bundle already includes `user: root` in docker-compose.yml to handle this. If you're writing your own Compose file, add `user: root` to the service.
+Synology uses ACLs that can override standard Unix permissions. The generated bundle includes `user: root` in `docker-compose.yml` to handle this. If you write your own Compose file, add `user: root` to the service.
 
-Via SSH:
+To start the service over SSH:
 
 ```bash
 cd /volume1/docker/msgvault
@@ -346,13 +328,13 @@ docker-compose up -d
 
 ### QNAP
 
-1. Install **Container Station** from App Center
-2. Create a folder for data (e.g., `/share/Container/msgvault`)
-3. Use Container Station or SSH to run docker-compose
+1. Install **Container Station** from **App Center**.
+2. Create a folder for data (for example, `/share/Container/msgvault`).
+3. Start the service using **Container Station** or over SSH.
 
 ### Raspberry Pi
 
-Works on Pi 4 and Pi 5 with a 64-bit OS:
+msgvault runs on Raspberry Pi 4 and Pi 5 with a 64-bit OS:
 
 ```bash
 # Verify 64-bit OS
@@ -362,16 +344,18 @@ uname -m  # Should show aarch64
 docker-compose up -d
 ```
 
-Initial sync of large mailboxes will be slower on Pi hardware. Use `--limit` to test with a small batch first.
+Initial sync of large mailboxes is slower on Pi hardware. Use `--limit` to test with a small batch first.
 
 ## Security Notes
 
-- **Use Tailscale.** The recommended way to access your NAS remotely is via [Tailscale](https://tailscale.com/). It encrypts all traffic and avoids the need for TLS certificates, port forwarding, or reverse proxies. Use your Tailscale hostname (e.g., `http://nas.tail12345.ts.net:8080`) with `--allow-insecure`.
-- **API key protects all API access.** The server requires `api_key` for non-loopback addresses. Anyone with the key can read your entire archive, so treat it like a password. [Remote client keys](#read-only-remote-clients) can also read the entire archive, but can't change settings or run syncs.
-- **Don't expose port 8080 to the internet.** msgvault is designed for trusted networks. If you need internet access, use Tailscale rather than opening ports on your router.
-- The generated bundle sets `user: root` in Docker Compose, which works around common NAS ACL quirks (for example Synology). On a standard Linux server you can change this to a non-root user.
+- **Use Tailscale.** The recommended way to reach your NAS remotely is through [Tailscale](https://tailscale.com/). It encrypts all traffic and avoids TLS certificates, port forwarding, or reverse proxies. Use your Tailscale hostname (for example, `http://nas.tail12345.ts.net:8080`) with `--allow-insecure`.
+- **Protect your API key.** The server requires `api_key` for non-loopback addresses. Anyone with the key can read your entire archive, so treat it like a password. [Remote client keys](#read-only-remote-clients) can also read the entire archive, though they cannot change settings or run syncs.
+- **Keep port 8080 off the internet.** msgvault is built for trusted networks. If you need internet access, use Tailscale instead of opening ports on your router.
+- **Adjust the container user on standard Linux.** The generated bundle sets `user: root` in Docker Compose to work around common NAS ACL quirks (for example on Synology). On a standard Linux server, you can change this to a non-root user.
 
-## Container Management
+## Manage the container
+
+Common Docker commands for inspecting, running commands in, and updating the container:
 
 ```bash
 # View logs
@@ -396,20 +380,13 @@ docker-compose up -d
 docker-compose down
 ```
 
-`restart` does not check the registry or replace the image. Generated bundles
-set `pull_policy: always`, so `up -d` checks the configured tag in GHCR. A
-version-pinned service stays on that version until you edit `image`. Back up
-before upgrading and keep the client and daemon versions compatible. Then use
-`pull` followed by `up -d` to deploy the selected image.
+`restart` does not check the registry or replace the image. Generated bundles set `pull_policy: always`, so `up -d` checks the configured tag in GHCR. A version-pinned service stays on that version until you edit `image`. Back up before upgrading and keep client and daemon versions compatible, then run `pull` followed by `up -d` to deploy the selected image.
 
-Bundles generated before `pull_policy: always` was added are not rewritten
-automatically. Existing installations should either regenerate the bundle,
-add `pull_policy: always` to the service manually, or keep updating explicitly
-with `docker compose pull` followed by `docker compose up -d`.
+Bundles generated before `pull_policy: always` was added are not rewritten automatically. For existing installations, regenerate the bundle, add `pull_policy: always` to the service manually, or continue updating explicitly with `docker compose pull` followed by `docker compose up -d`.
 
-### Health Checks
+### Health checks
 
-The container includes a health check that polls `/health` every 30 seconds.
+The container includes a health check that polls `/health` every 30 seconds:
 
 ```bash
 docker inspect --format='{{.State.Health.Status}}' msgvault
@@ -427,15 +404,16 @@ tar -czf msgvault-backup-$(date +%Y%m%d).tar.gz ./data
 docker-compose start
 ```
 
-Critical files:
-- `msgvault.db` — email metadata and bodies
-- `tokens/` — OAuth tokens (re-auth required if lost)
-- `config.toml` — configuration
-- `attachments/` — email attachments (large, optional if you can re-sync)
+Critical files to include:
 
-## Cron Schedule Reference
+- `msgvault.db`: email metadata and bodies.
+- `tokens/`: OAuth tokens (you must re-authorize if these are lost).
+- `config.toml`: server configuration.
+- `attachments/`: email attachments (large, optional if you can re-sync).
 
-The `schedule` field in `[[accounts]]` uses standard cron format (5 fields):
+## Cron schedule reference
+
+The `schedule` field in `[[accounts]]` uses standard five-field cron format:
 
 ```
 ┌───────────── minute (0-59)
@@ -460,7 +438,7 @@ The `schedule` field in `[[accounts]]` uses standard cron format (5 fields):
 
 ### Export fails with HTTPS required
 
-`msgvault export-token` requires HTTPS by default. If your endpoint is `http://`, add `--allow-insecure`.
+`msgvault export-token` requires HTTPS by default. If your endpoint uses `http://`, add `--allow-insecure`.
 
 ### 401/authorization errors from export
 
@@ -468,7 +446,7 @@ Check that `X-API-Key` matches the server's `[server] api_key` and that `/api/v1
 
 ### Sync fails with "no history ID" or "run full sync first"
 
-Scheduled syncs and the public sync API run incremental syncs. You must run a full sync first through the daemon-backed CLI (see [Run Initial Full Sync](#4-run-initial-full-sync)):
+Scheduled syncs and the public sync API run incremental syncs. Run a full sync first through the daemon-backed CLI (see [Run Initial Full Sync](#4-run-initial-full-sync)):
 
 ```bash
 docker exec msgvault msgvault sync-full you@gmail.com
@@ -476,10 +454,10 @@ docker exec msgvault msgvault sync-full you@gmail.com
 
 ### Account not syncing after import
 
-Verify the account exists in the server config:
+Check that the account exists in the server config:
 
 ```bash
 curl -H "X-API-Key: YOUR_API_KEY" http://remote-host:8080/api/v1/accounts
 ```
 
-If missing, re-run `export-token` without `--upload-only`, which also posts account metadata.
+If the account is missing, run `export-token` again without `--upload-only`, which also posts account metadata.

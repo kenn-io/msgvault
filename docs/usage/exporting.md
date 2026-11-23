@@ -4,8 +4,9 @@ title: Exporting Data
 description: Export bounded message windows, .eml files, and attachments.
 ---
 
-Take message content and attachment files out of msgvault without contacting
-their original providers. Choose the format for your next use:
+You can export message content and attachment files from msgvault without
+contacting their original providers. Pick the format that fits what you want to
+do next:
 
 | You need | Export path |
 |---|---|
@@ -14,9 +15,9 @@ their original providers. Choose the format for your next use:
 | One file or all files from a message | [Attachment exports](#export-a-single-attachment) |
 | Selected attachments from the terminal browser | [TUI attachment export](/docs/usage/tui/) |
 
-Messages deleted from their source remain exportable while their local archive
-copies exist. [Local garbage collection](/docs/usage/deletion/#permanently-purge-source-deleted-mail-from-the-local-archive)
-can remove those copies.
+You can still export messages deleted from their source as long as their local
+archive copies exist. [Local garbage collection](/docs/usage/deletion/#permanently-purge-source-deleted-mail-from-the-local-archive)
+can remove those local copies.
 
 ## Export a bounded message window
 
@@ -32,11 +33,12 @@ msgvault export-messages \
   > messages.jsonl
 ```
 
-`--start` is inclusive and `--end` is exclusive. Both bounds are required
-RFC3339 timestamps. Repeat `--message-type` to include exact message types, or
-omit it to include every type. Repeat `--source` with a stable
-`type:identifier` selector, or omit it to include every source. The first colon
-separates the source type; any remaining colons belong to the identifier.
+The `--start` bound is inclusive and `--end` is exclusive. Both flags are
+required and take RFC3339 timestamps. Repeat `--message-type` to select exact message
+types, or leave it out to include every type. Repeat `--source` with a stable
+`type:identifier` selector to filter by source, or leave it out to include every
+source. The first colon separates the source type from the identifier, and any
+remaining colons belong to the identifier.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -47,52 +49,53 @@ separates the source type; any remaining colons belong to the identifier.
 | `--person-id` | all | Limit to messages involving the saved person's bound participants |
 | `--format` | `jsonl` | Output format; supports only `jsonl` |
 
-To export a saved person's correspondence, add their durable person ID:
+To export correspondence for a saved person, pass their durable person ID:
 
 ```bash
 msgvault export-messages --person-id 42 \
   --start 2026-07-01T00:00:00Z --end 2026-08-01T00:00:00Z > person-42.jsonl
 ```
 
-This uses the person's bound participant identities. It does not infer new
-identity links during export. See [People](/docs/usage/people/) for creating and
-reviewing those bindings.
+This filter uses the person's bound participant identities and does not infer
+new identity links during export. See [People](/docs/usage/people/) to create
+and review those bindings.
 
 ### Stream contract for consumers
 
-Stdout contains one compact JSON object per line. The
-`msgvault-message-export/1` stream always has these phases:
+Standard output contains one compact JSON object per line. The
+`msgvault-message-export/1` stream always follows these phases:
 
 ```text
 manifest -> source* -> conversation* -> message* -> complete
 ```
 
-The manifest records the UTC window and normalized filters. Source records use
-`source_type` plus `identifier` as their stable key and include nullable
-`last_successful_sync_at` provenance. Conversation records use the source key
-plus conversation `id`; their closed `conversation_type` vocabulary is
-`email_thread`, `channel`, `thread`, `direct_chat`, `group_chat`, `meeting`,
-`calendar`, and `other`. Message records use the source key plus message `id`
-and include full normalized text, a nullable normalized author, `occurred_at`,
-and `deleted_from_source`.
+The manifest records the UTC window and normalized filters. Each source record
+uses `source_type` and `identifier` as its stable key and includes a nullable
+`last_successful_sync_at` timestamp for provenance. Each conversation record
+uses the source key and conversation `id`, with a closed `conversation_type`
+vocabulary of `email_thread`, `channel`, `thread`, `direct_chat`, `group_chat`,
+`meeting`, `calendar`, and `other`. Each message record uses the source key and
+message `id`, and includes full normalized text, a nullable normalized author,
+`occurred_at`, and `deleted_from_source`.
 
-Consumers should require one manifest first, phase order, one completion record
-last, and completion counts equal to observed record counts. A command failure
-after streaming begins deliberately leaves no completion record, making a
-partial export invalid. Explicitly selected sources still produce source
-records when the window is empty unless `--person-id` narrows the export, in
-which case only sources containing in-scope messages appear. A selector that
-does not exist fails before stdout begins.
+Downstream consumers should require one manifest first, the phase order above,
+one completion record last, and completion counts that match the observed record
+counts. If the command fails after streaming starts, it deliberately omits the
+completion record, which marks a partial export as invalid. Explicitly selected
+sources still produce source records when the time window is empty, unless you
+narrow the export with `--person-id`, in which case only sources with in-scope
+messages appear. If you pass a selector that does not exist, the command fails
+before writing anything to stdout.
 
-Output order is deterministic for an unchanged archive and command version.
-The command reads the configured local or remote daemon archive, does not load
-provider credentials, and never starts a sync. Exported message content is as
-sensitive as the archive itself; redirect it only to appropriately protected
-storage.
+For an unchanged archive and command version, the output order is deterministic.
+The command reads from your configured local or remote daemon archive, does not
+load provider credentials, and never starts a sync. Exported message content is
+as sensitive as the archive itself. Redirect it only to storage with appropriate
+protection.
 
 ## Export as EML
 
-Export a single message as a standard `.eml` file:
+To export a single message as a standard `.eml` file, run `export-eml`:
 
 ```bash
 # By internal message ID
@@ -110,15 +113,16 @@ msgvault export-eml 18abc123def --output -
 | `<id>` | Internal message ID or source message ID |
 | `-o`, `--output` | Output file path (default: `<source-message-id>.eml`; use `-` for stdout) |
 
-The exported `.eml` contains the original raw MIME bytes preserved during sync.
-To write a conversation as numbered `.eml` files, use
+The exported `.eml` file contains the original raw MIME bytes preserved during
+sync. To write a conversation as numbered `.eml` files, run
 `msgvault export-eml <id> --thread --output DIR`. See the
 [command reference](/docs/cli-reference/#export-eml) for reference resolution,
 account selection, and skipped-message behavior.
 
 ## Export a single attachment
 
-Export an attachment by its SHA-256 content hash. Get the hash from `show-message --json`:
+You can export an attachment by its SHA-256 content hash. To find the hash, run
+`show-message --json`:
 
 ```bash
 # Find the content hash
@@ -143,11 +147,14 @@ msgvault export-attachment <content-hash> --json
 | `--base64` | Output raw base64 to stdout |
 | `--json` | Output as JSON with base64-encoded data |
 
-The `--json`, `--base64`, and `--output` flags are mutually exclusive.
+You cannot combine `--json` and `--base64`, and you cannot combine either flag
+with an `--output` file path. Passing `-o -` to write to stdout is allowed with
+either flag.
 
 ## Export all attachments from a message
 
-Export every attachment from a message as individual files with their original filenames:
+To export every attachment from a message as individual files with their
+original filenames, run `export-attachments`:
 
 ```bash
 # Export all attachments to the current directory
@@ -164,4 +171,5 @@ msgvault export-attachments 18f0abc123def
 |---|---|
 | `-o`, `--output` | Output directory (default: current directory) |
 
-Filenames are sanitized and deduplicated automatically. Existing files are never overwritten — a numeric suffix is appended on conflict.
+msgvault sanitizes and deduplicates filenames automatically. It never overwrites
+existing files, and appends a numeric suffix when a filename conflicts.

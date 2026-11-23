@@ -5,27 +5,28 @@ description: Follow feeds and keep every item msgvault has seen, searchable next
 ---
 
 Follow the blogs, release pages, and other feeds you read, and keep every item
-searchable next to your mail and chats. msgvault fetches the feeds itself, so
-you need no feed reader or account, and it keeps items after a feed drops
-them.
+searchable alongside your mail and chats. msgvault fetches feeds directly, so
+you do not need a separate feed reader or account, and it keeps items after a
+feed drops them.
 
 ## Follow feeds
 
-Pass each feed's URL, or the OPML file a feed reader exports:
+Pass each feed's URL, or pass an OPML file exported from a feed reader:
 
 ```bash
 msgvault source feeds add https://example.com/releases.atom
 msgvault source feeds add --opml ~/Downloads/subscriptions.opml
 ```
 
-`source feeds add` fetches each URL first. A URL that is not a reachable RSS 2.0, Atom,
-or JSON feed is reported and not followed. The items a feed lists now are
-archived right away. `--opml` follows every feed in the file without fetching
-them; the next sync fetches them.
+When you pass feed URLs, `source feeds add` fetches each URL first and archives
+the items currently listed in the feed right away. If a URL is not a reachable
+RSS 2.0, Atom, or JSON feed, msgvault reports the error and does not follow it.
+When you pass `--opml`, msgvault follows every feed in the file without fetching
+them immediately, and the next sync fetches their items.
 
 ## Keep feeds current
 
-Fetch followed feeds on a schedule with the `[feeds]` block in `config.toml`:
+To fetch followed feeds on a schedule, add a `[feeds]` block to `config.toml`:
 
 ```toml
 [feeds]
@@ -33,32 +34,32 @@ enabled = true
 schedule = "*/30 * * * *"
 ```
 
-Run `msgvault source feeds sync` to fetch them now. Once the schedule is set, the
-Sources page offers **Sync now** for the Feeds source.
+To fetch feeds immediately, run `msgvault source feeds sync`. After you set a
+schedule, the **Sources** page shows **Sync now** for the **Feeds** source.
 
-- An unchanged feed isn't downloaded again. `source feeds sync --full` downloads
-  every feed again.
-- Each sync fetches the least recently checked feeds first, so a scheduled
-  sync that pauses for other work picks up the feeds it didn't reach.
-- A feed that fails is recorded on the sync run, and the other feeds still
-  sync. `msgvault source feeds list` shows each feed's last check and its last error.
-  A sync counts as failed, and the Sources page keeps its last good sync,
-  only when every feed fails.
+- If a feed has not changed since the last check, msgvault does not download
+  it again. To download every feed again, run `source feeds sync --full`.
+- Each sync starts with the least recently checked feeds, so if a scheduled
+  sync pauses for other work, the next run picks up the feeds it did not reach.
+- If a feed fails, msgvault records the error on the sync run and continues
+  syncing the other feeds. Run `msgvault source feeds list` to see each feed's
+  last check and last error. A sync counts as failed, and the **Sources** page
+  keeps its last good sync, only when every feed fails.
 
 ## Feeds on your own network
 
-A feed whose URL names a private address or a local name, such as
-`http://192.168.1.20/feed.xml` or `http://nas.local/feed.xml`, is fetched from
-your network. A feed whose URL names a public host may only reach public
-addresses: a redirect, or a host name that resolves to a private, loopback or
-reserved address, fails the fetch, so a publisher can't send msgvault to your
-own machine or network. To follow an internal feed whose host name resolves to
-a private address, add it by that address.
+When a feed URL uses a private address or a local name, such as
+`http://192.168.1.20/feed.xml` or `http://nas.local/feed.xml`, msgvault fetches
+it from your network. A feed URL with a public host can only reach public
+addresses. If a public host redirects or resolves to a private, loopback, or
+reserved address, the fetch fails, so a publisher cannot direct msgvault to
+your own machine or network. To follow an internal feed whose hostname resolves
+to a private address, add it using that address.
 
 ## What gets archived
 
-All feeds belong to one source, **Feeds** (type `feed`). Each feed is a
-conversation named after the feed, and each item is a message of type
+All feeds belong to one source, **Feeds** (type `feed`). Each feed becomes a
+conversation named after the feed, and each item becomes a message of type
 `feed_item`:
 
 ```bash
@@ -73,29 +74,35 @@ msgvault search "release notes" --message-type feed_item
 | Published time, else updated time | The message date; an item without one is dated when first seen |
 | Categories, enclosures, and image | The message's metadata |
 
-Each item is archived once, keyed by its RSS `guid`, Atom `id`, or JSON Feed
-`id`, else by its link, within its feed: feeds promise unique IDs only within
-themselves, so an item that two feeds publish is archived in each. A later
-edit to an item does not change the archived copy.
+msgvault archives each item once per feed, identifying it by its RSS `guid`,
+Atom `id`, or JSON Feed `id`, or by its link if no ID is present. Feeds
+guarantee unique IDs only within themselves, so if two feeds publish the same
+item, msgvault archives a copy in each. Later edits to an item do not change
+the archived copy.
 
-The sender follows the item's author. An author with a URL is that site's
-participant. An author with only a name is a participant of that feed alone,
-so two feeds' "Admin" stay two people. An item without an author is from the
-feed's site. Author emails are ignored: many feeds publish one placeholder
-address for every author.
+The sender comes from the item's author. If an author includes a URL, msgvault
+treats them as a participant for that site. If an author has only a name,
+msgvault scopes that participant to the feed, so an "Admin" in two different
+feeds stays two separate people. Items without an author come from the feed's
+site. msgvault ignores author email addresses. Many feeds publish one
+placeholder address for every author.
 
 ## Stop following a feed
+
+To stop following a feed while keeping its archived items searchable, remove
+its URL:
 
 ```bash
 msgvault source feeds remove https://example.com/releases.atom
 ```
 
-Archived items stay searchable. `source feeds add` with the same URL follows it again.
-To delete every feed item instead, run
-`msgvault remove-account --type feed feeds`, which cannot be undone.
+To follow the feed again later, run `source feeds add` with the same URL. To
+delete every archived feed item instead, run
+`msgvault remove-account --type feed feeds`. This action cannot be undone.
 
 ## Limitations
 
-- Give the feed's own URL. A website's home page is not searched for its feed.
-- Feeds that need a login are not supported.
-- msgvault archives items; it does not track which ones you have read.
+- Provide the feed's direct URL. msgvault does not search a website's home page
+  for a feed.
+- Feeds that require a login are not supported.
+- msgvault archives items and does not track which ones you have read.
