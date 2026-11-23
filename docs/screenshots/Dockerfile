@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.28
+# syntax=docker/dockerfile:1.29
 # Stage 1: Build msgvault binary
 FROM golang:1.27.4-bookworm AS builder
 

@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.28
+# syntax=docker/dockerfile:1.29
 # Runtime for the Web UI documentation captures. build-generated-assets.sh
 # passes the @playwright/test version from web/package.json, so the image's
 # Chromium matches it. Go and Bun come from their official images at the
