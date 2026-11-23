@@ -285,6 +285,7 @@ type mcpChat struct {
 	Peer   *struct {
 		UserID jsontext.Value `json:"userId"`
 	} `json:"peer"`
+	LastMessageID jsontext.Value `json:"lastMessageId"`
 }
 
 // Discover enumerates the complete catalog authorized by the OAuth grant.
@@ -326,7 +327,21 @@ func (c *MCPClient) Discover(ctx context.Context) ([]Conversation, error) {
 			if chat.Kind != "dm" && chat.Kind != "home_thread" && chat.Kind != "space_chat" {
 				return nil, fmt.Errorf("%w: unknown catalog conversation kind", ErrContract)
 			}
-			out = append(out, Conversation{ID: id, Title: chat.Title, Type: conversationType(chat.Kind), MemberCountKnown: false, Raw: item})
+			conversation := Conversation{ID: id, Title: chat.Title, Type: conversationType(chat.Kind), MemberCountKnown: false, Raw: item}
+			// Older servers omit lastMessageId; null means the chat is empty.
+			if chat.LastMessageID != nil {
+				if string(chat.LastMessageID) != "null" {
+					var rawLast string
+					if err := json.Unmarshal(chat.LastMessageID, &rawLast); err != nil {
+						return nil, fmt.Errorf("%w: malformed catalog last message", ErrContract)
+					}
+					if conversation.LastMessageID, err = positiveID(rawLast); err != nil {
+						return nil, err
+					}
+				}
+				conversation.LastMessageKnown = true
+			}
+			out = append(out, conversation)
 			last = id
 		}
 		if string(v.Next) == "null" {

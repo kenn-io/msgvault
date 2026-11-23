@@ -32,7 +32,12 @@ type Conversation struct {
 	PeerUserID                  int64 // Verified direct-chat peer; zero when unavailable.
 	MemberCount                 int
 	MemberCountKnown            bool
-	Raw                         jsontext.Value
+	// LastMessageID is the newest message ID a catalog listed for the chat;
+	// zero with LastMessageKnown means the chat has no messages. Without
+	// LastMessageKnown, the catalog did not say and the chat must be read.
+	LastMessageID    int64
+	LastMessageKnown bool
+	Raw              jsontext.Value
 }
 
 type Message struct {
