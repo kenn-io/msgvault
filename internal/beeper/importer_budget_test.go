@@ -98,6 +98,51 @@ func TestImportStopsAtChatBoundaryAndHoldsWatermark(t *testing.T) {
 	assert.True(finished.LastSyncAt.Valid, "a complete pass advances source freshness")
 }
 
+func TestImportResumesAfterMixedMediaFailures(t *testing.T) {
+	t.Parallel()
+	f := newFakeBeeper(t)
+	chat := mediaChat()
+	chat.Msgs[0].Attachments = append(chat.Msgs[0].Attachments, map[string]any{
+		"id": "mxc://beeper.local/transient", "type": "img", "mimeType": "image/png", "fileName": "other.png",
+	})
+	f.addChat(chat)
+	f.addChat(budgetTestChat("!later:beeper.local", 1, chat.LastActivity.Add(time.Hour)))
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadGateway, `{"message":"Media no longer exists","code":"SERVE_ASSET_ERROR"}`)
+	f.setAssetError("mxc://beeper.local/transient", http.StatusBadGateway, `{"message":"temporary failure"}`)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	opts := mediaImportOptions(t)
+	opts.ShouldStop = stopAfterMessagePages(f, 1)
+
+	first, err := imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	require.True(t, first.Stopped)
+	assert.EqualValues(t, 1, first.AttachmentsUnavailable)
+	assert.EqualValues(t, 1, first.AttachmentsPending)
+	assert.EqualValues(t, 1, first.Errors)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "signal")
+	require.NoError(t, err)
+	assert.False(t, src.LastSyncAt.Valid)
+	assert.Equal(t, 1, countBeeperMessages(t, imp))
+
+	opts.ShouldStop = nil
+	second, err := imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	assert.False(t, second.Stopped)
+	assert.Equal(t, 2, countBeeperMessages(t, imp))
+	src, err = st.GetSourceByID(src.ID)
+	require.NoError(t, err)
+	assert.True(t, src.LastSyncAt.Valid)
+	var unavailable, pending int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments WHERE attachment_state = 'unavailable'`).Scan(&unavailable))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments WHERE attachment_state = 'failed'`).Scan(&pending))
+	assert.Equal(t, 1, unavailable)
+	assert.Equal(t, 1, pending)
+	var itemErrors int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sync_run_items WHERE error_kind = 'beeper_media_error'`).Scan(&itemErrors))
+	assert.Positive(t, itemErrors)
+}
+
 func TestStoppedImportUpdatesTouchedConversationStats(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
