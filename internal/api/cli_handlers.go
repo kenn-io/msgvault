@@ -1801,6 +1801,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"embeddings",
 		"export-discord",
 		"export-messages",
+		"diagnose-gmail-inventory",
 		"gc",
 		"import",
 		"import-maildir",
