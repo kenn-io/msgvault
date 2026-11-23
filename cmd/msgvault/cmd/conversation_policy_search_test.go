@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/spf13/cobra"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,7 @@ func TestConversationPolicyIncludeColdNeverReranksCold(t *testing.T) {
 			resetSearchFlags()
 			t.Cleanup(resetSearchFlags)
 			root := newTestRootCmd()
-			root.AddCommand(searchCmd)
+			attachSearchCommand(t, root)
 			root.SetOut(io.Discard)
 			root.SetErr(io.Discard)
 			root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
@@ -69,7 +70,7 @@ func TestConversationPolicyIncludeColdRemoteRoundTrip(t *testing.T) {
 			cfg.Remote.URL = srv.URL
 			cfg.Remote.AllowInsecure = true
 			root := newTestRootCmd()
-			root.AddCommand(searchCmd)
+			attachSearchCommand(t, root)
 			root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 			root.SetArgs([]string{"search", "subject:needle | subject:other", "--include-cold", "--json"})
 			err := root.Execute()
@@ -82,4 +83,18 @@ func TestConversationPolicyIncludeColdRemoteRoundTrip(t *testing.T) {
 			assertions.Zero(calls.Load())
 		})
 	}
+}
+
+// attachSearchCommand runs the global search command under a test root. Adding
+// a command reparents it, so the cleanup returns it to the real root; otherwise
+// later tests that run search through rootCmd inherit this test's root and its
+// canceled context.
+func attachSearchCommand(t *testing.T, root *cobra.Command) {
+	t.Helper()
+	root.AddCommand(searchCmd)
+	t.Cleanup(func() {
+		root.RemoveCommand(searchCmd)
+		rootCmd.RemoveCommand(searchCmd)
+		rootCmd.AddCommand(searchCmd)
+	})
 }
