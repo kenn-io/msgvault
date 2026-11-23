@@ -201,7 +201,7 @@ func TestEnsureConversationCancellation(t *testing.T) {
 func TestEnsureConversationCancellationDuringMembership(t *testing.T) {
 	// Each member's resolution and membership commit are separate transactions.
 	// Room policy is refreshed before the first member is resolved.
-	for _, at := range []int{1, 2, 3, 4, 5, 6, 7} {
+	for _, at := range []int{1, 2, 3, 4, 5, 6, 7, 8} {
 		t.Run(fmt.Sprintf("begin %d", at), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st := testutil.NewTestStore(t)
@@ -236,7 +236,7 @@ func TestEnsureConversationCancellationDuringMembership(t *testing.T) {
 			assert.Zero(handler.afterCancel, "no later member or roster write may attempt BeginTx")
 			assert.Empty(handler.warnings)
 			want := []int64{oldID}
-			if at >= 7 {
+			if at >= 8 {
 				want = append(want, firstID)
 			}
 			assert.Equal(want, rosterMembers(t, st, sourceID, "!cancel:example.com"))

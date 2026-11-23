@@ -3,6 +3,7 @@ package beeper
 import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/beeperidentity"
 	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/testutil"
 	"testing"
@@ -74,4 +75,41 @@ func TestBeeperRosterDemotionPreservesText(t *testing.T) {
 	var body string
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id=?`), id).Scan(&body))
 	assertions.Equal("Retained synthetic text", body)
+}
+
+// A cold room's incomplete roster still hands the resolver its members'
+// contact details. Mentions and reactions must not use them to merge the
+// member into an independent phone participant.
+func TestColdRoomMentionsAndReactionsStayBare(t *testing.T) {
+	for _, kind := range []string{"mention", "reaction"} {
+		t.Run(kind, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("beeper", "account")
+			requirements.NoError(err)
+			room, err := st.EnsureConversation(t.Context(), source.ID, "cold", "Cold")
+			requirements.NoError(err)
+			requirements.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "cold", conversationpolicy.Cold))
+			existing, err := st.EnsureParticipantByPhone(t.Context(), "+12025550130", "Independent Contact", "sms")
+			requirements.NoError(err)
+			chat := &Chat{ID: "cold", AccountID: "account", Network: "Signal", Type: "group"}
+			chat.Participants.Items = []Participant{{User: User{ID: "member", PhoneNumber: "+12025550130"}}}
+			chat.Participants.HasMore = true
+			imp := NewImporter(st, nil)
+			imp.res.accountID = "account"
+			requirements.NoError(imp.res.useMessageRoster(t.Context(), source.ID, chat, true, true))
+			message := &Message{ID: kind + "-message", SenderID: "sender", Text: "Synthetic text"}
+			if kind == "mention" {
+				message.Mentions = []string{"member"}
+			} else {
+				message.Reactions = []Reaction{{ID: "reaction", ReactionKey: "👍", ParticipantID: "member", Emoji: true}}
+			}
+			requirements.NoError(imp.persistMessage(t.Context(), &chatScope{convID: room, sourceID: source.ID, cs: &ChatState{}}, message, &ImportSummary{}))
+			member, _, err := st.ParticipantByIdentifier("beeper", beeperidentity.Fallback("account", "member"))
+			requirements.NoError(err)
+			assertions.NotZero(member)
+			assertions.NotEqual(existing, member, "cold-room roster details must not merge the member")
+		})
+	}
 }

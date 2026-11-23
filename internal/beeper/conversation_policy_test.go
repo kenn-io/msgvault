@@ -236,3 +236,53 @@ func TestBeeperColdPolicyLateEvidenceDoesNotFailCapture(t *testing.T) {
 	assertions.Empty(kept.Evidence)
 	assertions.False(linked(t, s, left, right))
 }
+
+// A Full room whose roster grows past the participant limit must be demoted
+// before its new members are resolved, so their contact details cannot merge
+// identities.
+func TestBeeperGrownRoomIsDemotedBeforeRichResolution(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	f := newFakeBeeper(t)
+	room := &fakeChat{ID: "growing", AccountID: "account", Network: "Signal", Title: "Room", Type: "group",
+		Participants: []map[string]any{{"id": "@member0:beeper.local"}, {"id": "@member1:beeper.local"}}}
+	f.addChat(room)
+	imp, s, closeServer := newTestImporter(t, f)
+	t.Cleanup(closeServer)
+	sourceID := newBeeperTestSource(t, s, "account")
+	_, err := s.ConfigureConversationPolicy(t.Context(), conversationpolicy.RecommendedSettings(), time.Now())
+	requirements.NoError(err)
+	existing, err := s.EnsureParticipantByPhone(t.Context(), "+12025550131", "Independent Contact", "sms")
+	requirements.NoError(err)
+	opts := ImportOptions{AccountID: "account", rosterState: &rosterWork{}}
+	chat, err := imp.client.GetChat(t.Context(), room.ID)
+	requirements.NoError(err)
+	conversationID, _, _, err := imp.ensureConversation(t.Context(), 0, sourceID, chat, opts, &ImportSummary{})
+	requirements.NoError(err)
+	// The chat sync clears the repair marker and refreshes policy after a visit.
+	requirements.NoError(s.SetConversationRosterRepairPendingContext(t.Context(), conversationID, false))
+	_, err = s.RefreshConversationPolicy(t.Context(), []int64{conversationID}, time.Now())
+	requirements.NoError(err)
+	full, err := s.ConversationFullEligibleContext(t.Context(), conversationID)
+	requirements.NoError(err)
+	requirements.True(full, "a two-member room is within the limit")
+
+	f.mu.Lock()
+	room.Participants = append(room.Participants, map[string]any{"id": "@phone-member:beeper.local", "phoneNumber": "+12025550131"})
+	for i := 2; len(room.Participants) < 22; i++ {
+		room.Participants = append(room.Participants, map[string]any{"id": fmt.Sprintf("@member%d:beeper.local", i)})
+	}
+	f.mu.Unlock()
+	chat, err = imp.client.GetChat(t.Context(), room.ID)
+	requirements.NoError(err)
+	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, chat, opts, &ImportSummary{})
+	requirements.NoError(err)
+	full, err = s.ConversationFullEligibleContext(t.Context(), conversationID)
+	requirements.NoError(err)
+	assertions.False(full, "22 members exceed the limit")
+	member, _, err := s.ParticipantByIdentifier("beeper", beeperidentity.Fallback("account", "@phone-member:beeper.local"))
+	requirements.NoError(err)
+	assertions.NotZero(member)
+	assertions.NotEqual(existing, member, "the demoted room's phone must not merge the member")
+}

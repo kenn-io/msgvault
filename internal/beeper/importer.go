@@ -1143,9 +1143,10 @@ func (imp *Importer) ensureConversation(
 	}
 	// Invalidate earlier proof before any roster writes. Provider self proof
 	// is independent of rich phone/email identity, so the account-scoped
-	// anchors are published first. A room that is not yet Full refreshes its
-	// policy with them, so the user's own activity can promote it before its
-	// members are resolved.
+	// anchors are published first. Policy is then refreshed with them and with
+	// the member count just saved, so the user's own activity can promote the
+	// room, and a roster that outgrew its limit demotes it, before any member
+	// is resolved.
 	needsMembers := work.Phase == rosterPhaseMembers || !work.Verified
 	if needsMembers {
 		owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
@@ -1159,7 +1160,9 @@ func (imp *Importer) ensureConversation(
 			}
 			pid := owners[keys[i]]
 			if pid == 0 {
-				if pid, err = imp.res.resolveID(ctx, items[i].ID, ""); err != nil {
+				// Bare resolution leaves the member's roster details for the
+				// policy-aware resolution below.
+				if pid, err = imp.res.resolveIDFallback(ctx, items[i].ID, ""); err != nil {
 					return 0, false, chatMembership{}, err
 				}
 			}
@@ -1171,13 +1174,11 @@ func (imp *Importer) ensureConversation(
 		if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, anchored); err != nil {
 			return 0, false, chatMembership{}, err
 		}
-		if !full {
-			if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
-				return 0, false, chatMembership{}, err
-			}
-			if full, err = imp.store.ConversationFullEligibleContext(ctx, convID); err != nil {
-				return 0, false, chatMembership{}, err
-			}
+		if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+			return 0, false, chatMembership{}, err
+		}
+		if full, err = imp.store.ConversationFullEligibleContext(ctx, convID); err != nil {
+			return 0, false, chatMembership{}, err
 		}
 	}
 	var bridgePrefix string
@@ -2002,10 +2003,10 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 		sum.mediaErrorsWithMarkers += attachmentErrors
 	}
 
-	if err := imp.persistMentions(ctx, messageID, m, sum); err != nil {
+	if err := imp.persistMentions(ctx, cc.convID, messageID, m, sum); err != nil {
 		return err
 	}
-	if err := imp.persistReactions(ctx, messageID, m, sum); err != nil {
+	if err := imp.persistReactions(ctx, cc.convID, messageID, m, sum); err != nil {
 		return err
 	}
 	// Archive the exact original message JSON. m.Raw is captured verbatim at
@@ -2068,14 +2069,14 @@ func (imp *Importer) recordUnfinished(ctx context.Context, cc *chatScope, m *Mes
 // written: sender attribution lives in messages.sender_id and membership in
 // conversation_participants (WhatsApp-importer precedent), which avoids a
 // messages × group-size row explosion.
-func (imp *Importer) persistMentions(ctx context.Context, messageID int64, m *Message, sum *ImportSummary) error {
+func (imp *Importer) persistMentions(ctx context.Context, convID, messageID int64, m *Message, sum *ImportSummary) error {
 	var ids []int64
 	seen := map[int64]struct{}{}
 	for _, uid := range m.Mentions {
 		if uid == "" || uid == "@room" {
 			continue
 		}
-		pid, err := imp.res.resolveID(ctx, uid, "")
+		pid, err := imp.res.resolveIDForPolicy(ctx, uid, "", convID)
 		if err != nil {
 			return err
 		}
@@ -2094,10 +2095,10 @@ func (imp *Importer) persistMentions(ctx context.Context, messageID int64, m *Me
 // persistReactions replaces the message's reactions from the embedded set.
 // Embedded reactions carry no timestamp; created_at approximates with the
 // target message's timestamp (cosmetic only).
-func (imp *Importer) persistReactions(ctx context.Context, messageID int64, m *Message, sum *ImportSummary) error {
+func (imp *Importer) persistReactions(ctx context.Context, convID, messageID int64, m *Message, sum *ImportSummary) error {
 	reactions := make([]store.ReactionRef, 0, len(m.Reactions))
 	for _, rc := range m.Reactions {
-		pid, err := imp.res.resolveID(ctx, rc.ParticipantID, "")
+		pid, err := imp.res.resolveIDForPolicy(ctx, rc.ParticipantID, "", convID)
 		if err != nil {
 			return err
 		}
