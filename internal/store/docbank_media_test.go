@@ -30,6 +30,10 @@ func newBeeperMediaFixture(t *testing.T) *storetest.Fixture {
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE sources SET source_type = 'beeper', identifier = ? WHERE id = ?`), "signal", f.Source.ID)
 	require.NoError(t, err)
+	// A Beeper importer classifies each room; an unclassified chat room stays
+	// out of default search.
+	_, err = f.Store.RefreshConversationPolicy(t.Context(), []int64{f.ConvID}, time.Now())
+	require.NoError(t, err)
 	return f
 }
 
