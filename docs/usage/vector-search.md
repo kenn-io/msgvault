@@ -835,9 +835,9 @@ To check whether your binary was built with vector support, run:
 msgvault search "probe" --mode vector
 ```
 
-A rebuild-with-vector-backend error tells you the build tag is missing. Any
-other error (`vector_not_enabled`, `index_stale`, and so on) means the binary
-has vector support and is waiting on configuration or backfill.
+A rebuild-with-vector-backend error tells you the build tag is missing. A
+different error (`vector_not_enabled`, `index_stale`, etc.) means the command
+got past the build-tag check and is waiting on configuration or backfill.
 
 To check index health from the stats endpoint, run:
 
