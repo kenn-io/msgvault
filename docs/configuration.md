@@ -267,7 +267,7 @@ training declarations cover that entire path. If you use a logged-in or
 subscription-backed endpoint, including a local gateway, stay within its
 provider terms.
 
-msgvault never stores credentials in `config.toml`:
+People-sweep provider profile credentials are not stored in `config.toml`:
 
 - `credential = "stored"` saves a profile-specific secret in
   `tokens/provider-credentials.json` on every platform and sends it only to the
