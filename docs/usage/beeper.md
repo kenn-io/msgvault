@@ -157,14 +157,18 @@ message text and attachment metadata. To change those limits, adjust the shared
 
 When policy skips a file, msgvault records a reason such as `size_cap` or
 `participant_threshold`. A failed download does not stop the message from being
-archived. Passing `--no-media` for one run leaves pending markers, while a
-disabled media policy leaves excluded markers that become eligible when the
-policy allows them.
+archived. The source's freshness still advances if every failed download has a
+stored pending marker, nothing else in the run failed, and the run was not
+stopped early; the error stays in the run summary either way. Passing
+`--no-media` for one run leaves pending markers, while a disabled media policy
+leaves excluded markers that become eligible when the policy allows them.
 
 Some networks delete old media from their servers. WhatsApp, for example,
 reports `Media is no longer available`. msgvault requests such a file once,
 records it as `unavailable` with reason `source_unavailable`, and never retries
 it.
+
+Beeper's `Media no longer exists` response is also terminal after one request.
 
 Beeper can also report `Media not found`, `M_NOT_FOUND`, or
 `failed to download file: HTTP 404`, sometimes wrapped in an HTTP 502 response.

@@ -385,6 +385,9 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 	assert.Zero(cf.FetchErrors)
 	assert.NotEmpty(cf.LastError)
 	assert.EqualValues(1, sum.Errors)
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "signal")
+	require.NoError(err)
+	assert.True(source.LastSyncAt.Valid, "a stored retry marker must not hold source freshness")
 
 	var msgCount int
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
@@ -419,8 +422,6 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 
 	// History-only accounts can finish downloading already archived media.
 	historyOnly := true
-	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "signal")
-	require.NoError(err)
 	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{HistoryOnly: &historyOnly})
 	require.NoError(err)
 
@@ -473,6 +474,44 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 	for _, req := range f.requests() {
 		assert.NotContains(req, "direction=before", "sync after media backfill must stay incremental: %s", req)
 	}
+}
+
+func TestImportMediaFailureDoesNotHideOtherErrors(t *testing.T) {
+	t.Parallel()
+	f := newFakeBeeper(t)
+	f.addChat(mediaChat())
+	f.addChat(budgetTestChat("!failed:beeper.local", 1, time.Now().Add(-time.Hour)))
+	f.setMessageListFailure("!failed:beeper.local", true)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	sum, err := imp.Import(t.Context(), mediaImportOptions(t))
+	var partial *PartialSyncError
+	require.ErrorAs(t, err, &partial)
+	assert.Positive(t, sum.FetchErrors)
+	assert.Positive(t, sum.AttachmentsPending)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "signal")
+	require.NoError(t, err)
+	assert.False(t, src.LastSyncAt.Valid)
+}
+
+func TestImportMediaFailureWithFailedMarkerWriteHoldsFreshness(t *testing.T) {
+	t.Parallel()
+	f := newFakeBeeper(t)
+	f.addChat(mediaChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	failWrites(t, st, "attachments", "INSERT")
+
+	sum, err := imp.Import(t.Context(), mediaImportOptions(t))
+	require.NoError(t, err)
+	assert.Positive(t, sum.Errors)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "signal")
+	require.NoError(t, err)
+	assert.False(t, src.LastSyncAt.Valid)
+	var count int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&count))
+	assert.Zero(t, count)
 }
 
 func TestImportMediaSizeCap(t *testing.T) {

@@ -259,6 +259,12 @@ func TestGetAssetBytesClassification(t *testing.T) {
 			unavailable: true,
 		},
 		{
+			name:        "instagram expired media wrapped in a 502",
+			responses:   []assetResponse{{status: http.StatusBadGateway, body: `{"message":"Failed to download asset: Transfer failed for mxc://example.test/a: downloadFileWithParams failed: Media no longer exists","code":"SERVE_ASSET_ERROR"}`}},
+			wantCalls:   1,
+			unavailable: true,
+		},
+		{
 			name:        "definitive phrase wins over a bare 404",
 			responses:   []assetResponse{{status: http.StatusNotFound, body: expiredAssetBody}},
 			wantCalls:   1,
