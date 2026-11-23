@@ -1105,6 +1105,11 @@ func (imp *Importer) ensureConversation(
 		if err := imp.store.InvalidateConversationMessagingRouteEvidence(ctx, convID); err != nil {
 			return convID, false, membership, err
 		}
+		// The roster changed, so its stored tier may predate the new member
+		// count. Refresh it before this visit's messages resolve anyone.
+		if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+			return convID, false, membership, err
+		}
 		return convID, false, membership, nil
 	}
 	work := opts.rosterState
