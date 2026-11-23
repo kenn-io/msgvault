@@ -12,7 +12,7 @@ func TestRenderBriefMatchesTheFrozenRenderedForm(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("person-brief-render-v1", BriefRendererPolicyV1)
+	assert.Equal("person-brief-render-v2", BriefRendererPolicyV2)
 
 	archive := &briefFakeArchive{
 		items: []EvidenceItem{
@@ -54,7 +54,7 @@ func TestRenderBriefMatchesTheFrozenRenderedForm(t *testing.T) {
 
 	rendered, err := RenderBrief(parsed, window)
 	require.NoError(err)
-	assert.Equal(BriefRendererPolicyV1, rendered.Policy)
+	assert.Equal(BriefRendererPolicyV2, rendered.Policy)
 	assert.Equal(
 		"Last time you talked (Aug 29, chat): they were preparing for a role change and "+
 			"spending weekends learning to cook. "+
@@ -301,4 +301,33 @@ func TestBriefCitationOrdinalsFailsClosedOnAPointerCountMismatch(t *testing.T) {
 	ordinals, ok = BriefCitationOrdinals(BriefOutput{}, 0)
 	assert.True(ok, "a brief that cites nothing maps nothing and still aligns")
 	assert.Empty(ordinals)
+}
+
+func TestBriefDropHighlightReindexesFollowUps(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	output := BriefOutput{
+		Highlights: []BriefHighlight{{Text: "first"}, {Text: "middle"}, {Text: "last"}},
+		FollowUps: []BriefFollowUp{
+			{Question: "first question", HighlightIndex: 0},
+			{Question: "middle question", HighlightIndex: 1},
+			{Question: "last question", HighlightIndex: 2},
+		},
+	}
+	trimmed, dropped := briefDropHighlight(output, 1)
+	assert.Equal(2, dropped)
+	require.Len(trimmed.Highlights, 2)
+	assert.Equal("last", trimmed.Highlights[1].Text)
+	require.Len(trimmed.FollowUps, 2)
+	assert.Equal("first question", trimmed.FollowUps[0].Question)
+	assert.Equal(0, trimmed.FollowUps[0].HighlightIndex)
+	assert.Equal("last question", trimmed.FollowUps[1].Question)
+	assert.Equal(1, trimmed.FollowUps[1].HighlightIndex)
+
+	sole := BriefOutput{Highlights: []BriefHighlight{{Text: "only"}},
+		FollowUps: []BriefFollowUp{{Question: "only question", HighlightIndex: 0}}}
+	trimmed, dropped = briefDropHighlight(sole, 0)
+	assert.Equal(2, dropped)
+	assert.Empty(trimmed.Highlights)
+	assert.Empty(trimmed.FollowUps)
 }

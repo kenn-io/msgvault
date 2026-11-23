@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-11-06"
 title: Person Briefs
 description: Remember what someone recently shared before your next conversation, with links to the archived sources.
 ---
@@ -48,8 +48,9 @@ Running `person brief generate` again bypasses that delay.
 ## Read and manage briefs
 
 In the Web UI, open the person's **Details** tab in **People**, and find **Last time we
-talked**. Enroll or generate there, expand a sentence to see
-its sources, and use the history to inspect version dates and status. To read
+talked**. Enroll or generate there, expand a sentence to see its details and
+sources, and use the history to inspect version dates and status. Event details
+show the saved event sentence. To read
 earlier paragraphs and sources, run `msgvault person brief history 7 --json`.
 If a source cannot be tied to an individual sentence, the card labels it as a source for the whole
 brief. Turning enrollment off hides the brief and history in this card; saved
@@ -74,12 +75,77 @@ can read the current brief with `get_person_profile`; MCP does not generate,
 reject, or enroll briefs. See [MCP brief text](/docs/usage/chat/#brief-text-is-data)
 and the [brief API](/docs/api-server/#get-apiv1peopleidbrief) for response details.
 
+## Follow up on temporary events
+
+Briefs can remember an explicit temporary event the person mentioned, such as a
+move, interview, or trip. Each event keeps its announcement quote and, when
+available, a later outcome quote. It stays in the existing brief history;
+it does not become a profile attribute, observation, or task.
+
+| State | What the brief shows |
+|---|---|
+| Upcoming | The event summary, without a question that assumes it has happened. |
+| Follow-up | A question about the event. A dated event enters this state at midnight UTC after its full calendar day. An undated event gets a neutral check-in. |
+| Resolved | The summary marked resolved, with no follow-up question. This needs a later explicit outcome or cancellation; a passed date or silence is insufficient. |
+
+This is part of scheduled brief generation, with the same enrollment, tracking,
+provider consent, source limits, and budgets. Reading a saved brief makes no
+provider call. Existing briefs get one initial event-aware refresh after an
+upgrade, using the configured item, byte, and budget limits. A date becoming
+due can trigger a new version without another message. New activity can refresh
+retained unresolved events before the usual seven-day interval, so an outcome that reaches the evidence window can retire its question.
+A failed refresh uses the normal retry delay.
+
+Event memory holds at most eight events, with one event per source message.
+A new event is not saved while all eight retained events are unresolved; a
+resolved slot can be reused.
+The sweep re-reads their sources even after they leave the ordinary overlap
+window. Supported prior events survive a provider omission, and a supported
+resolution cannot be reopened by omitting its outcome. Unresolved events remain
+eligible for refresh until an outcome or source loss. Resolved entries can make
+room under evidence-window limits. If supported active memory and its sources
+cannot fit, the refresh defers and preserves the current brief. This deferral may
+appear as an internal failure; increase `max_items` or `max_bytes` under
+`[people.sweep.brief]`, or reject the brief to clear its derived event memory.
+The paragraph limit is soft when needed to keep retained event summaries and
+questions visible; ordinary items are still trimmed.
+All retained event sentences keep their source links.
+
+The evidence window is bounded, so this is not a complete event ledger. A burst
+of newer messages or the byte limit can hide an outcome. After the first event-
+aware brief, an older announcement cannot introduce a new event by replay or
+backfill; the admission date only moves forward. This prevents old resolved
+questions from reappearing when their memory leaves the eight-event set. Late
+imports and rediscoveries with an event timestamp equal to the admission date
+are also excluded.
+Date normalization and classification are model interpretations, even though
+source identity and exact quotes are checked separately. A saved event’s date
+can change when an update cites a later message from the person with a revised
+date. Without new evidence, the saved date remains unchanged, including when
+it was initially unknown. Retiring a typed event does not semantically suppress
+free-form model follow-ups on ordinary highlights.
+
+If sources change or fall outside the provider's allowed dates, the next sweep
+revalidates the event before reusing it. When no admissible evidence remains,
+it retires the current event-aware paragraph while preserving its history. If
+some evidence remains, a validated empty replacement after memory loss also
+retires the current paragraph. Provider, parse, budget, and operational read
+failures leave the current version intact for retry. After partial source loss,
+a failed rebuild leaves the previous brief current until a retry succeeds; deleted
+sources are flagged as unsupported when their status has been projected.
+Rejecting a brief clears that version's carried event memory and requests
+regeneration. The admission date stays in place, so replaying an old
+announcement cannot restore it. There is no individual event dismissal command.
+No question is sent automatically, and no reminder or task is created.
+
 ## When briefs refresh
 
 Scheduled sweeps generate a brief for an enrolled, tracked person who has none,
 or whose latest brief was rejected. Otherwise, they wait for new activity and
 either a brief at least seven days old or a planned contact date within three
-days. The sweep checks these conditions even when profile extraction has
+days. Retained temporary events also refresh when their date becomes due, or
+when new activity may update their outcome. Event source revalidation can
+retire a paragraph even without a new message. The sweep checks these conditions even when profile extraction has
 already caught up with the archive.
 
 `generate` bypasses those timing and new-activity checks. It still requires
@@ -87,7 +153,8 @@ enrollment, an enabled provider with consent, eligible messages, and available
 budget. Regeneration saves a new dated version and keeps earlier versions in
 history. Rejecting a brief hides it until a replacement is generated.
 
-The default paragraph limit is 560 characters. You can change generation timing,
+The default paragraph limit is 560 characters. Retained event sentences can
+exceed it so a due question is not silently omitted. You can change generation timing,
 input limits, and output limits in
 [brief configuration](/docs/configuration/#peoplesweepbrief), or disable
 brief generation for everyone without removing enrollments.

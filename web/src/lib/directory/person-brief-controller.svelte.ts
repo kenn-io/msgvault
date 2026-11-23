@@ -319,11 +319,12 @@ export class PersonBriefController {
         return failed;
       }
       if (run.brief_version <= 0) {
-        this.runOutcome = `No new brief version. Reason: ${briefFailureClassLabel(run.brief_failure_class)}.`;
-        this.announcement = this.runOutcome;
-        return confirmed;
+        this.runOutcome = run.brief_failure_class
+          ? `No new brief version. Reason: ${briefFailureClassLabel(run.brief_failure_class)}.`
+          : 'No new brief version.';
+      } else {
+        this.runOutcome = `Brief version ${run.brief_version} generated.`;
       }
-      this.runOutcome = `Brief version ${run.brief_version} generated.`;
       this.announcement = this.runOutcome;
       this.endMutation(context, mutation, personID, abort);
       await Promise.all([this.loadBrief(personID), this.refreshVersions(personID)]);
@@ -705,7 +706,7 @@ function safeSentences(
     keys.add(key);
     const cited = safeSentenceEvidence(value.evidence_ordinals, byOrdinal);
     if (!cited) return undefined;
-    const item = structuredItem(structured, value.kind, value.index);
+    const item = structuredItem(structured, value.kind, value.index, value.text);
     sentences.push({
       key,
       kind: value.kind,
@@ -764,6 +765,7 @@ function structuredItem(
   structured: unknown,
   kind: string,
   index: number,
+  sentenceText: string,
 ): { detail: string; meta: string[] } | undefined {
   const document = record(structured);
   if (!document) return undefined;
@@ -774,7 +776,11 @@ function structuredItem(
   }
   if (kind === 'highlight') {
     const item = itemAt(document, 'highlights', index);
-    const detail = text(item?.text);
+    const event = record(item?.life_event);
+    const state = event?.state;
+    const eventState = (state === 'upcoming' || state === 'follow_up' || state === 'resolved') &&
+      text(event?.anchor_id) && text(event?.quote) && text(event?.question);
+    const detail = (eventState && text(sentenceText)) || text(item?.text);
     if (!item || !detail) return undefined;
     const meta: string[] = [];
     const speaker = speakerLabels[String(item.speaker)];

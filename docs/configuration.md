@@ -356,7 +356,7 @@ max_rendered_runes = 560
 | `max_bytes` | `65536` | Maximum packet size for one brief window. Must be positive. |
 | `overlap_items` | `8` | Items already covered by the previous brief's window that may be re-admitted so a continued thread is recognizable. Must not be negative or exceed `max_items`. |
 | `max_output_tokens` | `2048` | Output cap for the brief call. Must be positive and must not exceed `[people.sweep.budgets] max_output_tokens_per_person`, because a brief is one more call against the same per-person ceiling. |
-| `max_rendered_runes` | `560` | Maximum length of the rendered paragraph, in Unicode runes. Msgvault enforces it after the model answers by dropping structured items from the tail: uncertainties first, then follow-ups, then highlights, never the last-interaction sentence and never mid-sentence. Every dropped item is counted in the version's `dropped_item_count`, and the stored structure and evidence pointers are the trimmed ones. Must be at least 240, which is the interaction summary's own maximum length. |
+| `max_rendered_runes` | `560` | Target length of the rendered paragraph, in Unicode runes. After the model answers, msgvault drops structured items from the tail: uncertainties first, then follow-ups, then ordinary highlights. It keeps event highlights and the last-interaction sentence, and never trims mid-sentence, so the paragraph can exceed this target. Every dropped item is counted in the version's `dropped_item_count`, and the stored structure and evidence pointers are the trimmed ones. Must be at least 240, which is the interaction summary's own maximum length. |
 
 An invalid value fails configuration validation with the offending key named,
 rather than being clamped.
