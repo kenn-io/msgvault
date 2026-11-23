@@ -172,6 +172,7 @@ linters:
     gomoddirectives:
       replace-allow-list:
         - github.com/emersion/go-imap/v2
+        - github.com/mattn/go-sqlite3
 
     importas:
       alias:

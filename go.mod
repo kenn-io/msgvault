@@ -4,6 +4,9 @@ go 1.27.4
 
 replace github.com/emersion/go-imap/v2 => github.com/rodboev/go-imap/v2 v2.0.0-beta.8.0.20261004224420-eafa576a8efe
 
+// Work around scheduled embedding crashes: https://github.com/kenn-io/msgvault/issues/2329
+replace github.com/mattn/go-sqlite3 v1.14.53 => github.com/mattn/go-sqlite3 v1.14.52
+
 require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
