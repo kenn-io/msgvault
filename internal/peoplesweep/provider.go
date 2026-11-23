@@ -273,11 +273,13 @@ type RPCProcess interface {
 
 // CodexAttestation binds the executable tested by the isolation gate.
 type CodexAttestation struct {
-	ExecutablePath     string
-	Version            string
-	ExecutableSHA256   string
-	ExecutionBoundary  string
-	LaunchArtifact     CodexLaunchArtifact
+	ExecutablePath    string
+	Version           string
+	ExecutableSHA256  string
+	ExecutionBoundary string
+	LaunchArtifact    CodexLaunchArtifact
+	// Platform is the GOOS/GOARCH the entry was certified on.
+	Platform           string
 	verifiedExecutable *verifiedCodexExecutable
 }
 

@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin
 
 package peoplesweep
 
@@ -78,6 +78,18 @@ func (e *codexEnrollmentClient) StartDeviceLogin(ctx context.Context, present fu
 		return errors.New("codex enrollment process has no owned work root")
 	}
 	return owned.CommitLoginAuth(e.authHome)
+}
+
+// codexEnrollmentIsolationGate admits only the platform's pinned enrollment
+// artifact. It does not populate the inference registry.
+type codexEnrollmentIsolationGate struct{}
+
+func (codexEnrollmentIsolationGate) Verify(ctx context.Context, executable, boundary string) (CodexAttestation, error) {
+	return verifyReleasedCodexIsolation(ctx, executable, boundary, codexEnrollmentAttestations)
+}
+
+func (codexEnrollmentIsolationGate) ReverifyForLaunch(attestation CodexAttestation) error {
+	return reverifyReleasedCodexIsolation(attestation, codexEnrollmentAttestations)
 }
 
 func (e *codexEnrollmentClient) ListModels(ctx context.Context) ([]CodexModel, error) {

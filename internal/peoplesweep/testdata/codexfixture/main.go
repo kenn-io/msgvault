@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"time"
 )
 
@@ -14,6 +15,8 @@ var (
 	mode          string
 	markerBase64  string
 	secret        string
+	// hangMilliseconds outlasts the launcher's version timeout by a fixed margin.
+	hangMilliseconds = "1000"
 )
 
 func main() {
@@ -51,8 +54,19 @@ func runVersion(marker []byte) {
 		_ = os.WriteFile(string(marker), []byte("version"), 0o600)
 	case "hang":
 		fmt.Println(secret)
-		time.Sleep(time.Second)
+		hang, _ := strconv.Atoi(hangMilliseconds)
+		time.Sleep(time.Duration(hang) * time.Millisecond)
 		_ = os.WriteFile(string(marker), []byte("late"), 0o600)
+	case "contained":
+		// Report anything reachable outside a contained version run.
+		if contents, err := os.ReadFile(string(marker)); err == nil {
+			fmt.Println("leaked " + string(contents))
+			return
+		}
+		if os.Getenv("PATH") != "" {
+			fmt.Println("leaked PATH")
+			return
+		}
 	case "descendant":
 		command := exec.Command(os.Args[0], "fixture-descendant")
 		command.Stdout = os.Stdout

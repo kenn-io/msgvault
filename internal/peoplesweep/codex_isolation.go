@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -18,9 +19,19 @@ import (
 
 const (
 	maxCodexVersionBytes  = 4096
-	codexVersionTimeout   = 500 * time.Millisecond
 	codexVersionWaitDelay = 100 * time.Millisecond
 )
+
+// codexVersionTimeout bounds the snapshot's --version run. macOS assesses a
+// fresh copy of a signed executable on its first launch; that took 1.6 to 2.4
+// seconds for a 270 MB Codex snapshot on Apple silicon, so darwin gets a
+// bound that holds on a loaded machine.
+var codexVersionTimeout = func() time.Duration {
+	if runtime.GOOS == "darwin" {
+		return 10 * time.Second
+	}
+	return 500 * time.Millisecond
+}()
 
 type verifiedCodexExecutable struct {
 	root string
@@ -139,6 +150,7 @@ func prepareReleasedCodexIsolation(
 		ExecutableSHA256:   released.ExecutableSHA256,
 		ExecutionBoundary:  released.ExecutionBoundary,
 		LaunchArtifact:     released.LaunchArtifact,
+		Platform:           released.Platform,
 		verifiedExecutable: verified,
 	}, nil
 }
@@ -161,7 +173,8 @@ func reverifyReleasedCodexIsolation(
 		attestation.Version != released.Version ||
 		attestation.ExecutableSHA256 != released.ExecutableSHA256 ||
 		attestation.ExecutionBoundary != released.ExecutionBoundary ||
-		attestation.LaunchArtifact != released.LaunchArtifact {
+		attestation.LaunchArtifact != released.LaunchArtifact ||
+		attestation.Platform != released.Platform {
 		return ErrCodexIsolationUnreleased
 	}
 	sourceDigest, sourceErr := hashCodexExecutable(attestation.ExecutablePath)
@@ -224,8 +237,13 @@ func validReleasedCodexAttestation(key CodexReleaseKey, released CodexAttestatio
 		released.ExecutablePath == "" && released.Version != "" &&
 		safeCodexVersion(released.Version) &&
 		released.ExecutionBoundary != "" && released.ExecutionBoundary == key.ExecutionBoundary &&
-		released.LaunchArtifact == CodexLaunchArtifactNativeStandaloneV1
+		released.LaunchArtifact == CodexLaunchArtifactNativeStandaloneV1 &&
+		released.Platform == codexHostPlatform
 }
+
+// codexHostPlatform names the OS and architecture a registry entry must be
+// certified on to admit an executable here.
+const codexHostPlatform = runtime.GOOS + "/" + runtime.GOARCH
 
 func codexSnapshotFilename(sourcePath string) string {
 	if strings.EqualFold(filepath.Ext(sourcePath), ".exe") {
@@ -295,11 +313,28 @@ func codexExecutableVersion(ctx context.Context, executable CodexExecutable) (st
 	if executable.verifiedPath == "" || !filepath.IsAbs(executable.verifiedPath) {
 		return "", errors.New("read codex executable version")
 	}
+	root, err := os.MkdirTemp("", "msgvault-codex-version-")
+	if err != nil {
+		return "", errors.New("create codex version root")
+	}
+	defer func() { _ = os.RemoveAll(root) }()
+	return runCodexVersion(ctx, func(versionCtx context.Context) (*exec.Cmd, error) {
+		// The snapshot runs contained, as the app server does, with only the
+		// disposable root for a home.
+		return codexVersionCommand(versionCtx, executable.verifiedPath, root)
+	})
+}
+
+// runCodexVersion bounds a --version run in time and output. build makes the
+// command under the deadline's context.
+func runCodexVersion(ctx context.Context, build func(context.Context) (*exec.Cmd, error)) (string, error) {
 	versionCtx, cancel := context.WithTimeout(ctx, codexVersionTimeout)
 	defer cancel()
+	command, err := build(versionCtx)
+	if err != nil {
+		return "", errors.New("read codex executable version")
+	}
 	var stdout boundedCodexVersionWriter
-	command := exec.CommandContext(versionCtx, executable.verifiedPath, "--version") //nolint:gosec // The gate owns this absolute private snapshot.
-	command.Env = scrubCodexEnvironment(os.Environ())
 	command.Stdout = &stdout
 	command.Stderr = io.Discard
 	command.WaitDelay = codexVersionWaitDelay

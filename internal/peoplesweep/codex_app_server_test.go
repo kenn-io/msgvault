@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -92,13 +93,22 @@ type recordingCodexStarter struct {
 }
 
 func (s *recordingCodexStarter) StartWithProxy(
-	ctx context.Context, executable peoplesweep.CodexExecutable, args, env []string, dir, socketPath string,
+	ctx context.Context, executable peoplesweep.CodexExecutable, args, env []string, dir, proxyEndpoint string,
 ) (peoplesweep.RPCProcess, error) {
 	s.proxyStarts.Add(1)
-	info, err := os.Lstat(socketPath)
+	if runtime.GOOS == "darwin" {
+		endpoint, err := url.Parse(proxyEndpoint)
+		require.NoError(s.t, err)
+		assert.Equal(s.t, "127.0.0.1", endpoint.Hostname())
+		password, ok := endpoint.User.Password()
+		assert.True(s.t, ok)
+		assert.Len(s.t, password, 64)
+		return s.Start(ctx, executable, args, env, dir)
+	}
+	info, err := os.Lstat(proxyEndpoint)
 	require.NoError(s.t, err)
 	assert.NotZero(s.t, info.Mode()&os.ModeSocket)
-	assert.Equal(s.t, filepath.Join(dir, ".proxy.sock"), socketPath)
+	assert.Equal(s.t, filepath.Join(dir, ".proxy.sock"), proxyEndpoint)
 	return s.Start(ctx, executable, args, env, dir)
 }
 
@@ -367,8 +377,8 @@ func newSuccessfulCodexTransport(
 func TestCodexRegistryUsesOnlyExplicitAuthHome(t *testing.T) {
 	assertChecks := assert.New(t)
 	requireChecks := require.New(t)
-	if runtime.GOOS != "linux" {
-		t.Skip("codex service proxy requires Linux")
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("codex service proxy requires Linux or macOS")
 	}
 	authHome := t.TempDir()
 	requireChecks.NoError(os.Chmod(authHome, 0o700))
@@ -427,8 +437,8 @@ func TestCodexInferenceCopiesBackRefreshForSameAccount(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertChecks := assert.New(t)
 			requireChecks := require.New(t)
-			if runtime.GOOS != "linux" {
-				t.Skip("codex service proxy requires Linux")
+			if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+				t.Skip("codex service proxy requires Linux or macOS")
 			}
 			authHome := t.TempDir()
 			requireChecks.NoError(os.Chmod(authHome, 0o700))
@@ -483,8 +493,8 @@ func TestCodexInferenceCopiesBackRefreshForSameAccount(t *testing.T) {
 func TestCodexModelListingCopiesBackRefresh(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	if runtime.GOOS != "linux" {
-		t.Skip("codex service proxy requires Linux")
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("codex service proxy requires Linux or macOS")
 	}
 	authHome := t.TempDir()
 	require.NoError(os.Chmod(authHome, 0o700))
@@ -537,8 +547,8 @@ func TestCodexModelListingCopiesBackRefresh(t *testing.T) {
 func TestCodexInferenceRejectsChangedAccountDuringRefresh(t *testing.T) {
 	assertChecks := assert.New(t)
 	requireChecks := require.New(t)
-	if runtime.GOOS != "linux" {
-		t.Skip("codex service proxy requires Linux")
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("codex service proxy requires Linux or macOS")
 	}
 	authHome := t.TempDir()
 	requireChecks.NoError(os.Chmod(authHome, 0o700))

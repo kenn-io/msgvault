@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,6 +21,10 @@ import (
 )
 
 const codexIsolationFixtureVersion = "codex-cli 0.149.0"
+
+// codexFixtureHangMargin is how long the hanging fixture outlives the version
+// timeout before its late write.
+const codexFixtureHangMargin = 500 * time.Millisecond
 
 type isolationCountingStarter struct {
 	starts atomic.Int64
@@ -79,6 +84,8 @@ func buildCodexIsolationExecutableFixture(
 	fixture codexIsolationExecutableFixture,
 ) (string, []byte) {
 	t.Helper()
+	// Verifying a fixture runs its --version contained.
+	requireCodexContainment(t)
 	filename := "codex-fixture"
 	if runtime.GOOS == "windows" {
 		filename += ".exe"
@@ -89,6 +96,7 @@ func buildCodexIsolationExecutableFixture(
 		"-X=main.mode=" + fixture.mode,
 		"-X=main.markerBase64=" + base64.StdEncoding.EncodeToString([]byte(fixture.marker)),
 		"-X=main.secret=" + fixture.secret,
+		"-X=main.hangMilliseconds=" + strconv.FormatInt((codexVersionTimeout+codexFixtureHangMargin).Milliseconds(), 10),
 	}
 	// This read makes Go's test cache rerun the test when the child's inputs change.
 	_, err := os.ReadDir(filepath.Join("testdata", "codexfixture"))
@@ -143,6 +151,7 @@ func codexIsolationFixtureRegistry(contents []byte) map[CodexReleaseKey]CodexAtt
 			ExecutableSHA256:  digest,
 			ExecutionBoundary: CodexExecutionBoundaryV1,
 			LaunchArtifact:    CodexLaunchArtifactNativeStandaloneV1,
+			Platform:          codexHostPlatform,
 		},
 	}
 }
@@ -215,9 +224,8 @@ func TestCodexRegisteredScriptIsNotAReleasableArtifact(t *testing.T) {
 // being combined with caller-owned version, boundary, digest, or path data.
 func TestCodexReleasedFixtureAttestsExactIdentity(t *testing.T) {
 	checks := assert.New(t)
-	marker := filepath.Join(t.TempDir(), "version-ran")
 	executable, contents := buildCodexIsolationExecutableFixture(t, codexIsolationExecutableFixture{
-		version: codexIsolationFixtureVersion, mode: "marker", marker: marker,
+		version: codexIsolationFixtureVersion,
 	})
 	registry := codexIsolationFixtureRegistry(contents)
 
@@ -236,7 +244,9 @@ func TestCodexReleasedFixtureAttestsExactIdentity(t *testing.T) {
 	checks.Equal(codexIsolationFixtureVersion, attestation.Version)
 	checks.Equal(CodexExecutionBoundaryV1, attestation.ExecutionBoundary)
 	checks.Equal(CodexLaunchArtifactNativeStandaloneV1, attestation.LaunchArtifact)
-	checks.FileExists(marker, "a registered digest must be version-checked")
+	checks.Equal(codexHostPlatform, attestation.Platform)
+	// The version came from running the snapshot: a mismatched one fails
+	// (TestCodexReleasedFixtureRequiresExactVersion).
 }
 
 // TestCodexVersionExecutesAcceptedSnapshotAfterSourceSwap catches Verify
@@ -244,10 +254,8 @@ func TestCodexReleasedFixtureAttestsExactIdentity(t *testing.T) {
 func TestCodexVersionExecutesAcceptedSnapshotAfterSourceSwap(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
-	verifiedMarker := filepath.Join(t.TempDir(), "verified-version-ran")
-	swappedMarker := filepath.Join(t.TempDir(), "swapped-version-ran")
 	executable, contents := buildCodexIsolationExecutableFixture(t, codexIsolationExecutableFixture{
-		version: codexIsolationFixtureVersion, mode: "marker", marker: verifiedMarker,
+		version: codexIsolationFixtureVersion,
 	})
 	attestation, err := prepareReleasedCodexIsolation(
 		executable, CodexExecutionBoundaryV1, codexIsolationFixtureRegistry(contents),
@@ -256,14 +264,13 @@ func TestCodexVersionExecutesAcceptedSnapshotAfterSourceSwap(t *testing.T) {
 	t.Cleanup(func() { must.NoError(attestation.Close()) })
 	must.NoError(os.Rename(executable, executable+".accepted-source"))
 	must.NoError(os.WriteFile(executable, []byte(
-		"#!/bin/sh\nprintf swapped > '"+swappedMarker+"'\nprintf 'codex-cli 0.149.0\\n'\n",
+		"#!/bin/sh\nprintf 'codex-cli 0.149.0-swapped\\n'\n",
 	), 0o700))
 
+	// Only the accepted snapshot prints the registered version.
 	version, err := codexExecutableVersion(t.Context(), attestation.VerifiedExecutable())
 	must.NoError(err)
 	checks.Equal(codexIsolationFixtureVersion, version)
-	checks.FileExists(verifiedMarker)
-	checks.NoFileExists(swappedMarker)
 }
 
 // TestCodexStartExecutesReverifiedSnapshotAfterSourceSwap catches Start
@@ -318,9 +325,9 @@ func TestCodexVersionTimeoutKillsHangingFixture(t *testing.T) {
 	t.Cleanup(func() { must.NoError(attestation.Close()) })
 
 	started := time.Now()
-	_, err = codexExecutableVersion(t.Context(), attestation.VerifiedExecutable())
+	_, err = runCodexVersion(t.Context(), unconfinedCodexVersion(attestation))
 	must.Error(err)
-	checks.Less(time.Since(started), 900*time.Millisecond)
+	checks.Less(time.Since(started), codexVersionTimeout+400*time.Millisecond)
 	checks.NotContains(err.Error(), secret)
 	checks.NotContains(err.Error(), executable)
 	time.Sleep(700 * time.Millisecond) //nolint:kennlint // sleeptest: waits past the fixture process's late write
@@ -343,7 +350,7 @@ func TestCodexVersionTimeoutClosesDescendantStdout(t *testing.T) {
 	t.Cleanup(func() { must.NoError(attestation.Close()) })
 
 	started := time.Now()
-	_, err = codexExecutableVersion(t.Context(), attestation.VerifiedExecutable())
+	_, err = runCodexVersion(t.Context(), unconfinedCodexVersion(attestation))
 	must.Error(err)
 	checks.Less(time.Since(started), 900*time.Millisecond)
 	checks.NotContains(err.Error(), lateMarker)
@@ -508,4 +515,75 @@ func TestCodexReverifyRejectsExecutableReplacement(t *testing.T) {
 	_, err = transport.GeneratePrepared(t.Context(), profile, Credential{}, prepared)
 	must.ErrorIs(err, ErrCodexIsolationUnreleased)
 	assert.Zero(t, starter.starts.Load(), "replacement must fail at reverify before Start")
+}
+
+// TestCodexReleaseIsScopedToCertifiedPlatform catches a certification on one
+// OS or architecture opening another platform's release gate.
+func TestCodexReleaseIsScopedToCertifiedPlatform(t *testing.T) {
+	checks := assert.New(t)
+	executable, contents := buildCodexIsolationExecutableFixture(t, codexIsolationExecutableFixture{
+		version: codexIsolationFixtureVersion,
+	})
+	host := codexIsolationFixtureRegistry(contents)
+	foreign := make(map[CodexReleaseKey]CodexAttestation, len(host))
+	other := "linux/amd64"
+	if codexHostPlatform == other {
+		other = "darwin/arm64"
+	}
+	for key, attestation := range host {
+		attestation.Platform = other
+		foreign[key] = attestation
+	}
+	checks.False(codexReleaseAvailable(foreign))
+	checks.Equal(runtime.GOOS == "linux" || runtime.GOOS == "darwin", codexReleaseAvailable(host))
+	attestation, err := verifyReleasedCodexIsolation(t.Context(), executable, CodexExecutionBoundaryV1, foreign)
+	require.ErrorIs(t, err, ErrCodexIsolationUnreleased)
+	checks.Empty(attestation)
+}
+
+// unconfinedCodexVersion runs a fixture's --version on the host, so the
+// timeout tests observe its late writes; containment would deny them anyway.
+func unconfinedCodexVersion(attestation CodexAttestation) func(context.Context) (*exec.Cmd, error) {
+	return func(ctx context.Context) (*exec.Cmd, error) {
+		return exec.CommandContext(ctx, attestation.VerifiedExecutable().verifiedPath, "--version"), nil
+	}
+}
+
+// TestCodexVersionRunIsContained catches the pre-launch --version run of the
+// snapshot reaching host files or the daemon's environment.
+func TestCodexVersionRunIsContained(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("only Linux and macOS have a containment launcher")
+	}
+	canary := filepath.Join(t.TempDir(), "version-canary")
+	require.NoError(t, os.WriteFile(canary, []byte("SYNTHETIC_VERSION_CANARY"), 0o600))
+	executable, contents := buildCodexIsolationExecutableFixture(t, codexIsolationExecutableFixture{
+		version: codexIsolationFixtureVersion, mode: "contained", marker: canary,
+	})
+	unconfined, err := runCodexVersion(t.Context(), func(ctx context.Context) (*exec.Cmd, error) {
+		return exec.CommandContext(ctx, executable, "--version"), nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "leaked SYNTHETIC_VERSION_CANARY", unconfined, "the fixture reaches the canary on the host")
+	attestation, err := verifyReleasedCodexIsolation(
+		t.Context(), executable, CodexExecutionBoundaryV1, codexIsolationFixtureRegistry(contents),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, attestation.Close()) })
+	assert.Equal(t, codexIsolationFixtureVersion, attestation.Version)
+}
+
+// requireCodexContainment skips where Linux lacks Bubblewrap, except in CI,
+// which must install it.
+func requireCodexContainment(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		return
+	}
+	if _, err := os.Stat("/usr/bin/bwrap"); err != nil {
+		if os.Getenv("CI") != "" {
+			require.NoError(t, err, "Bubblewrap is required for the contained Codex version run in CI")
+		}
+		t.Skip("Bubblewrap is required for the contained Codex version run")
+	}
 }
