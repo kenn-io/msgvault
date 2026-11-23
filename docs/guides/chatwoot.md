@@ -114,8 +114,8 @@ msgvault sync-chatwoot support --inbox 7 --limit 100
 msgvault sync-chatwoot support --full
 ```
 
-`--limit` caps the number of history messages fetched per conversation in this
-run, while pending media and call refreshes still run alongside it. Any
+`--limit` bounds how many history messages per conversation this run processes,
+while pending media and call refreshes run in addition to that limit. Any
 unfinished history resumes on the next run, including a full reconciliation
 interrupted by the limit. Running `--full` rereads every conversation's history
 in place, picking up edits to messages already in the archive, and later full
