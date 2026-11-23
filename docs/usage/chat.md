@@ -336,9 +336,9 @@ require daemon API schema 3.9.0 or newer. Upgrade the daemon when the bridge
 requests it.
 
 With optional write flags off, the complete default stdio `tools/list`
-response, including output schemas, measures 223,621 bytes for an mbox-only
-archive and 276,271 bytes with every family available. Tests cap each at that
-exact size, with no headroom.
+response, including output schemas, measures 234,052 bytes for an mbox-only
+archive and 286,846 bytes with every family available. Tests cap these at
+234,205 and 286,855 bytes, respectively.
 
 ### Claude Desktop configuration
 
