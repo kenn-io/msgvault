@@ -50,7 +50,7 @@ func (s *Server) agentReadScopeLabel(r *http.Request) string {
 }
 
 func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.Permission, *apiHTTPError) {
-	permission := operationPolicy(operation).AgentReadPermission
+	permission := operationPolicies[operation].AgentReadPermission
 	if permission == "" {
 		// Other delegated operations use their own handler checks.
 		return "", nil

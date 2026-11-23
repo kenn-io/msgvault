@@ -10,38 +10,52 @@ import (
 	"slices"
 	"sync"
 	"time"
-
-	"go.kenn.io/msgvault/internal/authz"
 )
 
-// Permission retains the delegated API vocabulary while sharing principal types.
-type Permission = authz.Permission
+type Permission string
 
 const (
-	PermissionVerificationRead  = authz.PermissionVerificationRead
-	PermissionSearchRead        = authz.PermissionSearchRead
-	PermissionMessageRead       = authz.PermissionMessageRead
-	PermissionAttachmentRead    = authz.PermissionAttachmentRead
-	PermissionStatsRead         = authz.PermissionStatsRead
-	PermissionDraftCreate       = authz.PermissionDraftCreate
-	PermissionDraftEdit         = authz.PermissionDraftEdit
-	PermissionDraftDelete       = authz.PermissionDraftDelete
-	PermissionCalendarRead      = authz.PermissionCalendarRead
-	PermissionCalendarEventRead = authz.PermissionCalendarEventRead
-	PermissionCalendarWrite     = authz.PermissionCalendarWrite
-	PermissionCalendarInvite    = authz.PermissionCalendarInvite
+	PermissionVerificationRead  Permission = "verification.read"
+	PermissionSearchRead        Permission = "search.read"
+	PermissionMessageRead       Permission = "message.read"
+	PermissionAttachmentRead    Permission = "attachment.read"
+	PermissionStatsRead         Permission = "stats.read"
+	PermissionDraftCreate       Permission = "draft.create"
+	PermissionDraftEdit         Permission = "draft.edit"
+	PermissionDraftDelete       Permission = "draft.delete"
+	PermissionCalendarRead      Permission = "calendar.read"
+	PermissionCalendarEventRead Permission = "calendar.event.read"
+	PermissionCalendarWrite     Permission = "calendar.write"
+	PermissionCalendarInvite    Permission = "calendar.invite"
 )
 
-// KnownPermission recognizes only permissions that can be delegated.
-func KnownPermission(s string) (Permission, bool) {
-	permission, known := authz.KnownPermission(s)
-	if !known || !authz.Grantable(permission) {
-		return "", false
-	}
-	return permission, true
+var knownPermissions = map[string]Permission{
+	string(PermissionVerificationRead):  PermissionVerificationRead,
+	string(PermissionSearchRead):        PermissionSearchRead,
+	string(PermissionMessageRead):       PermissionMessageRead,
+	string(PermissionAttachmentRead):    PermissionAttachmentRead,
+	string(PermissionStatsRead):         PermissionStatsRead,
+	string(PermissionDraftCreate):       PermissionDraftCreate,
+	string(PermissionDraftEdit):         PermissionDraftEdit,
+	string(PermissionDraftDelete):       PermissionDraftDelete,
+	string(PermissionCalendarRead):      PermissionCalendarRead,
+	string(PermissionCalendarEventRead): PermissionCalendarEventRead,
+	string(PermissionCalendarWrite):     PermissionCalendarWrite,
+	string(PermissionCalendarInvite):    PermissionCalendarInvite,
 }
 
-type SourceRef = authz.SourceRef
+func KnownPermission(s string) (Permission, bool) {
+	p, ok := knownPermissions[s]
+	return p, ok
+}
+
+// SourceRef matches Type and Identifier across re-adds; ID is diagnostic only.
+type SourceRef struct {
+	ID         int64
+	Type       string
+	Identifier string
+	SenderKeys []string
+}
 
 type Grant struct {
 	ID          string
@@ -141,7 +155,7 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef, 
 		if p == "*" || string(p) == "" {
 			return "", "", Grant{}, fmt.Errorf("agentgrant: invalid permission %q", p)
 		}
-		if _, ok := KnownPermission(string(p)); !ok {
+		if _, ok := knownPermissions[string(p)]; !ok {
 			return "", "", Grant{}, fmt.Errorf("agentgrant: unknown permission %q", p)
 		}
 	}

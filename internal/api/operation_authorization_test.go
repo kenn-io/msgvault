@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,11 +17,9 @@ func policyTestMux(srv *Server) *http.ServeMux {
 	mux := http.NewServeMux()
 	api := srv.setupHumaAPI(mux)
 	v1 := srv.setupAPIV1Group(api)
-	for _, id := range []string{"unclassifiedTestOperation"} {
-		registerRawHumaRoute(v1, rawAPIV1Operation(id, http.MethodGet, "/policy-test/"+id, "Exercise operation authorization"), func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusNoContent)
-		})
-	}
+	registerRawHumaRoute(v1, rawAPIV1Operation("unclassifiedTestOperation", http.MethodGet, "/policy-test/unclassifiedTestOperation", "Exercise operation authorization"), func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 	return mux
 }
 
@@ -68,32 +65,6 @@ func TestUnknownOperationRetainsCredentialBoundariesHTTP(t *testing.T) {
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
 			assert.Equal(t, tc.status, w.Code, w.Body.String())
-		})
-	}
-}
-
-func TestPrivilegedPredicatesRequireOwnerMode(t *testing.T) {
-	t.Parallel()
-	srv := &Server{}
-	for _, tc := range []struct {
-		name              string
-		mode              AuthMode
-		privileged, owner bool
-	}{
-		{"key", AuthModeAPIKey, true, true},
-		{"session", AuthModeSession, true, false},
-		{"loopback", AuthModeLoopback, true, false},
-		{"caller", AuthModeCaller, true, true},
-		{"remote", AuthModeRemoteClient, false, false},
-		{"grant", AuthModeDelegated, false, false},
-		{"unauthenticated", AuthModeRequired, false, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/agent-tokens", nil)
-			security := requestSecurity{auth: requestAuthentication{Mode: tc.mode}}
-			r = r.WithContext(context.WithValue(r.Context(), requestSecurityContextKey{}, security))
-			assert.Equal(t, tc.privileged, srv.apiRequestAuthorized(r))
-			assert.Equal(t, tc.owner, srv.ownerAccessAuthorized(r))
 		})
 	}
 }

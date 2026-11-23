@@ -653,22 +653,23 @@ upgrade procedure.
 
 ### API operation authorization
 
-Add every new `/api/v1/` operation to
-`internal/api/operation_policy.go`. Choose its capability classification
-explicitly. Unknown operations are classified as `archive.admin` and admit
-neither agent grants nor remote clients. `TestEveryAPIV1OperationIsClassified`
-walks the registered client OpenAPI document, including hidden CLI routes, and
-rejects missing or stale entries.
+List every new `/api/v1/` operation in `internal/api/operation_policy.go`.
+`TestEveryAPIV1OperationIsClassified` walks the registered client OpenAPI
+document, including hidden CLI routes, and rejects missing or stale entries.
 
-The classification describes an operation; credential-specific flags and
-resource handlers authorize requests. `AgentReadPermission` selects an existing
-grant-aware read path. `Delegated` admits other grant-aware handlers, which
-still check their selected resources.
-The remote-client fields preserve the remote CLI contract. A capability alone
-does not admit either credential class.
+An empty entry (`{}`) means owner-only. Set a flag only when the handler
+already enforces that credential's limits:
 
-Mixed-action operations need action, target and sender checks before broader
-admission. Until those exist, keep them administrative.
+- `AgentReadPermission` admits agent grants through the grant-aware read path,
+  which filters results to the grant's sources.
+- `Delegated` admits agent grants to handlers that check the selected
+  resources themselves.
+- `RemoteRead` and `RemoteCollectionsWrite` admit remote clients under the
+  remote CLI contract. Collection writes also need `collections_write` on the
+  client.
+
+Unlisted operations are owner-only. Keep operations that mix actions, targets
+or senders owner-only until their handlers check each of those.
 
 ## SQL Guidelines
 

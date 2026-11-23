@@ -11,7 +11,6 @@ import (
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
-	"go.kenn.io/msgvault/internal/authz"
 	"go.kenn.io/msgvault/internal/config"
 	"golang.org/x/time/rate"
 )
@@ -230,7 +229,6 @@ func isLoopbackRequest(r *http.Request) bool {
 
 type requestAuthentication struct {
 	Mode                  AuthMode
-	Principal             authz.Principal
 	SessionID             string
 	Session               browserSession
 	trustedForCLIDuration bool
@@ -253,12 +251,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 			return requestAuthentication{Mode: AuthModeRequired}
 		}
 		if grant, ok := s.agentGrants.Lookup(agentVal); ok {
-			return requestAuthentication{
-				Mode: AuthModeDelegated, Grant: &grant,
-				Principal: authz.Principal{
-					ID: "grant:" + grant.ID, Kind: authz.KindGrant, DisplayName: grant.Label,
-				},
-			}
+			return requestAuthentication{Mode: AuthModeDelegated, Grant: &grant}
 		}
 		return requestAuthentication{Mode: AuthModeRequired}
 	}
@@ -269,7 +262,6 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	if s.cfg.Server.AuthenticationKey() == "" {
 		return requestAuthentication{
 			Mode:                  AuthModeLoopback,
-			Principal:             authz.Principal{ID: "loopback", Kind: authz.KindLoopback},
 			trustedForCLIDuration: isLoopbackRequest(r),
 		}
 	}
@@ -287,7 +279,6 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	if constantTimeAPIKeyEqual(authHeader, s.cfg.Server.AuthenticationKey()) {
 		return requestAuthentication{
 			Mode:                  AuthModeAPIKey,
-			Principal:             authz.Principal{ID: "owner", Kind: authz.KindOwner},
 			trustedForCLIDuration: true,
 		}
 	}
@@ -295,7 +286,6 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 		if client := &s.cfg.Server.RemoteClients[i]; client.APIKey != "" && constantTimeAPIKeyEqual(authHeader, client.APIKey) {
 			return requestAuthentication{
 				Mode:                  AuthModeRemoteClient,
-				Principal:             authz.Principal{ID: "remote:" + client.ClientID, Kind: authz.KindRemoteClient, DisplayName: client.ClientID},
 				RemoteClient:          client,
 				trustedForCLIDuration: true,
 			}
@@ -306,7 +296,6 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 		if session, ok := s.sessions.lookup(cookie.Value); ok {
 			return requestAuthentication{
 				Mode:      AuthModeSession,
-				Principal: authz.Principal{ID: "owner", Kind: authz.KindOwner},
 				SessionID: cookie.Value,
 				Session:   session,
 			}

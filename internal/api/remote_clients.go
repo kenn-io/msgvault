@@ -11,7 +11,7 @@ const (
 
 // remoteClientOperationAllowed retains the exact remote CLI contract.
 func remoteClientOperationAllowed(operationID string, collectionsWrite bool) bool {
-	policy := operationPolicy(operationID)
+	policy := operationPolicies[operationID]
 	return policy.RemoteRead || (collectionsWrite && policy.RemoteCollectionsWrite)
 }
 
