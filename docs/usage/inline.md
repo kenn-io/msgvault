@@ -131,7 +131,10 @@ that checkpoint, so arrivals in an earlier chat do not prevent later chats from
 being archived. Within a limited run, unfinished older history takes priority
 over new arrivals. After that backlog finishes, incremental scans capture newer
 messages, and later runs capture new messages without repeating completed
-history.
+history. In all-chat mode, a later run reads only the chats whose newest message
+or title differs from the archive, using the newest message ID that discovery
+lists for each chat. A chat filter, or a connection whose catalog does not list
+newest message IDs, reads every selected chat on each run.
 
 ```bash
 # Sync every registered Inline account.

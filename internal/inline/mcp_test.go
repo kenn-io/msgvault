@@ -535,6 +535,8 @@ func TestMCPDiscoverRequiresValidPagesAndAdvancingCursor(t *testing.T) {
 		`{"sort":"id","nextAfterChatId":"5","items":[]}`,
 		`{"sort":"id","nextAfterChatId":"6","items":[{"chatId":"5","kind":"dm"}]}`,
 		`{"sort":"id","nextAfterChatId":null,"items":[{"chatId":"5","kind":"dm"},{"chatId":"5","kind":"dm"}]}`,
+		`{"sort":"id","nextAfterChatId":null,"items":[{"chatId":"5","kind":"dm","lastMessageId":9}]}`,
+		`{"sort":"id","nextAfterChatId":null,"items":[{"chatId":"5","kind":"dm","lastMessageId":"0"}]}`,
 	} {
 		t.Run(payload, func(t *testing.T) {
 			f := newInlineMCPFixture(t, map[string]string{"conversations.list": payload}, true)

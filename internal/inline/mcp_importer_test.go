@@ -320,3 +320,87 @@ func TestMCPImportPersistsDiscoveredHistoryAndBackfill(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPImportSkipsChatsWhoseListedNewestMessageIsArchived(t *testing.T) {
+	checks := assert.New(t)
+	requires := require.New(t)
+
+	catalogItem := `{"chatId":"7","title":"Synthetic","kind":"dm","lastMessageId":"5"}`
+	history := func(messages ...string) string {
+		return `{"chat":{"chatId":"7"},"nextOffsetId":null,"messages":[` + strings.Join(messages, ",") + `]}`
+	}
+	fixture := newInlineMCPFixture(t, map[string]string{
+		"conversations.get": `{"chat":{"chatId":"7","title":"Synthetic","kind":"dm","peer":{"userId":"2"}},"details":{"parentChatId":null,"parentMessageId":null}}`,
+		"messages.list":     history(inlineMessageJSON(t, 5, "first", "")),
+	}, true)
+	fixture.catalog = func(map[string]any) string {
+		return `{"sort":"id","nextAfterChatId":null,"items":[` + catalogItem + `]}`
+	}
+	setCatalogItem := func(item string) {
+		fixture.mu.Lock()
+		defer fixture.mu.Unlock()
+		catalogItem = item
+	}
+	chatReads := func() []string {
+		fixture.mu.Lock()
+		defer fixture.mu.Unlock()
+		var names []string
+		for _, call := range fixture.calls {
+			if call.name == "conversations.get" || call.name == "messages.list" {
+				names = append(names, call.name)
+			}
+		}
+		fixture.calls = nil
+		return names
+	}
+	st := testutil.NewTestStore(t)
+	account := Account{UserID: 1, Origin: ProductionOrigin}
+	_, err := st.GetOrCreateSource(SourceType, account.Identifier())
+	requires.NoError(err)
+	imp := NewImporter(st, connectInlineFixture(t, fixture))
+	opts := ImportOptions{Account: account, AttachmentsDir: t.TempDir(), NoMedia: true}
+
+	first, err := imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	checks.Equal(1, first.MessagesAdded)
+	checks.Equal([]string{"conversations.get", "messages.list"}, chatReads())
+
+	unchanged, err := imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	checks.Zero(unchanged.MessagesProcessed)
+	checks.Empty(chatReads(), "an archived newest message needs no chat reads")
+
+	fixture.mu.Lock()
+	fixture.payloads["messages.list"] = history(inlineMessageJSON(t, 6, "second", ""), inlineMessageJSON(t, 5, "first", ""))
+	fixture.mu.Unlock()
+	setCatalogItem(`{"chatId":"7","title":"Synthetic","kind":"dm","lastMessageId":"6"}`)
+	arrival, err := imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	checks.Equal(1, arrival.MessagesAdded)
+	checks.Equal([]string{"conversations.get", "messages.list"}, chatReads())
+	archivedMessage(t, st, first.SourceID, 7, 6)
+
+	_, err = imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	checks.Empty(chatReads())
+
+	// A rename refreshes the archived title even without new messages.
+	setCatalogItem(`{"chatId":"7","title":"Renamed","kind":"dm","lastMessageId":"6"}`)
+	_, err = imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	checks.Equal([]string{"conversations.get", "messages.list"}, chatReads())
+
+	// A catalog without lastMessageId cannot show the chat is unchanged.
+	setCatalogItem(`{"chatId":"7","title":"Synthetic","kind":"dm"}`)
+	_, err = imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	checks.Equal([]string{"conversations.get", "messages.list"}, chatReads())
+
+	// --full still revisits a listed chat that has not changed.
+	setCatalogItem(`{"chatId":"7","title":"Synthetic","kind":"dm","lastMessageId":"6"}`)
+	opts.Full = true
+	full, err := imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	checks.Equal(2, full.MessagesUpdated)
+	checks.Equal([]string{"conversations.get", "messages.list"}, chatReads())
+}

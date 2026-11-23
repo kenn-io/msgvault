@@ -336,7 +336,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (sum
 	started := time.Now()
 	sum = &ImportSummary{}
 	defer func() { sum.Duration = time.Since(started) }()
-	opts, err = imp.validateOptions(ctx, opts)
+	opts, _, err = imp.validateOptions(ctx, opts)
 	if err != nil {
 		return sum, err
 	}

@@ -901,3 +901,48 @@ func TestLimitedImportFinishesHistoryDespiteOngoingArrivals(t *testing.T) {
 	assertions.False(chat.ScanActive)
 	assertions.Equal(int64(10), chat.Head)
 }
+
+func TestDiscoveredChatsWithoutNewMessagesAreSkipped(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+
+	imp, client, opts := importerFixture(t)
+	opts.ChatIDs = nil
+	client.chats[2] = Conversation{ID: 2, Type: "dm", Title: "Second chat"}
+	for chatID := int64(1); chatID <= 2; chatID++ {
+		for id := int64(1); id <= 3; id++ {
+			client.messages[chatID] = append(client.messages[chatID], syntheticMessage(chatID, id, fmt.Sprintf("message %d", id)))
+		}
+	}
+	list := func(chatID, lastMessageID int64) {
+		chat := client.chats[chatID]
+		chat.LastMessageID, chat.LastMessageKnown = lastMessageID, true
+		client.chats[chatID] = chat
+	}
+	list(1, 3)
+	list(2, 3)
+	// Two-message pages leave chat 2's older history unfinished after a limited run.
+	opts.Limit = 4
+	_, err := imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	opts.Limit = 0
+	client.requests = nil
+	_, err = imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	assertions.Equal([]historyRequest{{2, 0}, {2, 3}}, client.requests, "unfinished history is read even when nothing is new")
+
+	client.requests = nil
+	client.messages[2] = append(client.messages[2], syntheticMessage(2, 4, "arrival"))
+	list(2, 4)
+	changed, err := imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	assertions.Equal(1, changed.MessagesAdded)
+	assertions.Equal(1, changed.ConversationsProcessed)
+	assertions.Equal([]historyRequest{{2, 0}}, client.requests, "only the chat with a new message is read")
+
+	client.requests = nil
+	opts.ChatIDs = []int64{1, 2}
+	_, err = imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	assertions.Equal([]historyRequest{{1, 0}, {2, 0}}, client.requests, "an explicit selection has no catalog to compare")
+}
