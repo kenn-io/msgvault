@@ -157,11 +157,11 @@ message text and attachment metadata. To change those limits, adjust the shared
 
 When policy skips a file, msgvault records a reason such as `size_cap` or
 `participant_threshold`. A failed download does not stop the message from being
-archived. Once its pending marker is stored, the source's freshness still
-advances; the error stays in the run summary, and
-`msgvault backfill-beeper-media` retries the file. Passing `--no-media` for one
-run leaves pending markers, while a disabled media policy leaves excluded
-markers that become eligible when the policy allows them.
+archived. The source's freshness still advances if every failed download has a
+stored pending marker, nothing else in the run failed, and the run was not
+stopped early; the error stays in the run summary either way. Passing
+`--no-media` for one run leaves pending markers, while a disabled media policy
+leaves excluded markers that become eligible when the policy allows them.
 
 Some networks delete old media from their servers. WhatsApp, for example,
 reports `Media is no longer available`. msgvault requests such a file once,
