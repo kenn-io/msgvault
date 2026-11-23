@@ -32,12 +32,15 @@ func TestConversationParticipantOriginTransaction(t *testing.T) {
 	got, err := s.ResolveConversationParticipantContext(t.Context(), room, input)
 	requirements.NoError(err)
 	assertions.NotEqual(weak, got.ParticipantID)
+	assertions.Equal(weak, got.MergedParticipantID, "the rich sighting folds the weak participant")
+	// Later sightings resolve the same participant and merge nothing.
+	resolved := store.ConversationParticipantResolution{ParticipantID: got.ParticipantID, ByPhone: got.ByPhone}
 	var sender int64
 	requirements.NoError(s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT sender_id FROM messages WHERE id=?`), mid).Scan(&sender))
 	assertions.Equal(got.ParticipantID, sender)
 	supported, err := s.ResolveConversationParticipantContext(t.Context(), supportRoom, input)
 	requirements.NoError(err)
-	assertions.Equal(got, supported)
+	assertions.Equal(resolved, supported)
 	revision, err := s.ConversationPolicyRevision(t.Context())
 	requirements.NoError(err)
 	_, err = s.DB().ExecContext(t.Context(), s.Rebind(`DELETE FROM participant_contact_observation_conversations
@@ -52,7 +55,7 @@ func TestConversationParticipantOriginTransaction(t *testing.T) {
 	logs := captureAttachmentQueryLogs(t)
 	again, err := s.ResolveConversationParticipantContext(t.Context(), supportRoom, input)
 	requirements.NoError(err)
-	assertions.Equal(got, again)
+	assertions.Equal(resolved, again)
 	assertions.NotContains(logs.String(), "SELECT c.id FROM conversations c JOIN sources src",
 		"a stable sighting should not scan historical room provenance")
 	var roomSupport int
