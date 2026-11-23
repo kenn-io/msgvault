@@ -352,7 +352,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 			// window after each audit before starting another, so limited
 			// runs cannot starve new top-level messages.
 			if cs.Done && !cs.ThreadsPending && len(cs.PendingThreads) == 0 &&
-				cs.BackfillLatest == "" && !tsLess(cs.Cursor, cs.AuditedThrough) {
+				cs.BackfillLatest == "" && !tsLess(cs.Cursor, cs.auditSettledAt()) {
 				cs.ThreadsPending = true
 				cs.AuditPending = true
 			}
@@ -983,12 +983,14 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 				// from wedging every future workspace sync into failure —
 				// and a vacuous stamp keeps the stamp-less adoption from
 				// re-flagging it (nothing exists to cover; the gap
-				// machinery owns any later resurrection).
+				// machinery owns any later resurrection). AuditedThrough
+				// stays at the last walk that read threads: if access
+				// returns, the next audit owes every reply since then.
+				// LastSkippedAt defers that audit instead.
 				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				cs.ThreadsPending = false
 				cs.CatchUpCursor, cs.CatchUpLatest = "", ""
 				cs.AuditPending = false
-				cs.AuditedThrough = tsFormat(imp.now())
 				cs.LastSkippedAt = tsFormat(imp.now())
 				if cs.SweptThrough == "" {
 					cs.SweptThrough = tsFormat(imp.now())

@@ -238,6 +238,17 @@ func (cs *ConvState) RecordPendingThreadTail(anchorTS, drainedTo string) {
 	cs.PendingThreads = append(cs.PendingThreads, PendingThread{RootTS: anchorTS, DrainedTo: drainedTo, Floor: drainedTo})
 }
 
+// auditSettledAt is when this conversation last had its turn at a canonical
+// audit: the last walk's pin, or a later attempt that found the conversation
+// unreadable. Scheduling waits from it. Thread coverage is AuditedThrough
+// alone, because an unreadable attempt fetched nothing.
+func (cs *ConvState) auditSettledAt() string {
+	if tsLess(cs.AuditedThrough, cs.LastSkippedAt) {
+		return cs.LastSkippedAt
+	}
+	return cs.AuditedThrough
+}
+
 // PendingForecast sums the remaining reply forecasts of the outstanding
 // drain debt: the budget charge for work committed but not yet performed.
 func (cs *ConvState) PendingForecast() int {

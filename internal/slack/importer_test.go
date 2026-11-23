@@ -1005,6 +1005,50 @@ func TestCanonicalThreadAuditSkipsThreadsSettledBeforeLastAudit(t *testing.T) {
 	assert.Equal(1, n, "the audit must still recover the reply search never served")
 }
 
+// An audit attempt that finds the conversation unreadable fetched no thread,
+// so it must not count as coverage. Without search, the audit is the only
+// reply discovery: a reply posted while access was lost has to be fetched
+// once access returns.
+func TestCanonicalThreadAuditOwesRepliesPostedWhileConversationUnreadable(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	f.scopes = "channels:read,channels:history,users:read,users:read.email"
+	imp, opts := testImporter(t, f)
+	start := time.Now()
+	at := func(d time.Duration) { imp.now = func() time.Time { return start.Add(d) } }
+
+	at(0)
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+
+	// Access is lost, and a reply lands an hour before the next sync.
+	missed := tsFormat(start.Add(time.Hour))
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: missed, ThreadTS: rootTS, User: "UME", Text: "posted while unreadable"})
+	f.handleGhost(f.conv("C09"))
+	f.mu.Unlock()
+	for _, d := range []time.Duration{2 * time.Hour, 2*time.Hour + time.Minute} {
+		at(d)
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+	}
+
+	f.mu.Lock()
+	f.ghosts = nil
+	f.mu.Unlock()
+	for _, d := range []time.Duration{3 * time.Hour, 3*time.Hour + time.Minute, 3*time.Hour + 2*time.Minute} {
+		at(d)
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+	}
+	var n int
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+missed).Scan(&n))
+	require.Equal(1, n, "the audit after access returns must fetch the reply posted while unreadable")
+}
+
 func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
