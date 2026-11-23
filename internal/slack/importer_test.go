@@ -959,6 +959,52 @@ func TestCanonicalThreadAuditRecoversReplyNeverServedBySearch(t *testing.T) {
 		"a canonical history/thread audit must eventually recover replies regardless of search indexing lag")
 }
 
+// A canonical walk already fetched every thread whole, so the next one only
+// owes threads that gained a reply since. Re-fetching the rest made each
+// audit of a busy channel re-read its entire reply history.
+func TestCanonicalThreadAuditSkipsThreadsSettledBeforeLastAudit(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	quietRoot := ts(-14300)
+	f.conv("C09").Msgs = append(f.conv("C09").Msgs, fakeMsg{
+		TS: quietRoot, User: "UME", Text: "quiet root",
+		Replies: []fakeMsg{
+			{TS: ts(-14290), ThreadTS: quietRoot, User: "UME", Text: "quiet reply one"},
+			{TS: ts(-14280), ThreadTS: quietRoot, User: "UME", Text: "quiet reply two"},
+		},
+	})
+	imp, opts := testImporter(t, f)
+
+	sum, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.Equal(3, sum.RepliesFetched, "test setup: the initial walk fetches every reply")
+
+	// One thread gains a reply that search never serves; the other is quiet.
+	lateReply := tsFresh(0)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "never indexed"})
+	f.searchIndexedThrough = tsMinusMicro(lateReply)
+	f.mu.Unlock()
+
+	imp.now = func() time.Time { return time.Now().Add(8 * 24 * time.Hour) }
+	sum, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.Zero(sum.RepliesFetched, "test setup: this run only schedules the audit")
+
+	imp.now = func() time.Time { return time.Now().Add(8*24*time.Hour + time.Minute) }
+	sum, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(2, sum.RepliesFetched,
+		"the audit must fetch the thread with a new reply and skip the quiet one")
+	var n int
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+	assert.Equal(1, n, "the audit must still recover the reply search never served")
+}
+
 func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

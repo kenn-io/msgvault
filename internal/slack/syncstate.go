@@ -86,7 +86,8 @@ type ConvState struct {
 	SweptThrough string `json:"swept_through,omitempty"`
 	// AuditedThrough is the pin of the last canonical history/thread walk.
 	// Search has no published maximum indexing lag, so one conversation at
-	// a time is periodically re-walked as a completeness backstop.
+	// a time is periodically re-walked as a completeness backstop. The next
+	// periodic audit skips threads whose newest reply predates this pin.
 	AuditedThrough string `json:"audited_through,omitempty"`
 	// AuditPending distinguishes a periodic canonical audit from other
 	// ThreadsPending causes so completion can advance AuditedThrough.

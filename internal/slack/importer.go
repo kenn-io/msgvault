@@ -944,6 +944,18 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 	if cs.CatchUpLatest == "" {
 		cs.CatchUpLatest = tsFormat(imp.now()) // exact instant, never rounded forward
 	}
+	// A periodic audit is scheduled only when no other thread debt is owed,
+	// so the walk that set AuditedThrough fetched every thread whole after
+	// its pin: a thread whose newest reply predates that pin has nothing new
+	// to fetch. AuditedThrough keeps that pin until this walk completes. The
+	// margin absorbs skew between this host's clock, which sets pins, and
+	// Slack's, which stamps replies. Other debt takes the full walk: a
+	// backfill begun under --no-threads is stamped without having fetched
+	// its early threads.
+	settledBefore := ""
+	if cs.AuditPending && cs.AuditedThrough != "" {
+		settledBefore = tsFormat(tsTime(cs.AuditedThrough).Add(-sweepLagMargin))
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -994,9 +1006,13 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 		cc.budgetUsed += len(page.Messages)
 		for i := range page.Messages {
 			m := &page.Messages[i]
-			if m.IsThreadRoot() {
-				cs.RecordPendingThread(m.TS, m.ReplyCount)
+			if !m.IsThreadRoot() {
+				continue
 			}
+			if settledBefore != "" && m.LatestReply != "" && tsLess(m.LatestReply, settledBefore) {
+				continue
+			}
+			cs.RecordPendingThread(m.TS, m.ReplyCount)
 		}
 		if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
 			return err
