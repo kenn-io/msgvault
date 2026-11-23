@@ -94,7 +94,7 @@ func TestColdRoomMentionsAndReactionsStayBare(t *testing.T) {
 			existing, err := st.EnsureParticipantByPhone(t.Context(), "+12025550130", "Independent Contact", "sms")
 			requirements.NoError(err)
 			chat := &Chat{ID: "cold", AccountID: "account", Network: "Signal", Type: "group"}
-			chat.Participants.Items = []Participant{{User: User{ID: "member", PhoneNumber: "+12025550130"}}}
+			chat.Participants.Items = []Participant{{ID: "member", PhoneNumber: "+12025550130"}}
 			chat.Participants.HasMore = true
 			imp := NewImporter(st, nil)
 			imp.res.accountID = "account"
