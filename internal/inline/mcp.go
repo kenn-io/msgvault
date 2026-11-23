@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -44,6 +43,9 @@ type MCPClient struct {
 	ownerID          int64
 	closed           bool
 	invalidPrincipal bool
+	// reconnectPending blocks reads until a replacement session's principal
+	// is verified. Only a rate-limited attempt leaves it pending for retry.
+	reconnectPending bool
 }
 
 var _ Client = (*MCPClient)(nil)
@@ -81,9 +83,25 @@ func NewMCPClient(ctx context.Context, endpoint string, httpClient *http.Client)
 type mcpResponseTransport struct {
 	base  http.RoundTripper
 	limit int64
-	// retryAfter holds the delay from the latest HTTP 429. The SDK reports
-	// only the status text, so the client reads the server's delay here.
-	retryAfter atomic.Int64
+
+	// The SDK reports an HTTP 429 only as status text, so the transport
+	// records it and the server's delay, which may be zero, for the client.
+	mu          sync.Mutex
+	rateLimited bool
+	retryAfter  time.Duration
+}
+
+func (t *mcpResponseTransport) rateLimit() (time.Duration, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.retryAfter, t.rateLimited
+}
+
+func (t *mcpResponseTransport) resetRateLimit() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.rateLimited = false
+	t.retryAfter = 0
 }
 
 func (t *mcpResponseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -92,7 +110,11 @@ func (t *mcpResponseTransport) RoundTrip(req *http.Request) (*http.Response, err
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
-		t.retryAfter.Store(int64(httpretry.RetryAfter(resp.Header.Get("Retry-After"), 0, httpretry.DefaultMaxRetryAfter)))
+		delay := httpretry.RetryAfter(resp.Header.Get("Retry-After"), 0, httpretry.DefaultMaxRetryAfter)
+		t.mu.Lock()
+		t.rateLimited = true
+		t.retryAfter = delay
+		t.mu.Unlock()
 	}
 	if resp.ContentLength > t.limit {
 		_ = resp.Body.Close()
@@ -193,10 +215,10 @@ func (c *MCPClient) call(ctx context.Context, name string, args map[string]any) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for attempt := 0; ; attempt++ {
-		c.transport.retryAfter.Store(0)
+		c.transport.resetRateLimit()
 		raw, err := c.callOnce(ctx, name, args)
-		delay := time.Duration(c.transport.retryAfter.Load())
-		if err == nil || delay == 0 || attempt >= mcpRateLimitRetries || ctx.Err() != nil {
+		delay, limited := c.transport.rateLimit()
+		if err == nil || !limited || attempt >= mcpRateLimitRetries || ctx.Err() != nil {
 			return raw, err
 		}
 		if waitErr := c.wait(ctx, delay); waitErr != nil {
@@ -214,33 +236,19 @@ func (c *MCPClient) callOnce(ctx context.Context, name string, args map[string]a
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
+	if c.reconnectPending {
+		if err := c.reconnect(ctx); err != nil {
+			return nil, err
+		}
+	}
 	result, err := c.session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	if errors.Is(err, mcp.ErrSessionMissing) {
 		// A provider restart or idle expiry invalidates the session, not the
-		// archive cursor. Reinitialize once, verify its principal, then retry.
-		// Any reconnect or verification failure must also block later reads.
-		c.invalidPrincipal = true
-		_ = c.session.Close()
-		if err = c.connect(ctx); err != nil {
+		// archive cursor. Reinitialize, verify its principal, then retry.
+		c.reconnectPending = true
+		if err = c.reconnect(ctx); err != nil {
 			return nil, err
 		}
-		me, checkErr := c.session.CallTool(ctx, &mcp.CallToolParams{Name: "account.me", Arguments: map[string]any{}})
-		if checkErr != nil {
-			return nil, fmt.Errorf("verify reconnected Inline account: %w", checkErr)
-		}
-		raw, checkErr := inlineToolJSON(me)
-		if checkErr != nil {
-			return nil, checkErr
-		}
-		account, checkErr := decodeAccount(raw)
-		if checkErr != nil {
-			return nil, checkErr
-		}
-		if c.ownerID != 0 && account.UserID != c.ownerID {
-			return nil, fmt.Errorf("%w: reconnected account differs from archive owner", ErrContract)
-		}
-		c.ownerID = account.UserID
-		c.invalidPrincipal = false
 		result, err = c.session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	}
 	if err != nil {
@@ -251,6 +259,45 @@ func (c *MCPClient) callOnce(ctx context.Context, name string, args map[string]a
 		return nil, fmt.Errorf("inline tool %s: %w", name, err)
 	}
 	return raw, nil
+}
+
+// reconnect replaces the session and verifies it belongs to the archive owner.
+// A rate-limited attempt stays pending, so the caller's bounded retry can try
+// again while reads remain blocked. Any other failure blocks later reads.
+func (c *MCPClient) reconnect(ctx context.Context) error {
+	err := c.reconnectOnce(ctx)
+	if err == nil {
+		c.reconnectPending = false
+		return nil
+	}
+	if _, limited := c.transport.rateLimit(); !limited {
+		c.invalidPrincipal = true
+	}
+	return err
+}
+
+func (c *MCPClient) reconnectOnce(ctx context.Context) error {
+	_ = c.session.Close()
+	if err := c.connect(ctx); err != nil {
+		return err
+	}
+	me, err := c.session.CallTool(ctx, &mcp.CallToolParams{Name: "account.me", Arguments: map[string]any{}})
+	if err != nil {
+		return fmt.Errorf("verify reconnected Inline account: %w", err)
+	}
+	raw, err := inlineToolJSON(me)
+	if err != nil {
+		return err
+	}
+	account, err := decodeAccount(raw)
+	if err != nil {
+		return err
+	}
+	if c.ownerID != 0 && account.UserID != c.ownerID {
+		return fmt.Errorf("%w: reconnected account differs from archive owner", ErrContract)
+	}
+	c.ownerID = account.UserID
+	return nil
 }
 
 func inlineToolJSON(result *mcp.CallToolResult) ([]byte, error) {
