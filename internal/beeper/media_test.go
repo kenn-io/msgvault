@@ -1229,7 +1229,7 @@ func TestImportMediaUnavailableIsTerminal(t *testing.T) {
 
 	f := newFakeBeeper(t)
 	f.addChat(mediaChat())
-	f.setAssetError("mxc://beeper.local/photo1", http.StatusInternalServerError, expiredAssetBody)
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadGateway, `{"message":"Failed to download asset: Media no longer exists","code":"SERVE_ASSET_ERROR"}`)
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
