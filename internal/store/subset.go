@@ -3327,12 +3327,14 @@ func copySubsetConversationPolicySettings(ctx context.Context, tx *sql.Tx) error
 		}
 	}
 	settings.Overrides = kept
-	value, err := json.Marshal(settings)
+	// Store the normalized form configuration writes, so the bootstrap after
+	// the copy sees unchanged settings.
+	_, value, err := normalizedConversationPolicySettings(settings)
 	if err != nil {
 		return fmt.Errorf("encode conversation policy settings: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata (key, value) VALUES (?, ?)
-		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, conversationPolicySettingsKey, string(value)); err != nil {
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, conversationPolicySettingsKey, value); err != nil {
 		return fmt.Errorf("copy conversation policy settings: %w", err)
 	}
 	return nil

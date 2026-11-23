@@ -196,6 +196,13 @@ func TestConversationPolicySubsetKeepsConfiguredClassification(t *testing.T) {
 	assertions.Equal(settings.ActivityWindowDays, copiedSettings.ActivityWindowDays)
 	assertions.Equal(settings.Overrides[:1], copiedSettings.Overrides,
 		"overrides for rooms outside the subset must not reveal their accounts or rooms")
+	// The copied settings and tiers match what the bootstrap after the copy
+	// computes, so it changes nothing beyond a new archive's own setup.
+	fresh, err := testutil.NewTestStore(t).ConversationPolicyRevision(t.Context())
+	requirements.NoError(err)
+	copiedRevision, err := copied.ConversationPolicyRevision(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(fresh, copiedRevision, "copying must not look like a policy change")
 }
 
 func TestConversationPolicySubsetBootstrapsLegacySource(t *testing.T) {
