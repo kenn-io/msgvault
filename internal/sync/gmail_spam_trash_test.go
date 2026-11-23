@@ -27,28 +27,36 @@ func TestGmailSkipSpamTrashFullAndRecovery(t *testing.T) {
 	gmailCoverageAbsent(t, env, "trash")
 	assert.Equal(t, []string{"false ", "false "}, gmailMessageLists(t, provider.requests))
 
-	// Seed an archive that previously included Spam and Trash.
-	env.Syncer = New(client, env.Store, nil)
-	runFullSync(t, env)
-	gmailCoverageRaw(t, env, "spam")
-	gmailCoverageRaw(t, env, "trash")
-
-	// An archived message moves to Trash while the History cursor expires.
+	// An archived message without raw MIME moves to Trash before recovery.
+	source := gmailCoverageSource(t.Context(), t, env)
+	rows, err := env.Store.MessageExistsBatchContext(t.Context(), source.ID, []string{"normal1"})
+	require.NoError(t, err)
+	require.Contains(t, rows, "normal1")
+	_, err = env.Store.DB().ExecContext(t.Context(), env.Store.Rebind("DELETE FROM message_raw WHERE message_id = ?"), rows["normal1"])
+	require.NoError(t, err)
 	provider.requests = nil
-	provider.labels = map[string]string{"normal1": "TRASH"}
+	provider.labels = map[string]string{"normal1": "TRASH", "normal2": "SPAM"}
 	provider.history, provider.expire = 2000, true
 	env.Syncer = New(client, env.Store, opts)
-	summary, err := env.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t.Context(), t, env), nil)
+	summary, err = env.Syncer.IncrementalWithHistoryRecovery(t.Context(), source, nil)
 	require.NoError(t, err)
 	assert.Zero(t, summary.Errors)
 	assert.Equal(t, []string{
-		"false ", "false ",
+		"false ",
 		"true " + gmailSpamTrashQuery, "true " + gmailSpamTrashQuery,
 		"true ", "true ",
 	}, gmailMessageLists(t, provider.requests))
 	assertMessageHasLabel(t, env.Store, "normal1", "TRASH")
 	assertMessageNotHasLabel(t, env.Store, "normal1", "INBOX")
-	for _, id := range []string{"normal1", "spam", "trash"} {
+	assertMessageHasLabel(t, env.Store, "normal2", "SPAM")
+	gmailCoverageAbsent(t, env, "spam")
+	gmailCoverageAbsent(t, env, "trash")
+	for _, request := range provider.requests {
+		u, err := url.ParseRequestURI(request)
+		require.NoError(t, err)
+		assert.NotEqual(t, "raw", u.Query().Get("format"))
+	}
+	for _, id := range []string{"normal1", "normal2"} {
 		assertDeletedFromSource(t, env.Store, id, false)
 	}
 }

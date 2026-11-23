@@ -613,6 +613,17 @@ type inconclusiveLabelRefresh struct {
 
 // processBatch processes a single batch of messages from a list response.
 func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listResp *gmail.MessageListResponse, labelMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (*batchResult, error) {
+	return s.processBatchWithArchivedRows(ctx, syncID, sourceID, listResp, labelMap, checkpoint, summary, nil)
+}
+
+// The excluded-folder recovery pass supplies the archived rows it already
+// selected, including rows with no raw MIME. Ordinary scans use raw MIME
+// availability to decide which messages need downloading or repair.
+func (s *Syncer) processBatchWithArchivedRows(
+	ctx context.Context, syncID, sourceID int64, listResp *gmail.MessageListResponse,
+	labelMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary,
+	archivedRows map[string]store.MessageWithRawMetadata,
+) (*batchResult, error) {
 	result := &batchResult{}
 
 	if len(listResp.Messages) == 0 {
@@ -720,10 +731,13 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			}
 		}
 	}
-	existingMap, err := s.store.MessageMetadataWithRawBatch(
-		ctx, sourceID, lookupMessageIDs)
-	if err != nil {
-		return nil, fmt.Errorf("check existing: %w", err)
+	var err error
+	existingMap := archivedRows
+	if existingMap == nil {
+		existingMap, err = s.store.MessageMetadataWithRawBatch(ctx, sourceID, lookupMessageIDs)
+		if err != nil {
+			return nil, fmt.Errorf("check existing: %w", err)
+		}
 	}
 	for sourceMessageID, canonicalSourceMessageID := range aliases {
 		if canonical, exists := existingMap[canonicalSourceMessageID]; exists {
@@ -774,7 +788,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			continue
 		}
 		existingCount++
-		if _, pending := s.pendingAcquisitions[id]; pending &&
+		if _, pending := s.pendingAcquisitions[id]; pending && archivedRows == nil &&
 			(s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail) && s.pendingAttachmentRepairs[id] == 0 {
 			if err := s.repairPendingAttachments(ctx, sourceID, id); err != nil {
 				if ctx.Err() != nil || errors.Is(err, store.ErrSyncRunSuperseded) {

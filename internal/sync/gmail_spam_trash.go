@@ -56,12 +56,14 @@ func (s *Syncer) refreshArchivedSpamTrashLabels(ctx context.Context, state *sync
 			return fmt.Errorf("check archived Gmail Spam and Trash: %w", err)
 		}
 		archived := &gmail.MessageListResponse{}
+		rows := make(map[string]store.MessageWithRawMetadata, len(existing))
 		for _, message := range listResp.Messages {
-			if _, ok := existing[message.ID]; ok {
+			if rowID, ok := existing[message.ID]; ok {
+				rows[message.ID] = store.MessageWithRawMetadata{ID: rowID}
 				archived.Messages = append(archived.Messages, message)
 			}
 		}
-		result, err := s.processBatch(ctx, state.syncID, sourceID, archived, labelMap, state.checkpoint, summary)
+		result, err := s.processBatchWithArchivedRows(ctx, state.syncID, sourceID, archived, labelMap, state.checkpoint, summary, rows)
 		if err != nil {
 			return fmt.Errorf("refresh archived Gmail Spam and Trash labels: %w", err)
 		}
