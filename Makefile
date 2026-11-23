@@ -549,6 +549,11 @@ docs-build:
 docs-serve: docs-build
 	cd docs && uv run --frozen python -m http.server 8000 --bind 127.0.0.1 --directory site
 
+# Fold changelog fragments into a release
+.PHONY: changelog-release
+changelog-release:
+	python3 docs/scripts/changelog.py release "$(RELEASE_VERSION)" "$(RELEASE_DATE)"
+
 # Check docs sources and build output
 docs-check:
 	bash scripts/check-docs.sh
