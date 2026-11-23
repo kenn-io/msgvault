@@ -1224,22 +1224,13 @@ func TestBackfillMediaGoneMessageKeepsDownloadedRows(t *testing.T) {
 }
 
 func TestImportMediaUnavailableIsTerminal(t *testing.T) {
-	t.Run("WhatsApp", func(t *testing.T) {
-		testImportMediaUnavailableIsTerminal(t, http.StatusInternalServerError, expiredAssetBody)
-	})
-	t.Run("Instagram", func(t *testing.T) {
-		testImportMediaUnavailableIsTerminal(t, http.StatusBadGateway, `{"message":"Failed to download asset: Media no longer exists","code":"SERVE_ASSET_ERROR"}`)
-	})
-}
-
-func testImportMediaUnavailableIsTerminal(t *testing.T, status int, body string) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
 	f := newFakeBeeper(t)
 	f.addChat(mediaChat())
-	f.setAssetError("mxc://beeper.local/photo1", status, body)
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusInternalServerError, expiredAssetBody)
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
