@@ -102,6 +102,13 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	// Ask for the stored bytes. Left to itself the transport requests gzip and
+	// inflates the body through a 4 KiB reader, which acknowledges every 4 KiB
+	// with its own HTTP/2 WINDOW_UPDATE. Slack's delivery host drops the
+	// connection after a few thousand of them, so a text file of several
+	// megabytes always ended in "unexpected EOF". The redirect hop inherits
+	// this header.
+	req.Header.Set("Accept-Encoding", "identity")
 	client := &http.Client{
 		Timeout: attachmentpolicy.DownloadTimeout(maxBytes),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {

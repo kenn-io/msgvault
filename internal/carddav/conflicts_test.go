@@ -2302,31 +2302,23 @@ func TestPublishedImportRetainsPreferenceHashBaseline(t *testing.T) {
 	assert.Contains(string(fixture.body), "PREF=01")
 }
 
-func TestPhoneURIIdentityReusesImportedPerson(t *testing.T) {
+func TestPhoneURIContactPointImportNormalization(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		phone, second string
-		distinct      bool
-	}{
-		{"+12025550102", "+12025550102", false},
-		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=42", false},
-		{"tel:5550102;phone-context=+1202;ext=42", "tel:5550102;phone-context=+1202;ext=42", false},
-		{"tel:5550102;phone-context=+1202;ext=42", "tel:+12025550102;ext=42", false},
-		{"tel:5550102;phone-context=+1202;ext=42", "TEL:5550102;EXT=42;PHONE-CONTEXT=+1202", false},
-		{"tel:+12025550102;ext=42;isub=7", "tel:+12025550102;ISUB=7;EXT=42", false},
-		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=43", true},
-		{"tel:+12025550102;ext=42", "+12025550102", true},
+	for _, phone := range []string{
+		"+12025550102",
+		"tel:+12025550102;ext=42",
+		"tel:5550102;phone-context=+1202;ext=42",
+		"tel:+12025550102;ext=42;isub=7",
 	} {
-		phone := tc.phone
-		t.Run(phone+"/"+tc.second, func(t *testing.T) {
+		t.Run(phone, func(t *testing.T) {
 			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
-			card := func(uid, phone string) []byte {
-				return []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + uid + "\r\nFN:" + uid + "\r\nTEL:" + phone + "\r\nEND:VCARD\r\n")
+			card := func(phone string) []byte {
+				return []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:first\r\nFN:first\r\nTEL:" + phone + "\r\nEND:VCARD\r\n")
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				writeDAVXML(t, w, syncResponse(cardResponseRaw("/books/personal/first.vcf", `"one"`, escapedCardData(card("first", phone)))+cardResponseRaw("/books/personal/second.vcf", `"one"`, escapedCardData(card("second", tc.second))), ""))
+				writeDAVXML(t, w, syncResponse(cardResponseRaw("/books/personal/first.vcf", `"one"`, escapedCardData(card(phone))), ""))
 			}))
 			t.Cleanup(server.Close)
 			service, st, book := newPullService(t, server, false)
@@ -2335,20 +2327,55 @@ func TestPhoneURIIdentityReusesImportedPerson(t *testing.T) {
 			first, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"first.vcf")
 			require.NoError(err)
 			require.NotNil(first.PersonID)
-			second, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"second.vcf")
-			require.NoError(err)
-			if !tc.distinct {
-				assert.Equal(first.PersonID, second.PersonID)
-			} else {
-				require.NotNil(second.PersonID)
-				assert.NotEqual(*first.PersonID, *second.PersonID)
-			}
 			points, err := st.ListPersonContactPointsContext(t.Context(), *first.PersonID, true)
 			require.NoError(err)
 			require.Len(points, 1)
 			assert.Equal("+12025550102", points[0].NormalizedValue)
 			if strings.HasPrefix(phone, "tel:") {
 				assert.Equal(new(phone), points[0].URI)
+			}
+		})
+	}
+}
+
+func TestPhoneURIContactPointMatchingThroughSync(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		local, remote string
+		matches       bool
+	}{
+		{"tel:5550102;phone-context=+1202;ext=42", "tel:+12025550102;ext=42", true},
+		{"tel:5550102;phone-context=+1202;ext=42", "TEL:5550102;EXT=42;PHONE-CONTEXT=+1202", true},
+		{"tel:+12025550102;ext=42;isub=7", "tel:+12025550102;ISUB=7;EXT=42", true},
+		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=43", false},
+		{"tel:+12025550102;ext=42", "+12025550102", false},
+	} {
+		t.Run(tc.local+"/"+tc.remote, func(t *testing.T) {
+			t.Parallel()
+			card := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:remote\r\nFN:remote\r\nTEL:" + tc.remote + "\r\nEND:VCARD\r\n")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				writeDAVXML(t, w, syncResponse(cardResponseRaw("/books/personal/remote.vcf", `"one"`, escapedCardData(card)), ""))
+			}))
+			t.Cleanup(server.Close)
+			service, st, book := newPullService(t, server, false)
+			participant, err := st.EnsureParticipant("local@example.test", "Local", "example.test")
+			require.NoError(t, err)
+			person, _, err := st.CreatePersonFromParticipant(participant)
+			require.NoError(t, err)
+			_, err = st.AddPersonContactPointContext(t.Context(), person.ID, store.PersonContactPointInput{
+				AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550102", URI: &tc.local,
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+			})
+			require.NoError(t, err)
+			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(t, err)
+			resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"remote.vcf")
+			require.NoError(t, err)
+			require.NotNil(t, resource.PersonID)
+			if tc.matches {
+				assert.Equal(t, person.ID, *resource.PersonID)
+			} else {
+				assert.NotEqual(t, person.ID, *resource.PersonID)
 			}
 		})
 	}

@@ -745,7 +745,7 @@
     border-start-start-radius: 0;
     border-end-start-radius: 0;
     border-bottom-color: transparent;
-    background: linear-gradient(to right, var(--accent-blue) 3px, var(--selected-bg) 3px);
+    background: linear-gradient(to right, var(--accent-blue) 3px, var(--selected-list-bg) 3px);
     box-shadow: none;
   }
 
@@ -763,7 +763,7 @@
   .data-row--inspected {
     border-start-start-radius: 0;
     border-end-start-radius: 0;
-    background: var(--selected-bg);
+    background: var(--selected-list-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 

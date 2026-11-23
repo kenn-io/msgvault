@@ -249,6 +249,11 @@ func (c *Client) DoGeneratedRequestWithContext(
 	return c.doGeneratedRequestWithHTTPClient(ctx, method, path, options, c.httpClient, maxErrorBodyBytes)
 }
 
+// DoGeneratedAttributeWriteWithContext allows larger conflict responses for attribute writes.
+func (c *Client) DoGeneratedAttributeWriteWithContext(ctx context.Context, method, path string, options runtime.RequestOptions) (*http.Response, error) {
+	return c.doGeneratedRequestWithHTTPClient(ctx, method, path, options, c.httpClient, 1<<20)
+}
+
 // DoGeneratedStreamingRequestWithContext is like DoGeneratedRequestWithContext
 // but disables http.Client.Timeout so long-running NDJSON streams are not cut
 // off by an absolute body-read deadline.

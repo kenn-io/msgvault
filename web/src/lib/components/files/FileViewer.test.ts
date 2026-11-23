@@ -116,8 +116,9 @@ describe('FileViewer', () => {
     expect(background).not.toHaveBeenCalled();
 
     const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
-    window.dispatchEvent(escape);
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    const dialog = screen.getByRole('dialog');
+    dialog.dispatchEvent(escape);
+    dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     expect(escape.defaultPrevented).toBe(true);
     expect(onClose).toHaveBeenCalledOnce();
     await waitFor(() => expect(document.activeElement).toBe(opener));

@@ -26,8 +26,9 @@ import (
 type stubIdentityCacheStore struct {
 	*store.Store
 
-	refreshErr   error
-	refreshCalls int
+	refreshErr          error
+	refreshCalls        int
+	cardDAVRefreshCalls int
 }
 
 func (s *stubIdentityCacheStore) RefreshIdentityDatasets(_ context.Context) (int64, error) {
@@ -36,6 +37,10 @@ func (s *stubIdentityCacheStore) RefreshIdentityDatasets(_ context.Context) (int
 		return 0, s.refreshErr
 	}
 	return 1, nil
+}
+
+func (s *stubIdentityCacheStore) QueueCardDAVIdentityCacheRefresh(context.Context) {
+	s.cardDAVRefreshCalls++
 }
 
 // mustParticipant is a thin wrapper around EnsureParticipant for these

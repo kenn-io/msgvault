@@ -1,6 +1,7 @@
 import { disabledTaskLookup, taskLookup } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { tick } from 'svelte';
+import { mount, tick, unmount } from 'svelte';
+import { fromStore, writable } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
@@ -41,6 +42,56 @@ function omittedMessage(id: number) {
 }
 
 describe('ConversationView', () => {
+  it('loads the selected omitted message while it stays collapsed', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path === '/api/v1/messages/1') return Response.json({ ...message(1), tab_title: 'Selected title' });
+      return Response.json({ id: 7, anchor_id: 2, messages: [omittedMessage(1), message(2), omittedMessage(3)], has_before: false, has_after: false, total: 3 });
+    });
+    render(ConversationView, { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 1 });
+    await screen.findByRole('article', { name: 'Message 2' });
+    await waitFor(() => expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname === '/api/v1/messages/1')).toBe(true));
+    expect(screen.getByRole('button', { name: /Expand message 1/ })).toBeTruthy();
+    expect(screen.queryByRole('article', { name: 'Message 1' })).toBeNull();
+    expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname === '/api/v1/messages/3')).toBe(false);
+  });
+
+  it('keeps the selected title while its detail reloads with a new window', async () => {
+    const detailRequests: Array<(response: Response) => void> = [];
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const url = new URL((input as Request).url);
+      if (url.pathname === '/api/v1/messages/1') return new Promise<Response>(resolve => { detailRequests.push(resolve); });
+      const anchor = Number(url.searchParams.get('anchor'));
+      const anchorMessage = { ...message(anchor), tab_title: `Title ${anchor}` };
+      return Response.json({ id: 7, anchor_id: anchor, messages: anchor === 2 ? [anchorMessage] : [message(1), anchorMessage], has_before: false, has_after: false, total: 3 });
+    });
+    const anchor = writable(2);
+    const currentAnchor = fromStore(anchor);
+    let title = '';
+    const target = document.createElement('div');
+    document.body.append(target);
+    const component = mount(ConversationView, { target, props: {
+      client: createAPIClient(fetchFn), conversationId: 7,
+      get anchorId() { return currentAnchor.current; }, titleAnchorId: 1,
+      get anchorTitle() { return title; }, set anchorTitle(value: string) { title = value; }
+    } });
+    try {
+      await waitFor(() => expect(title).toBe('Title 2'));
+      anchor.set(3);
+      await waitFor(() => expect(detailRequests).toHaveLength(1));
+      expect(title).toBe('');
+      detailRequests[0]!(Response.json({ ...message(1), tab_title: 'Selected title' }));
+      await waitFor(() => expect(title).toBe('Selected title'));
+      anchor.set(4);
+      await waitFor(() => expect(detailRequests).toHaveLength(2));
+      expect(title).toBe('Selected title');
+    } finally {
+      for (const release of detailRequests) release(Response.json({ ...message(1), tab_title: 'Selected title' }));
+      await unmount(component);
+      target.remove();
+    }
+  });
+
   it('loads the thread with the anchor expanded and the rest as one-line collapsed cards', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -53,7 +104,7 @@ describe('ConversationView', () => {
     });
 
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
 
     const anchorCard = await screen.findByRole('article', { name: 'Message 2' });
@@ -78,7 +129,7 @@ describe('ConversationView', () => {
       ],
       has_before: false, has_after: false, total: 2
     }));
-    render(ConversationView, { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onOpenPerson });
+    render(ConversationView, { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 2, onOpenPerson });
 
     const anchorCard = await screen.findByRole('article', { name: 'Message 2' });
     expect(anchorCard.textContent).toContain('You');
@@ -104,7 +155,7 @@ describe('ConversationView', () => {
 
     render(ConversationView, {
       props: {
-        client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2,
+        client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 2,
         start: '2026-07-19T00:00:00.000Z', end: '2026-07-20T00:00:00.000Z'
       }
     });
@@ -120,7 +171,7 @@ describe('ConversationView', () => {
       id: 7, anchor_id: 2, messages: [message(2)], has_before: false, has_after: false, total: 1
     }));
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
@@ -132,7 +183,7 @@ describe('ConversationView', () => {
   it('expands additional messages inline without refetching and reports the anchor change', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ id: 7, anchor_id: 2, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 }));
     const onAnchorChange = vi.fn();
-    render(ConversationView, { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onAnchorChange });
+    render(ConversationView, { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 2, onAnchorChange });
     await screen.findByRole('article', { name: 'Message 2' });
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
     expect(await screen.findByRole('article', { name: 'Message 1' })).toBeTruthy();
@@ -164,7 +215,7 @@ describe('ConversationView', () => {
     });
     const client = createCaptureClient(fetchFn, telemetryEvents, telemetryRequests);
     const view = render(ConversationView, {
-      props: { client, conversationId: 7, anchorId: 2 }
+      props: { client, conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
@@ -196,7 +247,7 @@ describe('ConversationView', () => {
       if (lookup) return Response.json(taskLookup({ state: recovered && lookup[1] === '1' ? 'unavailable' : 'ready', complete: !recovered, tasks: [{ id: `task-${lookup[1]}`, title: `Cached task ${lookup[1]}` }] }, Number(lookup[1])));
       return Response.json({ id: 7, anchor_id: 1, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
     }, telemetryEvents, telemetryRequests);
-    render(ConversationView, { client, conversationId: 7, anchorId: 1 });
+    render(ConversationView, { client, conversationId: 7, anchorId: 1, titleAnchorId: 1 });
     await screen.findByText('Cached task 1');
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
     expect(await screen.findByText('Cached task 2')).toBeDefined();
@@ -222,7 +273,7 @@ describe('ConversationView', () => {
       has_before: false, has_after: false, total: 2
     }));
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
@@ -243,24 +294,30 @@ describe('ConversationView', () => {
       }
     });
     try {
-      const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
-        id: 7, anchor_id: 2, messages: [message(1), message(2), message(3)],
-        has_before: false, has_after: false, total: 3
-      }));
+      const fetchFn = vi.fn<typeof fetch>(async input => {
+        if (new URL((input as Request).url).pathname === '/api/v1/messages/3') return Response.json(message(3));
+        return Response.json({
+          id: 7, anchor_id: 2, messages: [message(1), message(2), message(3)],
+          has_before: false, has_after: false, total: 3
+        });
+      });
       const client = createAPIClient(fetchFn);
       const rendered = render(ConversationView, {
-        props: { client, conversationId: 7, anchorId: 2 }
+        props: { client, conversationId: 7, anchorId: 2, titleAnchorId: 2 }
       });
       await screen.findByRole('article', { name: 'Message 2' });
       const scroller = screen.getByRole('region', { name: 'Conversation thread' });
       await waitFor(() => expect(scroller.scrollTop).toBe(2 * 100 - 8));
 
       scroller.scrollTop = 0;
-      await rendered.rerender({ client, conversationId: 7, anchorId: 3 });
+      await rendered.rerender({ client, conversationId: 7, anchorId: 3, titleAnchorId: 3 });
 
       expect(await screen.findByRole('article', { name: 'Message 3' })).toBeTruthy();
       await waitFor(() => expect(scroller.scrollTop).toBe(3 * 100 - 8));
-      expect(fetchFn).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(fetchFn.mock.calls.map(([input]) => new URL((input as Request).url).pathname)).toEqual([
+        '/api/v1/conversations/7',
+        '/api/v1/messages/3'
+      ]));
     } finally {
       Object.defineProperty(HTMLElement.prototype, 'offsetTop', offsetTopDescriptor);
     }
@@ -280,11 +337,11 @@ describe('ConversationView', () => {
     });
     const client = createAPIClient(fetchFn);
     const rendered = render(ConversationView, {
-      props: { client, conversationId: 7, anchorId: 2 }
+      props: { client, conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
     await screen.findByRole('article', { name: 'Message 2' });
 
-    await rendered.rerender({ client, conversationId: 7, anchorId: 99 });
+    await rendered.rerender({ client, conversationId: 7, anchorId: 99, titleAnchorId: 99 });
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(new URL(requests[1]!.url).searchParams.get('anchor')).toBe('99');
     expect(await screen.findByRole('article', { name: 'Message 99' })).toBeTruthy();
@@ -301,7 +358,7 @@ describe('ConversationView', () => {
     });
     const client = createAPIClient(fetchFn);
     const rendered = render(ConversationView, {
-      props: { client, conversationId: 7, anchorId: 2 }
+      props: { client, conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
     await waitFor(() => expect(pending.get(7)).toBeDefined());
     pending.get(7)!(Response.json({
@@ -310,7 +367,7 @@ describe('ConversationView', () => {
     }));
     await screen.findByRole('article', { name: 'Message 2' });
 
-    await rendered.rerender({ client, conversationId: 8, anchorId: 80 });
+    await rendered.rerender({ client, conversationId: 8, anchorId: 80, titleAnchorId: 80 });
     await waitFor(() => expect(pending.get(8)).toBeDefined());
 
     // The stale thread disappears immediately; loading is shown while B pends.
@@ -336,11 +393,11 @@ describe('ConversationView', () => {
     });
     const client = createAPIClient(fetchFn);
     const rendered = render(ConversationView, {
-      props: { client, conversationId: 7, anchorId: 2 }
+      props: { client, conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
     await waitFor(() => expect(pending.get(7)).toBeDefined());
 
-    await rendered.rerender({ client, conversationId: 8, anchorId: 80 });
+    await rendered.rerender({ client, conversationId: 8, anchorId: 80, titleAnchorId: 80 });
     await waitFor(() => expect(pending.get(8)).toBeDefined());
     pending.get(8)!(Response.json({
       id: 8, anchor_id: 80, messages: [{ ...message(9), id: 80 }],
@@ -378,13 +435,13 @@ describe('ConversationView', () => {
     });
     const client = createAPIClient(fetchFn);
     const rendered = render(ConversationView, {
-      props: { client, conversationId: 7, anchorId: 2 }
+      props: { client, conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
     await screen.findByRole('article', { name: 'Message 2' });
 
-    await rendered.rerender({ client, conversationId: 7, anchorId: 98 });
+    await rendered.rerender({ client, conversationId: 7, anchorId: 98, titleAnchorId: 98 });
     await waitFor(() => expect(pending.get(98)).toBeDefined());
-    await rendered.rerender({ client, conversationId: 7, anchorId: 99 });
+    await rendered.rerender({ client, conversationId: 7, anchorId: 99, titleAnchorId: 99 });
     await waitFor(() => expect(pending.get(99)).toBeDefined());
 
     expect(pending.get(98)?.request.signal.aborted).toBe(true);
@@ -404,7 +461,7 @@ describe('ConversationView', () => {
       throw new TypeError('connection refused');
     });
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Conversation network error');
@@ -416,7 +473,7 @@ describe('ConversationView', () => {
       throw new DOMException('superseded', 'AbortError');
     });
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
 
     await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
@@ -428,7 +485,7 @@ describe('ConversationView', () => {
       error: 'conversation_unavailable', message: 'Conversation details are unavailable'
     }, { status: 503 }));
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Conversation details are unavailable');
@@ -440,7 +497,7 @@ describe('ConversationView', () => {
       if (path.includes('/messages/')) return Response.json({ message: 'Body unavailable' }, { status: 500 });
       return Response.json({ id: 7, anchor_id: 1, messages: [omittedMessage(1), omittedMessage(2)], has_before: false, has_after: false, total: 2 });
     });
-    render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
+    render(ConversationView, { props: { client, conversationId: 7, anchorId: 1, titleAnchorId: 1 } });
     await screen.findByRole('alert');
     await waitFor(() => expect(telemetryEvents).toHaveLength(1));
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
@@ -463,7 +520,7 @@ describe('ConversationView', () => {
         }
         return Response.json({ id: 7, anchor_id: 1, messages: [omittedMessage(1)], has_before: false, has_after: false, total: 1 });
       });
-      const view = render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
+      const view = render(ConversationView, { props: { client, conversationId: 7, anchorId: 1, titleAnchorId: 1 } });
       await screen.findByText('Loading message…');
       if (action === 'collapsed pending') await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
       resolveBody(Response.json({ message: 'Body unavailable' }, { status: 500 }));
@@ -480,7 +537,7 @@ describe('ConversationView', () => {
             await screen.findByText('Loading message…');
           }
         } else if (action === 'navigate') {
-          await view.rerender({ client, conversationId: 8, anchorId: 1 });
+          await view.rerender({ client, conversationId: 8, anchorId: 1, titleAnchorId: 1 });
           await screen.findByText('Loading message…');
         } else if (action === 'unmount') view.unmount();
       }
@@ -505,7 +562,7 @@ describe('ConversationView', () => {
     });
 
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
@@ -533,7 +590,7 @@ describe('ConversationView', () => {
     });
 
     const client = createAPIClient(fetchFn);
-    const view = render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
+    const view = render(ConversationView, { props: { client, conversationId: 7, anchorId: 1, titleAnchorId: 1 } });
 
     await screen.findByText('Loading message…');
     expect(screen.queryByText('Fetched body 1')).toBeNull();
@@ -585,7 +642,7 @@ describe('ConversationView', () => {
     });
 
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
@@ -623,13 +680,13 @@ describe('ConversationView', () => {
     });
     const client = createAPIClient(fetchFn);
     const rendered = render(ConversationView, {
-      props: { client, conversationId: 7, anchorId: 2 }
+      props: { client, conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
     await screen.findByRole('article', { name: 'Message 2' });
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
     await waitFor(() => expect(resolveBody).toBeDefined());
 
-    await rendered.rerender({ client, conversationId: 8, anchorId: 80 });
+    await rendered.rerender({ client, conversationId: 8, anchorId: 80, titleAnchorId: 80 });
     await screen.findByRole('article', { name: 'Message 80' });
     resolveBody!(Response.json({
       ...message(1), body: 'Stale body 1', body_html: '<p>Stale body 1</p>'
@@ -646,7 +703,7 @@ describe('ConversationView', () => {
       id: 7, anchor_id: 2, messages: [message(2)], has_before: true, has_after: true, total: 40
     }));
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, titleAnchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });

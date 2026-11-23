@@ -325,6 +325,8 @@ func (d *PostgreSQLDialect) RFC822CanonicalIDIndexDefinition() string {
 // mismatch on the sources.sync_config write path.
 func (d *PostgreSQLDialect) JSONBindExpr() string { return "?::JSONB" }
 
+func (d *PostgreSQLDialect) JSONTextBindExpr() string { return "?::JSON" }
+
 func (d *PostgreSQLDialect) JSONIsDistinctExpr(col string) string {
 	return col + " IS DISTINCT FROM ?::JSONB"
 }
@@ -618,6 +620,8 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE meeting_details ADD COLUMN IF NOT EXISTS link_key TEXT`, "meeting_details.link_key"},
 		{`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS ical_uid TEXT NOT NULL DEFAULT ''`, "calendar_events.ical_uid"},
 		{`ALTER TABLE person_fact_decisions ADD COLUMN IF NOT EXISTS outcome TEXT`, "person_fact_decisions.outcome"},
+		{`ALTER TABLE carddav_sync_runs ADD COLUMN IF NOT EXISTS binding_conflicts BIGINT CHECK (binding_conflicts IS NULL OR binding_conflicts >= 0)`, "carddav_sync_runs.binding_conflicts"},
+		{`ALTER TABLE person_participants ADD COLUMN IF NOT EXISTS carddav_owned BOOLEAN NOT NULL DEFAULT FALSE`, "person_participants.carddav_owned"},
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS locally_published BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.locally_published"},
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN IF NOT EXISTS started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},

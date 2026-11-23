@@ -48,6 +48,7 @@ if [[ -z "$python_bin" ]]; then
   fi
 fi
 "$python_bin" docs/scripts/check_markdown_sources.py
+"$python_bin" -m unittest discover -s docs/scripts -p test_changelog.py
 
 if ! command -v rg >/dev/null 2>&1; then
   printf 'rg not found; cannot validate docs media references\n' >&2

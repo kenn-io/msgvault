@@ -6,7 +6,6 @@
   --control-h: 28px;
   --field-h: 32px;
   --control-h-lg: var(--field-h);
-  --nav-item-h: 36px;
   --font-reading: Charter, 'Bitstream Charter', Georgia, serif;
   --bg-canvas: var(--bg-surface);
   --bg-subtle: var(--bg-inset);
@@ -16,10 +15,9 @@
   --control-bg: var(--bg-surface);
   --control-border: var(--border-default);
   --text-danger: var(--accent-red);
-  --active-ink: var(--accent-blue);
+  --active-ink: color-mix(in srgb, var(--accent-blue) 80%, var(--text-primary));
   --link-ink: var(--accent-blue);
   --focus-color: var(--accent-blue);
-  --selected-bg: color-mix(in srgb, var(--accent-blue) 14%, var(--bg-surface));
   --artifact-ink: var(--accent-purple);
   --status-success-bg: color-mix(in srgb, var(--accent-green) 10%, var(--bg-surface));
   --status-success-ink: color-mix(in srgb, var(--accent-green) 72%, var(--text-primary));
@@ -245,6 +243,11 @@ body :is(.kit-button.kit-button, .kit-menu__trigger.kit-menu__trigger) {
   height: var(--control-h);
 }
 
+:root:root .saved-view__menu .kit-icon-button--sm {
+  width: var(--nav-subitem-height);
+  height: var(--nav-subitem-height);
+}
+
 /* Kit trims button labels to the x-height, which centers lowercase letters
  * and leaves a capitalized label sitting high. Trim to the cap height. Every
  * size shares one side padding. */
@@ -323,6 +326,11 @@ body .kit-disclosure.kit-disclosure--plain.fold > .kit-disclosure__content {
  * labels below AA contrast. The dot and check mark already show the state. */
 :root .kit-filter-dropdown__panel .kit-filter-dropdown__item:not(.active) {
   opacity: 1;
+}
+
+/* Active filter labels need contrast against the inset fill in both themes. */
+:root .kit-filter-dropdown__btn.kit-filter-dropdown__btn--active {
+  color: var(--active-ink);
 }
 
 /* Kit centers a short segment inside a taller track, so the active pill floats

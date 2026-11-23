@@ -8,12 +8,15 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/url"
+	"os"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
-	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for test setup
+	"github.com/jackc/pgx/v5/stdlib"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -24,7 +27,7 @@ import (
 // database and every fixture is then a CREATE DATABASE ... TEMPLATE clone —
 // a file-level copy the server makes in tens of milliseconds. Each fixture
 // still gets a private, never-used database produced by the same InitSchema()
-// path, and drops it on cleanup.
+// path. A background worker drops clones after cleanup.
 //
 // Ownership of a template is a session-level advisory lock held on a
 // connection pinned for the life of the binary. The server releases it the
@@ -76,6 +79,46 @@ var (
 	templateNamePattern = regexp.MustCompile("^" + templateDBPrefix + "([0-9a-f]{8})_([0-9a-f]{16})$")
 	cloneNamePattern    = regexp.MustCompile("^" + cloneDBPrefix + "([0-9a-f]{8})_([0-9a-f]{16})_([0-9a-f]{16})$")
 )
+
+type cloneDrop struct {
+	dbURL, name string
+}
+
+var cloneDrops = make(chan cloneDrop, 16)
+
+func init() {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// Start outside any synctest bubble. pgx ties a connection's timers to the
+	// bubble that dialed it, so the worker dials its own session rather than
+	// reuse the owner or admin pool,
+	// either of which a fixture may have dialed inside a bubble.
+	go func() {
+		sessions := map[string]*sql.DB{}
+		for request := range cloneDrops {
+			session, ok := sessions[request.dbURL]
+			if !ok {
+				config, err := pgx.ParseConfig(request.dbURL)
+				if err != nil {
+					continue
+				}
+				config.ConnectTimeout = 5 * time.Second
+				session = stdlib.OpenDB(*config)
+				sessions[request.dbURL] = session
+			}
+			dropCloneLogged(session, request.name, logger)
+		}
+	}()
+}
+
+// dropCloneLogged drops one clone within a minute and warns when it fails, so
+// a stalled or misconfigured server is visible while tests continue.
+func dropCloneLogged(session *sql.DB, name string, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := dropOwnedDatabaseOn(ctx, session, name); err != nil {
+		logger.Warn("drop PostgreSQL test clone", "database", name, "error", err)
+	}
+}
 
 var (
 	adminDBMu   sync.Mutex

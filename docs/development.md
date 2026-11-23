@@ -274,13 +274,14 @@ the first. Each test binary builds the schema once into a template — a
 SQLite file copied per test, or a PostgreSQL template database cloned per
 test with `CREATE DATABASE ... TEMPLATE` (`internal/testutil/sqlite_template.go`,
 `internal/testutil/pg_template.go`) — instead of replaying `InitSchema()` for
-every fixture. Nothing runs in the background, so no fixture ever issues a
-schema statement while a test body is running. Each database is still private
-to its test, still produced by the same `InitSchema()` path, and still dropped
-on cleanup. A PostgreSQL template is owned through a session advisory lock the
-server releases when the binary exits, so the next binary reclaims whatever an
-earlier one left behind; a role without `CREATEDB` falls back to a private
-schema in the configured database.
+every fixture. Template clones send no schema statements through a store
+connection, and a background worker drops PostgreSQL clones after cleanup.
+Each database is still private to its test and still produced by the same
+`InitSchema()` path. A PostgreSQL template is owned through a session advisory
+lock the server releases when the binary exits. After the owner exits, a later
+same-scope template build attempts to reclaim what it left behind, including
+clones whose drops were pending at exit, overflowed, or failed. A role without
+`CREATEDB` falls back to a private schema in the configured database.
 
 `dbtest.NewTestDB` copies an in-memory `schema.sql` template per test with
 SQLite's backup API.
@@ -342,7 +343,7 @@ reports its summed top-level test-seconds. Refresh
 main run's `test-postgres-sharded (store)` job with:
 
 ```bash
-gh run view -R kenn-io/msgvault --job <job-id> --log | cut -f3- | sed 's/^[^ ]* //' | grep -E '^--- (PASS|SKIP|FAIL): ' | sort
+gh run view -R kenn-io/msgvault --job <job-id> --log | cut -f3- | sed 's/^[^ ]* //' | grep -E '^--- (PASS|SKIP|FAIL): [^/ ]+ \(' | sort
 ```
 
 In CI, Vitest and Playwright retry a failed test twice and write JSON reports

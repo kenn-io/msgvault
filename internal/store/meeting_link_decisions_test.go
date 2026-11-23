@@ -17,6 +17,73 @@ import (
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
+type meetingJITReader struct {
+	SQLReader
+
+	t        *testing.T
+	settings []string
+}
+
+func (r *meetingJITReader) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if strings.Contains(query, "copies(idx,id)") {
+		var setting string
+		require.NoError(r.t, r.SQLReader.QueryRowContext(ctx, `SELECT current_setting('jit')`).Scan(&setting))
+		r.settings = append(r.settings, setting)
+	}
+	return r.SQLReader.QueryContext(ctx, query, args...)
+}
+
+func TestMeetingGraphRestoresJIT(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL")
+	}
+	_, event := calendarFixture(t, st, "jit-decision", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "jit-note", "meeting_json", `{}`)
+	_, purge := calendarFixture(t, st, "jit-purge", `{"id":"purge","start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`)
+	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+	require.NoError(t, err)
+	tx, err := st.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	reader := &meetingJITReader{SQLReader: tx.Tx, t: t}
+	ctx := WithReadSnapshotReaderContext(t.Context(), st.db.DB, reader)
+	for _, initial := range []string{"on", "off"} {
+		for _, operation := range []struct {
+			name string
+			run  func(*testing.T) error
+		}{
+			{"copies", func(t *testing.T) error {
+				t.Helper()
+				_, err := st.meetingCopies(ctx, event)
+				return err
+			}},
+			{"decision", func(t *testing.T) error {
+				t.Helper()
+				endpoint := meetingDecisionEndpoint{ID: event, Kind: meetingRefEvent, Key: occurrenceIdentity(t, "20270314T100000Z").Key()}
+				budget := 100
+				_, err := st.meetingDecisionEdgesBatch(ctx, []meetingDecisionEndpoint{endpoint}, &budget)
+				return err
+			}},
+			{"purge", func(t *testing.T) error {
+				t.Helper()
+				return st.preservePurgedMeetingDecisionsWith(ctx, tx, "id=?", purge)
+			}},
+		} {
+			t.Run(initial+"/"+operation.name, func(t *testing.T) {
+				var setting string
+				require.NoError(t, reader.QueryRowContext(ctx, `SELECT set_config('jit', $1, true)`, initial).Scan(&setting))
+				reader.settings = nil
+				require.NoError(t, operation.run(t))
+				require.Len(t, reader.settings, 1, "graph query must run once")
+				assert.Equal(t, "off", reader.settings[0])
+				require.NoError(t, reader.QueryRowContext(ctx, `SELECT current_setting('jit')`).Scan(&setting))
+				assert.Equal(t, initial, setting)
+			})
+		}
+	}
+}
+
 func TestMeetingLinkDecisionReadsOnlyRequestedOccurrence(t *testing.T) {
 	r := require.New(t)
 	base := newRFC822IDBackfillBackendStore(t)

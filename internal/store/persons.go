@@ -17,6 +17,7 @@ var (
 	ErrPersonNotFound                     = errors.New("person not found")
 	ErrPersonRevisionConflict             = errors.New("person revision conflict")
 	ErrPersonBindingConflict              = errors.New("participant clusters belong to different persons")
+	ErrIdentifierAddressConflict          = errors.New("identifier address belongs to another participant")
 	ErrPersonReferenced                   = errors.New("person is referenced by another profile")
 	ErrPersonCardDAVPublished             = errors.New("person has CardDAV publication state")
 	ErrPersonMergeActive                  = errors.New("person has active merge lineage")
@@ -81,6 +82,11 @@ func (s *Store) CreatePersonFromParticipantWithDisplayNameContext(
 	if participantID <= 0 {
 		return nil, false, fmt.Errorf("promote participant %d: %w", participantID, ErrInvalidParticipantID)
 	}
+	if displayName != nil {
+		if err := validatePersonNameText("display_name", *displayName); err != nil {
+			return nil, false, err
+		}
+	}
 
 	var personID int64
 	var person *Person
@@ -131,6 +137,9 @@ func (s *Store) CreatePersonFromParticipantWithDisplayNameContext(
 			}
 		} else {
 			personID = personIDs[0]
+		}
+		if err := confirmCardDAVParticipantBindingsTx(ctx, tx, personID, members); err != nil {
+			return err
 		}
 		bindingsChanged, err := s.bindPersonParticipantsTx(ctx, tx, personID, members)
 		if err != nil {
@@ -193,18 +202,39 @@ func observedPersonDisplayNameTx(ctx context.Context, tx *loggedTx, members []in
 	return nil, nil //nolint:nilnil // A cluster without an observed name has no default.
 }
 
-// bindPersonParticipantsTx binds every member to the person, ignoring
-// members already bound to it, and reports whether any binding was added.
-// Callers must have verified that no member is bound to a different person.
+// bindPersonParticipantsTx binds every member to the person and keeps
+// membership ownership uniform: an all-automatic component stays automatic,
+// while any manual member makes the combined component manual. It reports
+// whether any binding was added. Callers must have verified that no member is
+// bound to a different person.
 func (s *Store) bindPersonParticipantsTx(
 	ctx context.Context, tx *loggedTx, personID int64, members []int64,
 ) (bool, error) {
+	owned, err := cardDAVBindingOwnershipTx(ctx, tx, personID, members)
+	if err != nil {
+		return false, err
+	}
+	changed, err := s.bindPersonParticipantsOwnedTx(ctx, tx, personID, members, owned)
+	if err != nil {
+		return false, err
+	}
+	if !owned {
+		if err := confirmCardDAVParticipantBindingsTx(ctx, tx, personID, members); err != nil {
+			return false, err
+		}
+	}
+	return changed, nil
+}
+
+// bindPersonParticipantsOwnedTx preserves existing ownership; only newly inserted
+// membership receives the supplied policy.
+func (s *Store) bindPersonParticipantsOwnedTx(ctx context.Context, tx *loggedTx, personID int64, members []int64, owned bool) (bool, error) {
 	insert := s.dialect.InsertOrIgnore(
-		`INSERT OR IGNORE INTO person_participants (person_id, participant_id) VALUES (?, ?)`,
+		`INSERT OR IGNORE INTO person_participants (person_id, participant_id, carddav_owned) VALUES (?, ?, ?)`,
 	)
 	bindingsChanged := false
 	for _, memberID := range members {
-		result, err := tx.ExecContext(ctx, insert, personID, memberID)
+		result, err := tx.ExecContext(ctx, insert, personID, memberID, owned)
 		if err != nil {
 			return false, fmt.Errorf("bind person %d to participant %d: %w", personID, memberID, err)
 		}
@@ -640,6 +670,11 @@ func (s *Store) UpdatePersonDisplayName(
 func (s *Store) UpdatePersonDisplayNameContext(
 	ctx context.Context, id, expectedRevision int64, displayName *string,
 ) (*Person, error) {
+	if displayName != nil {
+		if err := validatePersonNameText("display_name", *displayName); err != nil {
+			return nil, err
+		}
+	}
 	displayName = normalizePersonDisplayName(displayName)
 	// The rename locks the identity row, this person, and then every
 	// relationship counterpart; relationship writes lock the same person
@@ -660,10 +695,11 @@ func (s *Store) updatePersonDisplayNameOnce(
 			return err
 		}
 		var previousName sql.NullString
+		var ownerID sql.NullInt64
 		err := tx.QueryRowContext(ctx,
-			`SELECT display_name FROM persons WHERE id = ? AND revision = ?`,
+			`SELECT display_name, display_name_source_name_id FROM persons WHERE id = ? AND revision = ?`,
 			id, expectedRevision,
-		).Scan(&previousName)
+		).Scan(&previousName, &ownerID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return s.personCASMissTx(ctx, tx, id)
 		}
@@ -673,26 +709,6 @@ func (s *Store) updatePersonDisplayNameOnce(
 		nameChanged := previousName.Valid
 		if displayName != nil {
 			nameChanged = !previousName.Valid || previousName.String != *displayName
-		}
-		var formattedNamesToSupersede []PersonName
-		if nameChanged {
-			names, err := s.listPersonNamesTx(ctx, tx, id, true)
-			if err != nil {
-				return fmt.Errorf("list current names for person %d rename: %w", id, err)
-			}
-			for index := range names {
-				name := &names[index]
-				if name.NameKind != PersonNameFormatted {
-					continue
-				}
-				canSupersedeDisplayName := name.Envelope.Source == ProvenanceUser ||
-					provenanceIsInferred(name.Envelope.Source)
-				isPreviousDisplayName := canSupersedeDisplayName && previousName.Valid && name.Formatted != nil &&
-					strings.TrimSpace(*name.Formatted) == previousName.String
-				if isPreviousDisplayName {
-					formattedNamesToSupersede = append(formattedNamesToSupersede, *name)
-				}
-			}
 		}
 
 		// An unchanged name keeps its owning inferred row, so the link stays.
@@ -717,18 +733,9 @@ func (s *Store) updatePersonDisplayNameOnce(
 			if err != nil {
 				return fmt.Errorf("update person %d: %w", id, err)
 			}
-			for _, formattedName := range formattedNamesToSupersede {
-				if err := s.supersedePersonNameTx(ctx, tx, id, formattedName.Envelope.ID, nil); err != nil {
+			if nameChanged && ownerID.Valid {
+				if err := s.supersedePersonNameTx(ctx, tx, id, ownerID.Int64, nil); err != nil {
 					return fmt.Errorf("supersede formatted name for person %d: %w", id, err)
-				}
-			}
-			if displayName != nil {
-				for _, formattedName := range formattedNamesToSupersede {
-					if _, err := s.addPersonNameTx(
-						ctx, tx, id, renamedPersonNameInput(formattedName, displayName),
-					); err != nil {
-						return fmt.Errorf("record user formatted name for person %d: %w", id, err)
-					}
 				}
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`, updatedID); err != nil {
@@ -761,35 +768,6 @@ func (s *Store) updatePersonDisplayNameOnce(
 		return nil, err
 	}
 	return person, nil
-}
-
-func renamedPersonNameInput(name PersonName, formatted *string) PersonNameInput {
-	identity := name.Envelope.VCard
-	identity.PID = slices.Clone(identity.PID)
-	return PersonNameInput{
-		NameKind:          name.NameKind,
-		Formatted:         formatted,
-		FamilyName:        name.FamilyName,
-		GivenName:         name.GivenName,
-		AdditionalNames:   name.AdditionalNames,
-		HonorificPrefixes: name.HonorificPrefixes,
-		HonorificSuffixes: name.HonorificSuffixes,
-		SecondarySurname:  name.SecondarySurname,
-		Generation:        name.Generation,
-		Language:          name.Language,
-		Script:            name.Script,
-		PhoneticSystem:    name.PhoneticSystem,
-		PhoneticScript:    name.PhoneticScript,
-		SortAs:            name.SortAs,
-		IsDerived:         name.IsDerived,
-		OriginalValue:     *formatted,
-		Envelope: ValueEnvelopeInput{
-			Pref: name.Envelope.Pref, Ordinal: new(name.Envelope.Ordinal),
-			TypeLabel: name.Envelope.TypeLabel, TypeTokens: slices.Clone(name.Envelope.TypeTokens),
-			VCard: identity, Source: ProvenanceUser,
-			SourceRef: name.Envelope.SourceRef, SourceResourceUID: name.Envelope.SourceResourceUID,
-		},
-	}
 }
 
 func (s *Store) personCASMissTx(ctx context.Context, tx *loggedTx, id int64) error {
@@ -1005,6 +983,10 @@ func (s *Store) PersonForParticipantsContext(
 func (s *Store) mergePersonBindingsTx(
 	ctx context.Context, tx *loggedTx, personID, absorbed int64, members []int64,
 ) (bool, error) {
+	owned, err := cardDAVBindingOwnershipTx(ctx, tx, personID, members)
+	if err != nil {
+		return false, err
+	}
 	result, err := tx.ExecContext(ctx,
 		`DELETE FROM person_participants WHERE participant_id = ?`, absorbed)
 	if err != nil {
@@ -1020,7 +1002,10 @@ func (s *Store) mergePersonBindingsTx(
 			survivors = append(survivors, memberID)
 		}
 	}
-	filled, err := s.bindPersonParticipantsTx(ctx, tx, personID, survivors)
+	filled, err := s.bindPersonParticipantsOwnedTx(ctx, tx, personID, survivors, owned)
+	if err == nil && !owned {
+		err = confirmCardDAVParticipantBindingsTx(ctx, tx, personID, survivors)
+	}
 	if err != nil {
 		return false, err
 	}

@@ -5,6 +5,12 @@ import { createAPIClient } from '../../api/client';
 import { CardDAVController } from '../../carddav/controller.svelte';
 import CardDAVOperations from './CardDAVOperations.svelte';
 
+const conflictWarning = /for details/;
+
+function warningText(): string | undefined {
+  return screen.queryByText(conflictWarning)?.closest('p')?.textContent?.replace(/\s+/g, ' ').trim();
+}
+
 describe('CardDAVOperations', () => {
   it('opens normalized CardDAV operation history through its shell callback', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -194,6 +200,36 @@ describe('CardDAVOperations', () => {
     controller.destroy();
   });
 
+  it('shows binding conflicts and the review command in scheduled run history', async () => {
+    const client = createAPIClient(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/status')) return Response.json({
+        configured: false, available: false, credential_configured: false,
+        enabled: false, scheduled: false, schedule: ''
+      });
+      if (path.endsWith('/runs')) return Response.json({ runs: [{
+        id: 3, account_id: 1, trigger: 'scheduled', full: false, state: 'succeeded',
+        started_at: '2026-08-28T09:00:00Z', finished_at: '2026-08-28T09:01:00Z',
+        books: 1, created: 0, updated: 1, removed: 0, binding_conflicts: 2
+      }, {
+        id: 2, account_id: 1, trigger: 'scheduled', full: false, state: 'succeeded',
+        started_at: '2026-08-27T09:00:00Z', finished_at: '2026-08-27T09:01:00Z', books: 1, created: 0, updated: 0, removed: 0, binding_conflicts: 1
+      }] });
+      if (path.endsWith('/books')) return Response.json({ books: [] });
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    const controller = new CardDAVController(client);
+    await controller.load();
+    render(CardDAVOperations, { controller });
+
+    const rows = screen.getAllByRole('row');
+    expect(rows[1].textContent).toContain('2 binding conflicts archive‑wide as of this run');
+    expect(rows[2].textContent).toContain('1 binding conflict archive‑wide as of this run');
+    expect(screen.getAllByText('msgvault carddav bind-participants --dry-run')).toHaveLength(1);
+    controller.destroy();
+  });
+
   it('calls Sync now with the selected connection', async () => {
     const controller = new CardDAVController(createAPIClient(async input => {
       const path = new URL((input as Request).url).pathname;
@@ -206,6 +242,20 @@ describe('CardDAVOperations', () => {
     render(CardDAVOperations, { controller, syncConnection: 'work' });
     await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
     expect(sync).toHaveBeenCalledExactlyOnceWith('work');
+    controller.destroy();
+  });
+
+  it.each([
+    { name: 'one', count: 1, warning: '1 archive‑wide CardDAV binding conflict. Run msgvault carddav bind-participants --dry-run for details.' },
+    { name: 'zero', count: 0, warning: undefined },
+    { name: 'absent', count: undefined, warning: undefined },
+  ])('shows the binding conflict warning only for a positive count: $name', ({ count, warning }) => {
+    const controller = new CardDAVController(createAPIClient(vi.fn<typeof fetch>()));
+    controller.bindingConflicts = count;
+    render(CardDAVOperations, { controller });
+
+    expect(warningText()).toBe(warning);
+    if (count === 1) expect(screen.getByText('1 archive‑wide CardDAV binding conflict.')).toBeTruthy();
     controller.destroy();
   });
 });

@@ -5,18 +5,24 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -45,6 +51,7 @@ const (
 	ToolSearchMessageBodies       = "search_message_bodies"
 	ToolSemanticSearchMessages    = "semantic_search_messages"
 	ToolGetMessage                = "get_message"
+	ToolGetMessageRecords         = "get_message_records"
 	ToolGetAttachment             = "get_attachment"
 	ToolExportAttachment          = "export_attachment"
 	ToolExportEML                 = "export_eml"
@@ -325,6 +332,73 @@ func officialToolHandler(
 	}
 }
 
+func exactAttributeToolHandler(definition operationalDefinition, backend OperationBackend, downloads *downloadCache, confirmation confirmationConfig) sdkmcp.ToolHandler {
+	handler := officialToolHandler(definition.bind(backend, downloads), confirmation)
+	schema, err := definition.definition.inputSchema.Resolve(nil)
+	if err != nil {
+		panic(err)
+	}
+	return func(ctx context.Context, request *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+		var args map[string]any
+		if err := json.Unmarshal(request.Params.Arguments, &args, jsonexact.PreserveNumbers); err != nil {
+			return nil, err
+		}
+		if err := schema.Validate(attributeValidationValue(args)); err != nil {
+			var result sdkmcp.CallToolResult
+			result.SetError(fmt.Errorf("invalid_arguments: %w", err))
+			return &result, nil
+		}
+		result, output, err := handler(ctx, request, args)
+		if err != nil || output == nil {
+			return result, err
+		}
+		raw, ok := output.(jsontext.Value)
+		if !ok {
+			return nil, errors.New("invalid attribute output")
+		}
+		result.StructuredContent = raw
+		if result.Content == nil {
+			result.Content = []sdkmcp.Content{&sdkmcp.TextContent{Text: string(raw)}}
+		}
+		return result, nil
+	}
+}
+
+func attributeValidationValue(value any) any {
+	switch value := value.(type) {
+	case jsontext.Value:
+		n, err := strconv.ParseFloat(string(value), 64)
+		if err != nil {
+			return math.Copysign(math.MaxFloat64, n)
+		}
+		if rational, ok := new(big.Rat).SetString(string(value)); ok && !rational.IsInt() && math.Trunc(n) == n {
+			direction := math.Inf(1)
+			if rational.Cmp(new(big.Rat).SetFloat64(n)) < 0 {
+				direction = math.Inf(-1)
+			}
+			n = math.Nextafter(n, direction)
+			if math.Trunc(n) == n {
+				return string(value)
+			}
+		}
+		return n
+	case map[string]any:
+		converted := make(map[string]any, len(value))
+		for key, item := range value {
+			converted[key] = attributeValidationValue(item)
+		}
+		return converted
+	case []any:
+		converted := make([]any, len(value))
+		for i, item := range value {
+			converted[i] = attributeValidationValue(item)
+		}
+		return converted
+	default:
+		return value
+	}
+}
+
 func mapInternalError(err error) error {
 	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
 		return &jsonrpc.Error{
@@ -456,7 +530,11 @@ func newMCPServerWithPolicy(
 	}
 
 	for _, definition := range operations {
-		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations, opts.downloads), confirmation))
+		if definition.family == OperationFamilyAttributes {
+			s.AddTool(definition.definition.tool(), exactAttributeToolHandler(definition, opts.Operations, opts.downloads, confirmation))
+		} else {
+			sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations, opts.downloads), confirmation))
+		}
 	}
 
 	return s
@@ -657,7 +735,7 @@ func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
 	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
 		return agentgrant.PermissionSearchRead, true
-	case ToolGetMessage, ToolListThread, ToolSearchInMessage, ToolGetMeetingRecord, ToolSuggestMeetingLinks:
+	case ToolGetMessage, ToolGetMessageRecords, ToolListThread, ToolSearchInMessage, ToolGetMeetingRecord, ToolSuggestMeetingLinks:
 		return agentgrant.PermissionMessageRead, true
 	case ToolGetAttachment:
 		return agentgrant.PermissionAttachmentRead, true

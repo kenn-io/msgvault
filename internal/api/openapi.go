@@ -434,7 +434,11 @@ import (
 // 5.18.0 adds Directory cadence filters, ordering, presets and coverage.
 // 5.19.0 adds message export at GET /api/v1/cli/messages/export.
 // 5.20.0 adds message_type to file details.
-const APISchemaVersion = "5.20.0"
+// 5.21.0 adds a browser tab title to message details.
+// 5.22.0 adds person attribute value selection by ordinal.
+// 5.23.0 rejects invalid person display names with a client error.
+// 5.24.0 adds CardDAV participant binding preview, reconciliation, undo, and sync conflict counts to run history.
+const APISchemaVersion = "5.24.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1056,6 +1060,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"MediaAttachmentResult", "filename"},
 		{"MediaAttachmentResult", "containing_title"},
 		{"MediaAttachmentResult", "excerpt"},
+		{"MessageDetail", "tab_title"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
 		{"MessagingRoute", "network_label"},

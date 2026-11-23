@@ -37,13 +37,15 @@ type rawBlockTree struct {
 	Pages []jsontext.Value `json:"pages,omitempty"`
 }
 
+const notionSnapshotVersion = 1
+
 type rawEvidence struct {
 	SchemaVersion  int               `json:"schema_version"`
 	Discovery      jsontext.Value    `json:"discovery"`
 	MeetingBlock   jsontext.Value    `json:"meeting_block"`
-	Summary        rawBlockTree      `json:"summary,omitzero"`
-	Notes          rawBlockTree      `json:"notes,omitzero"`
-	Transcript     rawBlockTree      `json:"transcript,omitzero"`
+	Summary        jsontext.Value    `json:"summary,omitzero"`
+	Notes          jsontext.Value    `json:"notes,omitzero"`
+	Transcript     jsontext.Value    `json:"transcript,omitzero"`
 	PageMarkdown   jsontext.Value    `json:"page_markdown"`
 	Canonical      canonicalEvidence `json:"canonical"`
 	AttendeeLabels []string          `json:"attendee_labels,omitempty"`
@@ -86,14 +88,7 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 	if err != nil {
 		return meetingarchive.Snapshot{}, fmt.Errorf("marshal Notion meeting metadata: %w", err)
 	}
-	raw, err := json.Marshal(rawEvidence{
-		SchemaVersion: 1, Discovery: h.Discovery.Raw,
-		MeetingBlock: rawForBlock(h.MeetingBlock),
-		Summary:      rawForTree(h.SummaryTree), Notes: rawForTree(h.NotesTree),
-		Transcript: rawForTree(h.TranscriptTree), PageMarkdown: rawForMarkdown(h.PageMarkdown),
-		Canonical:      canonicalEvidence{Summary: h.Summary, Notes: h.Notes, Transcript: h.Transcript},
-		AttendeeLabels: h.AttendeeLabels, ResolvedUsers: h.ResolvedUsers, Warnings: h.Warnings,
-	}, json.Deterministic(true))
+	raw, err := h.archiveEvidence()
 	if err != nil {
 		return meetingarchive.Snapshot{}, fmt.Errorf("marshal Notion raw evidence: %w", err)
 	}
@@ -104,6 +99,40 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 		Metadata: metadata, Raw: raw, RawFormat: RawFormat,
 		Attendees: append([]meetingarchive.Person(nil), h.Attendees...),
 	}, nil
+}
+
+func (h *HydratedMeeting) archiveEvidence() ([]byte, error) {
+	tree := func(name string, current blockTree) (jsontext.Value, error) {
+		if kept := h.keptRawTrees[name]; len(kept) > 0 {
+			return kept, nil
+		}
+		if current.Root == nil && len(current.Pages) == 0 {
+			return nil, nil
+		}
+		return json.Marshal(rawForTree(current))
+	}
+	summary, err := tree("summary", h.SummaryTree)
+	if err != nil {
+		return nil, err
+	}
+	notes, err := tree("notes", h.NotesTree)
+	if err != nil {
+		return nil, err
+	}
+	transcript, err := tree(sectionTranscript, h.TranscriptTree)
+	if err != nil {
+		return nil, err
+	}
+	markdown := rawForMarkdown(h.PageMarkdown)
+	if len(h.keptMarkdown) > 0 {
+		markdown = h.keptMarkdown
+	}
+	return json.Marshal(rawEvidence{
+		SchemaVersion: notionSnapshotVersion, Discovery: h.Discovery.Raw, MeetingBlock: rawForBlock(h.MeetingBlock),
+		Summary: summary, Notes: notes, Transcript: transcript, PageMarkdown: markdown,
+		Canonical:      canonicalEvidence{Summary: h.Summary, Notes: h.Notes, Transcript: h.Transcript},
+		AttendeeLabels: h.AttendeeLabels, ResolvedUsers: h.ResolvedUsers, Warnings: h.Warnings,
+	}, json.Deterministic(true))
 }
 
 func (h *HydratedMeeting) times() (time.Time, time.Time) {

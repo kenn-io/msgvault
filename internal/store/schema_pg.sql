@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS carddav_sync_runs (
     created       BIGINT NOT NULL DEFAULT 0 CHECK (created >= 0),
     updated       BIGINT NOT NULL DEFAULT 0 CHECK (updated >= 0),
     removed       BIGINT NOT NULL DEFAULT 0 CHECK (removed >= 0),
+    binding_conflicts BIGINT CHECK (binding_conflicts IS NULL OR binding_conflicts >= 0),
     error_code    TEXT NOT NULL DEFAULT '' CHECK (
         error_code = '' OR error_code ~ '^[a-z][a-z0-9_]{0,63}$'
     ),
@@ -378,6 +379,7 @@ CREATE TABLE IF NOT EXISTS person_carddav_inference_state (
 CREATE TABLE IF NOT EXISTS person_participants (
     person_id      BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
     participant_id BIGINT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    carddav_owned BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (person_id, participant_id),
     UNIQUE(participant_id)
 );
@@ -2630,7 +2632,7 @@ CREATE TABLE IF NOT EXISTS person_attribute_values (
     value_boolean     BOOLEAN,
     value_date        TEXT,
     value_timestamp   TIMESTAMPTZ,
-    value_json        JSONB,
+    value_json        JSON,
     value_record_type TEXT,
     value_record_id   BIGINT,
     active_from       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2822,7 +2824,7 @@ CREATE TABLE IF NOT EXISTS organization_attribute_values (
     value_boolean     BOOLEAN,
     value_date        TEXT,
     value_timestamp   TIMESTAMPTZ,
-    value_json        JSONB,
+    value_json        JSON,
     value_record_type TEXT,
     value_record_id   BIGINT,
     active_from       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

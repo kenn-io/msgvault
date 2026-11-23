@@ -79,11 +79,13 @@ func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 	list := rawAPIV1Operation("listPersonAttributes", http.MethodGet,
 		"/people/{id}/attributes", "List a person's typed attributes")
 	addPersonIDParameter(&list)
+	ordinal := queryIntegerParam("ordinal", "Restrict values to one ordinal within a definition")
+	ordinal.Schema.Minimum = new(float64(0))
 	list.Parameters = append(list.Parameters,
 		queryBooleanParam("history", "Include superseded values"),
 		queryStringParam("slug", "Restrict the response to one definition slug", false),
-		queryStringParam("universal_id",
-			"Restrict the response to one portable definition identifier", false))
+		ordinal,
+		queryStringParam("universal_id", "Restrict the response to one portable definition identifier", false))
 	list.Responses = jsonResponsesFor[PersonAttributesResponse](api)
 	addErrorResponses(api, list.Responses, http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, list, s.handleListPersonAttributes)
@@ -159,8 +161,16 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	ordinal, ok := attributeOrdinalQuery(w, r)
+	if !ok {
+		return
+	}
 	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
 	universalID := strings.TrimSpace(r.URL.Query().Get("universal_id"))
+	if ordinal != nil && slug == "" && universalID == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "ordinal requires slug or universal_id")
+		return
+	}
 	if slug != "" && universalID != "" {
 		writeError(w, http.StatusBadRequest, "bad_request",
 			"slug and universal_id cannot both be provided")
@@ -195,7 +205,7 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 	if universalID == "" || valueSlug != "" {
 		values, err = attributes.ListPersonAttributeValuesContext(r.Context(), personID,
 			store.PersonAttributeQuery{
-				DefinitionSlug: valueSlug, IncludeHistory: includeHistory,
+				DefinitionSlug: valueSlug, Ordinal: ordinal, IncludeHistory: includeHistory,
 			})
 		if err != nil {
 			s.writeAttributeError(w, err)
@@ -239,9 +249,6 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 		}
 		if includeHistory {
 			group.History = history[definition.Slug]
-			if group.History == nil {
-				group.History = []store.PersonAttributeValue{}
-			}
 		}
 		response.Attributes = append(response.Attributes, group)
 	}
@@ -402,16 +409,24 @@ func (s *Server) attributeClearQuery(w http.ResponseWriter, r *http.Request) (at
 		}
 		params.expectedValueID = &expectedValueID
 	}
-	if raw := strings.TrimSpace(r.URL.Query().Get("ordinal")); raw != "" {
-		parsed, parseErr := strconv.ParseInt(raw, 10, 64)
-		if parseErr != nil || parsed < 0 {
-			writeError(w, http.StatusBadRequest, "invalid_ordinal",
-				"ordinal must be a non-negative integer")
-			return params, false
-		}
-		params.ordinal = &parsed
+	ordinal, ok := attributeOrdinalQuery(w, r)
+	params.ordinal = ordinal
+	return params, ok
+}
+
+// attributeOrdinalQuery reads the optional non-negative ordinal query parameter.
+func attributeOrdinalQuery(w http.ResponseWriter, r *http.Request) (*int64, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get("ordinal"))
+	if raw == "" {
+		return nil, true
 	}
-	return params, true
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || parsed < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_ordinal",
+			"ordinal must be a non-negative integer")
+		return nil, false
+	}
+	return &parsed, true
 }
 
 func (s *Server) requirePersonForAttributes(

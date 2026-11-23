@@ -1,63 +1,71 @@
 ---
 title: TikTok Export
 description: Import direct messages, your own comments, and account identity from a TikTok data export.
-last_edited: "2026-11-18"
+last_edited: "2026-11-20"
 ---
 
-Import a TikTok **Download your data** ZIP or extracted folder to search your
-DMs and the comments you wrote. This importer is unreleased. Its synthetic
-fixtures use the fields in TikTok's [published export documentation](https://developers.tiktok.com/docs/en/data-portability-data-types).
-The precise JSON and TXT layouts below have not been checked against a real
-export. No live API access was tested or is needed for this command.
+Import a TikTok **Download your data** ZIP or extracted folder into msgvault to
+search your direct messages and the comments you wrote. Its synthetic fixtures
+use the fields in TikTok's
+[published export documentation](https://developers.tiktok.com/docs/en/data-portability-data-types),
+and the exact JSON and TXT layouts below have not been checked against a real
+export. You don't need live API access, and none was tested for this command.
 
 ## Import an archive
 
-1. Request your data in TikTok and choose **JSON**. Include direct messages,
-   comments, and profile information. Download the completed export.
-2. Put the ZIP or extracted folder on the machine running the msgvault daemon.
-3. Choose an identifier for this account and import it:
+1. In TikTok, request your data and choose **JSON**. Include direct messages,
+   comments, and profile information.
+2. Download the completed export.
+3. Put the ZIP or extracted folder on the machine running the msgvault daemon.
+4. Pick an identifier for this account and run the import:
 
    ```bash
    msgvault import-tiktok example-account ./tiktok-export.zip
    msgvault import-tiktok example-account ./tiktok-export --json
    ```
 
-No TikTok app, token, or provider configuration is needed. Run the command on
-the daemon host; local files can't be imported through a configured remote
-daemon, so use `--local` there. `--json` writes the summary to stdout.
-Warnings go to stderr and `unknown_sections` counts ignored sections or TXT
-files. Unknown sections are skipped. Malformed recognized records fail the
-import with an error; they are never reported as a complete import.
+You don't need a TikTok app, token, or provider configuration. Run the command
+on the daemon host. Local files can't be imported through a configured remote
+daemon, so pass `--local` there. Pass `--json` to write the summary to stdout.
+Warnings go to stderr, and `unknown_sections` counts ignored sections or TXT
+files. The importer skips unknown sections, while malformed recognized records
+fail the import with an error and are never reported as a complete import.
 
-Re-import with the same identifier to add messages. Each DM partner has one
-conversation. A message's key includes its chat, UTC timestamp, sender,
-content, and separate link field. Reordering records or importing equivalent
-JSON and TXT records does not duplicate them. Identical records in one chat
-at the same timestamp collapse because exports provide no native message ID.
-If a later export changes a message's content or link, it becomes a new record.
-Interrupted writes remain archived; re-run the command to continue safely.
+To add new messages later, re-import with the same identifier. Each DM partner
+gets one conversation, and each message's key includes its chat, UTC timestamp,
+sender, content, and separate link field. Reordering records or importing
+equivalent JSON and TXT records doesn't create duplicates. Because exports have
+no native message ID, identical records in one chat at the same timestamp
+collapse into one message, and changing a message's content or link in a later
+export creates a new record. If an import is interrupted, already-written
+messages stay in your archive. Re-run the command to continue safely.
 
 ## What appears in the archive
 
-- DMs retain their sender, date, text, and shared-post or media URLs. Links
-  remain text; the importer never downloads their targets.
-- Comments are messages authored by you. A video URL, when present, appears
-  in the body and `post_url` metadata. Comments on the same URL share a
-  public-comments conversation; comments without URLs share an unlinked one.
-- Profile `Username` identifies your messages as **me**. The same source
-  identifier cannot later import another profile. Use a different identifier
+- **Direct messages.** DMs keep their sender, date, text, and shared-post or
+  media URLs. Links stay as text, and the importer never downloads their
+  targets.
+- **Your comments.** Comments are archived as messages authored by you. When a
+  video URL is present, it appears in the body and in `post_url` metadata.
+  Comments on the same URL share a public-comments conversation, while comments
+  without URLs share an unlinked one.
+- **Account identity.** Your profile `Username` identifies your messages as
+  **me**. Once an identifier is bound to a profile, you can't use that same
+  source identifier to import a different profile. Use a separate identifier
   for another account.
 
-The source and message type are `tiktok_export`. Usernames are compared without
-an initial `@` and without case differences. Participant identities are scoped
-to the source identifier. A username is not a permanent TikTok user ID;
-renaming a partner can create another conversation. Matching display names
-across accounts do not establish that two participants are the same person.
+Imported records use `tiktok_export` as both their source type and message
+type. Usernames are compared without a leading `@` and without case
+differences, and participant identities stay scoped to the source identifier. A
+username is not a permanent TikTok user ID, and renaming a partner can create
+another conversation. Matching display names across accounts also do not mean
+two participants are the same person.
 
 ## Accepted layouts and fallback
 
-The importer reads named keys, independent of their order. Key matching ignores
-case, spaces, underscores, and punctuation. Recognized JSON wrappers are:
+The importer reads named keys in any order and ignores case, spaces,
+underscores, and punctuation when matching them. It recognizes these JSON
+wrappers:
 
 | Section | Accepted names and records |
 |---|---|
@@ -66,7 +74,7 @@ case, spaces, underscores, and punctuation. Recognized JSON wrappers are:
 | Own comments | `Comment`, `Comments`, `CommentsList`, `CommentList`; arrays of `Date`, `Comment content`/`Comment`/`Content`, optional `Original post landing page link`/`Video Link`/`Link`/`URL` |
 | Activity containers | `Your Activity`, `Activity`, containing the named sections above |
 
-For example, a combined JSON file may contain:
+For example, a combined JSON file may look like this:
 
 ```json
 {
@@ -79,36 +87,40 @@ For example, a combined JSON file may contain:
 }
 ```
 
-TXT fallback accepts files named `Direct Messages.txt`, `Direct Message.txt`,
-`Chat History.txt`, `Comments.txt`, `Comment.txt`, `Profile Information.txt`, or
-`Profile.txt`. Profile files use `Username: …` and optional `Nickname: …`.
-Messages use `Date: …`, `From: …`, `Content: …` under a
-`Chat History with <username>:` heading. Comments use `Date: …`, `Comment: …`
-and optional `Link: …` or `URL: …`. Content can continue across lines until the
-next recognized field or chat header. A content line that starts with such a header
-is ambiguous in TXT; choose JSON to preserve it.
+When TXT files are present, the fallback parser reads `Direct Messages.txt`,
+`Direct Message.txt`, `Chat History.txt`, `Comments.txt`, `Comment.txt`,
+`Profile Information.txt`, and `Profile.txt`. Profile files use `Username: …`
+and an optional `Nickname: …`. Messages use `Date: …`, `From: …`, and
+`Content: …` under a `Chat History with <username>:` heading. Comments use
+`Date: …`, `Comment: …`, and an optional `Link: …` or `URL: …`. Content can span
+multiple lines until the next recognized field or chat header. If a content
+line starts with one of those headers, TXT parsing is ambiguous. Choose JSON to
+preserve it.
 
-JSON wins for each chat and for a nonempty comment array. TXT supplies chats
-or comments absent from JSON, plus missing profile fields. A JSON record with
-no separate link can receive a TXT link when category, chat, timestamp, sender,
-and text match exactly. This requires one matching JSON record and one distinct
-TXT link. Conflicting or ambiguous links stay unresolved. Enriched links carry
-`link_source: "txt"` in message metadata; JSON text is never replaced.
-Conflicting profile usernames fail the import. Every import requires a profile
-username, including comments-only exports. Export filenames and enclosing directories do not affect message keys.
+JSON takes precedence for each chat and for any nonempty comment array, while
+TXT fills in chats or comments missing from JSON along with missing profile
+fields. If a JSON record has no separate link, it can pick up a link from TXT
+when the category, chat, timestamp, sender, and text match exactly, as long as
+there is one matching JSON record and one distinct TXT link. Conflicting or
+ambiguous links stay unresolved. Enriched links record `link_source: "txt"` in
+message metadata, and JSON text is never replaced. Conflicting profile
+usernames fail the import. Every import requires a profile username, including
+comments-only exports. Export filenames and enclosing directories don't affect
+message keys.
 
-Dates accept `YYYY-MM-DD HH:MM:SS`, that format followed by a numeric timezone
-such as `+0100`, or RFC 3339. Dates without timezone information are treated
-as UTC; this is an assumption rather than a verified TikTok timezone guarantee.
+Dates accept `YYYY-MM-DD HH:MM:SS`, that format with a numeric timezone such as
+`+0100`, or RFC 3339. Dates without timezone information are treated as UTC,
+which is an assumption rather than a verified TikTok timezone guarantee.
 
 ## Limits
 
-This path archives exported DMs and your own comments. It cannot retrieve
+This importer archives exported DMs and your own comments. It can't retrieve
 comments other people left on your videos, missing history, or content omitted
-by TikTok. Unsupported sections are counted and skipped. Formats with different
-chat container layouts require a parser update.
+by TikTok. Unsupported sections are counted and skipped, and formats with
+different chat container layouts require a parser update.
 
-ZIP members are read without extraction. Symbolic links, unsafe or duplicate
-ZIP paths, archives with more than 10,000 entries, files larger than 64 MiB,
-and parsed content exceeding 256 MiB per import are rejected. Keep each export
-separate from unrelated JSON files, because malformed JSON is an import error.
+The importer reads ZIP members without extracting them. It rejects symbolic
+links, unsafe or duplicate ZIP paths, archives with more than 10,000 entries,
+files larger than 64 MiB, and parsed content exceeding 256 MiB per import. Keep
+each export separate from unrelated JSON files, because any malformed JSON
+causes an import error.

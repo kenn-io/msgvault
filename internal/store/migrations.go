@@ -109,6 +109,8 @@ const (
 	// v2 reruns the backfill after the review began counting inferred names,
 	// contact points, and postal addresses, which v1 did not see.
 	migrationCardDAVInferenceExportStateV2 = "carddav_inference_export_state_v2"
+	// V2 missed resolved keep-local cards without a desired publication.
+	migrationCardDAVInferenceExportStateV3 = "carddav_inference_export_state_v3"
 )
 
 // hiddenTextBackfillCursorKey is the archive_metadata key holding the last
