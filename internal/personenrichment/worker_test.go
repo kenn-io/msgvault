@@ -2242,6 +2242,12 @@ func TestWorkerRateLimitedStartRetriesSameReservedAttempt(t *testing.T) {
 		cfg.MaxCostUSDMicrosPerRun = 1_000
 	})
 	f.enqueue(t)
+	// Keep retry deadlines independent of runner pauses between the worker and store.
+	now := time.Now().UTC()
+	clock := func() time.Time { return now }
+	store.SetPersonEnrichmentClockForTest(f.store, clock)
+	options := f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config})
+	options.Clock = clock
 	var starts, bounds atomic.Int64
 	provider := &guaranteedFunctionProvider{
 		functionProvider: &functionProvider{
@@ -2269,20 +2275,25 @@ func TestWorkerRateLimitedStartRetriesSameReservedAttempt(t *testing.T) {
 			return personenrichment.Cost{Currency: "USD", AmountMicros: 900}, nil
 		},
 	}
-	worker := f.newWorker(t,
+	worker, workerErr := personenrichment.NewWorker(
+		f.store, f.store, f.gate(t, func(string) (string, bool) { return "test-key", true }),
 		map[string]personenrichment.ProviderFactory{f.config.Name: func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
 			return provider, nil
 		}},
-		map[string]personenrichment.ProviderConfig{f.config.Name: f.config},
-		func(string) (string, bool) { return "test-key", true },
+		options,
 	)
+	requirements.NoError(workerErr)
 	processed, err := worker.RunOnce(t.Context(), f.run.ID)
 	requirements.NoError(err)
 	requirements.True(processed)
-	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_enrichment_work
-		SET due_at = ? WHERE person_id = ? AND profile_fingerprint = ?`),
-		time.Now().UTC().Add(-time.Second), f.person.ID, f.profile.Fingerprint)
+	work, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+	})
 	requirements.NoError(err)
+	requirements.Len(work, 1)
+	requirements.True(work[0].DueAt.After(now))
+	// Advance both clocks to the persisted deadline so the worker can claim the retry.
+	now = work[0].DueAt
 	processed, err = worker.RunOnce(t.Context(), f.run.ID)
 	requirements.NoError(err)
 	checks.True(processed)
