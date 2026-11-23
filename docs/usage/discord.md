@@ -1,88 +1,92 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-20"
 title: Discord
 description: Import personal Discord data packages or archive guild channels through a read-only bot.
 ---
 
-msgvault can archive Discord guild history into the same local database as
-email and other chat sources. Each guild is a separate `discord` source, and
-each text channel, announcement channel, thread, or forum post is a separate
-conversation. Messages use `message_type = discord`.
+Archive your Discord guild history into the same local database as your email
+and other chat sources. Each guild is stored as its own `discord` source, and
+each text channel, announcement channel, thread, or forum post becomes a
+separate conversation. All Discord messages use `message_type = discord`.
 
 Discord sync is read-only. It never sends or edits messages, reacts, changes
 membership, or moderates a guild.
 
 ## Import a personal data package
 
-Import an extracted official
-[Discord data package](https://support.discord.com/hc/en-us/articles/360004957991-Your-Discord-Data-Package):
+You can import an extracted official
+[Discord data package](https://support.discord.com/hc/en-us/articles/360004957991-Your-Discord-Data-Package)
+without Discord credentials or network access:
 
 ```bash
 msgvault import-discord-package /path/to/extracted-package
 ```
 
 A package contains only the exporting account's **sent messages**, including
-DMs. Messages from other people are not in it. Importing needs no Discord
-credentials or network access.
+DMs. Messages from other people are not in it.
 
-- The package directory must contain `account/user.json` and `messages/`
-  (`Account` and `Messages` also work). ZIP files are not supported; extract
-  the package first.
-- Run the command on the daemon host. A remote client cannot upload a package.
-- Legacy CSV transcripts are supported. JSON transcripts from current packages
-  are experimental: they have not yet been checked against a real export.
-- Each exporting account gets its own `discord_package` source, separate from
-  bot guild sources, even when both hold the same message.
-- Message and channel IDs, original text, timestamps, and channel metadata are
-  kept. A timestamp without a time zone is resolved from the message ID.
-- Attachment URLs are stored as links. Media is not downloaded.
-- Packages with more than 100,000 channel folders are refused.
+- **Directory layout.** The extracted directory must contain `account/user.json`
+  and `messages/`, or `Account` and `Messages`. ZIP files aren't supported
+  directly; extract the package first.
+- **Daemon host.** Run the command on the daemon host; a remote client can't
+  upload a package.
+- **Transcript formats.** Legacy CSV transcripts are supported. JSON
+  transcripts from current packages are experimental and have not yet been
+  checked against a real export.
+- **Separate source.** Each exporting account gets its own `discord_package`
+  source, separate from bot guild sources even when both hold the same message.
+- **Preserved fields.** Message and channel IDs, original text, timestamps, and
+  channel metadata are kept. If a timestamp has no time zone, msgvault resolves
+  it from the message ID.
+- **Attachments.** Attachment URLs are stored as links, and media is not
+  downloaded.
+- **Size limit.** Packages with more than 100,000 channel folders are refused.
 
 The command reports how many channels and messages it imported, updated, or
-skipped, with skip reasons, even when it stops partway.
+skipped, along with skip reasons, even if it stops partway through.
 
 Re-running the import updates each message to the latest package without
-creating duplicates. Messages missing from a newer package are kept. After an
-interruption, run the same command again. Use `--no-default-identity` to skip
-assigning this account to your default identity.
+creating duplicates, and keeps messages missing from a newer package.
+If an import is interrupted, run the same command again. Pass `--no-default-identity`
+if you don't want to assign this account to your default identity.
 
 ## Scope and prerequisites
 
-Discord's bot API exposes guilds the bot has joined. It does **not** expose a
-person's direct-message history. msgvault does not accept user tokens and does
-not implement a selfbot; using a user token for automated access violates
-Discord's rules.
+Discord's bot API exposes guilds that the bot has joined, and does **not**
+expose a person's direct-message history. msgvault doesn't accept user tokens
+and doesn't implement a selfbot. Using a user token for automated access
+violates Discord's rules.
 
-Create a dedicated application and bot in the
+To archive guilds, create a dedicated application and bot in the
 [Discord Developer Portal](https://discord.com/developers/applications):
 
 1. Create an application, add its bot user, and copy the bot token.
 2. Enable **Message Content Intent** so message bodies are available.
 3. Install the bot in each guild you want to archive with the `bot` scope and
    only **View Channels** and **Read Message History** permissions.
-4. Explicitly grant the bot access to any private channels or threads that
-   should be archived.
+4. Explicitly grant the bot access to any private channels or threads you want
+   to archive.
 
-Do not grant Administrator, Send Messages, Manage Messages, or moderation
-permissions. Archived private-thread coverage depends on what the bot can see.
-`add-discord` reports missing channel history, private-thread access, and likely
-Message Content Intent problems without printing the token.
+Don't grant Administrator, Send Messages, Manage Messages, or moderation
+permissions. Private-thread coverage depends on what the bot can see. When you
+run `add-discord`, it reports missing channel history, private-thread access,
+and likely Message Content Intent problems without printing the token.
 
 ## Register guilds
 
-Run setup and paste the token at the masked prompt:
+Run `add-discord` and paste the bot token at the masked prompt:
 
 ```bash
 msgvault add-discord
 ```
 
-The token is never accepted as a command-line flag. It is stored in an
-owner-only file under the msgvault token directory, separate from
+msgvault never accepts the token as a command-line flag. It stores the token in
+an owner-only file under your msgvault token directory, separate from
 `config.toml`.
 
-Setup lists every guild visible to that bot. If there is exactly one, msgvault
-selects it automatically and echoes its name and ID. If there are several,
-select one or more by repeating `--guild`:
+Setup lists every guild visible to that bot. If the bot sees only one guild,
+msgvault selects it automatically and prints its name and ID. If it sees more
+than one, pick the guilds you want by repeating `--guild`:
 
 ```bash
 msgvault add-discord \
@@ -90,18 +94,18 @@ msgvault add-discord \
   --guild 234567890123456789
 ```
 
-`--guild` always overrides automatic selection. One registered guild creates
-one source whose stable identifier is the guild ID; a mutable guild name is
-only its display name.
+`--guild` always overrides automatic selection. Each registered guild becomes
+one source whose stable identifier is the guild ID; its mutable guild name is
+only a display name.
 
 ### Multiple bot credentials
 
-By default, a guild with no binding label resolves to the sole stored Discord
-bot token. This is convenient for one bot, but msgvault rejects a second
-unnamed bot rather than silently changing the default.
+By default, a guild without a binding label uses the sole stored Discord bot
+token. That works when you have one bot, and msgvault rejects a second unnamed
+bot rather than silently changing the default.
 
-Use `--oauth-app` as a Discord credential binding label when more than one bot
-is needed:
+When you need more than one bot, pass `--oauth-app` as a Discord credential
+binding label:
 
 ```bash
 msgvault add-discord --oauth-app archive-bot-a \
@@ -110,17 +114,17 @@ msgvault add-discord --oauth-app archive-bot-b \
   --guild 345678901234567890
 ```
 
-The label is resolved from protected Discord token records; it does not need
-an `[oauth.apps]` entry. To promote an existing sole unnamed credential before
-adding a second bot, rerun setup for that bot with `--oauth-app`. Its existing
-NULL-bound guild sources are promoted to the new label. A binding that remains
-ambiguous fails instead of guessing.
+msgvault resolves the label from protected Discord token records; you don't
+need an `[oauth.apps]` entry. To promote an existing sole unnamed credential
+before adding a second bot, rerun setup for that bot with `--oauth-app`, which
+promotes its existing NULL-bound guild sources to the new label. If a binding
+remains ambiguous, msgvault fails instead of guessing.
 
 ## Configure media, repairs, and channel filters
 
-Discord settings are optional. The defaults download attachments up to 50 MiB
-from channels with at most 20 members, and re-scan the trailing seven days for
-edits, deletions, and changed reaction counts:
+Discord settings in `config.toml` are optional. By default, msgvault downloads
+attachments up to 50 MiB from channels with at most 20 members, and re-scans
+the trailing seven days for edits, deletions, and changed reaction counts:
 
 ```toml
 [discord]
@@ -136,50 +140,51 @@ exclude = ["567890123456789012"]
 # max_media_mb = 25
 ```
 
-Most guild channels have more than 20 members, so the default participant cap
-keeps guild media out of the archive unless you raise the cap or set it to `0`.
-Skipped attachments carry a typed `participant_threshold` marker rather than a
-retry marker; see [Media policy](/docs/configuration/#media-policy).
+Because most guild channels have more than 20 members, the default participant
+cap keeps guild media out of the archive unless you raise the cap or set it to
+`0`. Skipped attachments carry a typed `participant_threshold` marker rather
+than a retry marker; see [Media policy](/docs/configuration/#media-policy).
 
-`include` and `exclude` contain Discord channel, thread, or forum-post IDs. An
-empty `include` means every accessible message container. Top-level channels
-match their own IDs. Threads and forum posts inherit their parent's state, but
-an explicitly listed child ID overrides inheritance. An explicit child
-`exclude` overrides an included parent, an explicit child `include` overrides
-an excluded parent, and `exclude` wins if the same ID appears in both lists.
+`include` and `exclude` take Discord channel, thread, or forum-post IDs. An
+empty `include` matches every accessible message container, and top-level
+channels match their own IDs. Threads and forum posts inherit their parent's
+state unless you list the child ID explicitly: a child in `exclude` overrides
+an included parent, a child in `include` overrides an excluded parent, and
+`exclude` wins if the same ID appears in both lists.
 
-The guild key must be the exact guild ID used by its source. Tokens and
-credential binding labels never belong in this config block.
+Use the exact guild ID from the source as the guild key. Never put tokens or
+credential binding labels in this config block.
 
 ## Sync manually
 
-Sync one registered guild by ID or by an unambiguous display name:
+Sync one registered guild by its ID or by an unambiguous display name:
 
 ```bash
 msgvault sync-discord 123456789012345678
 ```
 
-With no argument, every registered Discord source runs sequentially in stable
-source order:
+To sync every registered Discord source sequentially in stable source order,
+omit the argument:
 
 ```bash
 msgvault sync-discord
 ```
 
-A failure in one guild does not stop later guilds, but the command exits
-non-zero with an aggregate error. Interrupted runs resume from durable page
-checkpoints.
+If one guild fails, later guilds still run, and the command exits non-zero with
+an aggregate error. Interrupted runs resume from durable page checkpoints.
 
-Use `--after` for an exclusive lower bound in `YYYY-MM-DD` or RFC3339 form:
+To set an exclusive lower bound, pass `--after` in `YYYY-MM-DD` or RFC3339
+format:
 
 ```bash
 msgvault sync-discord 123456789012345678 --after 2025-01-01
 ```
 
 A bounded sync defers the full-source automatic metadata repair pass, so rows
-older than the bound remain untouched. Run `msgvault repair-derived --source-type discord` when historical metadata needs repair.
+older than the bound stay untouched. When historical metadata needs repair, run
+`msgvault repair-derived --source-type discord`.
 
-Use `--full` to ignore normal completion cursors, re-fetch all available
+Pass `--full` to ignore normal completion cursors, re-fetch all available
 history, repair existing rows, and detect historical upstream deletions:
 
 ```bash
@@ -188,12 +193,12 @@ msgvault sync-discord 123456789012345678 --full \
   --after 2025-01-01T00:00:00Z
 ```
 
-When combined, `--full --after` repairs only the bounded range and leaves
+Combined with `--after`, `--full` repairs only the bounded range and leaves
 earlier archived rows untouched.
 
 ## Scheduled sync
 
-After registering a guild, schedule its exact guild ID with the standard
+After registering a guild, schedule it by its exact guild ID in a standard
 `[[accounts]]` block:
 
 ```toml
@@ -203,38 +208,39 @@ schedule = "*/30 * * * *"
 enabled = true
 ```
 
-Run `msgvault serve` to activate schedules. Discord display names are neither
-stable nor unique, so scheduled entries must use the guild ID. Each guild is
-resolved and synced independently through the same importer as
-`sync-discord`; schedule multiple guilds with separate `[[accounts]]` blocks.
+Run `msgvault serve` to activate schedules. Because Discord display names are
+neither stable nor unique, scheduled entries must use the guild ID. Each guild
+is resolved and synced independently through the same importer as
+`sync-discord`. Add a separate `[[accounts]]` block for each guild you want to
+schedule.
 
 ## What gets archived
 
 - Text and announcement channels, active and archived threads, and forum posts.
-- Readable message text plus the complete Discord JSON payload.
-- Observed authors and mentions as participants; msgvault does not add the
+- Readable message text along with the complete Discord JSON payload.
+- Observed authors and mentions as participants; msgvault doesn't add the
   entire guild roster to every conversation.
 - User-authored and bot-authored messages. Webhooks keep a stable webhook
   identity while preserving per-message username and avatar overrides.
 - Known system events, such as joins, boosts, pins, and thread starters, as
-  readable system text. Unknown future message types retain raw JSON and a
+  readable system text. Unknown future message types keep their raw JSON and a
   conservative rendering instead of being dropped.
-- Reply links when their target exists. The referenced message and channel IDs
-  remain in metadata when a target was deleted, excluded by `--after`, or
-  lives in another container, so the reply can appear as unavailable.
-- Attachment metadata and, within the configured cap, content-addressed bytes.
+- Reply links when their target exists. If a target was deleted, excluded by
+  `--after`, or lives in another container, the referenced message and channel
+  IDs stay in metadata, so the reply can appear as unavailable.
+- Attachment metadata and, within your configured cap, content-addressed bytes.
 
 Discord message metadata stores the complete nonzero message flag integer in
 `messages.metadata.discord_message_flags`. When that value contains `8192`,
-each attachment receives a `discord` object in
-`attachments.attachment_metadata`. A nonempty waveform remains the exact
-source string at `attachments.attachment_metadata.discord.waveform`, including
-strings that aren't valid base64. An empty waveform still produces
-`{"discord":{}}`. Existing `attachments.duration_ms`, MIME, and generic media
-type fields keep their current meanings.
+each attachment gets a `discord` object in `attachments.attachment_metadata`. A
+nonempty waveform stays as the exact source string at
+`attachments.attachment_metadata.discord.waveform`, even if it isn't valid
+base64. An empty waveform still produces `{"discord":{}}`. Existing
+`attachments.duration_ms`, MIME, and generic media type fields keep their
+current meanings.
 
-Run these queries against the archive database with a SQLite or PostgreSQL
-client. The `msgvault query` command reads the analytics cache, whose views
+To inspect those fields, query the archive database directly with a SQLite or
+PostgreSQL client. `msgvault query` reads the analytics cache, whose views
 don't include every archive column used here.
 
 For SQLite:
@@ -265,46 +271,46 @@ WHERE m.message_type = 'discord'
   AND a.source_attachment_id LIKE 'discord:%';
 ```
 
-On a fresh import or after a successful repair, NULL
-`attachment_metadata` means the current mapper emitted no Discord voice
-metadata for that row. A row imported before this change can also have NULL metadata because
-the old mapper omitted the field. Missing or undecodable raw data can leave a
-historical row unresolved. NULL alone therefore doesn't prove that a
-historical message is non-voice. Run `msgvault repair-derived --source-type
-discord`, or inspect the archived `discord_json`, before interpreting that
-value. Repair reads the archive and changes derived message and attachment
-metadata only. It doesn't download or rewrite media.
+On a fresh import or after a successful repair, NULL `attachment_metadata`
+means the current mapper emitted no Discord voice metadata for that row. A row
+imported before this change can also have NULL metadata because the old mapper
+omitted the field, and missing or undecodable raw data can leave a historical
+row unresolved. Therefore, NULL alone doesn't prove that a historical message
+is non-voice. Before interpreting that value, run
+`msgvault repair-derived --source-type discord` or inspect the archived
+`discord_json`. Repair reads the archive and updates derived message and
+attachment metadata only; it doesn't download or rewrite media.
 
 Reaction metadata is stored as stable summaries such as `👍 12`, including
-custom emoji name, ID, animation state, and count. Version 1 does not fetch
+custom emoji name, ID, animation state, and count. Version 1 doesn't fetch
 reactor identities or populate normalized reaction rows, so reaction-detail
-views and reaction analytics show no Discord reactions. The summaries remain
-archived in stable message metadata for future provider-aware consumers; the
-current generic CLI and API message-detail models do not expose them.
+views and reaction analytics show no Discord reactions. The summaries stay in
+stable message metadata for future provider-aware consumers, and the current
+generic CLI and API message-detail models don't expose them.
 
 ## Edit and deletion consistency
 
 New messages are collected incrementally. On each normal sync, every channel
-and thread independently re-fetches its trailing `edit_rescan_window` (seven
-days by default). Edits, reaction-count changes, and upstream deletions inside
-that window are refreshed. Changes older than the window require
+and thread independently re-fetches its trailing `edit_rescan_window` of seven
+days by default, refreshing edits, reaction-count changes, and upstream
+deletions inside that window. For changes older than the window, run
 `sync-discord --full`.
 
-Deletion detection only runs after a complete, successful scan of the exact
+Deletion detection runs only after a complete, successful scan of the exact
 container and time range. A partial page, cancellation, API failure, or lost
 access never causes msgvault to infer deletions. Upstream-deleted messages are
-marked deleted but their archived content and attachments remain.
+marked deleted, while their archived content and attachments stay intact.
 
-A `403` records `container_inaccessible_since`; a Discord `404 Unknown
-Channel` records `container_missing_since` and its reason. Neither response
-mass-deletes messages or discards the cursor. A successful later scan clears
-the marker. Messages deleted before msgvault first observed them cannot be
-recovered.
+A `403` records `container_inaccessible_since`, and a Discord `404 Unknown
+Channel` records `container_missing_since` along with its reason. Neither
+response mass-deletes messages or discards the cursor, and a successful later
+scan clears the marker. Messages deleted before msgvault first saw them can't
+be recovered.
 
 ## Export a bounded history window
 
-Use the provider-neutral message export to read one registered guild from the
-archive without contacting Discord:
+Use `export-messages` to export one registered guild from your archive without
+contacting Discord:
 
 ```bash
 msgvault export-messages \
@@ -314,30 +320,30 @@ msgvault export-messages \
   --source discord:123456789012345678
 ```
 
-The bounds are a half-open interval: `--start` is included and `--end` is
-excluded. Both must be RFC3339 timestamps. The JSONL stream uses schema
-`msgvault-message-export/1`; Discord channel types 10, 11, and 12 normalize to
+The bounds form a half-open interval: `--start` is included and `--end` is
+excluded, and both must be RFC3339 timestamps. The JSONL stream uses schema
+`msgvault-message-export/1`. Discord channel types 10, 11, and 12 normalize to
 `thread`, while other Discord containers normalize to `channel`. Parent
-conversation IDs are retained when present.
+conversation IDs are kept when present.
 
-Messages use their archived full text and effective timestamp. Source-deleted
-messages retain their content and carry `"deleted_from_source": true`; locally
-hidden duplicate rows are omitted. URLs remain in message text rather than
-being exported as a separate provider-specific field.
+Exported messages carry their archived full text and effective timestamp.
+Source-deleted messages keep their content with `"deleted_from_source": true`,
+while locally hidden duplicate rows are omitted. URLs stay inside message text
+rather than moving to a separate provider-specific field.
 
 The older `export-discord` command and `msgvault-discord-export/1` envelope
-remain temporarily available as a compatibility surface. New integrations
-should use `export-messages`; the compatibility command will be removed after
-its migration window closes.
+remain temporarily available for compatibility. New integrations should use
+`export-messages`; the compatibility command is set to be removed after its
+migration window closes.
 
 Like `sync-discord`, both export commands route through the running local or
-remote msgvault daemon. Export reads only the archive: it does not load Discord
-credentials or call the Discord API.
+remote msgvault daemon. Export reads only the archive and never loads Discord
+credentials or calls the Discord API.
 
 ## Attachment backfill and limits
 
-Retry attachment downloads after a transient failure or after raising
-`max_media_bytes` or `media_max_participants`:
+To retry attachment downloads after a transient failure or after raising
+`max_media_bytes` or `media_max_participants`, run `backfill-discord-media`:
 
 ```bash
 # Scan all archived Discord messages that have attachments.
@@ -350,19 +356,18 @@ msgvault backfill-discord-media 123456789012345678 --only-incomplete
 msgvault backfill-discord-media --only-incomplete
 ```
 
-The default scan counts already-complete messages but does no download work or
-source re-fetch for them. Backfill re-fetches only messages with pending
-attachments to obtain fresh attachment URLs before retrying incomplete files.
+The default scan counts already-complete messages without downloading files or
+re-fetching them from Discord. Backfill re-fetches only messages with pending
+attachments to get fresh attachment URLs before retrying incomplete files.
 
 Discord CDN URLs are signed and expire. A stored URL is provenance, not a
-durable lazy-download link. If an over-cap or failed attachment matters, raise
-the cap before the initial history sync when possible. Once its source message
-is deleted upstream, no API path remains to obtain a fresh signed URL and the
-metadata-only attachment is permanently unfetchable.
+durable lazy-download link. If an over-cap or failed attachment matters to you, raise the cap before the initial history sync when possible. Once a
+source message is deleted upstream, no API path remains to get a fresh signed
+URL, and the metadata-only attachment is permanently unfetchable.
 
 ## Search, TUI, and API
 
-Discord messages use the existing search and query surfaces:
+Search and query Discord messages with the same commands as other sources:
 
 ```bash
 msgvault search "release planning" --message-type discord
@@ -376,23 +381,23 @@ msgvault query --format table "
 "
 ```
 
-In the [TUI](/docs/usage/tui/), press `m` to switch to Texts mode. Discord channels
-and threads appear alongside other chat conversations. The HTTP search and
-message endpoints use the same `message_type = discord` filter; see the
-[Web Server](/docs/api-server/). If vector search is enabled, run
-`msgvault embeddings build` after a manual sync or enable
+In the [TUI](/docs/usage/tui/), press `m` to switch to Texts mode, where
+Discord channels and threads appear alongside other chat conversations. The
+HTTP search and message endpoints use the same `message_type = discord` filter;
+see [Web Server](/docs/api-server/). If vector search is enabled, run
+`msgvault embeddings build` after a manual sync, or enable
 `[vector.embed.schedule].run_after_sync` for scheduled syncs.
 
 ## Remove a guild
 
-Remove one guild source and its archived rows with its stable guild ID:
+Remove one guild source and its archived rows by passing its stable guild ID:
 
 ```bash
 msgvault remove-account 123456789012345678 --type discord
 ```
 
-Removal does not modify Discord. A bot token shared by another registered
-guild is preserved; it is deleted only after its last referencing guild source
-is removed. A credential is also preserved when removal is forced during an
-active sync. Content-addressed attachment files referenced by another source
-are preserved as well.
+Removing a guild doesn't modify Discord. If another registered guild shares the
+bot token, msgvault keeps the token and deletes it only after the last
+referencing guild source is removed. A credential is also kept if removal is
+forced during an active sync, and content-addressed attachment files referenced
+by another source are kept as well.
