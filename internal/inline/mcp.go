@@ -14,14 +14,18 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/msgvault/internal/httpretry"
 )
 
 const (
 	DefaultMCPEndpoint  = "https://mcp.inline.chat/mcp/v2"
 	mcpMaxResponseBytes = 32 << 20
+	// mcpRateLimitRetries bounds how often one read waits out HTTP 429.
+	mcpRateLimitRetries = 3
 )
 
 // ErrContract means a provider result cannot be archived without risking
@@ -35,6 +39,8 @@ type MCPClient struct {
 	endpoint         string
 	http             *http.Client
 	session          *mcp.ClientSession
+	transport        *mcpResponseTransport
+	wait             func(context.Context, time.Duration) error
 	ownerID          int64
 	closed           bool
 	invalidPrincipal bool
@@ -59,8 +65,9 @@ func NewMCPClient(ctx context.Context, endpoint string, httpClient *http.Client)
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	boundedClient.Transport = &mcpResponseTransport{base: base, limit: mcpMaxResponseBytes}
-	c := &MCPClient{endpoint: endpoint, http: &boundedClient}
+	transport := &mcpResponseTransport{base: base, limit: mcpMaxResponseBytes}
+	boundedClient.Transport = transport
+	c := &MCPClient{endpoint: endpoint, http: &boundedClient, transport: transport, wait: waitForRetry}
 	if err := c.connect(ctx); err != nil {
 		return nil, err
 	}
@@ -74,12 +81,18 @@ func NewMCPClient(ctx context.Context, endpoint string, httpClient *http.Client)
 type mcpResponseTransport struct {
 	base  http.RoundTripper
 	limit int64
+	// retryAfter holds the delay from the latest HTTP 429. The SDK reports
+	// only the status text, so the client reads the server's delay here.
+	retryAfter atomic.Int64
 }
 
 func (t *mcpResponseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		t.retryAfter.Store(int64(httpretry.RetryAfter(resp.Header.Get("Retry-After"), 0, httpretry.DefaultMaxRetryAfter)))
 	}
 	if resp.ContentLength > t.limit {
 		_ = resp.Body.Close()
@@ -163,9 +176,36 @@ func (c *MCPClient) Close() error {
 	return nil
 }
 
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// call waits out the server's Retry-After when it rate-limits a read, so a
+// busy sync slows down instead of failing and restarting its pass.
 func (c *MCPClient) call(ctx context.Context, name string, args map[string]any) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for attempt := 0; ; attempt++ {
+		c.transport.retryAfter.Store(0)
+		raw, err := c.callOnce(ctx, name, args)
+		delay := time.Duration(c.transport.retryAfter.Load())
+		if err == nil || delay == 0 || attempt >= mcpRateLimitRetries || ctx.Err() != nil {
+			return raw, err
+		}
+		if waitErr := c.wait(ctx, delay); waitErr != nil {
+			return nil, errors.Join(err, waitErr)
+		}
+	}
+}
+
+func (c *MCPClient) callOnce(ctx context.Context, name string, args map[string]any) ([]byte, error) {
 	if c.closed {
 		return nil, errors.New("inline MCP client is closed")
 	}

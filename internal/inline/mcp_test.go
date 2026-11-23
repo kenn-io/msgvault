@@ -26,6 +26,7 @@ type inlineMCPFixture struct {
 	endpoint   string
 	owner      atomic.Int64
 	missing    atomic.Int32
+	limited    atomic.Int32
 	inits      atomic.Int32
 	expired    atomic.Int32
 	mu         sync.Mutex
@@ -96,6 +97,14 @@ func newInlineMCPFixture(t *testing.T, payloads map[string]string, structured bo
 			// actual handshake request so the test measures reconnects.
 			if request.Method == "initialize" {
 				f.inits.Add(1)
+			}
+			if request.Method == "tools/call" && f.limited.Load() > 0 {
+				f.limited.Add(-1)
+				w.Header().Set("Retry-After", "7")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":"rate_limited"}`))
+				return
 			}
 		}
 		if r.Method == http.MethodPost && r.Header.Get("Mcp-Session-Id") != "" && f.missing.Load() > 0 {
@@ -285,6 +294,39 @@ func TestMCPReadReconnectIsBounded(t *testing.T) {
 	assertions.Equal(initial+1, f.inits.Load())
 	assertions.Equal(int32(2), f.expired.Load(), "original read and reconnected account check must each be attempted once")
 	assertions.Empty(f.historyCalls(), "expired sessions must not execute history reads")
+}
+
+func TestMCPRateLimitedReadWaitsForRetryAfter(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+
+	f := newInlineMCPFixture(t, map[string]string{"messages.list": `{"chat":{"chatId":"7"},"nextOffsetId":null,"messages":[]}`}, true)
+	c := connectInlineFixture(t, f)
+	var waits []time.Duration
+	c.wait = func(_ context.Context, delay time.Duration) error {
+		waits = append(waits, delay)
+		return nil
+	}
+	f.limited.Store(2)
+	_, err := c.Messages(t.Context(), 7, 0)
+	requires.NoError(err)
+	assertions.Equal([]time.Duration{7 * time.Second, 7 * time.Second}, waits)
+	assertions.Len(f.historyCalls(), 1)
+
+	// A server that keeps limiting fails the read after bounded waits.
+	waits = nil
+	f.limited.Store(50)
+	_, err = c.Messages(t.Context(), 7, 0)
+	requires.Error(err)
+	assertions.Len(waits, mcpRateLimitRetries)
+	assertions.Equal(int32(50-mcpRateLimitRetries-1), f.limited.Load())
+
+	// The session survives rate limiting, and later reads need no wait.
+	f.limited.Store(0)
+	waits = nil
+	_, err = c.Messages(t.Context(), 7, 0)
+	requires.NoError(err)
+	assertions.Empty(waits)
 }
 
 func TestMCPToolErrorDoesNotExposePayload(t *testing.T) {
