@@ -414,7 +414,9 @@ func TestRosterMatchingProgressSurvivesFreshImporters(t *testing.T) {
 				}
 				handler.operations = 0
 				imp = NewImporter(st, imp.client)
-				sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= 20 }})
+				// A visit refreshes room policy once after its roster work, so the
+				// quota allows that one transaction.
+				sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= 21 }})
 				require.NoError(err)
 				require.Zero(sum.Errors)
 				stopped = stopped || sum.Stopped
