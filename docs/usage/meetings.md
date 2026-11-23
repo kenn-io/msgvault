@@ -125,7 +125,7 @@ You can export a structured context packet for one or more meetings from
    only**, and selections larger than 100 meetings need to be narrowed first.
 2. In the selection bar, choose **Meeting context…**.
 3. In the popover, pick JSON or Markdown. Turn on **Include transcript** if you
-   want the full transcript (**Include transcript** is off by default).
+   want the transcript included (**Include transcript** is off by default).
 4. Choose **Export meeting context**.
 
 To export a single meeting instead, expand its message, choose
