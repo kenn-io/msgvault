@@ -51,7 +51,7 @@ func embeddingConnectionURL(ctx context.Context, postgres PostgreSQL, db *sql.DB
 func embeddingConfig(settings *Embeddings) (vector.Config, error) {
 	identity, err := settings.Descriptor.VectorIdentity()
 	if err != nil {
-		return vector.Config{}, err
+		return vector.Config{}, fmt.Errorf("vector identity: %w", err)
 	}
 	cfg := vector.Config{Enabled: true, Backend: "pgvector"}
 	cfg.Embeddings.Model = settings.Descriptor.Model.Name

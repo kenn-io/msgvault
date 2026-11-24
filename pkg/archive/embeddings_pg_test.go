@@ -69,7 +69,9 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 		var request struct {
 			Input []string `json:"input"`
 		}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+			return
+		}
 		data := make([]map[string]any, len(request.Input))
 		for i, input := range request.Input {
 			v := []float32{1, 0}
@@ -79,7 +81,7 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 			data[i] = map[string]any{"index": i, "embedding": v}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data, "model": "test"}))
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data, "model": "test"}))
 	}))
 	t.Cleanup(service.Close)
 	client, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: "test", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}, Retry: embedclient.Retry{MaxAttempts: 1}})
@@ -125,7 +127,6 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		assert.Contains(t, response.Body.String(), "observatory")
 		assert.NotContains(t, response.Body.String(), `"subject":"second"`)
-
 	}
 
 	// The next pass includes messages written after the first pass.
@@ -171,7 +172,6 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	assert.Zero(t, vectors)
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT message_count FROM index_generations WHERE state='active'").Scan(&count))
 	assert.Zero(t, count)
-
 }
 
 func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
@@ -207,12 +207,14 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 		var req struct {
 			Input []string `json:"input"`
 		}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req)) {
+			return
+		}
 		data := make([]map[string]any, len(req.Input))
 		for i := range req.Input {
 			data[i] = map[string]any{"index": i, "embedding": []float32{1, 0}}
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data, "model": "test"}))
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data, "model": "test"}))
 	}))
 	t.Cleanup(service.Close)
 	client, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: "test", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}})
@@ -278,7 +280,7 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	params.Set("options", "-csearch_path=archive_data,public")
 	u.RawQuery = params.Encode()
 	opts.URL = u.String()
-	assert.ErrorContains(t, archive.Setup(t.Context(), opts), "options")
+	require.ErrorContains(t, archive.Setup(t.Context(), opts), "options")
 }
 
 func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
@@ -318,7 +320,7 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 			require.NoError(t, archiveA.Close())
 			tc.change(&settings.Descriptor)
 			if tc.changed {
-				assert.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
+				require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
 			} else {
 				require.NoError(t, archive.Setup(t.Context(), opts))
 			}
@@ -361,14 +363,14 @@ func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {
 	require.NoError(t, err)
 	_, err = check.ExecContext(t.Context(), `INSERT INTO embeddings (generation_id,message_id,embedded_at,source_char_len,dimension,embedding) SELECT id,999,0,0,2,'[1,0]'::vector FROM index_generations WHERE state='building'`)
 	require.NoError(t, err)
-	assert.ErrorContains(t, archive.Setup(t.Context(), opts), "unknown-future-policy")
+	require.ErrorContains(t, archive.Setup(t.Context(), opts), "unknown-future-policy")
 	var pendingCount int
 	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM pending_embeddings`).Scan(&pendingCount))
 	assert.Equal(t, 1, pendingCount)
 	a, err := archive.Open(t.Context(), opts)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, a.Close()) }()
-	assert.ErrorContains(t, a.Embed(t.Context()), "unknown-future-policy")
+	require.ErrorContains(t, a.Embed(t.Context()), "unknown-future-policy")
 	var count int
 	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=999`).Scan(&count))
 	assert.Equal(t, 1, count)
@@ -377,8 +379,8 @@ func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {
 	// generation is building and could otherwise be activated over it.
 	_, err = check.ExecContext(t.Context(), `UPDATE index_generations SET state='active', fingerprint='future-format:v2' WHERE state='building'`)
 	require.NoError(t, err)
-	assert.ErrorContains(t, archive.Setup(t.Context(), opts), "future-format:v2")
-	assert.ErrorContains(t, a.Embed(t.Context()), "future-format:v2")
+	require.ErrorContains(t, archive.Setup(t.Context(), opts), "future-format:v2")
+	require.ErrorContains(t, a.Embed(t.Context()), "future-format:v2")
 	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM pending_embeddings`).Scan(&pendingCount))
 	assert.Equal(t, 1, pendingCount)
 	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=999`).Scan(&count))
@@ -387,8 +389,8 @@ func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {
 	// A matching build must not replace an unfamiliar active generation.
 	_, err = check.ExecContext(t.Context(), `INSERT INTO index_generations (model, dimension, fingerprint, started_at, state) VALUES ('test', 2, $1, 0, 'building')`, matchingFingerprint)
 	require.NoError(t, err)
-	assert.ErrorContains(t, archive.Setup(t.Context(), opts), "future-format:v2")
-	assert.ErrorContains(t, a.Embed(t.Context()), "future-format:v2")
+	require.ErrorContains(t, archive.Setup(t.Context(), opts), "future-format:v2")
+	require.ErrorContains(t, a.Embed(t.Context()), "future-format:v2")
 	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=999`).Scan(&count))
 	assert.Equal(t, 1, count)
 }

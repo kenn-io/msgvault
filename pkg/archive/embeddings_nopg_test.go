@@ -51,10 +51,8 @@ func TestPostgreSQLEmbeddingsWithoutPgvector(t *testing.T) {
 	assert.Contains(t, semantic.Body.String(), "pgvector")
 
 	// Existing vector tables can outlive the binary that created them.
-	_, err = db.ExecContext(t.Context(), "CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public")
-	require.NoError(t, err)
 	_, err = a.Store().DB().ExecContext(t.Context(), `CREATE TABLE index_generations (id bigint PRIMARY KEY, message_count bigint NOT NULL);
-		CREATE TABLE embeddings (generation_id bigint REFERENCES index_generations(id), message_id bigint, embedding public.vector)`)
+		CREATE TABLE embeddings (generation_id bigint REFERENCES index_generations(id), message_id bigint, embedding text)`)
 	require.NoError(t, err)
 	_, err = a.Store().DB().ExecContext(t.Context(), `INSERT INTO index_generations VALUES (1, 2)`)
 	require.NoError(t, err)

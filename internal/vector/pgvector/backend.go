@@ -766,6 +766,7 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 	if err != nil {
 		return fmt.Errorf("find existing messages: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	existing := make(map[int64]bool, len(ids))
 	for rows.Next() {
 		var id int64
