@@ -346,3 +346,9 @@ Deletion does not stop a future import from collecting the same provider data.
 Your application decides whether to change selection or allow reimport. You
 manage attachment files, external indexes, backups, and copies already read
 separately.
+
+## Search messages by meaning
+
+A PostgreSQL host can supply `PostgreSQL.Embeddings` with a `*embedclient.Client`, model name, and vector dimension. Build msgvault with the `pgvector` tag and install the PostgreSQL `vector` extension. Run `archive.Setup` as the schema owner, then open the archive with the runtime role and the same settings. Run Setup again when the model or dimension changes.
+
+Call `Archive.Embed` after synchronization and on the host's schedule. The call builds or updates the message index; stop it before closing the archive. Construct the API with `Archive.NewServer` to use the index. Search with `mode=vector` for meaning, or `mode=hybrid` for words and meaning. `WithSourceScope` limits both modes to authorized sources.

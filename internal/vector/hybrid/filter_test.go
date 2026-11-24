@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -427,4 +428,22 @@ func TestBuildFilterCarriesAccountScopes(t *testing.T) {
 		query.MessageFilter{AccountScopes: []search.AccountScope{{Unattributed: true}}}))
 	assert.Len(f.AccountScopes, 3, "structured scopes intersect with the query's")
 	assert.True(f.AccountScopes[2].Unattributed)
+}
+
+func TestBuildFilterSourceScope(t *testing.T) {
+	db := newFilterTestDB(t)
+	engine := NewEngine(nil, db, nil, Config{})
+	id := int64(2)
+	for _, tc := range []struct {
+		scope, want []int64
+		filter      query.MessageFilter
+	}{
+		{nil, []int64{noMatchSentinel}, query.MessageFilter{}},
+		{[]int64{1}, []int64{noMatchSentinel}, query.MessageFilter{SourceID: &id}},
+		{[]int64{1}, []int64{1}, query.MessageFilter{}},
+	} {
+		got, err := engine.BuildFilter(sourcescope.WithSourceIDs(t.Context(), tc.scope), nil, tc.filter)
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, got.SourceIDs)
+	}
 }

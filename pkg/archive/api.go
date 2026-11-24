@@ -34,7 +34,7 @@ type QueryEngine = query.Engine
 // a scope keep their existing behavior. The caller owns authentication and
 // keeps any authorization transaction open until ServeHTTP returns.
 //
-// Scoped handlers support message lists, full-text searches, message details,
+// Scoped handlers support message lists, full-text, vector, and hybrid searches, message details,
 // conversation windows, attachment metadata, the health probe, and the reads
 // behind the CLI's list-accounts, stats, search, show-message, show-thread,
 // and export-messages commands. Other operations are denied. ServerOptions.Store must be a native *Store. This is

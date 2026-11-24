@@ -683,7 +683,7 @@ func (b *Backend) generationByState(ctx context.Context, state vector.Generation
 	var g vector.Generation
 	var startedAt int64
 	var completedAt, activatedAt sql.NullInt64
-	err := b.db.QueryRowContext(ctx,
+	err := store.ReadDBContext(ctx, b.db).QueryRowContext(ctx,
 		`SELECT id, model, dimension, fingerprint, state,
 		        started_at, completed_at, activated_at, message_count
 		   FROM index_generations WHERE state = $1`, string(state)).Scan(
@@ -952,7 +952,7 @@ func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, e
 	// additional chunks it has. find_similar (the only LoadVector caller
 	// today) treats embeddings as message-level. Mirrors sqlitevec.
 	var lit string
-	err = b.db.QueryRowContext(ctx,
+	err = store.ReadDBContext(ctx, b.db).QueryRowContext(ctx,
 		`SELECT embedding::text FROM embeddings
 		  WHERE generation_id = $1 AND message_id = $2 AND chunk_index = 0`,
 		int64(active.ID), messageID).Scan(&lit)
@@ -1017,7 +1017,7 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		return nil, errors.New("search: empty query vector")
 	}
 	var dim int
-	err := b.db.QueryRowContext(ctx,
+	err := store.ReadDBContext(ctx, b.db).QueryRowContext(ctx,
 		`SELECT dimension FROM index_generations WHERE id = $1`, int64(gen)).Scan(&dim)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
@@ -1201,7 +1201,7 @@ func (b *Backend) filteredChunkAndMessageCount(ctx context.Context, gen vector.G
 	q := `SELECT COUNT(*), COUNT(DISTINCT e.message_id)
 		   FROM embeddings e
 		  WHERE e.generation_id = $1 AND ` + existsClause
-	if err := b.db.QueryRowContext(ctx, q, args...).Scan(&chunks, &messages); err != nil {
+	if err := store.ReadDBContext(ctx, b.db).QueryRowContext(ctx, q, args...).Scan(&chunks, &messages); err != nil {
 		return 0, 0, fmt.Errorf("lookup filtered chunk count: %w", err)
 	}
 	return chunks, messages, nil
@@ -1212,7 +1212,7 @@ func (b *Backend) filteredChunkAndMessageCount(ctx context.Context, gen vector.G
 // ANN LIMIT reaches it, no wider fetch can surface more distinct messages.
 func (b *Backend) chunkCount(ctx context.Context, gen vector.GenerationID) (int, error) {
 	var n int
-	if err := b.db.QueryRowContext(ctx,
+	if err := store.ReadDBContext(ctx, b.db).QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = $1`,
 		int64(gen)).Scan(&n); err != nil {
 		return 0, fmt.Errorf("lookup chunk count: %w", err)
@@ -1268,7 +1268,7 @@ func searchWiden(k, ceiling, distinctEarlyExit int, run func(innerLimit int) ([]
 }
 
 func (b *Backend) scanHits(ctx context.Context, query string, args ...any) ([]vector.Hit, error) {
-	rows, err := b.db.QueryContext(ctx, query, args...)
+	rows, err := store.ReadDBContext(ctx, b.db).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("ann query: %w", err)
 	}
@@ -1595,7 +1595,7 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 	}
 
 	var dim int
-	err := b.db.QueryRowContext(ctx,
+	err := store.ReadDBContext(ctx, b.db).QueryRowContext(ctx,
 		`SELECT dimension FROM index_generations WHERE id = $1`, int64(gen)).Scan(&dim)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
@@ -1615,7 +1615,7 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 		 WHERE generation_id = $1 AND message_id = $2
 		 ORDER BY distance ASC, chunk_index ASC`, dim)
 
-	rows, err := b.db.QueryContext(ctx, stmt, int64(gen), messageID, vectorLiteral(queryVec))
+	rows, err := store.ReadDBContext(ctx, b.db).QueryContext(ctx, stmt, int64(gen), messageID, vectorLiteral(queryVec))
 	if err != nil {
 		return nil, fmt.Errorf("score message chunks: %w", err)
 	}

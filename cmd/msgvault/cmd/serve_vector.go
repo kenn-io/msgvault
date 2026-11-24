@@ -217,19 +217,6 @@ func convergenceStateMessage(gen vector.GenerationID, state scheduler.Convergenc
 		state.LatestJournalSequence, state.ReconciliationComplete)
 }
 
-func embeddingPreprocessConfig(cfg vector.Config) embed.PreprocessConfig {
-	chunkPolicy := embed.EmbeddingChunkPolicy(cfg.Embeddings.MaxInputChars)
-	return embed.PreprocessConfig{
-		StripQuotes:        cfg.Preprocess.StripQuotesEnabled(),
-		StripSignatures:    cfg.Preprocess.StripSignaturesEnabled(),
-		StripHTML:          cfg.Preprocess.StripHTMLEnabled(),
-		StripBase64:        cfg.Preprocess.StripBase64Enabled(),
-		StripURLTracking:   cfg.Preprocess.StripURLTrackingEnabled(),
-		CollapseWhitespace: cfg.Preprocess.CollapseWhitespaceEnabled(),
-		MaxBodyRunes:       chunkPolicy.MaxBodyRunes,
-	}
-}
-
 func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*embeddingRuntime, error) {
 	personBackend, ok := deps.Backend.(vector.PersonBackend)
 	if !ok {
@@ -252,7 +239,7 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 		personClient := embed.NewClient(clientConfig)
 		messageWorker := embed.NewWorker(embed.WorkerDeps{
 			Backend: deps.Backend, VectorsDB: deps.VectorsDB, MainDB: deps.MainDB,
-			Store: deps.Store, Client: messageClient, Preprocess: embeddingPreprocessConfig(vectorCfg),
+			Store: deps.Store, Client: messageClient, Preprocess: embed.PreprocessConfigFor(vectorCfg),
 			MaxInputChars: vectorCfg.Embeddings.MaxInputChars,
 			BatchSize:     vectorCfg.Embeddings.BatchSize, BuildScope: vectorCfg.Embed.Scope.BuildScope(),
 			Rebind: deps.Rebind, LastModifiedExpr: deps.LastModifiedExpr,
@@ -288,7 +275,7 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 			MaxChunkRunes:           vectorCfg.Embeddings.MaxInputChars,
 			MaxDocumentUTF8Bytes:    contextualDocumentUTF8Limit,
 			DocumentPrefixUTF8Bytes: len(vectorCfg.Embeddings.DocumentPrefix),
-			Preprocess:              embeddingPreprocessConfig(vectorCfg),
+			Preprocess:              embed.PreprocessConfigFor(vectorCfg),
 		}
 		assembler := embed.CompositeAssembler{Policy: policy, Chat: embed.ChatWindowAssembler{Policy: policy}}
 		messageWorker := embed.NewContextWorker(embed.ContextWorkerDeps{
