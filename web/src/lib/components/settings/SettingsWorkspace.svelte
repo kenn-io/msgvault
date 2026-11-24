@@ -8,7 +8,7 @@
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
     patchSettings as generatedPatchSettings,
   } from '../../api/generated/api/api';
-  import { Disclosure, PageHeader, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
+  import { Disclosure, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
   import { getContext, onMount, onDestroy, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -616,15 +616,6 @@
 {/snippet}
 
 <main class="settings" bind:this={root} aria-label="Settings" data-form>
-  <div class="settings-header">
-    <PageHeader title="Settings">
-      {#snippet actions()}
-        {#if activeCategory === 'overview'}
-          <span class="feature-refresh"><IconButton ariaLabel="Refresh feature status" onclick={refreshFeatureStatus}><RefreshCwIcon size={16} /></IconButton></span>
-        {/if}
-      {/snippet}
-    </PageHeader>
-  </div>
   {#if loading}
     <p class="state" role="status">Loading…</p>
   {:else if !loaded}
@@ -633,7 +624,6 @@
     <SettingsLayout
       {categories}
       bind:active={() => activeCategory, selectCategory}
-      title=""
       footer={pendingLeave || dirtyCount > 0 ? settingsFooter : undefined}
     >
       {#snippet panel(activeId)}
@@ -648,7 +638,12 @@
           {/if}
         </div>
 
-        <h2 id="settings-category-heading" tabindex="-1">{label}</h2>
+        <div class="category-heading">
+          <h2 id="settings-category-heading" tabindex="-1">{label}</h2>
+          {#if activeId === 'overview'}
+            <IconButton ariaLabel="Refresh feature status" onclick={refreshFeatureStatus}><RefreshCwIcon size={16} /></IconButton>
+          {/if}
+        </div>
 
         <fieldset class="settings-fields" disabled={saving}>
         {#if activeId === 'overview'}
@@ -763,10 +758,6 @@
     background: var(--bg-surface);
     line-height: 1.45;
   }
-  .settings-header {
-    --page-header-gap: 0px;
-    padding: var(--space-5) var(--page-gutter) var(--field-gap);
-  }
   .settings :global(.kit-settings) {
     background: var(--bg-surface);
   }
@@ -788,10 +779,6 @@
     padding-right: calc(var(--pane-pad-x) - var(--scrollbar-gutter-size));
   }
   @media (max-width: 760px) {
-    /* Title, category tabs, and fields share one left edge. */
-    .settings-header {
-      padding-inline: var(--pane-pad-x);
-    }
     .settings :global(.kit-settings__sidebar) {
       padding-inline: calc(var(--pane-pad-x) - var(--space-4));
     }
@@ -843,6 +830,12 @@
     color: var(--status-error-ink);
   }
 
+  .category-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--control-gap);
+  }
   h2 {
     margin: 0;
     line-height: var(--type-page-line);
