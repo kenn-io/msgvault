@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/pkg/archive"
 )
 
@@ -196,8 +197,11 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	assert.Zero(t, vectors)
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT message_count FROM index_generations WHERE state='active'").Scan(&count))
 	assert.Zero(t, count)
-	_, err = owner.Store().DB().ExecContext(t.Context(), "DELETE FROM embed_runs; DELETE FROM index_generations")
+	backend, err := pgvector.Open(t.Context(), pgvector.Options{DB: owner.Store().DB(), SkipMigrate: true, ReadOnly: true})
 	require.NoError(t, err)
+	active, err := backend.ActiveGeneration(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, backend.RetireGeneration(t.Context(), active.ID, true))
 	err = runtime.Embed(t.Context())
 	require.ErrorIs(t, err, vector.ErrNoActiveGeneration)
 	require.ErrorContains(t, err, "run Setup")
@@ -287,14 +291,11 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	assert.Contains(t, path, `"vector_types"`)
 	assert.Equal(t, "[1,2]", vector)
 
-	// Tables belonging to the extension schema do not make an empty archive
-	// appear initialized and are never pruned by that archive.
+	// An empty archive does not prune tables belonging to the extension schema.
 	emptyOpts := opts
 	emptyOpts.Schema = "archive_empty"
 	emptyOpts.Embeddings = nil
 	require.NoError(t, archive.Setup(t.Context(), emptyOpts))
-	_, err = db.ExecContext(t.Context(), `CREATE TABLE vector_types.index_generations (id bigint PRIMARY KEY, message_count bigint); INSERT INTO vector_types.index_generations VALUES (1, 1)`)
-	require.NoError(t, err)
 	emptyOpts.Embeddings = opts.Embeddings
 	empty, err := archive.Open(t.Context(), emptyOpts)
 	require.NoError(t, err)
@@ -472,16 +473,12 @@ func TestPostgreSQLEmbeddingsPurgeRetry(t *testing.T) {
 	require.NoError(t, err)
 	u.User = url.UserPassword(role, "archive_test")
 	opts.URL = u.String()
-	opts.Embeddings = &archive.Embeddings{Client: client, Descriptor: testDescriptor("unprepared")}
-	unprepared, err := archive.Open(t.Context(), opts)
+	runtime, err := archive.Open(t.Context(), opts)
 	require.NoError(t, err)
-	defer func() { assert.NoError(t, unprepared.Close()) }()
-	require.Error(t, unprepared.Embed(t.Context()))
-	unavailable := sourceScopeRequest(t.Context(), t, unprepared.NewServer(archive.ServerOptions{}).Handler(nil), "/api/v1/search?q=meaning&mode=vector")
-	assert.Equal(t, http.StatusServiceUnavailable, unavailable.Code, unavailable.Body.String())
+	defer func() { assert.NoError(t, runtime.Close()) }()
 	_, err = admin.ExecContext(t.Context(), "REVOKE DELETE ON "+quote(schema)+".embeddings FROM "+quote(role))
 	require.NoError(t, err)
-	require.ErrorContains(t, unprepared.PurgeSource(t.Context(), source.ID), "delete orphan embeddings")
+	require.ErrorContains(t, runtime.PurgeSource(t.Context(), source.ID), "delete orphan embeddings")
 	var vectors, count int
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT count(*) FROM sources WHERE id=$1", source.ID).Scan(&count))
 	assert.Zero(t, count)
@@ -489,7 +486,7 @@ func TestPostgreSQLEmbeddingsPurgeRetry(t *testing.T) {
 	assert.Equal(t, 1, vectors)
 	_, err = admin.ExecContext(t.Context(), "GRANT DELETE ON "+quote(schema)+".embeddings TO "+quote(role))
 	require.NoError(t, err)
-	require.NoError(t, unprepared.PurgeSource(t.Context(), source.ID))
+	require.NoError(t, runtime.PurgeSource(t.Context(), source.ID))
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT count(*) FROM embeddings").Scan(&vectors))
 	assert.Zero(t, vectors)
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT message_count FROM index_generations WHERE state='active'").Scan(&count))

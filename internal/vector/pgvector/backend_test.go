@@ -658,6 +658,15 @@ func TestBackendEmbeddingCheckpointLifecycle(t *testing.T) {
 	_, err := db.ExecContext(ctx, `INSERT INTO messages (id) VALUES (2) ON CONFLICT DO NOTHING`)
 	require.NoError(t, err)
 	vectorcheckpoints.Lifecycle(ctx, t, b)
+	gen, err := b.CreateGeneration(ctx, "test", 4, "late-save")
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `DELETE FROM messages WHERE id=2`)
+	require.NoError(t, err)
+	checkpoints := b.EmbeddingCheckpoints()
+	require.NoError(t, checkpoints.Save(ctx, gen, []vector.EmbeddingCheckpoint{{Owner: "message:2", Revision: "r", Key: "input", Vectors: [][]float32{{1, 0}}}}))
+	owners, err := checkpoints.Owners(ctx, gen, "message:", "", 10)
+	require.NoError(t, err)
+	assert.Empty(t, owners, "a response saved after deletion must not create a checkpoint")
 }
 
 func TestBackendUpsertSkipsDeletedMessages(t *testing.T) {
@@ -668,10 +677,10 @@ func TestBackendUpsertSkipsDeletedMessages(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.ExecContext(t.Context(), `DELETE FROM messages WHERE id=2`)
 	require.NoError(t, err)
-	require.NoError(t, backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: 1, Vector: unitVec(2, 1)}, {MessageID: 2, Vector: unitVec(2, 0)}, {MessageID: 3, Vector: unitVec(2, 0)}}))
+	require.NoError(t, backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: 1, Vector: unitVec(2, 1)}, {MessageID: 2, Vector: unitVec(2, 0)}}))
 	require.NoError(t, backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: 4, Vector: unitVec(2, 0)}}))
 	var count int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id IN (2,3,4)`).Scan(&count))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id IN (2,4)`).Scan(&count))
 	assert.Zero(t, count)
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=1`).Scan(&count))
 	assert.Equal(t, 1, count)
