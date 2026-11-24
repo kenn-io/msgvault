@@ -2221,6 +2221,7 @@ func TestHandleCLISearchCollectionScope(t *testing.T) {
 		Engine: engine,
 		Logger: testLogger(),
 	})
+	defer func() { require.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) }()
 
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "GetOrCreateSource")
