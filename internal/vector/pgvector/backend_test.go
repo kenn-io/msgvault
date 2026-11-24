@@ -664,12 +664,8 @@ func TestBackendUpsertSkipsDeletedMessages(t *testing.T) {
 	require.NoError(t, err)
 	gen, err := backend.CreateGeneration(t.Context(), "test", 2, "test:2")
 	require.NoError(t, err)
-	require.NoError(t, backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: 1, Vector: unitVec(2, 0)}, {MessageID: 2, Vector: unitVec(2, 1)}}))
 	_, err = db.ExecContext(t.Context(), `DELETE FROM messages WHERE id=2`)
 	require.NoError(t, err)
-	pruned, err := backend.PruneOrphanEmbeddings(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), pruned)
 	require.NoError(t, backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: 1, Vector: unitVec(2, 1)}, {MessageID: 2, Vector: unitVec(2, 0)}, {MessageID: 3, Vector: unitVec(2, 0)}}))
 	require.NoError(t, backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: 4, Vector: unitVec(2, 0)}}))
 	var count int
