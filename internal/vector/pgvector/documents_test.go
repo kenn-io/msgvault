@@ -360,6 +360,8 @@ func TestDocumentPaginationWatermarksAndBasisPostgreSQL(t *testing.T) {
 	require.NoError(t, publisher.SetDocumentJournalCursor(ctx, gen, ""))
 	require.NoError(t, publisher.ResetDocumentReconcileCursor(ctx, gen))
 
+	_, err = db.ExecContext(ctx, `INSERT INTO messages (id) VALUES (100)`)
+	require.NoError(t, err)
 	ordinary := pgDocumentChunk(100, 0.2)
 	ordinary.SourceBasis = vector.SourceBasisBody
 	require.NoError(t, b.Upsert(ctx, gen, []vector.Chunk{ordinary}))
@@ -589,6 +591,8 @@ func TestDocumentMigrationUpgradePostgreSQL(t *testing.T) {
 		[]vector.DocumentPublication{pgDocumentPublication("chat:98", "r2", 2, 98)},
 		[]vector.Chunk{contextual}))
 	assertScoredChunkBasisPostgreSQL(t, b, 1, contextual, vector.SourceBasisBody)
+	_, err = db.ExecContext(ctx, `INSERT INTO messages (id) VALUES (100)`)
+	require.NoError(t, err)
 	ordinary := pgDocumentChunk(100, 0.4)
 	ordinary.Vector = ordinary.Vector[:2]
 	ordinary.SourceBasis = vector.SourceBasisSubjectBody

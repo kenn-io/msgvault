@@ -177,6 +177,7 @@ func (m MultimodalConfig) ImageQueriesEnabled() bool {
 // EmbeddingsConfig configures the external embedding endpoint used to convert
 // message text into vectors.
 type EmbeddingsConfig struct {
+	VectorIdentity string             `toml:"-"`
 	LocalOnly      bool               `toml:"local_only"`
 	APIFormat      EmbeddingAPIFormat `toml:"api_format"`
 	Endpoint       string             `toml:"endpoint"`
@@ -506,7 +507,10 @@ func (c *Config) GenerationFingerprint() string {
 	fp := fmt.Sprintf("%s:%s:c%d:e%d",
 		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars,
 		embedPolicyVersion)
-	if taskPrefixFingerprint := c.Embeddings.TaskPrefixFingerprint(); taskPrefixFingerprint != "" {
+	if c.Embeddings.VectorIdentity != "" {
+		digest := sha256.Sum256([]byte(c.Embeddings.VectorIdentity))
+		fp += ":k" + hex.EncodeToString(digest[:])
+	} else if taskPrefixFingerprint := c.Embeddings.TaskPrefixFingerprint(); taskPrefixFingerprint != "" {
 		fp += ":t" + taskPrefixFingerprint
 	}
 	if c.Embeddings.EffectiveAPIFormat() == APIFormatVoyageContextual {

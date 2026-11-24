@@ -12,6 +12,8 @@ import (
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -141,13 +143,21 @@ func (e *Engine) BuildFilter(
 	q *search.Query,
 	structured ...query.MessageFilter,
 ) (vector.Filter, error) {
-	filter, err := BuildFilter(ctx, e.mainDB, e.cfg.Rebind, q)
+	filter, err := BuildFilter(ctx, store.ReadDBContext(ctx, e.mainDB), e.cfg.Rebind, q)
 	if err != nil {
 		return vector.Filter{}, err
 	}
 	for _, exact := range structured {
-		if err := ApplyMessageFilter(ctx, e.mainDB, e.cfg.Rebind, &filter, exact); err != nil {
+		if err := ApplyMessageFilter(ctx, store.ReadDBContext(ctx, e.mainDB), e.cfg.Rebind, &filter, exact); err != nil {
 			return vector.Filter{}, err
+		}
+	}
+	if sourcescope.Restricted(ctx) {
+		ids := sourcescope.IDs(ctx)
+		if len(ids) == 0 {
+			filter.SourceIDs = []int64{noMatchSentinel}
+		} else {
+			intersectSourceIDs(&filter, ids)
 		}
 	}
 	return filter, nil

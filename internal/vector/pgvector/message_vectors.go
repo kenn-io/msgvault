@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -28,7 +29,7 @@ func (b *Backend) MessageVectors(ctx context.Context, gen vector.Generation, mes
 }
 
 func (b *Backend) readMessageVectorPage(ctx context.Context, gen vector.Generation, ids []int64, maxChunks int, result map[int64][][]float32) error {
-	rows, err := b.db.QueryContext(ctx, `
+	rows, err := store.ReadDBContext(ctx, b.db).QueryContext(ctx, `
 		SELECT message_id, chunk_index, embedding::text
 		  FROM embeddings
 		 WHERE generation_id = $1 AND message_id = ANY($2::bigint[])

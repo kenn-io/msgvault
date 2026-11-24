@@ -440,7 +440,8 @@ import (
 // 5.24.0 adds CardDAV participant binding preview, reconciliation, undo, and sync conflict counts to run history.
 // 5.25.0 admits read-only Gmail inventory diagnostics through the generic CLI runner.
 // 5.26.0 adds if_exists=return and structured match details to person creation.
-const APISchemaVersion = "5.26.0"
+// 5.27.0 supports vector and hybrid search under a source scope.
+const APISchemaVersion = "5.27.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

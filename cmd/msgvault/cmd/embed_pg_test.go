@@ -40,21 +40,25 @@ func countEmbeddingRowsPG(t *testing.T, db *sql.DB, gen vector.GenerationID) int
 // (force=true), bypassing the coverage gate, so no embed_gen stamping is
 // needed to make the management commands treat it as finished. Returns the
 // generation id.
-func seedGenWithEmbeddingsPG(t *testing.T, pgb *pgvector.Backend, ids ...int64) vector.GenerationID {
+func seedGenWithEmbeddingsPG(t *testing.T, pgb *pgvector.Backend, dsn string, ids ...int64) vector.GenerationID {
 	t.Helper()
 	ctx := t.Context()
-	// No messages rows are inserted: embeddings.message_id has no FK to
-	// messages, and the consuming tests force-activate/retire (force=true),
-	// bypassing the coverage gate, so no live messages are needed. (The full
-	// schema's messages.id is GENERATED ALWAYS AS IDENTITY, so an explicit-id
-	// insert would be rejected anyway.)
+	st, err := store.Open(dsn)
+	require.NoError(t, err)
+	defer func() { _ = st.Close() }()
+	source, err := st.GetOrCreateSource("gmail", "embed-test@example.com")
+	require.NoError(t, err)
+	conversation, err := st.EnsureConversation(ctx, source.ID, "thread", "Embeddings")
+	require.NoError(t, err)
 	gen, err := pgb.CreateGeneration(ctx, "test-model", 4, "test-model:4")
 	require.NoError(t, err, "CreateGeneration")
 	chunks := make([]vector.Chunk, 0, len(ids))
 	for i, id := range ids {
+		messageID, err := st.UpsertMessageContext(ctx, &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: strconv.FormatInt(id, 10), MessageType: "email"})
+		require.NoError(t, err)
 		v := make([]float32, 4)
 		v[i%4] = 1
-		chunks = append(chunks, vector.Chunk{MessageID: id, ChunkIndex: 0, Vector: v})
+		chunks = append(chunks, vector.Chunk{MessageID: messageID, ChunkIndex: 0, Vector: v})
 	}
 	require.NoError(t, pgb.Upsert(ctx, gen, chunks), "Upsert")
 	// The consuming tests force-activate/retire (force=true), bypassing the
@@ -78,7 +82,7 @@ func TestRunEmbeddingsRetire_PG_DeletesEmbeddings(t *testing.T) {
 	ctx := t.Context()
 	db := pgb.DB()
 
-	gen := seedGenWithEmbeddingsPG(t, pgb, 1, 2, 3)
+	gen := seedGenWithEmbeddingsPG(t, pgb, dsn, 1, 2, 3)
 	require.Equal(3, countEmbeddingRowsPG(t, db, gen), "precondition: vectors present before retire")
 
 	savedCfg := cfg
@@ -124,13 +128,13 @@ func TestRunEmbeddingsActivate_PG_AutoRetireDeletesPrevious(t *testing.T) {
 	ctx := t.Context()
 	db := pgb.DB()
 
-	genA := seedGenWithEmbeddingsPG(t, pgb, 1, 2)
+	genA := seedGenWithEmbeddingsPG(t, pgb, dsn, 1, 2)
 	require.NoError(
 		pgb.ActivateGeneration(ctx, genA, true), "activate A directly")
 
 	require.Equal(2, countEmbeddingRowsPG(t, db, genA), "A populated before re-embed")
 
-	genB := seedGenWithEmbeddingsPG(t, pgb, 3, 4)
+	genB := seedGenWithEmbeddingsPG(t, pgb, dsn, 3, 4)
 
 	savedCfg := cfg
 	savedYes, savedForce := embeddingsActivateYes, embeddingsActivateForce

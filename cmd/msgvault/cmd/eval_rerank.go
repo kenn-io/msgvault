@@ -345,7 +345,7 @@ func readEvalRerankOptions(cmd *cobra.Command) (evalRerankOptions, error) {
 	if state := invocationFromCommand(cmd); state != nil && state.cfg != nil {
 		vectorConfig := state.cfg.Vector
 		vectorConfig.ApplyDefaults()
-		opts.Preprocess = embeddingPreprocessConfig(vectorConfig)
+		opts.Preprocess = embed.PreprocessConfigFor(vectorConfig)
 	}
 	return opts, nil
 }

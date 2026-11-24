@@ -218,6 +218,13 @@ func (o *messagePassOutcomes) counters(final bool) operations.InvocationCounters
 	}
 }
 
+// final returns the pass's counters and sets res.Failed to the messages that
+// stayed failed, so a failure a later scan recovered is not reported.
+func (o *messagePassOutcomes) final(res *RunResult) operations.InvocationCounters {
+	res.Failed = len(o.failed)
+	return o.counters(true)
+}
+
 func (o *messagePassOutcomes) checkpoint(ctx context.Context) {
 	o.pass.checkpoint(ctx, o.counters(false))
 }

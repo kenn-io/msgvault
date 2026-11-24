@@ -24,7 +24,7 @@ func sourceScopedOperation(r *http.Request, operation Operation) bool {
 		return true // It reports the server, not archive content.
 	case "searchMessages":
 		mode := r.URL.Query().Get("mode")
-		return mode == "" || mode == "fts"
+		return mode == "" || mode == "fts" || mode == "vector" || mode == "hybrid"
 	default:
 		return false
 	}

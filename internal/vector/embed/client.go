@@ -26,6 +26,8 @@ var ErrPermanent4xx = vector.ErrPermanent4xx
 // Config controls an embeddings Client. The zero value is not usable; callers
 // must set Endpoint, Model, and Dimension at a minimum.
 type Config struct {
+	// Kit supplies a host-managed embedding client.
+	Kit *embedclient.Client
 	// Endpoint is the base URL including /v1 (e.g. "http://host:8080/v1").
 	// The request path "/embeddings" is appended.
 	Endpoint string
@@ -95,6 +97,10 @@ func (c *Client) embed(ctx context.Context, role embedconfig.Role, inputs []stri
 	if len(inputs) == 0 {
 		return nil, nil
 	}
+	if c.cfg.Kit != nil {
+		vectors, err := c.cfg.Kit.EmbedTexts(ctx, role, inputs)
+		return c.mapResult(ctx, role, inputs, vectors, err)
+	}
 	ctx = withEmbeddingAttemptGroup(ctx)
 	httpClient := *c.http
 	if c.cfg.BeforeRequest != nil {
@@ -157,6 +163,10 @@ func (c *Client) embed(ctx context.Context, role embedconfig.Role, inputs []stri
 			c.mu.Unlock()
 		}
 	}
+	return c.mapResult(ctx, role, inputs, vectors, err)
+}
+
+func (c *Client) mapResult(ctx context.Context, role embedconfig.Role, inputs []string, vectors [][]float32, err error) ([][]float32, error) {
 	if err == nil {
 		if role == embedconfig.RoleDocument {
 			addEmbeddingPrefix(ctx, c.cfg.DocumentPrefix, len(inputs))
