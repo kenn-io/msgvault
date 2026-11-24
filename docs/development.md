@@ -652,6 +652,26 @@ upgrade procedure.
 - **Cancellation**: Context-based cancellation for long operations
 - **Encoding**: Charset detection via `gogs/chardet`, conversion via `golang.org/x/text/encoding`
 
+### API operation authorization
+
+List every new `/api/v1/` operation in `internal/api/operation_policy.go`.
+`TestEveryAPIV1OperationIsClassified` walks the registered client OpenAPI
+document, including hidden CLI routes, and rejects missing or stale entries.
+
+An empty entry (`{}`) means owner-only. Set a flag only when the handler
+already enforces that credential's limits:
+
+- `AgentReadPermission` admits agent grants through the grant-aware read path,
+  which filters results to the grant's sources.
+- `Delegated` admits agent grants to handlers that check the selected
+  resources themselves.
+- `RemoteRead` and `RemoteCollectionsWrite` admit remote clients under the
+  remote CLI contract. Collection writes also need `collections_write` on the
+  client.
+
+Unlisted operations are owner-only. Keep operations that mix actions, targets
+or senders owner-only until their handlers check each of those.
+
 ## SQL Guidelines
 
 - **Never use `SELECT DISTINCT` with JOINs**: use `EXISTS` subqueries instead (semi-joins)

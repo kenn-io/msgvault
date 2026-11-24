@@ -14,24 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
-// Every admitted read has either a source filter or an object-source check.
-// SQL, export, administrative reads, and unsupported analytics remain owner-only.
-var agentReadPermissions = map[string]agentgrant.Permission{
-	"searchCLI": agentgrant.PermissionSearchRead, "searchMessages": agentgrant.PermissionSearchRead,
-	"fastSearch": agentgrant.PermissionSearchRead, "deepSearch": agentgrant.PermissionSearchRead,
-	"getAggregates": agentgrant.PermissionSearchRead, "getSubAggregates": agentgrant.PermissionSearchRead,
-	"filterMessages": agentgrant.PermissionSearchRead, "listMessages": agentgrant.PermissionSearchRead,
-	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
-	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
-	"getCLIMessageThread": agentgrant.PermissionMessageRead,
-	"getMeetingRecord":    agentgrant.PermissionMessageRead,
-	"suggestMeetingLinks": agentgrant.PermissionMessageRead,
-	"getMessage":          agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
-	"getAttachment": agentgrant.PermissionAttachmentRead, "getAttachmentContent": agentgrant.PermissionAttachmentRead,
-	"getCLIAttachment": agentgrant.PermissionAttachmentRead,
-	"listCLIAccounts":  agentgrant.PermissionSearchRead, "listCLICollections": agentgrant.PermissionSearchRead,
-}
-
 func agentReadDenied(permission agentgrant.Permission) *apiHTTPError {
 	return newAPIHTTPError(http.StatusForbidden, "permission_denied", "Agent grant requires "+string(permission)+" on the requested sources")
 }
@@ -68,10 +50,11 @@ func (s *Server) agentReadScopeLabel(r *http.Request) string {
 }
 
 func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.Permission, *apiHTTPError) {
-	permission, read := agentReadPermissions[operation]
-	if !read {
+	permission := operationPolicies[operation].AgentReadPermission
+	if permission == "" {
+		// Other delegated operations use their own handler checks.
 		return "", nil
-	} // runCLI has its own command authorization; health discloses no archive data.
+	}
 	if operation == "listCLIAccounts" || operation == "listCLICollections" {
 		permission = agentDiscoveryPermission(grant)
 		if permission == "" {
