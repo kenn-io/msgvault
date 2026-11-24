@@ -217,11 +217,17 @@ func (s *Store) withSyncSourceWriteContext(
 	}
 	base := s.withoutSyncScope()
 	return base.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockSyncSourceTx(ctx, tx, sourceID); err != nil {
-			return err
+		// A joined page transaction already holds the source row and passed
+		// the fence, and keeps both until it commits.
+		if !tx.attribution.holds(sourceID) {
+			if err := s.lockSyncSourceTx(ctx, tx, sourceID); err != nil {
+				return err
+			}
 		}
-		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
-			return err
+		if !tx.syncGenerationFenced {
+			if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
+				return err
+			}
 		}
 		return write(boundQuerier{ctx: ctx, q: tx})
 	})
