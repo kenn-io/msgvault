@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -516,6 +517,26 @@ func (c *Config) GenerationFingerprint() string {
 		fp = fmt.Sprintf("%s:s%s", fp, scopeFP)
 	}
 	return fp
+}
+
+var generationPolicyPattern = regexp.MustCompile(`(?:^|:)p([0-9]+)-[01]+:c[0-9]+:e([0-9]+)(?::|$)`)
+
+// ValidateGenerationPolicy rejects a generation produced by a newer policy.
+func ValidateGenerationPolicy(fingerprint string) error {
+	matches := generationPolicyPattern.FindAllStringSubmatch(fingerprint, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	match := matches[len(matches)-1]
+	p, err := strconv.ParseUint(match[1], 10, 64)
+	if err != nil || p > preprocessVersion {
+		return fmt.Errorf("generation uses a newer preprocessing policy: %s", fingerprint)
+	}
+	e, err := strconv.ParseUint(match[2], 10, 64)
+	if err != nil || e > embedPolicyVersion {
+		return fmt.Errorf("generation uses a newer embedding policy: %s", fingerprint)
+	}
+	return nil
 }
 
 // TaskPrefixFingerprint identifies document/query task-prefix policy without

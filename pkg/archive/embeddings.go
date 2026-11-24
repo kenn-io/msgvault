@@ -70,6 +70,34 @@ func setupEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings)
 		return nil
 	}
 	cfg := embeddingConfig(settings)
+	var generationsExist bool
+	if err := st.DB().QueryRowContext(ctx, `SELECT to_regclass('index_generations') IS NOT NULL`).Scan(&generationsExist); err != nil {
+		return err
+	}
+	if generationsExist {
+		rows, err := st.DB().QueryContext(ctx, `SELECT fingerprint FROM index_generations WHERE state IN ('active','building')`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var fingerprint string
+			if err := rows.Scan(&fingerprint); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if err := vector.ValidateGenerationPolicy(fingerprint); err != nil {
+				_ = rows.Close()
+				return err
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
 	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: settings.Dimension, SkipExtension: true})
 	if err != nil {
 		return err

@@ -316,6 +316,9 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 		}
 		if err != nil {
 			log.Warn("embed: convergence check after run failed", "gen", target, "error", err)
+			if j.Strict {
+				return err
+			}
 		} else {
 			contextualState = &state
 			if state.Complete() {
@@ -358,6 +361,9 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 			}
 			if err != nil {
 				log.Warn("embed: convergence check after run failed", "gen", target, "error", err)
+				if j.Strict {
+					return err
+				}
 				return nil
 			}
 			contextualState = &state
@@ -387,6 +393,9 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 		}
 		if err != nil {
 			log.Warn("embed: coverage count after run failed", "gen", target, "error", err)
+			if j.Strict {
+				return err
+			}
 			return nil
 		}
 		if missing > 0 {
@@ -470,6 +479,9 @@ func (j *EmbedJob) activateBuilding(
 			return activateErr
 		}
 		log.Warn("embed: activation failed", "gen", target, "error", activateErr)
+		if j.Strict {
+			return activateErr
+		}
 		return nil
 	}
 	if jobctx.StopRequested(ctx) {

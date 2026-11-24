@@ -26,6 +26,12 @@ import (
 	"go.kenn.io/msgvault/pkg/archive"
 )
 
+func installTestPgvector(t *testing.T, db *sql.DB) {
+	t.Helper()
+	_, err := db.ExecContext(t.Context(), "CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public")
+	require.NoError(t, err)
+}
+
 func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	dsn := os.Getenv("MSGVAULT_TEST_DB")
 	if !store.IsPostgresURL(dsn) {
@@ -34,6 +40,7 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	admin, err := sql.Open("pgx", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = admin.Close() })
+	installTestPgvector(t, admin)
 	schema := "archive_" + strings.ToLower(rand.Text())
 	role := "runtime_" + strings.ToLower(rand.Text())
 	quote := func(s string) string { return pgx.Identifier{s}.Sanitize() }
@@ -293,6 +300,7 @@ func TestPostgreSQLEmbeddingsReplacesBuildingGeneration(t *testing.T) {
 	db, err := sql.Open("pgx", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
+	installTestPgvector(t, db)
 	schema := "archive_" + strings.ToLower(rand.Text())
 	t.Cleanup(func() {
 		_, err := db.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
@@ -339,7 +347,7 @@ func TestPostgreSQLEmbeddingsReplacesBuildingGeneration(t *testing.T) {
 	u, err := url.Parse(dsn)
 	require.NoError(t, err)
 	params := u.Query()
-	params.Set("search_path", schema)
+	params.Set("search_path", schema+",public")
 	u.RawQuery = params.Encode()
 	check, err := sql.Open("pgx", u.String())
 	require.NoError(t, err)
@@ -389,6 +397,21 @@ func TestPostgreSQLEmbeddingsReplacesBuildingGeneration(t *testing.T) {
 	var activeFingerprint string
 	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT fingerprint FROM index_generations WHERE state='active'").Scan(&activeFingerprint))
 	assert.NotEqual(t, activeFingerprint, fingerprint)
+
+	// A newer binary's unfinished generation must survive an older Setup.
+	newer := strings.Replace(fingerprint, ":p1-", ":p2-", 1)
+	require.NotEqual(t, fingerprint, newer)
+	_, err = check.ExecContext(t.Context(), `UPDATE index_generations SET fingerprint=$1 WHERE state='building'`, newer)
+	require.NoError(t, err)
+	_, err = check.ExecContext(t.Context(), `INSERT INTO embeddings (generation_id,message_id,embedded_at,source_char_len,dimension,embedding) SELECT id,999,0,0,2,'[1,0]'::vector FROM index_generations WHERE state='building'`)
+	require.NoError(t, err)
+	require.ErrorContains(t, archive.Setup(t.Context(), opts), "newer preprocessing policy")
+	var retainedFingerprint string
+	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT fingerprint FROM index_generations WHERE state='building'`).Scan(&retainedFingerprint))
+	assert.Equal(t, newer, retainedFingerprint)
+	var retained int
+	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=999`).Scan(&retained))
+	assert.Equal(t, 1, retained)
 }
 
 func TestPostgreSQLEmbeddingsPurgeDuringRequest(t *testing.T) {
@@ -401,6 +424,7 @@ func TestPostgreSQLEmbeddingsPurgeDuringRequest(t *testing.T) {
 			db, err := sql.Open("pgx", dsn)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
+			installTestPgvector(t, db)
 			schema := "archive_" + strings.ToLower(rand.Text())
 			t.Cleanup(func() {
 				_, err := db.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")

@@ -785,3 +785,23 @@ include_animated_gifs = true
 	require.Error(err)
 	require.Contains(err.Error(), "include_animated_gifs")
 }
+
+func TestValidateGenerationPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		fingerprint string
+		wantError   bool
+	}{
+		{"model:2:p1-111111:c100:e1", false},
+		{"model:2:p2-111111:c100:e1", true},
+		{"model:2:p1-111111:c100:e2", true},
+		{"model:2:p1-111111:c100:e1:t123", false},
+		{"legacy:2", false},
+	} {
+		err := ValidateGenerationPolicy(tc.fingerprint)
+		if tc.wantError {
+			assert.Error(t, err, tc.fingerprint)
+		} else {
+			assert.NoError(t, err, tc.fingerprint)
+		}
+	}
+}
