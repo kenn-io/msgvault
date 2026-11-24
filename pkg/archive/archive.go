@@ -44,8 +44,8 @@ func (p PostgreSQL) connectionURL(extensionSchema, currentPath string) (string, 
 	if p.Schema == "" && extensionSchema == "" {
 		return p.URL, nil
 	}
-	if p.Schema != "" && parsed.RuntimeParams["options"] != "" {
-		return "", errors.New("use PostgreSQL connection parameters instead of options when selecting a schema")
+	if parsed.RuntimeParams["options"] != "" {
+		return "", errors.New("use PostgreSQL connection parameters instead of options when selecting an archive or pgvector schema")
 	}
 	path := currentPath
 	if p.Schema != "" {

@@ -191,4 +191,10 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	assert.Contains(t, path, "archive_data,public")
 	assert.Contains(t, path, `"vector_types"`)
 	assert.Equal(t, "[1,2]", vector)
+
+	params.Del("search_path")
+	params.Set("options", "-csearch_path=archive_data,public")
+	u.RawQuery = params.Encode()
+	opts.URL = u.String()
+	assert.ErrorContains(t, archive.Setup(t.Context(), opts), "options")
 }
