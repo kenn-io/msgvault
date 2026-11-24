@@ -624,6 +624,7 @@
     <SettingsLayout
       {categories}
       bind:active={() => activeCategory, selectCategory}
+      title="Settings"
       footer={pendingLeave || dirtyCount > 0 ? settingsFooter : undefined}
     >
       {#snippet panel(activeId)}
