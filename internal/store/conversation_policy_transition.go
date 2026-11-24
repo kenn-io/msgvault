@@ -575,10 +575,44 @@ func (s *Store) refreshConversationPolicyTx(ctx context.Context, tx *loggedTx, s
 			if err = s.invalidateConversationPolicyPeopleTx(ctx, tx, nil, result.Revision); err != nil {
 				return result, err
 			}
+			if err = s.invalidateUnsupportedParticipantContextTx(ctx, tx); err != nil {
+				return result, err
+			}
 			err = s.setConversationPolicyMetadataTx(ctx, tx, "conversation_policy_people_bootstrapped", "1")
 		}
 	}
 	return result, err
+}
+
+// invalidateUnsupportedParticipantContextTx rebuilds contextual embeddings
+// that may name a chat participant whose name, email or phone no room or
+// independent contact now supports. Those embeddings were built before
+// context assembly honored room policy, so no tier change marks them stale.
+func (s *Store) invalidateUnsupportedParticipantContextTx(ctx context.Context, tx *loggedTx) error {
+	rows, err := tx.QueryContext(ctx, `SELECT p.id FROM participants p WHERE `+participantChatProvenanceWhere("p.id")+` AND (
+		(TRIM(COALESCE(p.display_name,''))<>'' AND NOT `+FullParticipantNameWhere("p.id", "p.display_name")+`)
+		OR (COALESCE(p.email_address,'')<>'' AND NOT `+FullParticipantValueWhere("p.id", "'email'", "p.email_address")+`)
+		OR (COALESCE(p.phone_number,'')<>'' AND NOT `+FullParticipantValueWhere("p.id", "'phone'", "p.phone_number")+`))
+		ORDER BY p.id`)
+	if err != nil {
+		return fmt.Errorf("list participants with unsupported details: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		ids = append(ids, id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	return s.invalidateContextualParticipantMessagesTx(ctx, tx, ids)
 }
 
 // ConversationPolicyCleanupRevision returns the durable reconciliation target.

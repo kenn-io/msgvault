@@ -292,3 +292,66 @@ func TestConversationPolicyFirstFullOverrideReplaysExcludedActivity(t *testing.T
 	}
 	assertions.Contains(ids, message, "including the room must replay its activity")
 }
+
+// Deleting the last Discord source keeps its participants and their Discord
+// identifiers. A name that only a Cold Discord room supported must stay
+// unsupported, so the participant still counts as a chat participant.
+func TestConversationPolicyDeletedDiscordSourceKeepsChatProvenance(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	source, err := st.GetOrCreateSource("discord", "guild-1")
+	requirements.NoError(err)
+	room, err := st.EnsureConversation(ctx, source.ID, "channel-1", "Channel")
+	requirements.NoError(err)
+	requirements.NoError(st.SetConversationPolicyOverride(ctx, source.ID, "channel-1", conversationpolicy.Cold))
+	member, err := st.EnsureParticipantByIdentifier("discord_user_id", "350", "Cold Member")
+	requirements.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: "message", MessageType: "discord", SenderID: sql.NullInt64{Int64: member, Valid: true}})
+	requirements.NoError(err)
+	nameSupported := func() bool {
+		var supported bool
+		requirements.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT EXISTS(SELECT 1 FROM participants p WHERE p.id = ? AND `+
+			store.FullParticipantNameWhere("p.id", "p.display_name")+`)`), member).Scan(&supported))
+		return supported
+	}
+	requirements.False(nameSupported(), "a Cold room does not support the name")
+	requirements.NoError(st.RemoveSource(source.ID))
+	assertions.False(nameSupported(), "deleting the source must not make the name independent")
+}
+
+// Contextual embeddings built before room policy named participants whatever
+// supported them. The one-time people bootstrap must rebuild the ones that
+// name a participant whose details only an excluded room supports.
+func TestConversationPolicyPeopleBootstrapRebuildsUnsupportedContext(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	source, err := st.GetOrCreateSource("beeper", "bootstrap-context")
+	requirements.NoError(err)
+	cold, err := st.EnsureConversation(ctx, source.ID, "cold-room", "Cold")
+	requirements.NoError(err)
+	full, err := st.EnsureConversation(ctx, source.ID, "full-room", "Full")
+	requirements.NoError(err)
+	requirements.NoError(st.SetConversationPolicyOverride(ctx, source.ID, "cold-room", conversationpolicy.Cold))
+	requirements.NoError(st.SetConversationPolicyOverride(ctx, source.ID, "full-room", conversationpolicy.Full))
+	member, err := st.EnsureParticipantByIdentifier("beeper", "cold-only-member", "Cold Only Name")
+	requirements.NoError(err)
+	requirements.NoError(st.EnsureConversationParticipant(cold, member, "member"))
+	requirements.NoError(st.EnsureConversationParticipant(full, member, "member"))
+	shared, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: full, SourceMessageID: "shared", MessageType: "beeper"})
+	requirements.NoError(err)
+	revision := func() int64 {
+		var value int64
+		requirements.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT embedding_revision FROM messages WHERE id = ?`), shared).Scan(&value))
+		return value
+	}
+	// An archive from before people features honored policy has not run the
+	// people bootstrap yet.
+	_, err = st.DB().ExecContext(ctx, `DELETE FROM archive_metadata WHERE key = 'conversation_policy_people_bootstrapped'`)
+	requirements.NoError(err)
+	before := revision()
+	_, err = st.ConfigureConversationPolicy(ctx, conversationpolicy.RecommendedSettings(), time.Now())
+	requirements.NoError(err)
+	assertions.Greater(revision(), before, "context naming an unsupported participant must be rebuilt")
+}

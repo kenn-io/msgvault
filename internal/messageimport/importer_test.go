@@ -461,3 +461,38 @@ func TestImporterUnavailableWithoutStore(t *testing.T) {
 	_, err := NewImporter(nil, Hooks{}).Import(t.Context(), Request{})
 	require.ErrorIs(t, err, ErrUnavailable)
 }
+
+// A phone number from an imported message is that source's evidence, like a
+// name. It supports the number for a participant who also belongs to a room
+// excluded from people features, until the source is deleted.
+func TestImporterSenderPhoneSupportGoesWithItsSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	chat, err := st.GetOrCreateSource("beeper", "cold-chat")
+	require.NoError(err)
+	room, err := st.EnsureConversation(t.Context(), chat.ID, "cold-room", "Cold room")
+	require.NoError(err)
+	participant, err := st.EnsurePhoneParticipantContext(t.Context(), "+15550100199", "")
+	require.NoError(err)
+	require.NoError(st.EnsureConversationParticipant(room, participant, "member"))
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), chat.ID, "cold-room", conversationpolicy.Cold))
+	phoneSupported := func() bool {
+		var supported bool
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT EXISTS(SELECT 1 FROM participants p WHERE p.id = ? AND `+
+			store.FullParticipantValueWhere("p.id", "'phone'", "p.phone_number")+`)`), participant).Scan(&supported))
+		return supported
+	}
+	require.False(phoneSupported(), "a Cold room does not support the number")
+
+	req := validRequest(t)
+	req.Message.Sender = MessageImportSender{Phone: "+1 555 010 0199"}
+	result, err := NewImporter(st, Hooks{}).Import(t.Context(), req)
+	require.NoError(err)
+	assert.True(phoneSupported(), "the importing source supports the number it supplied")
+
+	var sourceID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT source_id FROM messages WHERE id = ?`), result.MessageID).Scan(&sourceID))
+	require.NoError(st.RemoveSource(sourceID))
+	assert.False(phoneSupported(), "deleting the source removes the number's only support")
+}
