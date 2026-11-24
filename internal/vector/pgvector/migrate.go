@@ -133,10 +133,10 @@ func migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 	if defaultDim > 0 {
 		// EnsureVectorIndex opens its own statement_timeout-disabling tx
 		// (HNSW builds are slow), so it runs after the migrate tx commits.
-		if err := ensureVectorIndex(ctx, db, defaultDim, extensionSchema); err != nil {
+		if err := EnsureVectorIndex(ctx, db, defaultDim, extensionSchema); err != nil {
 			return err
 		}
-		if err := ensurePersonVectorIndex(ctx, db, defaultDim, extensionSchema); err != nil {
+		if err := EnsurePersonVectorIndex(ctx, db, defaultDim, extensionSchema); err != nil {
 			return err
 		}
 	}
@@ -148,11 +148,7 @@ func migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 // with different dimensions coexist in the same embeddings table — the
 // expression cast `(embedding::vector(dim))` only fires for rows that
 // already match, so a 4-dim row never trips a 768-dim index. Idempotent.
-func EnsureVectorIndex(ctx context.Context, db migrateExecer, dim int) error {
-	return ensureVectorIndex(ctx, db, dim, "")
-}
-
-func ensureVectorIndex(ctx context.Context, db migrateExecer, dim int, extensionSchema string) error {
+func EnsureVectorIndex(ctx context.Context, db migrateExecer, dim int, extensionSchema string) error {
 	if dim <= 0 {
 		return fmt.Errorf("invalid dimension %d", dim)
 	}

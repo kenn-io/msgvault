@@ -40,10 +40,7 @@ func (a *Archive) PurgeSource(ctx context.Context, sourceID int64) (retErr error
 	if errors.Is(err, store.ErrSourceNotFound) {
 		return nil
 	}
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func (a *Archive) pruneEmbeddings(ctx context.Context) error {

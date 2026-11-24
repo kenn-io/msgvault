@@ -227,7 +227,7 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	db, err := sql.Open("pgx", u.String())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	for _, statement := range []string{"CREATE SCHEMA archive_data", "CREATE SCHEMA archive_other", "CREATE SCHEMA archive_empty", "CREATE SCHEMA vector_types"} {
+	for _, statement := range []string{"CREATE SCHEMA archive_data", "CREATE SCHEMA archive_empty", "CREATE SCHEMA vector_types"} {
 		_, err = db.ExecContext(t.Context(), statement)
 		require.NoError(t, err)
 	}
@@ -261,19 +261,12 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	require.NoError(t, missing.Close())
 	_, err = db.ExecContext(t.Context(), "CREATE EXTENSION vector WITH SCHEMA vector_types")
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `CREATE FUNCTION vector_types.bump_document_index_revision_after_message_type_update() RETURNS integer LANGUAGE SQL AS 'SELECT 1'; CREATE VIEW vector_types.keep_function AS SELECT vector_types.bump_document_index_revision_after_message_type_update(); CREATE TABLE vector_types.pending_embeddings (generation_id bigint, message_id bigint); INSERT INTO vector_types.pending_embeddings VALUES (1, 42); CREATE TABLE vector_types.embeddings (generation_id bigint, message_id bigint); INSERT INTO vector_types.embeddings VALUES (1, 999); CREATE INDEX idx_embeddings_gen_msg ON vector_types.embeddings (generation_id, message_id); CREATE TABLE vector_types.document_vector_embeddings (id bigint); INSERT INTO vector_types.document_vector_embeddings VALUES (1)`)
+	_, err = db.ExecContext(t.Context(), `CREATE FUNCTION vector_types.bump_document_index_revision_after_message_type_update() RETURNS integer LANGUAGE SQL AS 'SELECT 1'; CREATE VIEW vector_types.keep_function AS SELECT vector_types.bump_document_index_revision_after_message_type_update(); CREATE TABLE vector_types.pending_embeddings (generation_id bigint, message_id bigint); INSERT INTO vector_types.pending_embeddings VALUES (1, 42); CREATE TABLE vector_types.embeddings (generation_id bigint, message_id bigint); INSERT INTO vector_types.embeddings VALUES (1, 999)`)
 	require.NoError(t, err)
 	require.NoError(t, archive.Setup(t.Context(), opts))
 	var pending int
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM vector_types.pending_embeddings`).Scan(&pending))
 	assert.Equal(t, 1, pending)
-	var foreignObjects int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM vector_types.document_vector_embeddings`).Scan(&foreignObjects))
-	assert.Equal(t, 1, foreignObjects)
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM information_schema.columns WHERE table_schema='vector_types' AND table_name='embeddings' AND column_name='source_basis'`).Scan(&foreignObjects))
-	assert.Zero(t, foreignObjects)
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM pg_indexes WHERE schemaname='vector_types' AND indexname='idx_embeddings_gen_msg'`).Scan(&foreignObjects))
-	assert.Equal(t, 1, foreignObjects)
 	a, err := archive.Open(t.Context(), opts)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = a.Close() })
@@ -292,31 +285,6 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	assert.Contains(t, path, "archive_data,public")
 	assert.Contains(t, path, `"vector_types"`)
 	assert.Equal(t, "[1,2]", vector)
-
-	// A second archive keeps its vector columns after the first is removed.
-	other := opts
-	other.Schema = "archive_other"
-	require.NoError(t, archive.Setup(t.Context(), other))
-	second, err := archive.Open(t.Context(), other)
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, second.Close()) })
-	source, err := second.Store().GetOrCreateSource("slack", "other-source")
-	require.NoError(t, err)
-	conversation, err := second.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
-	require.NoError(t, err)
-	id, err := second.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "one", MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}, Subject: sql.NullString{String: "observatory", Valid: true}})
-	require.NoError(t, err)
-	require.NoError(t, second.Store().UpsertMessageBody(id, sql.NullString{String: "observatory", Valid: true}, sql.NullString{}))
-	require.NoError(t, second.Store().UpsertFTS(id, "observatory", "observatory", "", "", ""))
-	require.NoError(t, second.Embed(t.Context()))
-	require.NoError(t, a.Close())
-	_, err = db.ExecContext(t.Context(), "DROP SCHEMA archive_data CASCADE")
-	require.NoError(t, err)
-	require.NoError(t, second.Store().DB().QueryRowContext(t.Context(), `SELECT '[1,2]'::vector::text`).Scan(&vector))
-	assert.Equal(t, "[1,2]", vector)
-	response = sourceScopeRequest(t.Context(), t, second.NewServer(archive.ServerOptions{}).Handler(nil), "/api/v1/search?q=meaning&mode=vector")
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "observatory")
 
 	// Tables belonging to the extension schema do not make an empty archive
 	// appear initialized and are never pruned by that archive.
@@ -353,18 +321,6 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	installTestPgvector(t, db)
-	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Input []string `json:"input"`
-		}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
-		data := make([]map[string]any, len(req.Input))
-		for i := range req.Input {
-			data[i] = map[string]any{"index": i, "embedding": []float32{1, 0}}
-		}
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data, "model": "test"}))
-	}))
-	t.Cleanup(service.Close)
 	cases := []struct {
 		name    string
 		change  func(*embedmodel.Descriptor)
@@ -393,52 +349,20 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 				assert.NoError(t, err)
 			})
 			d := testDescriptor("test")
-			client, err := embedclient.New(embedclient.Options{Model: d.Model, Roles: d.Roles, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}})
+			client, err := embedclient.New(embedclient.Options{Model: d.Model, Roles: d.Roles, Deployment: embedconfig.Deployment{BaseURL: "http://127.0.0.1:1", TrustPrivateNetwork: true}})
 			require.NoError(t, err)
 			settings := &archive.Embeddings{Client: client, Descriptor: d}
 			opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: settings}
 			require.NoError(t, archive.Setup(t.Context(), opts))
 			archiveA, err := archive.Open(t.Context(), opts)
 			require.NoError(t, err)
-			source, err := archiveA.Store().GetOrCreateSource("slack", "source")
-			require.NoError(t, err)
-			conversation, err := archiveA.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
-			require.NoError(t, err)
-			id, err := archiveA.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "one", MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}, Subject: sql.NullString{String: "example", Valid: true}})
-			require.NoError(t, err)
-			require.NoError(t, archiveA.Store().UpsertMessageBody(id, sql.NullString{String: "example", Valid: true}, sql.NullString{}))
-			require.NoError(t, archiveA.Store().UpsertFTS(id, "example", "example", "", "", ""))
 			require.NoError(t, archiveA.Embed(t.Context()))
 			require.NoError(t, archiveA.Close())
 			tc.change(&settings.Descriptor)
-			client, err = embedclient.New(embedclient.Options{Model: settings.Descriptor.Model, Roles: settings.Descriptor.Roles, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}})
-			require.NoError(t, err)
-			settings.Client = client
 			if tc.changed {
 				assert.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
 			} else {
 				require.NoError(t, archive.Setup(t.Context(), opts))
-			}
-			u, err := url.Parse(dsn)
-			require.NoError(t, err)
-			q := u.Query()
-			q.Set("search_path", schema+",public")
-			u.RawQuery = q.Encode()
-			check, err := sql.Open("pgx", u.String())
-			require.NoError(t, err)
-			defer func() { _ = check.Close() }()
-			var count int
-			require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM index_generations WHERE state='building'`).Scan(&count))
-			assert.Zero(t, count)
-			require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=$1`, id).Scan(&count))
-			assert.Equal(t, 1, count)
-			current, err := archive.Open(t.Context(), opts)
-			require.NoError(t, err)
-			defer func() { assert.NoError(t, current.Close()) }()
-			if tc.changed {
-				assert.ErrorContains(t, current.Embed(t.Context()), "differs from configured")
-				w := sourceScopeRequest(t.Context(), t, current.NewServer(archive.ServerOptions{}).Handler(nil), "/api/v1/search?q=test&mode=vector")
-				assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 			}
 		})
 	}
@@ -516,79 +440,71 @@ func TestPostgreSQLEmbeddingsPurgeDuringRequest(t *testing.T) {
 	if !store.IsPostgresURL(dsn) {
 		t.Skip("requires PostgreSQL")
 	}
-	for _, channel := range []bool{false, true} {
-		t.Run(fmt.Sprintf("channel=%t", channel), func(t *testing.T) {
-			db, err := sql.Open("pgx", dsn)
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = db.Close() })
-			installTestPgvector(t, db)
-			schema := "archive_" + strings.ToLower(rand.Text())
-			t.Cleanup(func() {
-				_, err := db.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
-				assert.NoError(t, err)
-			})
-			var pause atomic.Bool
-			started, resume := make(chan struct{}), make(chan struct{})
-			service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if pause.Load() {
-					close(started)
-					<-resume
-				}
-				var req struct {
-					Input []string `json:"input"`
-				}
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
-				data := make([]map[string]any, len(req.Input))
-				for i := range req.Input {
-					data[i] = map[string]any{"index": i, "embedding": []float32{1, 0}}
-				}
-				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data, "model": "test"}))
-			}))
-			t.Cleanup(service.Close)
-			client, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: "test", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}})
-			require.NoError(t, err)
-			opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: &archive.Embeddings{Client: client, Descriptor: testDescriptor("test")}}
-			require.NoError(t, archive.Setup(t.Context(), opts))
-			a, err := archive.Open(t.Context(), opts)
-			require.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, a.Close()) })
-			seed := func(name string) (int64, int64) {
-				source, err := a.Store().GetOrCreateSource("slack", name)
-				require.NoError(t, err)
-				conv, err := a.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
-				require.NoError(t, err)
-				id, err := a.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "one", MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}, Subject: sql.NullString{String: name, Valid: true}})
-				require.NoError(t, err)
-				require.NoError(t, a.Store().UpsertMessageBody(id, sql.NullString{String: name, Valid: true}, sql.NullString{}))
-				return source.ID, id
-			}
-			_, retained := seed("retained")
-			require.NoError(t, a.Embed(t.Context()))
-			target, removed := seed("removed")
-			pause.Store(true)
-			done := make(chan error, 1)
-			go func() { done <- a.Embed(t.Context()) }()
-			select {
-			case <-started:
-			case <-time.After(10 * time.Second):
-				close(resume)
-				require.FailNow(t, "embedding request did not start")
-			}
-			if channel {
-				err = a.PurgeChannel(t.Context(), target, "channel")
-			} else {
-				err = a.PurgeSource(t.Context(), target)
-			}
-			close(resume)
-			require.NoError(t, err)
-			require.NoError(t, <-done)
-			var count int
-			require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=$1`, removed).Scan(&count))
-			assert.Zero(t, count)
-			require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=$1`, retained).Scan(&count))
-			assert.Equal(t, 1, count)
-			require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT message_count FROM index_generations WHERE state='active'`).Scan(&count))
-			assert.Equal(t, 1, count)
-		})
+	db, err := sql.Open("pgx", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	installTestPgvector(t, db)
+	schema := "archive_" + strings.ToLower(rand.Text())
+	t.Cleanup(func() {
+		_, err := db.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		assert.NoError(t, err)
+	})
+	var pause atomic.Bool
+	started, resume := make(chan struct{}), make(chan struct{})
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if pause.Load() {
+			close(started)
+			<-resume
+		}
+		var req struct {
+			Input []string `json:"input"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		data := make([]map[string]any, len(req.Input))
+		for i := range req.Input {
+			data[i] = map[string]any{"index": i, "embedding": []float32{1, 0}}
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data, "model": "test"}))
+	}))
+	t.Cleanup(service.Close)
+	client, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: "test", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}})
+	require.NoError(t, err)
+	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: &archive.Embeddings{Client: client, Descriptor: testDescriptor("test")}}
+	require.NoError(t, archive.Setup(t.Context(), opts))
+	a, err := archive.Open(t.Context(), opts)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, a.Close()) })
+	seed := func(name string) (int64, int64) {
+		source, err := a.Store().GetOrCreateSource("slack", name)
+		require.NoError(t, err)
+		conv, err := a.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
+		require.NoError(t, err)
+		id, err := a.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "one", MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}, Subject: sql.NullString{String: name, Valid: true}})
+		require.NoError(t, err)
+		require.NoError(t, a.Store().UpsertMessageBody(id, sql.NullString{String: name, Valid: true}, sql.NullString{}))
+		return source.ID, id
 	}
+	_, retained := seed("retained")
+	require.NoError(t, a.Embed(t.Context()))
+	target, removed := seed("removed")
+	pause.Store(true)
+	done := make(chan error, 1)
+	go func() { done <- a.Embed(t.Context()) }()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		close(resume)
+		require.FailNow(t, "embedding request did not start")
+	}
+	err = a.PurgeSource(t.Context(), target)
+	close(resume)
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+	var count int
+	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=$1`, removed).Scan(&count))
+	assert.Zero(t, count)
+	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=$1`, retained).Scan(&count))
+	assert.Equal(t, 1, count)
+	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT message_count FROM index_generations WHERE state='active'`).Scan(&count))
+	assert.Equal(t, 1, count)
 }

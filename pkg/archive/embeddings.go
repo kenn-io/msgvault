@@ -193,7 +193,7 @@ func (a *Archive) NewServer(options ServerOptions) *Server {
 	if options.Engine == nil {
 		options.Engine = a.QueryEngine()
 	}
-	if a.embeddings != nil && a.embeddings.engine != nil {
+	if a.embeddings != nil {
 		if options.HybridEngine == nil {
 			options.HybridEngine = a.embeddings.engine
 		}

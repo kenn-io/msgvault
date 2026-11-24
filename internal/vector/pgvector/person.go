@@ -17,11 +17,7 @@ var _ vector.PersonBackend = (*Backend)(nil)
 // EnsurePersonVectorIndex creates the dimension-partial person-owned HNSW
 // compatibility index. SearchPeople ranks its capped curated corpus exactly,
 // but retaining this lifecycle keeps a future ANN path migration-free.
-func EnsurePersonVectorIndex(ctx context.Context, db migrateExecer, dim int) error {
-	return ensurePersonVectorIndex(ctx, db, dim, "")
-}
-
-func ensurePersonVectorIndex(ctx context.Context, db migrateExecer, dim int, extensionSchema string) error {
+func EnsurePersonVectorIndex(ctx context.Context, db migrateExecer, dim int, extensionSchema string) error {
 	if dim <= 0 {
 		return fmt.Errorf("invalid dimension %d", dim)
 	}

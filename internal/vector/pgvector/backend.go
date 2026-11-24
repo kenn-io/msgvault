@@ -187,10 +187,10 @@ func (b *Backend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
 // rebuild can resume; a mismatched fingerprint surfaces
 // vector.ErrBuildingInProgress.
 func (b *Backend) CreateGeneration(ctx context.Context, model string, dim int, fingerprint string) (vector.GenerationID, error) {
-	if err := ensureVectorIndex(ctx, b.db, dim, b.extensionSchema); err != nil {
+	if err := EnsureVectorIndex(ctx, b.db, dim, b.extensionSchema); err != nil {
 		return 0, err
 	}
-	if err := ensurePersonVectorIndex(ctx, b.db, dim, b.extensionSchema); err != nil {
+	if err := EnsurePersonVectorIndex(ctx, b.db, dim, b.extensionSchema); err != nil {
 		return 0, err
 	}
 	fp := fingerprint
