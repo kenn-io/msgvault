@@ -14,6 +14,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/embedclient"
+	"go.kenn.io/kit/embedconfig"
+	"go.kenn.io/kit/embedmodel"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/archive"
 )
@@ -31,7 +34,10 @@ func TestPostgreSQLEmbeddingsWithoutPgvector(t *testing.T) {
 		_, e := db.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		assert.NoError(t, e)
 	})
-	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: &archive.Embeddings{Model: "test", Dimension: 2}}
+	model := embedconfig.Model{Name: "test", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}
+	client, err := embedclient.New(embedclient.Options{Model: model, Deployment: embedconfig.Deployment{BaseURL: "http://127.0.0.1:1", TrustPrivateNetwork: true}})
+	require.NoError(t, err)
+	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: &archive.Embeddings{Client: client, Descriptor: embedmodel.Descriptor{Model: model}}}
 	require.NoError(t, archive.Setup(t.Context(), opts))
 	a, err := archive.Open(t.Context(), opts)
 	require.NoError(t, err)
@@ -42,4 +48,13 @@ func TestPostgreSQLEmbeddingsWithoutPgvector(t *testing.T) {
 	semantic := sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=example&mode=vector")
 	assert.Equal(t, http.StatusServiceUnavailable, semantic.Code, semantic.Body.String())
 	assert.Contains(t, semantic.Body.String(), "pgvector")
+
+	opts.Embeddings = &archive.Embeddings{}
+	disabled, err := archive.Open(t.Context(), opts)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, disabled.Close()) }()
+	require.NoError(t, disabled.Embed(t.Context()))
+	response := sourceScopeRequest(t.Context(), t, disabled.NewServer(archive.ServerOptions{}).Handler(nil), "/api/v1/search?q=example&mode=vector")
+	assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "vector_not_enabled")
 }

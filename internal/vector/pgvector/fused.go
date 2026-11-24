@@ -90,21 +90,17 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	// fetches chunks so the outer GROUP BY can still surface KPerSignal+1
 	// distinct messages; on multi-chunk corpora a few long messages can
 	// pack the inner LIMIT and collapse the deduplicated pool below that.
-	// chunkCeiling counts chunks in the filtered set, or the whole generation
-	// when unfiltered. filteredCeiling counts distinct matching messages for
-	// an early exit.
+	// chunkCeiling (generation-wide chunk count) is the hard upper bound so
+	// the widening loop always terminates; filteredCeiling (distinct
+	// filtered messages with at least one chunk) is an early exit so a
+	// selective filter does not drive the loop to the full generation.
 	// Both are only needed on the ANN side.
 	var chunkCeiling, filteredCeiling int
 	if useANN {
-		if req.Filter.IsEmpty() {
-			chunkCeiling, err = b.chunkCount(ctx, req.Generation)
-			if err == nil {
-				filteredCeiling, err = b.filteredChunkMessageCount(ctx, req.Generation, req.Filter)
-			}
-		} else {
-			chunkCeiling, filteredCeiling, err = b.filteredChunkAndMessageCount(ctx, req.Generation, req.Filter)
+		if chunkCeiling, err = b.chunkCount(ctx, req.Generation); err != nil {
+			return nil, vector.SearchMetadata{}, err
 		}
-		if err != nil {
+		if filteredCeiling, err = b.filteredChunkMessageCount(ctx, req.Generation, req.Filter); err != nil {
 			return nil, vector.SearchMetadata{}, err
 		}
 	}

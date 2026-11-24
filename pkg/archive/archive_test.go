@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/msgvault/pkg/archive"
 )
 
@@ -16,4 +17,11 @@ func TestOpenRejectsPoolThatCannotHoldSyncLock(t *testing.T) {
 		})
 		assert.ErrorContains(t, err, "cannot hold a sync lock", "MaxOpenConnections %d", size)
 	}
+}
+
+func TestInvalidEmbeddingDescriptor(t *testing.T) {
+	opts := archive.PostgreSQL{URL: "postgres://archive.invalid/msgvault", Embeddings: &archive.Embeddings{Client: &embedclient.Client{}}}
+	assert.ErrorContains(t, archive.Setup(t.Context(), opts), "embedding descriptor")
+	_, err := archive.Open(t.Context(), opts)
+	assert.ErrorContains(t, err, "embedding descriptor")
 }

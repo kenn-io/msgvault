@@ -77,6 +77,9 @@ func (p PostgreSQL) connectionURL(extensionSchema, currentPath string) (string, 
 // using a schema-owning database role, before starting runtime readers/writers.
 // The caller serializes setup with other setup/upgrade processes.
 func Setup(ctx context.Context, postgres PostgreSQL) error {
+	if err := validateEmbeddings(postgres.Embeddings); err != nil {
+		return err
+	}
 	dsn, err := postgres.connectionURL("", "")
 	if err != nil {
 		return err
@@ -101,7 +104,7 @@ func Setup(ctx context.Context, postgres PostgreSQL) error {
 			}
 		}
 	}
-	if postgres.Embeddings != nil {
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
 		dsn, err = embeddingConnectionURL(ctx, postgres, db)
 		if err != nil {
 			return err
@@ -115,7 +118,7 @@ func Setup(ctx context.Context, postgres PostgreSQL) error {
 	if err := st.InitSchemaContext(ctx); err != nil {
 		return err
 	}
-	if postgres.Embeddings != nil {
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
 		return setupEmbeddings(ctx, st, postgres.Embeddings)
 	}
 	return nil
@@ -132,6 +135,9 @@ type Archive struct {
 // Open connects to a previously set up archive. It runs no DDL and can use a
 // runtime role with only USAGE on the schema and DML on its tables/sequences.
 func Open(ctx context.Context, postgres PostgreSQL) (*Archive, error) {
+	if err := validateEmbeddings(postgres.Embeddings); err != nil {
+		return nil, err
+	}
 	if postgres.MaxOpenConnections < 0 || postgres.MaxOpenConnections == 1 {
 		return nil, fmt.Errorf("PostgreSQL MaxOpenConnections %d cannot hold a sync lock and run its work; "+
 			"use 0 for the default pool or at least 2", postgres.MaxOpenConnections)
@@ -140,7 +146,7 @@ func Open(ctx context.Context, postgres PostgreSQL) (*Archive, error) {
 	if err != nil {
 		return nil, err
 	}
-	if postgres.Embeddings != nil {
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
 		db, openErr := sql.Open("pgx", dsn)
 		if openErr != nil {
 			return nil, openErr
@@ -171,7 +177,7 @@ func Open(ctx context.Context, postgres PostgreSQL) (*Archive, error) {
 		st.DB().SetMaxOpenConns(postgres.MaxOpenConnections)
 	}
 	a := &Archive{store: st}
-	if postgres.Embeddings != nil {
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
 		a.embeddings, a.vectorErr = openEmbeddings(ctx, st, postgres.Embeddings)
 	}
 	return a, nil

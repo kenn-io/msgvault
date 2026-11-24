@@ -5,9 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
+
+	"github.com/google/uuid"
 
 	"go.kenn.io/kit/embedclient"
-	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/kit/embedmodel"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
@@ -15,22 +19,31 @@ import (
 	"go.kenn.io/msgvault/internal/vector/pgvector"
 )
 
-// Embeddings configures message embeddings with a host-owned client. Changing
-// Model, Dimension, or either prefix requires Setup again and starts a rebuild.
-// Model, Dimension, and the prefixes must match the configuration on Client.
+// Embeddings configures a host-owned client and the descriptor used to build it.
+// Changing its vector identity requires Setup and rebuilds the index.
 type Embeddings struct {
-	Client         *embedclient.Client
-	Model          string
-	Dimension      int
-	DocumentPrefix string
-	QueryPrefix    string
+	Client     *embedclient.Client
+	Descriptor embedmodel.Descriptor
 }
 
 type embeddingRuntime struct {
 	backend *pgvector.Backend
 	config  vector.Config
 	engine  *hybrid.Engine
-	job     *scheduler.EmbedJob
+	worker  *embed.Worker
+}
+
+func validateEmbeddings(settings *Embeddings) error {
+	if settings == nil || settings.Client == nil {
+		return nil
+	}
+	if err := settings.Descriptor.Validate(); err != nil {
+		return fmt.Errorf("embedding descriptor: %w", err)
+	}
+	if settings.Descriptor.Model.Dimensions <= 0 {
+		return errors.New("embedding descriptor requires positive dimensions")
+	}
+	return nil
 }
 
 func embeddingConnectionURL(ctx context.Context, postgres PostgreSQL, db *sql.DB) (string, error) {
@@ -48,14 +61,48 @@ func embeddingConnectionURL(ctx context.Context, postgres PostgreSQL, db *sql.DB
 	return postgres.connectionURL(schema, path)
 }
 
-func embeddingConfig(settings *Embeddings) vector.Config {
+func embeddingConfig(settings *Embeddings) (vector.Config, error) {
+	identity, err := settings.Descriptor.VectorIdentity()
+	if err != nil {
+		return vector.Config{}, err
+	}
 	cfg := vector.Config{Enabled: true, Backend: "pgvector"}
-	cfg.Embeddings.Model = settings.Model
-	cfg.Embeddings.Dimension = settings.Dimension
-	cfg.Embeddings.DocumentPrefix = settings.DocumentPrefix
-	cfg.Embeddings.QueryPrefix = settings.QueryPrefix
+	cfg.Embeddings.Model = settings.Descriptor.Model.Name
+	cfg.Embeddings.Dimension = settings.Descriptor.Model.Dimensions
+	cfg.Embeddings.DocumentPrefix = settings.Descriptor.Roles.DocumentPrefix
+	cfg.Embeddings.QueryPrefix = settings.Descriptor.Roles.QueryPrefix
+	cfg.Embeddings.VectorIdentity = identity
 	cfg.ApplyDefaults()
-	return cfg
+	return cfg, nil
+}
+
+func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vector.Config, create bool) (vector.Generation, bool, error) {
+	fingerprint := cfg.GenerationFingerprint()
+	building, err := backend.BuildingGeneration(ctx)
+	if err != nil {
+		return vector.Generation{}, false, err
+	}
+	if building != nil {
+		if building.Fingerprint != fingerprint {
+			return vector.Generation{}, false, fmt.Errorf("%w: building fingerprint %q differs from configured %q; finish the build or retire it", vector.ErrBuildingInProgress, building.Fingerprint, fingerprint)
+		}
+		return *building, true, nil
+	}
+	active, err := backend.ActiveGeneration(ctx)
+	if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
+		return vector.Generation{}, false, err
+	}
+	if err == nil && active.Fingerprint == fingerprint {
+		return active, false, nil
+	}
+	if !create {
+		return vector.Generation{}, false, fmt.Errorf("embedding generation %q differs from configured %q; run Setup", active.Fingerprint, fingerprint)
+	}
+	id, err := backend.CreateGeneration(ctx, cfg.Embeddings.Model, cfg.Embeddings.Dimension, fingerprint)
+	if err != nil {
+		return vector.Generation{}, false, err
+	}
+	return vector.Generation{ID: id, Fingerprint: fingerprint}, true, nil
 }
 
 func setupEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings) error {
@@ -69,68 +116,27 @@ func setupEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings)
 	if !available {
 		return nil
 	}
-	cfg := embeddingConfig(settings)
-	var generationsExist bool
-	if err := st.DB().QueryRowContext(ctx, `SELECT to_regclass('index_generations') IS NOT NULL`).Scan(&generationsExist); err != nil {
-		return err
-	}
-	if generationsExist {
-		rows, err := st.DB().QueryContext(ctx, `SELECT fingerprint FROM index_generations WHERE state IN ('active','building')`)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var fingerprint string
-			if err := rows.Scan(&fingerprint); err != nil {
-				_ = rows.Close()
-				return err
-			}
-			if err := vector.ValidateGenerationPolicy(fingerprint); err != nil {
-				_ = rows.Close()
-				return err
-			}
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-	}
-	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: settings.Dimension, SkipExtension: true})
+	cfg, err := embeddingConfig(settings)
 	if err != nil {
 		return err
 	}
-	building, err := backend.BuildingGeneration(ctx)
+	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipExtension: true})
 	if err != nil {
 		return err
 	}
-	if building != nil {
-		if building.Fingerprint == cfg.GenerationFingerprint() {
-			return nil
-		}
-		if err := backend.RetireGeneration(ctx, building.ID, false); err != nil {
-			return err
-		}
-	}
-	active, err := backend.ActiveGeneration(ctx)
-	if err == nil && active.Fingerprint == cfg.GenerationFingerprint() {
-		return nil
-	}
-	if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
-		return err
-	}
-	_, err = backend.CreateGeneration(ctx, settings.Model, settings.Dimension, cfg.GenerationFingerprint())
+	_, _, err = embeddingGeneration(ctx, backend, cfg, true)
 	return err
 }
 
 func openEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings) (*embeddingRuntime, error) {
-	var runtime *embeddingRuntime
 	unavailable := func(err error) (*embeddingRuntime, error) {
-		return runtime, fmt.Errorf("pgvector is missing or Setup has not prepared embeddings for %s: %w", settings.Model, err)
+		return nil, fmt.Errorf("pgvector is missing or Setup has not prepared embeddings: %w", err)
 	}
-	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: settings.Dimension, SkipMigrate: true, ReadOnly: true})
+	cfg, err := embeddingConfig(settings)
+	if err != nil {
+		return unavailable(err)
+	}
+	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipMigrate: true, ReadOnly: true})
 	if err != nil {
 		return unavailable(err)
 	}
@@ -141,31 +147,13 @@ func openEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings) 
 	if !storage {
 		return unavailable(errors.New("embedding storage is missing"))
 	}
-	runtime = &embeddingRuntime{backend: backend}
-	if settings.Client == nil || settings.Model == "" || settings.Dimension <= 0 {
-		return unavailable(errors.New("embedding client, model, and dimension are required"))
-	}
-	cfg := embeddingConfig(settings)
-	building, err := backend.BuildingGeneration(ctx)
-	if err != nil {
-		return unavailable(err)
-	}
-	active, activeErr := backend.ActiveGeneration(ctx)
-	if activeErr != nil && !errors.Is(activeErr, vector.ErrNoActiveGeneration) {
-		return unavailable(activeErr)
-	}
-	if (building != nil && building.Fingerprint != cfg.GenerationFingerprint()) || (building == nil && (activeErr != nil || active.Fingerprint != cfg.GenerationFingerprint())) {
-		return unavailable(errors.New("generation is missing"))
-	}
-	client := embed.NewClient(embed.Config{Kit: settings.Client, Model: settings.Model, Dimension: settings.Dimension})
+	client := embed.NewClient(embed.Config{Kit: settings.Client, Model: cfg.Embeddings.Model, Dimension: cfg.Embeddings.Dimension})
 	worker := embed.NewWorker(embed.WorkerDeps{Backend: backend, VectorsDB: st.DB(), MainDB: st.DB(), Store: st, Client: client, Preprocess: embed.PreprocessConfigFor(cfg), MaxInputChars: cfg.Embeddings.MaxInputChars, BatchSize: cfg.Embeddings.BatchSize, Rebind: st.Rebind, LastModifiedExpr: "m.last_modified", Recorder: st, Diagnostics: st})
-	job := &scheduler.EmbedJob{Strict: true, Worker: worker, Backend: backend, Store: st, Fingerprint: cfg.GenerationFingerprint(), RequestTimeout: cfg.Embeddings.Timeout, BatchSize: cfg.Embeddings.BatchSize, BackstopInterval: cfg.Embed.BackstopInterval}
 	engine := hybrid.NewEngine(backend, st.DB(), client, hybrid.Config{ExpectedFingerprint: cfg.GenerationFingerprint(), RRFK: cfg.Search.RRFK, KPerSignal: cfg.Search.KPerSignal, SubjectBoost: cfg.Search.SubjectBoost, Rebind: st.Rebind})
-	runtime.config, runtime.engine, runtime.job = cfg, engine, job
-	return runtime, nil
+	return &embeddingRuntime{backend: backend, config: cfg, engine: engine, worker: worker}, nil
 }
 
-// Embed runs one embedding pass. Stop calls to Embed before Close.
+// Embed runs a full embedding pass. The caller serializes calls and stops them before Close.
 func (a *Archive) Embed(ctx context.Context) error {
 	if a.vectorErr != nil {
 		return a.vectorErr
@@ -173,7 +161,32 @@ func (a *Archive) Embed(ctx context.Context) error {
 	if a.embeddings == nil {
 		return nil
 	}
-	return a.embeddings.job.Run(ctx)
+	rt := a.embeddings
+	gen, building, err := embeddingGeneration(ctx, rt.backend, rt.config, false)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	res, err := rt.worker.RunBackstop(ctx, gen.ID, operations.PassScope{Key: "archive-embed:" + uuid.NewString(), Trigger: operations.TriggerManual, StartedAt: now})
+	if err != nil {
+		return err
+	}
+	if res.Failed > 0 {
+		return fmt.Errorf("embedding failed for %d messages", res.Failed)
+	}
+	if building {
+		missing, err := a.store.MissingCount(ctx, int64(gen.ID))
+		if err != nil {
+			return err
+		}
+		if missing > 0 {
+			return fmt.Errorf("embedding generation has %d messages remaining", missing)
+		}
+		if err := rt.backend.ActivateGeneration(ctx, gen.ID, false); err != nil {
+			return err
+		}
+	}
+	return a.pruneEmbeddings(ctx)
 }
 
 // NewServer constructs an API server using the archive's configured services.

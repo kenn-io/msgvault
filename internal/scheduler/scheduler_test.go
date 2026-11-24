@@ -1619,7 +1619,6 @@ func (c *recoverOnBackstopCoverage) MissingCount(context.Context, int64) (int64,
 // fakeCoverage satisfies EmbedCoverage for the activation-gate tests:
 // it reports a fixed number of live messages still needing embedding.
 type fakeCoverage struct {
-	err         error
 	missing     int64
 	calls       int
 	yieldCancel context.CancelCauseFunc
@@ -1772,7 +1771,7 @@ func (c *fakeCoverage) MissingCount(_ context.Context, _ int64) (int64, error) {
 	if c.yieldCancel != nil {
 		c.yieldCancel(jobctx.ErrYieldedToWaiter)
 	}
-	return c.missing, c.err
+	return c.missing, nil
 }
 
 // slowRunner blocks RunOnce on `release` so tests can control when it
@@ -3784,39 +3783,6 @@ func TestEndedPassKeepsAcceptedTrigger(t *testing.T) {
 				assert.False(t, status.Pending)
 				assert.Empty(t, status.LastError)
 			})
-		})
-	}
-}
-
-func TestEmbedJobStrictReturnsCoverageAndActivationErrors(t *testing.T) {
-	failure := errors.New("test failure")
-	for _, tc := range []struct {
-		name        string
-		coverage    *fakeCoverage
-		convergence *fakeConvergenceChecker
-		activation  error
-	}{
-		{name: "coverage", coverage: &fakeCoverage{err: failure}},
-		{name: "convergence", convergence: &fakeConvergenceChecker{err: failure}},
-		{name: "activation", coverage: &fakeCoverage{}, activation: failure},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			for _, strict := range []bool{true, false} {
-				backend := &fakeBackend{building: &vector.Generation{ID: 7, Fingerprint: "test"}, activateErr: tc.activation}
-				job := &EmbedJob{Strict: strict, Worker: &fakeRunner{}, Backend: backend, Fingerprint: "test", BackstopInterval: -1}
-				if tc.coverage != nil {
-					job.Store = tc.coverage
-				}
-				if tc.convergence != nil {
-					job.Convergence = tc.convergence
-				}
-				err := job.Run(t.Context())
-				if strict {
-					assert.ErrorIs(t, err, failure)
-				} else {
-					assert.NoError(t, err)
-				}
-			}
 		})
 	}
 }

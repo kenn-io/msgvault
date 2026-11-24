@@ -10,27 +10,26 @@ import (
 
 // PurgeChannel removes a channel and its retained threads, serializing with sync.
 // A later import can restore provider content; callers own future selection.
-func (a *Archive) PurgeChannel(ctx context.Context, sourceID int64, channelID string) error {
-	if err := a.store.PurgeChannelContext(ctx, sourceID, channelID); err != nil {
-		return err
-	}
-	return a.pruneEmbeddings(ctx)
+func (a *Archive) PurgeChannel(ctx context.Context, sourceID int64, channelID string) (retErr error) {
+	defer func() { retErr = errors.Join(retErr, a.pruneEmbeddings(ctx)) }()
+	return a.store.PurgeChannelContext(ctx, sourceID, channelID)
 }
 
 // PurgeSource removes a source and its retained message data, serializing with sync.
 // An already removed source succeeds. Attachment files and external indexes
 // are managed separately by their owners.
 func (a *Archive) PurgeSource(ctx context.Context, sourceID int64) (retErr error) {
+	defer func() { retErr = errors.Join(retErr, a.pruneEmbeddings(ctx)) }()
 	_, err := a.store.GetSourceByIDContext(ctx, sourceID)
 	if errors.Is(err, store.ErrSourceNotFound) {
-		return a.pruneEmbeddings(ctx)
+		return nil
 	}
 	if err != nil {
 		return err
 	}
 	execution, err := a.store.AcquireSyncExecutionContext(ctx, sourceID)
 	if errors.Is(err, store.ErrSourceNotFound) {
-		return a.pruneEmbeddings(ctx)
+		return nil
 	}
 	if err != nil {
 		return err
@@ -39,12 +38,12 @@ func (a *Archive) PurgeSource(ctx context.Context, sourceID int64) (retErr error
 	// Another caller may remove the source between the lookup and the lock.
 	_, _, err = a.store.RemoveSourceSerialized(ctx, sourceID)
 	if errors.Is(err, store.ErrSourceNotFound) {
-		return a.pruneEmbeddings(ctx)
+		return nil
 	}
 	if err != nil {
 		return err
 	}
-	return a.pruneEmbeddings(ctx)
+	return nil
 }
 
 func (a *Archive) pruneEmbeddings(ctx context.Context) error {

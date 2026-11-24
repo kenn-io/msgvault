@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -178,6 +177,7 @@ func (m MultimodalConfig) ImageQueriesEnabled() bool {
 // EmbeddingsConfig configures the external embedding endpoint used to convert
 // message text into vectors.
 type EmbeddingsConfig struct {
+	VectorIdentity string             `toml:"-"`
 	LocalOnly      bool               `toml:"local_only"`
 	APIFormat      EmbeddingAPIFormat `toml:"api_format"`
 	Endpoint       string             `toml:"endpoint"`
@@ -507,6 +507,10 @@ func (c *Config) GenerationFingerprint() string {
 	fp := fmt.Sprintf("%s:%s:c%d:e%d",
 		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars,
 		embedPolicyVersion)
+	if c.Embeddings.VectorIdentity != "" {
+		digest := sha256.Sum256([]byte(c.Embeddings.VectorIdentity))
+		fp += ":k" + hex.EncodeToString(digest[:])
+	}
 	if taskPrefixFingerprint := c.Embeddings.TaskPrefixFingerprint(); taskPrefixFingerprint != "" {
 		fp += ":t" + taskPrefixFingerprint
 	}
@@ -517,26 +521,6 @@ func (c *Config) GenerationFingerprint() string {
 		fp = fmt.Sprintf("%s:s%s", fp, scopeFP)
 	}
 	return fp
-}
-
-var generationPolicyPattern = regexp.MustCompile(`(?:^|:)p([0-9]+)-[01]+:c[0-9]+:e([0-9]+)(?::|$)`)
-
-// ValidateGenerationPolicy rejects a generation produced by a newer policy.
-func ValidateGenerationPolicy(fingerprint string) error {
-	matches := generationPolicyPattern.FindAllStringSubmatch(fingerprint, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-	match := matches[len(matches)-1]
-	p, err := strconv.ParseUint(match[1], 10, 64)
-	if err != nil || p > preprocessVersion {
-		return fmt.Errorf("generation uses a newer preprocessing policy: %s", fingerprint)
-	}
-	e, err := strconv.ParseUint(match[2], 10, 64)
-	if err != nil || e > embedPolicyVersion {
-		return fmt.Errorf("generation uses a newer embedding policy: %s", fingerprint)
-	}
-	return nil
 }
 
 // TaskPrefixFingerprint identifies document/query task-prefix policy without
