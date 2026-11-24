@@ -169,7 +169,10 @@ func (a *Archive) Embed(ctx context.Context) error {
 	}
 	now := time.Now().UTC()
 	res, err := rt.worker.RunBackstop(ctx, gen.ID, operations.PassScope{Key: "archive-embed:" + uuid.NewString(), Trigger: operations.TriggerManual, StartedAt: now})
-	if err = embedFailure(res, err); err != nil {
+	if err == nil && res.Failed > 0 {
+		err = fmt.Errorf("embedding failed for %d messages", res.Failed)
+	}
+	if err != nil {
 		return err
 	}
 	if building {
@@ -183,14 +186,6 @@ func (a *Archive) Embed(ctx context.Context) error {
 		return fmt.Errorf("embedding generation has %d messages remaining", missing)
 	}
 	return nil
-}
-
-// embedFailure reports the worker's error, or the messages the pass could not embed.
-func embedFailure(res embed.RunResult, err error) error {
-	if err == nil && res.Failed > 0 {
-		return fmt.Errorf("embedding failed for %d messages", res.Failed)
-	}
-	return err
 }
 
 // NewServer constructs an API server using the archive's configured services.
