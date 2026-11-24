@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/kit/embedmodel"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/pkg/archive"
 )
 
@@ -130,6 +131,14 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	assert.False(t, failOnce.Load())
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT state FROM index_generations").Scan(&state))
 	assert.Equal(t, "active", state)
+	_, err = owner.Store().DB().ExecContext(t.Context(), "DROP INDEX idx_embeddings_hnsw_d2")
+	require.NoError(t, err)
+	setupOpts := opts
+	setupOpts.URL = dsn
+	require.NoError(t, archive.Setup(t.Context(), setupOpts))
+	var indexExists bool
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT to_regclass('idx_embeddings_hnsw_d2') IS NOT NULL").Scan(&indexExists))
+	assert.True(t, indexExists)
 	handler := runtime.NewServer(archive.ServerOptions{}).Handler(nil)
 	for _, mode := range []string{"vector", "hybrid"} {
 		response := sourceScopeRequest(archive.WithSourceScope(t.Context(), sourceIDs[:1]), t, handler, "/api/v1/search?q=second&mode="+mode)
@@ -187,6 +196,12 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	assert.Zero(t, vectors)
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT message_count FROM index_generations WHERE state='active'").Scan(&count))
 	assert.Zero(t, count)
+	_, err = owner.Store().DB().ExecContext(t.Context(), "DELETE FROM embed_runs; DELETE FROM index_generations")
+	require.NoError(t, err)
+	err = runtime.Embed(t.Context())
+	require.ErrorIs(t, err, vector.ErrNoActiveGeneration)
+	require.ErrorContains(t, err, "run Setup")
+	assert.NotContains(t, err.Error(), "differs")
 }
 
 func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {

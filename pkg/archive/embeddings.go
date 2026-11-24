@@ -86,7 +86,7 @@ func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vec
 		return active, false, nil
 	}
 	if !create {
-		return vector.Generation{}, false, fmt.Errorf("%w: embedding generation %q differs from configured %q; run Setup", vector.ErrNoActiveGeneration, active.Fingerprint, fingerprint)
+		return vector.Generation{}, false, fmt.Errorf("%w: run Setup to create an embedding generation", vector.ErrNoActiveGeneration)
 	}
 	id, err := backend.CreateGeneration(ctx, cfg.Embeddings.Model, cfg.Embeddings.Dimension, fingerprint)
 	if err != nil {
@@ -109,16 +109,22 @@ func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config) er
 	if err := st.DB().QueryRowContext(ctx, `SELECT to_regclass(format('%I.%I', current_schema(), 'index_generations')) IS NOT NULL`).Scan(&exists); err != nil {
 		return err
 	}
+	// A new generation creates its own indexes; existing generations need migration to check them.
+	dimension := 0
 	if exists {
 		backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipMigrate: true, ReadOnly: true})
 		if err != nil {
 			return err
 		}
-		if _, _, err := embeddingGeneration(ctx, backend, cfg, false); err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
+		_, _, err = embeddingGeneration(ctx, backend, cfg, false)
+		if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
 			return err
 		}
+		if err == nil {
+			dimension = cfg.Embeddings.Dimension
+		}
 	}
-	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipExtension: true, ExtensionSchema: extensionSchema})
+	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: dimension, SkipExtension: true, ExtensionSchema: extensionSchema})
 	if err != nil {
 		return err
 	}
@@ -147,7 +153,8 @@ func openEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings, 
 	return &embeddingRuntime{backend: backend, config: cfg, engine: engine, worker: worker}, nil
 }
 
-// Embed runs a full embedding pass. The caller serializes calls and stops them before Close.
+// Embed runs a full embedding pass. The caller serializes calls across all handles
+// for the same archive and stops them before Close.
 func (a *Archive) Embed(ctx context.Context) error {
 	if a.vectorErr != nil {
 		return a.vectorErr
@@ -165,15 +172,15 @@ func (a *Archive) Embed(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if building {
+		return rt.backend.ActivateGeneration(ctx, gen.ID, false)
+	}
 	missing, err := a.store.MissingCount(ctx, int64(gen.ID))
 	if err != nil {
 		return err
 	}
 	if missing > 0 {
 		return fmt.Errorf("embedding generation has %d messages remaining", missing)
-	}
-	if building {
-		return rt.backend.ActivateGeneration(ctx, gen.ID, false)
 	}
 	return nil
 }

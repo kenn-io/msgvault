@@ -248,7 +248,7 @@ Scoped requests support these operations:
 | Operation | Route |
 |---|---|
 | `listMessages` | `GET /api/v1/messages` |
-| `searchMessages` | `GET /api/v1/search` with default or `mode=fts` |
+| `searchMessages` | `GET /api/v1/search` with default, `mode=fts`, `mode=vector`, or `mode=hybrid` |
 | `getMessage` | `GET /api/v1/messages/{id}` |
 | `getConversation` | `GET /api/v1/conversations/{id}` |
 | `getAttachment` | `GET /api/v1/attachments/{id}` (metadata) |
@@ -271,7 +271,7 @@ with no messages in authorized sources. `getHealth` returns the public health
 view plus the API schema version.
 
 All other operations return 403 under a source scope, including attachment
-downloads, inline MIME parts, and vector or hybrid search. Message bodies are
+downloads and inline MIME parts. Message bodies are
 returned, though images that reference inline parts do not load under a scope. A
 custom store that cannot provide native scoped reads returns 503. Your operation
 callback still decides which supported operations to admit. Source scopes apply
@@ -353,6 +353,6 @@ A PostgreSQL host can supply `PostgreSQL.Embeddings` with an `embedclient.Client
 
 The host must pass the descriptor used to build the client. Msgvault uses its own preprocessing and ignores the descriptor's input limits and legacy fingerprints. The descriptor identifies the vector space. Changes to its model, dimensions, role formatting, pooling, or revision require retiring the existing generation before Setup can create another. Endpoint changes affect the identity only when the descriptor pins the endpoint. Finish or retire an existing build before changing settings. A daemon-built index has a different identity, so retire it before using the library. Retiring an active pgvector generation requires `msgvault embeddings retire --force-active` and deletes its vectors.
 
-Call `Archive.Embed` after synchronization and on the host's schedule. Each call scans for new and edited messages. Serialize calls to `Embed` and stop them before closing the archive. Construct the API with `Archive.NewServer` to use the index. Search with `mode=vector` for meaning, or `mode=hybrid` for words and meaning. `WithSourceScope` limits both modes to authorized sources.
+Call `Archive.Embed` after synchronization and on the host's schedule. Each call scans for new and edited messages. Serialize calls to `Embed` across all handles for the same archive, including handles in other processes, and stop them before closing the archive. Construct the API with `Archive.NewServer` to use the index. Search with `mode=vector` for meaning, or `mode=hybrid` for words and meaning. `WithSourceScope` limits both modes to authorized sources.
 
 Purging through a handle opened with an embedding client removes orphaned embeddings. A purge through a handle without a client leaves them in place; a later purge through a configured handle removes them.
