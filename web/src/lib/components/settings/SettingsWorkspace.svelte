@@ -783,6 +783,9 @@
     .settings :global(.kit-settings__sidebar) {
       padding-inline: calc(var(--pane-pad-x) - var(--space-4));
     }
+    .settings :global(.kit-settings__title) {
+      padding-left: var(--space-4);
+    }
   }
   .settings :global(.kit-settings__nav-item) {
     line-height: var(--type-meta-line);
