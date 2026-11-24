@@ -101,12 +101,11 @@ func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config) er
 	if !pgvector.Available() {
 		return nil
 	}
-	var available bool
-	if err := st.DB().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')`).Scan(&available); err != nil {
-		return err
-	}
-	if !available {
+	var extensionSchema string
+	if err := st.DB().QueryRowContext(ctx, `SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'vector'`).Scan(&extensionSchema); errors.Is(err, sql.ErrNoRows) {
 		return nil
+	} else if err != nil {
+		return err
 	}
 	var exists bool
 	if err := st.DB().QueryRowContext(ctx, `SELECT to_regclass(format('%I.%I', current_schema(), 'index_generations')) IS NOT NULL`).Scan(&exists); err != nil {
@@ -121,7 +120,7 @@ func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config) er
 			return err
 		}
 	}
-	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipExtension: true})
+	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipExtension: true, ExtensionSchema: extensionSchema})
 	if err != nil {
 		return err
 	}

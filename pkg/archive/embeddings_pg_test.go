@@ -261,9 +261,19 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	require.NoError(t, missing.Close())
 	_, err = db.ExecContext(t.Context(), "CREATE EXTENSION vector WITH SCHEMA vector_types")
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `CREATE FUNCTION vector_types.bump_document_index_revision_after_message_type_update() RETURNS integer LANGUAGE SQL AS 'SELECT 1'; CREATE VIEW vector_types.keep_function AS SELECT vector_types.bump_document_index_revision_after_message_type_update()`)
+	_, err = db.ExecContext(t.Context(), `CREATE FUNCTION vector_types.bump_document_index_revision_after_message_type_update() RETURNS integer LANGUAGE SQL AS 'SELECT 1'; CREATE VIEW vector_types.keep_function AS SELECT vector_types.bump_document_index_revision_after_message_type_update(); CREATE TABLE vector_types.pending_embeddings (generation_id bigint, message_id bigint); INSERT INTO vector_types.pending_embeddings VALUES (1, 42); CREATE TABLE vector_types.embeddings (generation_id bigint, message_id bigint); INSERT INTO vector_types.embeddings VALUES (1, 999); CREATE INDEX idx_embeddings_gen_msg ON vector_types.embeddings (generation_id, message_id); CREATE TABLE vector_types.document_vector_embeddings (id bigint); INSERT INTO vector_types.document_vector_embeddings VALUES (1)`)
 	require.NoError(t, err)
 	require.NoError(t, archive.Setup(t.Context(), opts))
+	var pending int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM vector_types.pending_embeddings`).Scan(&pending))
+	assert.Equal(t, 1, pending)
+	var foreignObjects int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM vector_types.document_vector_embeddings`).Scan(&foreignObjects))
+	assert.Equal(t, 1, foreignObjects)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM information_schema.columns WHERE table_schema='vector_types' AND table_name='embeddings' AND column_name='source_basis'`).Scan(&foreignObjects))
+	assert.Zero(t, foreignObjects)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM pg_indexes WHERE schemaname='vector_types' AND indexname='idx_embeddings_gen_msg'`).Scan(&foreignObjects))
+	assert.Equal(t, 1, foreignObjects)
 	a, err := archive.Open(t.Context(), opts)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = a.Close() })
@@ -314,7 +324,7 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	emptyOpts.Schema = "archive_empty"
 	emptyOpts.Embeddings = nil
 	require.NoError(t, archive.Setup(t.Context(), emptyOpts))
-	_, err = db.ExecContext(t.Context(), `CREATE TABLE vector_types.index_generations (id bigint PRIMARY KEY, message_count bigint); CREATE TABLE vector_types.embeddings (generation_id bigint, message_id bigint); INSERT INTO vector_types.index_generations VALUES (1, 1); INSERT INTO vector_types.embeddings VALUES (1, 999)`)
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE vector_types.index_generations (id bigint PRIMARY KEY, message_count bigint); INSERT INTO vector_types.index_generations VALUES (1, 1)`)
 	require.NoError(t, err)
 	emptyOpts.Embeddings = opts.Embeddings
 	empty, err := archive.Open(t.Context(), emptyOpts)

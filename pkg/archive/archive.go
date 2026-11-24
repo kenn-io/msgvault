@@ -131,16 +131,7 @@ func Setup(ctx context.Context, postgres PostgreSQL) error {
 		return err
 	}
 	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
-		dsn, err = embeddingConnectionURL(ctx, postgres, db)
-		if err != nil {
-			return err
-		}
-		vectorStore, err := store.OpenPostgresContext(ctx, dsn)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = vectorStore.Close() }()
-		return setupEmbeddings(ctx, vectorStore, cfg)
+		return setupEmbeddings(ctx, st, cfg)
 	}
 	return nil
 }

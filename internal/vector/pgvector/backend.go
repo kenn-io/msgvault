@@ -77,14 +77,17 @@ type Options struct {
 	// so a non-superuser holding DDL rights can bring the embedding
 	// tables up. Ignored when SkipMigrate is true.
 	SkipExtension bool
+	// ExtensionSchema qualifies pgvector types and operator classes for setup.
+	ExtensionSchema string
 }
 
 // Backend implements vector.Backend against a PostgreSQL database
 // with the pgvector extension. The same *sql.DB also serves the main
 // msgvault schema (messages, message_recipients, message_labels).
 type Backend struct {
-	db    *sql.DB
-	scope vector.BuildScope
+	db              *sql.DB
+	scope           vector.BuildScope
+	extensionSchema string
 }
 
 // Open verifies the database is reachable, applies the embedding schema
@@ -96,14 +99,15 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 		return nil, errors.New("pgvector.Open: Options.DB is required")
 	}
 	b := &Backend{
-		db:    opts.DB,
-		scope: vector.NewBuildScope(opts.BuildScope.MessageTypes, opts.BuildScope.SourceIDs),
+		db:              opts.DB,
+		scope:           vector.NewBuildScope(opts.BuildScope.MessageTypes, opts.BuildScope.SourceIDs),
+		extensionSchema: opts.ExtensionSchema,
 	}
 	if !opts.SkipMigrate {
 		// serve / build / search: full migrate incl. CREATE EXTENSION (the
 		// extension step is gated by SkipExtension for managed PG). The eager
 		// per-dimension HNSW index is built here too.
-		if err := Migrate(ctx, opts.DB, opts.Dimension, opts.SkipExtension); err != nil {
+		if err := migrate(ctx, opts.DB, opts.Dimension, opts.SkipExtension, opts.ExtensionSchema); err != nil {
 			return nil, fmt.Errorf("pgvector migrate: %w", err)
 		}
 	}
@@ -114,7 +118,7 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 		// and the one-time upgrade backfill lands — parity with sqlitevec (which
 		// always Migrates vectors.db + backfills unless ReadOnly).
 		if opts.SkipMigrate {
-			if err := Migrate(ctx, opts.DB, opts.Dimension, true /* skipExtension */); err != nil {
+			if err := migrate(ctx, opts.DB, opts.Dimension, true, opts.ExtensionSchema); err != nil {
 				return nil, fmt.Errorf("pgvector migrate (schema-only): %w", err)
 			}
 		}
@@ -183,10 +187,10 @@ func (b *Backend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
 // rebuild can resume; a mismatched fingerprint surfaces
 // vector.ErrBuildingInProgress.
 func (b *Backend) CreateGeneration(ctx context.Context, model string, dim int, fingerprint string) (vector.GenerationID, error) {
-	if err := EnsureVectorIndex(ctx, b.db, dim); err != nil {
+	if err := ensureVectorIndex(ctx, b.db, dim, b.extensionSchema); err != nil {
 		return 0, err
 	}
-	if err := EnsurePersonVectorIndex(ctx, b.db, dim); err != nil {
+	if err := ensurePersonVectorIndex(ctx, b.db, dim, b.extensionSchema); err != nil {
 		return 0, err
 	}
 	fp := fingerprint
