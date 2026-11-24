@@ -540,3 +540,42 @@ func TestWorkerColdPolicyInterruptionIsNotAProviderFailure(t *testing.T) {
 	require.NotNil(t, runs[0].Error)
 	assert.Equal(t, operations.PublicErrorInvocationCancelled, runs[0].Error.Code)
 }
+
+// A downshift drain checkpoints its first singleton with both messages
+// attempted. A policy interruption during the second singleton must still
+// finish the pass as cancelled rather than leave it running.
+func TestWorkerColdPolicyInterruptionAfterCheckpointFinishes(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	src, err := st.GetOrCreateSource("beeper", "checkpointed-policy")
+	require.NoError(t, err)
+	room, err := st.EnsureConversation(t.Context(), src.ID, "room", "Room")
+	require.NoError(t, err)
+	for _, id := range []string{"first", "second"} {
+		_, err = st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: room, SourceMessageID: id, MessageType: "beeper", Subject: sql.NullString{String: "Checkpointed " + id, Valid: true}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), src.ID, "room", conversationpolicy.Full))
+	b, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: filepath.Join(t.TempDir(), "vectors.db"), MainDB: st.DB(), PolicyStore: st, Dimension: 4})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, b.Close()) }()
+	gen, err := b.CreateGeneration(t.Context(), "checkpointed", 4, "")
+	require.NoError(t, err)
+	singletons := 0
+	client := &fakeEmbeddingClient{dim: 4, OnEmbed: func(inputs []string) ([][]float32, error) {
+		if len(inputs) > 1 {
+			return nil, ErrPermanent4xx
+		}
+		singletons++
+		if singletons == 2 {
+			require.NoError(t, st.SetConversationPolicyOverride(t.Context(), src.ID, "room", conversationpolicy.Cold))
+		}
+		return [][]float32{{1, 0, 0, 0}}, nil
+	}}
+	recorder := testutil.NewTestStore(t)
+	w := NewWorker(WorkerDeps{Store: st, MainDB: st.DB(), Backend: b, VectorsDB: b.DB(), Client: client, BatchSize: 2, Recorder: recorder})
+	_, err = w.RunOnce(t.Context(), gen, testEmbeddingPassScope())
+	require.ErrorIs(t, err, store.ErrConversationPolicyStale)
+	runs := messageEmbeddingOperationRuns(t, recorder)
+	require.Len(t, runs, 1)
+	assert.Equal(t, operations.StateCancelled, runs[0].State, "the pass must finish, not stay running")
+}
