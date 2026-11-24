@@ -469,6 +469,7 @@
   }
 
   let sidebarCollapsed = $state(readSidebarCollapsed());
+  const settingsOpen = $derived(exploreState.current.workspace === 'settings');
 
   function readSidebarCollapsed(): boolean {
     try {
@@ -1281,8 +1282,8 @@
   {#if !narrow}
     <AppSidebar
       active={exploreState.current.workspace}
-      collapsed={sidebarCollapsed}
-      showCollapseToggle
+      collapsed={sidebarCollapsed || settingsOpen}
+      showCollapseToggle={!settingsOpen}
       jobs={shellData.jobs}
       duplicateCount={shellData.duplicateCount}
       views={shellData.views}

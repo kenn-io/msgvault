@@ -21,6 +21,7 @@ async function openCalendar(page: Page, firstAt: string | Promise<string> = pers
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'loopback', https: false, plain_http_warning: false }
   }));
+  await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/v1/relationships', (route) => route.fulfill({ json: {
     rows: [{ canonical_id: 1, display_label: person.display_label, member_ids: [1], score: 1,
       last_at: person.last_at, signals: { last_interaction_at: person.last_at, meeting_count: 0,

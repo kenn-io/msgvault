@@ -1367,6 +1367,21 @@ describe('AppShell', () => {
       expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeTruthy();
     });
 
+    it('restores the saved sidebar state after leaving Settings', async () => {
+      for (const collapsed of [false, true]) {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+        const state = shellState('settings');
+        const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+        const sidebar = screen.getByRole('complementary', { name: 'Sidebar' });
+        expect(sidebar.classList.contains('sidebar--rail')).toBe(true);
+        expect(within(sidebar).queryByRole('button', { name: 'Expand sidebar' })).toBeNull();
+        await fireEvent.click(within(sidebar).getByRole('button', { name: 'Messages' }));
+        expect(sidebar.classList.contains('sidebar--rail')).toBe(collapsed);
+        expect(within(sidebar).getByRole('button', { name: collapsed ? 'Expand sidebar' : 'Collapse sidebar' })).toBeTruthy();
+        rendered.unmount();
+      }
+    });
+
     it('opens a modal navigation menu on narrow screens and closes it on Escape', async () => {
       window.innerWidth = 480;
       render(AppShell, { client: createAPIClient(vi.fn()), state: shellState('everything'), enabled: false });
@@ -2754,7 +2769,7 @@ describe('AppShell', () => {
       expect(selectionStatus().textContent).toBe('1 selected');
       await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
       await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
-      await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
+      await openBudgetThreads();
       const stay = await screen.findByRole('button', { name: 'Stay' });
       await tick();
       expect(document.activeElement).toBe(stay);
@@ -2765,7 +2780,7 @@ describe('AppShell', () => {
       await waitFor(() => expect(selectionStatus().textContent).toBe('1 selected'));
       await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
       await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
-      await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
+      await openBudgetThreads();
       await fireEvent.click(await screen.findByRole('button', { name: 'Discard and leave' }));
       await screen.findByRole('grid', { name: 'Messages results' });
       expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull();
@@ -3165,6 +3180,12 @@ function settingsLeaveClient() {
   });
 }
 
+async function openBudgetThreads() {
+  await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+  const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+  await fireEvent.click(await within(palette).findByRole('option', { name: 'Budget threads' }));
+}
+
 function settingsWithLeaveGuard(client: ReturnType<typeof createAPIClient>) {
   return createRawSnippet<Parameters<NonNullable<ComponentProps<typeof AppShell>['settings']>>>((...args) => {
     const registerLeave = getContext('msgvault:hold-settings-leave');
@@ -3191,7 +3212,7 @@ it.each(['Stay', 'Discard and leave'])('restores held Back before a saved view r
     expect(state.current.workspace).toBe('settings');
     expect(window.location.search).toBe('?workspace=files');
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
+    await openBudgetThreads();
     expect(window.location.search).toBe('?workspace=settings&mode=full_text');
     await fireEvent.click(await screen.findByRole('button', { name: choice }));
     if (choice === 'Stay') {
