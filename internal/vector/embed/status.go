@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -336,7 +337,7 @@ func (d *embeddingDiagnosticRun) failure(err error) {
 // as daemon shutdown, and retirement of the generation.
 func (d *embeddingDiagnosticRun) failureLocked(err error) {
 	err = jobctx.ErrorAfterYield(d.ctx, err)
-	if err == nil || errors.Is(err, context.Canceled) ||
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, store.ErrConversationPolicyStale) ||
 		errors.Is(err, vector.ErrGenerationRetired) || errors.Is(err, errContextGenerationRetired) {
 		return
 	}

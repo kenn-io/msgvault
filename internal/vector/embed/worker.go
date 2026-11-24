@@ -372,6 +372,9 @@ func (w *Worker) runOperationPass(
 	ctx = withEmbeddingDiagnostics(ctx, diagnostics)
 	defer func() {
 		retErr = operationRunError(retErr)
+		if errors.Is(retErr, store.ErrConversationPolicyStale) {
+			outcomes.releaseUnaccounted()
+		}
 		// Finish the snapshot while the run is still active, so status never
 		// sees a closed run with an unfinished snapshot.
 		diagnostics.finish(retErr)

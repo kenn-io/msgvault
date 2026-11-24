@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/conversationpolicy"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -508,4 +509,36 @@ func embedBatchBackend(t *testing.T, st *store.Store) (*sqlitevec.Backend, vecto
 	gen, err := backend.CreateGeneration(t.Context(), "m", 4, "")
 	require.NoError(t, err)
 	return backend, gen
+}
+
+// A room that changes tier during a request stops the pass on purpose. The
+// pass history must record a cancellation, not a provider failure, and must
+// not count the released messages as failed.
+func TestWorkerColdPolicyInterruptionIsNotAProviderFailure(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	src, err := st.GetOrCreateSource("beeper", "interrupted-policy")
+	require.NoError(t, err)
+	room, err := st.EnsureConversation(t.Context(), src.ID, "room", "Room")
+	require.NoError(t, err)
+	_, err = st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: room, SourceMessageID: "message", MessageType: "beeper", Subject: sql.NullString{String: "Interrupted request", Valid: true}})
+	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), src.ID, "room", conversationpolicy.Full))
+	b, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: filepath.Join(t.TempDir(), "vectors.db"), MainDB: st.DB(), PolicyStore: st, Dimension: 4})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, b.Close()) }()
+	gen, err := b.CreateGeneration(t.Context(), "interrupted", 4, "")
+	require.NoError(t, err)
+	client := &fakeEmbeddingClient{dim: 4, preReturn: func() {
+		require.NoError(t, st.SetConversationPolicyOverride(t.Context(), src.ID, "room", conversationpolicy.Cold))
+	}}
+	recorder := testutil.NewTestStore(t)
+	w := NewWorker(WorkerDeps{Store: st, MainDB: st.DB(), Backend: b, VectorsDB: b.DB(), Client: client, BatchSize: 1, Recorder: recorder})
+	_, err = w.RunOnce(t.Context(), gen, testEmbeddingPassScope())
+	require.ErrorIs(t, err, store.ErrConversationPolicyStale)
+	runs := messageEmbeddingOperationRuns(t, recorder)
+	require.Len(t, runs, 1)
+	assert.Equal(t, operations.StateCancelled, runs[0].State)
+	require.NotNil(t, runs[0].Error)
+	assert.Equal(t, operations.PublicErrorInvocationCancelled, runs[0].Error.Code)
+	assert.Zero(t, operationCounter(runs[0], operations.CounterFailed))
 }

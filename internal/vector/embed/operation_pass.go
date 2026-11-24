@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -99,7 +100,9 @@ func (p *operationPass) finish(
 }
 
 func operationPublicError(ctx context.Context, runErr error) *operations.PublicError {
-	if errors.Is(runErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+	// A room policy change stops the pass on purpose, like a cancellation.
+	if errors.Is(runErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) ||
+		errors.Is(runErr, store.ErrConversationPolicyStale) {
 		return operations.FixedPublicError(operations.PublicErrorInvocationCancelled)
 	}
 	if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -198,6 +201,18 @@ func (o *messagePassOutcomes) fail(ids []int64) {
 		o.attempted[id] = struct{}{}
 		if _, ok := o.succeeded[id]; !ok {
 			o.failed[id] = struct{}{}
+		}
+	}
+}
+
+// releaseUnaccounted forgets attempts without a durable outcome. A policy
+// change releases that work for a later pass, so it is neither done nor failed.
+func (o *messagePassOutcomes) releaseUnaccounted() {
+	for id := range o.attempted {
+		_, succeeded := o.succeeded[id]
+		_, failed := o.failed[id]
+		if !succeeded && !failed {
+			delete(o.attempted, id)
 		}
 	}
 }
