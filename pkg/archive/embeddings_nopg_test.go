@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -52,7 +53,8 @@ func TestPostgreSQLEmbeddingsWithoutPgvector(t *testing.T) {
 
 	// Existing vector tables can outlive the binary that created them.
 	_, err = a.Store().DB().ExecContext(t.Context(), `CREATE TABLE index_generations (id bigint PRIMARY KEY, message_count bigint NOT NULL);
-		CREATE TABLE embeddings (generation_id bigint REFERENCES index_generations(id), message_id bigint, embedding text)`)
+		CREATE TABLE embeddings (generation_id bigint REFERENCES index_generations(id), message_id bigint, embedding text);
+		CREATE TABLE embedding_checkpoints (generation_id bigint REFERENCES index_generations(id), owner text)`)
 	require.NoError(t, err)
 	_, err = a.Store().DB().ExecContext(t.Context(), `INSERT INTO index_generations VALUES (1, 2)`)
 	require.NoError(t, err)
@@ -67,11 +69,15 @@ func TestPostgreSQLEmbeddingsWithoutPgvector(t *testing.T) {
 		sources, messages = append(sources, source.ID), append(messages, id)
 		_, err = a.Store().DB().ExecContext(t.Context(), `INSERT INTO embeddings VALUES (1, $1, '[1,0]')`, id)
 		require.NoError(t, err)
+		_, err = a.Store().DB().ExecContext(t.Context(), `INSERT INTO embedding_checkpoints VALUES (1, $1)`, fmt.Sprintf("message:%d", id))
+		require.NoError(t, err)
 	}
 	require.NoError(t, a.PurgeSource(t.Context(), sources[0]))
 	var count int
 	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=$1`, messages[0]).Scan(&count))
 	assert.Zero(t, count)
+	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embedding_checkpoints`).Scan(&count))
+	assert.Equal(t, 1, count)
 	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT message_count FROM index_generations WHERE id=1`).Scan(&count))
 	assert.Equal(t, 1, count)
 	opts.Embeddings = &archive.Embeddings{}

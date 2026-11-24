@@ -104,9 +104,9 @@ func (s EmbeddingCheckpoints) Save(ctx context.Context, gen GenerationID, entrie
 		return fmt.Errorf("begin embedding response save: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	lock := ""
-	if s.LockGeneration {
-		lock = " FOR SHARE"
+	entries, err = s.liveEntries(saveCtx, tx, gen, entries)
+	if err != nil {
+		return err
 	}
 	for _, entry := range entries {
 		data, err := json.Marshal(entry.Vectors)
@@ -114,7 +114,7 @@ func (s EmbeddingCheckpoints) Save(ctx context.Context, gen GenerationID, entrie
 			return fmt.Errorf("encode embedding checkpoint: %w", err)
 		}
 		res, err := tx.ExecContext(saveCtx, s.Rebind(`INSERT INTO embedding_checkpoints (generation_id, owner, revision, input_key, vectors)
-		SELECT id, ?, ?, ?, ? FROM index_generations WHERE id = ? AND state <> 'retired'`+lock+`
+		SELECT id, ?, ?, ?, ? FROM index_generations WHERE id = ? AND state <> 'retired'
 		ON CONFLICT (generation_id, owner, input_key) DO UPDATE SET revision = excluded.revision, vectors = excluded.vectors`), entry.Owner, entry.Revision, entry.Key, string(data), int64(gen))
 		if err != nil {
 			return fmt.Errorf("save embedding checkpoint: %w", err)
@@ -126,6 +126,42 @@ func (s EmbeddingCheckpoints) Save(ctx context.Context, gen GenerationID, entrie
 		}
 	}
 	return tx.Commit()
+}
+
+// liveEntries locks the generation, then drops responses for purged messages,
+// so Save serializes with the backend's orphan prune as Upsert does.
+func (s EmbeddingCheckpoints) liveEntries(ctx context.Context, tx *sql.Tx, gen GenerationID, entries []EmbeddingCheckpoint) ([]EmbeddingCheckpoint, error) {
+	if !s.LockGeneration {
+		return entries, nil
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM index_generations WHERE id = $1 FOR SHARE`, int64(gen)); err != nil {
+		return nil, fmt.Errorf("lock embedding generation: %w", err)
+	}
+	var ids []string
+	for _, entry := range entries {
+		if id, ok := strings.CutPrefix(entry.Owner, "message:"); ok {
+			ids = append(ids, id)
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT 'message:' || id FROM messages WHERE id = ANY($1::bigint[])`, "{"+strings.Join(ids, ",")+"}")
+	if err != nil {
+		return nil, fmt.Errorf("find existing checkpoint messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	live := make(map[string]bool, len(ids))
+	for rows.Next() {
+		var owner string
+		if err := rows.Scan(&owner); err != nil {
+			return nil, err
+		}
+		live[owner] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(slices.Clone(entries), func(e EmbeddingCheckpoint) bool {
+		return strings.HasPrefix(e.Owner, "message:") && !live[e.Owner]
+	}), nil
 }
 
 // Owners lists a bounded page of checkpoint owners in lexical order.

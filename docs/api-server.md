@@ -179,7 +179,10 @@ limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.26.0**.
+it is separate from the binary release version. The current schema is **5.27.0**.
+
+Schema 5.27.0 accepts `mode=vector` and `mode=hybrid` searches from callers limited to some sources;
+they return hits from those sources only.
 
 Schema 5.26.0 adds `if_exists: "return"` to `POST /api/v1/people/create`.
 It returns a single matching saved person unchanged with HTTP 200 and

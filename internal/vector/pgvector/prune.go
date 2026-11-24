@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// PruneOrphanEmbeddings removes message embeddings whose authoritative
+// PruneOrphanEmbeddings removes embeddings and saved responses whose
 // message row has been hard-deleted. Generation row locks serialize pruning
 // with the backend's other embedding writers, so embeddings and message_count
 // are repaired atomically without racing an upsert or retirement.
@@ -29,24 +29,11 @@ func PruneOrphanEmbeddings(ctx context.Context, db *sql.DB, schema string) (int6
 		return 0, fmt.Errorf("disable statement_timeout for orphan prune: %w", err)
 	}
 
-	rows, err := tx.QueryContext(ctx,
-		`SELECT id FROM index_generations ORDER BY id FOR UPDATE`)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT id FROM index_generations ORDER BY id FOR UPDATE`); err != nil {
 		return 0, fmt.Errorf("lock generations for orphan prune: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var generationID int64
-		if err := rows.Scan(&generationID); err != nil {
-			_ = rows.Close()
-			return 0, fmt.Errorf("scan locked generation: %w", err)
-		}
-	}
-	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("close locked generations: %w", err)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("iterate locked generations: %w", err)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_checkpoints c WHERE c.owner LIKE 'message:%' AND NOT EXISTS (SELECT 1 FROM messages m WHERE 'message:' || m.id = c.owner)`); err != nil {
+		return 0, fmt.Errorf("delete orphan embedding checkpoints: %w", err)
 	}
 
 	var pruned int64

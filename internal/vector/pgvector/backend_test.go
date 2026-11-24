@@ -654,7 +654,9 @@ func TestBackend_Search_SubjectFilter_CaseInsensitive(t *testing.T) {
 }
 
 func TestBackendEmbeddingCheckpointLifecycle(t *testing.T) {
-	b, ctx, _ := newBackendForTest(t)
+	b, ctx, db := newBackendForTest(t)
+	_, err := db.ExecContext(ctx, `INSERT INTO messages (id) VALUES (2) ON CONFLICT DO NOTHING`)
+	require.NoError(t, err)
 	vectorcheckpoints.Lifecycle(ctx, t, b)
 }
 

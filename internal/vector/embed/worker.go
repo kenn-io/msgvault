@@ -356,7 +356,7 @@ func (w *Worker) runOperationPass(
 		// Finish the snapshot while the run is still active, so status never
 		// sees a closed run with an unfinished snapshot.
 		diagnostics.finish(retErr)
-		pass.finish(ctx, outcomes.counters(true), retErr)
+		pass.finish(ctx, outcomes.final(&res), retErr)
 	}()
 	return w.run(ctx, gen, backstop, outcomes)
 }
