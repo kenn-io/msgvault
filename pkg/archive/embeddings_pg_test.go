@@ -232,9 +232,24 @@ func TestPostgreSQLEmbeddingsReplacesBuildingGeneration(t *testing.T) {
 		_, err := db.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		assert.NoError(t, err)
 	})
-	client, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: "a", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: "http://127.0.0.1:1", TrustPrivateNetwork: true}})
-	require.NoError(t, err)
-	settings := &archive.Embeddings{Client: client, Model: "a", Dimension: 2}
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Input []string `json:"input"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		data := make([]map[string]any, len(req.Input))
+		for i := range req.Input {
+			data[i] = map[string]any{"index": i, "embedding": []float32{1, 0}}
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data, "model": "a"}))
+	}))
+	t.Cleanup(service.Close)
+	newClient := func(model, documentPrefix, queryPrefix string) *embedclient.Client {
+		client, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: model, Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Roles: embedconfig.Roles{DocumentPrefix: documentPrefix, QueryPrefix: queryPrefix}, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}})
+		require.NoError(t, err)
+		return client
+	}
+	settings := &archive.Embeddings{Client: newClient("a", "", ""), Model: "a", Dimension: 2}
 	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: settings}
 	require.NoError(t, archive.Setup(t.Context(), opts))
 	a, err := archive.Open(t.Context(), opts)
@@ -242,8 +257,10 @@ func TestPostgreSQLEmbeddingsReplacesBuildingGeneration(t *testing.T) {
 	require.NoError(t, a.Embed(t.Context()))
 	require.NoError(t, a.Close())
 	settings.Model = "b"
+	settings.Client = newClient("b", "", "")
 	require.NoError(t, archive.Setup(t.Context(), opts))
 	settings.Model = "c"
+	settings.Client = newClient("c", "", "")
 	require.NoError(t, archive.Setup(t.Context(), opts))
 	u, err := url.Parse(dsn)
 	require.NoError(t, err)
@@ -257,22 +274,40 @@ func TestPostgreSQLEmbeddingsReplacesBuildingGeneration(t *testing.T) {
 	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT model FROM index_generations WHERE state='building'").Scan(&model))
 	assert.Equal(t, "c", model)
 	settings.Model = "a"
+	settings.Client = newClient("a", "", "")
 	require.NoError(t, archive.Setup(t.Context(), opts))
 	var building int
 	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT count(*) FROM index_generations WHERE state='building'").Scan(&building))
 	assert.Zero(t, building)
 	settings.Model = "b"
+	settings.Client = newClient("b", "", "")
 	require.NoError(t, archive.Setup(t.Context(), opts))
+	b, err := archive.Open(t.Context(), opts)
+	require.NoError(t, err)
+	source, err := b.Store().GetOrCreateSource("slack", "new-source")
+	require.NoError(t, err)
+	conversation, err := b.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
+	require.NoError(t, err)
+	id, err := b.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "one", MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}, Subject: sql.NullString{String: "New message", Valid: true}})
+	require.NoError(t, err)
+	require.NoError(t, b.Store().UpsertMessageBody(id, sql.NullString{String: "New message", Valid: true}, sql.NullString{}))
+	require.NoError(t, b.Store().UpsertFTS(id, "New message", "New message", "", "", ""))
+	require.NoError(t, b.Close())
 	settings.Model = "a"
+	settings.Client = newClient("a", "", "")
 	require.NoError(t, archive.Setup(t.Context(), opts))
 	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT count(*) FROM index_generations WHERE state='building'").Scan(&building))
 	assert.Zero(t, building)
 	a, err = archive.Open(t.Context(), opts)
 	require.NoError(t, err)
 	require.NoError(t, a.Embed(t.Context()))
+	var count int
+	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT count(*) FROM embeddings e JOIN index_generations g ON g.id=e.generation_id WHERE e.message_id=$1 AND g.state='active'", id).Scan(&count))
+	assert.Equal(t, 1, count)
 	require.NoError(t, a.Close())
 	settings.DocumentPrefix = "doc: "
 	settings.QueryPrefix = "query: "
+	settings.Client = newClient("a", settings.DocumentPrefix, settings.QueryPrefix)
 	require.NoError(t, archive.Setup(t.Context(), opts))
 	var fingerprint string
 	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT fingerprint FROM index_generations WHERE state='building'").Scan(&fingerprint))

@@ -17,7 +17,7 @@ import (
 
 // Embeddings configures message embeddings with a host-owned client. Changing
 // Model, Dimension, or either prefix requires Setup again and starts a rebuild.
-// The prefixes must match the role formatting on Client.
+// Model, Dimension, and the prefixes must match the configuration on Client.
 type Embeddings struct {
 	Client         *embedclient.Client
 	Model          string
