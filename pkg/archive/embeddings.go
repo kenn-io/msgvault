@@ -20,7 +20,7 @@ import (
 )
 
 // Embeddings configures a host-owned client and the descriptor used to build it.
-// Changing its vector identity requires Setup and rebuilds the index.
+// Changing its vector identity requires retiring the existing generation before Setup.
 type Embeddings struct {
 	Client     *embedclient.Client
 	Descriptor embedmodel.Descriptor
@@ -39,9 +39,6 @@ func validateEmbeddings(settings *Embeddings) error {
 	}
 	if err := settings.Descriptor.Validate(); err != nil {
 		return fmt.Errorf("embedding descriptor: %w", err)
-	}
-	if settings.Descriptor.Model.Dimensions <= 0 {
-		return errors.New("embedding descriptor requires positive dimensions")
 	}
 	return nil
 }
@@ -86,13 +83,18 @@ func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vec
 		if building.Fingerprint != fingerprint {
 			return vector.Generation{}, false, fmt.Errorf("%w: building fingerprint %q differs from configured %q; finish the build or retire it", vector.ErrBuildingInProgress, building.Fingerprint, fingerprint)
 		}
-		return *building, true, nil
 	}
 	active, err := backend.ActiveGeneration(ctx)
 	if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
 		return vector.Generation{}, false, err
 	}
-	if err == nil && active.Fingerprint == fingerprint {
+	if err == nil && active.Fingerprint != fingerprint {
+		return vector.Generation{}, false, fmt.Errorf("embedding generation %q differs from configured %q; retire it before changing settings", active.Fingerprint, fingerprint)
+	}
+	if building != nil {
+		return *building, true, nil
+	}
+	if err == nil {
 		return active, false, nil
 	}
 	if !create {

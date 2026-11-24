@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/pgvector"
 )
 
 // PurgeChannel removes a channel and its retained threads, serializing with sync.
@@ -47,13 +47,16 @@ func (a *Archive) PurgeSource(ctx context.Context, sourceID int64) (retErr error
 }
 
 func (a *Archive) pruneEmbeddings(ctx context.Context) error {
-	if a.embeddings == nil {
+	if a.embeddings == nil && a.vectorErr == nil {
 		return nil
 	}
-	pruner, ok := any(a.embeddings.backend).(vector.OrphanEmbeddingPruner)
-	if !ok {
+	var exists bool
+	if err := a.store.DB().QueryRowContext(ctx, `SELECT to_regclass('embeddings') IS NOT NULL`).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
 		return nil
 	}
-	_, err := pruner.PruneOrphanEmbeddings(ctx)
+	_, err := pgvector.PruneOrphanEmbeddings(ctx, a.store.DB())
 	return err
 }

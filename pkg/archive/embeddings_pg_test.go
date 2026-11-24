@@ -359,13 +359,25 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 			require.NoError(t, archive.Setup(t.Context(), opts))
 			archiveA, err := archive.Open(t.Context(), opts)
 			require.NoError(t, err)
+			source, err := archiveA.Store().GetOrCreateSource("slack", "source")
+			require.NoError(t, err)
+			conversation, err := archiveA.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
+			require.NoError(t, err)
+			id, err := archiveA.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "one", MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}, Subject: sql.NullString{String: "example", Valid: true}})
+			require.NoError(t, err)
+			require.NoError(t, archiveA.Store().UpsertMessageBody(id, sql.NullString{String: "example", Valid: true}, sql.NullString{}))
+			require.NoError(t, archiveA.Store().UpsertFTS(id, "example", "example", "", "", ""))
 			require.NoError(t, archiveA.Embed(t.Context()))
 			require.NoError(t, archiveA.Close())
 			tc.change(&settings.Descriptor)
 			client, err = embedclient.New(embedclient.Options{Model: settings.Descriptor.Model, Roles: settings.Descriptor.Roles, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}})
 			require.NoError(t, err)
 			settings.Client = client
-			require.NoError(t, archive.Setup(t.Context(), opts))
+			if tc.changed {
+				assert.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
+			} else {
+				require.NoError(t, archive.Setup(t.Context(), opts))
+			}
 			u, err := url.Parse(dsn)
 			require.NoError(t, err)
 			q := u.Query()
@@ -376,26 +388,14 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 			defer func() { _ = check.Close() }()
 			var count int
 			require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM index_generations WHERE state='building'`).Scan(&count))
-			if tc.changed {
-				assert.Equal(t, 1, count)
-				require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM index_generations WHERE state='active'`).Scan(&count))
-				assert.Equal(t, 1, count)
-			} else {
-				assert.Zero(t, count)
-			}
-			if tc.name == "model" {
-				previousClient, err := embedclient.New(embedclient.Options{Model: d.Model, Roles: d.Roles, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}})
-				require.NoError(t, err)
-				previous := opts
-				previous.Embeddings = &archive.Embeddings{Client: previousClient, Descriptor: d}
-				assert.ErrorContains(t, archive.Setup(t.Context(), previous), "building fingerprint")
-				previous.Embeddings.Descriptor.Model.Name = "third"
-				assert.ErrorContains(t, archive.Setup(t.Context(), previous), "building fingerprint")
-			}
+			assert.Zero(t, count)
+			require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=$1`, id).Scan(&count))
+			assert.Equal(t, 1, count)
 			current, err := archive.Open(t.Context(), opts)
 			require.NoError(t, err)
 			defer func() { assert.NoError(t, current.Close()) }()
 			if tc.changed {
+				assert.ErrorContains(t, current.Embed(t.Context()), "differs from configured")
 				w := sourceScopeRequest(t.Context(), t, current.NewServer(archive.ServerOptions{}).Handler(nil), "/api/v1/search?q=test&mode=vector")
 				assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 			}
@@ -430,6 +430,8 @@ func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {
 	check, err := sql.Open("pgx", u.String())
 	require.NoError(t, err)
 	defer func() { _ = check.Close() }()
+	var matchingFingerprint string
+	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT fingerprint FROM index_generations WHERE state='building'`).Scan(&matchingFingerprint))
 	_, err = check.ExecContext(t.Context(), `UPDATE index_generations SET fingerprint='unknown-future-policy' WHERE state='building'`)
 	require.NoError(t, err)
 	_, err = check.ExecContext(t.Context(), `INSERT INTO embeddings (generation_id,message_id,embedded_at,source_char_len,dimension,embedding) SELECT id,999,0,0,2,'[1,0]'::vector FROM index_generations WHERE state='building'`)
@@ -440,6 +442,23 @@ func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {
 	defer func() { assert.NoError(t, a.Close()) }()
 	assert.ErrorContains(t, a.Embed(t.Context()), "unknown-future-policy")
 	var count int
+	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=999`).Scan(&count))
+	assert.Equal(t, 1, count)
+
+	// An unknown active generation must remain untouched, even if a matching
+	// generation is building and could otherwise be activated over it.
+	_, err = check.ExecContext(t.Context(), `UPDATE index_generations SET state='active', fingerprint='future-format:v2' WHERE state='building'`)
+	require.NoError(t, err)
+	assert.ErrorContains(t, archive.Setup(t.Context(), opts), "future-format:v2")
+	assert.ErrorContains(t, a.Embed(t.Context()), "future-format:v2")
+	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=999`).Scan(&count))
+	assert.Equal(t, 1, count)
+
+	// A matching build must not replace an unfamiliar active generation.
+	_, err = check.ExecContext(t.Context(), `INSERT INTO index_generations (model, dimension, fingerprint, started_at, state) VALUES ('test', 2, $1, 0, 'building')`, matchingFingerprint)
+	require.NoError(t, err)
+	assert.ErrorContains(t, archive.Setup(t.Context(), opts), "future-format:v2")
+	assert.ErrorContains(t, a.Embed(t.Context()), "future-format:v2")
 	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=999`).Scan(&count))
 	assert.Equal(t, 1, count)
 }

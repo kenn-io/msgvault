@@ -351,6 +351,6 @@ separately.
 
 A PostgreSQL host can supply `PostgreSQL.Embeddings` with an `embedclient.Client` and the `embedmodel.Descriptor` used to build it. Build msgvault with the `pgvector` tag and install the PostgreSQL `vector` extension in a shared schema before running Setup. Run `archive.Setup` as the schema owner, then open the archive with the runtime role and the same settings.
 
-The descriptor identifies the vector space. A change to its model, dimensions, role formatting, pooling, or revision builds a new generation alongside the active index. Endpoint changes affect the identity only when the descriptor pins the endpoint. Finish an existing build before starting another.
+The descriptor identifies the vector space. Changes to its model, dimensions, role formatting, pooling, or revision require retiring the existing generation before Setup can create another. Endpoint changes affect the identity only when the descriptor pins the endpoint. Finish or retire an existing build before changing settings. Retiring an active pgvector generation requires `msgvault embeddings retire --force-active` and deletes its vectors.
 
 Call `Archive.Embed` after synchronization and on the host's schedule. Each call scans for new and edited messages. Serialize calls to `Embed` and stop them before closing the archive. Construct the API with `Archive.NewServer` to use the index. Search with `mode=vector` for meaning, or `mode=hybrid` for words and meaning. `WithSourceScope` limits both modes to authorized sources.

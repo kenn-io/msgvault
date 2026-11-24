@@ -510,8 +510,7 @@ func (c *Config) GenerationFingerprint() string {
 	if c.Embeddings.VectorIdentity != "" {
 		digest := sha256.Sum256([]byte(c.Embeddings.VectorIdentity))
 		fp += ":k" + hex.EncodeToString(digest[:])
-	}
-	if taskPrefixFingerprint := c.Embeddings.TaskPrefixFingerprint(); taskPrefixFingerprint != "" {
+	} else if taskPrefixFingerprint := c.Embeddings.TaskPrefixFingerprint(); taskPrefixFingerprint != "" {
 		fp += ":t" + taskPrefixFingerprint
 	}
 	if c.Embeddings.EffectiveAPIFormat() == APIFormatVoyageContextual {

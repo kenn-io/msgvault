@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
@@ -48,6 +49,38 @@ func TestPostgreSQLEmbeddingsWithoutPgvector(t *testing.T) {
 	semantic := sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=example&mode=vector")
 	assert.Equal(t, http.StatusServiceUnavailable, semantic.Code, semantic.Body.String())
 	assert.Contains(t, semantic.Body.String(), "pgvector")
+
+	// Existing vector tables can outlive the binary that created them.
+	_, err = db.ExecContext(t.Context(), "CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public")
+	require.NoError(t, err)
+	_, err = a.Store().DB().ExecContext(t.Context(), `CREATE TABLE index_generations (id bigint PRIMARY KEY, message_count bigint NOT NULL);
+		CREATE TABLE embeddings (generation_id bigint REFERENCES index_generations(id), message_id bigint, embedding public.vector)`)
+	require.NoError(t, err)
+	_, err = a.Store().DB().ExecContext(t.Context(), `INSERT INTO index_generations VALUES (1, 2)`)
+	require.NoError(t, err)
+	var sources, messages []int64
+	for _, name := range []string{"first", "second"} {
+		source, err := a.Store().GetOrCreateSource("slack", name)
+		require.NoError(t, err)
+		conversation, err := a.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
+		require.NoError(t, err)
+		id, err := a.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "one", MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}})
+		require.NoError(t, err)
+		sources, messages = append(sources, source.ID), append(messages, id)
+		_, err = a.Store().DB().ExecContext(t.Context(), `INSERT INTO embeddings VALUES (1, $1, '[1,0]')`, id)
+		require.NoError(t, err)
+	}
+	require.NoError(t, a.PurgeSource(t.Context(), sources[0]))
+	var count int
+	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=$1`, messages[0]).Scan(&count))
+	assert.Zero(t, count)
+	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT message_count FROM index_generations WHERE id=1`).Scan(&count))
+	assert.Equal(t, 1, count)
+	require.NoError(t, a.PurgeChannel(t.Context(), sources[1], "channel"))
+	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings`).Scan(&count))
+	assert.Zero(t, count)
+	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT message_count FROM index_generations WHERE id=1`).Scan(&count))
+	assert.Zero(t, count)
 
 	opts.Embeddings = &archive.Embeddings{}
 	disabled, err := archive.Open(t.Context(), opts)

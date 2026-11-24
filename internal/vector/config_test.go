@@ -785,3 +785,16 @@ include_animated_gifs = true
 	require.Error(err)
 	require.Contains(err.Error(), "include_animated_gifs")
 }
+
+func TestConfig_GenerationFingerprint_VectorIdentityIncludesPrefixes(t *testing.T) {
+	var cfg Config
+	cfg.ApplyDefaults()
+	cfg.Embeddings.VectorIdentity = "identity"
+	cfg.Embeddings.DocumentPrefix = "doc: "
+	fingerprint := cfg.GenerationFingerprint()
+	assert.NotContains(t, fingerprint, ":t")
+	cfg.Embeddings.DocumentPrefix = "different: "
+	assert.Equal(t, fingerprint, cfg.GenerationFingerprint())
+	cfg.Embeddings.VectorIdentity = "different identity"
+	assert.NotEqual(t, fingerprint, cfg.GenerationFingerprint())
+}
