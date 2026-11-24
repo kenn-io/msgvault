@@ -22,13 +22,16 @@ func (c *Client) CreateStandalonePerson(ctx context.Context, input store.PersonC
 	if err := json.Unmarshal(data, &body); err != nil {
 		return nil, fmt.Errorf("convert person creation: %w", err)
 	}
-	resp, err := APIResponseWithStatuses(c, []int{http.StatusCreated},
+	resp, err := APIResponseWithStatuses(c, []int{http.StatusCreated, http.StatusOK},
 		func(client *apiclient.Client) (*generated.CreateStandalonePersonResp, error) {
 			return client.CreateStandalonePersonWithResponse(ctx,
 				&generated.CreateStandalonePersonRequestOptions{Body: &body})
 		})
 	if err != nil {
 		return nil, err
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
 	}
 	return resp.JSON201, nil
 }
