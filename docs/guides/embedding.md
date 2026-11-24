@@ -355,4 +355,4 @@ The host must pass the descriptor used to build the client. Msgvault uses its ow
 
 Call `Archive.Embed` after synchronization and on the host's schedule. Each call scans for new and edited messages. Serialize calls to `Embed` and stop them before closing the archive. Construct the API with `Archive.NewServer` to use the index. Search with `mode=vector` for meaning, or `mode=hybrid` for words and meaning. `WithSourceScope` limits both modes to authorized sources.
 
-Purging through a handle opened with an embedding client removes orphaned embeddings. A purge through a handle without a client leaves them in place; a later purge through a configured handle removes them.
+Purging a source through a handle opened with an embedding client removes orphaned embeddings. A source purge through a handle without a client leaves them in place; a later source purge through a configured handle removes them.

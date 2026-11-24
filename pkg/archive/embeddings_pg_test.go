@@ -38,73 +38,6 @@ func installTestPgvector(t *testing.T, db *sql.DB) {
 	require.NoError(t, err)
 }
 
-func TestPostgreSQLEmbeddingsBatchRetry(t *testing.T) {
-	dsn := os.Getenv("MSGVAULT_TEST_DB")
-	if !store.IsPostgresURL(dsn) {
-		t.Skip("requires PostgreSQL")
-	}
-	for _, tc := range []struct {
-		name       string
-		persistent bool
-	}{
-		{name: "recovered"},
-		{name: "persistent", persistent: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			admin, err := sql.Open("pgx", dsn)
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = admin.Close() })
-			installTestPgvector(t, admin)
-			schema := "archive_" + strings.ToLower(rand.Text())
-			t.Cleanup(func() {
-				_, err := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
-				assert.NoError(t, err)
-			})
-			var calls atomic.Int32
-			service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if calls.Add(1) == 1 || tc.persistent {
-					http.Error(w, "unavailable", http.StatusInternalServerError)
-					return
-				}
-				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"index": 0, "embedding": []float32{1, 0}}}, "model": "test"}))
-			}))
-			t.Cleanup(service.Close)
-			client, err := embedclient.New(embedclient.Options{Model: testDescriptor("test").Model, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}, Retry: embedclient.Retry{MaxAttempts: 1}})
-			require.NoError(t, err)
-			opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: &archive.Embeddings{Client: client, Descriptor: testDescriptor("test")}}
-			require.NoError(t, archive.Setup(t.Context(), opts))
-			a, err := archive.Open(t.Context(), opts)
-			require.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, a.Close()) })
-			source, err := a.Store().GetOrCreateSource("slack", "source")
-			require.NoError(t, err)
-			conversation, err := a.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
-			require.NoError(t, err)
-			_, err = a.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "one", MessageType: "slack", Subject: sql.NullString{String: "message", Valid: true}})
-			require.NoError(t, err)
-			err = a.Embed(t.Context())
-			if tc.persistent {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-			var state string
-			require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), "SELECT state FROM index_generations").Scan(&state))
-			if tc.persistent {
-				assert.Equal(t, "building", state)
-			} else {
-				assert.Equal(t, "active", state)
-				_, err = a.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "two", MessageType: "slack", Subject: sql.NullString{String: "new message", Valid: true}})
-				require.NoError(t, err)
-				ctx, preempt := jobctx.WithPreemption(t.Context())
-				preempt()
-				require.ErrorContains(t, a.Embed(ctx), "1 messages remaining")
-			}
-			assert.Greater(t, calls.Load(), int32(1))
-		})
-	}
-}
-
 func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	dsn := os.Getenv("MSGVAULT_TEST_DB")
 	if !store.IsPostgresURL(dsn) {
@@ -124,9 +57,10 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 		assert.NoError(t, e)
 	})
 	var block, fail atomic.Bool
+	var failOnce atomic.Bool
 	started, resume := make(chan struct{}), make(chan struct{})
 	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if fail.Load() {
+		if fail.Load() || failOnce.CompareAndSwap(true, false) {
 			http.Error(w, "unavailable", http.StatusInternalServerError)
 			return
 		}
@@ -187,8 +121,15 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	defer func() { assert.NoError(t, runtime.Close()) }()
 	fail.Store(true)
 	require.Error(t, runtime.Embed(t.Context()))
+	var state string
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT state FROM index_generations").Scan(&state))
+	assert.Equal(t, "building", state)
 	fail.Store(false)
+	failOnce.Store(true)
 	require.NoError(t, runtime.Embed(t.Context()))
+	assert.False(t, failOnce.Load())
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT state FROM index_generations").Scan(&state))
+	assert.Equal(t, "active", state)
 	handler := runtime.NewServer(archive.ServerOptions{}).Handler(nil)
 	for _, mode := range []string{"vector", "hybrid"} {
 		response := sourceScopeRequest(archive.WithSourceScope(t.Context(), sourceIDs[:1]), t, handler, "/api/v1/search?q=second&mode="+mode)
@@ -203,6 +144,9 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	id, err := owner.Store().UpsertMessage(&store.Message{SourceID: sourceIDs[0], ConversationID: conversation, SourceMessageID: "two", MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}, Subject: sql.NullString{String: "new arrival", Valid: true}})
 	require.NoError(t, err)
 	require.NoError(t, owner.Store().UpsertMessageBody(id, sql.NullString{String: "new arrival", Valid: true}, sql.NullString{}))
+	ctx, preempt := jobctx.WithPreemption(t.Context())
+	preempt()
+	require.ErrorContains(t, runtime.Embed(ctx), "1 messages remaining")
 	require.NoError(t, runtime.Embed(t.Context()))
 	response := sourceScopeRequest(archive.WithSourceScope(t.Context(), sourceIDs[:1]), t, handler, "/api/v1/search?q=meaning&mode=vector")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
