@@ -176,3 +176,30 @@ func TestVisualColdPolicyCanceledUncapturedWorkReleasesClaims(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, acquired)
 }
+
+// A provider bills a completed request even when a policy change then rejects
+// its vectors, so the worker must still report that usage.
+func TestVisualColdPolicyRejectedRequestReportsUsage(t *testing.T) {
+	assertions := assert.New(t)
+	f, _, work := workerFixture(t, 1)
+	provider := &fakeVisualProvider{
+		callback: func([]DocumentInput) {
+			require.NoError(t, f.Store.SetConversationPolicyOverride(t.Context(), f.Source.ID, "default-thread", conversationpolicy.Cold))
+		},
+		embed: func(_ context.Context, documents []DocumentInput) ([]EmbeddingResult, error) {
+			results := make([]EmbeddingResult, len(documents))
+			for index := range documents {
+				results[index] = EmbeddingResult{
+					Owner: documents[index].Owner, Vector: []float32{1, 2},
+					Usage: Usage{Available: true, TotalTokens: 7},
+				}
+			}
+			return results, nil
+		},
+	}
+	backend := newFakeVisualBackend()
+	result, err := newTestVisualWorker(t, f, provider, backend).Run(t.Context(), work)
+	require.ErrorIs(t, err, store.ErrConversationPolicyStale)
+	assertions.Empty(backend.vectors)
+	assertions.Equal(Usage{Available: true, TotalTokens: 7}, result.Usage, "the billed request's usage is reported")
+}

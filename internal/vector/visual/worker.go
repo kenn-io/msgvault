@@ -201,6 +201,13 @@ func (w *Worker) runBatch(
 		return fmt.Errorf("renew visual work claims: %w", renewalErr)
 	}
 	if admissionErr := store.CheckConversationPolicyAdmission(policyCtx); admissionErr != nil {
+		// The provider billed this completed request even though a policy
+		// change now rejects its vectors.
+		if err == nil {
+			for _, embedding := range embeddings {
+				mergeUsage(&result.Usage, embedding.Usage)
+			}
+		}
 		return admissionErr
 	}
 	if err != nil {
