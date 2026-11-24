@@ -43,9 +43,13 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 		_, e = admin.ExecContext(context.WithoutCancel(t.Context()), "DROP ROLE IF EXISTS "+quote(role))
 		assert.NoError(t, e)
 	})
-	var block atomic.Bool
+	var block, fail atomic.Bool
 	started, resume := make(chan struct{}), make(chan struct{})
 	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			http.Error(w, "unavailable", http.StatusBadRequest)
+			return
+		}
 		if block.Load() {
 			close(started)
 			<-resume
@@ -99,6 +103,9 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	runtime, err := archive.Open(t.Context(), opts)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, runtime.Close()) }()
+	fail.Store(true)
+	require.Error(t, runtime.Embed(t.Context()))
+	fail.Store(false)
 	require.NoError(t, runtime.Embed(t.Context()))
 	handler := runtime.NewServer(archive.ServerOptions{}).Handler(nil)
 	for _, mode := range []string{"vector", "hybrid"} {
@@ -145,6 +152,19 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	response = <-result
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.NotContains(t, response.Body.String(), `"subject":"second"`)
+
+	// Purges remove vectors and update generation counts.
+	require.NoError(t, runtime.PurgeChannel(t.Context(), sourceIDs[0], "channel"))
+	var vectors, count int
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT count(*) FROM embeddings WHERE message_id IN ($1,$2)", messageIDs[0], id).Scan(&vectors))
+	assert.Zero(t, vectors)
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT message_count FROM index_generations WHERE state='active'").Scan(&count))
+	assert.Equal(t, 1, count)
+	require.NoError(t, runtime.PurgeSource(t.Context(), sourceIDs[1]))
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT count(*) FROM embeddings").Scan(&vectors))
+	assert.Zero(t, vectors)
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT message_count FROM index_generations WHERE state='active'").Scan(&count))
+	assert.Zero(t, count)
 
 }
 
@@ -197,4 +217,67 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	u.RawQuery = params.Encode()
 	opts.URL = u.String()
 	assert.ErrorContains(t, archive.Setup(t.Context(), opts), "options")
+}
+
+func TestPostgreSQLEmbeddingsReplacesBuildingGeneration(t *testing.T) {
+	dsn := os.Getenv("MSGVAULT_TEST_DB")
+	if !store.IsPostgresURL(dsn) {
+		t.Skip("requires PostgreSQL")
+	}
+	db, err := sql.Open("pgx", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	schema := "archive_" + strings.ToLower(rand.Text())
+	t.Cleanup(func() {
+		_, err := db.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		assert.NoError(t, err)
+	})
+	client, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: "a", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: "http://127.0.0.1:1", TrustPrivateNetwork: true}})
+	require.NoError(t, err)
+	settings := &archive.Embeddings{Client: client, Model: "a", Dimension: 2}
+	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: settings}
+	require.NoError(t, archive.Setup(t.Context(), opts))
+	a, err := archive.Open(t.Context(), opts)
+	require.NoError(t, err)
+	require.NoError(t, a.Embed(t.Context()))
+	require.NoError(t, a.Close())
+	settings.Model = "b"
+	require.NoError(t, archive.Setup(t.Context(), opts))
+	settings.Model = "c"
+	require.NoError(t, archive.Setup(t.Context(), opts))
+	u, err := url.Parse(dsn)
+	require.NoError(t, err)
+	params := u.Query()
+	params.Set("search_path", schema)
+	u.RawQuery = params.Encode()
+	check, err := sql.Open("pgx", u.String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = check.Close() })
+	var model string
+	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT model FROM index_generations WHERE state='building'").Scan(&model))
+	assert.Equal(t, "c", model)
+	settings.Model = "a"
+	require.NoError(t, archive.Setup(t.Context(), opts))
+	var building int
+	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT count(*) FROM index_generations WHERE state='building'").Scan(&building))
+	assert.Zero(t, building)
+	settings.Model = "b"
+	require.NoError(t, archive.Setup(t.Context(), opts))
+	settings.Model = "a"
+	require.NoError(t, archive.Setup(t.Context(), opts))
+	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT count(*) FROM index_generations WHERE state='building'").Scan(&building))
+	assert.Zero(t, building)
+	a, err = archive.Open(t.Context(), opts)
+	require.NoError(t, err)
+	require.NoError(t, a.Embed(t.Context()))
+	require.NoError(t, a.Close())
+	settings.DocumentPrefix = "doc: "
+	settings.QueryPrefix = "query: "
+	require.NoError(t, archive.Setup(t.Context(), opts))
+	var fingerprint string
+	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT fingerprint FROM index_generations WHERE state='building'").Scan(&fingerprint))
+	assert.NotEmpty(t, fingerprint)
+	var activeFingerprint string
+	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT fingerprint FROM index_generations WHERE state='active'").Scan(&activeFingerprint))
+	assert.NotEqual(t, activeFingerprint, fingerprint)
 }

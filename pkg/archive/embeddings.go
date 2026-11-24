@@ -16,11 +16,14 @@ import (
 )
 
 // Embeddings configures message embeddings with a host-owned client. Changing
-// Model or Dimension requires Setup again and starts a rebuild.
+// Model, Dimension, or either prefix requires Setup again and starts a rebuild.
+// The prefixes must match the role formatting on Client.
 type Embeddings struct {
-	Client    *embedclient.Client
-	Model     string
-	Dimension int
+	Client         *embedclient.Client
+	Model          string
+	Dimension      int
+	DocumentPrefix string
+	QueryPrefix    string
 }
 
 type embeddingRuntime struct {
@@ -49,6 +52,8 @@ func embeddingConfig(settings *Embeddings) vector.Config {
 	cfg := vector.Config{Enabled: true, Backend: "pgvector"}
 	cfg.Embeddings.Model = settings.Model
 	cfg.Embeddings.Dimension = settings.Dimension
+	cfg.Embeddings.DocumentPrefix = settings.DocumentPrefix
+	cfg.Embeddings.QueryPrefix = settings.QueryPrefix
 	cfg.ApplyDefaults()
 	return cfg
 }
@@ -73,8 +78,13 @@ func setupEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings)
 	if err != nil {
 		return err
 	}
-	if building != nil && building.Fingerprint == cfg.GenerationFingerprint() {
-		return nil
+	if building != nil {
+		if building.Fingerprint == cfg.GenerationFingerprint() {
+			return nil
+		}
+		if err := backend.RetireGeneration(ctx, building.ID, false); err != nil {
+			return err
+		}
 	}
 	active, err := backend.ActiveGeneration(ctx)
 	if err == nil && active.Fingerprint == cfg.GenerationFingerprint() {
@@ -112,7 +122,7 @@ func openEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings) 
 	}
 	client := embed.NewClient(embed.Config{Kit: settings.Client, Model: settings.Model, Dimension: settings.Dimension})
 	worker := embed.NewWorker(embed.WorkerDeps{Backend: backend, VectorsDB: st.DB(), MainDB: st.DB(), Store: st, Client: client, Preprocess: embed.PreprocessConfigFor(cfg), MaxInputChars: cfg.Embeddings.MaxInputChars, BatchSize: cfg.Embeddings.BatchSize, Rebind: st.Rebind, LastModifiedExpr: "m.last_modified", Recorder: st, Diagnostics: st})
-	job := &scheduler.EmbedJob{Worker: worker, Backend: backend, Store: st, Fingerprint: cfg.GenerationFingerprint(), RequestTimeout: cfg.Embeddings.Timeout, BatchSize: cfg.Embeddings.BatchSize, BackstopInterval: cfg.Embed.BackstopInterval}
+	job := &scheduler.EmbedJob{Strict: true, Worker: worker, Backend: backend, Store: st, Fingerprint: cfg.GenerationFingerprint(), RequestTimeout: cfg.Embeddings.Timeout, BatchSize: cfg.Embeddings.BatchSize, BackstopInterval: cfg.Embed.BackstopInterval}
 	engine := hybrid.NewEngine(backend, st.DB(), client, hybrid.Config{ExpectedFingerprint: cfg.GenerationFingerprint(), RRFK: cfg.Search.RRFK, KPerSignal: cfg.Search.KPerSignal, SubjectBoost: cfg.Search.SubjectBoost, Rebind: st.Rebind})
 	return &embeddingRuntime{backend: backend, config: cfg, engine: engine, job: job}, nil
 }

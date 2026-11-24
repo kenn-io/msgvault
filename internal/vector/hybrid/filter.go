@@ -3,8 +3,9 @@ package hybrid
 import (
 	"context"
 	"fmt"
-	"go.kenn.io/msgvault/internal/store"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/store"
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"

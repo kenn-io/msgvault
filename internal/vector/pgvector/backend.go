@@ -1030,18 +1030,6 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 			vector.ErrDimensionMismatch, len(queryVec), dim)
 	}
 
-	// chunkCeiling is the actual number of embedding rows in the
-	// generation — the upper bound for the candidate-widening loops below.
-	// When the inner ANN LIMIT already reaches this value, no wider fetch
-	// can surface more distinct messages, so the loop terminates.
-	chunkCeiling, err := b.chunkCount(ctx, gen)
-	if err != nil {
-		return nil, err
-	}
-	if chunkCeiling == 0 {
-		return nil, nil
-	}
-
 	// Filter resolution. Unlike sqlitevec, embeddings live in the same
 	// database as messages — we can express the live-message and
 	// structured filters as a single SQL query against both tables
@@ -1049,6 +1037,13 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 	// from a slim fast path that elides the join.
 	queryVecLit := vectorLiteral(queryVec)
 	if filter.IsEmpty() {
+		chunkCeiling, err := b.chunkCount(ctx, gen)
+		if err != nil {
+			return nil, err
+		}
+		if chunkCeiling == 0 {
+			return nil, nil
+		}
 		// Fast path: let pgvector use the HNSW index by issuing ORDER BY
 		// <=> LIMIT inside a subquery first. The inner SELECT returns at
 		// most innerLimit rows in ANN order; the HNSW index applies to that

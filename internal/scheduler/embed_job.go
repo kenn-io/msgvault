@@ -95,6 +95,8 @@ var _ EmbedRunner = (*embed.ContextWorker)(nil)
 // another is already in flight returns immediately (drop-not-queue —
 // the next tick will pick up whatever was missed).
 type EmbedJob struct {
+	// Strict returns embedding failures to callers instead of only logging them.
+	Strict  bool
 	Worker  EmbedRunner
 	Backend vector.Backend
 	Log     *slog.Logger
@@ -245,6 +247,9 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 		if jobctx.StopRequested(ctx) {
 			return err
 		}
+		if j.Strict {
+			return err
+		}
 		log.Warn("embed reclaim failed", "error", err)
 	}
 
@@ -254,7 +259,7 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 
 	target, isBuilding, ok, targetErr := j.pickTarget(ctx, log)
 	if !ok {
-		if jobctx.StopRequested(ctx) {
+		if jobctx.StopRequested(ctx) || j.Strict {
 			return targetErr
 		}
 		return nil
@@ -275,7 +280,13 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 	}
 	if err != nil {
 		log.Warn("embed run failed", "gen", target, "error", err)
+		if j.Strict {
+			return err
+		}
 		return nil
+	}
+	if j.Strict && res.Failed > 0 {
+		return fmt.Errorf("embedding failed for %d messages", res.Failed)
 	}
 	if j.interruptedBackstop[target] && res.Contextual != nil && res.Contextual.ReconcileComplete {
 		if j.lastBackstop == nil {
@@ -323,7 +334,7 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 	// non-locking batches, and is idempotent (already-covered rows are
 	// skipped) so it never re-embeds stamped messages.
 	backstopRan, backstopErr := j.maybeRunBackstop(ctx, target, log, occurrence)
-	if jobctx.StopRequested(ctx) {
+	if jobctx.StopRequested(ctx) || (j.Strict && backstopErr != nil) {
 		return backstopErr
 	}
 
@@ -526,7 +537,13 @@ func (j *EmbedJob) maybeRunBackstop(
 	if err != nil {
 		log.Warn("embed backstop failed", "gen", gen, "error", err)
 		// Do not advance lastBackstop on failure so the next tick retries.
+		if j.Strict {
+			return true, err
+		}
 		return true, nil
+	}
+	if j.Strict && res.Failed > 0 {
+		return true, fmt.Errorf("embedding backstop failed for %d messages", res.Failed)
 	}
 	if j.lastBackstop == nil {
 		j.lastBackstop = make(map[vector.GenerationID]time.Time)
