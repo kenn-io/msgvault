@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-19"
+last_edited: "2026-11-23"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -84,6 +84,39 @@ observed contact. To combine observed identities, use
 [explicit identity linking](#review-identity-matches); creation never links them
 silently.
 
+For retry-safe intake, supply an email or phone and add `--if-exists return`
+(the default is `error`):
+
+```bash
+msgvault person create --name "Alex Example" --email alex@example.test --if-exists return --json
+```
+
+Name-only calls create a new person each time.
+
+`--if-exists return` requires a daemon with API schema 5.26.0 or newer.
+The CLI checks this version before creation and asks you to upgrade an older
+daemon. Direct API requests to older daemons reject the unknown `if_exists`
+field.
+
+When all matching contacts identify one saved person, the command returns that
+person without changing its saved profile. Supplied `name`, `org`, `title`,
+`note`, and `address` are ignored on a match. The JSON `ensure` field reports
+`status: matched_existing`; `unapplied_contacts` lists only supplied contacts
+that did not match and were not added, not other ignored fields. A new person
+reports `status: created`. With `--publish`, only a newly created person is
+published.
+Current curated contacts take precedence over unbound observations of that
+same value. A match bound to another saved person or an unbound cluster on an
+uncurated contact still counts toward ambiguity.
+
+An unbound participant cluster returns `person_matches_participant` with a
+CLI argv array and an MCP tool-and-arguments call in `details.next`. Multiple
+saved people or separate clusters return `person_ambiguous` with `details.candidates`; resolve them explicitly.
+Both conflicts exit with an error. Text-mode ambiguity errors give a summary;
+`--json` includes candidate IDs and other structured resolution details. See
+[person creation conflict details](../api-server.md#person-creation-conflicts)
+for both response shapes.
+
 Without `--publish`, the new person stays in your archive. Add `--publish` to
 send the profile to your configured
 [CardDAV write target](people-carddav.md#sync-and-publish-selected-people). If
@@ -97,8 +130,12 @@ and also accepts `enrichment`. CardDAV publishes an enrichment-created person
 only after
 [publication review](people-carddav.md#review-inferred-changes-before-they-are-exported).
 A successful call returns the person with HTTP 201 and its ETag; invalid input
-returns 400 and an existing contact returns 409. This endpoint does not publish;
-publish separately through the CardDAV publication API. `POST /api/v1/people`
+returns 400 and an existing contact returns 409. This endpoint does not publish.
+With `if_exists: "return"`, success adds `ensure` and uses HTTP 201 for
+`created` or HTTP 200 for `matched_existing`. Return-mode conflicts use HTTP
+409 with `person_ambiguous` or `person_matches_participant` and a `details`
+object. Omitting `if_exists` preserves the original response. Publish
+separately through the CardDAV publication API. `POST /api/v1/people`
 continues to promote observed participants.
 
 The MCP `create_person` tool accepts the same creation fields except `source`.
@@ -106,7 +143,9 @@ Like `promote_person`, it requires both MCP writes and profile writes to be
 enabled, and it is absent from the read-only catalog and from daemons older than
 API schema 5.16.0. Because it records every value with enrichment provenance,
 like other MCP profile writes, CardDAV publication requires review. It never
-publishes.
+publishes. The `if_exists` argument appears against
+daemons with API schema 5.26.0 or newer; return-mode conflicts are structured
+tool errors with the same resolution details.
 
 People and Relationships count a meeting once for a person with a transcript,
 and linked calendar events add no separate count. Filters count each meeting

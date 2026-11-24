@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-19"
+last_edited: "2026-11-23"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -4327,12 +4327,20 @@ for evidence rules and limits.
 `create` creates a profile with a new vCard UID and no participants. Optional
 flags include repeatable `--email <value[:type]>`, repeatable
 `--phone <value[:type]>`, `--org`, `--title` (which requires `--org`),
-`--address`, `--note`, `--json`, and `--publish`. The command refuses existing
-current contact points and observed identities and reports the matched person or
-participant. Without `--publish`, everything stays local. Publication uses the
-existing CardDAV path; if it fails, the new person stays saved and the output
-prints its ID so you can retry or review. See
-[Create a person](usage/people.md#create-a-person).
+`--address`, `--note`, `--json`, `--publish`, and `--if-exists error|return`
+(default `error`). The command refuses existing current contact points and
+observed identities and reports the matched person or participant.
+`--if-exists return` returns a single saved match unchanged, with
+`ensure.status` set to `matched_existing` in JSON; a new person reports
+`created`. Retry safety requires an email or phone; name-only calls create a
+new person each time. Return mode requires a daemon with API schema 5.26.0 or
+newer; the CLI checks this before creation and asks you to upgrade an older
+daemon. Unmatched contacts are reported without being added. Ambiguous matches
+and unbound clusters return coded errors with resolution details (`--json`
+prints the error envelope). `--publish` publishes only a new person. Without
+`--publish`, everything stays local. Publication uses the existing CardDAV
+path; if it fails, the new person stays saved and the output prints its ID so
+you can retry or review. See [Create a person](usage/people.md#create-a-person).
 
 `promote` seeds a new profile with the first nonblank observed name in its
 linked cluster, ordered by participant ID, and leaves the name empty if no

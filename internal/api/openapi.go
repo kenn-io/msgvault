@@ -439,7 +439,8 @@ import (
 // 5.23.0 rejects invalid person display names with a client error.
 // 5.24.0 adds CardDAV participant binding preview, reconciliation, undo, and sync conflict counts to run history.
 // 5.25.0 admits read-only Gmail inventory diagnostics through the generic CLI runner.
-const APISchemaVersion = "5.25.0"
+// 5.26.0 adds if_exists=return and structured match details to person creation.
+const APISchemaVersion = "5.26.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1278,6 +1279,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 		for _, propertyName := range []string{"rejected_at", "superseded_at"} {
 			nullableSchemaProperty(brief, propertyName)
+		}
+	}
+	// Creation conflicts carry either ambiguity or participant-promotion data.
+	// Keep that JSON intact instead of generating an empty details struct.
+	if response := schemas["PersonCreateErrorResponse"]; response != nil {
+		if details := response.Properties["details"]; details != nil {
+			if details.Extensions == nil {
+				details.Extensions = map[string]any{}
+			}
+			details.Extensions["x-go-type"] = "jsontext.Value"
+			details.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json/jsontext"}
 		}
 	}
 	nullableSchemaProperty(schemas["PersonBriefEnrollment"], "enabled_at")

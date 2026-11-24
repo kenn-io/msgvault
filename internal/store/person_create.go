@@ -45,14 +45,15 @@ type PersonCreateContact struct {
 
 // PersonCreateInput creates a profile without inventing message participants.
 type PersonCreateInput struct {
-	Name    string                `json:"name" minLength:"1" maxLength:"256"`
-	Emails  []PersonCreateContact `json:"emails,omitempty" maxItems:"200"`
-	Phones  []PersonCreateContact `json:"phones,omitempty" maxItems:"200"`
-	Org     string                `json:"org,omitzero" maxLength:"256"`
-	Title   string                `json:"title,omitzero" maxLength:"280" doc:"Job title at org; requires org"`
-	Address string                `json:"address,omitzero" maxLength:"1000"`
-	Note    string                `json:"note,omitzero" maxLength:"10000"`
-	Source  Provenance            `json:"source,omitzero" enum:"user,enrichment" doc:"Provenance of every created value; defaults to user"`
+	IfExists PersonIfExists        `json:"if_exists,omitzero" enum:"error,return"`
+	Name     string                `json:"name" minLength:"1" maxLength:"256"`
+	Emails   []PersonCreateContact `json:"emails,omitempty" maxItems:"200"`
+	Phones   []PersonCreateContact `json:"phones,omitempty" maxItems:"200"`
+	Org      string                `json:"org,omitzero" maxLength:"256"`
+	Title    string                `json:"title,omitzero" maxLength:"280" doc:"Job title at org; requires org"`
+	Address  string                `json:"address,omitzero" maxLength:"1000"`
+	Note     string                `json:"note,omitzero" maxLength:"10000"`
+	Source   Provenance            `json:"source,omitzero" enum:"user,enrichment" doc:"Provenance of every created value; defaults to user"`
 }
 
 // PersonContactExistsError identifies a match and the explicit existing-person
@@ -95,6 +96,11 @@ func ValidatePersonCreateInput(input PersonCreateInput) error {
 }
 
 func validatePersonCreateInput(input PersonCreateInput) ([]personCreateContactPoint, error) {
+	switch input.IfExists {
+	case "", PersonIfExistsError, PersonIfExistsReturn:
+	default:
+		return nil, fmt.Errorf("%w: if_exists must be error or return", ErrPersonCreateInvalid)
+	}
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", ErrPersonCreateInvalid)
 	}
@@ -194,9 +200,20 @@ func (s *Store) CreateStandalonePersonContext(
 		if err != nil {
 			return err
 		}
-		for _, point := range points {
-			if err := s.refusePersonContactDuplicateTx(ctx, tx, point.kind, point.normalized, formatted); err != nil {
+		if input.IfExists == PersonIfExistsReturn {
+			matches, err := s.collectPersonContactMatchesTx(ctx, tx, points, formatted)
+			if err != nil {
 				return err
+			}
+			if len(matches.basis) > 0 {
+				person, err = s.resolvePersonCreateMatchesTx(ctx, tx, points, matches)
+				return err
+			}
+		} else {
+			for _, point := range points {
+				if err := s.refusePersonContactDuplicateTx(ctx, tx, point.kind, point.normalized, formatted); err != nil {
+					return err
+				}
 			}
 		}
 		uid, err := newVCardUID()
@@ -220,6 +237,9 @@ func (s *Store) CreateStandalonePersonContext(
 			return err
 		}
 		person, err = s.getPersonTx(ctx, tx, id)
+		if err == nil && input.IfExists == PersonIfExistsReturn {
+			person.Ensure = &PersonEnsureInfo{Status: PersonEnsureCreated, MatchBasis: []PersonMatchBasis{}, UnappliedContacts: []PersonUnappliedContact{}}
+		}
 		return err
 	})
 	if err != nil {
@@ -352,12 +372,12 @@ func (s *Store) refusePersonContactDuplicateTx(
 	formatted serviceFormattedContactOwners,
 ) error {
 	match := &PersonContactExistsError{Kind: kind, Value: value}
+	curated, curatedArgs := personCreateCuratedMatch(kind, value)
 	err := tx.QueryRowContext(ctx, `
 		SELECT c.person_id, COALESCE(p.display_name, '')
 		FROM person_contact_points c JOIN persons p ON p.id = c.person_id
-		WHERE c.address_kind = ? AND c.normalized_value = ?
-		  AND c.active_until IS NULL AND c.superseded_at IS NULL
-		ORDER BY c.person_id LIMIT 1`, kind, value).Scan(&match.PersonID, &match.Name)
+		WHERE `+curated+`
+		ORDER BY c.person_id LIMIT 1`, curatedArgs...).Scan(&match.PersonID, &match.Name)
 	if err == nil {
 		return match
 	}
@@ -365,8 +385,8 @@ func (s *Store) refusePersonContactDuplicateTx(
 		return fmt.Errorf("check curated contact duplicates: %w", err)
 	}
 	key := serviceFormattedContactKey(kind, value)
-	if owner, ok := formatted.persons[key]; ok {
-		match.PersonID, match.Name = owner.id, owner.name
+	if owners := formatted.persons[key]; len(owners) > 0 {
+		match.PersonID, match.Name = owners[0].id, owners[0].name
 		return match
 	}
 	found, err := s.findObservedContactParticipantTx(ctx, tx, kind, value, match)
@@ -374,13 +394,13 @@ func (s *Store) refusePersonContactDuplicateTx(
 		return err
 	}
 	if !found {
-		owner, ok := formatted.participants[key]
-		if !ok {
+		owners := formatted.participants[key]
+		if len(owners) == 0 {
 			return nil
 		}
-		match.ParticipantID, match.Name = owner.id, owner.name
+		match.ParticipantID, match.Name = owners[0].id, owners[0].name
 	}
-	edges, err := s.loadLinkEdgesTx(tx)
+	edges, err := s.loadLinkEdgesTxContext(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -406,11 +426,12 @@ type contactOwner struct {
 }
 
 // serviceFormattedContactOwners maps the canonical form of an email or phone
-// to the first person and the first participant that hold it under a
-// service normalization that does not produce that form. Keys come from
-// serviceFormattedContactKey.
+// to the people and the participants that hold it under a service
+// normalization that does not produce that form, each in ascending ID order.
+// Refusal reports the lowest owner; return mode needs every owner to detect
+// ambiguity. Keys come from serviceFormattedContactKey.
 type serviceFormattedContactOwners struct {
-	persons, participants map[string]contactOwner
+	persons, participants map[string][]contactOwner
 }
 
 func serviceFormattedContactKey(kind ContactAddressKind, canonical string) string {
@@ -421,12 +442,12 @@ func serviceFormattedContactKey(kind ContactAddressKind, canonical string) strin
 // emails and phones a service stored in a form the indexed lookup cannot
 // find. Telegram keeps "+1 (202) 555-0123" as typed rather than in E.164, and
 // Matrix keeps an email's case. Rows are read only for kinds the request
-// contains, canonicalized like the request, and the lowest owner ID wins.
+// contains and canonicalized like the request.
 func (s *Store) loadServiceFormattedContactOwnersTx(
 	ctx context.Context, tx *loggedTx, points []personCreateContactPoint,
 ) (serviceFormattedContactOwners, error) {
 	owners := serviceFormattedContactOwners{
-		persons: map[string]contactOwner{}, participants: map[string]contactOwner{},
+		persons: map[string][]contactOwner{}, participants: map[string][]contactOwner{},
 	}
 	// Each kind lists the normalizations whose stored values already match
 	// the canonical form, so the indexed lookup finds them.
@@ -443,7 +464,7 @@ func (s *Store) loadServiceFormattedContactOwnersTx(
 		}
 		placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(canonical)), ", ")
 		for _, lookup := range []struct {
-			owners map[string]contactOwner
+			owners map[string][]contactOwner
 			query  string
 		}{
 			{owners.persons, `
@@ -469,7 +490,7 @@ func (s *Store) loadServiceFormattedContactOwnersTx(
 }
 
 func loadServiceFormattedRowsTx(
-	ctx context.Context, tx *loggedTx, owners map[string]contactOwner,
+	ctx context.Context, tx *loggedTx, owners map[string][]contactOwner,
 	kind ContactAddressKind, query string, args []any,
 ) error {
 	rows, err := tx.QueryContext(ctx, query, args...)
@@ -488,9 +509,11 @@ func loadServiceFormattedRowsTx(
 		if err != nil {
 			continue
 		}
+		// Rows arrive in owner ID order, so skipping a repeat of the last
+		// owner keeps each list ascending and free of duplicates.
 		key := serviceFormattedContactKey(kind, canonical)
-		if _, seen := owners[key]; !seen {
-			owners[key] = owner
+		if held := owners[key]; len(held) == 0 || held[len(held)-1].id != owner.id {
+			owners[key] = append(held, owner)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -508,21 +531,11 @@ func (s *Store) findObservedContactParticipantTx(
 	ctx context.Context, tx *loggedTx, kind ContactAddressKind, value string,
 	match *PersonContactExistsError,
 ) (bool, error) {
-	participantLookup := `SELECT id FROM participants WHERE LOWER(email_address) = ?`
-	if kind == ContactAddressPhone {
-		participantLookup = `SELECT id FROM participants WHERE phone_number = ?`
-	}
+	observed, observedArgs := personCreateObservedMatches(kind, value)
 	err := tx.QueryRowContext(ctx, `
 		SELECT p.id, COALESCE(p.display_name, '') FROM participants p
-		WHERE p.id IN (`+participantLookup+`
-			UNION
-			SELECT i.participant_id FROM participant_identifiers i
-			WHERE LOWER(i.identifier_value) = ?
-			UNION
-			SELECT o.participant_id FROM participant_contact_observations o
-			WHERE o.address_kind = ? AND o.normalized_value = ?
-			  AND o.active_until IS NULL AND o.superseded_at IS NULL)
-		ORDER BY p.id LIMIT 1`, value, value, kind, value).Scan(&match.ParticipantID, &match.Name)
+		WHERE p.id IN (SELECT participant_id FROM (`+observed+`) observed)
+		ORDER BY p.id LIMIT 1`, observedArgs...).Scan(&match.ParticipantID, &match.Name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
