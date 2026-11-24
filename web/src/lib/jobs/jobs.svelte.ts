@@ -58,9 +58,8 @@ export class JobsStore {
     ]);
     if (this.#controller !== controller) return;
     if (!controller.signal.aborted) {
-      const sourceList = sources?.data?.sources;
-      if (Array.isArray(sourceList)) this.#sources = sourceList;
-      this.#sourceError = !Array.isArray(sourceList);
+      if (sources?.data) this.#sources = sources.data.sources;
+      this.#sourceError = !sources?.data;
     }
   }
 

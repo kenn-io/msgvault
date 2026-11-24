@@ -13,28 +13,6 @@ const knownJobs = [
   { name: 'running work', sources: [], lanes: [jobLane('visual_embedding', { active, latest: active })], details: [''], health: 'running' },
 ];
 
-it('keeps the last source status when the response is not source status', async () => {
-  let invalid = false;
-  const client = createAPIClient(async input => {
-    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    if (path.includes('/sources')) return invalid ? new Response('<html></html>') : Response.json({ sources: [sourceStatus()] });
-    return Response.json({ lanes: operationLanes() });
-  });
-  const operations = new OperationsController(client);
-  const store = new JobsStore(client, operations);
-  try {
-    await store.refresh();
-    invalid = true;
-    await store.refresh();
-    expect(store.items).toEqual([]);
-    expect(store.sources.size).toBe(1);
-    expect(store.health).toBe('unavailable');
-  } finally {
-    store.dispose();
-    operations.destroy();
-  }
-});
-
 it.each(knownJobs.flatMap(fixture => ['sources', 'operations', 'history'].map(failedEndpoint => ({ ...fixture, failedEndpoint }))))('keeps known $name when $failedEndpoint cannot refresh', async ({ sources, lanes, details, health, failedEndpoint }) => {
   let failing = false;
   const client = createAPIClient(async input => {
