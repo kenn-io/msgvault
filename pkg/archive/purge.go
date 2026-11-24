@@ -51,12 +51,13 @@ func (a *Archive) pruneEmbeddings(ctx context.Context) error {
 		return nil
 	}
 	var exists bool
-	if err := a.store.DB().QueryRowContext(ctx, `SELECT to_regclass('embeddings') IS NOT NULL`).Scan(&exists); err != nil {
+	var schema string
+	if err := a.store.DB().QueryRowContext(ctx, `SELECT current_schema(), to_regclass(format('%I.%I', current_schema(), 'embeddings')) IS NOT NULL`).Scan(&schema, &exists); err != nil {
 		return err
 	}
 	if !exists {
 		return nil
 	}
-	_, err := pgvector.PruneOrphanEmbeddings(ctx, a.store.DB())
+	_, err := pgvector.PruneOrphanEmbeddings(ctx, a.store.DB(), schema)
 	return err
 }

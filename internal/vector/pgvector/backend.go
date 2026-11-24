@@ -1385,7 +1385,7 @@ func (b *Backend) Delete(ctx context.Context, gen vector.GenerationID, messageID
 
 // PruneOrphanEmbeddings removes vectors for deleted messages.
 func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
-	return PruneOrphanEmbeddings(ctx, b.db)
+	return PruneOrphanEmbeddings(ctx, b.db, "")
 }
 
 // Stats returns counts for the given generation. When gen == 0,

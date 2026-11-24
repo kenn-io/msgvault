@@ -33,16 +33,6 @@ type embeddingRuntime struct {
 	worker  *embed.Worker
 }
 
-func validateEmbeddings(settings *Embeddings) error {
-	if settings == nil || settings.Client == nil {
-		return nil
-	}
-	if err := settings.Descriptor.Validate(); err != nil {
-		return fmt.Errorf("embedding descriptor: %w", err)
-	}
-	return nil
-}
-
 func embeddingConnectionURL(ctx context.Context, postgres PostgreSQL, db *sql.DB) (string, error) {
 	var schema string
 	err := db.QueryRowContext(ctx, `SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'vector'`).Scan(&schema)
@@ -98,7 +88,7 @@ func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vec
 		return active, false, nil
 	}
 	if !create {
-		return vector.Generation{}, false, fmt.Errorf("embedding generation %q differs from configured %q; run Setup", active.Fingerprint, fingerprint)
+		return vector.Generation{}, false, fmt.Errorf("%w: embedding generation %q differs from configured %q; run Setup", vector.ErrNoActiveGeneration, active.Fingerprint, fingerprint)
 	}
 	id, err := backend.CreateGeneration(ctx, cfg.Embeddings.Model, cfg.Embeddings.Dimension, fingerprint)
 	if err != nil {
@@ -107,7 +97,7 @@ func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vec
 	return vector.Generation{ID: id, Fingerprint: fingerprint}, true, nil
 }
 
-func setupEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings) error {
+func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config) error {
 	if !pgvector.Available() {
 		return nil
 	}
@@ -118,9 +108,18 @@ func setupEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings)
 	if !available {
 		return nil
 	}
-	cfg, err := embeddingConfig(settings)
-	if err != nil {
+	var exists bool
+	if err := st.DB().QueryRowContext(ctx, `SELECT to_regclass(format('%I.%I', current_schema(), 'index_generations')) IS NOT NULL`).Scan(&exists); err != nil {
 		return err
+	}
+	if exists {
+		backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipMigrate: true, ReadOnly: true})
+		if err != nil {
+			return err
+		}
+		if _, _, err := embeddingGeneration(ctx, backend, cfg, false); err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
+			return err
+		}
 	}
 	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipExtension: true})
 	if err != nil {
@@ -130,20 +129,16 @@ func setupEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings)
 	return err
 }
 
-func openEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings) (*embeddingRuntime, error) {
+func openEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings, cfg vector.Config) (*embeddingRuntime, error) {
 	unavailable := func(err error) (*embeddingRuntime, error) {
 		return nil, fmt.Errorf("pgvector is missing or Setup has not prepared embeddings: %w", err)
-	}
-	cfg, err := embeddingConfig(settings)
-	if err != nil {
-		return unavailable(err)
 	}
 	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipMigrate: true, ReadOnly: true})
 	if err != nil {
 		return unavailable(err)
 	}
 	var storage bool
-	if err := st.DB().QueryRowContext(ctx, `SELECT to_regclass('embeddings') IS NOT NULL`).Scan(&storage); err != nil {
+	if err := st.DB().QueryRowContext(ctx, `SELECT to_regclass(format('%I.%I', current_schema(), 'embeddings')) IS NOT NULL`).Scan(&storage); err != nil {
 		return unavailable(err)
 	}
 	if !storage {
@@ -188,7 +183,7 @@ func (a *Archive) Embed(ctx context.Context) error {
 			return err
 		}
 	}
-	return a.pruneEmbeddings(ctx)
+	return nil
 }
 
 // NewServer constructs an API server using the archive's configured services.

@@ -10,12 +10,17 @@ import (
 // message row has been hard-deleted. Generation row locks serialize pruning
 // with the backend's other embedding writers, so embeddings and message_count
 // are repaired atomically without racing an upsert or retirement.
-func PruneOrphanEmbeddings(ctx context.Context, db *sql.DB) (int64, error) {
+func PruneOrphanEmbeddings(ctx context.Context, db *sql.DB, schema string) (int64, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin orphan prune: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if schema != "" {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('search_path', format('%I,pg_catalog', $1::text), true)`, schema); err != nil {
+			return 0, fmt.Errorf("set orphan prune schema: %w", err)
+		}
+	}
 	// The count, delete, and count repair below are corpus-wide maintenance.
 	// Disable the pool's 30-second statement timeout for this transaction so
 	// a large accumulated orphan set can complete. SET LOCAL resets when the

@@ -125,6 +125,10 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		assert.Contains(t, response.Body.String(), "observatory")
 		assert.NotContains(t, response.Body.String(), `"subject":"second"`)
+		response = sourceScopeRequest(archive.WithSourceScope(t.Context(), sourceIDs[1:]), t, handler, "/api/v1/search?q=second&mode="+mode)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		assert.Contains(t, response.Body.String(), `"subject":"second"`)
+		assert.NotContains(t, response.Body.String(), "observatory")
 		response = sourceScopeRequest(archive.WithSourceScope(t.Context(), nil), t, handler, "/api/v1/search?q=second&mode="+mode)
 		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		assert.NotContains(t, response.Body.String(), "observatory")
@@ -186,7 +190,13 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	require.Error(t, unprepared.Embed(t.Context()))
 	unavailable := sourceScopeRequest(t.Context(), t, unprepared.NewServer(archive.ServerOptions{}).Handler(nil), "/api/v1/search?q=meaning&mode=vector")
 	assert.Equal(t, http.StatusServiceUnavailable, unavailable.Code, unavailable.Body.String())
-	require.NoError(t, unprepared.PurgeSource(t.Context(), sourceIDs[1]))
+	_, err = admin.ExecContext(t.Context(), "REVOKE DELETE ON "+quote(schema)+".embeddings FROM "+quote(role))
+	require.NoError(t, err)
+	require.Error(t, unprepared.PurgeSource(t.Context(), sourceIDs[1]))
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT count(*) FROM embeddings").Scan(&vectors))
+	assert.Equal(t, 1, vectors)
+	_, err = admin.ExecContext(t.Context(), "GRANT DELETE ON "+quote(schema)+".embeddings TO "+quote(role))
+	require.NoError(t, err)
 	require.NoError(t, unprepared.PurgeSource(t.Context(), sourceIDs[1]))
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT count(*) FROM embeddings").Scan(&vectors))
 	assert.Zero(t, vectors)
@@ -217,7 +227,7 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	db, err := sql.Open("pgx", u.String())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	for _, statement := range []string{"CREATE SCHEMA archive_data", "CREATE SCHEMA archive_other", "CREATE SCHEMA vector_types"} {
+	for _, statement := range []string{"CREATE SCHEMA archive_data", "CREATE SCHEMA archive_other", "CREATE SCHEMA archive_empty", "CREATE SCHEMA vector_types"} {
 		_, err = db.ExecContext(t.Context(), statement)
 		require.NoError(t, err)
 	}
@@ -250,6 +260,8 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	assert.Contains(t, response.Body.String(), "pgvector")
 	require.NoError(t, missing.Close())
 	_, err = db.ExecContext(t.Context(), "CREATE EXTENSION vector WITH SCHEMA vector_types")
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `CREATE FUNCTION vector_types.bump_document_index_revision_after_message_type_update() RETURNS integer LANGUAGE SQL AS 'SELECT 1'; CREATE VIEW vector_types.keep_function AS SELECT vector_types.bump_document_index_revision_after_message_type_update()`)
 	require.NoError(t, err)
 	require.NoError(t, archive.Setup(t.Context(), opts))
 	a, err := archive.Open(t.Context(), opts)
@@ -296,6 +308,25 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), "observatory")
 
+	// Tables belonging to the extension schema do not make an empty archive
+	// appear initialized and are never pruned by that archive.
+	emptyOpts := opts
+	emptyOpts.Schema = "archive_empty"
+	emptyOpts.Embeddings = nil
+	require.NoError(t, archive.Setup(t.Context(), emptyOpts))
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE vector_types.index_generations (id bigint PRIMARY KEY, message_count bigint); CREATE TABLE vector_types.embeddings (generation_id bigint, message_id bigint); INSERT INTO vector_types.index_generations VALUES (1, 1); INSERT INTO vector_types.embeddings VALUES (1, 999)`)
+	require.NoError(t, err)
+	emptyOpts.Embeddings = opts.Embeddings
+	empty, err := archive.Open(t.Context(), emptyOpts)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, empty.Close()) }()
+	unavailable := sourceScopeRequest(t.Context(), t, empty.NewServer(archive.ServerOptions{}).Handler(nil), "/api/v1/search?q=meaning&mode=vector")
+	assert.Equal(t, http.StatusServiceUnavailable, unavailable.Code, unavailable.Body.String())
+	require.NoError(t, empty.PurgeSource(t.Context(), 999))
+	var foreignCount int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM vector_types.embeddings`).Scan(&foreignCount))
+	assert.Equal(t, 1, foreignCount)
+
 	params.Del("search_path")
 	params.Set("options", "-csearch_path=archive_data,public")
 	u.RawQuery = params.Encode()
@@ -340,8 +371,8 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 		{"dimension", func(d *embedmodel.Descriptor) { d.Model.Dimensions = 3 }, true},
 		{"document prefix", func(d *embedmodel.Descriptor) { d.Roles.DocumentPrefix = "doc: " }, true},
 		{"query prefix", func(d *embedmodel.Descriptor) { d.Roles.QueryPrefix = "query: " }, true},
-		{"legacy", func(d *embedmodel.Descriptor) { d.Legacy = []string{"old"} }, false},
-		{"input", func(d *embedmodel.Descriptor) { d.Input.Recipe = "new recipe" }, false},
+		{"legacy", func(d *embedmodel.Descriptor) { d.Legacy = []string{""} }, false},
+		{"input", func(d *embedmodel.Descriptor) { d.Input.MaxTokens = -1 }, false},
 		{"endpoint", func(d *embedmodel.Descriptor) { d.Deployment.BaseURL = "https://other.example" }, false},
 	}
 	for _, tc := range cases {
@@ -432,11 +463,16 @@ func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {
 	defer func() { _ = check.Close() }()
 	var matchingFingerprint string
 	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT fingerprint FROM index_generations WHERE state='building'`).Scan(&matchingFingerprint))
+	_, err = check.ExecContext(t.Context(), `CREATE TABLE pending_embeddings (generation_id bigint, message_id bigint); INSERT INTO pending_embeddings VALUES (1, 999)`)
+	require.NoError(t, err)
 	_, err = check.ExecContext(t.Context(), `UPDATE index_generations SET fingerprint='unknown-future-policy' WHERE state='building'`)
 	require.NoError(t, err)
 	_, err = check.ExecContext(t.Context(), `INSERT INTO embeddings (generation_id,message_id,embedded_at,source_char_len,dimension,embedding) SELECT id,999,0,0,2,'[1,0]'::vector FROM index_generations WHERE state='building'`)
 	require.NoError(t, err)
 	assert.ErrorContains(t, archive.Setup(t.Context(), opts), "unknown-future-policy")
+	var pendingCount int
+	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM pending_embeddings`).Scan(&pendingCount))
+	assert.Equal(t, 1, pendingCount)
 	a, err := archive.Open(t.Context(), opts)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, a.Close()) }()
@@ -451,6 +487,8 @@ func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {
 	require.NoError(t, err)
 	assert.ErrorContains(t, archive.Setup(t.Context(), opts), "future-format:v2")
 	assert.ErrorContains(t, a.Embed(t.Context()), "future-format:v2")
+	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM pending_embeddings`).Scan(&pendingCount))
+	assert.Equal(t, 1, pendingCount)
 	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=999`).Scan(&count))
 	assert.Equal(t, 1, count)
 

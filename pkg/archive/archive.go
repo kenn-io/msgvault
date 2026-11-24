@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // PostgreSQL selects a database and optionally a schema. Empty Schema preserves
@@ -77,8 +78,13 @@ func (p PostgreSQL) connectionURL(extensionSchema, currentPath string) (string, 
 // using a schema-owning database role, before starting runtime readers/writers.
 // The caller serializes setup with other setup/upgrade processes.
 func Setup(ctx context.Context, postgres PostgreSQL) error {
-	if err := validateEmbeddings(postgres.Embeddings); err != nil {
-		return err
+	var cfg vector.Config
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
+		var err error
+		cfg, err = embeddingConfig(postgres.Embeddings)
+		if err != nil {
+			return fmt.Errorf("embedding descriptor: %w", err)
+		}
 	}
 	dsn, err := postgres.connectionURL("", "")
 	if err != nil {
@@ -104,8 +110,14 @@ func Setup(ctx context.Context, postgres PostgreSQL) error {
 			}
 		}
 	}
-	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
-		dsn, err = embeddingConnectionURL(ctx, postgres, db)
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil && postgres.Schema == "" {
+		var schema string
+		if err := db.QueryRowContext(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+			return err
+		}
+		archiveOnly := postgres
+		archiveOnly.Schema = schema
+		dsn, err = archiveOnly.connectionURL("", "")
 		if err != nil {
 			return err
 		}
@@ -119,7 +131,16 @@ func Setup(ctx context.Context, postgres PostgreSQL) error {
 		return err
 	}
 	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
-		return setupEmbeddings(ctx, st, postgres.Embeddings)
+		dsn, err = embeddingConnectionURL(ctx, postgres, db)
+		if err != nil {
+			return err
+		}
+		vectorStore, err := store.OpenPostgresContext(ctx, dsn)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = vectorStore.Close() }()
+		return setupEmbeddings(ctx, vectorStore, cfg)
 	}
 	return nil
 }
@@ -135,8 +156,13 @@ type Archive struct {
 // Open connects to a previously set up archive. It runs no DDL and can use a
 // runtime role with only USAGE on the schema and DML on its tables/sequences.
 func Open(ctx context.Context, postgres PostgreSQL) (*Archive, error) {
-	if err := validateEmbeddings(postgres.Embeddings); err != nil {
-		return nil, err
+	var cfg vector.Config
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
+		var err error
+		cfg, err = embeddingConfig(postgres.Embeddings)
+		if err != nil {
+			return nil, fmt.Errorf("embedding descriptor: %w", err)
+		}
 	}
 	if postgres.MaxOpenConnections < 0 || postgres.MaxOpenConnections == 1 {
 		return nil, fmt.Errorf("PostgreSQL MaxOpenConnections %d cannot hold a sync lock and run its work; "+
@@ -178,7 +204,7 @@ func Open(ctx context.Context, postgres PostgreSQL) (*Archive, error) {
 	}
 	a := &Archive{store: st}
 	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
-		a.embeddings, a.vectorErr = openEmbeddings(ctx, st, postgres.Embeddings)
+		a.embeddings, a.vectorErr = openEmbeddings(ctx, st, postgres.Embeddings, cfg)
 	}
 	return a, nil
 }
