@@ -74,12 +74,6 @@ func TestPostgreSQLEmbeddingsWithoutPgvector(t *testing.T) {
 	assert.Zero(t, count)
 	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT message_count FROM index_generations WHERE id=1`).Scan(&count))
 	assert.Equal(t, 1, count)
-	require.NoError(t, a.PurgeChannel(t.Context(), sources[1], "channel"))
-	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings`).Scan(&count))
-	assert.Zero(t, count)
-	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT message_count FROM index_generations WHERE id=1`).Scan(&count))
-	assert.Zero(t, count)
-
 	opts.Embeddings = &archive.Embeddings{}
 	disabled, err := archive.Open(t.Context(), opts)
 	require.NoError(t, err)

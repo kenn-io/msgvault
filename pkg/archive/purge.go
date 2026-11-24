@@ -10,8 +10,7 @@ import (
 
 // PurgeChannel removes a channel and its retained threads, serializing with sync.
 // A later import can restore provider content; callers own future selection.
-func (a *Archive) PurgeChannel(ctx context.Context, sourceID int64, channelID string) (retErr error) {
-	defer func() { retErr = errors.Join(retErr, a.pruneEmbeddings(ctx)) }()
+func (a *Archive) PurgeChannel(ctx context.Context, sourceID int64, channelID string) error {
 	return a.store.PurgeChannelContext(ctx, sourceID, channelID)
 }
 

@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/embedmodel"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/archive"
 )
@@ -35,6 +36,73 @@ func installTestPgvector(t *testing.T, db *sql.DB) {
 	t.Helper()
 	_, err := db.ExecContext(t.Context(), "CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public")
 	require.NoError(t, err)
+}
+
+func TestPostgreSQLEmbeddingsBatchRetry(t *testing.T) {
+	dsn := os.Getenv("MSGVAULT_TEST_DB")
+	if !store.IsPostgresURL(dsn) {
+		t.Skip("requires PostgreSQL")
+	}
+	for _, tc := range []struct {
+		name       string
+		persistent bool
+	}{
+		{name: "recovered"},
+		{name: "persistent", persistent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admin, err := sql.Open("pgx", dsn)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = admin.Close() })
+			installTestPgvector(t, admin)
+			schema := "archive_" + strings.ToLower(rand.Text())
+			t.Cleanup(func() {
+				_, err := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+				assert.NoError(t, err)
+			})
+			var calls atomic.Int32
+			service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) == 1 || tc.persistent {
+					http.Error(w, "unavailable", http.StatusInternalServerError)
+					return
+				}
+				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"index": 0, "embedding": []float32{1, 0}}}, "model": "test"}))
+			}))
+			t.Cleanup(service.Close)
+			client, err := embedclient.New(embedclient.Options{Model: testDescriptor("test").Model, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}, Retry: embedclient.Retry{MaxAttempts: 1}})
+			require.NoError(t, err)
+			opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: &archive.Embeddings{Client: client, Descriptor: testDescriptor("test")}}
+			require.NoError(t, archive.Setup(t.Context(), opts))
+			a, err := archive.Open(t.Context(), opts)
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, a.Close()) })
+			source, err := a.Store().GetOrCreateSource("slack", "source")
+			require.NoError(t, err)
+			conversation, err := a.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
+			require.NoError(t, err)
+			_, err = a.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "one", MessageType: "slack", Subject: sql.NullString{String: "message", Valid: true}})
+			require.NoError(t, err)
+			err = a.Embed(t.Context())
+			if tc.persistent {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			var state string
+			require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), "SELECT state FROM index_generations").Scan(&state))
+			if tc.persistent {
+				assert.Equal(t, "building", state)
+			} else {
+				assert.Equal(t, "active", state)
+				_, err = a.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "two", MessageType: "slack", Subject: sql.NullString{String: "new message", Valid: true}})
+				require.NoError(t, err)
+				ctx, preempt := jobctx.WithPreemption(t.Context())
+				preempt()
+				require.ErrorContains(t, a.Embed(ctx), "1 messages remaining")
+			}
+			assert.Greater(t, calls.Load(), int32(1))
+		})
+	}
 }
 
 func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
@@ -164,14 +232,6 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	response = <-result
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.NotContains(t, response.Body.String(), `"subject":"second"`)
-
-	// Purges remove vectors and update generation counts.
-	require.NoError(t, runtime.PurgeChannel(t.Context(), sourceIDs[0], "channel"))
-	var vectors, count int
-	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT count(*) FROM embeddings WHERE message_id IN ($1,$2)", messageIDs[0], id).Scan(&vectors))
-	assert.Zero(t, vectors)
-	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT message_count FROM index_generations WHERE state='active'").Scan(&count))
-	assert.Zero(t, count)
 }
 
 func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {

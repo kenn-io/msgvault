@@ -161,24 +161,19 @@ func (a *Archive) Embed(ctx context.Context) error {
 		return err
 	}
 	now := time.Now().UTC()
-	res, err := rt.worker.RunBackstop(ctx, gen.ID, operations.PassScope{Key: "archive-embed:" + uuid.NewString(), Trigger: operations.TriggerManual, StartedAt: now})
+	_, err = rt.worker.RunBackstop(ctx, gen.ID, operations.PassScope{Key: "archive-embed:" + uuid.NewString(), Trigger: operations.TriggerManual, StartedAt: now})
 	if err != nil {
 		return err
 	}
-	if res.Failed > 0 {
-		return fmt.Errorf("embedding failed for %d messages", res.Failed)
+	missing, err := a.store.MissingCount(ctx, int64(gen.ID))
+	if err != nil {
+		return err
+	}
+	if missing > 0 {
+		return fmt.Errorf("embedding generation has %d messages remaining", missing)
 	}
 	if building {
-		missing, err := a.store.MissingCount(ctx, int64(gen.ID))
-		if err != nil {
-			return err
-		}
-		if missing > 0 {
-			return fmt.Errorf("embedding generation has %d messages remaining", missing)
-		}
-		if err := rt.backend.ActivateGeneration(ctx, gen.ID, false); err != nil {
-			return err
-		}
+		return rt.backend.ActivateGeneration(ctx, gen.ID, false)
 	}
 	return nil
 }
