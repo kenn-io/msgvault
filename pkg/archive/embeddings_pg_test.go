@@ -176,6 +176,17 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	response = <-result
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.NotContains(t, response.Body.String(), `"subject":"second"`)
+
+	var vectors, count int
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT count(*) FROM embeddings").Scan(&vectors))
+	require.Equal(t, 3, vectors)
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT message_count FROM index_generations WHERE state='active'").Scan(&count))
+	require.Equal(t, 3, count)
+	require.NoError(t, runtime.PurgeChannel(t.Context(), sourceIDs[0], "channel"))
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT count(*) FROM embeddings").Scan(&vectors))
+	assert.Zero(t, vectors)
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT message_count FROM index_generations WHERE state='active'").Scan(&count))
+	assert.Zero(t, count)
 }
 
 func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
