@@ -1031,7 +1031,9 @@ func (s *Store) withTxLockedContext(
 			return err
 		}
 	}
-	if s.syncGeneration != nil && (opts == nil || !opts.ReadOnly) {
+	// A joined transaction that already passed the fence keeps the run's row
+	// locked until it commits, so the run cannot have stopped since.
+	if s.syncGeneration != nil && (opts == nil || !opts.ReadOnly) && (!joined || !tx.syncGenerationFenced) {
 		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
 			if !joined {
 				_ = tx.Rollback()

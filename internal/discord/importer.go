@@ -1477,6 +1477,11 @@ func filterBackfillPage(
 	return eligible, pageMin, pageMax, reachedLower, nil
 }
 
+// persistPage writes one fetched page. Participants resolve first in their
+// own short transaction, because creating one takes the archive-wide identity
+// lock. Every message write for the page then commits in one transaction, so
+// a failure leaves none of the page and the next sync replays it. Attachment
+// downloads run after that commit, so no transaction waits on the network.
 func (imp *Importer) persistPage(
 	ctx context.Context,
 	sourceID, conversationID int64,
@@ -1484,136 +1489,209 @@ func (imp *Importer) persistPage(
 	summary *ImportSummary,
 	media *MediaArchiver,
 ) error {
-	ids := make([]string, 0, len(page))
-	for _, message := range page {
-		ids = append(ids, message.ID)
+	if len(page) == 0 {
+		return nil
 	}
-	existing, err := imp.store.MessageExistsBatchContext(ctx, sourceID, ids)
+	ids := make([]string, 0, len(page))
+	mapped := make([]mappedMessage, len(page))
+	for i := range page {
+		ids = append(ids, page[i].ID)
+		var err error
+		mapped[i], err = mapMessage(&page[i], conversationID, sourceID)
+		if err != nil {
+			return err
+		}
+	}
+	participants, err := imp.ensurePageParticipants(ctx, mapped)
 	if err != nil {
-		return fmt.Errorf("load existing Discord messages: %w", err)
+		return err
 	}
 
-	for i := range page {
-		message := &page[i]
-		_, alreadyProcessed := summary.processedMessageIDs[message.ID]
-		mapped, err := mapMessage(message, conversationID, sourceID)
+	type messageDownloads struct {
+		sourceMessageID string
+		plan            attachmentPlan
+	}
+	var existing map[string]int64
+	var downloads []messageDownloads
+	var mediaPending int64
+	err = imp.store.WithSourceWriteTxContext(ctx, sourceID, func(ctx context.Context) error {
+		var err error
+		existing, err = imp.store.MessageExistsBatchContext(ctx, sourceID, ids)
 		if err != nil {
-			return err
+			return fmt.Errorf("load existing Discord messages: %w", err)
 		}
-		recipients, participantIDs, senderID, fromLabel, mentionLabels, err := imp.resolveRecipients(ctx, mapped.Recipients)
-		if err != nil {
-			return err
-		}
-		if senderID != 0 {
-			mapped.Message.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
-		}
-		metadata := sql.NullString{String: string(mapped.Metadata), Valid: len(mapped.Metadata) != 0}
-		messageID, err := imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
-			Message:        &mapped.Message,
-			Metadata:       &metadata,
-			BodyText:       sql.NullString{String: mapped.BodyText, Valid: mapped.BodyText != ""},
-			RawMIME:        mapped.Raw,
-			RawFormat:      mapped.RawFormat,
-			Recipients:     recipients,
-			PreserveLabels: true,
-			FTS: &store.FTSDoc{
-				Body: mapped.BodyText, FromAddr: fromLabel, ToAddrs: strings.Join(mentionLabels, " "),
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("persist Discord message %s: %w", message.ID, err)
-		}
-		if err := imp.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, message.ID); err != nil {
-			return fmt.Errorf("clear Discord message %s tombstone: %w", message.ID, err)
-		}
-		if mapped.Edited {
-			if err := imp.store.SetMessageEditedContext(ctx, messageID); err != nil {
-				return fmt.Errorf("mark Discord message %s edited: %w", message.ID, err)
+		seen := make(map[string]struct{}, len(page))
+		for i := range page {
+			message := &page[i]
+			current := &mapped[i]
+			_, alreadyProcessed := summary.processedMessageIDs[message.ID]
+			if _, ok := seen[message.ID]; ok {
+				alreadyProcessed = true
 			}
-		}
-		for _, participantID := range participantIDs {
-			if err := imp.store.EnsureConversationParticipantContext(ctx, conversationID, participantID, "member"); err != nil {
-				return fmt.Errorf("persist Discord conversation participant: %w", err)
+			seen[message.ID] = struct{}{}
+			recipients, participantIDs, senderID, fromLabel, mentionLabels := pageRecipients(current.Recipients, participants)
+			if senderID != 0 {
+				current.Message.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
 			}
-		}
-		if media != nil {
-			conversation, err := imp.store.AttachmentConversationContext(ctx, messageID)
+			metadata := sql.NullString{String: string(current.Metadata), Valid: len(current.Metadata) != 0}
+			messageID, err := imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
+				Message:        &current.Message,
+				Metadata:       &metadata,
+				BodyText:       sql.NullString{String: current.BodyText, Valid: current.BodyText != ""},
+				RawMIME:        current.Raw,
+				RawFormat:      current.RawFormat,
+				Recipients:     recipients,
+				PreserveLabels: true,
+				FTS: &store.FTSDoc{
+					Body: current.BodyText, FromAddr: fromLabel, ToAddrs: strings.Join(mentionLabels, " "),
+				},
+			})
 			if err != nil {
-				return fmt.Errorf("load Discord message %s media conversation: %w", message.ID, err)
+				return fmt.Errorf("persist Discord message %s: %w", message.ID, err)
 			}
-			if conversation.ParticipantCount < media.conversation.ParticipantCount {
-				conversation.ParticipantCount = media.conversation.ParticipantCount
+			if err := imp.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, message.ID); err != nil {
+				return fmt.Errorf("clear Discord message %s tombstone: %w", message.ID, err)
 			}
-			media.SetPolicy(media.policy, conversation)
-			result, err := media.persistAttachments(
-				ctx, messageID, message.Attachments, !alreadyProcessed, message.Flags,
-			)
-			if err != nil {
-				return fmt.Errorf("persist Discord message %s media metadata: %w", message.ID, err)
-			}
-			for _, item := range result.Items {
-				switch item.Outcome {
-				case MediaDownloaded:
-					summary.MediaDownloaded++
-				case MediaPending, MediaUnrecoverable:
-					summary.MediaPending++
-				case MediaSkipped:
-					summary.MediaSkipped++
+			if current.Edited {
+				if err := imp.store.SetMessageEditedContext(ctx, messageID); err != nil {
+					return fmt.Errorf("mark Discord message %s edited: %w", message.ID, err)
 				}
 			}
-		} else {
-			// Without an attachments directory nothing downloads, but an earlier
-			// run may already have archived these files. Keep their stored state.
-			existingAttachments, err := imp.store.MessageDiscordAttachmentsContext(ctx, messageID)
-			if err != nil {
-				return fmt.Errorf("load Discord message %s attachment metadata: %w", message.ID, err)
+			for _, participantID := range participantIDs {
+				if err := imp.store.EnsureConversationParticipantContext(ctx, conversationID, participantID, "member"); err != nil {
+					return fmt.Errorf("persist Discord conversation participant: %w", err)
+				}
 			}
-			pendingCount := 0
-			for i := range mapped.Attachments {
-				ref := &mapped.Attachments[i]
-				previous, seen := existingAttachments[ref.SourceAttachmentID]
-				stored := false
-				if seen {
-					stored = keepArchivedAttachment(ref, previous)
-					if !stored {
-						ref.State = previous.State
-						ref.SkipReason = previous.SkipReason
+			if media != nil {
+				conversation, err := imp.store.AttachmentConversationContext(ctx, messageID)
+				if err != nil {
+					return fmt.Errorf("load Discord message %s media conversation: %w", message.ID, err)
+				}
+				if conversation.ParticipantCount < media.conversation.ParticipantCount {
+					conversation.ParticipantCount = media.conversation.ParticipantCount
+				}
+				media.SetPolicy(media.policy, conversation)
+				plan, err := media.prepareAttachments(
+					ctx, messageID, message.Attachments, !alreadyProcessed, message.Flags,
+				)
+				if err != nil {
+					return fmt.Errorf("persist Discord message %s media metadata: %w", message.ID, err)
+				}
+				downloads = append(downloads, messageDownloads{sourceMessageID: message.ID, plan: plan})
+			} else {
+				// Without an attachments directory nothing downloads, but an earlier
+				// run may already have archived these files. Keep their stored state.
+				existingAttachments, err := imp.store.MessageDiscordAttachmentsContext(ctx, messageID)
+				if err != nil {
+					return fmt.Errorf("load Discord message %s attachment metadata: %w", message.ID, err)
+				}
+				for i := range current.Attachments {
+					ref := &current.Attachments[i]
+					previous, seen := existingAttachments[ref.SourceAttachmentID]
+					stored := false
+					if seen {
+						stored = keepArchivedAttachment(ref, previous)
+						if !stored {
+							ref.State = previous.State
+							ref.SkipReason = previous.SkipReason
+						}
+					}
+					if !stored && (!alreadyProcessed || !seen) {
+						mediaPending++
 					}
 				}
-				if !stored && (!alreadyProcessed || !seen) {
-					pendingCount++
+				if err := imp.store.ReplaceMessageDiscordAttachmentsContext(ctx, messageID, current.Attachments); err != nil {
+					return fmt.Errorf("persist Discord message %s attachment metadata: %w", message.ID, err)
+				}
+				if err := imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
+					return fmt.Errorf("recompute Discord message %s attachment metadata: %w", message.ID, err)
 				}
 			}
-			if err := imp.store.ReplaceMessageDiscordAttachmentsContext(ctx, messageID, mapped.Attachments); err != nil {
-				return fmt.Errorf("persist Discord message %s attachment metadata: %w", message.ID, err)
-			}
-			if err := imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
-				return fmt.Errorf("recompute Discord message %s attachment metadata: %w", message.ID, err)
-			}
-			summary.MediaPending += int64(pendingCount)
-		}
 
-		if reference := message.MessageReference; reference != nil && reference.MessageID != "" {
-			if err := imp.store.SetReplyToContext(ctx, sourceID, message.ID, reference.MessageID); err != nil {
-				return fmt.Errorf("link Discord reply %s: %w", message.ID, err)
+			if reference := message.MessageReference; reference != nil && reference.MessageID != "" {
+				if err := imp.store.SetReplyToContext(ctx, sourceID, message.ID, reference.MessageID); err != nil {
+					return fmt.Errorf("link Discord reply %s: %w", message.ID, err)
+				}
 			}
 		}
-		if _, counted := summary.processedMessageIDs[message.ID]; !counted {
-			summary.processedMessageIDs[message.ID] = struct{}{}
-			summary.MessagesProcessed++
-			if _, ok := existing[message.ID]; ok {
-				summary.MessagesUpdated++
-			} else {
-				summary.MessagesAdded++
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// Count only after the page commits, so a rolled-back page counts nothing.
+	for _, message := range page {
+		if _, counted := summary.processedMessageIDs[message.ID]; counted {
+			continue
+		}
+		summary.processedMessageIDs[message.ID] = struct{}{}
+		summary.MessagesProcessed++
+		if _, ok := existing[message.ID]; ok {
+			summary.MessagesUpdated++
+		} else {
+			summary.MessagesAdded++
+		}
+	}
+	summary.MediaPending += mediaPending
+	for _, pending := range downloads {
+		result, err := media.downloadAttachments(ctx, pending.plan)
+		if err != nil {
+			return fmt.Errorf("persist Discord message %s media metadata: %w", pending.sourceMessageID, err)
+		}
+		for _, item := range result.Items {
+			switch item.Outcome {
+			case MediaDownloaded:
+				summary.MediaDownloaded++
+			case MediaPending, MediaUnrecoverable:
+				summary.MediaPending++
+			case MediaSkipped:
+				summary.MediaSkipped++
 			}
 		}
 	}
 	return nil
 }
 
-func (imp *Importer) resolveRecipients(ctx context.Context,
-	observations []recipientObservation,
-) ([]store.RecipientSet, []int64, int64, string, []string, error) {
+// ensurePageParticipants resolves every participant a page observes in one
+// transaction, in the order the messages observe them.
+func (imp *Importer) ensurePageParticipants(ctx context.Context,
+	mapped []mappedMessage,
+) (map[store.ParticipantIdentifier]int64, error) {
+	var identifiers []store.ParticipantIdentifier
+	seen := make(map[store.ParticipantIdentifier]struct{})
+	for i := range mapped {
+		for _, recipient := range mapped[i].Recipients {
+			identifier := participantIdentifier(recipient.Participant)
+			if _, ok := seen[identifier]; ok {
+				continue
+			}
+			seen[identifier] = struct{}{}
+			identifiers = append(identifiers, identifier)
+		}
+	}
+	participantIDs, err := imp.store.EnsureParticipantsByIdentifierContext(ctx, identifiers)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Discord participant: %w", err)
+	}
+	resolved := make(map[store.ParticipantIdentifier]int64, len(identifiers))
+	for i, identifier := range identifiers {
+		resolved[identifier] = participantIDs[i]
+	}
+	return resolved, nil
+}
+
+func participantIdentifier(observation participantObservation) store.ParticipantIdentifier {
+	return store.ParticipantIdentifier{
+		Type:        observation.IdentifierType,
+		Value:       observation.IdentifierValue,
+		DisplayName: observation.ParticipantLabel,
+	}
+}
+
+func pageRecipients(observations []recipientObservation,
+	resolved map[store.ParticipantIdentifier]int64,
+) ([]store.RecipientSet, []int64, int64, string, []string) {
 	sets := map[string]*store.RecipientSet{
 		"from":    {Type: "from"},
 		"mention": {Type: "mention"},
@@ -1625,14 +1703,7 @@ func (imp *Importer) resolveRecipients(ctx context.Context,
 	var mentionLabels []string
 	for _, recipient := range observations {
 		observation := recipient.Participant
-		participantID, err := imp.store.EnsureParticipantByIdentifierContext(ctx,
-			observation.IdentifierType,
-			observation.IdentifierValue,
-			observation.ParticipantLabel,
-		)
-		if err != nil {
-			return nil, nil, 0, "", nil, fmt.Errorf("resolve Discord participant: %w", err)
-		}
+		participantID := resolved[participantIdentifier(observation)]
 		set := sets[recipient.Type]
 		if set == nil {
 			set = &store.RecipientSet{Type: recipient.Type}
@@ -1656,7 +1727,7 @@ func (imp *Importer) resolveRecipients(ctx context.Context,
 			mentionLabels = append(mentionLabels, label)
 		}
 	}
-	return []store.RecipientSet{*sets["from"], *sets["mention"]}, participants, senderID, fromLabel, mentionLabels, nil
+	return []store.RecipientSet{*sets["from"], *sets["mention"]}, participants, senderID, fromLabel, mentionLabels
 }
 
 func (imp *Importer) resolveDeferredReplies(ctx context.Context, sourceID int64) error {

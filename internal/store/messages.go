@@ -5611,6 +5611,49 @@ func (s *Store) EnsureParticipantByIdentifierContext(ctx context.Context, identi
 	return participantID, nil
 }
 
+// ParticipantIdentifier names one participant by a non-email identifier.
+type ParticipantIdentifier struct {
+	Type        string
+	Value       string
+	DisplayName string
+}
+
+// EnsureParticipantsByIdentifierContext resolves each identifier in order, as
+// EnsureParticipantByIdentifierContext does, in one transaction. It returns
+// one participant ID per identifier.
+func (s *Store) EnsureParticipantsByIdentifierContext(ctx context.Context, identifiers []ParticipantIdentifier) ([]int64, error) {
+	if len(identifiers) == 0 {
+		return nil, nil
+	}
+	cleaned := make([]ParticipantIdentifier, len(identifiers))
+	for i, identifier := range identifiers {
+		identifier.Type = strings.TrimSpace(identifier.Type)
+		identifier.Value = strings.TrimSpace(identifier.Value)
+		if identifier.Type == "" {
+			return nil, errors.New("identifier type is required")
+		}
+		if identifier.Value == "" {
+			return nil, errors.New("identifier value is required")
+		}
+		cleaned[i] = identifier
+	}
+	ids := make([]int64, len(cleaned))
+	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+		for i, identifier := range cleaned {
+			var err error
+			ids[i], err = s.ensureParticipantByIdentifierTx(ctx, tx, identifier.Type, identifier.Value, identifier.DisplayName)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 func (s *Store) ensureParticipantByIdentifierTx(ctx context.Context, tx *loggedTx, identifierType, identifierValue, displayName string) (participantID int64, err error) {
 	err = tx.QueryRowContext(ctx, `
 		SELECT participant_id FROM participant_identifiers

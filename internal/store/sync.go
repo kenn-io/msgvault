@@ -227,6 +227,52 @@ func (s *Store) withSyncSourceWriteContext(
 	})
 }
 
+// WithSourceWriteTxContext runs fn in one transaction for an importer's
+// writes to sourceID. Store methods called with the context fn receives join
+// that transaction instead of opening their own, so their writes commit or
+// roll back together and pass the sync-generation fence once.
+//
+// The transaction holds the sync maintenance gate, the shared identity lock,
+// the source row, and the sync fence until fn returns, so fn must not wait on
+// the network. A write that needs the exclusive identity lock, such as
+// creating a participant, fails inside it; make those writes first.
+func (s *Store) WithSourceWriteTxContext(ctx context.Context, sourceID int64, fn func(context.Context) error) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	return s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error {
+		// Take locks in the order the separate writes take them: the gate,
+		// then the identity row, then the source row, then the fence.
+		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
+			return err
+		}
+		if err := s.shareIdentityLockTxContext(ctx, tx); err != nil {
+			return err
+		}
+		if err := s.lockSyncSourceTx(ctx, tx, sourceID); err != nil {
+			return err
+		}
+		if s.IsPostgreSQL() {
+			// Boundaries that lock attachments, then messages, IN SHARE MODE
+			// would deadlock with a transaction that writes a message before
+			// its attachments. Take both writer locks in their order first.
+			if _, err := tx.ExecContext(ctx, `LOCK TABLE attachments, messages IN ROW EXCLUSIVE MODE`); err != nil {
+				return fmt.Errorf("lock source %d message writers: %w", sourceID, err)
+			}
+		}
+		if tx.attribution == nil {
+			tx.attribution = &attributionLockState{sources: make(map[int64]struct{}, 1)}
+		}
+		tx.attribution.sources[sourceID] = struct{}{}
+		return nil
+	}, func(tx *loggedTx) error {
+		if err := fn(withWritableSnapshot(ctx, s.db.DB, tx)); err != nil {
+			return err
+		}
+		return s.applyAttributionFlipsTx(tx)
+	})
+}
+
 // withSyncSourceMaintenanceWriteContext serializes source-wide settings with
 // other maintenance writes before taking the per-source lock. Keep the source
 // lock ahead of the sync-generation fence, matching sync start and ordinary
