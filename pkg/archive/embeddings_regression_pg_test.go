@@ -39,7 +39,7 @@ func regressionArchive(t *testing.T, handler http.HandlerFunc) *archive.Archive 
 	})
 	service := httptest.NewServer(handler)
 	t.Cleanup(service.Close)
-	descriptor := testDescriptor("test")
+	descriptor := testDescriptor()
 	client, err := embedclient.New(embedclient.Options{Model: descriptor.Model, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}, Retry: embedclient.Retry{MaxAttempts: 1}})
 	require.NoError(t, err)
 	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: &archive.Embeddings{Client: client, Descriptor: descriptor}}
@@ -50,15 +50,14 @@ func regressionArchive(t *testing.T, handler http.HandlerFunc) *archive.Archive 
 	return a
 }
 
-func regressionMessage(t *testing.T, a *archive.Archive, sourceName, channel, body string) (int64, int64) {
+func regressionMessage(t *testing.T, a *archive.Archive, sourceName, channel, body string) {
 	t.Helper()
 	source, err := a.Store().GetOrCreateSource("slack", sourceName)
 	require.NoError(t, err)
 	conversation, err := a.Store().EnsureConversation(t.Context(), source.ID, channel, channel)
 	require.NoError(t, err)
-	id, err := a.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: body, MessageType: "slack", Subject: sql.NullString{String: body, Valid: true}})
+	_, err = a.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: body, MessageType: "slack", Subject: sql.NullString{String: body, Valid: true}})
 	require.NoError(t, err)
-	return source.ID, id
 }
 
 func TestPostgreSQLEmbedReportsRejectedMessage(t *testing.T) {

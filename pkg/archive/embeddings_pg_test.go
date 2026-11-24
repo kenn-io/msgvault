@@ -30,8 +30,8 @@ import (
 	"go.kenn.io/msgvault/pkg/archive"
 )
 
-func testDescriptor(model string) embedmodel.Descriptor {
-	return embedmodel.Descriptor{Model: embedconfig.Model{Name: model, Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}}
+func testDescriptor() embedmodel.Descriptor {
+	return embedmodel.Descriptor{Model: embedconfig.Model{Name: "test", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}}
 }
 
 func installTestPgvector(t *testing.T, db *sql.DB) {
@@ -90,7 +90,7 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	t.Cleanup(service.Close)
 	client, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: "test", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}, Retry: embedclient.Retry{MaxAttempts: 1}})
 	require.NoError(t, err)
-	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: &archive.Embeddings{Client: client, Descriptor: testDescriptor("test")}}
+	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: &archive.Embeddings{Client: client, Descriptor: testDescriptor()}}
 	require.NoError(t, archive.Setup(t.Context(), opts))
 	owner, err := archive.Open(t.Context(), opts)
 	require.NoError(t, err)
@@ -253,7 +253,7 @@ func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
 	t.Cleanup(service.Close)
 	client, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: "test", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}})
 	require.NoError(t, err)
-	opts := archive.PostgreSQL{URL: u.String(), Embeddings: &archive.Embeddings{Client: client, Descriptor: testDescriptor("test")}}
+	opts := archive.PostgreSQL{URL: u.String(), Embeddings: &archive.Embeddings{Client: client, Descriptor: testDescriptor()}}
 	require.NoError(t, archive.Setup(t.Context(), opts))
 	var installed bool
 	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='vector')").Scan(&installed))
@@ -339,7 +339,7 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 				_, err := db.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 				assert.NoError(t, err)
 			})
-			d := testDescriptor("test")
+			d := testDescriptor()
 			client, err := embedclient.New(embedclient.Options{Model: d.Model, Roles: d.Roles, Deployment: embedconfig.Deployment{BaseURL: "http://127.0.0.1:1", TrustPrivateNetwork: true}})
 			require.NoError(t, err)
 			settings := &archive.Embeddings{Client: client, Descriptor: d}
@@ -373,7 +373,7 @@ func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {
 		_, err := db.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		assert.NoError(t, err)
 	})
-	desc := testDescriptor("test")
+	desc := testDescriptor()
 	client, err := embedclient.New(embedclient.Options{Model: desc.Model, Deployment: embedconfig.Deployment{BaseURL: "http://127.0.0.1:1", TrustPrivateNetwork: true}})
 	require.NoError(t, err)
 	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: &archive.Embeddings{Client: client, Descriptor: desc}}
@@ -444,7 +444,7 @@ func TestPostgreSQLEmbeddingsPurgeRetry(t *testing.T) {
 		_, e = admin.ExecContext(context.WithoutCancel(t.Context()), "DROP ROLE IF EXISTS "+quote(role))
 		assert.NoError(t, e)
 	})
-	desc := testDescriptor("test")
+	desc := testDescriptor()
 	client, err := embedclient.New(embedclient.Options{Model: desc.Model, Deployment: embedconfig.Deployment{BaseURL: "http://127.0.0.1:1", TrustPrivateNetwork: true}})
 	require.NoError(t, err)
 	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: &archive.Embeddings{Client: client, Descriptor: desc}}

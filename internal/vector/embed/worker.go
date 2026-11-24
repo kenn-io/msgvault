@@ -1436,7 +1436,15 @@ func (w *Worker) stampSkipped(ctx context.Context, gen vector.GenerationID, ids 
 		deleteIDs = append(deleteIDs, id)
 	}
 
-	if err := w.deps.Backend.Delete(ctx, gen, deleteIDs); err != nil {
+	var deleteErr error
+	if backend, ok := w.deps.Backend.(interface {
+		DeleteTx(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, messageIDs []int64) error
+	}); ok {
+		deleteErr = backend.DeleteTx(ctx, tx, gen, deleteIDs)
+	} else {
+		deleteErr = w.deps.Backend.Delete(ctx, gen, deleteIDs)
+	}
+	if err := deleteErr; err != nil {
 		return nil, fmt.Errorf("delete stale skipped embeddings: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

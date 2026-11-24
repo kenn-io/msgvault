@@ -1347,8 +1347,22 @@ func (b *Backend) Delete(ctx context.Context, gen vector.GenerationID, messageID
 		return fmt.Errorf("begin delete tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := b.DeleteTx(ctx, tx, gen, messageIDs); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete tx: %w", err)
+	}
+	return nil
+}
 
-	// Take the index_generations row lock FIRST, mirroring Upsert's
+// DeleteTx removes messages using the caller's transaction on the shared database.
+func (b *Backend) DeleteTx(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, messageIDs []int64) error {
+	if len(messageIDs) == 0 {
+		return nil
+	}
+
+	// Take the index_generations row lock before touching embeddings, mirroring Upsert's
 	// `SELECT ... FOR UPDATE` (backend.go ~437). Every other write path
 	// (Upsert, ActivateGeneration, RetireGeneration) acquires this row
 	// before touching the embeddings rows; if Delete instead locked
@@ -1360,7 +1374,7 @@ func (b *Backend) Delete(ctx context.Context, gen vector.GenerationID, messageID
 	// Delete. The dimension value is unused by the deletion itself but the
 	// locked read also yields ErrUnknownGeneration semantics.
 	var dim int
-	err = tx.QueryRowContext(ctx,
+	err := tx.QueryRowContext(ctx,
 		`SELECT dimension FROM index_generations WHERE id = $1 FOR UPDATE`, int64(gen)).Scan(&dim)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
@@ -1381,9 +1395,6 @@ func (b *Backend) Delete(ctx context.Context, gen vector.GenerationID, messageID
 	}
 	if err := applyMessageCountDeltaTx(ctx, tx, gen, -willDelete); err != nil {
 		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit delete tx: %w", err)
 	}
 	return nil
 }
