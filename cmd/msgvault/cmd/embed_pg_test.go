@@ -46,7 +46,7 @@ func seedGenWithEmbeddingsPG(t *testing.T, pgb *pgvector.Backend, dsn string, id
 	st, err := store.Open(dsn)
 	require.NoError(t, err)
 	defer func() { _ = st.Close() }()
-	source, err := st.GetOrCreateSource("gmail", "embed-test@example.test")
+	source, err := st.GetOrCreateSource("gmail", "embed-test@example.com")
 	require.NoError(t, err)
 	conversation, err := st.EnsureConversation(ctx, source.ID, "thread", "Embeddings")
 	require.NoError(t, err)
