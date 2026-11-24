@@ -147,3 +147,48 @@ func TestPostgreSQLLibraryEmbeddings(t *testing.T) {
 	assert.NotContains(t, response.Body.String(), `"subject":"second"`)
 
 }
+
+func TestPostgreSQLEmbeddingsPreservesSearchPath(t *testing.T) {
+	dsn := os.Getenv("MSGVAULT_TEST_DB")
+	if !store.IsPostgresURL(dsn) {
+		t.Skip("requires PostgreSQL")
+	}
+	admin, err := sql.Open("pgx", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close() })
+	database := "archive_" + strings.ToLower(rand.Text())
+	quote := func(s string) string { return pgx.Identifier{s}.Sanitize() }
+	_, err = admin.ExecContext(t.Context(), "CREATE DATABASE "+quote(database))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP DATABASE "+quote(database))
+		assert.NoError(t, err)
+	})
+	u, err := url.Parse(dsn)
+	require.NoError(t, err)
+	u.Path = "/" + database
+	db, err := sql.Open("pgx", u.String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	for _, statement := range []string{"CREATE SCHEMA archive_data", "CREATE SCHEMA vector_types", "CREATE EXTENSION vector WITH SCHEMA vector_types"} {
+		_, err = db.ExecContext(t.Context(), statement)
+		require.NoError(t, err)
+	}
+	params := u.Query()
+	params.Set("search_path", "archive_data,public")
+	u.RawQuery = params.Encode()
+	client, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: "test", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: "http://127.0.0.1:1", TrustPrivateNetwork: true}})
+	require.NoError(t, err)
+	opts := archive.PostgreSQL{URL: u.String(), Embeddings: &archive.Embeddings{Client: client, Model: "test", Dimension: 2}}
+	require.NoError(t, archive.Setup(t.Context(), opts))
+	a, err := archive.Open(t.Context(), opts)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, a.Close()) })
+	require.NoError(t, a.Embed(t.Context()))
+	var current, path, vector string
+	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT current_schema(), current_setting('search_path'), '[1,2]'::vector::text`).Scan(&current, &path, &vector))
+	assert.Equal(t, "archive_data", current)
+	assert.Contains(t, path, "archive_data,public")
+	assert.Contains(t, path, `"vector_types"`)
+	assert.Equal(t, "[1,2]", vector)
+}

@@ -33,7 +33,7 @@ type PostgreSQL struct {
 	Embeddings         *Embeddings
 }
 
-func (p PostgreSQL) connectionURL(extensionSchema string) (string, error) {
+func (p PostgreSQL) connectionURL(extensionSchema, currentPath string) (string, error) {
 	if strings.TrimSpace(p.URL) == "" {
 		return "", errors.New("archive requires an explicit PostgreSQL connection")
 	}
@@ -41,17 +41,25 @@ func (p PostgreSQL) connectionURL(extensionSchema string) (string, error) {
 	if err != nil {
 		return "", errors.New("invalid archive PostgreSQL connection")
 	}
-	if p.Schema == "" {
+	if p.Schema == "" && extensionSchema == "" {
 		return p.URL, nil
 	}
-	if parsed.RuntimeParams["options"] != "" {
+	if p.Schema != "" && parsed.RuntimeParams["options"] != "" {
 		return "", errors.New("use PostgreSQL connection parameters instead of options when selecting a schema")
 	}
-	path := pgx.Identifier{p.Schema}.Sanitize()
-	if extensionSchema != "" && extensionSchema != p.Schema {
-		path += "," + pgx.Identifier{extensionSchema}.Sanitize()
+	path := currentPath
+	if p.Schema != "" {
+		path = pgx.Identifier{p.Schema}.Sanitize()
 	}
-	path += ",pg_catalog"
+	if extensionSchema != "" && extensionSchema != p.Schema {
+		if path != "" {
+			path += ","
+		}
+		path += pgx.Identifier{extensionSchema}.Sanitize()
+	}
+	if p.Schema != "" {
+		path += ",pg_catalog"
+	}
 	if !store.IsPostgresURL(p.URL) {
 		quoted := strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(path)
 		return p.URL + " search_path='" + quoted + "'", nil
@@ -70,7 +78,7 @@ func (p PostgreSQL) connectionURL(extensionSchema string) (string, error) {
 // using a schema-owning database role, before starting runtime readers/writers.
 // The caller serializes setup with other setup/upgrade processes.
 func Setup(ctx context.Context, postgres PostgreSQL) error {
-	dsn, err := postgres.connectionURL("")
+	dsn, err := postgres.connectionURL("", "")
 	if err != nil {
 		return err
 	}
@@ -140,7 +148,7 @@ func Open(ctx context.Context, postgres PostgreSQL) (*Archive, error) {
 		return nil, fmt.Errorf("PostgreSQL MaxOpenConnections %d cannot hold a sync lock and run its work; "+
 			"use 0 for the default pool or at least 2", postgres.MaxOpenConnections)
 	}
-	dsn, err := postgres.connectionURL("")
+	dsn, err := postgres.connectionURL("", "")
 	if err != nil {
 		return nil, err
 	}

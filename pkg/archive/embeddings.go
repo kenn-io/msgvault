@@ -36,7 +36,13 @@ func embeddingConnectionURL(ctx context.Context, postgres PostgreSQL, db *sql.DB
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("find pgvector schema: %w", err)
 	}
-	return postgres.connectionURL(schema)
+	var path string
+	if postgres.Schema == "" && schema != "" {
+		if err := db.QueryRowContext(ctx, "SELECT current_setting('search_path')").Scan(&path); err != nil {
+			return "", fmt.Errorf("read archive search path: %w", err)
+		}
+	}
+	return postgres.connectionURL(schema, path)
 }
 
 func embeddingConfig(settings *Embeddings) vector.Config {
