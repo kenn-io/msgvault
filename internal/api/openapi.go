@@ -441,7 +441,8 @@ import (
 // 5.25.0 admits read-only Gmail inventory diagnostics through the generic CLI runner.
 // 5.26.0 adds if_exists=return and structured match details to person creation.
 // 5.27.0 supports vector and hybrid search under a source scope.
-const APISchemaVersion = "5.27.0"
+// 5.28.0 admits owner-only physical attachment verification through the CLI runner.
+const APISchemaVersion = "5.28.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

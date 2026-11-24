@@ -646,6 +646,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 		{"diagnose-gmail-inventory", `{"args":["diagnose-gmail-inventory","--source-id","1","--json"]}`},
 		{"export-discord", `{"args":["export-discord"]}`},
 		{"list-folders", `{"args":["list-folders"]}`},
+		{"verify-attachments", `{"args":["verify-attachments","--limit=10","--json"]}`},
 		{"policy list", `{"args":["policy","list"]}`},
 		{"embeddings list", `{"args":["embeddings","list"]}`},
 		{"embeddings value flag before status", `{"args":["embeddings","--source","42","--json=true","status"]}`},
