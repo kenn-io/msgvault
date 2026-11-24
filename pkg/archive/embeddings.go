@@ -56,8 +56,6 @@ func embeddingConfig(settings *Embeddings) (vector.Config, error) {
 	cfg := vector.Config{Enabled: true, Backend: "pgvector"}
 	cfg.Embeddings.Model = settings.Descriptor.Model.Name
 	cfg.Embeddings.Dimension = settings.Descriptor.Model.Dimensions
-	cfg.Embeddings.DocumentPrefix = settings.Descriptor.Roles.DocumentPrefix
-	cfg.Embeddings.QueryPrefix = settings.Descriptor.Roles.QueryPrefix
 	cfg.Embeddings.VectorIdentity = identity
 	cfg.ApplyDefaults()
 	return cfg, nil
