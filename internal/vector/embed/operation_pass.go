@@ -205,18 +205,6 @@ func (o *messagePassOutcomes) fail(ids []int64) {
 	}
 }
 
-// releaseUnaccounted forgets attempts without a durable outcome. A policy
-// change releases that work for a later pass, so it is neither done nor failed.
-func (o *messagePassOutcomes) releaseUnaccounted() {
-	for id := range o.attempted {
-		_, succeeded := o.succeeded[id]
-		_, failed := o.failed[id]
-		if !succeeded && !failed {
-			delete(o.attempted, id)
-		}
-	}
-}
-
 func (o *messagePassOutcomes) addTruncated(count int) {
 	o.truncated += int64(count)
 }

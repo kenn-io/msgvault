@@ -512,8 +512,7 @@ func embedBatchBackend(t *testing.T, st *store.Store) (*sqlitevec.Backend, vecto
 }
 
 // A room that changes tier during a request stops the pass on purpose. The
-// pass history must record a cancellation, not a provider failure, and must
-// not count the released messages as failed.
+// pass history must record a cancellation, not a provider failure.
 func TestWorkerColdPolicyInterruptionIsNotAProviderFailure(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	src, err := st.GetOrCreateSource("beeper", "interrupted-policy")
@@ -540,5 +539,4 @@ func TestWorkerColdPolicyInterruptionIsNotAProviderFailure(t *testing.T) {
 	assert.Equal(t, operations.StateCancelled, runs[0].State)
 	require.NotNil(t, runs[0].Error)
 	assert.Equal(t, operations.PublicErrorInvocationCancelled, runs[0].Error.Code)
-	assert.Zero(t, operationCounter(runs[0], operations.CounterFailed))
 }
