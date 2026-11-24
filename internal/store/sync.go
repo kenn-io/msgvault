@@ -232,7 +232,7 @@ func (s *Store) withSyncSourceWriteContext(
 // that transaction instead of opening their own, so their writes commit or
 // roll back together and pass the sync-generation fence once.
 //
-// The transaction holds the sync maintenance gate, the shared identity lock,
+// The transaction holds the shared identity lock, the sync maintenance gate,
 // the source row, and the sync fence until fn returns, so fn must not wait on
 // the network. A write that needs the exclusive identity lock, such as
 // creating a participant, fails inside it; make those writes first.
@@ -241,11 +241,10 @@ func (s *Store) WithSourceWriteTxContext(ctx context.Context, sourceID int64, fn
 		return err
 	}
 	return s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error {
-		// Take locks in the order the separate writes take them: the gate,
-		// then the identity row, then the source row, then the fence.
-		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
-			return err
-		}
+		// Take the identity row first, as BeginExclusive and attribution
+		// writes do, then the gate, the source row, and the fence. Taking the
+		// gate first deadlocks with a source removal that holds the identity
+		// row and waits to lock sync_runs.
 		if err := s.shareIdentityLockTxContext(ctx, tx); err != nil {
 			return err
 		}
