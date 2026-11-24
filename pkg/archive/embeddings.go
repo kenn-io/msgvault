@@ -70,7 +70,7 @@ func setupEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings)
 		return nil
 	}
 	cfg := embeddingConfig(settings)
-	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: settings.Dimension})
+	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: settings.Dimension, SkipExtension: true})
 	if err != nil {
 		return err
 	}
@@ -98,17 +98,26 @@ func setupEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings)
 }
 
 func openEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings) (*embeddingRuntime, error) {
+	var runtime *embeddingRuntime
 	unavailable := func(err error) (*embeddingRuntime, error) {
-		return nil, fmt.Errorf("pgvector is missing or Setup has not prepared embeddings for %s: %w", settings.Model, err)
+		return runtime, fmt.Errorf("pgvector is missing or Setup has not prepared embeddings for %s: %w", settings.Model, err)
 	}
-	if settings.Client == nil || settings.Model == "" || settings.Dimension <= 0 {
-		return unavailable(errors.New("embedding client, model, and dimension are required"))
-	}
-	cfg := embeddingConfig(settings)
 	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: settings.Dimension, SkipMigrate: true, ReadOnly: true})
 	if err != nil {
 		return unavailable(err)
 	}
+	var storage bool
+	if err := st.DB().QueryRowContext(ctx, `SELECT to_regclass('embeddings') IS NOT NULL`).Scan(&storage); err != nil {
+		return unavailable(err)
+	}
+	if !storage {
+		return unavailable(errors.New("embedding storage is missing"))
+	}
+	runtime = &embeddingRuntime{backend: backend}
+	if settings.Client == nil || settings.Model == "" || settings.Dimension <= 0 {
+		return unavailable(errors.New("embedding client, model, and dimension are required"))
+	}
+	cfg := embeddingConfig(settings)
 	building, err := backend.BuildingGeneration(ctx)
 	if err != nil {
 		return unavailable(err)
@@ -117,14 +126,15 @@ func openEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings) 
 	if activeErr != nil && !errors.Is(activeErr, vector.ErrNoActiveGeneration) {
 		return unavailable(activeErr)
 	}
-	if (building == nil || building.Fingerprint != cfg.GenerationFingerprint()) && (activeErr != nil || active.Fingerprint != cfg.GenerationFingerprint()) {
+	if (building != nil && building.Fingerprint != cfg.GenerationFingerprint()) || (building == nil && (activeErr != nil || active.Fingerprint != cfg.GenerationFingerprint())) {
 		return unavailable(errors.New("generation is missing"))
 	}
 	client := embed.NewClient(embed.Config{Kit: settings.Client, Model: settings.Model, Dimension: settings.Dimension})
 	worker := embed.NewWorker(embed.WorkerDeps{Backend: backend, VectorsDB: st.DB(), MainDB: st.DB(), Store: st, Client: client, Preprocess: embed.PreprocessConfigFor(cfg), MaxInputChars: cfg.Embeddings.MaxInputChars, BatchSize: cfg.Embeddings.BatchSize, Rebind: st.Rebind, LastModifiedExpr: "m.last_modified", Recorder: st, Diagnostics: st})
 	job := &scheduler.EmbedJob{Strict: true, Worker: worker, Backend: backend, Store: st, Fingerprint: cfg.GenerationFingerprint(), RequestTimeout: cfg.Embeddings.Timeout, BatchSize: cfg.Embeddings.BatchSize, BackstopInterval: cfg.Embed.BackstopInterval}
 	engine := hybrid.NewEngine(backend, st.DB(), client, hybrid.Config{ExpectedFingerprint: cfg.GenerationFingerprint(), RRFK: cfg.Search.RRFK, KPerSignal: cfg.Search.KPerSignal, SubjectBoost: cfg.Search.SubjectBoost, Rebind: st.Rebind})
-	return &embeddingRuntime{backend: backend, config: cfg, engine: engine, job: job}, nil
+	runtime.config, runtime.engine, runtime.job = cfg, engine, job
+	return runtime, nil
 }
 
 // Embed runs one embedding pass. Stop calls to Embed before Close.
@@ -146,7 +156,7 @@ func (a *Archive) NewServer(options ServerOptions) *Server {
 	if options.Engine == nil {
 		options.Engine = a.QueryEngine()
 	}
-	if a.embeddings != nil {
+	if a.embeddings != nil && a.embeddings.engine != nil {
 		if options.HybridEngine == nil {
 			options.HybridEngine = a.embeddings.engine
 		}

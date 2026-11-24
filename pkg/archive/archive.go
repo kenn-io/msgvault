@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/vector/pgvector"
 )
 
 // PostgreSQL selects a database and optionally a schema. Empty Schema preserves
@@ -99,17 +98,6 @@ func Setup(ctx context.Context, postgres PostgreSQL) error {
 		if !exists {
 			if _, err := db.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{postgres.Schema}.Sanitize()); err != nil {
 				return fmt.Errorf("create archive schema: %w", err)
-			}
-		}
-	}
-	if postgres.Embeddings != nil && pgvector.Available() {
-		var available bool
-		if err := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector')").Scan(&available); err != nil {
-			return err
-		}
-		if available {
-			if _, err := db.ExecContext(ctx, "CREATE EXTENSION IF NOT EXISTS vector"); err != nil {
-				return fmt.Errorf("create pgvector extension: %w", err)
 			}
 		}
 	}

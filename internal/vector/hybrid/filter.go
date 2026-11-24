@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"go.kenn.io/msgvault/internal/store"
-
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 

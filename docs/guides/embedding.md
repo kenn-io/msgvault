@@ -349,6 +349,6 @@ separately.
 
 ## Search messages by meaning
 
-A PostgreSQL host can supply `PostgreSQL.Embeddings` with a `*embedclient.Client`, model name, and vector dimension. Build msgvault with the `pgvector` tag and install the PostgreSQL `vector` extension. Run `archive.Setup` as the schema owner, then open the archive with the runtime role and the same settings. Set `Model`, `Dimension`, `DocumentPrefix`, and `QueryPrefix` to match the supplied client. Run Setup again when the model, dimension, or either prefix changes.
+A PostgreSQL host can supply `PostgreSQL.Embeddings` with a `*embedclient.Client`, model name, and vector dimension. Build msgvault with the `pgvector` tag and install the PostgreSQL `vector` extension in a shared schema before running Setup. Run `archive.Setup` as the schema owner, then open the archive with the runtime role and the same settings. Set `Model`, `Dimension`, `DocumentPrefix`, and `QueryPrefix` to match the supplied client. Run Setup again when the model, dimension, or either prefix changes.
 
 Call `Archive.Embed` after synchronization and on the host's schedule. New messages are indexed on the next call. Edited messages are revisited by the existing backstop, at most once every 24 hours while calls continue. The call builds or updates the message index; stop it before closing the archive. Construct the API with `Archive.NewServer` to use the index. Search with `mode=vector` for meaning, or `mode=hybrid` for words and meaning. `WithSourceScope` limits both modes to authorized sources.

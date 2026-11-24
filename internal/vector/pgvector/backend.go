@@ -755,6 +755,43 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 		}
 	}
 
+	// Purge locks this generation before pruning, so a writer that arrives
+	// afterward must skip messages already removed from the archive.
+	ids := distinctMessageIDs(chunks)
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM messages WHERE id = ANY($1::bigint[])`, int64Array(ids))
+	if err != nil {
+		return fmt.Errorf("find existing messages: %w", err)
+	}
+	existing := make(map[int64]bool, len(ids))
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan existing message: %w", err)
+		}
+		existing[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("read existing messages: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close existing messages: %w", err)
+	}
+	kept := make([]vector.Chunk, 0, len(chunks))
+	for _, chunk := range chunks {
+		if existing[chunk.MessageID] {
+			kept = append(kept, chunk)
+		}
+	}
+	chunks = kept
+	if len(chunks) == 0 {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit upsert for generation %d: %w", gen, err)
+		}
+		return nil
+	}
+
 	// message_count tracks distinct messages, not chunks. Count how many
 	// of the batch's message_ids already have any row in the generation
 	// so we can apply an O(1) delta after the replace below.

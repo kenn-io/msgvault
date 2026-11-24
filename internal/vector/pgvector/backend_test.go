@@ -657,3 +657,23 @@ func TestBackendEmbeddingCheckpointLifecycle(t *testing.T) {
 	b, ctx, _ := newBackendForTest(t)
 	vectorcheckpoints.Lifecycle(ctx, t, b)
 }
+
+func TestBackendUpsertSkipsDeletedMessages(t *testing.T) {
+	backend, _, db := newBackendForTest(t)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES (2)`)
+	require.NoError(t, err)
+	gen, err := backend.CreateGeneration(t.Context(), "test", 2, "test:2")
+	require.NoError(t, err)
+	require.NoError(t, backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: 1, Vector: unitVec(2, 0)}, {MessageID: 2, Vector: unitVec(2, 1)}}))
+	_, err = db.ExecContext(t.Context(), `DELETE FROM messages WHERE id=2`)
+	require.NoError(t, err)
+	require.NoError(t, backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: 1, Vector: unitVec(2, 1)}, {MessageID: 3, Vector: unitVec(2, 0)}}))
+	require.NoError(t, backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: 4, Vector: unitVec(2, 0)}}))
+	var count int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id IN (3,4)`).Scan(&count))
+	assert.Zero(t, count)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=1`).Scan(&count))
+	assert.Equal(t, 1, count)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT message_count FROM index_generations WHERE id=$1`, int64(gen)).Scan(&count))
+	assert.Equal(t, 2, count)
+}
