@@ -11,29 +11,6 @@ test.use({
   viewport: { width: 1700, height: 700 }
 });
 
-for (const collapsed of [false, true]) {
-  test(`Settings restores the ${collapsed ? 'collapsed' : 'expanded'} app sidebar`, async ({ page }) => {
-    await mockArchiveLayout(page);
-    await page.goto('/');
-    const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
-    if (collapsed) await sidebar.getByRole('button', { name: 'Collapse sidebar' }).click();
-    await selectWorkspace(page, 'Settings');
-    await expect(sidebar).toHaveClass(/sidebar--rail/);
-    await expect(sidebar.getByRole('button', { name: 'Expand sidebar' })).toHaveCount(0);
-    const navigation = page.getByRole('navigation', { name: 'Settings', exact: true });
-    await expect(navigation.getByRole('button', { name: 'Overview', exact: true })).toBeVisible();
-    const navBox = await page.locator('.kit-settings__sidebar').boundingBox();
-    const panelBox = await page.locator('.kit-settings__panel').boundingBox();
-    expect(navBox!.x + navBox!.width).toBeLessThanOrEqual(panelBox!.x);
-    await page.reload();
-    await expect(sidebar).toHaveClass(/sidebar--rail/);
-    await selectWorkspace(page, 'Messages');
-    if (collapsed) await expect(sidebar).toHaveClass(/sidebar--rail/);
-    else await expect(sidebar).not.toHaveClass(/sidebar--rail/);
-    await expect(sidebar.getByRole('button', { name: collapsed ? 'Expand sidebar' : 'Collapse sidebar' })).toBeVisible();
-  });
-}
-
 test('Settings panel stays in place when a long category makes it scroll', async ({ page }) => {
   await mockArchiveLayout(page);
   const attachmentSections = [

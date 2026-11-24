@@ -1367,6 +1367,21 @@ describe('AppShell', () => {
       expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeTruthy();
     });
 
+    it('restores the saved sidebar state after leaving Settings', async () => {
+      for (const collapsed of [false, true]) {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+        const state = shellState('settings');
+        const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+        const sidebar = screen.getByRole('complementary', { name: 'Sidebar' });
+        expect(sidebar.classList.contains('sidebar--rail')).toBe(true);
+        expect(within(sidebar).queryByRole('button', { name: 'Expand sidebar' })).toBeNull();
+        await fireEvent.click(within(sidebar).getByRole('button', { name: 'Messages' }));
+        expect(sidebar.classList.contains('sidebar--rail')).toBe(collapsed);
+        expect(within(sidebar).getByRole('button', { name: collapsed ? 'Expand sidebar' : 'Collapse sidebar' })).toBeTruthy();
+        rendered.unmount();
+      }
+    });
+
     it('opens a modal navigation menu on narrow screens and closes it on Escape', async () => {
       window.innerWidth = 480;
       render(AppShell, { client: createAPIClient(vi.fn()), state: shellState('everything'), enabled: false });
