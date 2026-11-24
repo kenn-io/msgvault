@@ -233,3 +233,32 @@ func TestConversationPolicySubsetBootstrapsLegacySource(t *testing.T) {
 	requirements.Len(rows, 1, "the copied chat must be classified after the copy")
 	assertions.Equal(conversationpolicy.Full, rows[0].EffectiveTier)
 }
+
+// A configured override names a room by its source. After a source merge moves
+// the room, the override no longer matches and the room must not stay Cold.
+func TestConversationPolicySourceMergeDropsStaleConfiguredOverride(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	from, err := st.GetOrCreateSource("imap", "history@example.test")
+	requirements.NoError(err)
+	into, err := st.GetOrCreateSource("imap", "live@example.test")
+	requirements.NoError(err)
+	room, err := st.EnsureConversation(ctx, from.ID, "thread-1", "Thread")
+	requirements.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{SourceID: from.ID, ConversationID: room, SourceMessageID: "message-1", MessageType: "email"})
+	requirements.NoError(err)
+	settings := conversationpolicy.DefaultSettings()
+	settings.Overrides = []conversationpolicy.Override{{SourceType: "imap", SourceIdentifier: "history@example.test", ConversationID: "thread-1", Tier: conversationpolicy.Cold}}
+	_, err = st.ConfigureConversationPolicy(ctx, settings, time.Now())
+	requirements.NoError(err)
+	tier := func() string {
+		var effective string
+		requirements.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT effective_tier FROM conversation_policy WHERE conversation_id = ?`), room).Scan(&effective))
+		return effective
+	}
+	requirements.Equal(string(conversationpolicy.Cold), tier())
+	_, err = st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	assertions.NotEqual(string(conversationpolicy.Cold), tier(), "the moved room no longer matches its configured override")
+}

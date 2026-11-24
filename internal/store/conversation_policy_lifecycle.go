@@ -34,6 +34,10 @@ type conversationPolicyLifecycle struct {
 	checkSelfOnly bool
 	selfBefore    string
 	activityRooms []int64
+	// sourceRooms are the rooms of a source being merged, removed or purged.
+	// The operation can give a room a new provider ID, so a configured
+	// override may stop naming it.
+	sourceRooms []int64
 }
 
 func (s *Store) captureSourceConversationPolicyTx(ctx context.Context, tx *loggedTx, sourceIDs ...int64) (conversationPolicyLifecycle, error) {
@@ -58,7 +62,9 @@ func (s *Store) captureSourceConversationPolicyTx(ctx context.Context, tx *logge
 	if err != nil {
 		return state, err
 	}
-	return s.captureConversationPolicyRoomsTx(ctx, tx, rooms)
+	state, err = s.captureConversationPolicyRoomsTx(ctx, tx, rooms)
+	state.sourceRooms = rooms
+	return state, err
 }
 
 func (s *Store) captureConversationPolicyRoomsTx(ctx context.Context, tx *loggedTx, rooms []int64) (conversationPolicyLifecycle, error) {
@@ -84,17 +90,29 @@ func (s *Store) finishConversationPolicyLifecycleTx(ctx context.Context, tx *log
 		refresh = state.selfBefore != current
 	}
 	refreshed := ConversationPolicyRefresh{Revision: state.revision}
-	if refresh {
+	if refresh || len(state.sourceRooms) > 0 {
 		settings, _, err := s.conversationPolicySettingsTx(ctx, tx)
 		if err != nil {
 			return err
 		}
-		raw, err := json.Marshal(settings, json.Deterministic(true))
-		if err != nil {
-			return err
+		if refresh {
+			raw, err := json.Marshal(settings, json.Deterministic(true))
+			if err != nil {
+				return err
+			}
+			if err = s.configureConversationPolicyTx(ctx, tx, settings, string(raw), time.Now().UTC(), &refreshed, true); err != nil {
+				return err
+			}
 		}
-		if err = s.configureConversationPolicyTx(ctx, tx, settings, string(raw), time.Now().UTC(), &refreshed, true); err != nil {
-			return err
+		// Re-evaluate the source's rooms now, so a room whose configured
+		// override no longer names it does not keep that tier until the next
+		// expiry pass.
+		if len(state.sourceRooms) > 0 {
+			moved, err := s.refreshConversationPolicyTx(ctx, tx, settings, state.sourceRooms, time.Now().UTC(), false)
+			if err != nil {
+				return err
+			}
+			refreshed.Revision = max(refreshed.Revision, moved.Revision)
 		}
 	}
 	// Full provenance can enter an already-Cold destination without any tier
