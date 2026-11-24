@@ -349,7 +349,7 @@ separately.
 
 ## Search messages by meaning
 
-A PostgreSQL host can supply `PostgreSQL.Embeddings` with an `embedclient.Client` and the `embedmodel.Descriptor` used to build it. Build msgvault with the `pgvector` tag and install the PostgreSQL `vector` extension in a shared schema before running Setup. Run `archive.Setup` as the schema owner, then open the archive with the runtime role and the same settings. When pgvector is installed, use connection parameters instead of libpq `options` in the DSN; msgvault sets `search_path` itself.
+A PostgreSQL host can supply `PostgreSQL.Embeddings` with an `embedclient.Client` and the `embedmodel.Descriptor` used to build it. Build msgvault with the `pgvector` tag and install the PostgreSQL `vector` extension in a shared schema before running Setup. Run `archive.Setup` as the schema owner, then open the archive with the runtime role and the same settings. With embeddings configured, use connection parameters instead of libpq `options` in the DSN; msgvault sets `search_path` itself.
 
 The host must pass the descriptor used to build the client. Msgvault uses its own preprocessing and ignores the descriptor's input limits and legacy fingerprints. The descriptor identifies the vector space. Changes to its model, dimensions, role formatting, pooling, or revision require retiring the existing generation before Setup can create another. Endpoint changes affect the identity only when the descriptor pins the endpoint. Finish or retire an existing build before changing settings. A daemon-built index has a different identity, so retire it before using the library. Retiring an active pgvector generation requires `msgvault embeddings retire --force-active` and deletes its vectors.
 
