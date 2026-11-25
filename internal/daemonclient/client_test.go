@@ -989,7 +989,7 @@ func TestErrorResponseBodiesAreBounded(t *testing.T) {
 	client, err := New(Config{URL: srv.URL, AllowInsecure: true})
 	require.NoError(t, err)
 
-	_, _, err = client.GetCLIAccounts(t.Context())
+	_, err = client.GetCLIAccounts(t.Context())
 	require.ErrorContains(t, err, "exceeds 64 KiB")
 }
 

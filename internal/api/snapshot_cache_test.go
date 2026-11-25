@@ -99,32 +99,15 @@ func TestSnapshotCacheStaleWaitPolicy(t *testing.T) {
 		require := require.New(t)
 		lifetimeCtx, cancelLifetime := context.WithCancel(t.Context())
 		defer cancelLifetime()
-		cache := snapshotCache[int]{staleWait: 500 * time.Millisecond}
-		started := time.Now()
-		value, asOf, stale, err := cache.getVersion(t.Context(), lifetimeCtx, "k", "", 2*time.Second, true,
-			func(context.Context) (int, error) { time.Sleep(time.Second); return 1, nil })
-		require.NoError(err)
-		assert.Equal(time.Second, time.Since(started), "cold reads retain the original budget")
-		assert.Equal(1, value)
-		assert.False(stale)
-		started = time.Now()
-		value, previousAsOf, stale, err := cache.get(t.Context(), lifetimeCtx, "k", 2*time.Second,
-			func(ctx context.Context) (int, error) { <-ctx.Done(); return 0, ctx.Err() })
-		require.NoError(err)
-		assert.Equal(500*time.Millisecond, time.Since(started))
-		assert.Equal(1, value)
-		assert.Equal(asOf, previousAsOf)
-		assert.True(stale)
-
 		var catalog snapshotCache[int]
-		value, asOf, stale, err = catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "1", 2*time.Second, true,
+		value, asOf, stale, err := catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "1", 2*time.Second, true,
 			func(context.Context) (int, error) { return 1, nil })
 		require.NoError(err)
 		assert.Equal(1, value)
 		assert.False(stale)
 
-		started = time.Now()
-		value, previousAsOf, stale, err = catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "1", 2*time.Second, true,
+		started := time.Now()
+		value, previousAsOf, stale, err := catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "1", 2*time.Second, true,
 			func(ctx context.Context) (int, error) { <-ctx.Done(); return 0, ctx.Err() })
 		require.NoError(err)
 		assert.Zero(time.Since(started), "matching optional reads reuse the snapshot immediately")

@@ -369,8 +369,9 @@ filter, and the virtual account catalog on `/cli/accounts`.
 Schema 3.1.0 adds [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
 
-Schema 3.2.0 adds `counts_pending` to `GET /api/v1/cli/accounts`. See
-[archive statistics](#get-apiv1stats) for when it appears.
+Schema 3.2.0 added `counts_pending` to `GET /api/v1/cli/accounts`. Schema
+5.28.0 removes it, along with that endpoint's `stale` and `as_of`: account
+counts come from stored per-source totals and are always current.
 
 Schema 3.6.0 adds `GET /api/v1/messages/{id}/recordings`, which lists a
 message's recordings with their Docbank transcript state. Existing routes are
@@ -1197,20 +1198,13 @@ about 2 seconds:
 - Vector statistics have a 3-second budget. If they miss it, the response sets
   `"vector_stats_unavailable": true` instead of failing.
 
-`GET /api/v1/cli/accounts` bounds its message counts the same way, with `stale`
-and `as_of` at the top level. Before the first counts finish, no earlier
-snapshot exists, so the request fails with `503 query_timeout`. To get the
-accounts anyway, send the `X-Msgvault-Allow-Pending-Counts: true` header: the
-response sets `"counts_pending": true` and uses `0` as a placeholder for each
-account's `message_count` and `source_deleted_count`.
+`GET /api/v1/cli/accounts` reads each account's `message_count` and
+`source_deleted_count` from totals the archive updates with every message
+write, so they are always current and never wait on a count of the archive.
 
-Once a count snapshot exists, fresh counts have 500 ms. If they do not finish in
-time, the response returns the previous counts with `"stale": true` and their
-original `as_of` while the refresh continues. The CLI displays these counts with
-their age, such as `1,234 (counted 3 minutes ago)`.
-
-Virtual-account counts keep their two-second cold wait. Once a matching catalog
-exists, callers that send the pending-counts header reuse it immediately after
+The virtual-account catalog on that endpoint has a two-second cold wait. Once a
+matching catalog exists, callers that send the
+`X-Msgvault-Allow-Pending-Counts: true` header reuse it immediately after
 expiry while it refreshes, whereas strict callers keep the two-second refresh
 wait.
 

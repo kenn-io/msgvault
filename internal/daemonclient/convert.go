@@ -510,8 +510,6 @@ func cliAccountsFromGenerated(resp *generated.ListCLIAccountsResponse) []CLIAcco
 			AuthMethod:         stringValue(account.AuthMethod),
 			MessageCount:       account.MessageCount,
 			SourceDeletedCount: account.SourceDeletedCount,
-			Stale:              boolValue(resp.Stale),
-			AsOf:               copyTime(resp.AsOf),
 			LastSync:           account.LastSync,
 			VirtualAccounts:    virtualAccountsFromGenerated(account.VirtualAccounts),
 		}

@@ -349,7 +349,6 @@ func TestEngineListAccountsUsesSourceBackedCLIAccounts(t *testing.T) {
 		assert.Equal("/api/v1/cli/accounts", r.URL.Path, "path")
 		assert.Equal("true", r.Header.Get(apiprotocol.AllowPendingCountsHeader), "allow pending counts")
 		writeJSONResponse(t, w, map[string]any{
-			"counts_pending": true,
 			"accounts": []map[string]any{
 				{
 					"id":            42,

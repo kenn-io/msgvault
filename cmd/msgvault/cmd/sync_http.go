@@ -230,7 +230,7 @@ func buildSyncPreflight(st *daemonclient.Client, info HTTPStoreInfo, state *invo
 		OAuthConfigured: oauthConfigured,
 		Out:             os.Stdout,
 		ListGmailAccounts: func(ctx context.Context) ([]preflightAccount, error) {
-			accounts, _, err := st.GetCLIAccounts(ctx)
+			accounts, err := st.GetCLIAccounts(ctx)
 			if err != nil {
 				return nil, err
 			}

@@ -5879,13 +5879,8 @@ include `id`, `email`, `type`, `display_name`, and `last_sync`; pass `email` to
 to `export-messages`.
 
 Table and JSON output also show the archive alias, history-only state,
-retirement destination, and Beeper re-anchor marker. While the daemon's first
-message-count refresh is still running, the table prints `pending` in the
-messages column and JSON sets `"counts_pending": true` instead of
-`message_count` and `source_deleted_count`. Later calls wait up to 500 ms for
-fresh counts before falling back to the previous count with its age (for
-example, `1,234 (counted 3 minutes ago)`), and stale JSON rows include
-`stale: true` with the original `as_of` timestamp.
+retirement destination, and Beeper re-anchor marker. JSON rows also include
+`message_count` and `source_deleted_count`; both are always current.
 
 ```bash
 msgvault list-accounts [flags]

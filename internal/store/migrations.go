@@ -106,6 +106,9 @@ const (
 	migrationCardDAVMultipleAccounts        = "carddav_multiple_accounts_v1"
 	migrationCardDAVInferenceExportState    = "carddav_inference_export_state_v1"
 	migrationChatMembers                    = "chat_members_v1"
+	// Account listings read per-source message counts that triggers keep
+	// current; the migration installs them and recounts every source.
+	migrationSourceMessageCounts = "source_message_counts_v1"
 	// v2 reruns the backfill after the review began counting inferred names,
 	// contact points, and postal addresses, which v1 did not see.
 	migrationCardDAVInferenceExportStateV2 = "carddav_inference_export_state_v2"

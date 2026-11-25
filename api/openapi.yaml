@@ -2624,13 +2624,6 @@ components:
           items:
             $ref: "#/components/schemas/CliAccountResponse"
           type: array
-        as_of:
-          format: date-time
-          type: string
-        counts_pending:
-          type: boolean
-        stale:
-          type: boolean
         virtual_accounts_unavailable:
           type: boolean
       required:
@@ -17765,7 +17758,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.27.0
+  version: 5.28.0
 openapi: 3.1.0
 paths:
   /api/ping:

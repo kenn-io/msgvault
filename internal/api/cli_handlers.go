@@ -59,8 +59,7 @@ type CLIStore interface {
 	ListAccountIdentities(sourceID int64) ([]store.AccountIdentity, error)
 	AddAccountIdentity(sourceID int64, address, signal string) error
 	RemoveAccountIdentity(sourceID int64, address string) (int64, error)
-	CountMessagesForSource(sourceID int64) (int64, error)
-	CountSourceDeletedMessages(sourceIDs ...int64) (int64, error)
+	SourceMessageCountsContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error)
 	NeedsFTSBackfill() bool
 	NeedsFTSBackfillQuick() bool
 	BackfillFTS(progress func(done, total int64)) (int64, error)
@@ -119,8 +118,6 @@ type ContextCLIStore interface {
 		sourceID int64,
 		candidates []store.IdentityConfirmation,
 	) ([]store.IdentityConfirmationOutcome, error)
-	CountMessagesForSourceContext(ctx context.Context, sourceID int64) (int64, error)
-	CountSourceDeletedMessagesContext(ctx context.Context, sourceIDs ...int64) (int64, error)
 	NeedsFTSBackfillQuickContext(ctx context.Context) bool
 	NeedsFTSBackfillContext(ctx context.Context) (bool, error)
 	BackfillFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error)
@@ -258,14 +255,6 @@ func (s *requestCLIStore) MergeConfirmedAccountIdentitySignalsContext(
 	candidates []store.IdentityConfirmation,
 ) ([]store.IdentityConfirmationOutcome, error) {
 	return s.contextStore.MergeConfirmedAccountIdentitySignalsContext(s.ctx, sourceID, candidates)
-}
-
-func (s *requestCLIStore) CountMessagesForSource(sourceID int64) (int64, error) {
-	return s.contextStore.CountMessagesForSourceContext(s.ctx, sourceID)
-}
-
-func (s *requestCLIStore) CountSourceDeletedMessages(sourceIDs ...int64) (int64, error) {
-	return s.contextStore.CountSourceDeletedMessagesContext(s.ctx, sourceIDs...)
 }
 
 func (s *requestCLIStore) NeedsFTSBackfillQuick() bool {
@@ -715,25 +704,11 @@ type CLIQueryMessageSummary query.MessageSummary
 
 type cliAccountsResponse struct {
 	Accounts []cliAccountResponse `json:"accounts"`
-	// Stale reports message counts served from an earlier snapshot because
-	// fresh counts did not finish in time; AsOf says when it was taken.
-	Stale bool      `json:"stale,omitempty"`
-	AsOf  time.Time `json:"as_of,omitzero"`
-	// CountsPending reports that the first count refresh is still running, so
-	// every count is a zero placeholder. Only callers sending
-	// apiprotocol.AllowPendingCountsHeader get it.
-	CountsPending bool `json:"counts_pending,omitempty"`
 	// VirtualAccountsUnavailable reports that the catalog read failed, timed
 	// out, or was served from an earlier snapshot. Accounts then carry the
 	// last known virtual_accounts, if any, which can miss identities confirmed
 	// since, so absence from them does not prove an address is unknown.
 	VirtualAccountsUnavailable bool `json:"virtual_accounts_unavailable,omitempty"`
-}
-
-// sourceMessageCounter is implemented by stores that count every source's
-// messages in one pass.
-type sourceMessageCounter interface {
-	CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error)
 }
 
 // virtualAccountLister reads the virtual account catalog. Its freshness
@@ -2768,56 +2743,21 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 	if s.requestAuthentication(r).Grant != nil {
 		sources = slices.DeleteFunc(sources, func(src *store.Source) bool { return !slices.Contains(agentReadSourceIDs(r), src.ID) })
 	}
-	// Opted-in callers accept placeholder counts and immediate reuse of a matching catalog.
-	allowPending := r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true"
-	var grouped map[int64]store.SourceMessageCounts
-	var response cliAccountsResponse
-	if counter, ok := s.store.(sourceMessageCounter); ok && !s.sourceScopedRead(r) {
-		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.get(
-			r.Context(), s.importContext, "", s.statsSnapshotWait, counter.CountMessagesBySourceContext,
-		)
-		response.CountsPending = allowPending && errors.Is(err, errSnapshotWaitTimeout)
-		if err != nil && !response.CountsPending {
-			if s.writeIfContextError(w, err) {
-				return
-			}
-			s.logger.Error("failed to count CLI account messages", "error", err)
-			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list accounts")
+	counts, err := cliStore.SourceMessageCountsContext(r.Context())
+	if err != nil {
+		if s.writeIfContextError(w, err) {
 			return
 		}
+		s.logger.Error("failed to count CLI account messages", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list accounts")
+		return
 	}
-
 	accounts := make([]cliAccountResponse, 0, len(sources))
 	for _, src := range sources {
-		if response.CountsPending {
-			accounts = append(accounts, newCLIAccountResponse(src, 0, 0))
-			continue
-		}
-		if grouped != nil {
-			accounts = append(accounts, newCLIAccountResponse(src, grouped[src.ID].Live, grouped[src.ID].SourceDeleted))
-			continue
-		}
-		count, err := cliStore.CountMessagesForSource(src.ID)
-		if err != nil {
-			s.logger.Error("failed to count CLI account messages",
-				"source_id", src.ID,
-				"identifier", src.Identifier,
-				"error", err)
-			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list accounts")
-			return
-		}
-		sourceDeleted, err := cliStore.CountSourceDeletedMessages(src.ID)
-		if err != nil {
-			s.logger.Error("failed to count CLI account source-deleted messages",
-				"source_id", src.ID,
-				"identifier", src.Identifier,
-				"error", err)
-			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list accounts")
-			return
-		}
-		accounts = append(accounts, newCLIAccountResponse(src, count, sourceDeleted))
+		accounts = append(accounts, newCLIAccountResponse(src, counts[src.ID].Live, counts[src.ID].SourceDeleted))
 	}
 
+	var response cliAccountsResponse
 	if lister, ok := s.store.(virtualAccountLister); ok {
 		var virtual map[int64][]store.VirtualAccount
 		var stale bool
@@ -2829,7 +2769,8 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		} else {
 			virtual, _, stale, err = s.virtualAccountSnapshots.getVersion(
 				r.Context(), s.importContext, "", s.virtualAccountCatalogVersion(r.Context(), lister),
-				s.statsSnapshotWait, allowPending, lister.ListVirtualAccountsContext,
+				s.statsSnapshotWait, r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true",
+				lister.ListVirtualAccountsContext,
 			)
 		}
 		// The catalog is extra detail; a slow or failed read still returns
