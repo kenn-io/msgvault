@@ -1229,6 +1229,97 @@ func TestImporterFailureCheckpointsDurablePagesAndResumeDoesNotReplayThem(t *tes
 	assert.Equal("101", replyTo, "deferred reply survives a crash between child and parent pages")
 }
 
+// failMessageInsert makes the database reject inserting one Discord message,
+// so a page fails partway through its writes. The returned func removes it.
+func failMessageInsert(t *testing.T, st *store.Store, sourceMessageID string) func() {
+	t.Helper()
+	db := st.DB()
+	statements := []string{`CREATE TRIGGER fail_message_insert BEFORE INSERT ON messages
+		WHEN NEW.source_message_id = '` + sourceMessageID + `'
+		BEGIN SELECT RAISE(ABORT, 'synthetic message insert failure'); END`}
+	drop := []string{`DROP TRIGGER fail_message_insert`}
+	if st.IsPostgreSQL() {
+		statements = []string{
+			`CREATE FUNCTION fail_message_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN
+				IF NEW.source_message_id = '` + sourceMessageID + `' THEN
+					RAISE EXCEPTION 'synthetic message insert failure';
+				END IF;
+				RETURN NEW;
+			END $$`,
+			`CREATE TRIGGER fail_message_insert BEFORE INSERT ON messages
+			FOR EACH ROW EXECUTE FUNCTION fail_message_insert()`,
+		}
+		drop = []string{`DROP TRIGGER fail_message_insert ON messages`, `DROP FUNCTION fail_message_insert()`}
+	}
+	for _, statement := range statements {
+		_, err := db.ExecContext(t.Context(), statement)
+		require.NoError(t, err)
+	}
+	return func() {
+		for _, statement := range drop {
+			_, err := db.ExecContext(t.Context(), statement)
+			require.NoError(t, err)
+		}
+	}
+}
+
+func TestImporterPageFailureWritesNoneOfThePageAndResumes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	for id := 101; id <= 105; id++ {
+		api.messages["300"] = append(api.messages["300"], importerTestMessage(strconv.Itoa(id), "300", "message"))
+	}
+	// Pages run newest first: [105 104], [103 102], [101]. Message 103 is
+	// written before 102 fails, and carries every per-message write.
+	api.messages["300"][2].Attachments = []Attachment{{ID: "401", Filename: "page.bin", Size: 1}}
+	api.messages["300"][2].MessageReference = &MessageReference{MessageID: "101", ChannelID: "300"}
+	api.messages["300"][2].EditedTimestamp = &api.messages["300"][2].Timestamp
+	api.messages["300"][4].MessageReference = &MessageReference{MessageID: "101", ChannelID: "300"}
+	restore := failMessageInsert(t, st, "102")
+
+	_, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.ErrorContains(err, "persist Discord message 102")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
+	require.NoError(err)
+	failed, err := st.GetLatestCheckpointedSync(source.ID)
+	require.NoError(err)
+	checkpoint, err := LoadSyncState(failed.CursorBefore.String)
+	require.NoError(err)
+	assert.Equal("104", checkpoint.Containers["300"].BackfillBefore)
+	assert.Equal(int64(2), failed.MessagesProcessed)
+
+	countRows := func(query string) int {
+		t.Helper()
+		var count int
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(query), source.ID).Scan(&count))
+		return count
+	}
+	assert.Equal(2, countRows(`SELECT COUNT(*) FROM messages WHERE source_id = ?`))
+	assert.Zero(countRows(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = '103'`))
+	assert.Zero(countRows(`SELECT COUNT(*) FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ?`))
+	assert.Zero(countRows(`SELECT COUNT(*) FROM conversation_participants cp
+		JOIN conversations c ON c.id = cp.conversation_id
+		JOIN participant_identifiers pi ON pi.participant_id = cp.participant_id
+		WHERE c.source_id = ? AND pi.identifier_value = 'user-103'`))
+
+	restore()
+	summary, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.NoError(err)
+	assert.Equal(int64(3), summary.MessagesAdded)
+	assert.Equal(int64(1), summary.MediaPending)
+	assert.Equal(5, countRows(`SELECT COUNT(*) FROM messages WHERE source_id = ?`))
+	assert.Equal(1, countRows(`SELECT COUNT(*) FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.source_id = ?`))
+	assert.Equal(1, countRows(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = '103' AND is_edited`))
+	assert.Equal(5, countRows(`SELECT COUNT(*) FROM conversation_participants cp
+		JOIN conversations c ON c.id = cp.conversation_id WHERE c.source_id = ?`))
+	assert.Equal(2, countRows(`SELECT COUNT(*) FROM messages child
+		JOIN messages parent ON parent.id = child.reply_to_message_id
+		WHERE child.source_id = ? AND parent.source_message_id = '101'`))
+}
+
 func TestImporterRepeatedIDsRefreshContentRawMetadataRecipientsAndAttachments(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

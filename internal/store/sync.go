@@ -217,13 +217,64 @@ func (s *Store) withSyncSourceWriteContext(
 	}
 	base := s.withoutSyncScope()
 	return base.withTxContext(ctx, func(tx *loggedTx) error {
+		// A joined page transaction already holds the source row and passed
+		// the fence, and keeps both until it commits.
+		if !tx.attribution.holds(sourceID) {
+			if err := s.lockSyncSourceTx(ctx, tx, sourceID); err != nil {
+				return err
+			}
+		}
+		if !tx.syncGenerationFenced {
+			if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
+				return err
+			}
+		}
+		return write(boundQuerier{ctx: ctx, q: tx})
+	})
+}
+
+// WithSourceWriteTxContext runs fn in one transaction for an importer's
+// writes to sourceID. Store methods called with the context fn receives join
+// that transaction instead of opening their own, so their writes commit or
+// roll back together and pass the sync-generation fence once.
+//
+// The transaction holds the shared identity lock, the sync maintenance gate,
+// the source row, and the sync fence until fn returns, so fn must not wait on
+// the network. A write that needs the exclusive identity lock, such as
+// creating a participant, fails inside it; make those writes first.
+func (s *Store) WithSourceWriteTxContext(ctx context.Context, sourceID int64, fn func(context.Context) error) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	return s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error {
+		// Take the identity row first, as BeginExclusive and attribution
+		// writes do, then the gate, the source row, and the fence. Taking the
+		// gate first deadlocks with a source removal that holds the identity
+		// row and waits to lock sync_runs.
+		if err := s.shareIdentityLockTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockSyncSourceTx(ctx, tx, sourceID); err != nil {
 			return err
 		}
-		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
+		if s.IsPostgreSQL() {
+			// Boundaries that lock attachments, then messages, IN SHARE MODE
+			// would deadlock with a transaction that writes a message before
+			// its attachments. Take both writer locks in their order first.
+			if _, err := tx.ExecContext(ctx, `LOCK TABLE attachments, messages IN ROW EXCLUSIVE MODE`); err != nil {
+				return fmt.Errorf("lock source %d message writers: %w", sourceID, err)
+			}
+		}
+		if tx.attribution == nil {
+			tx.attribution = &attributionLockState{sources: make(map[int64]struct{}, 1)}
+		}
+		tx.attribution.sources[sourceID] = struct{}{}
+		return nil
+	}, func(tx *loggedTx) error {
+		if err := fn(withWritableSnapshot(ctx, s.db.DB, tx)); err != nil {
 			return err
 		}
-		return write(boundQuerier{ctx: ctx, q: tx})
+		return s.applyAttributionFlipsTx(tx)
 	})
 }
 

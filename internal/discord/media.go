@@ -236,26 +236,47 @@ func keepArchivedAttachment(ref *store.AttachmentRef, previous store.AttachmentR
 func (m *MediaArchiver) persistAttachments(
 	ctx context.Context, messageID int64, attachments []Attachment, retryExisting bool, messageFlags int,
 ) (MediaResult, error) {
+	plan, err := m.prepareAttachments(ctx, messageID, attachments, retryExisting, messageFlags)
+	if err != nil {
+		return MediaResult{}, err
+	}
+	return m.downloadAttachments(ctx, plan)
+}
+
+type attachmentWork struct {
+	attachment Attachment
+	ref        *store.AttachmentRef
+	download   bool
+	report     bool
+}
+
+// attachmentPlan is one message's recorded attachment markers and the
+// downloads still to attempt for them.
+type attachmentPlan struct {
+	messageID int64
+	refs      []store.AttachmentRef
+	work      []attachmentWork
+}
+
+// prepareAttachments records every current attachment's marker without any
+// network work, so it can run inside a caller's database transaction.
+func (m *MediaArchiver) prepareAttachments(
+	ctx context.Context, messageID int64, attachments []Attachment, retryExisting bool, messageFlags int,
+) (attachmentPlan, error) {
 	existing, err := m.store.MessageDiscordAttachmentsContext(ctx, messageID)
 	if err != nil {
-		return MediaResult{}, fmt.Errorf("load Discord attachment metadata: %w", err)
+		return attachmentPlan{}, fmt.Errorf("load Discord attachment metadata: %w", err)
 	}
 
 	refs := mapAttachments(attachments, messageFlags)
 	if len(refs) != len(attachments) {
-		return MediaResult{}, errors.New("map Discord attachment metadata: attachment count changed")
-	}
-	type attachmentWork struct {
-		attachment Attachment
-		ref        *store.AttachmentRef
-		download   bool
-		report     bool
+		return attachmentPlan{}, errors.New("map Discord attachment metadata: attachment count changed")
 	}
 	work := make([]attachmentWork, 0, len(attachments))
 	remainingRefs := refs
 	for _, attachment := range attachments {
 		if len(remainingRefs) == 0 {
-			return MediaResult{}, errors.New("map Discord attachment metadata: attachment count changed")
+			return attachmentPlan{}, errors.New("map Discord attachment metadata: attachment count changed")
 		}
 		ref := &remainingRefs[0]
 		remainingRefs = remainingRefs[1:]
@@ -282,11 +303,17 @@ func (m *MediaArchiver) persistAttachments(
 		work = append(work, item)
 	}
 	if err := m.replaceMetadata(ctx, messageID, refs); err != nil {
-		return MediaResult{}, err
+		return attachmentPlan{}, err
 	}
+	return attachmentPlan{messageID: messageID, refs: refs, work: work}, nil
+}
 
+// downloadAttachments attempts a prepared plan's downloads and records each
+// outcome. It must run after the plan's markers are committed.
+func (m *MediaArchiver) downloadAttachments(ctx context.Context, plan attachmentPlan) (MediaResult, error) {
+	messageID, refs := plan.messageID, plan.refs
 	result := MediaResult{Items: make([]MediaItemResult, 0, len(refs))}
-	for _, pending := range work {
+	for _, pending := range plan.work {
 		if !pending.report {
 			continue
 		}

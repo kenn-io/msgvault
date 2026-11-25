@@ -127,8 +127,15 @@ func (s *Store) withAttributionTxContext(
 		} else if err := s.shareIdentityLockTxContext(ctx, tx); err != nil {
 			return err
 		}
-		state := &attributionLockState{exclusive: lock.Exclusive, sources: make(map[int64]struct{}, len(sources))}
+		// A joined transaction keeps the locks its owner already took.
+		state := tx.attribution
+		if state == nil {
+			state = &attributionLockState{exclusive: lock.Exclusive, sources: make(map[int64]struct{}, len(sources))}
+		}
 		for _, sourceID := range sources {
+			if state.holds(sourceID) {
+				continue
+			}
 			// The same row lock lockSyncSourceTx takes. A missing source has
 			// no rows to derive, so callers keep reporting their own error.
 			if _, err := tx.ExecContext(ctx,
@@ -146,14 +153,20 @@ func (s *Store) withAttributionTxContext(
 		if err := fn(tx); err != nil {
 			return err
 		}
-		for _, flips := range tx.attribution.flips {
-			if err := s.applyLabelOutboundFlipsTx(flips); err != nil {
-				return err
-			}
-		}
-		tx.attribution.flips = nil
-		return nil
+		return s.applyAttributionFlipsTx(tx)
 	})
+}
+
+// applyAttributionFlipsTx applies the label changes an attribution
+// transaction collected before it commits.
+func (s *Store) applyAttributionFlipsTx(tx *loggedTx) error {
+	for _, flips := range tx.attribution.flips {
+		if err := s.applyLabelOutboundFlipsTx(flips); err != nil {
+			return err
+		}
+	}
+	tx.attribution.flips = nil
+	return nil
 }
 
 // attributionLockForMessage is the shared lock a write of one message needs:
