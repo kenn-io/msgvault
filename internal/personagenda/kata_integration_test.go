@@ -24,7 +24,7 @@ func TestPersonAgendaAgainstPinnedKataService(t *testing.T) {
 	native := katatest.NewHosted(t, "msgvault")
 	server := httptest.NewTLSServer(native.Handler())
 	t.Cleanup(server.Close)
-	client, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: server.URL, HTTPClient: server.Client(), DefaultProject: "msgvault", Timeout: katatest.RequestTimeout})
+	client, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: server.URL, HTTPClient: server.Client(), DefaultProject: "msgvault"})
 	require.NoError(t, err)
 	people := integrationPeople{1: {"person-a", "retired-person-a"}, 2: {"person-b"}, 3: {"bounded", "retired-bounded"}, 4: {"empty-person"}}
 	agenda := Service{Tasks: client, People: people, Project: "msgvault"}

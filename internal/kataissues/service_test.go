@@ -154,7 +154,7 @@ func newFixture(t *testing.T) *fixture {
 
 func (f *fixture) connect(t *testing.T) *kataissues.Service {
 	t.Helper()
-	client, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: f.kata.URL, APIKey: katatest.Token, HTTPClient: f.kata.Client(), DefaultProject: "example", Timeout: katatest.RequestTimeout})
+	client, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: f.kata.URL, APIKey: katatest.Token, HTTPClient: f.kata.Client(), DefaultProject: "example"})
 	require.NoError(t, err)
 	return &kataissues.Service{Archive: f.store.Store, Kata: client, Evidence: kataevidence.New(f.store.Store), People: people{7: {"person-uid-7"}}, Project: "example"}
 }
@@ -623,7 +623,7 @@ func TestAgendaListsMaximumSizeIssues(t *testing.T) {
 		_, err := f.service.Create(t.Context(), fmt.Sprintf("key-large-%d", i), kataissues.CreateInput{Title: "Send the revised budget", PersonID: new(int64(7)), Evidence: evidence})
 		require.NoError(err)
 	}
-	client, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: f.kata.URL, APIKey: katatest.Token, HTTPClient: f.kata.Client(), DefaultProject: "example", Timeout: katatest.RequestTimeout})
+	client, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: f.kata.URL, APIKey: katatest.Token, HTTPClient: f.kata.Client(), DefaultProject: "example"})
 	require.NoError(err)
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%d/issues?status=open", f.kata.URL, f.kata.projectID), nil)
 	require.NoError(err)
@@ -840,7 +840,7 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 		f.kata.service.Handler().ServeHTTP(w, r)
 	}))
 	t.Cleanup(fallbackServer.Close)
-	fallbackClient, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: fallbackServer.URL, APIKey: katatest.Token, DefaultProject: "example", Timeout: katatest.RequestTimeout})
+	fallbackClient, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: fallbackServer.URL, APIKey: katatest.Token, DefaultProject: "example"})
 	require.NoError(err)
 	fallback := *service
 	fallback.Kata = fallbackClient

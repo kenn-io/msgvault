@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	kata "go.kenn.io/kata"
@@ -20,10 +19,6 @@ const (
 	Token = "synthetic-token"
 	// Project is the name of the seeded project.
 	Project = "example"
-	// RequestTimeout overrides taskclient.DefaultRequestTimeout (5s) for
-	// in-process Kata tests so pure-Go SQLite writes and WAL checkpoints do not
-	// time out on contended CI runners. t.Context() still bounds each test.
-	RequestTimeout = time.Minute
 )
 
 // Kata is a running service with one seeded project.

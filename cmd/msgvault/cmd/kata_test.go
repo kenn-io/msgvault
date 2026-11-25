@@ -344,7 +344,7 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 		}
 		return map[string]any{kataissues.EvidenceMetadataKey: kataissues.Envelope{Version: 1, Entries: entries}}
 	}
-	kata, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: kataServer.URL, APIKey: katatest.Token, DefaultProject: "example", Timeout: katatest.RequestTimeout})
+	kata, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: kataServer.URL, APIKey: katatest.Token, DefaultProject: "example"})
 	require.NoError(err)
 	chunkOnly, err := kata.CreateTask(t.Context(), "example", "chunk-only", taskclient.KataCreate{Title: "Cites the extracted text", Metadata: metadata(chunkRef)})
 	require.NoError(err)
