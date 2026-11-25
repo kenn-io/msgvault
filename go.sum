@@ -316,6 +316,8 @@ github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e h1:Q6MvJtQK/iRcRt
 github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e/go.mod h1:autxFIvghDt3jPTLoqZ9OZ7s9qTGNAWmYCjVFWPX/zg=
 github.com/magiconair/properties v1.8.10 h1:s31yESBquKXCV9a/ScB3ESkOjUYYv+X0rg8SYxI99mE=
 github.com/magiconair/properties v1.8.10/go.mod h1:Dhd985XPs7jluiymwWYZ0G4Z61jb3vdS329zhj2hYo0=
+github.com/mariusvniekerk/go-imap/v2 v2.0.0-beta.8.0.20261125121445-3dca0df52597 h1:x13z4PhZRFfuWMMsfi/QssznB1EZM+GIQamuIbIYMJo=
+github.com/mariusvniekerk/go-imap/v2 v2.0.0-beta.8.0.20261125121445-3dca0df52597/go.mod h1:dhoFe2Q0PwLrMD7oZw8ODuaD0vLYPe5uj2wcOMnvh48=
 github.com/mattn/go-colorable v0.1.16 h1:+2YjeAe7xP1OQbZW1jERPWWCDLlNqFNCvjiqGiAt84A=
 github.com/mattn/go-colorable v0.1.16/go.mod h1:6LmQG8QLFO4G5z1gPvYEzlUgJ2wF+stgPZH1UqBm1s8=
 github.com/mattn/go-isatty v0.0.24 h1:tGZZoVgT/KiqK1c8ocVLeDS8BSWMRd47J3Lbz7vsReI=
@@ -400,8 +402,6 @@ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
 github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=
-github.com/rodboev/go-imap/v2 v2.0.0-beta.8.0.20261004224420-eafa576a8efe h1:whY/z/7X0CefbCMbQuFI/6YelwZSq2y0YFC64nfawWU=
-github.com/rodboev/go-imap/v2 v2.0.0-beta.8.0.20261004224420-eafa576a8efe/go.mod h1:dhoFe2Q0PwLrMD7oZw8ODuaD0vLYPe5uj2wcOMnvh48=
 github.com/rogpeppe/go-internal v1.16.0 h1:O9DK+vNMDVGLr2BeZqmpLeMjiMNkuXfcqntWbZV6S5g=
 github.com/rogpeppe/go-internal v1.16.0/go.mod h1:DrUVZyrJU+txYW5/1kwtXQSMFio52ZOxX7yM1VHvnxs=
 github.com/rotisserie/eris v0.5.4 h1:Il6IvLdAapsMhvuOahHWiBnl1G++Q0/L5UIkI5mARSk=
