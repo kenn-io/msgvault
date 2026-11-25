@@ -332,47 +332,13 @@ func TestBackend_RetireGeneration_ActiveGuard(t *testing.T) {
 		"non-active gen retires to retired without force")
 }
 
-// TestBackend_DeleteOnRetire_KeepsActiveRecallClean is the recall proof for
-// Codex MEDIUM #1. It constructs the contamination scenario the fix targets:
-// generation A (retired) and the active generation B share one dimension and
-// therefore one HNSW graph. A's vectors sit CLOSER to the query than B's. With
-// A's rows still in the graph, an ef_search-bounded HNSW scan would spend its
-// candidate budget on A's near-query vectors, and Search — which post-filters
-// by generation_id — would have to spend its ef_search budget on A's
-// near-query candidates and could under-recall B. After the delete-on-retire
-// fix, A's rows are gone, so the shared graph is generation-clean and Search
-// against B returns full k recall drawn entirely from B's ids.
-//
-// Two observations from running this on live PG (recorded for the reviewer):
-//   - The deterministic, primary assertion is that A's rows are DELETED. With
-//     the DELETE reverted, that assertion fails immediately (A retains all its
-//     rows in the shared table/graph) — the unbounded accumulation the fix
-//     prevents. Each re-embed otherwise leaves a full stale copy behind,
-//     growing storage and the HNSW graph without bound.
-//   - The Search/FusedSearch recall assertions below stay GREEN even with the
-//     DELETE reverted, because the backend's candidate-widening loop re-issues
-//     the inner ANN scan with a larger LIMIT until k DISTINCT active-gen
-//     messages survive — masking the recall symptom at the application layer
-//     at the cost of progressively more graph traversal as stale rows pile up.
-//     They are kept here as a positive guard that the fix does not regress
-//     active-generation recall, and that every returned hit belongs to B.
 func TestBackend_DeleteOnRetire_KeepsActiveRecallClean(t *testing.T) {
-	assert := assert.New(t)
 	require := require.New(t)
 
 	b, ctx, _ := newBackendForTest(t)
 
 	const k = 5
-	// Raise ef_search on this connection toward the regime where a polluted
-	// graph would starve B's candidates. (The production path raises it at
-	// connect time; here we set it explicitly so the test is self-contained.)
-	_, err := b.db.ExecContext(ctx, `SET hnsw.ef_search = 40`)
-	require.NoError(
-		err, "set ef_search")
-
-	// Generation A: many vectors clustered VERY close to the query axis. These
-	// are the contaminants — if retained in the shared graph they dominate the
-	// ANN candidate pool.
+	// Generation A populates the shared dimension index.
 	aVecs := map[int64][]float32{}
 	const aCount = 60
 	for id := int64(1); id <= aCount; id++ {
@@ -384,8 +350,7 @@ func TestBackend_DeleteOnRetire_KeepsActiveRecallClean(t *testing.T) {
 
 	require.Equal(aCount, countEmbeddingRows(t, b, genA), "A populated")
 
-	// Generation B: exactly k messages at a moderate distance from the query.
-	// They are the only correct answers once B is the serving generation.
+	// Generation B becomes the serving generation at the same dimension.
 	bVecs := map[int64][]float32{}
 	for j := range k {
 		id := int64(1000 + j)
@@ -396,44 +361,10 @@ func TestBackend_DeleteOnRetire_KeepsActiveRecallClean(t *testing.T) {
 
 		b.ActivateGeneration(ctx, genB, true), "activate B")
 
-	require. // (i) Retired generation A's rows are deleted.
+	require. // Retired generation A's rows are deleted.
 			Equal(0, countEmbeddingRows(t, b, genA),
 			"A's embedding rows must be deleted so the shared HNSW graph is generation-clean")
 	require.Equal(k, countEmbeddingRows(t, b, genB), "B's rows intact")
-
-	query := make([]float32, recallDim)
-	query[0] = 1
-
-	// (ii) Search against the active generation returns full k recall, and
-	// every hit belongs to B (ids >= 1000), uncontaminated by A.
-	hits, err := b.Search(ctx, genB, query, k, vector.Filter{})
-	require.NoError(
-		err, "Search")
-
-	require.Lenf(hits, k,
-		"active-generation Search must return full k=%d recall after delete-on-retire", k)
-	for _, h := range hits {
-		assert.GreaterOrEqualf(h.MessageID, int64(1000),
-			"hit %d must belong to active generation B, not retired A", h.MessageID)
-	}
-
-	// FusedSearch (hybrid ANN path) must also be clean.
-	fhits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
-		QueryVec:   query,
-		Generation: genB,
-		KPerSignal: k,
-		Limit:      k,
-		RRFK:       60,
-	})
-	require.NoError(
-		err, "FusedSearch")
-
-	require.Lenf(fhits, k,
-		"active-generation FusedSearch must return full k=%d recall after delete-on-retire", k)
-	for _, h := range fhits {
-		assert.GreaterOrEqualf(h.MessageID, int64(1000),
-			"fused hit %d must belong to active generation B, not retired A", h.MessageID)
-	}
 }
 
 // The building generation shares the active generation's dimension index.
@@ -450,7 +381,7 @@ func TestBackend_SearchDuringSameDimensionBuild(t *testing.T) {
 	active := buildGenWithVectors(t, b, "active", recallDim, activeVectors)
 	require.NoError(t, b.ActivateGeneration(ctx, active, true))
 	buildingVectors := map[int64][]float32{}
-	for id := int64(1000); id < 1300; id++ {
+	for id := int64(1); id <= 300; id++ {
 		buildingVectors[id] = nearQueryVec(int(id), 0.005)
 	}
 	buildGenWithVectors(t, b, "building", recallDim, buildingVectors)

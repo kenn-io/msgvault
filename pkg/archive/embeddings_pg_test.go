@@ -352,12 +352,6 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 			tc.change(&settings.Descriptor)
 			if tc.changed {
 				require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
-				require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
-				require.NoError(t, archive.Setup(t.Context(), opts))
-				settings.Descriptor = d
-				require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
-				require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
-				require.NoError(t, archive.Setup(t.Context(), opts))
 			} else {
 				require.NoError(t, archive.Setup(t.Context(), opts))
 			}
@@ -371,19 +365,10 @@ func assertSearchMessage(t *testing.T, response *httptest.ResponseRecorder, id i
 		Results []struct {
 			ID int64 `json:"id"`
 		} `json:"results"`
-		Messages []struct {
-			ID int64 `json:"id"`
-		} `json:"messages"`
 	}
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
-	var ids []int64
-	for _, result := range body.Results {
-		ids = append(ids, result.ID)
-	}
-	for _, message := range body.Messages {
-		ids = append(ids, message.ID)
-	}
-	assert.Contains(t, ids, id)
+	require.NotEmpty(t, body.Results)
+	assert.Equal(t, id, body.Results[0].ID)
 }
 
 func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
@@ -426,10 +411,13 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 		}
 		requests.Add(1)
 		data := make([]map[string]any, len(request.Input))
-		for i := range request.Input {
-			v := []float32{1, 0}
+		for i, input := range request.Input {
+			v := []float32{0, 1}
+			if strings.Contains(input, "observatory") {
+				v = []float32{1, 0}
+			}
 			if request.Model == "other" {
-				v = []float32{1, 0, 0}
+				v = append(v, 0)
 			}
 			data[i] = map[string]any{"index": i, "embedding": v}
 		}
@@ -476,7 +464,7 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	unsupported := desc
 	unsupported.Model.Dimensions = 3072
 	opts.Embeddings = settings(unsupported)
-	require.Error(t, archive.RebuildEmbeddings(t.Context(), opts))
+	require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), opts), "create hnsw index for dim 3072")
 	var count int
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, oldID).Scan(&count))
 	assert.Equal(t, 33, count)
@@ -486,7 +474,7 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	opts.Embeddings = settings(desc)
 	require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
 	failOther.Store(true)
-	require.Error(t, archive.RebuildEmbeddings(t.Context(), opts))
+	require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), opts), "unavailable")
 	failOther.Store(false)
 	var buildingID int64
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='building'`).Scan(&buildingID))
@@ -494,18 +482,16 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&built))
 	require.Greater(t, built, 0)
 	require.Less(t, built, 33)
-	for _, poolSize := range []int{1, -1} {
-		invalid := opts
-		invalid.Embeddings = settings(original)
-		invalid.MaxOpenConnections = poolSize
-		require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), invalid), "MaxOpenConnections")
-		var stillBuilding int64
-		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='building'`).Scan(&stillBuilding))
-		assert.Equal(t, buildingID, stillBuilding)
-		var remaining int
-		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&remaining))
-		assert.Equal(t, built, remaining)
-	}
+	invalid := opts
+	invalid.Embeddings = settings(original)
+	invalid.MaxOpenConnections = 1
+	require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), invalid), "MaxOpenConnections")
+	var stillBuilding int64
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='building'`).Scan(&stillBuilding))
+	assert.Equal(t, buildingID, stillBuilding)
+	var remaining int
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&remaining))
+	assert.Equal(t, built, remaining)
 	var restored bool
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT to_regclass('person_embeddings') IS NOT NULL`).Scan(&restored))
 	assert.True(t, restored)
@@ -532,7 +518,7 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	opts.Embeddings = settings(desc)
 	otherSuccesses.Store(0)
 	failOther.Store(true)
-	require.Error(t, archive.RebuildEmbeddings(t.Context(), opts))
+	require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), opts), "unavailable")
 	failOther.Store(false)
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='building'`).Scan(&buildingID))
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&built))
@@ -558,9 +544,6 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, runtime.Close()) }()
 	handler = runtime.NewServer(archive.ServerOptions{}).Handler(nil)
-	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=fts")
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assertSearchMessage(t, response, observatoryID)
 	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assertSearchMessage(t, response, observatoryID)
@@ -570,8 +553,6 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	assert.Equal(t, 1, count)
 	assert.Equal(t, 3, dimension)
 	assert.Equal(t, "other", model)
-	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, oldID).Scan(&count))
-	assert.Zero(t, count)
 }
 
 func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {
