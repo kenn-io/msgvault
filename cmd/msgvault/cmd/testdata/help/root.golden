@@ -190,6 +190,7 @@ Maintenance and repair:
   repair-senders          Restore missing email senders from archived MIME
   schema-version          Print the binary's expected archive schema version
   unpack-attachments      Restore packed attachments to loose files
+  verify-attachments      Check a bounded page of retained attachment files
 
 Setup, daemon, and integrations:
   agent        Set up agents
