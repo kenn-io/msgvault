@@ -2611,6 +2611,18 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("backfill CardDAV inference export state for bound cards: %w", err)
 	}
 
+	// Archived attachment bytes are named by their hash. Run after the legacy
+	// attachment columns and triggers exist so repaired rows reach the change
+	// journal.
+	if err := s.runOnceMigration(
+		ctx, migrationAttachmentBytesHash, 1, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, s.enforceAttachmentBytesHash)
+		},
+	); err != nil {
+		return fmt.Errorf("enforce attachment bytes hash: %w", err)
+	}
+
 	// Reconcile the system relationship type catalog on every open: insert
 	// missing seeds, repair structural drift, and leave user-owned labels,
 	// vCard mappings, colours, icons, and descriptions alone. See

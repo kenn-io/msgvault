@@ -1143,7 +1143,6 @@ func TestMessageMediaOccurrences(t *testing.T) {
 		archived                               bool
 	}{
 		{"slack:F01", "", "", true},
-		{"slack:F02", "stored", "", true},
 		{"discord:A03", "", "", true},
 		{"slack:F04", "", "slack:pending:F04", false},
 		{"slack:F05", "", "none", false},

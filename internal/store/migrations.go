@@ -114,6 +114,7 @@ const (
 	migrationCardDAVInferenceExportStateV2 = "carddav_inference_export_state_v2"
 	// V2 missed resolved keep-local cards without a desired publication.
 	migrationCardDAVInferenceExportStateV3 = "carddav_inference_export_state_v3"
+	migrationAttachmentBytesHash           = "attachment_bytes_hash_v1"
 )
 
 // hiddenTextBackfillCursorKey is the archive_metadata key holding the last

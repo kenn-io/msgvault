@@ -1598,6 +1598,8 @@ CREATE TABLE IF NOT EXISTS attachments (
     size INTEGER,
 
     -- Content-addressed storage (deduplication)
+    -- A row holds archived bytes only when content_hash is set. A hashless
+    -- storage_path is a source locator or placeholder, never archived bytes.
     content_hash TEXT,              -- SHA-256 of content
     storage_path TEXT NOT NULL,     -- relative path: ab/abcd1234...
 

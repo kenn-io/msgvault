@@ -1327,9 +1327,9 @@ func TestStore_IsAttachmentPathReferenced(t *testing.T) {
 	require.NoError(err, "IsAttachmentPathReferenced (hit)")
 	assert.True(referenced, "expected true for referenced path")
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
-		UPDATE attachments SET thumbnail_path = ?
+		UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ?
 		WHERE message_id = ? AND content_hash = ?`),
-		"thumbs/hash1", msgID, "hash1")
+		"thumbhash1", "thumbs/hash1", msgID, "hash1")
 	require.NoError(err, "set thumbnail path")
 	referenced, err = f.Store.IsAttachmentPathReferenced(t.Context(), "thumbs/hash1")
 	require.NoError(err, "IsAttachmentPathReferenced (thumbnail hit)")
