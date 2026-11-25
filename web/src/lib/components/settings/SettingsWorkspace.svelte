@@ -642,7 +642,7 @@
         <div class="category-heading">
           <h2 id="settings-category-heading" tabindex="-1">{label}</h2>
           {#if activeId === 'overview'}
-            <IconButton ariaLabel="Refresh feature status" onclick={refreshFeatureStatus}><RefreshCwIcon size={16} /></IconButton>
+            <IconButton class="feature-refresh" ariaLabel="Refresh feature status" onclick={refreshFeatureStatus}><RefreshCwIcon size={16} /></IconButton>
           {/if}
         </div>
 
@@ -839,6 +839,10 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--control-gap);
+  }
+  .category-heading :global(.feature-refresh) {
+    --kit-control-height: 44px;
+    margin: -8px;
   }
   h2 {
     margin: 0;
