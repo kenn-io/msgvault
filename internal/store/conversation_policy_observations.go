@@ -344,7 +344,7 @@ func participantChatProvenanceWhere(id string) string {
 	const chatSources = `'beeper','slack','slackdump','discord','teams'`
 	// A deleted source leaves its participants' identifiers. Discord names its
 	// identifier types for the kind of account; the others use the source name.
-	const chatIdentifierTypes = `'beeper','slack','slackdump','discord_user_id','discord_webhook_id','teams'`
+	const chatIdentifierTypes = `'beeper','slack','slackdump','discord_user_id','discord_webhook_id','discord_application_id','discord_automated_id','teams'`
 	return `(EXISTS(SELECT 1 FROM sources policy_source WHERE policy_source.source_type IN (` + chatSources + `) AND (EXISTS(SELECT 1 FROM conversation_participants policy_member JOIN conversations policy_room ON policy_room.id=policy_member.conversation_id WHERE policy_member.participant_id=` + id + ` AND policy_room.source_id=policy_source.id) OR EXISTS(SELECT 1 FROM participant_contact_observations policy_observation WHERE policy_observation.participant_id=` + id + ` AND policy_observation.source_id=policy_source.id) OR EXISTS(SELECT 1 FROM messages policy_message WHERE policy_message.sender_id=` + id + ` AND policy_message.source_id=policy_source.id) OR EXISTS(SELECT 1 FROM message_recipients policy_recipient JOIN messages policy_message ON policy_message.id=policy_recipient.message_id WHERE policy_recipient.participant_id=` + id + ` AND policy_message.source_id=policy_source.id))) OR EXISTS(SELECT 1 FROM participant_identifiers policy_identifier WHERE policy_identifier.participant_id=` + id + ` AND policy_identifier.identifier_type IN (` + chatIdentifierTypes + `)))`
 }
 

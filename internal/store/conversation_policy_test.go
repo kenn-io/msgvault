@@ -297,27 +297,40 @@ func TestConversationPolicyFirstFullOverrideReplaysExcludedActivity(t *testing.T
 // identifiers. A name that only a Cold Discord room supported must stay
 // unsupported, so the participant still counts as a chat participant.
 func TestConversationPolicyDeletedDiscordSourceKeepsChatProvenance(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	ctx := t.Context()
-	source, err := st.GetOrCreateSource("discord", "guild-1")
-	requirements.NoError(err)
-	room, err := st.EnsureConversation(ctx, source.ID, "channel-1", "Channel")
-	requirements.NoError(err)
-	requirements.NoError(st.SetConversationPolicyOverride(ctx, source.ID, "channel-1", conversationpolicy.Cold))
-	member, err := st.EnsureParticipantByIdentifier("discord_user_id", "350", "Cold Member")
-	requirements.NoError(err)
-	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: "message", MessageType: "discord", SenderID: sql.NullInt64{Int64: member, Valid: true}})
-	requirements.NoError(err)
-	nameSupported := func() bool {
-		var supported bool
-		requirements.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT EXISTS(SELECT 1 FROM participants p WHERE p.id = ? AND `+
-			store.FullParticipantNameWhere("p.id", "p.display_name")+`)`), member).Scan(&supported))
-		return supported
+	for _, identifierType := range []string{"discord_user_id", "discord_webhook_id", "discord_application_id", "discord_automated_id"} {
+		t.Run(identifierType, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := testutil.NewTestStore(t)
+			ctx := t.Context()
+			source, err := st.GetOrCreateSource("discord", "guild-1")
+			requirements.NoError(err)
+			room, err := st.EnsureConversation(ctx, source.ID, "channel-1", "Channel")
+			requirements.NoError(err)
+			requirements.NoError(st.SetConversationPolicyOverride(ctx, source.ID, "channel-1", conversationpolicy.Cold))
+			member, err := st.EnsureParticipantByIdentifier(identifierType, "350", "Cold Member")
+			requirements.NoError(err)
+			_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: "message", MessageType: "discord", SenderID: sql.NullInt64{Int64: member, Valid: true}})
+			requirements.NoError(err)
+			identifierWhere := store.FullParticipantIdentifierWhereSQLite("i")
+			if st.IsPostgreSQL() {
+				identifierWhere = store.FullParticipantIdentifierWherePostgres("i")
+			}
+			supported := func() (name, identifier bool) {
+				requirements.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT EXISTS(SELECT 1 FROM participants p WHERE p.id = ? AND `+
+					store.FullParticipantNameWhere("p.id", "p.display_name")+`)`), member).Scan(&name))
+				requirements.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT EXISTS(SELECT 1 FROM participant_identifiers i WHERE i.participant_id = ? AND `+
+					identifierWhere+`)`), member).Scan(&identifier))
+				return name, identifier
+			}
+			name, identifier := supported()
+			requirements.False(name, "a Cold room does not support the name")
+			requirements.False(identifier, "a Cold room does not support the identifier")
+			requirements.NoError(st.RemoveSource(source.ID))
+			name, identifier = supported()
+			assertions.False(name, "deleting the source must not make the name independent")
+			assertions.False(identifier, "deleting the source must not make the identifier independent")
+		})
 	}
-	requirements.False(nameSupported(), "a Cold room does not support the name")
-	requirements.NoError(st.RemoveSource(source.ID))
-	assertions.False(nameSupported(), "deleting the source must not make the name independent")
 }
 
 // Contextual embeddings built before room policy named participants whatever
