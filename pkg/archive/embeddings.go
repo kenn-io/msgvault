@@ -20,7 +20,7 @@ import (
 )
 
 // Embeddings configures a host-owned client and the descriptor used to build it.
-// Changing its vector identity requires retiring the existing generation before Setup.
+// Use RebuildEmbeddings when its vector identity changes.
 type Embeddings struct {
 	Client     *embedclient.Client
 	Descriptor embedmodel.Descriptor
@@ -69,7 +69,7 @@ func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vec
 	}
 	if building != nil {
 		if building.Fingerprint != fingerprint {
-			return vector.Generation{}, false, fmt.Errorf("%w: building fingerprint %q differs from configured %q; finish the build or retire it", vector.ErrBuildingInProgress, building.Fingerprint, fingerprint)
+			return vector.Generation{}, false, fmt.Errorf("%w: building fingerprint %q differs from configured %q; use RebuildEmbeddings to replace it", vector.ErrBuildingInProgress, building.Fingerprint, fingerprint)
 		}
 	}
 	active, err := backend.ActiveGeneration(ctx)
@@ -77,7 +77,7 @@ func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vec
 		return vector.Generation{}, false, err
 	}
 	if err == nil && active.Fingerprint != fingerprint {
-		return vector.Generation{}, false, fmt.Errorf("embedding generation %q differs from configured %q; retire it before changing settings", active.Fingerprint, fingerprint)
+		return vector.Generation{}, false, fmt.Errorf("embedding generation %q differs from configured %q; use RebuildEmbeddings to replace it", active.Fingerprint, fingerprint)
 	}
 	if building != nil {
 		return *building, true, nil
@@ -95,7 +95,7 @@ func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vec
 	return vector.Generation{ID: id, Fingerprint: fingerprint}, true, nil
 }
 
-func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config) error {
+func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config, rebuild bool) error {
 	if !pgvector.Available() {
 		return nil
 	}
@@ -112,9 +112,29 @@ func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config) er
 	// A new generation creates its own indexes; existing generations need migration to check them.
 	dimension := 0
 	if exists {
-		backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipMigrate: true, ReadOnly: true})
+		backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipMigrate: true, ReadOnly: !rebuild})
 		if err != nil {
 			return err
+		}
+		if rebuild {
+			building, err := backend.BuildingGeneration(ctx)
+			if err != nil {
+				return err
+			}
+			if building != nil && building.Fingerprint != cfg.GenerationFingerprint() {
+				if err := backend.RetireGeneration(ctx, building.ID, false); err != nil {
+					return err
+				}
+			}
+			active, err := backend.ActiveGeneration(ctx)
+			if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
+				return err
+			}
+			if err == nil && active.Fingerprint != cfg.GenerationFingerprint() {
+				if err := backend.RetireGeneration(ctx, active.ID, true); err != nil {
+					return err
+				}
+			}
 		}
 		_, _, err = embeddingGeneration(ctx, backend, cfg, false)
 		if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {

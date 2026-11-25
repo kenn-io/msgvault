@@ -352,11 +352,127 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 			tc.change(&settings.Descriptor)
 			if tc.changed {
 				require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
+				require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
+				require.NoError(t, archive.Setup(t.Context(), opts))
+				settings.Descriptor = d
+				require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
+				require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
 			} else {
 				require.NoError(t, archive.Setup(t.Context(), opts))
 			}
 		})
 	}
+}
+
+func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
+	require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), archive.PostgreSQL{}), "requires an embedding client")
+	require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), archive.PostgreSQL{Embeddings: &archive.Embeddings{}}), "requires an embedding client")
+	dsn := os.Getenv("MSGVAULT_TEST_DB")
+	if !store.IsPostgresURL(dsn) {
+		t.Skip("requires PostgreSQL")
+	}
+	admin, err := sql.Open("pgx", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close() })
+	installTestPgvector(t, admin)
+	schema := "archive_" + strings.ToLower(rand.Text())
+	role := "runtime_" + strings.ToLower(rand.Text())
+	quote := func(s string) string { return pgx.Identifier{s}.Sanitize() }
+	t.Cleanup(func() {
+		_, e := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+quote(schema)+" CASCADE")
+		assert.NoError(t, e)
+		_, e = admin.ExecContext(context.WithoutCancel(t.Context()), "DROP ROLE IF EXISTS "+quote(role))
+		assert.NoError(t, e)
+	})
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model string   `json:"model"`
+			Input []string `json:"input"`
+		}
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+			return
+		}
+		data := make([]map[string]any, len(request.Input))
+		for i := range request.Input {
+			v := []float32{1, 0}
+			if request.Model == "other" {
+				v = []float32{1, 0, 0}
+			}
+			data[i] = map[string]any{"index": i, "embedding": v}
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data, "model": request.Model}))
+	}))
+	t.Cleanup(service.Close)
+	settings := func(d embedmodel.Descriptor) *archive.Embeddings {
+		client, err := embedclient.New(embedclient.Options{Model: d.Model, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}})
+		require.NoError(t, err)
+		return &archive.Embeddings{Client: client, Descriptor: d}
+	}
+	desc := testDescriptor()
+	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: settings(desc)}
+	require.NoError(t, archive.Setup(t.Context(), opts))
+	owner, err := archive.Open(t.Context(), opts)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, owner.Close()) }()
+	source, err := owner.Store().GetOrCreateSource("slack", "source")
+	require.NoError(t, err)
+	conversation, err := owner.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
+	require.NoError(t, err)
+	for _, body := range []string{"observatory", "second"} {
+		id, err := owner.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: body, MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}, Subject: sql.NullString{String: body, Valid: true}})
+		require.NoError(t, err)
+		require.NoError(t, owner.Store().UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+		require.NoError(t, owner.Store().UpsertFTS(id, body, body, "", "", ""))
+	}
+	require.NoError(t, owner.Embed(t.Context()))
+	handler := owner.NewServer(archive.ServerOptions{}).Handler(nil)
+	response := sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "observatory")
+	var oldID int64
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='active'`).Scan(&oldID))
+	desc.Model.Name, desc.Model.Dimensions = "other", 3
+	opts.Embeddings = settings(desc)
+	require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
+	require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
+	_, err = admin.ExecContext(t.Context(), "CREATE ROLE "+quote(role)+" LOGIN PASSWORD 'archive_test'")
+	require.NoError(t, err)
+	for _, grant := range []string{"GRANT USAGE ON SCHEMA " + quote(schema) + " TO " + quote(role), "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA " + quote(schema) + " TO " + quote(role), "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA " + quote(schema) + " TO " + quote(role)} {
+		_, err = admin.ExecContext(t.Context(), grant)
+		require.NoError(t, err)
+	}
+	u, err := url.Parse(dsn)
+	require.NoError(t, err)
+	u.User = url.UserPassword(role, "archive_test")
+	opts.URL = u.String()
+	runtime, err := archive.Open(t.Context(), opts)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, runtime.Close()) }()
+	handler = runtime.NewServer(archive.ServerOptions{}).Handler(nil)
+	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=fts")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "observatory")
+	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
+	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "index_building")
+	require.NoError(t, runtime.Embed(t.Context()))
+	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "observatory")
+	var count, dimension int
+	var model, fingerprint string
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*), max(dimension), max(model), max(fingerprint) FROM index_generations WHERE state='active'`).Scan(&count, &dimension, &model, &fingerprint))
+	assert.Equal(t, 1, count)
+	assert.Equal(t, 3, dimension)
+	assert.Equal(t, "other", model)
+	identity, err := desc.VectorIdentity()
+	require.NoError(t, err)
+	cfg := vector.Config{Enabled: true, Backend: "pgvector"}
+	cfg.Embeddings.Model, cfg.Embeddings.Dimension, cfg.Embeddings.VectorIdentity = desc.Model.Name, desc.Model.Dimensions, identity
+	cfg.ApplyDefaults()
+	assert.Equal(t, cfg.GenerationFingerprint(), fingerprint)
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, oldID).Scan(&count))
+	assert.Zero(t, count)
 }
 
 func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {

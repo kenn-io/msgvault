@@ -78,6 +78,22 @@ func (p PostgreSQL) connectionURL(extensionSchema, currentPath string) (string, 
 // using a schema-owning database role, before starting runtime readers/writers.
 // The caller serializes setup with other setup/upgrade processes.
 func Setup(ctx context.Context, postgres PostgreSQL) error {
+	return setup(ctx, postgres, false)
+}
+
+// RebuildEmbeddings prepares an archive for a changed embedding identity. Run it
+// as the schema owner, after stopping Embed calls across all archive handles.
+// It retires generations with a different identity, including daemon-built
+// generations, and deletes their vectors. Embed builds and activates the new
+// generation. If the identity is unchanged, it behaves like Setup.
+func RebuildEmbeddings(ctx context.Context, postgres PostgreSQL) error {
+	if postgres.Embeddings == nil || postgres.Embeddings.Client == nil {
+		return errors.New("rebuild embeddings requires an embedding client and descriptor")
+	}
+	return setup(ctx, postgres, true)
+}
+
+func setup(ctx context.Context, postgres PostgreSQL, rebuild bool) error {
 	var cfg vector.Config
 	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
 		var err error
@@ -131,7 +147,7 @@ func Setup(ctx context.Context, postgres PostgreSQL) error {
 		return err
 	}
 	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
-		return setupEmbeddings(ctx, st, cfg)
+		return setupEmbeddings(ctx, st, cfg, rebuild)
 	}
 	return nil
 }
