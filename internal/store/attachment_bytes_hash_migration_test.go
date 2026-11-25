@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -59,9 +60,9 @@ func TestInitSchemaRepairsAttachmentsClaimingBytesWithoutHash(t *testing.T) {
 		"thumbnail-without-hash": {message: first, hash: other, path: casPath(other), thumbPath: "thumbs/a.jpg"},
 		// Duplicate bytes in one message were kept as hashless aliases at
 		// the content-addressed path.
-		"keyed-alias":     {message: first, path: casPath(hash), state: "stored", sourceAttachmentID: "slack:F1"},
-		"colliding-alias": {message: first, path: casPath(hash), state: "stored"},
-		"legacy-alias":    {message: second, path: casPath(other)},
+		"keyed-alias":   {message: first, path: casPath(hash), state: "stored", sourceAttachmentID: "slack:F1"},
+		"unkeyed-alias": {message: first, path: casPath(hash), state: "stored"},
+		"legacy-alias":  {message: second, path: casPath(other)},
 	}
 	for name, r := range seed {
 		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
@@ -72,6 +73,10 @@ func TestInitSchemaRepairsAttachmentsClaimingBytesWithoutHash(t *testing.T) {
 		`), r.message, name, r.hash, r.path, r.state, r.sourceAttachmentID, r.thumbHash, r.thumbPath)
 		require.NoError(t, err, name)
 	}
+
+	var unkeyedID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(),
+		`SELECT id FROM attachments WHERE filename = 'unkeyed-alias'`).Scan(&unkeyedID))
 
 	_, err := st.DB().ExecContext(t.Context(), st.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`), "attachment_bytes_hash_v1")
@@ -85,9 +90,13 @@ func TestInitSchemaRepairsAttachmentsClaimingBytesWithoutHash(t *testing.T) {
 		"thumbnail-without-hash": {message: first, hash: other, path: casPath(other)},
 		"keyed-alias": {message: first, hash: hash, path: casPath(hash), state: "stored",
 			partKey: "slack:F1", sourceAttachmentID: "slack:F1"},
-		"colliding-alias": {message: first, path: casPath(hash)},
-		"legacy-alias":    {message: second, hash: other, path: casPath(other)},
+		"unkeyed-alias": {message: first, hash: hash, path: casPath(hash), state: "stored"},
+		"legacy-alias":  {message: second, hash: other, path: casPath(other)},
 	}
+	// An alias without a usable source attachment ID is keyed by its row.
+	w := want["unkeyed-alias"]
+	w.partKey = fmt.Sprintf("legacy-alias:%d", unkeyedID)
+	want["unkeyed-alias"] = w
 	for name, w := range want {
 		var got row
 		err := st.DB().QueryRowContext(t.Context(), st.Rebind(`

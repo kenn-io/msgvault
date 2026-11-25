@@ -6175,3 +6175,55 @@ func TestCopySubsetNoteOnlyAfterOccurrenceEdit(t *testing.T) {
 	r.NoError(err)
 	r.Empty(record.Links)
 }
+
+func TestCopySubsetRepairsLegacyAttachmentsWithoutHash(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 2)
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	hash := strings.Repeat("ab", 32)
+
+	// A source written by an older release holds rows the guard rejects.
+	src, err := sql.Open(sqliteutil.DriverName(), srcDB)
+	require.NoError(err)
+	defer func() { _ = src.Close() }()
+	for _, name := range attachmentBytesHashTriggers {
+		_, err := src.ExecContext(t.Context(), `DROP TRIGGER `+name)
+		require.NoError(err)
+	}
+	_, err = src.ExecContext(t.Context(), `
+		INSERT INTO attachments (message_id, filename, storage_path, attachment_state, source_attachment_id, thumbnail_path)
+		VALUES (1, 'alias', ?, 'stored', 'slack:F1', NULL),
+		       (1, 'lost', 'legacy/report.pdf', 'stored', NULL, NULL),
+		       (2, 'thumb', 'https://files.example.com/a.png', 'pending', NULL, 'thumbs/a.jpg')`,
+		hash[:2]+"/"+hash)
+	require.NoError(err)
+
+	_, err = CopySubset(t.Context(), srcDB, dstDir, 2, false)
+	require.NoError(err)
+
+	dst, err := sql.Open(sqliteutil.DriverName(), filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	defer func() { _ = dst.Close() }()
+	got := map[string][3]string{}
+	rows, err := dst.QueryContext(t.Context(), `
+		SELECT filename, COALESCE(content_hash, ''), COALESCE(attachment_state, ''), COALESCE(thumbnail_path, '')
+		FROM attachments WHERE filename IN ('alias', 'lost', 'thumb')`)
+	require.NoError(err)
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name string
+		var row [3]string
+		require.NoError(rows.Scan(&name, &row[0], &row[1], &row[2]))
+		got[name] = row
+	}
+	require.NoError(rows.Err())
+	assert.Equal(map[string][3]string{
+		"alias": {hash, "stored", ""},
+		"lost":  {"", "failed", ""},
+		"thumb": {"", "pending", ""},
+	}, got)
+
+	_, err = dst.ExecContext(t.Context(), `UPDATE attachments SET content_hash = NULL WHERE filename = 'alias'`)
+	assert.Error(err, "the copy reinstalls the guard")
+}

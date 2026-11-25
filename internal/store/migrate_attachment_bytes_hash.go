@@ -17,6 +17,13 @@ import (
 //   - attachment_state 'stored' without a content hash;
 //   - a thumbnail_path without a thumbnail hash.
 //
+// The SQLite guard triggers. Subset copy drops them while it bulk-copies
+// rows from older archives, and the post-copy upgrade reinstalls them.
+var attachmentBytesHashTriggers = []string{
+	"trg_attachments_archived_bytes_hash_insert",
+	"trg_attachments_archived_bytes_hash_update",
+}
+
 // archivedBytesHashPredicate is the rule both backends enforce, over the
 // columns of row (empty for a table constraint, "NEW." in a trigger).
 func archivedBytesHashPredicate(row string) string {
@@ -59,22 +66,23 @@ func (s *Store) enforceAttachmentBytesHash(ctx context.Context, tx *loggedTx) er
 		}
 	} else {
 		// SQLite cannot add a CHECK constraint without rebuilding the table.
-		ddl = []string{
-			`DROP TRIGGER IF EXISTS trg_attachments_archived_bytes_hash_insert`,
-			`DROP TRIGGER IF EXISTS trg_attachments_archived_bytes_hash_update`,
+		for _, name := range attachmentBytesHashTriggers {
+			ddl = append(ddl, `DROP TRIGGER IF EXISTS `+name)
+		}
+		ddl = append(ddl,
 			`CREATE TRIGGER trg_attachments_archived_bytes_hash_insert
 			BEFORE INSERT ON attachments
-			WHEN NOT (` + archivedBytesHashPredicate("NEW.") + `)
+			WHEN NOT (`+archivedBytesHashPredicate("NEW.")+`)
 			BEGIN
 				SELECT RAISE(ABORT, 'attachments: stored bytes and thumbnails require a content hash');
 			END`,
 			`CREATE TRIGGER trg_attachments_archived_bytes_hash_update
 			BEFORE UPDATE OF attachment_state, content_hash, thumbnail_path, thumbnail_hash ON attachments
-			WHEN NOT (` + archivedBytesHashPredicate("NEW.") + `)
+			WHEN NOT (`+archivedBytesHashPredicate("NEW.")+`)
 			BEGIN
 				SELECT RAISE(ABORT, 'attachments: stored bytes and thumbnails require a content hash');
 			END`,
-		}
+		)
 	}
 	for _, stmt := range ddl {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
@@ -86,10 +94,12 @@ func (s *Store) enforceAttachmentBytesHash(ctx context.Context, tx *loggedTx) er
 
 // recoverAttachmentPathHashes records the hash a hashless row's
 // content-addressed storage path names. The per-message hash index admits one
-// unkeyed row per hash, which is why aliases were left hashless; an alias
-// without a source-part key takes its source attachment ID as the key, the
-// same upgrade replaceMessageAttachmentsWhereTx applies. An alias that would
-// still collide stays hashless with no recorded outcome.
+// unkeyed row per hash, which is why aliases were left hashless. A recovered
+// alias without a source-part key takes its source attachment ID, the same
+// upgrade replaceMessageAttachmentsWhereTx applies. When that ID is missing or
+// taken and an unkeyed row already holds the hash, it takes a key derived from
+// its row. A replacing import removes a row with a stale key just as it
+// removes an unkeyed one.
 func recoverAttachmentPathHashes(ctx context.Context, tx *loggedTx) error {
 	type candidate struct {
 		id, messageID                 int64
@@ -147,16 +157,7 @@ func recoverAttachmentPathHashes(ctx context.Context, tx *loggedTx) error {
 				return fmt.Errorf("check attachment %d content hash: %w", c.id, err)
 			}
 			if taken {
-				// The path still names bytes the sibling row records, so
-				// keep the legacy alias readable as a row with no recorded
-				// outcome rather than a failed download.
-				if _, err := tx.ExecContext(ctx, `
-					UPDATE attachments SET attachment_state = NULL, attachment_skip_reason = NULL
-					WHERE id = ? AND attachment_state = ?
-				`, c.id, attachmentpolicy.StateStored); err != nil {
-					return fmt.Errorf("clear attachment %d alias state: %w", c.id, err)
-				}
-				continue
+				c.partKey = fmt.Sprintf("legacy-alias:%d", c.id)
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `
