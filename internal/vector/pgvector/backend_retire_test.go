@@ -371,35 +371,47 @@ func TestBackend_DeleteOnRetire_KeepsActiveRecallClean(t *testing.T) {
 // Its closer vectors must not crowd the active generation out of search.
 func TestBackend_SearchDuringSameDimensionBuild(t *testing.T) {
 	b, ctx, db := newBackendForTest(t)
-	db.SetMaxOpenConns(1)
-	_, err := db.ExecContext(ctx, `SET enable_seqscan = off; SET hnsw.ef_search = 40`)
-	require.NoError(t, err)
+	const count = 2000
 	activeVectors := map[int64][]float32{}
-	for id := int64(1); id <= 5; id++ {
-		activeVectors[id] = midQueryVec(int(id))
+	buildingVectors := map[int64][]float32{}
+	for id := int64(1); id <= count; id++ {
+		activeVectors[id] = midQueryVec(int(id)%(recallDim-1) + 1)
+		buildingVectors[id] = nearQueryVec(int(id), 0.005)
 	}
 	active := buildGenWithVectors(t, b, "active", recallDim, activeVectors)
 	require.NoError(t, b.ActivateGeneration(ctx, active, true))
-	buildingVectors := map[int64][]float32{}
-	for id := int64(1); id <= 300; id++ {
-		buildingVectors[id] = nearQueryVec(int(id), 0.005)
-	}
 	buildGenWithVectors(t, b, "building", recallDim, buildingVectors)
-	_, err = db.ExecContext(ctx, `ANALYZE embeddings`)
+	_, err := db.ExecContext(ctx, `ANALYZE embeddings; ANALYZE messages`)
+	require.NoError(t, err)
+
+	// Force the former indexed query to show that the closer building vectors
+	// exhaust even the production ef_search budget before active hits appear.
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	_, err = conn.ExecContext(ctx, `SET enable_seqscan = off; SET enable_sort = off; SET hnsw.ef_search = 1000`)
 	require.NoError(t, err)
 	query := unitVec(recallDim, 0)
+	plan := explainInnerANN(t, conn, active, query, 500)
+	require.Contains(t, plan, "Index Scan using "+VectorIndexName(recallDim))
+	assert.Zero(t, innerANNDistinctCount(t, conn, active, query, 500))
+	require.NoError(t, conn.Close())
+
 	for _, filter := range []vector.Filter{{}, {MessageIDs: []int64{1, 2, 3, 4, 5}}} {
 		hits, err := b.Search(ctx, active, query, 5, filter)
 		require.NoError(t, err)
 		require.Len(t, hits, 5)
 		for _, hit := range hits {
-			assert.LessOrEqual(t, hit.MessageID, int64(5))
+			assert.Contains(t, activeVectors, hit.MessageID)
+			assert.InDelta(t, 0.6, hit.Score, 0.00001)
 		}
 		fused, _, err := b.FusedSearch(ctx, vector.FusedRequest{QueryVec: query, Generation: active, KPerSignal: 5, Limit: 5, RRFK: 60, Filter: filter})
 		require.NoError(t, err)
 		require.Len(t, fused, 5)
 		for _, hit := range fused {
-			assert.LessOrEqual(t, hit.MessageID, int64(5))
+			assert.Contains(t, activeVectors, hit.MessageID)
+			assert.InDelta(t, 0.6, hit.VectorScore, 0.00001)
 		}
 	}
 }
