@@ -1110,11 +1110,25 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 	// from a slim fast path that elides the join.
 	queryVecLit := vectorLiteral(queryVec)
 	if filter.IsEmpty() {
-		// The inner query ranks chunks, and the outer query groups them by
-		// message using the best chunk. Start with k*annOverFetchFactor chunks;
-		// if deduplication leaves fewer than k messages, double the limit up to
-		// chunkCeiling. The indexed branch uses the connection's raised
-		// store.HNSWEfSearch; generationCandidates selects it or the exact path.
+		// Fast path: let pgvector use the HNSW index by issuing ORDER BY
+		// <=> LIMIT inside a subquery first. The inner SELECT returns at
+		// most innerLimit rows in distance order; the HNSW index applies to that
+		// inner ORDER BY (ef_search is raised at connect time — see
+		// store.HNSWEfSearch — so the index is not capped at the pgvector
+		// default of 40). When another generation shares the dimension,
+		// generationCandidates uses an exact sort instead. The outer query
+		// re-groups by message_id to collapse multi-chunk messages (best chunk
+		// wins via MIN), then
+		// re-sorts and re-limits the deduplicated result. We start at
+		// k*annOverFetchFactor chunks so the common single-chunk case is a
+		// single query; on multi-chunk corpora the dedup can collapse the
+		// candidate set below k, so the loop doubles the inner LIMIT
+		// (bounded by chunkCeiling) until k distinct messages survive.
+		//
+		// The dimension predicate is embedded as a literal (matching the
+		// partial HNSW index's WHERE dimension = <N> in migrate.go and the
+		// fused.go ANN path) rather than a bind param, so a PG generic plan
+		// can prove the partial-index predicate and use the HNSW index.
 		candidates := generationCandidates(dim, "$1", "$2", "$3", "", "EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND "+store.LiveMessagesWhere("m", true)+")")
 		stmt := `SELECT ann.message_id, MIN(ann.distance) AS distance FROM (` + candidates + `) ann
 			GROUP BY ann.message_id ORDER BY distance, ann.message_id LIMIT $4`
@@ -1128,13 +1142,37 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		})
 	}
 
-	// Keep structured filters in a correlated EXISTS rather than transferring
-	// every matching message ID to Go. The inner limit counts chunks, so the
-	// widening ceiling must be the filtered chunk count: a message count can
-	// stop too early when messages have multiple chunks. The distinct-message
-	// count is an early exit for selective filters. Both counts use the same
-	// EXISTS predicate as the search. Each query builds its own bind positions,
-	// so its placeholders match its own arguments.
+	// Filtered path: intersecting with a structured filter may cause a
+	// sequential scan within the filtered set. Rather than materializing every
+	// matching message id in Go and shipping it back as one bigint[] param
+	// (which serialized hundreds of
+	// thousands of ids per query on a broad filter), the filter stays in
+	// SQL as an inline correlated EXISTS against messages — the same shape
+	// the empty-filter fast path uses for liveness,
+	// extended with the structured-filter clauses. [V2]
+	//
+	// The inner ORDER BY <=> LIMIT still short-circuits on chunk count.
+	// The widening loop mirrors the empty-filter (and sqlitevec) pattern
+	// so a multi-chunk filtered universe still reaches k distinct messages.
+	//
+	// The inner LIMIT counts CHUNKS, so the loop ceiling must be a CHUNK
+	// count, not a message count: a MESSAGE count would under-shoot on
+	// multi-chunk filtered corpora — the inner LIMIT would saturate at the
+	// message count before the GROUP BY surfaced k distinct messages,
+	// short-returning (the exact failure sqlitevec's comment warns
+	// against). Bound the loop by the CHUNK count of the filtered set, and
+	// use the DISTINCT filtered-message count (messages with a chunk in
+	// this generation) only as an early exit so a selective filter does not
+	// drive the loop to the full generation. Both counts are derived from
+	// the SAME EXISTS predicate the search SQL applies, so the loop bounds
+	// stay exactly aligned with what the inner scan can surface.
+	//
+	// Recompute the loop ceilings (chunk count + distinct-message count)
+	// over the SAME EXISTS predicate, so the loop bounds stay exactly
+	// aligned with what the inner scan can surface. Both the count query
+	// and the search query rebuild the EXISTS clause with their own bind
+	// closure, so each statement's $N placeholders resolve against its own
+	// ordinals.
 	filteredChunks, filteredMessages, err := b.filteredChunkAndMessageCount(ctx, gen, filter)
 	if err != nil {
 		return nil, err

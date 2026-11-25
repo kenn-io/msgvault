@@ -183,13 +183,24 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			innerArg := bind(innerChunks)
 			kp1Arg := bind(kPlus1)
 			kArg := bind(req.KPerSignal)
-			// Rank chunks before grouping them by message. The candidate query
-			// selects the indexed or exact path. An empty filter uses an inline
-			// liveness check; a structured filter joins the materialized set and
-			// may lead PostgreSQL to scan it sequentially. MIN picks each message's
-			// best chunk, and the outer limit keeps KPerSignal+1 distinct messages.
-			// The widening loop increases innerChunks when deduplication leaves
-			// fewer candidates than that limit.
+			// Use an inner SELECT with ORDER BY <=> LIMIT so pgvector can
+			// apply the HNSW index before the outer GROUP BY collapses
+			// multi-chunk messages. When another generation shares the
+			// dimension, generationCandidates uses an exact sort instead. The
+			// candidate set is constrained either by an inline correlated EXISTS
+			// against the live-message set
+			// (empty filter — mirrors backend.go, lets the HNSW
+			// index drive the inner ORDER BY without first materializing the
+			// whole universe) or by a JOIN to the materialized `filtered`
+			// CTE (non-empty filter; note that JOIN may, depending on
+			// PG/pgvector version and planner costing, force a sequential
+			// ANN scan within the filtered set — same tradeoff as
+			// backend.go's filtered path, not yet verified with EXPLAIN
+			// ANALYZE). The outer GROUP BY then picks the best-scoring chunk
+			// per message via MIN(distance) and limits to KPerSignal+1
+			// distinct messages, so the outer LIMIT is applied after dedup.
+			// The widening loop in FusedSearch grows innerChunks when this
+			// dedup collapses the pool below KPerSignal+1.
 			annConstraint := "              JOIN filtered f ON f.id = e.message_id\n"
 			annLive := ""
 			if emptyFilter {
