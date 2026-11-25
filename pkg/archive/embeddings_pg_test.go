@@ -386,6 +386,7 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 		assert.NoError(t, e)
 	})
 	var failOther atomic.Bool
+	var otherSuccesses atomic.Int64
 	var requests atomic.Int64
 	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -395,9 +396,12 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
 			return
 		}
-		if request.Model == "other" && failOther.Load() {
+		if request.Model == "other" && failOther.Load() && otherSuccesses.Load() > 0 {
 			http.Error(w, "unavailable", http.StatusInternalServerError)
 			return
+		}
+		if request.Model == "other" {
+			otherSuccesses.Add(1)
 		}
 		requests.Add(1)
 		data := make([]map[string]any, len(request.Input))
@@ -426,7 +430,11 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	require.NoError(t, err)
 	conversation, err := owner.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
 	require.NoError(t, err)
-	for _, body := range []string{"observatory", "second"} {
+	for i := range 33 {
+		body := fmt.Sprintf("message %d", i)
+		if i == 0 {
+			body = "observatory"
+		}
 		id, err := owner.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: body, MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}, Subject: sql.NullString{String: body, Valid: true}})
 		require.NoError(t, err)
 		require.NoError(t, owner.Store().UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
@@ -446,7 +454,7 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	require.Error(t, archive.RebuildEmbeddings(t.Context(), opts))
 	var count int
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, oldID).Scan(&count))
-	assert.Equal(t, 2, count)
+	assert.Equal(t, 33, count)
 	_, err = owner.Store().DB().ExecContext(t.Context(), `DROP TABLE person_embeddings`)
 	require.NoError(t, err)
 	desc.Model.Name, desc.Model.Dimensions = "other", 3
@@ -455,18 +463,24 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	failOther.Store(true)
 	require.Error(t, archive.RebuildEmbeddings(t.Context(), opts))
 	failOther.Store(false)
+	var buildingID int64
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='building'`).Scan(&buildingID))
+	var built int
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&built))
+	require.Greater(t, built, 0)
+	require.Less(t, built, 33)
 	var restored bool
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT to_regclass('person_embeddings') IS NOT NULL`).Scan(&restored))
 	assert.True(t, restored)
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, oldID).Scan(&count))
-	assert.Equal(t, 2, count)
+	assert.Equal(t, 33, count)
 	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.ErrorContains(t, archive.Setup(t.Context(), opts), "RebuildEmbeddings")
 	opts.Embeddings = settings(original)
 	before := requests.Load()
 	require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
-	assert.Equal(t, before, requests.Load())
+	assert.Greater(t, requests.Load(), before)
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM index_generations WHERE state='building'`).Scan(&count))
 	assert.Zero(t, count)
 	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
@@ -475,9 +489,22 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	require.NoError(t, owner.Embed(t.Context()))
 	assert.Equal(t, before, requests.Load())
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, oldID).Scan(&count))
-	assert.Equal(t, 2, count)
+	assert.Equal(t, 33, count)
 	opts.Embeddings = settings(desc)
+	otherSuccesses.Store(0)
+	failOther.Store(true)
+	require.Error(t, archive.RebuildEmbeddings(t.Context(), opts))
+	failOther.Store(false)
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='building'`).Scan(&buildingID))
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&built))
+	require.Greater(t, built, 0)
+	require.Less(t, built, 33)
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, oldID).Scan(&count))
+	assert.Equal(t, 33, count)
 	require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
+	var activeID int64
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='active'`).Scan(&activeID))
+	assert.Equal(t, buildingID, activeID)
 	_, err = admin.ExecContext(t.Context(), "CREATE ROLE "+quote(role)+" LOGIN PASSWORD 'archive_test'")
 	require.NoError(t, err)
 	for _, grant := range []string{"GRANT USAGE ON SCHEMA " + quote(schema) + " TO " + quote(role), "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA " + quote(schema) + " TO " + quote(role), "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA " + quote(schema) + " TO " + quote(role)} {
