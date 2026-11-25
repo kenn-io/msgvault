@@ -843,12 +843,13 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 			if errors.Is(err, ErrChannelNotFound) {
 				// The conversation itself is unreadable, so every queued
 				// thread would fail the same way. Drop them rather than wedge
-				// the conversation behind debt it may never pay, and clear
-				// the audit pin: the walk that queued them no longer proves
-				// they were fetched, so the next audit after access returns
-				// must fetch every thread.
+				// the conversation behind debt it may never pay. Their walk's
+				// page cursor is already past their roots and the audit pin
+				// claims they were fetched, so clear both: the walk restarts
+				// within its window, and the next audit fetches every thread.
 				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				cs.PendingThreads = nil
+				cs.BackfillCursor, cs.CatchUpCursor = "", ""
 				cs.AuditedThrough = ""
 				cs.LastSkippedAt = tsFormat(imp.now())
 				cc.channelUnreadable = true

@@ -1178,6 +1178,88 @@ func TestWalkStopsWhenRepliesFindConversationUnreadable(t *testing.T) {
 	}
 }
 
+// --limit can stop a walk with threads queued from a page its cursor has
+// already passed. If the next run drops them because the conversation is
+// unreadable, the walk must revisit their roots once access returns instead
+// of resuming past them and certifying coverage it never fetched.
+func TestWalkRevisitsThreadsDroppedWhileConversationUnreadable(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		// queue runs the limited sync that leaves the thread queued and
+		// returns the reply that must be archived once access returns.
+		queue func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, start time.Time) string
+	}{
+		{
+			name: "initial walk",
+			queue: func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, _ time.Time) string {
+				_, err := imp.Import(t.Context(), opts)
+				require.NoError(t, err)
+				return f.conv("C09").findRoot(rootTS).Replies[0].TS
+			},
+		},
+		{
+			name: "audit walk",
+			queue: func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, start time.Time) string {
+				unlimited := opts
+				unlimited.Limit = 0
+				_, err := imp.Import(t.Context(), unlimited)
+				require.NoError(t, err)
+				missed := tsFormat(start.Add(time.Hour))
+				f.mu.Lock()
+				root := f.conv("C09").findRoot(rootTS)
+				root.Replies = append(root.Replies, fakeMsg{TS: missed, ThreadTS: rootTS, User: "UME", Text: "queued, then dropped"})
+				f.mu.Unlock()
+				imp.now = func() time.Time { return start.Add(2 * time.Hour) }
+				_, err = imp.Import(t.Context(), opts)
+				require.NoError(t, err)
+				return missed
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			f, rootTS := oldThreadWorkspace(t)
+			f.scopes = "channels:read,channels:history,users:read,users:read.email"
+			// An older message puts a second history page behind the root.
+			c := f.conv("C09")
+			c.Msgs = append([]fakeMsg{{TS: ts(-15000), User: "UME", Text: "older chatter"}}, c.Msgs...)
+			imp, opts := testImporter(t, f)
+			start := time.Now()
+			imp.now = func() time.Time { return start }
+			limited := opts
+			limited.Limit = 2
+
+			want := tc.queue(t, f, imp, limited, rootTS, start)
+			count := func() int {
+				var n int
+				require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
+					`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+want).Scan(&n))
+				return n
+			}
+			require.Zero(count(), "test setup: the limit must leave the thread queued")
+
+			f.mu.Lock()
+			f.unreadableReplies = map[string]bool{"C09": true}
+			f.mu.Unlock()
+			imp.now = func() time.Time { return start.Add(2*time.Hour + time.Minute) }
+			_, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+
+			f.mu.Lock()
+			f.unreadableReplies = nil
+			f.mu.Unlock()
+			for _, d := range []time.Duration{3 * time.Hour, 3*time.Hour + time.Minute, 3*time.Hour + 2*time.Minute} {
+				imp.now = func() time.Time { return start.Add(d) }
+				_, err := imp.Import(t.Context(), opts)
+				require.NoError(err)
+			}
+			require.Equal(1, count(), "the dropped thread's reply must be archived once access returns")
+		})
+	}
+}
+
 func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
