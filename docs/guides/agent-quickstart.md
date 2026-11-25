@@ -330,6 +330,7 @@ backend checks for action permissions, source scope, and sender identity, and
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
 | `list_person_attributes` | read | — | owner-only |
+| `list_relationships` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |

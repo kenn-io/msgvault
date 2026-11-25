@@ -12,6 +12,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -47,6 +48,7 @@ type catalogCapabilities struct {
 	mediaSearch          bool
 	people               bool
 	directoryPeople      bool
+	relationshipPeople   bool
 	chatDiscovery        bool
 	visualSearch         bool
 	embeddingStatus      bool
@@ -136,14 +138,18 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 	return catalogCapabilities{
-		sqlQuery:             opts.ArchiveSQLQuerier != nil,
-		semanticSearch:       opts.HybridEngine != nil || opts.HybridSearcher != nil,
-		vectorInMessage:      opts.HybridEngine != nil && opts.Backend != nil,
-		similarMessages:      opts.Backend != nil || opts.SimilarSearcher != nil,
-		mediaSearch:          opts.MediaSearcher != nil,
-		people:               opts.PeopleBackend != nil,
-		directoryPeople:      opts.DirectoryBackend != nil,
-		chatDiscovery:        opts.ChatDiscoveryBackend != nil,
+		sqlQuery:        opts.ArchiveSQLQuerier != nil,
+		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
+		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
+		similarMessages: opts.Backend != nil || opts.SimilarSearcher != nil,
+		mediaSearch:     opts.MediaSearcher != nil,
+		people:          opts.PeopleBackend != nil,
+		directoryPeople: opts.DirectoryBackend != nil,
+		chatDiscovery:   opts.ChatDiscoveryBackend != nil,
+		relationshipPeople: func() bool {
+			_, ok := opts.PeopleBackend.(peoplebrowser.RelationshipLister)
+			return ok
+		}(),
 		visualSearch:         opts.VisualSearcher != nil,
 		embeddingStatus:      opts.EmbeddingStatus != nil,
 		savedViews:           opts.SavedViews != nil,
@@ -285,6 +291,7 @@ func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 		listMeetingActionItemsDefinition(nil),
 		listDirectoryPeopleDefinition(nil),
 		findChatDefinition(),
+		listRelationshipsDefinition(nil),
 		listSavedViewsDefinition(nil),
 		querySQLDefinition(),
 		runSavedViewDefinition(nil),
@@ -408,6 +415,8 @@ func similarMessagesAvailable(c catalogCapabilities) bool { return c.similarMess
 func peopleAvailable(c catalogCapabilities) bool { return c.people }
 
 func directoryPeopleAvailable(c catalogCapabilities) bool { return c.directoryPeople }
+
+func relationshipPeopleAvailable(c catalogCapabilities) bool { return c.relationshipPeople }
 
 func savedViewsAvailable(c catalogCapabilities) bool { return c.savedViews }
 
