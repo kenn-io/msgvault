@@ -1264,6 +1264,59 @@ func TestWalkRevisitsThreadsDroppedWhileConversationUnreadable(t *testing.T) {
 	}
 }
 
+// A backfill begun under --no-threads and finished by a threaded run stamps
+// AuditedThrough without having fetched its early threads; its catch-up walk
+// owes them. If that catch-up finds the conversation unreadable, the stamp
+// proves nothing, so the audit after access returns must fetch every thread.
+func TestCatchUpAbandonedWhileUnreadableDoesNotCertifyThreads(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	f.scopes = "channels:read,channels:history,users:read,users:read.email"
+	// The root leads the first history page; older chatter fills the second.
+	c := f.conv("C09")
+	c.Msgs = []fakeMsg{{TS: ts(-15000), User: "UME", Text: "older chatter"}, *c.findRoot(rootTS)}
+	reply := c.Msgs[1].Replies[0].TS
+	imp, opts := testImporter(t, f)
+	start := time.Now()
+	at := func(d time.Duration) { imp.now = func() time.Time { return start.Add(d) } }
+	count := func() int {
+		var n int
+		require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
+			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+reply).Scan(&n))
+		return n
+	}
+
+	threadless := opts
+	threadless.Limit, threadless.NoThreads = 1, true
+	at(0)
+	_, err := imp.Import(t.Context(), threadless)
+	require.NoError(err)
+	limited := opts
+	limited.Limit = 1
+	at(time.Minute)
+	_, err = imp.Import(t.Context(), limited)
+	require.NoError(err)
+	require.Zero(count(), "test setup: the root's thread must still be owed to catch-up")
+
+	f.mu.Lock()
+	f.handleGhost(f.conv("C09"))
+	f.mu.Unlock()
+	at(2 * time.Minute)
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+
+	f.mu.Lock()
+	f.ghosts = nil
+	f.mu.Unlock()
+	for _, d := range []time.Duration{3 * time.Hour, 3*time.Hour + time.Minute, 3*time.Hour + 2*time.Minute} {
+		at(d)
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+	}
+	require.Equal(1, count(), "the reply catch-up never fetched must be archived once access returns")
+}
+
 func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

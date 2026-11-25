@@ -1005,11 +1005,18 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 				// from wedging every future workspace sync into failure —
 				// and a vacuous stamp keeps the stamp-less adoption from
 				// re-flagging it (nothing exists to cover; the gap
-				// machinery owns any later resurrection). AuditedThrough
-				// stays at the last walk that read threads: if access
-				// returns, the next audit owes every reply since then.
-				// LastSkippedAt defers that audit instead.
+				// machinery owns any later resurrection). A periodic audit
+				// is scheduled only once other debt is paid, so its
+				// AuditedThrough is the last walk that fetched every thread:
+				// keep it, and the next audit owes every reply since then.
+				// Other catch-up debt, such as a backfill begun under
+				// --no-threads, was stamped without fetching its threads,
+				// so its stamp is cleared and the next audit fetches every
+				// thread. LastSkippedAt defers that audit either way.
 				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
+				if !cs.AuditPending {
+					cs.AuditedThrough = ""
+				}
 				cs.ThreadsPending = false
 				cs.CatchUpCursor, cs.CatchUpLatest = "", ""
 				cs.AuditPending = false
