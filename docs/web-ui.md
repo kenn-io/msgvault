@@ -399,6 +399,8 @@ saved profiles, including people with no archived messages. To link observed
 identities, check multiple observed people and select **Merge**. To delete
 saved profiles in bulk, select them from the list.
 
+With **People** sorted by **Closest**, the list also shows saved people’s keep-in-touch list or custom frequency and due status. In **Filter**, **Keep in touch** narrows the ranked People list to overdue, due within 0–3660 UTC days (including overdue), no list, or unknown due date. Clear search, Saved, and profile filters to use it. Unsaved clusters have no cadence. **Due date updating** marks stale cadence without claiming a current due date.
+
 Selecting a person or domain opens three tabs: **Messages**, **Files**, and
 **Details**. **Messages** uses the same table and reader as the Messages
 workspace. A person's events and meetings appear when an account owner

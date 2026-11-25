@@ -966,3 +966,35 @@ test('People list keys stay in that grid while Messages is open', async ({ page 
   expect(await messages.getAttribute('aria-activedescendant')).toBe(active);
   await expect(messages.getByRole('row', { selected: true })).toHaveCount(0);
 });
+
+test('cadence filters reach ranked requests and block incompatible sorting', async ({ page }) => {
+  const bodies: Record<string, unknown>[] = [];
+  await prepare(page);
+  await page.route('**/api/v1/relationships', route => {
+    bodies.push(route.request().postDataJSON());
+    return route.fulfill({ json: { rows: [], total_count: 0 } });
+  });
+  await page.goto('/?workspace=relationships');
+  const list = page.getByRole('complementary', { name: 'People', exact: true });
+  await list.getByRole('button', { name: /^Filter/ }).click();
+  await page.getByRole('button', { name: 'Due', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await list.getByRole('spinbutton', { name: 'Due within days' }).fill('4000');
+  await list.getByRole('button', { name: /^Filter/ }).click();
+  await page.getByRole('button', { name: 'Overdue', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await list.getByRole('button', { name: /^Filter/ }).click();
+  await page.getByRole('button', { name: 'Due', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(list.getByRole('spinbutton', { name: 'Due within days' })).toHaveValue('');
+  await expect(list.getByRole('alert')).toHaveCount(0);
+  const dueHistoryLength = await page.evaluate(() => history.length);
+  await list.getByRole('spinbutton', { name: 'Due within days' }).fill('7');
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ cadence: 'due', due_within_days: 7 });
+  await list.getByRole('spinbutton', { name: 'Due within days' }).fill('0');
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ cadence: 'due', due_within_days: 0 });
+  expect(await page.evaluate(() => history.length)).toBe(dueHistoryLength);
+  await list.getByRole('combobox', { name: 'Sort: Closest', exact: true }).click();
+  await page.getByRole('option', { name: 'Most recent', exact: true }).click();
+  await expect(list.getByText(/Keep-in-touch filters require People/)).toBeVisible();
+});

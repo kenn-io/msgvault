@@ -10,6 +10,8 @@ All notable changes to msgvault, grouped by release.
 
 ### New features
 
+- The Web UI shows saved contacts’ cadence in People sorted by Closest, with Keep in touch filters to find people due for contact.
+- Ranked relationships carry the saved person ID, contact-list cadence, and last-contact channel. `POST /api/v1/relationships` and the new MCP `list_relationships` tool filter the ranking by `cadence` and `due_within_days`.
 - Read the order, delivery, invoice and reservation details an email carries as schema.org markup with the MCP tool `get_message_records`, without sending the message anywhere.
 - Let owner MCP clients read person attributes and definitions, and enable attribute edits with `--allow-attribute-writes`. The owner approves the previewed value, and the write refuses if that value or empty slot changes before saving. The tools require an updated daemon. Existing archives migrate attribute JSON on writable open; upgrade applications using embedded archive readers alongside the daemon. Numbers stored before this change may have already lost their original spelling.
 

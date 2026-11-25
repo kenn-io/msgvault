@@ -1,3 +1,4 @@
+import { RelationshipsHTTPRequestCadence as Cadence } from '../api/generated/models/relationshipsHTTPRequestCadence';
 import { normalizeCategory } from '../settings/layout';
 import { SvelteSet } from 'svelte/reactivity';
 
@@ -23,7 +24,7 @@ import type {
   OperationStatusAuthority,
   OperationState
 } from './models';
-import { DEFAULT_EXPLORE_COLUMNS, identityDirection, sameFilterID, singleSourceValue } from './models';
+import { validDueWithin, DEFAULT_EXPLORE_COLUMNS, identityDirection, sameFilterID, singleSourceValue } from './models';
 import { trimAttributeText } from '../directory/attribute-text';
 import { isCalendarDate } from '../directory/dates';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
@@ -183,6 +184,8 @@ export const defaultExploreURLState: ExploreURLState = {
   relationshipFacet: 'people',
   relationshipTarget: null,
   relationshipShowAll: false,
+  relationshipCadence: '',
+  relationshipDueWithinDays: null,
   relationshipFiles: false,
   relationshipSaved: false,
   relationshipSort: 'closest',
@@ -515,6 +518,8 @@ function normalize(value: unknown): ExploreURLState {
     relationshipFacet,
     relationshipTarget,
     relationshipShowAll: value.relationshipShowAll === true,
+    relationshipCadence: Object.values(Cadence).some(cadence => cadence === value.relationshipCadence) ? value.relationshipCadence as ExploreURLState['relationshipCadence'] : '',
+    relationshipDueWithinDays: value.relationshipCadence === 'due' && typeof value.relationshipDueWithinDays === 'number' && validDueWithin(value.relationshipDueWithinDays) ? value.relationshipDueWithinDays : null,
     relationshipFiles: value.relationshipFiles === true,
     relationshipSaved: value.relationshipSaved === true || value.workspace === 'directory',
     relationshipSort: value.workspace === 'directory' ? value.directorySort === 'last_contact_asc' ? 'last_contact_asc' : value.directorySort === 'last_contact_desc' ? 'recent' : 'name' : value.relationshipSort === 'name' || value.relationshipSort === 'recent' || value.relationshipSort === 'last_contact_asc' ? value.relationshipSort : 'closest',
@@ -571,6 +576,8 @@ const WORKSPACE_FIELDS: Partial<Record<keyof ExploreURLState, ReadonlyArray<Expl
   relationshipFacet: ['relationships'],
   relationshipTarget: ['relationships'],
   relationshipShowAll: ['relationships'],
+  relationshipCadence: ['relationships'],
+  relationshipDueWithinDays: ['relationships'],
   relationshipFiles: ['relationships'],
   relationshipSaved: ['relationships'],
   relationshipSort: ['relationships'],
