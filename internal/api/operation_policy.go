@@ -144,7 +144,9 @@ var operationPolicies = map[string]OperationPolicy{
 	"getMeetingMetrics":      {},
 	"listMeetingActionItems": {},
 
-	"importMuesli": {},
+	"importHex":          {},
+	"importHexRecording": {},
+	"importMuesli":       {},
 
 	"clearOrganizationAttribute":         {},
 	"createOrganization":                 {},
