@@ -352,6 +352,10 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 			tc.change(&settings.Descriptor)
 			if tc.changed {
 				require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
+				if tc.name == "suffix" {
+					require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
+					require.NoError(t, archive.Setup(t.Context(), opts))
+				}
 			} else {
 				require.NoError(t, archive.Setup(t.Context(), opts))
 			}
