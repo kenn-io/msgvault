@@ -217,8 +217,16 @@ separate from the curated `persons` table.
 | `filename` | TEXT | Original filename |
 | `mime_type` | TEXT | MIME type |
 | `size` | INTEGER | Size in bytes |
-| `content_hash` | TEXT | SHA-256 hash |
-| `storage_path` | TEXT | Relative path: `ab/abcd1234...` |
+| `content_hash` | TEXT | SHA-256 hash of the archived bytes |
+| `storage_path` | TEXT | Relative path such as `ab/abcd1234...`, or a source locator when `content_hash` is empty |
+| `attachment_state` | TEXT | `pending`, `stored`, `skipped`, `failed`, or `unavailable` |
+| `thumbnail_hash`, `thumbnail_path` | TEXT | Archived thumbnail bytes and their path |
+
+A row holds archived bytes only when `content_hash` is set. Without a hash,
+`storage_path` records where the source keeps the media, such as a provider
+URL or a pending-download marker, and backup, packing, and export skip it.
+The database rejects a `stored` row without `content_hash` and a
+`thumbnail_path` without `thumbnail_hash`.
 
 **sync_runs / sync_run_items / sync_checkpoints / source_import_items** -- Sync and import state for resumability and diagnostics.
 

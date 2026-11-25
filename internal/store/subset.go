@@ -215,6 +215,17 @@ func CopySubsetWithOptions(
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 
+	// Older sources can hold attachment rows the hash guard rejects. Copy
+	// them as they are; the post-copy upgrade below repairs them and
+	// reinstalls the guard.
+	for _, name := range attachmentBytesHashTriggers {
+		if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS `+name); err != nil {
+			_ = tx.Rollback()
+			_, _ = db.ExecContext(ctx, "DETACH DATABASE src")
+			closeAndCleanup()
+			return nil, fmt.Errorf("drop attachment hash guard for copy: %w", err)
+		}
+	}
 	result, err := copyData(ctx, db, tx, rowCount, options)
 	if err != nil {
 		_ = tx.Rollback()
@@ -230,6 +241,12 @@ func CopySubsetWithOptions(
 		_ = tx.Rollback()
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied derived data migrations: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = ?`, migrationAttachmentBytesHash); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset attachment hash migration: %w", err)
 	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV1); err != nil {

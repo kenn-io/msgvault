@@ -58,7 +58,7 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 			case "other person":
 				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=NULL WHERE id=?`), mid)
 			case "storage path fallback":
-				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET content_hash=NULL,source_attachment_id='slack:file' WHERE message_id=?`), mid)
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET content_hash=NULL,attachment_state=NULL,source_attachment_id='slack:file' WHERE message_id=?`), mid)
 			}
 			require.NoError(err)
 			require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: versionIDs[name]}, ""))

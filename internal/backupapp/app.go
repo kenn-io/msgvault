@@ -15,7 +15,10 @@ import (
 )
 
 // contentBearing and thumbBearing select attachment rows whose bytes live
-// in the local attachments tree. Only genuine URL schemes are excluded — a
+// in the local attachments tree. The archive names archived bytes by hash
+// and refuses a stored row or thumbnail path without one, so a hashless
+// storage_path is a source locator with no bytes to capture (see
+// store.enforceAttachmentBytesHash). Only genuine URL schemes are excluded — a
 // local namespaced path is free to start with "http" (an importer may use
 // an "http-cache/" namespace), so the patterns must match the "://"
 // separator, not the bare prefix.

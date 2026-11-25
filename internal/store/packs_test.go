@@ -369,8 +369,12 @@ func TestCanonicalizeAttachmentBlobAliasesPreservesCaseEquivalentNonlocalRows(t 
 			canonical := hash[:2] + "/" + hash
 			fx.addAttachment(hash, tc.preservedPath, 100)
 			fx.addAttachment(uppercase, "legacy/"+uppercase, 100)
+			// A stored row keeps a content hash throughout the exchange.
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(
+				`UPDATE attachments SET attachment_state = 'stored' WHERE message_id = ?`), fx.msgID)
+			require.NoError(err)
 
-			err := st.CanonicalizeAttachmentBlobAliases(hash, []string{uppercase})
+			err = st.CanonicalizeAttachmentBlobAliases(hash, []string{uppercase})
 			require.NoError(err)
 
 			rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`

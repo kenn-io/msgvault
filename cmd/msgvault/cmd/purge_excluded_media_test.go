@@ -234,7 +234,7 @@ func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {
 	f := newPurgeMediaFixture(t, sourceTypeBeeper)
 	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		UPDATE attachments
-		SET content_hash = NULL, storage_path = ?, thumbnail_hash = ?, thumbnail_path = ?
+		SET content_hash = NULL, attachment_state = NULL, storage_path = ?, thumbnail_hash = ?, thumbnail_path = ?
 		WHERE id = ?
 		RETURNING id
 	`), "thumbnail-only", f.contentHash, f.contentPath, f.retainedID).Scan(&f.retainedID))

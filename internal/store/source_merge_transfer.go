@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
 func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, plan sourceMergePlan) error {
@@ -383,7 +385,7 @@ func copyMergedMessageEvidence(ctx context.Context, tx *loggedTx, from, into, or
 		}
 		// Only the copied occurrence loses provider eligibility. Original live
 		// destination attachments retain their pending state and endpoint.
-		if _, err := tx.ExecContext(ctx, `UPDATE attachments SET attachment_state = 'unavailable', attachment_skip_reason = 'historical-source' WHERE id = ? AND COALESCE(content_hash, '') = ''`, copied); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE attachments SET attachment_state = ?, attachment_skip_reason = ? WHERE id = ? AND COALESCE(content_hash, '') = ''`, attachmentpolicy.StateUnavailable, sourceMergeHistoricalReason, copied); err != nil {
 			return err
 		}
 	}

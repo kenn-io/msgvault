@@ -8989,7 +8989,7 @@ func TestHandleGetAttachmentContent_HashlessAliasFallback(t *testing.T) {
 			require.NoError(f.Store.UpsertAttachment(t.Context(), donor, "donor.bin", "application/octet-stream", path, hash, len(content)))
 			require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), f.CreateMessage("alias"), store.AttachmentWrite{
 				SourceAttachmentID: provider + ":alias", Filename: "retained.pdf", MIMEType: "application/pdf",
-				StoragePath: path, Size: int64(len(content)), State: "stored",
+				StoragePath: path, Size: int64(len(content)),
 			}))
 			seedAttachmentFile(t, cfg, hash, content)
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM messages WHERE id=?`), donor)
