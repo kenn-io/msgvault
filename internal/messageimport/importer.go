@@ -97,7 +97,7 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		priorConversationID = ref.ConversationID
 	}
 
-	senderID, err := resolveSender(ctx, st, snapshot)
+	senderID, err := resolveSender(ctx, st, sourceID, snapshot)
 	if err != nil {
 		return apiimport.Write{}, err
 	}
@@ -188,7 +188,7 @@ func storedMatches(ctx context.Context, st *store.Store, prior store.MessageMeta
 // resolveSender returns the sender's participant. An email or phone is a
 // global identity shared with every other source; anything else becomes an
 // imported identifier, see senderIdentifier.
-func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int64, error) {
+func resolveSender(ctx context.Context, st *store.Store, sourceID int64, snapshot Snapshot) (int64, error) {
 	sender := snapshot.Sender
 	var (
 		id  int64
@@ -201,10 +201,13 @@ func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int
 		if err == nil {
 			// An existing participant keeps its name; one without a name
 			// takes this sender's, as the phone and identifier paths do.
-			_, err = st.UpdateParticipantDisplayNameByEmail(ctx, sender.Email, sender.Name)
+			// The name came from this source's message, so its support goes
+			// with the source.
+			_, err = st.UpdateParticipantDisplayNameFromSourceContext(ctx, sourceID, sender.Email, sender.Name)
 		}
 	case sender.Phone != "":
-		id, err = st.EnsurePhoneParticipantContext(ctx, sender.Phone, sender.Name)
+		// Like the sender name, the number is this source's evidence.
+		id, err = st.EnsurePhoneParticipantFromSourceContext(ctx, sourceID, sender.Phone, sender.Name)
 	default:
 		id, err = st.EnsureParticipantByIdentifierContext(ctx,
 			SenderIdentifierType, senderIdentifier(snapshot.SourceIdentifier, sender), sender.Name)

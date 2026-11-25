@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -53,11 +54,23 @@ func (b *Backend) UpsertPersons(ctx context.Context, gen vector.GenerationID, pe
 	if len(persons) == 0 {
 		return nil
 	}
+	versions := make([]store.ConversationPolicyPersonVersion, len(persons))
+	for i, person := range persons {
+		versions[i] = store.ConversationPolicyPersonVersion{PersonID: person.PersonID, Revision: person.Revision}
+	}
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin person upsert tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := b.checkPolicyPublicationTx(ctx, tx, nil); err != nil {
+		return err
+	}
+	if b.policyStore != nil {
+		if err := b.policyStore.CheckConversationPolicyPersonPublicationTx(ctx, tx, versions); err != nil {
+			return err
+		}
+	}
 	dim, err := personGeneration(ctx, tx, gen, true)
 	if err != nil {
 		return err
@@ -157,6 +170,9 @@ func (b *Backend) DeletePersonsNotIn(ctx context.Context, gen vector.GenerationI
 		return fmt.Errorf("begin person reconcile tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := b.checkPolicyPublicationTx(ctx, tx, nil); err != nil {
+		return err
+	}
 	if _, err := personGeneration(ctx, tx, gen, true); err != nil {
 		return err
 	}

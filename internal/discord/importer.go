@@ -1520,7 +1520,7 @@ func (imp *Importer) persistPage(
 			return err
 		}
 	}
-	participants, err := imp.ensurePageParticipants(ctx, mapped)
+	participants, err := imp.ensurePageParticipants(ctx, conversationID, mapped)
 	if err != nil {
 		return err
 	}
@@ -1675,9 +1675,12 @@ func (imp *Importer) persistPage(
 	return nil
 }
 
-// ensurePageParticipants resolves every participant a page observes in one
-// transaction, in the order the messages observe them.
-func (imp *Importer) ensurePageParticipants(ctx context.Context,
+// ensurePageParticipants resolves every participant a page observes, in the
+// order the messages observe them. A Full room records each profile fact
+// against the room. When the room's policy refuses that write, the
+// participant keeps only its bare identifier, and those resolve in one
+// transaction.
+func (imp *Importer) ensurePageParticipants(ctx context.Context, conversationID int64,
 	mapped []mappedMessage,
 ) (map[store.ParticipantIdentifier]int64, error) {
 	var identifiers []store.ParticipantIdentifier
@@ -1692,12 +1695,31 @@ func (imp *Importer) ensurePageParticipants(ctx context.Context,
 			identifiers = append(identifiers, identifier)
 		}
 	}
-	participantIDs, err := imp.store.EnsureParticipantsByIdentifierContext(ctx, identifiers)
+	resolved := make(map[store.ParticipantIdentifier]int64, len(identifiers))
+	var refused, bare []store.ParticipantIdentifier
+	for _, identifier := range identifiers {
+		resolution, err := imp.store.ResolveConversationParticipantContext(ctx, conversationID, store.ConversationParticipantIdentity{
+			IdentifierType:  identifier.Type,
+			IdentifierValue: identifier.Value,
+			DisplayName:     identifier.DisplayName,
+		})
+		if errors.Is(err, store.ErrConversationPolicyStale) || errors.Is(err, store.ErrPersonBindingConflict) {
+			// Archive stable identity and per-message presentation even when the
+			// originating room no longer admits shared profile writes.
+			refused = append(refused, identifier)
+			bare = append(bare, store.ParticipantIdentifier{Type: identifier.Type, Value: identifier.Value})
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("resolve Discord participant: %w", err)
+		}
+		resolved[identifier] = resolution.ParticipantID
+	}
+	participantIDs, err := imp.store.EnsureParticipantsByIdentifierContext(ctx, bare)
 	if err != nil {
 		return nil, fmt.Errorf("resolve Discord participant: %w", err)
 	}
-	resolved := make(map[store.ParticipantIdentifier]int64, len(identifiers))
-	for i, identifier := range identifiers {
+	for i, identifier := range refused {
 		resolved[identifier] = participantIDs[i]
 	}
 	return resolved, nil

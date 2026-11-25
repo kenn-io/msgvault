@@ -418,7 +418,7 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest,
 	var senderArgs []any
 	var senderSQL strings.Builder
 	for _, term := range req.Filter.SenderTerms {
-		predicate, _, args := search.SenderLookup(term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		predicate, _, args := search.SenderLookup(term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m", b.senderEligibility())
 		for _, arg := range args {
 			name := fmt.Sprintf("sender_term_%d", len(senderArgs))
 			senderArgs = append(senderArgs, sql.Named(name, arg))
@@ -428,7 +428,7 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest,
 	}
 	filterWhere += senderSQL.String()
 	if req.Filter.SenderDomain != "" {
-		filterWhere += " AND " + search.SenderDomainCondition(":sender_domain")
+		filterWhere += " AND " + search.SenderDomainCondition(":sender_domain", b.senderEligibility())
 		senderArgs = append(senderArgs, sql.Named("sender_domain", req.Filter.SenderDomain))
 	}
 	embeddingFreshSQL := ""

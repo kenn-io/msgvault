@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -650,15 +651,7 @@ func TestImportLinksPreviouslyArchivedSenders(t *testing.T) {
 	require.NoError(err)
 	bridge, err := st.EnsureParticipantByIdentifier("beeper", "bridge-user", "Bob Sample")
 	require.NoError(err)
-	source, err := st.GetOrCreateSource("beeper", "telegram")
-	require.NoError(err)
-	key := "provider:8:telegram:7:service:0::19:7000000000000666666"
-	_, err = st.RecordContactObservationContext(t.Context(), bridge, store.ParticipantContactObservationInput{
-		AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
-		ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID,
-		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
-	})
-	require.NoError(err)
+	recordBridgeTelegramIdentity(t, st, bridge, "provider:8:telegram:7:service:0::19:7000000000000666666")
 
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
@@ -691,15 +684,7 @@ func TestImportLinksArchivedPeerWithoutMessages(t *testing.T) {
 	require.NoError(err)
 	bridge, err := st.EnsureParticipantByIdentifier("beeper", "bridge-user", "Alice Example")
 	require.NoError(err)
-	source, err := st.GetOrCreateSource("beeper", "telegram")
-	require.NoError(err)
-	key := "provider:8:telegram:7:service:0::1:2"
-	_, err = st.RecordContactObservationContext(t.Context(), bridge, store.ParticipantContactObservationInput{
-		AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
-		ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID,
-		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
-	})
-	require.NoError(err)
+	recordBridgeTelegramIdentity(t, st, bridge, "provider:8:telegram:7:service:0::1:2")
 
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
@@ -721,15 +706,7 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 			require.NoError(err)
 			participant, err := st.EnsureParticipantByIdentifier("telegram", "user2", "Alice Example")
 			require.NoError(err)
-			source, err := st.GetOrCreateSource("beeper", "telegram")
-			require.NoError(err)
-			key := "provider:8:telegram:7:service:0::1:2"
-			_, err = st.RecordContactObservationContext(ctx, bridge, store.ParticipantContactObservationInput{
-				AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
-				ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID,
-				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
-			})
-			require.NoError(err)
+			recordBridgeTelegramIdentity(t, st, bridge, "provider:8:telegram:7:service:0::1:2")
 			// Fail only this sender's identity so the import reaches its message.
 			condition := "NEW.participant_id = " + strconv.FormatInt(participant, 10)
 			if table == "participant_links" {
@@ -828,4 +805,21 @@ func TestImportFailedBatchRetriesChat(t *testing.T) {
 	assert.EqualValues(t, 10, summary.MessagesAdded)
 	assert.EqualValues(t, 50, summary.MessagesSkipped)
 	assert.Equal(t, 60, countMessages(t, st))
+}
+
+// recordBridgeTelegramIdentity records a Beeper bridge user's Telegram ID from
+// a Full room. Chat evidence supports matches only from Full rooms.
+func recordBridgeTelegramIdentity(t *testing.T, st *store.Store, bridge int64, key string) {
+	t.Helper()
+	source, err := st.GetOrCreateSource("beeper", "telegram")
+	require.NoError(t, err)
+	room, err := st.EnsureConversation(t.Context(), source.ID, "bridge-room", "Bridge")
+	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), source.ID, "bridge-room", conversationpolicy.Full))
+	_, err = st.RecordContactObservationContext(t.Context(), bridge, store.ParticipantContactObservationInput{
+		AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
+		ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID, ConversationID: &room,
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	})
+	require.NoError(t, err)
 }

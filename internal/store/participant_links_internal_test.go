@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 )
 
 func TestLinkParticipantsReadsOnlyTouchedComponents(t *testing.T) {
@@ -285,9 +287,13 @@ func TestMergeParticipantsReappliesAcceptedMatchAfterScopedCleanup(t *testing.T)
 			seedDisjointOwnedParticipantLinks(t, st, 6, 1000)
 			source, err := st.GetOrCreateSource("slack", "merge-support@example.test")
 			require.NoError(err)
+			// Chat evidence supports matches only from a Full room.
+			room, err := st.EnsureConversation(t.Context(), source.ID, "merge-room", "Merge")
+			require.NoError(err)
+			require.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "merge-room", conversationpolicy.Full))
 			for participant, provider := range map[int64]string{1: "previous-provider", 2: "survivor-provider", 3: "previous-provider"} {
 				_, err := st.RecordContactObservationContext(t.Context(), participant, ParticipantContactObservationInput{
-					SourceID: &source.ID, AddressKind: ContactAddressEmail,
+					SourceID: &source.ID, ConversationID: &room, AddressKind: ContactAddressEmail,
 					OriginalValue: "shared@example.test", ProviderUserID: new(provider),
 					Envelope: ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
 				})

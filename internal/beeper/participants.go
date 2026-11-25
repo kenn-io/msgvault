@@ -80,6 +80,44 @@ func (r *participantResolver) identifierForUser(userID string) string {
 	return beeperidentity.Fallback(r.accountID, userID)
 }
 
+func (r *participantResolver) resolveUserForPolicy(ctx context.Context, u *User, room int64) (int64, error) {
+	if u == nil || u.ID == "" {
+		return 0, nil
+	}
+	// Legacy namespace adoption remains archival normalization. Do not create a
+	// bare participant first: rich resolution binds the identifier itself, and
+	// a premature bare row would only be merged away, with archive-wide work
+	// under the policy and identity locks. The fallback below still creates a
+	// bare participant when admission fails.
+	identifier := r.identifierForUser(u.ID)
+	if _, err := r.adoptLegacyIdentifier(ctx, u.ID, identifier); err != nil {
+		return 0, err
+	}
+	identity := store.ConversationParticipantIdentity{IdentifierType: participantIdentifierType, IdentifierValue: identifier, DisplayName: u.FullName}
+	if strings.HasPrefix(u.PhoneNumber, "+") {
+		identity.Phone = u.PhoneNumber
+	} else if strings.Contains(u.Email, "@") {
+		identity.Email = u.Email
+	}
+	result, err := r.store.ResolveConversationParticipantContext(ctx, room, identity)
+	if errors.Is(err, store.ErrConversationPolicyStale) || errors.Is(err, store.ErrPersonBindingConflict) {
+		return r.store.EnsureParticipantByIdentifierContext(ctx, participantIdentifierType, identity.IdentifierValue, "")
+	}
+	if err != nil {
+		return 0, err
+	}
+	if result.MergedParticipantID != 0 {
+		r.forgetMerged(result.MergedParticipantID)
+	}
+	if identity.Phone != "" || identity.Email != "" {
+		r.rich[identity.IdentifierValue] = richEntry{pid: result.ParticipantID, byPhone: result.ByPhone}
+		delete(r.fallback, identity.IdentifierValue)
+	} else {
+		r.fallback[identity.IdentifierValue] = result.ParticipantID
+	}
+	return result.ParticipantID, nil
+}
+
 func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, error) {
 	if u == nil || u.ID == "" {
 		return 0, nil
@@ -191,6 +229,24 @@ func (r *participantResolver) resolveID(ctx context.Context, userID, displayName
 	return r.resolveIDFallback(ctx, userID, displayName)
 }
 
+// resolveIDForPolicy is resolveID for a message sender in room. A sender this
+// run has not resolved yet goes through room policy, so a cold room lends it
+// neither roster contact details nor its display name.
+func (r *participantResolver) resolveIDForPolicy(ctx context.Context, userID, displayName string, room int64) (int64, error) {
+	if user, ok := r.messageUsers[userID]; ok {
+		delete(r.messageUsers, userID)
+		r.forgetUser(userID)
+		return r.resolveUserForPolicy(ctx, &user, room)
+	}
+	identifier := r.identifierForUser(userID)
+	_, rich := r.rich[identifier]
+	_, cached := r.fallback[identifier]
+	if userID != "" && !rich && !cached {
+		return r.resolveUserForPolicy(ctx, &User{ID: userID, FullName: displayName}, room)
+	}
+	return r.resolveIDFallback(ctx, userID, displayName)
+}
+
 func (r *participantResolver) forgetUser(userID string) {
 	key := r.identifierForUser(userID)
 	delete(r.rich, key)
@@ -250,7 +306,7 @@ func (r *participantResolver) resolveIDFallback(ctx context.Context, userID, dis
 	return pid, nil
 }
 
-func (r *participantResolver) useMessageRoster(ctx context.Context, sourceID int64, ch *Chat, enabled bool) error {
+func (r *participantResolver) useMessageRoster(ctx context.Context, sourceID int64, ch *Chat, enabled, cold bool) error {
 	r.messageUsers = nil
 	for key := range r.roomOwners {
 		delete(r.fallback, key)
@@ -282,7 +338,7 @@ func (r *participantResolver) useMessageRoster(ctx context.Context, sourceID int
 			key := r.identifierForUser(item.ID)
 			receipt := receipts[key]
 			owner := r.fallback[key]
-			if owner != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(rosterMemberInputs(&item, ch, r.accountID, bridgePrefix), owner) {
+			if owner != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(rosterMemberInputs(&item, ch, r.accountID, bridgePrefix, cold), owner) {
 				continue
 			}
 		}

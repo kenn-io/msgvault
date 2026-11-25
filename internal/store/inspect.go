@@ -118,12 +118,13 @@ func (s *Store) InspectMessage(sourceMessageID string) (*MessageInspection, erro
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var recipType, email, displayName string
+		var recipType string
+		var email, displayName sql.NullString
 		if err := rows.Scan(&recipType, &email, &displayName); err != nil {
 			return nil, err
 		}
-		key := recipType + ":" + email
-		insp.RecipientDisplayName[key] = displayName
+		key := recipType + ":" + email.String
+		insp.RecipientDisplayName[key] = displayName.String
 	}
 
 	return insp, rows.Err()

@@ -36,7 +36,7 @@ func TestVectorFilterMessageIDsBeforeRanking(t *testing.T) {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
 	}
-	clauses := buildPGFilterClauses(vector.Filter{MessageIDs: []int64{7, 11}}, bind)
+	clauses := buildPGFilterClauses(vector.Filter{MessageIDs: []int64{7, 11}}, bind, nil)
 	require.Len(t, clauses, 1)
 	assert.Equal(t, "m.id = ANY($1::bigint[])", clauses[0])
 	assert.Equal(t, []any{`{7,11}`}, args)
@@ -144,7 +144,7 @@ func TestBuildPGFilterClausesExactListID(t *testing.T) {
 		return fmt.Sprintf("$%d", len(args))
 	}
 
-	clauses := buildPGFilterClauses(vector.Filter{ListID: "<Dev@Example.Test>"}, bind)
+	clauses := buildPGFilterClauses(vector.Filter{ListID: "<Dev@Example.Test>"}, bind, nil)
 
 	require.Equal(t, []string{"LOWER(m.list_id) = LOWER($1)"}, clauses)
 	assert.Equal(t, []any{"<Dev@Example.Test>"}, args)
@@ -157,7 +157,7 @@ func TestBuildPGFilterClausesMessageTypes(t *testing.T) {
 		return fmt.Sprintf("$%d", len(args))
 	}
 
-	clauses := buildPGFilterClauses(vector.Filter{MessageTypes: []string{"sms", "mms"}}, bind)
+	clauses := buildPGFilterClauses(vector.Filter{MessageTypes: []string{"sms", "mms"}}, bind, nil)
 
 	require.Len(t, clauses, 1)
 	assert.Equal(t, "(m.message_type = ANY($1::text[]))", clauses[0])
@@ -171,7 +171,7 @@ func TestBuildPGFilterClausesConversationIDs(t *testing.T) {
 		return fmt.Sprintf("$%d", len(args))
 	}
 
-	clauses := buildPGFilterClauses(vector.Filter{ConversationIDs: []int64{7, 11}}, bind)
+	clauses := buildPGFilterClauses(vector.Filter{ConversationIDs: []int64{7, 11}}, bind, nil)
 
 	require.Len(t, clauses, 1)
 	assert.Equal(t, "m.conversation_id = ANY($1::bigint[])", clauses[0])
@@ -185,7 +185,7 @@ func TestBuildPGFilterClausesLegacyEmail(t *testing.T) {
 		return fmt.Sprintf("$%d", len(args))
 	}
 
-	clauses := buildPGFilterClauses(vector.Filter{MessageTypes: []string{"email"}}, bind)
+	clauses := buildPGFilterClauses(vector.Filter{MessageTypes: []string{"email"}}, bind, nil)
 
 	require.Len(t, clauses, 1)
 	assert.Contains(t, clauses[0], "m.message_type IS NULL")

@@ -268,7 +268,7 @@ func (s *Store) commitPreparedPersonEnrichmentResult(
 	}
 	outcome := &personenrichment.ClaimOutcome{}
 	var costViolation bool
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		if s.personEnrichmentTxBarrier != nil {
 			s.personEnrichmentTxBarrier("result_before_authority_lock")
 		}
@@ -358,6 +358,15 @@ func (s *Store) commitPreparedPersonEnrichmentResult(
 		outcome.Generation = generationResult
 		return nil
 	})
+	if errors.Is(err, ErrConversationPolicyStale) {
+		// The provider call already ran and may have charged. Any policy change
+		// since the worker captured its revision withdraws the result, but the
+		// attempt must still end and record its reported cost.
+		if rejectErr := s.rejectStalePersonEnrichmentResult(ctx, prepared); rejectErr != nil {
+			return nil, errors.Join(err, rejectErr)
+		}
+		return &personenrichment.ClaimOutcome{Status: personenrichment.ClaimPolicyRejected}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -701,6 +710,25 @@ func (s *Store) rejectPersonEnrichmentResultPolicyTx(
 ) error {
 	return s.completePersonEnrichmentRejectedAttemptTx(
 		ctx, tx, commit, "terminal", personenrichment.FailurePolicy, "", completionTime, false)
+}
+
+// rejectStalePersonEnrichmentResult ends an attempt whose result lost its
+// policy revision. It holds the shared policy lock without the revision check
+// and takes the result commit's lock order.
+func (s *Store) rejectStalePersonEnrichmentResult(ctx context.Context, prepared *preparedEnrichmentCommit) error {
+	return s.withConversationPolicyLocked(ctx, nil, func(tx *loggedTx) error {
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, prepared.Commit.PersonID); err != nil {
+			return err
+		}
+		if err := lockEnrichmentWorkRowForOrderingTx(
+			ctx, tx, s.dialect, prepared.Commit.PersonID, prepared.Commit.ProfileFingerprint); err != nil {
+			return err
+		}
+		return s.rejectPersonEnrichmentResultPolicyTx(ctx, tx, prepared.Commit, prepared.CompletionTime)
+	})
 }
 
 func (s *Store) rejectPersonEnrichmentResultSuppressedTx(

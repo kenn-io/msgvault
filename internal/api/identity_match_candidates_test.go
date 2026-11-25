@@ -249,6 +249,8 @@ func TestRejectIdentityMatchCandidateRetainsTheRow(t *testing.T) {
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
 	candidate, alice, bob := seedMatchCandidate(t, st, store.IdentityMatchServiceScopeUsername)
+	beforeRevision, err := st.IdentityRevision()
+	require.NoError(err)
 
 	response := personRequest(t, srv, http.MethodPost, rejectPath(candidate.ID),
 		identityDecisionBody(t, srv, candidate.ID, "different people"), "")
@@ -258,7 +260,7 @@ func TestRejectIdentityMatchCandidateRetainsTheRow(t *testing.T) {
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &rejected), response.Body.String())
 	assert.Equal(store.IdentityMatchStateRejected, rejected.Candidate.State)
 	assert.Equal("user", *rejected.Candidate.DecidedBy)
-	assert.Zero(rejected.IdentityRevision,
+	assert.Equal(beforeRevision, rejected.IdentityRevision,
 		"state-only rejection does not change the identity revision")
 	assert.Equal(identityCacheStateReady, rejected.CacheState)
 	assert.Equal(1, st.refreshCalls,

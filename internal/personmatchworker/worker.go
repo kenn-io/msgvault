@@ -20,6 +20,8 @@ var ErrConsentRequired = errors.New("identity scoring consent is required")
 const QuestionVersion = personmatch.QuestionVersion
 
 type Store interface {
+	CaptureConversationPolicyWork(ctx context.Context) (context.Context, error)
+	CheckIdentityMatchJudgmentAdmission(ctx context.Context, lease store.IdentityMatchJudgmentLease) error
 	HasPersonMatchConsentContext(ctx context.Context, fingerprint string) (bool, error)
 	PersonMatchConsentEgressContext(ctx context.Context, fingerprint string, dispatch func() error) (bool, error)
 	EnsurePersonMatchScoringCandidatesContext(ctx context.Context, limit int) (int, error)
@@ -84,10 +86,6 @@ func (w Worker) Run(ctx context.Context, limit int) ([]Result, error) {
 	if endpoint == "" {
 		endpoint = personmatch.Endpoint
 	}
-	judge := personmatch.JevClient{Endpoint: endpoint, ModelID: cfg.ModelID, Key: key, HTTPClient: w.HTTPClient,
-		RequestGate: func(dispatchContext context.Context, dispatch func() error) (bool, error) {
-			return w.Store.PersonMatchConsentEgressContext(dispatchContext, fingerprint, dispatch)
-		}}
 	versionBytes := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s:%.17g", fingerprint, QuestionVersion,
 		personmatchpolicy.Version, cfg.MinimumProbability)))
 	scoringVersion := hex.EncodeToString(versionBytes[:])
@@ -102,13 +100,26 @@ func (w Worker) Run(ctx context.Context, limit int) ([]Result, error) {
 		if !consented {
 			return results, ErrConsentRequired
 		}
-		lease, err := w.Store.ClaimNextIdentityMatchJudgmentContext(ctx, "daemon_scoring", 2*time.Minute, scoringVersion)
+		workCtx, err := w.Store.CaptureConversationPolicyWork(ctx)
+		if err != nil {
+			return results, err
+		}
+		lease, err := w.Store.ClaimNextIdentityMatchJudgmentContext(workCtx, "daemon_scoring", 2*time.Minute, scoringVersion)
 		if err != nil {
 			return results, err
 		}
 		if lease == nil {
 			break
 		}
+		judge := personmatch.JevClient{Endpoint: endpoint, ModelID: cfg.ModelID, Key: key, HTTPClient: w.HTTPClient,
+			RequestGate: func(dispatchContext context.Context, dispatch func() error) (bool, error) {
+				return w.Store.PersonMatchConsentEgressContext(dispatchContext, fingerprint, func() error {
+					if err := w.Store.CheckIdentityMatchJudgmentAdmission(dispatchContext, *lease); err != nil {
+						return err
+					}
+					return dispatch()
+				})
+			}}
 		result := Result{CandidateID: lease.CandidateID, ReviewToken: lease.Candidate.ReviewToken,
 			ModelID: cfg.ModelID, PacketSchema: personmatch.PacketSchema,
 			PolicyVersion: personmatchpolicy.Version, ProposedAction: personmatchpolicy.NeedsReview,
@@ -154,7 +165,7 @@ func (w Worker) Run(ctx context.Context, limit int) ([]Result, error) {
 				consentRevoked = true
 				journalInput.ErrorClass = "consent_revoked"
 			} else {
-				judgment, scoreErr := judge.Score(ctx, packet)
+				judgment, scoreErr := judge.Score(workCtx, packet)
 				if scoreErr != nil {
 					journalInput.ErrorClass = "provider_error"
 					consentRevoked = errors.Is(scoreErr, personmatch.ErrConsentRevoked)
@@ -176,7 +187,7 @@ func (w Worker) Run(ctx context.Context, limit int) ([]Result, error) {
 				}
 			}
 		}
-		_, err = w.Store.RecordIdentityMatchJudgmentContext(ctx, *lease, journalInput)
+		_, err = w.Store.RecordIdentityMatchJudgmentContext(workCtx, *lease, journalInput)
 		stale := errors.Is(err, store.ErrIdentityMatchJudgmentFingerprintStale)
 		if stale {
 			result.Status = "stale"

@@ -60,7 +60,7 @@ type identityDiscoveryMessage struct {
 func (s *Store) CountIdentityDiscoveryMessagesContext(ctx context.Context, sourceID int64) (int64, error) {
 	var count int64
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(DISTINCT m.id) FROM messages m WHERE m.source_id = ?`, sourceID,
+		`SELECT COUNT(DISTINCT m.id) FROM messages m WHERE m.source_id = ? AND `+FullMessageWhere("m"), sourceID,
 	).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count identity discovery messages: %w", err)
 	}
@@ -83,7 +83,7 @@ func (s *Store) ScanIdentityDiscoveryPageContext(
 		       COALESCE(m.source_is_from_me, FALSE),
 		       COALESCE(m.sent_at, m.received_at, m.internal_date, m.archived_at)
 		FROM messages m
-		WHERE m.source_id = ? AND m.id > ?
+		WHERE `+FullMessageWhere("m")+` AND m.source_id = ? AND m.id > ?
 		ORDER BY m.id
 		LIMIT ?
 	`, sourceID, afterID, limit)
@@ -139,7 +139,7 @@ func (s *Store) ScanIdentityObservationsForSourceMessageIDsContext(
 		       COALESCE(m.source_is_from_me, FALSE),
 		       COALESCE(m.sent_at, m.received_at, m.internal_date, m.archived_at)
 		FROM messages m
-		WHERE m.source_id = ? AND m.source_message_id IN (%s)
+		WHERE `+FullMessageWhere("m")+` AND m.source_id = ? AND m.source_message_id IN (%s)
 		ORDER BY m.id
 	`, func(rows *loggedRows) error {
 		message, scanErr := scanIdentityDiscoveryMessage(rows)
@@ -212,11 +212,15 @@ func (s *Store) scanIdentityObservationsContext(
 	// existed fall back to the participant's current email, which remains
 	// mutable under merges; routine re-sync skips already-archived messages,
 	// so those rows keep the fallback until the message is re-ingested (a
-	// future repair command could backfill from the stored raw MIME).
+	// future repair command could backfill from the stored raw MIME). The
+	// fallback may have come from another room, so it needs the same Full
+	// support as any other use of a participant's email.
+	identifier := `COALESCE(NULLIF(mr.email_address, ''), CASE WHEN ` +
+		FullParticipantValueWhere("p.id", "'email'", "p.email_address") + ` THEN p.email_address END)`
 	observations := make([]IdentityObservation, 0)
 	err := queryInChunksContext(ctx, s.db, messageIDs, []any{sourceID}, `
 		SELECT m.id,
-		       COALESCE(NULLIF(mr.email_address, ''), p.email_address),
+		       `+identifier+`,
 		       mr.recipient_type,
 		       EXISTS (
 		           SELECT 1
@@ -241,7 +245,7 @@ func (s *Store) scanIdentityObservationsContext(
 		WHERE m.source_id = ?
 		  AND m.id IN (%s)
 		  AND mr.recipient_type IN ('from', 'to', 'cc', 'bcc')
-		  AND COALESCE(NULLIF(mr.email_address, ''), p.email_address) IS NOT NULL
+		  AND `+identifier+` IS NOT NULL
 		ORDER BY m.id, mr.id
 	`, func(rows *loggedRows) error {
 		var observation IdentityObservation
