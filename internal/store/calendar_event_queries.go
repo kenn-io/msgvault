@@ -23,7 +23,6 @@ type CalendarEventRow struct {
 	Subject             string
 	CalendarID          string
 	DeletedFromSource   bool
-	ics                 bool
 	Event               calevent.Event
 }
 
@@ -32,7 +31,7 @@ const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
 
 var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
- m.deleted_from_source_at IS NOT NULL, EXISTS (SELECT 1 FROM message_raw raw WHERE raw.message_id=m.id AND raw.raw_format='ics'),
+ m.deleted_from_source_at IS NOT NULL,
  e.ical_uid, e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
  e.event_time_zone, e.calendar_time_zone, e.recurrence_json
@@ -103,7 +102,7 @@ func queryCalendarEventRows(ctx context.Context, r SQLReader, predicate string, 
 		var original, start, end nullableTimestamp
 		var originalDate, recurrence string
 		var uid sql.NullString
-		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource, &row.ics,
+		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource,
 			&uid, &e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
 			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence)
 		if err != nil {
@@ -183,8 +182,9 @@ func calendarEventRowsInWindow(ctx context.Context, r SQLReader, dialect Dialect
 	lower, upper := from.UTC().Add(-calendarCandidateMargin), to.UTC().Add(calendarCandidateMargin)
 	// RDATE can precede DTSTART by any amount. Retain those masters for exact
 	// expansion rather than treating their stored start as the earliest instance.
-	// Provider deletions keep only archived exceptions; cancelled ICS series retain their occurrences.
-	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND (e.status <> 'cancelled' OR EXISTS (SELECT 1 FROM message_raw raw WHERE raw.message_id=e.message_id AND raw.raw_format='ics')) AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
+	// A cancelled series keeps only its archived exceptions, so it never counts
+	// toward the series cap.
+	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND e.status <> 'cancelled' AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +234,8 @@ func calendarEventRowsInWindow(ctx context.Context, r SQLReader, dialect Dialect
 		for _, row := range parents {
 			if _, exists := byID[row.MessageID]; !exists {
 				byID[row.MessageID] = row
-				if row.Event.Kind == calendarSeriesKind {
+				// A cancelled parent only places its archived exceptions.
+				if row.Event.Kind == calendarSeriesKind && row.Event.Status != calendarCancelledStatus {
 					seriesCount++
 				}
 				if seriesCount > maxCalendarSeries {

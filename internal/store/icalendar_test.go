@@ -102,12 +102,42 @@ func TestICalendarCancelledSeriesOccurrences(t *testing.T) {
 			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
 			r.NoError(err)
-			r.Len(page.Occurrences, 3)
-			for _, occurrence := range page.Occurrences {
-				r.Equal("cancelled", occurrence.Status)
-				r.Equal("Updated", occurrence.Subject)
-				r.Equal(14, occurrence.Start.Hour())
+			r.Empty(page.Occurrences)
+			r.Empty(page.Unexpandable)
+		})
+	}
+}
+
+func TestICalendarCancelledSeriesKeepsArchivedExceptions(t *testing.T) {
+	for _, mode := range []string{"file", "email"} {
+		t.Run(mode, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source := icsSource(t, st)
+			if mode == "email" {
+				mail, err := st.GetOrCreateSource("mbox", "owner@example.com")
+				r.NoError(err)
+				source = mail.ID
 			}
+			for i, event := range [][]byte{
+				[]byte(strings.ReplaceAll(string(calendarFamilyDocument()), "UID:family@example.com\r\n", "UID:family@example.com\r\nORGANIZER:mailto:organizer@example.com\r\n")),
+				calendarDocument("CANCEL", "SEQUENCE:1\r\nDTSTAMP:20270301T130000Z\r\nORGANIZER:mailto:organizer@example.com"),
+			} {
+				if mode == "email" {
+					persistInviteEmailForSource(t, st, source, fmt.Sprintf("cancelled-family-%d", i), inviteEmail(event))
+				} else {
+					_, err := importICalendarForTest(t, st, source, event)
+					r.NoError(err)
+				}
+			}
+			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+			r.NoError(err)
+			r.Empty(page.Unexpandable)
+			r.Len(page.Occurrences, 1)
+			moved := page.Occurrences[0]
+			assert.Equal(t, "cancelled", moved.Status)
+			assert.Equal(t, time.Date(2027, 3, 3, 14, 0, 0, 0, time.UTC), moved.Start.UTC())
 		})
 	}
 }
