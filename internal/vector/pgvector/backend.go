@@ -1049,6 +1049,9 @@ func (b *Backend) ResetWatermarkBelow(ctx context.Context, minID int64) error {
 // generationCandidates keeps the indexed path for a single generation. While a
 // second generation shares its HNSW graph, an exact sort prevents its vectors
 // from consuming the search budget before the generation filter is applied.
+// The literal dimension lets PostgreSQL match the partial index even with a
+// generic plan. Adding zero to the exact branch's distance prevents an HNSW
+// scan from applying its candidate limit before the generation filter.
 func generationCandidates(dim int, vecArg, genArg, limitArg, from, where string) string {
 	competing := fmt.Sprintf("EXISTS (SELECT 1 FROM index_generations g WHERE g.id <> %s AND g.dimension = %d AND g.state IN ('active', 'building'))", genArg, dim)
 	distance := fmt.Sprintf("e.embedding::vector(%d) <=> %s::vector", dim, vecArg)
@@ -1107,9 +1110,11 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 	// from a slim fast path that elides the join.
 	queryVecLit := vectorLiteral(queryVec)
 	if filter.IsEmpty() {
-		// Widen the candidate pool when multiple chunks collapse to fewer than
-		// k messages. generationCandidates selects the index or exact path.
-
+		// The inner query ranks chunks, and the outer query groups them by
+		// message using the best chunk. Start with k*annOverFetchFactor chunks;
+		// if deduplication leaves fewer than k messages, double the limit up to
+		// chunkCeiling. The indexed branch uses the connection's raised
+		// store.HNSWEfSearch; generationCandidates selects it or the exact path.
 		candidates := generationCandidates(dim, "$1", "$2", "$3", "", "EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND "+store.LiveMessagesWhere("m", true)+")")
 		stmt := `SELECT ann.message_id, MIN(ann.distance) AS distance FROM (` + candidates + `) ann
 			GROUP BY ann.message_id ORDER BY distance, ann.message_id LIMIT $4`
@@ -1123,9 +1128,13 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		})
 	}
 
-	// Keep filters in SQL and bound widening by the matching chunk and
-	// distinct-message counts.
-
+	// Keep structured filters in a correlated EXISTS rather than transferring
+	// every matching message ID to Go. The inner limit counts chunks, so the
+	// widening ceiling must be the filtered chunk count: a message count can
+	// stop too early when messages have multiple chunks. The distinct-message
+	// count is an early exit for selective filters. Both counts use the same
+	// EXISTS predicate as the search. Each query builds its own bind positions,
+	// so its placeholders match its own arguments.
 	filteredChunks, filteredMessages, err := b.filteredChunkAndMessageCount(ctx, gen, filter)
 	if err != nil {
 		return nil, err

@@ -183,9 +183,13 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			innerArg := bind(innerChunks)
 			kp1Arg := bind(kPlus1)
 			kArg := bind(req.KPerSignal)
-			// Rank chunks before grouping them by message. The generation-aware
-			// candidate query chooses an indexed or exact search as needed.
-
+			// Rank chunks before grouping them by message. The candidate query
+			// selects the indexed or exact path. An empty filter uses an inline
+			// liveness check; a structured filter joins the materialized set and
+			// may lead PostgreSQL to scan it sequentially. MIN picks each message's
+			// best chunk, and the outer limit keeps KPerSignal+1 distinct messages.
+			// The widening loop increases innerChunks when deduplication leaves
+			// fewer candidates than that limit.
 			annConstraint := "              JOIN filtered f ON f.id = e.message_id\n"
 			annLive := ""
 			if emptyFilter {
