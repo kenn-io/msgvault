@@ -53,6 +53,10 @@ var methodTiers = map[string]int{
 // ErrNotFound reports a channel/thread/user that no longer exists.
 var ErrNotFound = errors.New("not found")
 
+// ErrChannelNotFound is the ErrNotFound for a conversation that is gone or
+// unreadable, as distinct from one missing thread or message inside it.
+var ErrChannelNotFound = fmt.Errorf("channel %w", ErrNotFound)
+
 // ErrAssetTooLarge reports a file exceeding the caller's size cap; the cap is
 // enforced while reading so oversized bodies are never fully buffered.
 var ErrAssetTooLarge = errors.New("file exceeds size cap")
@@ -218,6 +222,8 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, out
 // apiError maps a Slack method-level error string to a typed error.
 func apiError(method string, envelope *apiResponse) error {
 	switch {
+	case envelope.Error == "channel_not_found":
+		return fmt.Errorf("slack %s: %s: %w", method, envelope.Error, ErrChannelNotFound)
 	case notFoundAPIErrors[envelope.Error]:
 		return fmt.Errorf("slack %s: %s: %w", method, envelope.Error, ErrNotFound)
 	case envelope.Error == "invalid_cursor":

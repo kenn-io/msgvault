@@ -44,6 +44,10 @@ type convScope struct {
 	// shared message mapping while replacing file rows from exported bytes.
 	filesHandledExternally bool
 	budgetUsed             int
+	// channelUnreadable is set when a reply fetch finds the conversation
+	// unreadable. A walk that sees it must stop without certifying
+	// coverage, because the threads it queued were dropped unfetched.
+	channelUnreadable bool
 }
 
 type messageRecipient struct {
@@ -352,7 +356,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 			// window after each audit before starting another, so limited
 			// runs cannot starve new top-level messages.
 			if cs.Done && !cs.ThreadsPending && len(cs.PendingThreads) == 0 &&
-				cs.BackfillLatest == "" && !tsLess(cs.Cursor, cs.AuditedThrough) {
+				cs.BackfillLatest == "" && !tsLess(cs.Cursor, cs.auditSettledAt()) {
 				cs.ThreadsPending = true
 				cs.AuditPending = true
 			}
@@ -759,6 +763,9 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 			if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
 				return err
 			}
+			if cc.channelUnreadable {
+				return nil // resumable; this page's threads were never fetched
+			}
 		}
 		if page.NextCursor == "" {
 			cs.Done = true
@@ -832,6 +839,21 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			if errors.Is(err, ErrChannelNotFound) {
+				// The conversation itself is unreadable, so every queued
+				// thread would fail the same way. Drop them rather than wedge
+				// the conversation behind debt it may never pay. Their walk's
+				// page cursor is already past their roots and the audit pin
+				// claims they were fetched, so clear both: the walk restarts
+				// within its window, and the next audit fetches every thread.
+				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
+				cs.PendingThreads = nil
+				cs.BackfillCursor, cs.CatchUpCursor = "", ""
+				cs.AuditedThrough = ""
+				cs.LastSkippedAt = tsFormat(imp.now())
+				cc.channelUnreadable = true
+				return nil
 			}
 			if errors.Is(err, ErrNotFound) {
 				// Thread gone between discovery and drain: expected churn.
@@ -944,6 +966,18 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 	if cs.CatchUpLatest == "" {
 		cs.CatchUpLatest = tsFormat(imp.now()) // exact instant, never rounded forward
 	}
+	// A periodic audit is scheduled only when no other thread debt is owed,
+	// so the walk that set AuditedThrough fetched every thread whole after
+	// its pin: a thread whose newest reply predates that pin has nothing new
+	// to fetch. AuditedThrough keeps that pin until this walk completes. The
+	// margin absorbs skew between this host's clock, which sets pins, and
+	// Slack's, which stamps replies. Other debt takes the full walk: a
+	// backfill begun under --no-threads is stamped without having fetched
+	// its early threads.
+	settledBefore := ""
+	if cs.AuditPending && cs.AuditedThrough != "" {
+		settledBefore = tsFormat(tsTime(cs.AuditedThrough).Add(-sweepLagMargin))
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -971,12 +1005,21 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 				// from wedging every future workspace sync into failure —
 				// and a vacuous stamp keeps the stamp-less adoption from
 				// re-flagging it (nothing exists to cover; the gap
-				// machinery owns any later resurrection).
+				// machinery owns any later resurrection). A periodic audit
+				// is scheduled only once other debt is paid, so its
+				// AuditedThrough is the last walk that fetched every thread:
+				// keep it, and the next audit owes every reply since then.
+				// Other catch-up debt, such as a backfill begun under
+				// --no-threads, was stamped without fetching its threads,
+				// so its stamp is cleared and the next audit fetches every
+				// thread. LastSkippedAt defers that audit either way.
 				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
+				if !cs.AuditPending {
+					cs.AuditedThrough = ""
+				}
 				cs.ThreadsPending = false
 				cs.CatchUpCursor, cs.CatchUpLatest = "", ""
 				cs.AuditPending = false
-				cs.AuditedThrough = tsFormat(imp.now())
 				cs.LastSkippedAt = tsFormat(imp.now())
 				if cs.SweptThrough == "" {
 					cs.SweptThrough = tsFormat(imp.now())
@@ -994,12 +1037,19 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 		cc.budgetUsed += len(page.Messages)
 		for i := range page.Messages {
 			m := &page.Messages[i]
-			if m.IsThreadRoot() {
-				cs.RecordPendingThread(m.TS, m.ReplyCount)
+			if !m.IsThreadRoot() {
+				continue
 			}
+			if settledBefore != "" && m.LatestReply != "" && tsLess(m.LatestReply, settledBefore) {
+				continue
+			}
+			cs.RecordPendingThread(m.TS, m.ReplyCount)
 		}
 		if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
 			return err
+		}
+		if cc.channelUnreadable {
+			return nil // resumable; this page's threads were never fetched
 		}
 		if page.NextCursor == "" {
 			// The WALK is complete: every root it owed is now recorded as
