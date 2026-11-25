@@ -47,13 +47,11 @@ Choose the connection the archive owner has authorized:
   ```
 
   This bridge uses stdio and cannot serve `--http`. The daemon checks the
-  grant's permissions and source scope on every call. Scoped archive reads
-  require daemon API schema 3.9.0 or newer, and the owner can set an expiry and
-  select permissions and sources when
-  [issuing a grant](../cli-reference.md#agent-token-issue). Withholding detected
-  verification content from delegated reads requires daemon API schema 3.49.0 or
-  newer. The `verification.read` modifier allows that content and grants no
-  reads on its own; see [detection rules and limits](../api-server.md#verification-content).
+  grant's permissions and source scope on every call. The owner can set an
+  expiry and select permissions and sources when
+  [issuing a grant](../cli-reference.md#agent-token-issue). Delegated reads
+  withhold detected verification content. The `verification.read` modifier
+  allows that content and grants no reads on its own; see [detection rules and limits](../api-server.md#verification-content).
 
 Use your client's MCP `tools/list` capability to discover the tools and input
 schemas available in the current session. Availability depends on the daemon
@@ -83,15 +81,13 @@ emotional closeness or permission to contact anyone.
 
 To find a chat when a person's name differs across networks, call `find_chat`
 with a `query`. Results include the network label and a message reference to
-open the chat. `find_chat` is for owner clients only and requires daemon API
-schema 3.25.0 or newer.
+open the chat. `find_chat` is for owner clients only.
 
 To look up messaging routes, call `find_contact_candidates` with a name, inspect
 any ambiguity, and pass the selected `person_uid` to
 `get_person_messaging_routes`. Routes and suggestions carry different evidence
 and status, and an archived route does not prove current reachability or
-authorize sending. These contact tools require daemon API schema 3.20.0 or
-newer.
+authorize sending.
 
 To see who is waiting on a reply and whose reply the owner awaits, call
 `list_open_loops`, optionally with a `person_id`. Each item names the message

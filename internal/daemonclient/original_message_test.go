@@ -169,23 +169,6 @@ func TestEngineListsThreadThroughDaemon(t *testing.T) {
 	checks.NotContains(err.Error(), "pass account", "presentation layers supply their own hint")
 }
 
-func TestEngineOriginalCapabilityRetriesFailureAndCachesSuccess(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	d := newOriginalDaemon(t)
-	d.failHealth.Store(true)
-	_, err := d.engine.ReadOriginalMessage(t.Context(), query.MessageRef{ID: d.withRaw}, 0)
-	must.Error(err)
-	_, err = d.engine.ListThread(t.Context(), query.ThreadQuery{ID: d.withRaw})
-	must.NoError(err)
-	for range 3 {
-		original, err := d.engine.ReadOriginalMessage(t.Context(), query.MessageRef{ID: d.withRaw}, 0)
-		must.NoError(err)
-		checks.Equal(d.raw, original.MIME)
-	}
-	checks.Equal(int64(2), d.healthRequests.Load(), "failed capability checks retry; successful ones are reused")
-}
-
 func TestEngineRawIDDoesNotFallBackAfterDedupPurge(t *testing.T) {
 	must := require.New(t)
 	d := newOriginalDaemon(t)
@@ -205,27 +188,6 @@ func TestEngineRawIDDoesNotFallBackAfterDedupPurge(t *testing.T) {
 	raw, err := d.engine.GetMessageRaw(t.Context(), d.withRaw)
 	must.ErrorIs(err, store.ErrMessageNotFound)
 	assert.Empty(t, raw)
-}
-
-func TestEngineOriginalMessageNeedsCurrentDaemon(t *testing.T) {
-	must := require.New(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/health", r.URL.Path, "no export request reaches an old daemon")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.32.0"}`))
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
-	must.NoError(err)
-	t.Cleanup(func() { _ = client.Close() })
-	engine := daemonclient.NewEngineAdapter(client)
-
-	_, err = engine.ReadOriginalMessage(t.Context(), query.MessageRef{ID: 1}, 0)
-	must.ErrorIs(err, daemonclient.ErrNotSupported)
-	_, err = engine.GetMessageRaw(t.Context(), 1)
-	must.ErrorIs(err, daemonclient.ErrNotSupported)
-	_, err = engine.ListThread(t.Context(), query.ThreadQuery{ThreadID: "x"})
-	must.ErrorIs(err, daemonclient.ErrNotSupported)
 }
 
 func TestEngineMapsUnsupportedOriginalExportThroughDaemon(t *testing.T) {

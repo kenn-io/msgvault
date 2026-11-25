@@ -54,15 +54,6 @@ func newPersonCreateCommand() *cobra.Command {
 			return err
 		}
 		defer func() { _ = client.Close() }()
-		if input.IfExists == store.PersonIfExistsReturn {
-			supported, err := client.SupportsAPISchemaVersion(cmd.Context(), personCreateIfExistsMinAPISchemaVersion)
-			if err != nil {
-				return fmt.Errorf("check daemon person creation return support: %w", err)
-			}
-			if !supported {
-				return errors.New("this daemon does not support person create --if-exists return; upgrade msgvault")
-			}
-		}
 		person, err := client.CreateStandalonePerson(cmd.Context(), input)
 		if err != nil {
 			var conflict *daemonclient.APIError

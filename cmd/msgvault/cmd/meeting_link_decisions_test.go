@@ -22,7 +22,7 @@ func (c *meetingDecisionClient) DecideMeetingLink(_ context.Context, left, right
 	return store.MeetingLinkDecisionResult{Left: left, Right: right, State: state}, nil
 }
 
-func TestMeetingDecisionCLIOutputAndSchemaGate(t *testing.T) {
+func TestMeetingDecisionCLIOutput(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	for _, tc := range []struct{ action, decision, output string }{
@@ -30,7 +30,7 @@ func TestMeetingDecisionCLIOutputAndSchemaGate(t *testing.T) {
 		{"unlink", "unlink", "Saved split: msg:3 evt:7@20270314\n"},
 		{"reset-link", "clear", "No saved choice: msg:3 evt:7@20270314\n"},
 	} {
-		client := &meetingDecisionClient{version: "5.10.0"}
+		client := &meetingDecisionClient{}
 		command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 		var out bytes.Buffer
 		command.SetOut(&out)
@@ -39,9 +39,4 @@ func TestMeetingDecisionCLIOutputAndSchemaGate(t *testing.T) {
 		assert.Equal(tc.output, out.String())
 		assert.Equal([]string{"msg:3", "evt:7@20270314", tc.decision}, client.args)
 	}
-	client := &meetingDecisionClient{version: "5.9.0"}
-	command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
-	command.SetArgs([]string{"link", "msg:3", "msg:4"})
-	require.ErrorContains(command.Execute(), "5.10.0")
-	assert.Empty(client.args)
 }

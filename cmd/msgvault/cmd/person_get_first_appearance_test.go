@@ -19,7 +19,6 @@ func TestPersonGetContactState(t *testing.T) {
 		probeFails, stateFails, hasState bool
 	}{
 		{"optional subresource unavailable", "5.7.0", false, true, false},
-		{"version probe fails", "", true, false, false},
 		{"current daemon", "5.7.0", false, false, true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {

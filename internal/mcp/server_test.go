@@ -3334,18 +3334,6 @@ func TestStageDeletion(t *testing.T) {
 		assert.Contains(t, resultText(t, r), "matches multiple sources")
 	})
 
-	t.Run("older daemon returns an upgrade error without a batch", func(t *testing.T) {
-		assertions := assert.New(t)
-		engine := &querytest.MockEngine{GetDeletionTargetsBySearchBoundedFunc: func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, int, error) {
-			return nil, 0, daemonclient.ErrBoundedDeletionSearchUnsupported
-		}}
-		saver := &captureDeletionManifestSaver{}
-		h := &handlers{engine: engine, manifestSaver: saver}
-		result := runToolExpectError(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "from:news"})
-		assertions.Contains(resultText(t, result), daemonclient.ErrBoundedDeletionSearchUnsupported.Error())
-		assertions.Nil(saver.manifest)
-	})
-
 	t.Run("selection over the limit is refused without a batch", func(t *testing.T) {
 		saver := &captureDeletionManifestSaver{}
 		engine := &querytest.MockEngine{GetDeletionTargetsBySearchBoundedFunc: func(_ context.Context, _ *search.Query, _ query.MessageFilter, mode query.DeletionSearchMode, limit int) ([]query.DeletionTarget, int, error) {

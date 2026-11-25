@@ -17,27 +17,6 @@ var (
 	_ peoplebrowser.PersonBriefWriter = (*PeopleBrowser)(nil)
 )
 
-// peopleBrowserWithoutBriefs serves every People operation but hides the brief
-// surfaces. It embeds the Backend interface rather than *PeopleBrowser, so the
-// brief methods are not promoted and a caller's PersonBriefReader assertion
-// fails. A daemon that predates the brief routes therefore makes the brief
-// disappear instead of reporting a failed read on every contact.
-type peopleBrowserWithoutBriefs struct {
-	peoplebrowser.Backend
-}
-
-// NewPeopleBrowserWithoutBriefs wraps a People browser for a daemon whose API
-// schema predates the person brief routes.
-//
-// The embedded field is the Backend interface, so this drops *every* optional
-// interface *PeopleBrowser implements, not only the brief pair. The brief
-// reader and writer are the only optional interfaces asserted on a people
-// backend today; the next one has to be forwarded here explicitly or it
-// disappears from every daemon-backed surface without a word.
-func NewPeopleBrowserWithoutBriefs(browser *PeopleBrowser) peoplebrowser.Backend {
-	return peopleBrowserWithoutBriefs{Backend: browser}
-}
-
 // personBriefNotFoundCode is the daemon's answer for a person with no current
 // brief version. It is a missing optional resource, not a failed read.
 const personBriefNotFoundCode = "person_brief_not_found"

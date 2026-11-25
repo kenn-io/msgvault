@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -78,7 +77,7 @@ func resolveMessageIDArg(raw string) (string, error) {
 }
 
 func showHTTPMessage(cmd *cobra.Command, idStr string) (result error) {
-	s, _, err := OpenHTTPStore(cmd.Context(), daemonclient.AgentReadMinAPISchemaVersion)
+	s, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}

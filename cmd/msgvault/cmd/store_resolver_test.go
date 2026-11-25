@@ -1199,12 +1199,14 @@ type openHTTPStoreDaemonVersionCase struct {
 	disabled, replace, notice bool
 	persistent                bool
 	incompatible              bool
+	olderSchema               bool
 	policy                    string
 }
 
 func TestOpenHTTPStoreDaemonVersionPolicy(t *testing.T) {
 	for _, tt := range []openHTTPStoreDaemonVersionCase{
 		{name: "same base source stays", cli: "v0.23.0-45-gabc", daemon: "v0.23.0-46-gdef", notice: true, policy: config.DaemonAutoRestartNewer},
+		{name: "older API schema is replaced", olderSchema: true, cli: "v0.23.0-45-gabc", daemon: "v0.23.0-46-gdef", replace: true, policy: config.DaemonAutoRestartNewer},
 		{name: "persistent source replacement", persistent: true, cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
 		{name: "persistent incompatible replacement", persistent: true, incompatible: true, cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
 		{name: "source replaces release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
@@ -1261,6 +1263,10 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 	if tt.incompatible {
 		apiVersion--
 	}
+	schemaVersion := api.APISchemaVersion
+	if tt.olderSchema {
+		schemaVersion = "5.1.0"
+	}
 	idleTimeout := "20m0s"
 	if tt.persistent {
 		idleTimeout = "0s"
@@ -1278,7 +1284,7 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 			runtimeHost:             host,
 			runtimePort:             strconv.Itoa(port),
 			runtimeAPIVersion:       strconv.Itoa(apiVersion),
-			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeAPISchemaVersion: schemaVersion,
 			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})

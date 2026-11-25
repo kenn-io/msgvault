@@ -1,7 +1,6 @@
 package daemonclient
 
 import (
-	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -92,25 +91,6 @@ func TestPeopleBrowserListDirectoryMapsQueryAndResponse(t *testing.T) {
 	var _ peoplebrowser.DirectoryLister = engine
 }
 
-func TestPeopleBrowserDirectoryAddressRejectsUnsupportedDaemon(t *testing.T) {
-	for _, version := range []string{"3.28.0", "", "unknown"} {
-		t.Run(version, func(t *testing.T) {
-			var lookups int
-			engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/health" {
-					writePeopleBrowserJSON(t, w, http.StatusOK, `{"status":"ok","api_schema_version":"`+version+`"}`)
-					return
-				}
-				lookups++
-				http.NotFound(w, r)
-			}))
-			_, err := engine.ListDirectoryPeople(t.Context(), store.DirectoryPeopleQuery{Address: "alex@example.test"})
-			require.EqualError(t, err, "person directory address filtering requires daemon API schema 3.29.0 or newer; upgrade the daemon")
-			assert.Zero(t, lookups)
-		})
-	}
-}
-
 func TestPeopleBrowserListDirectoryReturnsDaemonError(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -131,11 +111,6 @@ func TestPeopleBrowserDirectoryCadenceRoundTrip(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			writePeopleBrowserJSON(t, w, http.StatusOK, fmt.Sprintf(`{"status":"ok","api_schema_version":%q}`, DirectoryCadenceMinAPISchemaVersion))
-			return
-		}
-
 		assert.Equal("due", r.URL.Query().Get("cadence"))
 		assert.Equal("7", r.URL.Query().Get("due_within_days"))
 		assert.Equal("next_due", r.URL.Query().Get("sort"))
@@ -161,20 +136,4 @@ func TestPeopleBrowserDirectoryCadenceRoundTrip(t *testing.T) {
 	assert.True(*p.ReachOutContext.OpenLoopsStale)
 	assert.False(*p.ReachOutContext.SignalsStale)
 	assert.Equal("B", p.ReachOutContext.SuggestedList)
-}
-
-func TestPeopleBrowserDirectoryCadenceRequiresCurrentSchema(t *testing.T) {
-	requests := 0
-	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			writePeopleBrowserJSON(t, w, http.StatusOK, `{"status":"ok","api_schema_version":"3.23.0"}`)
-			return
-		}
-		requests++
-		writePeopleBrowserJSON(t, w, http.StatusOK, `{"people":[]}`)
-	}))
-	_, err := engine.ListDirectoryPeople(t.Context(), store.DirectoryPeopleQuery{Cadence: "overdue"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "upgrade the daemon")
-	assert.Zero(t, requests, "an old daemon must not silently ignore cadence filtering")
 }

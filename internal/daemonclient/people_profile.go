@@ -3,7 +3,6 @@ package daemonclient
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -16,13 +15,6 @@ import (
 
 var _ peoplebrowser.ProfileReader = (*PeopleBrowser)(nil)
 var _ peoplebrowser.ProfileUIDReader = (*PeopleBrowser)(nil)
-
-// PersonUIDLookupMinAPISchemaVersion is the first daemon schema that supports
-// resolving a person profile by current or CardDAV UID.
-const PersonUIDLookupMinAPISchemaVersion = "3.10.0"
-
-// FirstAppearanceMinAPISchemaVersion is the first schema exposing first appearance.
-const FirstAppearanceMinAPISchemaVersion = "5.7.0"
 
 // maxProfileOrganizationLookups bounds the per-organization name resolution
 // a single profile read may perform beyond the primary-employment projection.
@@ -147,14 +139,6 @@ func (b *PeopleBrowser) GetPersonProfileByUID(
 	uid = strings.TrimSpace(uid)
 	if uid == "" {
 		return nil, errors.New("vCard UID must not be empty")
-	}
-	supported, err := b.engine.store.SupportsAPISchemaVersion(ctx, PersonUIDLookupMinAPISchemaVersion)
-	if err != nil {
-		return nil, fmt.Errorf("check person UID lookup capability: %w", err)
-	}
-	if !supported {
-		return nil, fmt.Errorf("person UID lookup requires daemon API schema %s or newer; upgrade the daemon",
-			PersonUIDLookupMinAPISchemaVersion)
 	}
 	resp, err := APIResponse(b.engine.store,
 		func(client *apiclient.Client) (*generated.GetPersonByUIDResp, error) {

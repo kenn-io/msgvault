@@ -26,7 +26,7 @@ func listDirectoryPeopleDefinition(_ *handlers) toolDefinition {
 		"List durable people from the Directory, with cadence filters and ordering by name, last contact, or due date. Search observed contacts separately with search_people.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:          stringSchema("Optional lexical query over durable person fields"),
-			"address":             stringSchema("Optional literal case-insensitive address or identifier substring. Sparse matches can scan all saved people. Requires daemon API schema 3.29.0."),
+			"address":             stringSchema("Optional literal case-insensitive address or identifier substring. Sparse matches can scan all saved people."),
 			toolArgCursor:         stringSchema("Opaque cursor from the previous list_directory_people response"),
 			toolArgLimit:          nonNegativeIntegerSchema("Maximum rows to return (default 50, max 100)", store.DefaultDirectoryPeopleLimit),
 			"sort":                sort,
@@ -138,8 +138,6 @@ func directoryDaemonError(err error) *toolResult {
 		return nil
 	}
 	switch coded.APIErrorCode() {
-	case "directory_address_unsupported":
-		return toolErrorResult("directory_address_unsupported: person directory address filtering requires daemon API schema 3.29.0 or newer; upgrade the daemon")
 	case "invalid_cursor":
 		return toolErrorResult("invalid_cursor: directory cursor is invalid; restart the query")
 	case "invalid_query":

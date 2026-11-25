@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -313,32 +312,21 @@ func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {
 	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_forward", "draft_get", "draft_recover", "draft_reply", "draft_send_as"}, names)
 }
 
-func TestMCPDraftCapabilityGate(t *testing.T) {
-	runMCPCapabilityGate(t, false)
-}
-
-func TestMCPDelegatedStartupGate(t *testing.T) {
-	runMCPCapabilityGate(t, true)
-}
-
-func runMCPCapabilityGate(t *testing.T, delegated bool) {
-	t.Helper()
+// The owner MCP server offers draft tools only when the daemon health check
+// succeeds.
+func TestMCPDraftToolsFollowDaemonHealth(t *testing.T) {
 	previousCheck := remoteAPISchemaCheckEnabled
 	remoteAPISchemaCheckEnabled = true
 	t.Cleanup(func() { remoteAPISchemaCheckEnabled = previousCheck })
-	versions := []string{"failed", "missing", "2.35.0", "3.0.0"}
-	if delegated {
-		versions = []string{"failed", "3.0.0"}
-	}
-	for _, version := range versions {
-		name := "owner/" + version
-		if delegated {
-			name = "health failure"
-			if version == "3.0.0" {
-				name = "old daemon"
-			}
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		failed bool
+		want   int
+	}{
+		{name: "health failure", failed: true, want: 0},
+		{name: "healthy", want: 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := newDraftReplyFixture(t)
@@ -346,63 +334,25 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 			var healthCalls atomic.Int64
 			server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if probing.Load() && r.URL.Path == "/api/v1/health" && healthCalls.Add(1) > 1 {
+					if probing.Load() && r.URL.Path == "/api/v1/health" && healthCalls.Add(1) > 1 && tc.failed {
 						w.Header().Set("Content-Type", "application/json")
-						if version == "failed" {
-							w.WriteHeader(http.StatusServiceUnavailable)
-							_, _ = w.Write([]byte(`{"error":"unavailable","message":"probe unavailable"}`))
-							return
-						}
-						body := map[string]any{"status": "ok"}
-						if version != "missing" {
-							body["api_schema_version"] = version
-						}
-						_ = json.NewEncoder(w).Encode(body)
+						w.WriteHeader(http.StatusServiceUnavailable)
+						_, _ = w.Write([]byte(`{"error":"unavailable","message":"probe unavailable"}`))
 						return
 					}
 					next.ServeHTTP(w, r)
 				})
 			})
-			var ctx context.Context
-			if delegated {
-				ctx = mcpDraftAgentContext(t, server, fixture.source.ID, []string{"draft.create"})
-			} else {
-				ctx = withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
-			}
+			ctx := withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
 			probing.Store(true)
-			if delegated {
-				// Delegated tool selection needs the grant source inventory.
-				served := false
-				previousServe := serveMCPStdioWithOptions
-				serveMCPStdioWithOptions = func(context.Context, mcpserver.ServeOptions) error { served = true; return nil }
-				t.Cleanup(func() { serveMCPStdioWithOptions = previousServe })
-				cmd := &cobra.Command{Use: "mcp"}
-				cmd.SetContext(ctx)
-				err := mcpCmd.RunE(cmd, nil)
-				if version == "failed" {
-					require.ErrorContains(err, "check daemon compatibility")
-					require.ErrorContains(err, "probe unavailable")
-				} else {
-					require.ErrorContains(err, "delegated MCP requires daemon API schema")
-					require.ErrorContains(err, "upgrade the daemon")
-				}
-				assert.False(served)
-				assert.Equal(int64(2), healthCalls.Load(), "startup compatibility and delegated source inventory probes")
-				return
-			}
 			session := mcpDraftTestSession(ctx, t)
-			names := mcpDraftToolNames(t, session)
 			var drafts []string
-			for _, name := range names {
+			for _, name := range mcpDraftToolNames(t, session) {
 				if strings.HasPrefix(name, "draft_") {
 					drafts = append(drafts, name)
 				}
 			}
-			want := 0
-			if version == "3.0.0" {
-				want = 8
-			}
-			assert.Len(drafts, want)
+			assert.Len(drafts, tc.want)
 			require.Equal(int64(2), healthCalls.Load(), "startup compatibility and capability probes")
 		})
 	}

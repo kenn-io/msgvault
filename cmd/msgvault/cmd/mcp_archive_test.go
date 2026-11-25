@@ -254,7 +254,6 @@ func TestMCPMeetingRecordDelegated(t *testing.T) {
 		available     bool
 	}{
 		{"current", api.APISchemaVersion, []string{"message.read"}, true},
-		{"schema 5.8", "5.8.0", []string{"message.read"}, false},
 		{"without message access", api.APISchemaVersion, []string{"search.read"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

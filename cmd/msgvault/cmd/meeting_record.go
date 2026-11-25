@@ -14,8 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const meetingLinksMinAPISchemaVersion = "5.9.0"
-
 func newMeetingLinksCommand(deps meetingCommandDeps) *cobra.Command {
 	var jsonOutput bool
 	command := &cobra.Command{Use: "links <note-id|ref>", Short: "Show linked calendar events and notes", Long: "Show linked calendar events and notes. Takes a note ID, msg:<id>, or evt:<id>[@occurrence key].", Args: cobra.ExactArgs(1)}
@@ -25,7 +23,7 @@ func newMeetingLinksCommand(deps meetingCommandDeps) *cobra.Command {
 		if err != nil {
 			return usageErr(cmd, err)
 		}
-		client, cleanup, err := openMeetingCommandClient(cmd.Context(), deps, meetingLinksMinAPISchemaVersion)
+		client, cleanup, err := openMeetingCommandClient(cmd.Context(), deps)
 		if err != nil {
 			return err
 		}

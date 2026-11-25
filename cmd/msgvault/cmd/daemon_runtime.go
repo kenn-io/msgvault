@@ -48,7 +48,6 @@ const (
 	runtimePersistent               = "persistent"
 	runtimeIdleTimeout              = "idle_timeout"
 	runtimeBackgroundValue          = "true"
-	minimumDaemonAPISchemaVersion   = "3.0.0"
 	runtimeStartupCacheBuildOutcome = "startup_cache_build_outcome"
 	daemonProbeTick                 = 250 * time.Millisecond
 )
@@ -414,10 +413,13 @@ func apiSchemaCompatibilityError(peerVersion string) error {
 			peerVersion, api.APISchemaVersion,
 		)
 	}
-	if !daemonclient.APISchemaVersionAtLeast(peerVersion, minimumDaemonAPISchemaVersion) {
+	// The CLI and its daemon run the same release. A newer daemon of the
+	// same major version only adds to the contract, but an older one may lack
+	// routes and fields this CLI relies on without checking for them.
+	if !daemonclient.APISchemaVersionAtLeast(peerVersion, api.APISchemaVersion) {
 		return fmt.Errorf(
-			"daemon API schema version %q is incompatible: this CLI requires API schema %s or newer",
-			peerVersion, minimumDaemonAPISchemaVersion,
+			"daemon API schema version %q is older than this CLI's API schema %s; upgrade the daemon",
+			peerVersion, api.APISchemaVersion,
 		)
 	}
 	return nil
@@ -754,8 +756,13 @@ func nativeCommandExecutable() string {
 	return executable
 }
 
+// shouldUpgradeIncompatibleDaemonRuntimeWithPolicy reports whether to replace
+// a local daemon this CLI cannot use. Unless restarts are turned off, a daemon
+// with an older API schema is always replaced, even when binary versions
+// cannot be ordered (two source builds of one release), so a CLI in the
+// default mode never stops on a daemon it could restart.
 func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, currentVersion string, policy string) bool {
-	if !shouldUpgradeDaemonRuntimeWithPolicy(rt, currentVersion, policy) {
+	if rt == nil || rt.API > daemonAPIVersion {
 		return false
 	}
 	if rt.APISchemaVersion != "" {
@@ -765,7 +772,11 @@ func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, current
 			return false
 		}
 	}
-	return rt.API <= daemonAPIVersion
+	if policy != config.DaemonAutoRestartNever &&
+		!daemonclient.APISchemaVersionAtLeast(rt.APISchemaVersion, api.APISchemaVersion) {
+		return true
+	}
+	return shouldUpgradeDaemonRuntimeWithPolicy(rt, currentVersion, policy)
 }
 
 func localDaemonAPIClient(baseURL, apiKey string) (*apiclient.Client, error) {
