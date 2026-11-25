@@ -33,6 +33,14 @@ type PostgreSQL struct {
 	Embeddings         *Embeddings
 }
 
+func (p PostgreSQL) validatePool() error {
+	if p.MaxOpenConnections < 0 || p.MaxOpenConnections == 1 {
+		return fmt.Errorf("PostgreSQL MaxOpenConnections %d cannot hold a sync lock and run its work; "+
+			"use 0 for the default pool or at least 2", p.MaxOpenConnections)
+	}
+	return nil
+}
+
 func (p PostgreSQL) connectionURL(extensionSchema, currentPath string) (string, error) {
 	if strings.TrimSpace(p.URL) == "" {
 		return "", errors.New("archive requires an explicit PostgreSQL connection")
@@ -87,6 +95,9 @@ func Setup(ctx context.Context, postgres PostgreSQL) error {
 func RebuildEmbeddings(ctx context.Context, postgres PostgreSQL) error {
 	if postgres.Embeddings == nil || postgres.Embeddings.Client == nil {
 		return errors.New("rebuild embeddings requires an embedding client and descriptor")
+	}
+	if err := postgres.validatePool(); err != nil {
+		return err
 	}
 	if err := setup(ctx, postgres, true); err != nil {
 		return err
@@ -177,9 +188,8 @@ func Open(ctx context.Context, postgres PostgreSQL) (*Archive, error) {
 			return nil, fmt.Errorf("embedding descriptor: %w", err)
 		}
 	}
-	if postgres.MaxOpenConnections < 0 || postgres.MaxOpenConnections == 1 {
-		return nil, fmt.Errorf("PostgreSQL MaxOpenConnections %d cannot hold a sync lock and run its work; "+
-			"use 0 for the default pool or at least 2", postgres.MaxOpenConnections)
+	if err := postgres.validatePool(); err != nil {
+		return nil, err
 	}
 	dsn, err := postgres.connectionURL("", "")
 	if err != nil {

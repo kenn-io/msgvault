@@ -494,6 +494,18 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&built))
 	require.Greater(t, built, 0)
 	require.Less(t, built, 33)
+	for _, poolSize := range []int{1, -1} {
+		invalid := opts
+		invalid.Embeddings = settings(original)
+		invalid.MaxOpenConnections = poolSize
+		require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), invalid), "MaxOpenConnections")
+		var stillBuilding int64
+		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='building'`).Scan(&stillBuilding))
+		assert.Equal(t, buildingID, stillBuilding)
+		var remaining int
+		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&remaining))
+		assert.Equal(t, built, remaining)
+	}
 	var restored bool
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT to_regclass('person_embeddings') IS NOT NULL`).Scan(&restored))
 	assert.True(t, restored)
