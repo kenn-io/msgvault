@@ -22,8 +22,8 @@ const EmbedGenBackfillMigration = "embed_gen_backfill_active_v1"
 // Error semantics:
 //   - ErrIndexStale: an active generation exists but its fingerprint
 //     does not match the supplied one. The active generation is returned too.
-//   - ErrIndexBuilding: no active yet, but a first-ever build is in
-//     progress.
+//   - ErrIndexBuilding: a generation matching the configured fingerprint is
+//     building, or the first generation is building.
 //   - ErrNotEnabled: no generation exists at all (vector search not
 //     initialized).
 //
@@ -32,6 +32,13 @@ func ResolveActiveForFingerprint(ctx context.Context, b Backend, fingerprint str
 	active, err := b.ActiveGeneration(ctx)
 	if err == nil {
 		if fingerprint != "" && active.Fingerprint != fingerprint {
+			building, bErr := b.BuildingGeneration(ctx)
+			if bErr != nil {
+				return Generation{}, fmt.Errorf("building generation: %w", bErr)
+			}
+			if building != nil && building.Fingerprint == fingerprint {
+				return Generation{}, ErrIndexBuilding
+			}
 			return active, fmt.Errorf("%w: active=%q configured=%q",
 				ErrIndexStale, active.Fingerprint, fingerprint)
 		}

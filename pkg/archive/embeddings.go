@@ -61,7 +61,7 @@ func embeddingConfig(settings *Embeddings) (vector.Config, error) {
 	return cfg, nil
 }
 
-func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vector.Config, create bool) (vector.Generation, bool, error) {
+func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vector.Config, create, allowReplacement bool) (vector.Generation, bool, error) {
 	fingerprint := cfg.GenerationFingerprint()
 	building, err := backend.BuildingGeneration(ctx)
 	if err != nil {
@@ -70,6 +70,9 @@ func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vec
 	if building != nil {
 		if building.Fingerprint != fingerprint {
 			return vector.Generation{}, false, fmt.Errorf("%w: building fingerprint %q differs from configured %q; use RebuildEmbeddings to replace it", vector.ErrBuildingInProgress, building.Fingerprint, fingerprint)
+		}
+		if allowReplacement {
+			return *building, true, nil
 		}
 	}
 	active, err := backend.ActiveGeneration(ctx)
@@ -109,6 +112,35 @@ func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config, re
 	if err := st.DB().QueryRowContext(ctx, `SELECT to_regclass(format('%I.%I', current_schema(), 'index_generations')) IS NOT NULL`).Scan(&exists); err != nil {
 		return err
 	}
+	if rebuild {
+		// Migrate before retirement, and prepare the new indexes before changing
+		// any generation so a failed setup leaves the active vectors intact.
+		backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipExtension: true, ExtensionSchema: extensionSchema})
+		if err != nil {
+			return err
+		}
+		building, err := backend.BuildingGeneration(ctx)
+		if err != nil {
+			return err
+		}
+		if building != nil && building.Fingerprint != cfg.GenerationFingerprint() {
+			if err := backend.RetireGeneration(ctx, building.ID, false); err != nil {
+				return err
+			}
+			building = nil
+		}
+		if building == nil {
+			active, err := backend.ActiveGeneration(ctx)
+			if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
+				return err
+			}
+			if errors.Is(err, vector.ErrNoActiveGeneration) || active.Fingerprint != cfg.GenerationFingerprint() {
+				_, err = backend.CreateGeneration(ctx, cfg.Embeddings.Model, cfg.Embeddings.Dimension, cfg.GenerationFingerprint())
+				return err
+			}
+		}
+		return nil
+	}
 	// A new generation creates its own indexes; existing generations need migration to check them.
 	dimension := 0
 	if exists {
@@ -116,27 +148,7 @@ func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config, re
 		if err != nil {
 			return err
 		}
-		if rebuild {
-			building, err := backend.BuildingGeneration(ctx)
-			if err != nil {
-				return err
-			}
-			if building != nil && building.Fingerprint != cfg.GenerationFingerprint() {
-				if err := backend.RetireGeneration(ctx, building.ID, false); err != nil {
-					return err
-				}
-			}
-			active, err := backend.ActiveGeneration(ctx)
-			if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
-				return err
-			}
-			if err == nil && active.Fingerprint != cfg.GenerationFingerprint() {
-				if err := backend.RetireGeneration(ctx, active.ID, true); err != nil {
-					return err
-				}
-			}
-		}
-		_, _, err = embeddingGeneration(ctx, backend, cfg, false)
+		_, _, err = embeddingGeneration(ctx, backend, cfg, false, false)
 		if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
 			return err
 		}
@@ -148,7 +160,7 @@ func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config, re
 	if err != nil {
 		return err
 	}
-	_, _, err = embeddingGeneration(ctx, backend, cfg, true)
+	_, _, err = embeddingGeneration(ctx, backend, cfg, true, false)
 	return err
 }
 
@@ -183,7 +195,7 @@ func (a *Archive) Embed(ctx context.Context) error {
 		return nil
 	}
 	rt := a.embeddings
-	gen, building, err := embeddingGeneration(ctx, rt.backend, rt.config, false)
+	gen, building, err := embeddingGeneration(ctx, rt.backend, rt.config, false, true)
 	if err != nil {
 		return err
 	}

@@ -83,9 +83,9 @@ func Setup(ctx context.Context, postgres PostgreSQL) error {
 
 // RebuildEmbeddings prepares an archive for a changed embedding identity. Run it
 // as the schema owner, after stopping Embed calls across all archive handles.
-// It retires generations with a different identity, including daemon-built
-// generations, and deletes their vectors. Embed builds and activates the new
-// generation. If the identity is unchanged, it behaves like Setup.
+// It retires an unfinished build with a different identity and prepares a new
+// generation. Embed builds and activates it, retiring the previous generation
+// and deleting its vectors.
 func RebuildEmbeddings(ctx context.Context, postgres PostgreSQL) error {
 	if postgres.Embeddings == nil || postgres.Embeddings.Client == nil {
 		return errors.New("rebuild embeddings requires an embedding client and descriptor")

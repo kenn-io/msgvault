@@ -80,6 +80,14 @@ func TestResolveActiveForFingerprint_Stale(t *testing.T) {
 	assert.Equal(t, "m:768:p1-111111", generation.Fingerprint)
 }
 
+func TestResolveActiveForFingerprint_MatchingBuild(t *testing.T) {
+	b := &fakeBackend{active: &Generation{Fingerprint: "old"}, building: &Generation{Fingerprint: "new"}}
+	_, err := ResolveActiveForFingerprint(t.Context(), b, "new")
+	assert.ErrorIs(t, err, ErrIndexBuilding)
+	_, err = ResolveActiveForFingerprint(t.Context(), b, "other")
+	assert.ErrorIs(t, err, ErrIndexStale)
+}
+
 // TestResolveActiveForFingerprint_StaleOnPreprocessFlip pins the
 // upgrade path that motivated folding preprocess into the fingerprint:
 // flipping a strip_* toggle (here strip_html → false) must surface as
