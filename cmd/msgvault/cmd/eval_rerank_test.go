@@ -197,12 +197,12 @@ func (fakeReranker) Rerank(_ context.Context, _ rerank.Request) (rerank.Result, 
 func TestEvalRerankShortlist(t *testing.T) {
 	assert := assert.New(t)
 	keys, result, err := rerankEvalKeys(t.Context(), fakeReranker{}, "query",
-		[]string{"first", "second", "tail"}, []string{"one", "two"})
+		[]string{"first", "second", "tail"}, []string{"one", "two"}, nil)
 	require.NoError(t, err)
 	assert.Equal([]string{"second", "first", "tail"}, keys)
 	assert.Equal([]float64{0.1, 0.9}, result.Scores)
 	for _, shortlist := range [][]string{nil, {"only"}} {
-		keys, result, err := rerankEvalKeys(t.Context(), nil, "query", shortlist, shortlist)
+		keys, result, err := rerankEvalKeys(t.Context(), nil, "query", shortlist, shortlist, nil)
 		require.NoError(t, err)
 		assert.Equal(shortlist, keys)
 		assert.Equal(rerank.Usage{InputTokens: new(int64(0)), OutputTokens: new(int64(0)), Complete: true}, result.Usage)
@@ -596,4 +596,31 @@ func TestEvalRerankRevalidatesCandidatesBeforeEachDispatch(t *testing.T) {
 			assert.False(t, report.Complete)
 		})
 	}
+}
+
+// A per-candidate ranking sends its candidates in waves. A room that turns
+// Cold after the first wave must stop the later waves, not just the next
+// ranking.
+func TestEvalRerankRevalidatesCandidatesBetweenWaves(t *testing.T) {
+	s := seedRankingDivergenceArchive(t)
+	waves := 0
+	scorer := evalRerankFunc(func(ctx context.Context, request rerank.Request) (rerank.Result, error) {
+		for waves < 2 {
+			if err := request.Admit(ctx); err != nil {
+				return rerank.Result{Usage: rerank.Usage{Requests: waves, Complete: true}}, err
+			}
+			waves++
+			require.NoError(t, s.SetConversationPolicyOverride(t.Context(), 1, "thread-1", conversationpolicy.Cold))
+		}
+		return rerank.Result{Scores: []float64{1, 0}, Usage: rerank.Usage{Complete: true}}, nil
+	})
+	report := newEvalRerankReport(evalRerankOptions{Shapes: []string{"per-candidate"}, Top: 2})
+	report.scorers = map[string]evalReranker{"per-candidate": scorer}
+	err := report.scoreRanking(t.Context(), s, map[string]evalHit{"one": {MessageID: 1}, "two": {MessageID: 2}},
+		"fts", eval.Topic{ID: "q1", Query: "renewal"}, []string{"one", "two"}, map[string]struct{}{"one": {}}, eval.Cutoffs{}, 0)
+	require.ErrorContains(t, err, "candidate policy changed or is ineligible")
+	assert.Equal(t, 1, waves, "only the wave admitted before the room turned Cold is sent")
+	arm := report.arm("fts", "per-candidate")
+	assert.Equal(t, "candidate policy changed or is ineligible", arm.Error)
+	assert.False(t, report.Complete)
 }

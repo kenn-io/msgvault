@@ -32,7 +32,12 @@ type jevScorer interface {
 }
 
 // Jev scores candidates through Docbank's TypeSafe client.
-type Jev struct{ scorer jevScorer }
+type Jev struct {
+	scorer jevScorer
+	// perCandidate sends one request per candidate, so a ranking can be
+	// split into waves without changing any candidate's score.
+	perCandidate bool
+}
 
 type staticSecret string
 
@@ -71,22 +76,47 @@ func NewJev(shape, key string) (*Jev, error) {
 	if err != nil {
 		return nil, fmt.Errorf("typesafe client: %w", err)
 	}
-	return &Jev{scorer: client}, nil
+	return &Jev{scorer: client, perCandidate: shape == "per-candidate"}, nil
 }
 
-// Rerank scores request.Candidates in order. A failed ranking reports no usage.
+// Rerank scores request.Candidates in order. A failed or stopped ranking
+// reports the usage of the waves it already sent, which is none for a
+// single-call ranking. A provider failure marks that usage incomplete.
 func (j *Jev) Rerank(ctx context.Context, request Request) (Result, error) {
-	result, err := j.scorer.Rerank(ctx, typesafe.RerankRequest{Query: request.Query, Candidates: request.Candidates})
-	if err != nil {
-		return Result{}, err
+	wave := len(request.Candidates)
+	if j.perCandidate && request.Admit != nil {
+		wave = jevConcurrent
 	}
-	receipt := result.Receipt
-	requests := 1
-	if receipt.RequestShape == typesafe.RequestShapePerCandidate {
-		requests = receipt.CandidateCount
+	var total Result
+	var input, output int64
+	for start := 0; start == 0 || start < len(request.Candidates); start += wave {
+		if request.Admit != nil {
+			if err := request.Admit(ctx); err != nil {
+				total.Scores = nil
+				return total, err
+			}
+		}
+		end := min(start+wave, len(request.Candidates))
+		result, err := j.scorer.Rerank(ctx, typesafe.RerankRequest{Query: request.Query, Candidates: request.Candidates[start:end]})
+		if err != nil {
+			// Earlier waves' usage is known; this wave's is not.
+			total.Scores, total.Usage.Complete = nil, false
+			return total, err
+		}
+		receipt := result.Receipt
+		requests := 1
+		if receipt.RequestShape == typesafe.RequestShapePerCandidate {
+			requests = receipt.CandidateCount
+		}
+		input += receipt.InputTokens
+		output += receipt.OutputTokens
+		total.Scores = append(total.Scores, result.Scores...)
+		total.Usage = Usage{Requests: total.Usage.Requests + requests, InputTokens: new(input), OutputTokens: new(output), Complete: true}
+		if wave == 0 {
+			break
+		}
 	}
-	input, output := receipt.InputTokens, receipt.OutputTokens
-	return Result{Scores: result.Scores, Usage: Usage{Requests: requests, InputTokens: &input, OutputTokens: &output, Complete: true}}, nil
+	return total, nil
 }
 
 // SafeFailure reports a known error category without including queries, message
