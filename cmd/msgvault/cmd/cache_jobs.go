@@ -33,6 +33,8 @@ type cacheBuildJobs struct {
 	paused    bool
 	runCancel context.CancelFunc
 	runDone   chan struct{}
+	// followers maps a queued job to interrupted jobs that finish with it.
+	followers map[string][]string
 }
 
 // verifyWhenDue queues a full staleness check in the builder subprocess.
@@ -214,19 +216,23 @@ func (m *cacheBuildJobs) execute(runCtx context.Context, id string, mode buildCa
 
 // requeueInterruptedLocked handles a build a backup freeze stopped. The job
 // returns to the queue and runs again after resume, unless a later request is
-// already queued; that later build covers this one, so this job ends.
+// already queued. That later build reads a newer snapshot and covers this one,
+// so this job stays queued and finishes with the later build's outcome.
 func (m *cacheBuildJobs) requeueInterruptedLocked(id string, mode buildCacheMode) {
 	m.current = ""
+	job := m.jobs[id]
+	job.Status = api.CacheBuildQueued
+	m.jobs[id] = job
 	if m.pending != "" {
-		m.finishLocked(id, "analytics cache build was interrupted by a backup; a queued build replaces it", time.Now().UTC())
+		if m.followers == nil {
+			m.followers = make(map[string][]string)
+		}
+		m.followers[m.pending] = append(m.followers[m.pending], id)
 		if mode != buildCacheModeScheduledAuto && m.pendingMode == buildCacheModeScheduledAuto {
 			m.pendingMode = mode
 		}
 		return
 	}
-	job := m.jobs[id]
-	job.Status = api.CacheBuildQueued
-	m.jobs[id] = job
 	m.pending, m.pendingMode = id, mode
 }
 
@@ -292,6 +298,11 @@ func (m *cacheBuildJobs) finishLocked(id, failure string, finishedAt time.Time) 
 	if len(m.completed) > 100 {
 		delete(m.jobs, m.completed[0])
 		m.completed = m.completed[1:]
+	}
+	followers := m.followers[id]
+	delete(m.followers, id)
+	for _, follower := range followers {
+		m.finishLocked(follower, failure, finishedAt)
 	}
 }
 

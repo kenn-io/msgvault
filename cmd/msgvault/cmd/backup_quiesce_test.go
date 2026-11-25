@@ -256,3 +256,39 @@ func TestCacheBuildJobsRunInterruptedBuildAfterPauseGivesUp(t *testing.T) {
 		assert.Equal(int32(2), calls.Load())
 	})
 }
+
+func TestCacheBuildJobsInterruptedBuildFinishesWithQueuedReplacement(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		started := make(chan struct{}, 1)
+		var calls atomic.Int32
+		jobs := newCacheBuildJobs(t.Context(), nil, func(ctx context.Context, _ buildCacheMode) error {
+			if calls.Add(1) == 1 {
+				started <- struct{}{}
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return nil
+		})
+		first, err := jobs.accept(buildCacheModeAuto)
+		require.NoError(err)
+		<-started
+		// A sync commits while the first build reads an older snapshot.
+		replacement, err := jobs.acceptAfterWrite(buildCacheModeAuto)
+		require.NoError(err)
+		require.NotEqual(first.JobID, replacement.JobID)
+
+		resume, err := jobs.pause(t.Context())
+		require.NoError(err)
+		resume()
+		synctest.Wait()
+
+		for _, id := range []string{first.JobID, replacement.JobID} {
+			status, ok := jobs.status(id)
+			require.True(ok)
+			assert.Equal(api.CacheBuildPublished, status.Status, "job %s", id)
+		}
+		assert.Equal(int32(2), calls.Load(), "the replacement build covers the interrupted one")
+	})
+}
