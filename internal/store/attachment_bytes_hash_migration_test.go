@@ -135,7 +135,7 @@ func TestAttachmentsRejectStoredBytesWithoutHash(t *testing.T) {
 		`UPDATE attachments SET thumbnail_path = 'thumbs/a.jpg' WHERE filename = 'stored'`,
 	} {
 		_, err := st.DB().ExecContext(t.Context(), stmt)
-		assert.Error(t, err, stmt)
+		require.Error(t, err, stmt)
 	}
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ? WHERE filename = 'stored'`),
