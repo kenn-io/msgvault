@@ -195,7 +195,8 @@ func TestEnsureConversationCancellation(t *testing.T) {
 // serial: changes slog.Default and SQL logging.
 func TestEnsureConversationCancellationDuringMembership(t *testing.T) {
 	// Each member's resolution and membership commit are separate transactions.
-	for _, at := range []int{1, 2, 3, 4, 5} {
+	// Room policy setup commits before the first member is written.
+	for _, at := range []int{1, 2, 3, 4, 5, 6, 7, 8} {
 		t.Run(fmt.Sprintf("begin %d", at), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st := testutil.NewTestStore(t)
@@ -230,7 +231,7 @@ func TestEnsureConversationCancellationDuringMembership(t *testing.T) {
 			assert.Zero(handler.afterCancel, "no later member or roster write may attempt BeginTx")
 			assert.Empty(handler.warnings)
 			want := []int64{oldID}
-			if at >= 5 {
+			if at >= 8 {
 				want = append(want, firstID)
 			}
 			assert.Equal(want, rosterMembers(t, st, sourceID, "!cancel:example.com"))
@@ -259,8 +260,9 @@ func TestEnsureConversationCancellationDuringPartialRoster(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	// The fifth commit atomically writes the first member and its receipt.
-	handler := installCancelOnLog(t, cancel, 5, logMessage("sql tx commit"))
+	// The eighth commit atomically writes the first member and its receipt.
+	// Room policy setup commits first.
+	handler := installCancelOnLog(t, cancel, 8, logMessage("sql tx commit"))
 	sum := &ImportSummary{}
 	_, complete, _, err := imp.ensureConversation(ctx, syncID, sourceID, &Chat{
 		ID: chatID, Type: "group", Title: "Partial", Network: "Telegram",

@@ -2190,14 +2190,61 @@ func (s *Store) UpdateSourceSyncConfig(ctx context.Context, sourceID int64, conf
 // those rows return to pending in the same transaction and re-derive after it.
 func (s *Store) UpdateSourceIdentifier(ctx context.Context, sourceID int64, identifier string) error {
 	var pending []int64
+	var renamed bool
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
 		pending = nil
-		return s.updateSourceIdentifierTx(ctx, tx, sourceID, identifier, &pending)
+		renamed = false
+		// Config overrides match rooms by identifier, so a rename re-evaluates
+		// the source's rooms after commit.
+		var oldIdentifier string
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(identifier, '') FROM sources WHERE id = ?`, sourceID).Scan(&oldIdentifier); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read source %d identifier: %w", sourceID, err)
+		}
+		if err := s.updateSourceIdentifierTx(ctx, tx, sourceID, identifier, &pending); err != nil {
+			return err
+		}
+		renamed = oldIdentifier != identifier
+		return nil
 	})
 	if err != nil {
 		return err
 	}
 	s.deriveAccountAttributionAfterCommit(ctx, sourceID, pending)
+	if renamed {
+		return s.refreshSourceConversationPolicies(ctx, sourceID)
+	}
+	return nil
+}
+
+// refreshSourceConversationPolicies re-evaluates a source's managed rooms
+// after its identifier changes. Config overrides match by identifier, so a
+// room may gain or lose an override. The refresh takes the policy fence in its
+// own transaction; the periodic check repairs a refresh that never ran.
+func (s *Store) refreshSourceConversationPolicies(ctx context.Context, sourceID int64) error {
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT c.id FROM conversations c
+		JOIN conversation_policy p ON p.conversation_id = c.id
+		WHERE c.source_id = ? ORDER BY c.id`), sourceID)
+	if err != nil {
+		return fmt.Errorf("list managed conversations for renamed source: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return fmt.Errorf("list managed conversations for renamed source: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if _, err := s.RefreshConversationPolicy(ctx, ids, time.Now()); err != nil {
+		return fmt.Errorf("refresh conversation policy after source rename: %w", err)
+	}
 	return nil
 }
 

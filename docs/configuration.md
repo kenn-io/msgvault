@@ -802,23 +802,22 @@ explicit child `include` can override an excluded parent, and an explicit child
 `exclude` wins. See
 [Discord](/docs/usage/discord/#configure-media-repairs-and-channel-filters).
 
-### Conversation archive tiers (staged)
+### Conversation archive tiers
 
-Conversation policy uses the provider's archived roster and applies the same
-participant-count rules as media policy. Four tiers are defined:
+Conversation policy decides how much of a chat room flows into search and
+analytics. It uses the provider's archived roster, with the same
+participant-count rules as media policy. Newer `main` builds enforce two tiers:
 
-| Tier | Intended behavior |
+| Tier | Behavior |
 | --- | --- |
-| `full` | Archive text and use it in search, embeddings and people features. |
-| `cold` | Archive text; explicit lexical search only, without embeddings or people contributions. |
-| `stub` | Keep your own messages, direct replies and explicit mentions of you, plus room metadata. |
-| `skip` | Stop importing room history. |
+| `full` | Archive text and include it in default search and analytics. |
+| `cold` | Archive text, but leave it out of default lexical search, Explore, Files, graph and relationship analytics. |
+| `stub` (future) | Keep your own messages, direct replies and explicit mentions of you, plus room metadata. |
+| `skip` (future) | Stop importing room history. |
 
-This release adds only configuration and inspection. Every room's effective
-tier stays `full`. Automatic classification and cold exclusions are not enabled
-yet. `stub` and `skip` are rejected until retention and purge support
-ships, and saving a `cold` override does not yet hide messages or remove
-vectors.
+Cold text is never deleted. Message and conversation detail requests still read
+it, and lexical search finds it with `--include-cold` or `include:cold`.
+`stub` and `skip` settings are rejected until retention and purge support ships.
 
 Automatic classification is off by default. To enable it for Beeper, Slack
 (including Slackdump imports), Discord, or Teams, set that provider's
@@ -841,14 +840,13 @@ conversation_id = "example-room"
 tier = "cold"
 ```
 
-The policy selects `full` when a room's known roster is at or below the limit,
-or when you have recent activity there: your own post, an explicit mention of
-you, or a direct reply to one of your messages. The activity cutoff is
-inclusive, and future timestamps do not count as activity. Larger rooms and
-rooms with an unknown size select `cold` without that activity.
-`activity_window_days` defaults to 180 days (including when set to `0`);
-negative values and values above 106751 days are rejected. Other providers keep
-their existing behavior.
+With a limit set, a room stays `full` when its known roster is at or below the
+limit, or when it has recent activity: your own post, an explicit mention of a
+confirmed self identity, or a direct reply to your message. The activity cutoff
+is inclusive; future timestamps do not count. Larger rooms, and rooms whose size
+is unknown, become `cold` without that activity. The activity window defaults to
+180 days (also when set to `0`); negative values and windows beyond 106751 days
+are rejected. Other providers keep their current behavior.
 
 You can inspect archived rooms and save overrides through the daemon:
 
@@ -858,13 +856,23 @@ msgvault policy set 1 example-room cold
 msgvault policy reset 1 example-room
 ```
 
-`msgvault policy list` prints JSON with source IDs, provider room IDs, roster
-status, effective tiers, and selected overrides. Pass those source and provider
-IDs to `set` or `reset`. A saved CLI override takes precedence over config, and
-`reset` removes it so config or automatic selection applies again. Config
-overrides match the exact source type, source identifier, and provider room ID,
-and duplicate keys are rejected. All saved values are marked staged in this
-release, and these commands neither purge messages nor contact any provider.
+`list` prints JSON with source IDs, provider room IDs, roster status, effective
+tiers and selected overrides. Use its source ID and provider ID with `set` or
+`reset`. A saved CLI override wins over config. Reset removes that saved value
+and restores config or automatic selection. Config overrides match the exact
+source type, source identifier and provider room ID; duplicate keys are rejected.
+Beeper source identifiers are account IDs; Slack uses `TeamID:UserID`, Discord
+uses guild IDs, and Teams uses account email addresses. `list` also reports last
+activity and whether the roster count is authoritative. Set and reset change
+eligibility immediately and request an analytics rebuild; they do not purge
+messages or contact a provider.
+
+The daemon configures the whole archive before other work starts, including
+quiet and disabled sources. It then checks settings and activity once a minute,
+so a quiet room can go cold up to a minute after its activity window ends. A
+malformed config reload keeps the last validated settings, and expiry continues.
+A failure during initial configuration blocks startup. Cache-only analytics are
+unavailable while an invalidated cache rebuilds.
 
 ### Media policy
 

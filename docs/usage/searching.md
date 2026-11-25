@@ -17,6 +17,13 @@ Run `msgvault search` to find archived email, chats, calendar events, and meetin
 
 Message search does not look inside extracted document text or attachment pixels. Those use separate indexes and setup steps.
 
+In newer `main` builds, default searches exclude cold conversations. Use
+`msgvault search --mode fts --include-cold "query"` or the `include:cold` query
+operator for retained cold text. This broadens lexical discovery only; explicit
+message and conversation details remain readable. Web Explore and its saved
+views cover full conversations only, so they refuse `include:cold`. See
+[conversation archive tiers](../configuration.md#conversation-archive-tiers).
+
 ## Filename suggestions
 
 When you only remember roughly how an attachment filename is spelled, person file lookup can suggest close matches:

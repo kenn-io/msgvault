@@ -229,6 +229,10 @@ func (d *loggedDB) BeginTx(
 type loggedTx struct {
 	*sql.Tx
 
+	// manualConn is set only for a genuine manual-BEGIN transaction. Its owner
+	// retains sole responsibility for COMMIT/ROLLBACK and closing the connection.
+	manualConn *sql.Conn
+
 	rebind func(string) string
 	// ctx is the context BeginTx received; Commit does its own database work
 	// under it.
@@ -244,6 +248,14 @@ type loggedTx struct {
 	syncGenerationFenced bool
 }
 
+// callerTransaction never opens a connection or changes transaction ownership.
+func (t *loggedTx) callerTransaction() ConversationPolicyTx {
+	if t.manualConn != nil {
+		return t.manualConn
+	}
+	return t.Tx
+}
+
 // Exec rebinds before delegating. Transaction-scoped queries are
 // not individually logged — the per-tx duration from Store.withTx
 // gives enough signal.
@@ -257,7 +269,7 @@ func (t *loggedTx) Exec(
 func (t *loggedTx) ExecContext(
 	ctx context.Context, query string, args ...any,
 ) (sql.Result, error) {
-	return t.Tx.ExecContext(ctx, t.rebind(query), args...)
+	return t.callerTransaction().ExecContext(ctx, t.rebind(query), args...)
 }
 
 // Query rebinds and returns *loggedRows so transactional
@@ -277,7 +289,7 @@ func (t *loggedTx) QueryContext(
 	query = t.rebind(query)
 	reqID := RequestIDFromContext(ctx)
 	start := time.Now()
-	rows, err := t.Tx.QueryContext(ctx, query, args...) //nolint:rowserrcheck // caller owns rows.Err
+	rows, err := t.callerTransaction().QueryContext(ctx, query, args...) //nolint:rowserrcheck // caller owns rows.Err
 	if err != nil {
 		logStmtWith("query", reqID, query, args, err, time.Since(start))
 		return nil, err
@@ -302,7 +314,7 @@ func (t *loggedTx) QueryRow(
 func (t *loggedTx) QueryRowContext(
 	ctx context.Context, query string, args ...any,
 ) *sql.Row {
-	return t.Tx.QueryRowContext(ctx, t.rebind(query), args...)
+	return t.callerTransaction().QueryRowContext(ctx, t.rebind(query), args...)
 }
 
 // loggedRows wraps *sql.Rows so the timing log emitted for a

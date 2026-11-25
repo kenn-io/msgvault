@@ -95,6 +95,41 @@ func TestSearchCommonWordExcludesCutoffTies(t *testing.T) {
 	}
 }
 
+// The newest-first window for common words must keep room policy: a Cold
+// room's matches inside the window are not part of the page.
+func TestSearchCommonWordWindowExcludesColdRooms(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	for _, stmt := range []string{
+		`INSERT INTO sources (id, source_type, identifier) VALUES (90, 'slack', 'T0WINDOW')`,
+		`INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES (90, 90, 'cold-room', 'group_chat', 'Cold room')`,
+		`INSERT INTO conversation_policy (conversation_id, effective_tier) VALUES (90, 'cold')`,
+		// Alternate Cold-room and Full-room matches through the newest window.
+		`WITH RECURSIVE seq(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x < 2000)
+		INSERT INTO messages (id, source_message_id, source_id, conversation_id, message_type, sent_at, subject)
+		SELECT 5000+x, 'mixed-' || x,
+			CASE WHEN x % 2 = 0 THEN 90 ELSE 1 END,
+			CASE WHEN x % 2 = 0 THEN 90 ELSE 1 END,
+			CASE WHEN x % 2 = 0 THEN 'slack' ELSE 'email' END,
+			datetime('2025-03-01 00:00:00', '-' || x || ' minutes'), 'invoice' FROM seq`,
+	} {
+		_, err := env.DB.ExecContext(t.Context(), stmt)
+		require.NoError(err)
+	}
+	env.EnableFTS()
+	q := search.Parse("invoice")
+	conditions, args, ftsJoin := env.Engine.buildSearchQueryParts(env.Ctx, q)
+	page, full, err := env.Engine.searchNewestFirst(env.Ctx, q, conditions, args, ftsJoin, 7, 0)
+	require.NoError(err)
+	require.True(full, "the window path must serve this page")
+	require.Len(page, 7)
+	for _, message := range page {
+		assert.NotEqual(int64(90), message.ConversationID, "Cold-room match %d", message.ID)
+	}
+}
+
 func TestSearchCommonWordPreservesPages(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)

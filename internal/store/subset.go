@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
@@ -255,6 +256,14 @@ func CopySubsetWithOptions(
 		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
 	}
 
+	// A source from before room policy copies chats without policy rows. Bootstrap
+	// them after the copy, so copied overrides keep their tiers.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = ?`, migrationConversationPolicyBootstrap); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied conversation policy bootstrap: %w", err)
+	}
+
 	// A source that predates matrix_encrypted_events copies placeholders the
 	// empty destination never registered.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = ?`, migrationMatrixEncryptedEventsV1); err != nil {
@@ -476,6 +485,13 @@ func copyData(ctx context.Context, db *sql.DB, tx *sql.Tx, rowCount int, options
 	} else if exists {
 		if _, err := copyByName(ctx, tx, "conversation_policy", `conversation_id IN (SELECT id FROM conversations)`); err != nil {
 			return nil, fmt.Errorf("copy conversation policy: %w", err)
+		}
+	}
+	// The bootstrap after the copy classifies rooms with the source's policy
+	// settings. Default settings would promote every Cold room.
+	if hasArchiveMetadata {
+		if err := copySubsetConversationPolicySettings(ctx, tx); err != nil {
+			return nil, err
 		}
 	}
 
@@ -2424,6 +2440,13 @@ func copyStructuredProfiles(ctx context.Context, tx *sql.Tx) (int64, error) {
 		`participant_id IN (SELECT id FROM participants)`); err != nil {
 		return 0, fmt.Errorf("copy participant_contact_observations: %w", err)
 	}
+	if exists, err := sourceTableExists(ctx, tx, "participant_contact_observation_conversations"); err != nil {
+		return 0, err
+	} else if exists {
+		if _, err := copyByName(ctx, tx, "participant_contact_observation_conversations", `observation_id IN (SELECT id FROM participant_contact_observations) AND conversation_id IN (SELECT id FROM conversations)`); err != nil {
+			return 0, fmt.Errorf("copy observation room support: %w", err)
+		}
+	}
 	hasCandidates, err := sourceTableExists(ctx, tx, identityMatchCandidatesTableName)
 	if err != nil {
 		return 0, fmt.Errorf("check identity match candidate schema: %w", err)
@@ -2687,6 +2710,9 @@ func copyMessages(ctx context.Context, tx *sql.Tx) error {
 // source lacks is left out of the INSERT, so the destination's own DEFAULT,
 // where it has one, supplies it. Columns the source has and the destination
 // does not are dropped.
+//
+// table and where must be internal SQL templates, never user or archive strings.
+// Schema-derived columns are escaped by commonColumns; values stay bound in args.
 func copyByName(ctx context.Context, tx *sql.Tx, table, where string, args ...any) (sql.Result, error) {
 	cols, err := commonColumns(ctx, tx, table)
 	if err != nil {
@@ -2697,6 +2723,7 @@ func copyByName(ctx context.Context, tx *sql.Tx, table, where string, args ...an
 			"source and destination share no %s columns", table)
 	}
 	list := strings.Join(cols, ", ")
+	// #nosec G701 -- table/where are internal SQL templates; commonColumns uses quoteIdentifier to escape schema columns; values remain bound in args.
 	res, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (%s) SELECT %s FROM src.%s
 		WHERE %s`, table, list, list, table, where), args...)
@@ -3267,6 +3294,48 @@ func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) err
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO meeting_link_decisions(id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES(?,?,?,?,?,?,?,?)`, edge.id, left, edge.a.Kind, edge.a.Key, right, edge.b.Kind, edge.b.Key, edge.decision); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// copySubsetConversationPolicySettings copies the source's room policy
+// settings. Configuration overrides name accounts and rooms, so only those for
+// rooms the subset copied are kept.
+func copySubsetConversationPolicySettings(ctx context.Context, tx *sql.Tx) error {
+	var raw string
+	err := tx.QueryRowContext(ctx, `SELECT value FROM src.archive_metadata WHERE key = ?`, conversationPolicySettingsKey).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read conversation policy settings: %w", err)
+	}
+	var settings conversationpolicy.Settings
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return fmt.Errorf("decode conversation policy settings: %w", err)
+	}
+	kept := settings.Overrides[:0]
+	for _, override := range settings.Overrides {
+		var copied bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversations c JOIN sources s ON s.id = c.source_id
+			WHERE s.source_type = ? AND s.identifier = ? AND c.source_conversation_id = ?)`,
+			override.SourceType, override.SourceIdentifier, override.ConversationID).Scan(&copied); err != nil {
+			return fmt.Errorf("match conversation policy override: %w", err)
+		}
+		if copied {
+			kept = append(kept, override)
+		}
+	}
+	settings.Overrides = kept
+	// Store the normalized form configuration writes, so the bootstrap after
+	// the copy sees unchanged settings.
+	_, value, err := normalizedConversationPolicySettings(settings)
+	if err != nil {
+		return fmt.Errorf("encode conversation policy settings: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata (key, value) VALUES (?, ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, conversationPolicySettingsKey, value); err != nil {
+		return fmt.Errorf("copy conversation policy settings: %w", err)
 	}
 	return nil
 }

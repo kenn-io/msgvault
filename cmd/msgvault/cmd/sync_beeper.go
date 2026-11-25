@@ -427,6 +427,9 @@ func runConfiguredBeeperSync(ctx context.Context, s *store.Store) error {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
+	if err := refreshConversationPolicyForSync(ctx, s, currentConversationPolicySettingsSource(state), time.Now()); err != nil {
+		return err
+	}
 	accountIDs, err := resolveBeeperSyncAccounts(ctx, s, nil, cfg)
 	if err != nil {
 		return err

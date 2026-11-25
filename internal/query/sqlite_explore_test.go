@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -181,6 +182,31 @@ func TestSQLiteExploreRepairsInvalidParticipantLabels(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(page.Rows, 1)
 	assertions.Equal([]string{"Alice", "Bo\ufffdb"}, page.Rows[0].ParticipantLabels)
+}
+
+func TestSQLiteExploreOmitsColdRooms(t *testing.T) {
+	t.Parallel()
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := liveExploreFixture(t)
+	st := fixture.store
+	source, err := st.GetOrCreateSource("slack", "policy-explore")
+	requirements.NoError(err)
+	sentAt := sql.NullTime{Time: time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC), Valid: true}
+	for _, tier := range []conversationpolicy.Tier{conversationpolicy.Full, conversationpolicy.Cold} {
+		room, err := st.EnsureConversationWithType(source.ID, string(tier), "group_chat", string(tier)+" room")
+		requirements.NoError(err)
+		requirements.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, string(tier), tier))
+		_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room,
+			SourceMessageID: string(tier), MessageType: "slack", SentAt: sentAt})
+		requirements.NoError(err)
+	}
+
+	page, err := fixture.live.Explore(t.Context(), ExploreRequest{Context: Context{SourceIDs: []int64{source.ID}}})
+	requirements.NoError(err)
+	assertions.Equal(int64(1), page.TotalCount)
+	requirements.Len(page.Rows, 1)
+	assertions.Equal("full room", page.Rows[0].Title)
 }
 
 func TestSQLiteExploreReaderLifecycle(t *testing.T) {
