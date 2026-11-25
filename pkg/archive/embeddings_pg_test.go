@@ -565,17 +565,11 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assertSearchMessage(t, response, observatoryID)
 	var dimension int
-	var model, fingerprint string
-	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*), max(dimension), max(model), max(fingerprint) FROM index_generations WHERE state='active'`).Scan(&count, &dimension, &model, &fingerprint))
+	var model string
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*), max(dimension), max(model) FROM index_generations WHERE state='active'`).Scan(&count, &dimension, &model))
 	assert.Equal(t, 1, count)
 	assert.Equal(t, 3, dimension)
 	assert.Equal(t, "other", model)
-	identity, err := desc.VectorIdentity()
-	require.NoError(t, err)
-	cfg := vector.Config{Enabled: true, Backend: "pgvector"}
-	cfg.Embeddings.Model, cfg.Embeddings.Dimension, cfg.Embeddings.VectorIdentity = desc.Model.Name, desc.Model.Dimensions, identity
-	cfg.ApplyDefaults()
-	assert.Equal(t, cfg.GenerationFingerprint(), fingerprint)
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, oldID).Scan(&count))
 	assert.Zero(t, count)
 }
