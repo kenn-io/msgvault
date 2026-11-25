@@ -496,3 +496,62 @@ func TestImporterSenderPhoneSupportGoesWithItsSource(t *testing.T) {
 	require.NoError(st.RemoveSource(sourceID))
 	assert.False(phoneSupported(), "deleting the source removes the number's only support")
 }
+
+// The import supports only the number it supplied. An email-only sender whose
+// participant also holds a number from a Cold room lends that number nothing.
+func TestImporterEmailSenderDoesNotSupportAnotherPhone(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	chat, err := st.GetOrCreateSource("beeper", "cold-chat")
+	require.NoError(err)
+	room, err := st.EnsureConversation(t.Context(), chat.ID, "cold-room", "Cold room")
+	require.NoError(err)
+	participant, err := st.EnsurePhoneParticipantContext(t.Context(), "+15550100177", "")
+	require.NoError(err)
+	require.NoError(st.EnsureConversationParticipant(room, participant, "member"))
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), chat.ID, "cold-room", conversationpolicy.Cold))
+	// A merge leaves one row with the Cold number and the imported address.
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET email_address = ? WHERE id = ?`), "merged@example.com", participant)
+	require.NoError(err)
+
+	req := validRequest(t)
+	req.Message.Sender = MessageImportSender{Email: "merged@example.com"}
+	result, err := NewImporter(st, Hooks{}).Import(t.Context(), req)
+	require.NoError(err)
+	var sender int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), result.MessageID).Scan(&sender))
+	require.Equal(participant, sender, "the imported address resolves to the merged row")
+
+	var supported bool
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT EXISTS(SELECT 1 FROM participants p WHERE p.id = ? AND `+
+		store.FullParticipantValueWhere("p.id", "'phone'", "p.phone_number")+`)`), participant).Scan(&supported))
+	assert.False(t, supported, "an email-only import must not support the Cold number")
+}
+
+// A service identifier can carry the number instead of a generic phone row.
+// The import still supports the number it supplied.
+func TestImporterPhoneSupportIgnoresWhichIdentifierCarriesIt(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	chat, err := st.GetOrCreateSource("beeper", "cold-chat")
+	require.NoError(err)
+	room, err := st.EnsureConversation(t.Context(), chat.ID, "cold-room", "Cold room")
+	require.NoError(err)
+	participant, err := st.EnsureParticipantByPhone(t.Context(), "+15550100188", "", "whatsapp")
+	require.NoError(err)
+	require.NoError(st.EnsureConversationParticipant(room, participant, "member"))
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), chat.ID, "cold-room", conversationpolicy.Cold))
+
+	req := validRequest(t)
+	req.Message.Sender = MessageImportSender{Phone: "+1 555 010 0188"}
+	_, err = NewImporter(st, Hooks{}).Import(t.Context(), req)
+	require.NoError(err)
+	var phoneRows int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'phone'`), participant).Scan(&phoneRows))
+	require.Zero(phoneRows, "the service identifier keeps the number")
+
+	var supported bool
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT EXISTS(SELECT 1 FROM participants p WHERE p.id = ? AND `+
+		store.FullParticipantValueWhere("p.id", "'phone'", "p.phone_number")+`)`), participant).Scan(&supported))
+	assert.True(t, supported, "the importing source supports the number it supplied")
+}

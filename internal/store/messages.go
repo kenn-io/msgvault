@@ -5154,6 +5154,25 @@ func (s *Store) EnsurePhoneParticipantContext(ctx context.Context, phone, displa
 	return id, nil
 }
 
+// EnsurePhoneParticipantFromSourceContext is EnsurePhoneParticipantContext
+// for a number read from one source's message. The number is recorded as that
+// source's observation, so the source supports exactly this number for the
+// participant, whatever identifier row carries it, until the source is deleted.
+func (s *Store) EnsurePhoneParticipantFromSourceContext(ctx context.Context, sourceID int64, phone, displayName string) (int64, error) {
+	id, err := s.EnsurePhoneParticipantContext(ctx, phone, displayName)
+	if err != nil {
+		return 0, err
+	}
+	sourceRef := "message_sender"
+	if _, err := s.RecordContactObservationContext(ctx, id, ParticipantContactObservationInput{
+		SourceID: &sourceID, AddressKind: ContactAddressPhone, OriginalValue: phone,
+		Envelope: ValueEnvelopeInput{Source: ProvenanceArchiveObservation, SourceRef: &sourceRef},
+	}); err != nil {
+		return 0, fmt.Errorf("record message sender phone for participant %d: %w", id, err)
+	}
+	return id, nil
+}
+
 // ensureParticipantByPhoneTx is EnsureParticipantByPhone inside a caller's
 // transaction. The caller holds the identity-mutation lock.
 func (s *Store) ensureParticipantByPhoneTx(

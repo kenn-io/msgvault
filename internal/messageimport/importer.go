@@ -206,7 +206,8 @@ func resolveSender(ctx context.Context, st *store.Store, sourceID int64, snapsho
 			_, err = st.UpdateParticipantDisplayNameFromSourceContext(ctx, sourceID, sender.Email, sender.Name)
 		}
 	case sender.Phone != "":
-		id, err = st.EnsurePhoneParticipantContext(ctx, sender.Phone, sender.Name)
+		// Like the sender name, the number is this source's evidence.
+		id, err = st.EnsurePhoneParticipantFromSourceContext(ctx, sourceID, sender.Phone, sender.Name)
 	default:
 		id, err = st.EnsureParticipantByIdentifierContext(ctx,
 			SenderIdentifierType, senderIdentifier(snapshot.SourceIdentifier, sender), sender.Name)
