@@ -1485,6 +1485,8 @@ func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.Gen
 // EmbeddingCoverage counts in-scope live, stamped, and embedded messages for
 // gen in one statement. PostgreSQL gives a statement one snapshot, so a batch
 // committed by a running embedding job cannot make Embedded exceed Stamped.
+// A replacement build moves the shared stamp, but the active generation's
+// retained vectors still count after that build starts or is retired.
 func (b *Backend) EmbeddingCoverage(
 	ctx context.Context, gen vector.GenerationID, scope vector.BuildScope,
 ) (vector.EmbeddingCoverage, error) {
@@ -1493,12 +1495,17 @@ func (b *Backend) EmbeddingCoverage(
 	var coverage vector.EmbeddingCoverage
 	if err := b.db.QueryRowContext(ctx, `
 		SELECT COUNT(*),
-		       COUNT(*) FILTER (WHERE m.embed_gen = $1),
-		       COUNT(*) FILTER (WHERE m.embed_gen = $1 AND EXISTS (
-		           SELECT 1 FROM embeddings e
-		           WHERE e.generation_id = $1 AND e.message_id = m.id))
-		FROM messages m
-		WHERE `+store.LiveMessagesWhere("m", true)+scopeWhere,
+		       COUNT(*) FILTER (WHERE stamped OR (moved AND has_vector)),
+		       COUNT(*) FILTER (WHERE (stamped OR moved) AND has_vector)
+		FROM (
+		    SELECT m.embed_gen = $1 AS stamped,
+		           EXISTS (SELECT 1 FROM embeddings e WHERE e.generation_id = $1 AND e.message_id = m.id) AS has_vector,
+		           EXISTS (SELECT 1 FROM index_generations active
+		                   JOIN index_generations building ON building.id = m.embed_gen AND building.state IN ('building', 'retired')
+		                   WHERE active.id = $1 AND active.state = 'active') AS moved
+		    FROM messages m
+		    WHERE `+store.LiveMessagesWhere("m", true)+scopeWhere+`
+		) coverage`,
 		args...).Scan(&coverage.Live, &coverage.Stamped, &coverage.Embedded); err != nil {
 		return vector.EmbeddingCoverage{}, fmt.Errorf("count embedding coverage: %w", err)
 	}
