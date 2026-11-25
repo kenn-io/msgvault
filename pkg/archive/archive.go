@@ -92,7 +92,7 @@ func Setup(ctx context.Context, postgres PostgreSQL) error {
 // RebuildEmbeddings builds and activates embeddings for the configured model.
 // Run it as the schema owner with Embed stopped on every archive handle. If it
 // fails, call it again to resume. Reopen handles with the new settings afterward.
-func RebuildEmbeddings(ctx context.Context, postgres PostgreSQL) error {
+func RebuildEmbeddings(ctx context.Context, postgres PostgreSQL) (retErr error) {
 	if postgres.Embeddings == nil || postgres.Embeddings.Client == nil {
 		return errors.New("rebuild embeddings requires an embedding client and descriptor")
 	}
@@ -106,7 +106,7 @@ func RebuildEmbeddings(ctx context.Context, postgres PostgreSQL) error {
 	if err != nil {
 		return err
 	}
-	defer a.Close()
+	defer func() { retErr = errors.Join(retErr, a.Close()) }()
 	return a.embed(ctx, true)
 }
 

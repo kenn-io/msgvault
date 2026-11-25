@@ -484,7 +484,7 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='building'`).Scan(&buildingID))
 	var built int
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&built))
-	require.Greater(t, built, 0)
+	require.Positive(t, built)
 	require.Less(t, built, 33)
 	invalid := opts
 	invalid.Embeddings = settings(original)
@@ -526,7 +526,7 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	failOther.Store(false)
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='building'`).Scan(&buildingID))
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&built))
-	require.Greater(t, built, 0)
+	require.Positive(t, built)
 	require.Less(t, built, 33)
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, oldID).Scan(&count))
 	assert.Equal(t, 33, count)
