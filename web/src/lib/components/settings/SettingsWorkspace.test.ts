@@ -460,6 +460,7 @@ describe('SettingsWorkspace', () => {
     const { client, operationsController, onStatusChange } = fixture();
     render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced' });
     await screen.findByRole('heading', { name: 'Advanced', level: 2 });
+    expect(screen.getByRole('heading', { name: 'Settings', level: 1 })).toBeDefined();
     const names = [...window.document.querySelectorAll('.kit-settings__nav-item')].map((item) => item.textContent?.trim());
     expect(names).toEqual([
       'Overview', 'Server', 'Search & AI', 'People lookups', 'People', 'Tasks', 'Contacts', 'Sources', 'Advanced'

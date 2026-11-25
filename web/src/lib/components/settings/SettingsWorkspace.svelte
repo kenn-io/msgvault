@@ -616,6 +616,7 @@
 {/snippet}
 
 <main class="settings" bind:this={root} aria-label="Settings" data-form>
+  <h1 class="kit-sr-only">Settings</h1>
   {#if loading}
     <p class="state" role="status">Loading…</p>
   {:else if !loaded}
