@@ -42,7 +42,7 @@ func TestConversationPolicyIncludeColdNeverReranksCold(t *testing.T) {
 func TestConversationPolicyIncludeColdRemoteRoundTrip(t *testing.T) {
 	// An older daemon reads include:cold as a search word and finds nothing,
 	// so the CLI must refuse before sending the search.
-	for _, version := range []string{"5.26.0", "5.27.0"} {
+	for _, version := range []string{"5.27.0", "5.28.0"} {
 		t.Run(version, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
@@ -74,12 +74,12 @@ func TestConversationPolicyIncludeColdRemoteRoundTrip(t *testing.T) {
 			root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 			root.SetArgs([]string{"search", "subject:needle | subject:other", "--include-cold", "--json"})
 			err := root.Execute()
-			if version == "5.27.0" {
+			if version == "5.28.0" {
 				requirements.NoError(err)
 				assertions.Equal(int32(1), calls.Load())
 				return
 			}
-			requirements.ErrorContains(err, "include:cold requires daemon API schema 5.27.0")
+			requirements.ErrorContains(err, "include:cold requires daemon API schema 5.28.0")
 			assertions.Zero(calls.Load())
 		})
 	}

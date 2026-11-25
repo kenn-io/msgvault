@@ -14,7 +14,7 @@ func TestConversationPolicyIncludeColdRemoteRoundTrip(t *testing.T) {
 	calls := 0
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
-			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "5.27.0"})
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "5.28.0"})
 			return
 		}
 		calls++

@@ -46,7 +46,7 @@ const (
 	filenameMinAPISchemaVersion = "3.14.0"
 	// includeColdMinAPISchemaVersion is the first daemon contract that parses
 	// include:cold. Older daemons read it as a text term and return no rows.
-	includeColdMinAPISchemaVersion = "5.27.0"
+	includeColdMinAPISchemaVersion = "5.28.0"
 	// boundedDeletionSearchMinAPISchemaVersion adds one-request bounded MCP staging.
 	boundedDeletionSearchMinAPISchemaVersion = "3.26.0"
 )
