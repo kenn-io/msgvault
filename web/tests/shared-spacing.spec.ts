@@ -49,7 +49,16 @@ test('page content uses its header gap across workspaces', async ({ page }) => {
       await panel.getByRole('button', { name: 'Close', exact: true }).click();
     }
     if (label === 'Sources') await expect(page.getByRole('table', { name: 'Sources' }).getByText('Archive', { exact: true })).toBeVisible();
-    if (label === 'Settings') await expect(page.locator('.kit-settings')).toBeVisible();
+    if (label === 'Settings') {
+      const sidebar = page.locator('.kit-settings__sidebar');
+      const title = sidebar.getByRole('heading', { name: 'Settings', level: 2 });
+      const navigation = sidebar.getByRole('navigation', { name: 'Settings' });
+      await expect(title).toBeVisible();
+      await expect(navigation).toBeVisible();
+      const titleBox = (await title.boundingBox())!;
+      gaps[label] = (await navigation.boundingBox())!.y - (titleBox.y + titleBox.height);
+      continue;
+    }
     const header = page.locator('.kit-page-header:visible');
     await expect(header).toHaveCount(1);
     gaps[label] = await header.evaluate((element) => {
