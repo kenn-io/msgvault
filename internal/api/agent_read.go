@@ -93,9 +93,27 @@ func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agen
 	}
 	indexGeneration := s.ftsRebuildGen.Load()
 	indexComplete := s.ftsIndexComplete.Load()
-	readContext, releaseSnapshot, err := snapshotStore.BeginReadSnapshotContext(req.Context())
+	begin := snapshotStore.BeginReadSnapshotContext
+	if operation == "listChangedMessages" {
+		feedStore, ok := s.store.(interface {
+			BeginChangedMessagesReadSnapshotContext(ctx context.Context) (context.Context, func(), error)
+		})
+		if !ok {
+			<-s.readSnapshotSlots
+			return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
+		}
+		begin = feedStore.BeginChangedMessagesReadSnapshotContext
+	}
+	readContext, releaseSnapshot, err := begin(req.Context())
 	if err != nil {
 		<-s.readSnapshotSlots
+		if operation == "listChangedMessages" {
+			if apiErr := contextAPIHTTPError(err); apiErr != nil {
+				return nil, apiErr
+			}
+			s.logger.Error("changed messages query failed", "error", err)
+			return nil, newAPIHTTPError(http.StatusInternalServerError, "internal_error", "Message change query failed")
+		}
 		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
 	}
 	var once sync.Once
@@ -157,7 +175,7 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
-	case "getMeetingRecord", "suggestMeetingLinks":
+	case "getMeetingRecord", "suggestMeetingLinks", "listChangedMessages":
 		*r = *r.WithContext(sourcescope.WithSourceIDs(r.Context(), allowed))
 		return nil
 	case "getCLIMessageThread":

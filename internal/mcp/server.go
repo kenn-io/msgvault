@@ -57,6 +57,7 @@ const (
 	ToolExportEML                 = "export_eml"
 	ToolListThread                = "list_thread"
 	ToolListMessages              = "list_messages"
+	ToolListChanges               = "list_changes"
 	ToolGetStats                  = "get_stats"
 	ToolAggregate                 = "aggregate"
 	ToolStageDeletion             = "stage_deletion"
@@ -735,7 +736,7 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 // agentReadToolPermission names the grant permission the daemon requires for a read tool.
 func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
-	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
+	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains, ToolListChanges:
 		return agentgrant.PermissionSearchRead, true
 	case ToolGetMessage, ToolGetMessageRecords, ToolListThread, ToolSearchInMessage, ToolGetMeetingRecord, ToolSuggestMeetingLinks:
 		return agentgrant.PermissionMessageRead, true

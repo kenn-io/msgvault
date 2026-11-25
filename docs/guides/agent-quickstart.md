@@ -321,7 +321,7 @@ backend checks for action permissions, source scope, and sender identity, and
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
 | `list_attribute_definitions` | read | — | owner-only |
-| `list_changes` | read | — | owner-only |
+| `list_changes` | read | — | search.read |
 | `list_deletions` | read | — | owner-only |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |
