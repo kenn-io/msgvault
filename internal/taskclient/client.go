@@ -389,7 +389,7 @@ func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, req
 		if errors.Is(err, ErrRedirect) {
 			return nil, ErrRedirect
 		}
-		return nil, fmt.Errorf("%w: request failed", ErrUnreachable)
+		return nil, fmt.Errorf("%w: request failed: %s", ErrUnreachable, transportErrorDetail(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if !containsStatus(successStatuses, resp.StatusCode) {
@@ -463,12 +463,25 @@ func fillRevisionFromETag(task *Task, headers http.Header) {
 func readBounded(reader io.Reader, maximum int64) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(reader, maximum+1))
 	if err != nil {
-		return nil, fmt.Errorf("%w: read response", ErrUnreachable)
+		return nil, fmt.Errorf("%w: read response: %s", ErrUnreachable, transportErrorDetail(err))
 	}
 	if int64(len(data)) > maximum {
 		return nil, ErrResponseTooLarge
 	}
 	return data, nil
+}
+
+// transportErrorDetail extracts the underlying transport reason without any
+// request URL, so errors distinguish timeouts from connection failures without
+// exposing query parameters or changing ErrUnreachable's error-tree identity.
+func transportErrorDetail(err error) string {
+	for {
+		urlErr, ok := errors.AsType[*url.Error](err)
+		if !ok || urlErr.Err == nil {
+			return err.Error()
+		}
+		err = urlErr.Err
+	}
 }
 
 // ValidateEndpoint checks that an endpoint has one of the shapes the runtime
