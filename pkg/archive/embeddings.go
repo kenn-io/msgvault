@@ -112,7 +112,7 @@ func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config, re
 	// A new generation creates its own indexes; existing generations need migration to check them.
 	dimension := 0
 	if exists {
-		backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipMigrate: true, ReadOnly: !rebuild})
+		backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipMigrate: true, ReadOnly: true})
 		if err != nil {
 			return err
 		}
