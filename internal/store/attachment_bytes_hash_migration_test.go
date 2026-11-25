@@ -63,14 +63,17 @@ func TestInitSchemaRepairsAttachmentsClaimingBytesWithoutHash(t *testing.T) {
 		"keyed-alias":   {message: first, path: casPath(hash), state: "stored", sourceAttachmentID: "slack:F1"},
 		"unkeyed-alias": {message: first, path: casPath(hash), state: "stored"},
 		"legacy-alias":  {message: second, path: casPath(other)},
+		// A source merge copies an alias onto the surviving message as
+		// unavailable historical evidence.
+		"merged-alias": {message: second, path: casPath(hash), state: "unavailable", reason: "historical-source"},
 	}
 	for name, r := range seed {
 		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 			INSERT INTO attachments
-				(message_id, filename, content_hash, storage_path, attachment_state,
+				(message_id, filename, content_hash, storage_path, attachment_state, attachment_skip_reason,
 				 source_attachment_id, thumbnail_hash, thumbnail_path)
-			VALUES (?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''))
-		`), r.message, name, r.hash, r.path, r.state, r.sourceAttachmentID, r.thumbHash, r.thumbPath)
+			VALUES (?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''))
+		`), r.message, name, r.hash, r.path, r.state, r.reason, r.sourceAttachmentID, r.thumbHash, r.thumbPath)
 		require.NoError(t, err, name)
 	}
 
@@ -92,6 +95,7 @@ func TestInitSchemaRepairsAttachmentsClaimingBytesWithoutHash(t *testing.T) {
 			partKey: "slack:F1", sourceAttachmentID: "slack:F1"},
 		"unkeyed-alias": {message: first, hash: hash, path: casPath(hash), state: "stored"},
 		"legacy-alias":  {message: second, hash: other, path: casPath(other)},
+		"merged-alias":  {message: second, hash: hash, path: casPath(hash), state: "unavailable", reason: "historical-source"},
 	}
 	// An alias without a usable source attachment ID is keyed by its row.
 	w := want["unkeyed-alias"]

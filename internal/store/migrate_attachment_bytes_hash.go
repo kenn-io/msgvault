@@ -99,7 +99,13 @@ func (s *Store) enforceAttachmentBytesHash(ctx context.Context, tx *loggedTx) er
 // upgrade replaceMessageAttachmentsWhereTx applies. When that ID is missing or
 // taken and an unkeyed row already holds the hash, it takes a key derived from
 // its row. A replacing import removes a row with a stale key just as it
-// removes an unkeyed one.
+// removes an unkeyed one. A source merge copies an alias onto the surviving
+// message as unavailable historical evidence; the copy keeps that outcome, so
+// providers never retry it, and gains the hash its path names.
+// sourceMergeHistoricalReason marks an attachment a source merge copied from
+// the merged source (copyMergedMessageEvidence).
+const sourceMergeHistoricalReason = "historical-source"
+
 func recoverAttachmentPathHashes(ctx context.Context, tx *loggedTx) error {
 	type candidate struct {
 		id, messageID                 int64
@@ -109,9 +115,10 @@ func recoverAttachmentPathHashes(ctx context.Context, tx *loggedTx) error {
 		SELECT id, message_id, storage_path, COALESCE(source_part_key, ''), COALESCE(source_attachment_id, '')
 		FROM attachments
 		WHERE COALESCE(content_hash, '') = '' AND LENGTH(storage_path) = 67
-		  AND COALESCE(attachment_state, '') IN ('', ?)
+		  AND (COALESCE(attachment_state, '') IN ('', ?)
+		       OR (attachment_state = ? AND attachment_skip_reason = ?))
 		ORDER BY id
-	`, attachmentpolicy.StateStored)
+	`, attachmentpolicy.StateStored, attachmentpolicy.StateUnavailable, sourceMergeHistoricalReason)
 	if err != nil {
 		return fmt.Errorf("list hashless content-addressed attachments: %w", err)
 	}
