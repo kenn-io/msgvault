@@ -46,7 +46,7 @@ type suggestMember struct {
 }
 
 func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence) (MeetingSuggestion, bool) {
-	if event.Status == "cancelled" || event.Start.IsZero() || event.End.IsZero() || member.Start.IsZero() {
+	if event.Status == calendarCancelledStatus || event.Start.IsZero() || event.End.IsZero() || member.Start.IsZero() {
 		return MeetingSuggestion{}, false
 	}
 	start, end := member.Start, member.End
@@ -195,7 +195,7 @@ func (s *Store) suggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if seed == nil {
 			return page, sql.ErrNoRows
 		}
-		if seed.Start == nil || seed.End == nil || seed.Status == "cancelled" {
+		if seed.Start == nil || seed.End == nil || seed.Status == calendarCancelledStatus {
 			return page, nil
 		}
 		seedIDs = []int64{seed.MessageID}

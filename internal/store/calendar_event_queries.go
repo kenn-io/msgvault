@@ -235,7 +235,7 @@ func calendarEventRowsInWindow(ctx context.Context, r SQLReader, dialect Dialect
 			if _, exists := byID[row.MessageID]; !exists {
 				byID[row.MessageID] = row
 				// A cancelled parent only places its archived exceptions.
-				if row.Event.Kind == calendarSeriesKind && row.Event.Status != "cancelled" {
+				if row.Event.Kind == calendarSeriesKind && row.Event.Status != calendarCancelledStatus {
 					seriesCount++
 				}
 				if seriesCount > maxCalendarSeries {
