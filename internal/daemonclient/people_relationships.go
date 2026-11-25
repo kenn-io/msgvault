@@ -14,7 +14,7 @@ import (
 // RelationshipCadenceMinAPISchemaVersion adds cadence filters to the
 // relationship ranking. An older daemon would ignore them and return the
 // unfiltered ranking.
-const RelationshipCadenceMinAPISchemaVersion = "3.44.0"
+const RelationshipCadenceMinAPISchemaVersion = "5.28.0"
 
 var _ peoplebrowser.RelationshipLister = (*PeopleBrowser)(nil)
 

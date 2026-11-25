@@ -44,15 +44,6 @@ func directoryCadenceSort(order string) bool {
 	return order == DirectoryPeopleSortMostOverdue || order == DirectoryPeopleSortNextDue
 }
 
-func directoryCadenceDueWithinDays(dueAt *time.Time, now time.Time, days int) bool {
-	if dueAt == nil {
-		return false
-	}
-	horizonDate := now.UTC().AddDate(0, 0, days)
-	exclusiveCutoff := time.Date(horizonDate.Year(), horizonDate.Month(), horizonDate.Day()+1, 0, 0, 0, 0, time.UTC)
-	return dueAt.Before(exclusiveCutoff)
-}
-
 func directoryCadence(state ContactState, values []contactFrequencyValue, now time.Time) DirectoryCadence {
 	result := DirectoryCadence{Status: CadenceUnknown, Stale: state.Stale}
 	if len(values) != 1 || !values[0].Valid || values[0].Days <= 0 {
@@ -195,7 +186,7 @@ func (s *Store) directoryCadencePageTx(ctx context.Context, tx *loggedTx, query 
 		case "overdue":
 			matches = cadence.Status == CadenceOverdue
 		case "due":
-			matches = directoryCadenceDueWithinDays(cadence.DueAt, now, query.dueWithinDays)
+			matches = cadence.DueAt != nil && contactcadence.DueWithinUTCDateHorizon(*cadence.DueAt, now, query.dueWithinDays)
 		case "no_list":
 			matches = cadence.FrequencyDays == nil
 		case "unknown":

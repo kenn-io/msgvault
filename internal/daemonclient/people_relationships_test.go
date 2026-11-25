@@ -46,7 +46,7 @@ func TestPeopleBrowserRelationshipCadenceRequiresCurrentSchema(t *testing.T) {
 	requests := 0
 	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
-			writePeopleBrowserJSON(t, w, http.StatusOK, `{"status":"ok","api_schema_version":"3.43.0"}`)
+			writePeopleBrowserJSON(t, w, http.StatusOK, `{"status":"ok","api_schema_version":"5.27.0"}`)
 			return
 		}
 		requests++
