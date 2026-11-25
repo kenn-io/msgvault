@@ -456,6 +456,26 @@ it('keeps a failed Overview action error on Overview', async () => {
 });
 
 describe('SettingsWorkspace', () => {
+  it('shows the Settings title while loading and after a failed request', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    let reads = 0;
+    const { client, operationsController, onStatusChange } = fixture(settingsDoc(), async request => {
+      if (new URL(request.url).pathname === '/api/v1/settings' && request.method === 'GET' && ++reads === 1) {
+        await pending;
+        return Response.json({ message: 'Temporary settings read failure' }, { status: 503 });
+      }
+    });
+    render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced' });
+    expect(screen.getByRole('heading', { name: 'Settings', level: 2 })).toBeDefined();
+    release();
+    await screen.findByText("Can't load settings");
+    expect(screen.getByRole('heading', { name: 'Settings', level: 2 })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const sidebar = (await screen.findByRole('navigation', { name: 'Settings' })).closest('.kit-settings__sidebar') as HTMLElement;
+    expect(within(sidebar).getByRole('heading', { name: 'Settings', level: 2 })).toBeDefined();
+  });
+
   it('titles Settings and lists the categories in order, opening the one it is given', async () => {
     const { client, operationsController, onStatusChange } = fixture();
     render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced' });

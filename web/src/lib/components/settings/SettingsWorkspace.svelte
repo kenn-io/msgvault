@@ -617,6 +617,7 @@
 
 <main class="settings" bind:this={root} aria-label="Settings" data-form>
   <h1 class="kit-sr-only">Settings</h1>
+  {#if loading || !loaded}<h2 class="settings-title">Settings</h2>{/if}
   {#if loading}
     <p class="state" role="status">Loading…</p>
   {:else if !loaded}
@@ -758,6 +759,11 @@
     width: 100%;
     background: var(--bg-surface);
     line-height: 1.45;
+  }
+  .settings-title {
+    padding: var(--space-6);
+    font-size: var(--font-size-lg);
+    font-weight: 650;
   }
   .settings :global(.kit-settings) {
     background: var(--bg-surface);
