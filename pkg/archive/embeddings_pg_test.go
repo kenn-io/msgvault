@@ -353,10 +353,11 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 			if tc.changed {
 				require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
 				require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
-				require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
+				require.NoError(t, archive.Setup(t.Context(), opts))
 				settings.Descriptor = d
 				require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
 				require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
+				require.NoError(t, archive.Setup(t.Context(), opts))
 			} else {
 				require.NoError(t, archive.Setup(t.Context(), opts))
 			}
@@ -451,20 +452,26 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	desc.Model.Name, desc.Model.Dimensions = "other", 3
 	opts.Embeddings = settings(desc)
 	require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
-	require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
+	failOther.Store(true)
+	require.Error(t, archive.RebuildEmbeddings(t.Context(), opts))
+	failOther.Store(false)
+	var restored bool
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT to_regclass('person_embeddings') IS NOT NULL`).Scan(&restored))
+	assert.True(t, restored)
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, oldID).Scan(&count))
 	assert.Equal(t, 2, count)
-	failOther.Store(true)
-	failed, err := archive.Open(t.Context(), opts)
-	require.NoError(t, err)
-	require.Error(t, failed.Embed(t.Context()))
-	require.NoError(t, failed.Close())
-	failOther.Store(false)
-	opts.Embeddings = settings(original)
-	require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
 	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.ErrorContains(t, archive.Setup(t.Context(), opts), "RebuildEmbeddings")
+	opts.Embeddings = settings(original)
 	before := requests.Load()
+	require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
+	assert.Equal(t, before, requests.Load())
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM index_generations WHERE state='building'`).Scan(&count))
+	assert.Zero(t, count)
+	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	before = requests.Load()
 	require.NoError(t, owner.Embed(t.Context()))
 	assert.Equal(t, before, requests.Load())
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, oldID).Scan(&count))
@@ -488,10 +495,6 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=fts")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), "observatory")
-	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
-	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "index_building")
-	require.NoError(t, runtime.Embed(t.Context()))
 	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), "observatory")
@@ -569,13 +572,13 @@ func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {
 	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=999`).Scan(&count))
 	assert.Equal(t, 1, count)
 
-	// A matching build can replace the active generation after it is complete.
+	// A matching build cannot replace an unknown active generation without a rebuild.
 	_, err = check.ExecContext(t.Context(), `INSERT INTO index_generations (model, dimension, fingerprint, started_at, state) VALUES ('test', 2, $1, 0, 'building')`, matchingFingerprint)
 	require.NoError(t, err)
 	require.ErrorContains(t, archive.Setup(t.Context(), opts), "future-format:v2")
-	require.NoError(t, a.Embed(t.Context()))
+	require.ErrorContains(t, a.Embed(t.Context()), "future-format:v2")
 	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=999`).Scan(&count))
-	assert.Zero(t, count)
+	assert.Equal(t, 1, count)
 }
 
 func TestPostgreSQLEmbeddingsPurgeRetry(t *testing.T) {
