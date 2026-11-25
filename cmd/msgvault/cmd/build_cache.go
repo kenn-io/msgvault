@@ -2821,8 +2821,13 @@ func rebuildCacheNow(
 		"identifier", identifier, "reason", staleness.Reason,
 		"full_rebuild", staleness.FullRebuild)
 	if err := runScheduledBuildCacheSubprocess(ctx); err != nil {
+		if ctx.Err() != nil {
+			// Shutdown or a backup freeze stopped the build; the caller decides
+			// whether it runs again.
+			return ctx.Err()
+		}
 		logger.Error("cache build failed", "error", err)
-		if scheduleRetry != nil && ctx.Err() == nil {
+		if scheduleRetry != nil {
 			// Later syncs that write nothing request no build, so a failed
 			// build would otherwise leave the cache stale until the next write.
 			scheduleRetry(cacheBuildFailureRetryDelay, identifier)

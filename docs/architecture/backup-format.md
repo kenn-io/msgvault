@@ -13,13 +13,13 @@ This page covers what's specific to msgvault's use of the engine: how `backup cr
 
 To capture a transactionally consistent database image while the daemon is running:
 
-1. The backup subprocess calls the daemon's same-host-only (loopback, or the daemon's own bind address), authenticated `POST /api/v1/backup/freeze/begin`, which acquires the daemon's serial operation gate (pausing conflicting maintenance work) and returns a token. A five-minute watchdog on the daemon auto-releases the gate if the backup dies. This allows the engine's checkpoint retry waits, which can total about 260 seconds when another reader holds a snapshot.
+1. The backup subprocess calls the daemon's same-host-only (loopback, or the daemon's own bind address), authenticated `POST /api/v1/backup/freeze/begin`, which acquires the daemon's serial operation gate (pausing conflicting maintenance work). Analytics cache builds read the archive outside that gate and hold one SQLite read transaction for a whole export, which would keep the checkpoint below busy. So Begin also cancels the daemon's running cache refresh or build, holds new ones until the freeze ends, and takes the analytics builder lock (`<analytics dir>.builder.lock`) to confirm that no builder, including one in another msgvault process, is still reading. If that takes longer than 30 seconds, Begin releases the gate and fails with `backup_readers_busy`, naming the work that did not stop. Interrupted cache work runs again once the freeze ends. Begin then returns a token. A five-minute watchdog on the daemon auto-releases the gate if the backup dies. This allows the engine's checkpoint retry waits, which can total about 260 seconds when another reader holds a snapshot.
 2. The subprocess opens its own SQLite connection, runs `PRAGMA wal_checkpoint(TRUNCATE)` (with bounded retries) until the WAL is empty, then pins a read transaction — from this point the main database file bytes cannot change under it.
 3. It immediately calls `freeze/end` with the token. The gate is released and normal daemon writes resume; the pinned transaction alone keeps the file image stable for the page scan. Database geometry, statistics, and attachment locators are all read inside the pinned transaction.
 
 The freeze window covers checkpointing and pinning the read transaction, not
-the full backup. It can take minutes when a cache rebuild or another long-lived
-reader delays the checkpoint. If the watchdog expires, the backup fails; it
+the full backup. It can take minutes when a reader the daemon does not manage, such as a
+separate `msgvault` command or a `sqlite3` shell, delays the checkpoint. If the watchdog expires, the backup fails; it
 never continues with an expired token. A crashed backup can hold conflicting
 daemon writes for up to five minutes before the watchdog releases the gate.
 `backup create` refuses to run unfrozen against a live daemon: if the daemon's
