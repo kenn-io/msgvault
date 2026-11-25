@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +100,30 @@ func TestCalendarEventRowsHardSeriesCap(t *testing.T) {
 	requirements.NoError(err)
 	_, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
 	requirements.NoError(err)
+	// A cancelled series whose archived exception overlaps the window does not
+	// count either, even when the live series already fill the cap.
+	_, err = st.db.Exec(`UPDATE calendar_events SET status = 'confirmed' WHERE kind = 'series' AND message_id <> 100000`)
+	requirements.NoError(err)
+	override := ""
+	if st.IsPostgreSQL() {
+		override = " OVERRIDING SYSTEM VALUE"
+	}
+	_, err = st.db.Exec(`INSERT INTO messages (id,source_id,conversation_id,source_message_id,message_type)`+override+` VALUES (?, ?, ?, ?, ?)`, 200000, data.Message.SourceID, data.Message.ConversationID, "cap-moved", "calendar_event")
+	requirements.NoError(err)
+	moved := time.Date(2027, 3, 14, 0, 30, 0, 0, time.UTC)
+	_, err = st.db.Exec(`INSERT INTO calendar_events (message_id,projection_version,content_hash,provider_event_id,series_provider_id,kind,original_start_at,status,all_day,start_at,end_at,calendar_time_zone,recurrence_json) VALUES (?, 1, 'fixture', ?, ?, 'exception', ?, 'confirmed', false, ?, ?, 'UTC', '[]')`,
+		200000, "cap-moved", "bulk-series-100000", from, moved, moved.Add(15*time.Minute))
+	requirements.NoError(err)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
+	requirements.NoError(err)
+	exception := slices.IndexFunc(page.Occurrences, func(o CalendarOccurrence) bool { return o.MessageID == 200000 })
+	requirements.GreaterOrEqual(exception, 0)
+	assertions.Equal("cancelled", page.Occurrences[exception].Status)
+	assertions.Equal(moved, page.Occurrences[exception].Start.UTC())
+	_, err = st.db.Exec(`UPDATE calendar_events SET status = 'confirmed' WHERE message_id = 100000`)
+	requirements.NoError(err)
+	_, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
+	requirements.ErrorIs(err, ErrQueryTooBroad)
 }
 
 func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
