@@ -422,6 +422,7 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	}))
 	t.Cleanup(service.Close)
 	settings := func(t *testing.T, d embedmodel.Descriptor) *archive.Embeddings {
+		t.Helper()
 		client, err := embedclient.New(embedclient.Options{Model: d.Model, Roles: d.Roles, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}})
 		require.NoError(t, err)
 		return &archive.Embeddings{Client: client, Descriptor: d}
