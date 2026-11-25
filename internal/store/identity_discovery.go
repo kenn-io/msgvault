@@ -212,11 +212,15 @@ func (s *Store) scanIdentityObservationsContext(
 	// existed fall back to the participant's current email, which remains
 	// mutable under merges; routine re-sync skips already-archived messages,
 	// so those rows keep the fallback until the message is re-ingested (a
-	// future repair command could backfill from the stored raw MIME).
+	// future repair command could backfill from the stored raw MIME). The
+	// fallback may have come from another room, so it needs the same Full
+	// support as any other use of a participant's email.
+	identifier := `COALESCE(NULLIF(mr.email_address, ''), CASE WHEN ` +
+		FullParticipantValueWhere("p.id", "'email'", "p.email_address") + ` THEN p.email_address END)`
 	observations := make([]IdentityObservation, 0)
 	err := queryInChunksContext(ctx, s.db, messageIDs, []any{sourceID}, `
 		SELECT m.id,
-		       COALESCE(NULLIF(mr.email_address, ''), p.email_address),
+		       `+identifier+`,
 		       mr.recipient_type,
 		       EXISTS (
 		           SELECT 1
@@ -241,7 +245,7 @@ func (s *Store) scanIdentityObservationsContext(
 		WHERE m.source_id = ?
 		  AND m.id IN (%s)
 		  AND mr.recipient_type IN ('from', 'to', 'cc', 'bcc')
-		  AND COALESCE(NULLIF(mr.email_address, ''), p.email_address) IS NOT NULL
+		  AND `+identifier+` IS NOT NULL
 		ORDER BY m.id, mr.id
 	`, func(rows *loggedRows) error {
 		var observation IdentityObservation

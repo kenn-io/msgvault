@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
@@ -411,4 +412,53 @@ func TestConversationPolicyBootstrapCoversMembersOfRestrictedRooms(t *testing.T)
 	after, err := s.GetPersonContext(ctx, person.ID)
 	requirements.NoError(err)
 	assertions.Greater(after.Revision, person.Revision, "bootstrap invalidates people derived from restricted rooms")
+}
+
+func TestConversationPolicyIdentityDiscoveryRequiresFullEmailSupport(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	s, source, full, cold, _ := policyObservationFixture(t)
+	_, err := s.DB().ExecContext(t.Context(), s.Rebind(`UPDATE sources SET source_type='slack' WHERE id=?`), source)
+	requirements.NoError(err)
+	// The provider email is recorded only in the room named "full".
+	resolution, err := s.ResolveConversationParticipantContext(t.Context(), full, store.ConversationParticipantIdentity{
+		IdentifierType: "slack", IdentifierValue: "WORKSPACE:USER", DisplayName: "Synthetic Provider User",
+		Email: "provider-user@example.test",
+	})
+	requirements.NoError(err)
+	peer, err := s.EnsureParticipant("peer@example.test", "Synthetic Peer", "example.test")
+	requirements.NoError(err)
+	// A message in the other room names the sender without an envelope
+	// address and the peer with one.
+	message, err := s.UpsertMessage(&store.Message{
+		SourceID: source, ConversationID: cold, SourceMessageID: "discovery-message", MessageType: "slack",
+		SenderID: sql.NullInt64{Int64: resolution.ParticipantID, Valid: true},
+	})
+	requirements.NoError(err)
+	_, err = s.DB().ExecContext(t.Context(), s.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'from')`), message, resolution.ParticipantID)
+	requirements.NoError(err)
+	_, err = s.DB().ExecContext(t.Context(), s.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address) VALUES(?,?,'to','peer@example.test')`), message, peer)
+	requirements.NoError(err)
+	discovered := func() []string {
+		page, err := s.ScanIdentityDiscoveryPageContext(t.Context(), source, 0, 100)
+		requirements.NoError(err)
+		batch, err := s.ScanIdentityObservationsForSourceMessageIDsContext(t.Context(), source, []string{"discovery-message"})
+		requirements.NoError(err)
+		assertions.Equal(page.Observations, batch)
+		var identifiers []string
+		for _, observation := range page.Observations {
+			identifiers = append(identifiers, observation.RecipientType+":"+observation.Identifier)
+		}
+		return identifiers
+	}
+
+	// Only the Cold room supports the sender's email.
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source, "full", conversationpolicy.Cold))
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source, "cold", conversationpolicy.Full))
+	assertions.Equal([]string{"to:peer@example.test"}, discovered(),
+		"an exact envelope address stays; the sender's Cold-only email does not")
+
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source, "full", conversationpolicy.Full))
+	assertions.Equal([]string{"from:provider-user@example.test", "to:peer@example.test"}, discovered())
 }
