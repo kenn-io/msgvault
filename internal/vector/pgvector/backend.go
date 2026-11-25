@@ -1046,6 +1046,22 @@ func (b *Backend) ResetWatermarkBelow(ctx context.Context, minID int64) error {
 	return nil
 }
 
+// generationCandidates keeps the indexed path for a single generation. While a
+// second generation shares its HNSW graph, an exact sort prevents its vectors
+// from consuming the search budget before the generation filter is applied.
+func generationCandidates(dim int, vecArg, genArg, limitArg, from, where string) string {
+	competing := fmt.Sprintf("EXISTS (SELECT 1 FROM index_generations g WHERE g.id <> %s AND g.dimension = %d AND g.state IN ('active', 'building'))", genArg, dim)
+	distance := fmt.Sprintf("e.embedding::vector(%d) <=> %s::vector", dim, vecArg)
+	branch := func(guard, order string) string {
+		return fmt.Sprintf(`SELECT * FROM (
+			SELECT e.message_id, %s AS distance FROM embeddings e %s
+			WHERE e.generation_id = %s AND e.dimension = %d AND %s AND %s
+			ORDER BY %s LIMIT %s
+		) candidates`, distance, from, genArg, dim, where, guard, order, limitArg)
+	}
+	return branch("NOT "+competing, distance) + " UNION ALL " + branch(competing, "("+distance+") + 0")
+}
+
 // Search runs an ANN query against the given generation and returns
 // the top-k hits (optionally intersected with a structured filter).
 // Uses pgvector's cosine-distance operator (<=>), which returns 0..2;
@@ -1091,41 +1107,13 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 	// from a slim fast path that elides the join.
 	queryVecLit := vectorLiteral(queryVec)
 	if filter.IsEmpty() {
-		// Fast path: let pgvector use the HNSW index by issuing ORDER BY
-		// <=> LIMIT inside a subquery first. The inner SELECT returns at
-		// most innerLimit rows in ANN order; the HNSW index applies to that
-		// inner ORDER BY (ef_search is raised at connect time — see
-		// store.HNSWEfSearch — so the index is not capped at the pgvector
-		// default of 40). The outer query re-groups by message_id to
-		// collapse multi-chunk messages (best chunk wins via MIN), then
-		// re-sorts and re-limits the deduplicated result. We start at
-		// k*annOverFetchFactor chunks so the common single-chunk case is a
-		// single query; on multi-chunk corpora the dedup can collapse the
-		// candidate set below k, so the loop doubles the inner LIMIT
-		// (bounded by chunkCeiling) until k distinct messages survive.
-		//
-		// The dimension predicate is embedded as a literal (matching the
-		// partial HNSW index's WHERE dimension = <N> in migrate.go and the
-		// fused.go ANN path) rather than a bind param, so a PG generic plan
-		// can prove the partial-index predicate and use the HNSW index.
-		stmt := fmt.Sprintf(`
-			SELECT ann.message_id,
-			       MIN(ann.distance) AS distance
-			  FROM (
-			        SELECT e.message_id,
-			               (e.embedding::vector(%[1]d)) <=> $1::vector AS distance
-			          FROM embeddings e
-			         WHERE e.generation_id = $2
-			           AND e.dimension = %[1]d
-			           AND EXISTS (
-			                SELECT 1 FROM messages m
-			                 WHERE m.id = e.message_id AND %[2]s)
-			         ORDER BY e.embedding::vector(%[1]d) <=> $1::vector
-			         LIMIT $3
-			       ) ann
-			 GROUP BY ann.message_id
-			 ORDER BY distance, ann.message_id
-			 LIMIT $4`, dim, store.LiveMessagesWhere("m", true))
+		// Widen the candidate pool when multiple chunks collapse to fewer than
+		// k messages. generationCandidates selects the index or exact path.
+
+		candidates := generationCandidates(dim, "$1", "$2", "$3", "", "EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND "+store.LiveMessagesWhere("m", true)+")")
+		stmt := `SELECT ann.message_id, MIN(ann.distance) AS distance FROM (` + candidates + `) ann
+			GROUP BY ann.message_id ORDER BY distance, ann.message_id LIMIT $4`
+
 		// Empty-filter path: the candidate universe is the whole
 		// generation, so the inner-LIMIT ceiling is the generation chunk
 		// count and there is no separate distinct-message early exit
@@ -1135,38 +1123,9 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		})
 	}
 
-	// Filtered path: HNSW cannot be applied when intersecting with a
-	// structured filter, so we use the same inner-subquery shape as the
-	// empty-filter path but accept a sequential scan within the filtered
-	// set. Rather than materializing every matching message id in Go and
-	// shipping it back as one bigint[] param (which serialized hundreds of
-	// thousands of ids per query on a broad filter), the filter stays in
-	// SQL as an inline correlated EXISTS against messages — the same shape
-	// the empty-filter fast path uses for liveness (backend.go ~816-818),
-	// extended with the structured-filter clauses. [V2]
-	//
-	// The inner ORDER BY <=> LIMIT still short-circuits on chunk count.
-	// The widening loop mirrors the empty-filter (and sqlitevec) pattern
-	// so a multi-chunk filtered universe still reaches k distinct messages.
-	//
-	// The inner LIMIT counts CHUNKS, so the loop ceiling must be a CHUNK
-	// count, not a message count: a MESSAGE count would under-shoot on
-	// multi-chunk filtered corpora — the inner LIMIT would saturate at the
-	// message count before the GROUP BY surfaced k distinct messages,
-	// short-returning (the exact failure sqlitevec's comment warns
-	// against). Bound the loop by the CHUNK count of the filtered set, and
-	// use the DISTINCT filtered-message count (messages with a chunk in
-	// this generation) only as an early exit so a selective filter does not
-	// drive the loop to the full generation. Both counts are derived from
-	// the SAME EXISTS predicate the search SQL applies, so the loop bounds
-	// stay exactly aligned with what the inner scan can surface.
-	//
-	// Recompute the loop ceilings (chunk count + distinct-message count)
-	// over the SAME EXISTS predicate, so the loop bounds stay exactly
-	// aligned with what the inner scan can surface. Both the count query
-	// and the search query rebuild the EXISTS clause with their own bind
-	// closure, so each statement's $N placeholders resolve against its own
-	// ordinals.
+	// Keep filters in SQL and bound widening by the matching chunk and
+	// distinct-message counts.
+
 	filteredChunks, filteredMessages, err := b.filteredChunkAndMessageCount(ctx, gen, filter)
 	if err != nil {
 		return nil, err
@@ -1187,22 +1146,10 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 	existsClause := filterExistsClause("e", filter, bind)
 	innerArg := fmt.Sprintf("$%d", len(baseArgs)+1)
 	outerArg := fmt.Sprintf("$%d", len(baseArgs)+2)
-	stmt := fmt.Sprintf(`
-		SELECT ann.message_id,
-		       MIN(ann.distance) AS distance
-		  FROM (
-		        SELECT e.message_id,
-		               (e.embedding::vector(%[1]d)) <=> $1::vector AS distance
-		          FROM embeddings e
-		         WHERE e.generation_id = $2
-		           AND e.dimension = $3
-		           AND %[2]s
-		         ORDER BY e.embedding::vector(%[1]d) <=> $1::vector
-		         LIMIT %[3]s
-		       ) ann
-		 GROUP BY ann.message_id
-		 ORDER BY distance, ann.message_id
-		 LIMIT %[4]s`, dim, existsClause, innerArg, outerArg)
+	candidates := generationCandidates(dim, "$1", "$2", innerArg, "", "e.dimension = $3 AND "+existsClause)
+	stmt := `SELECT ann.message_id, MIN(ann.distance) AS distance FROM (` + candidates + `) ann
+		GROUP BY ann.message_id ORDER BY distance, ann.message_id LIMIT ` + outerArg
+
 	return searchWiden(k, filteredChunks, filteredMessages, func(innerLimit int) ([]vector.Hit, error) {
 		runArgs := append(append([]any(nil), baseArgs...), innerLimit, k)
 		return b.scanHits(ctx, stmt, runArgs...)

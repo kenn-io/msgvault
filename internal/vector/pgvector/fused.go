@@ -183,22 +183,9 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			innerArg := bind(innerChunks)
 			kp1Arg := bind(kPlus1)
 			kArg := bind(req.KPerSignal)
-			// Use an inner SELECT with ORDER BY <=> LIMIT so pgvector can
-			// apply the HNSW index before the outer GROUP BY collapses
-			// multi-chunk messages. The candidate set is constrained either
-			// by an inline correlated EXISTS against the live-message set
-			// (empty filter — mirrors backend.go ~816-818, lets the HNSW
-			// index drive the inner ORDER BY without first materializing the
-			// whole universe) or by a JOIN to the materialized `filtered`
-			// CTE (non-empty filter; note that JOIN may, depending on
-			// PG/pgvector version and planner costing, force a sequential
-			// ANN scan within the filtered set — same tradeoff as
-			// backend.go's filtered path, not yet verified with EXPLAIN
-			// ANALYZE). The outer GROUP BY then picks the best-scoring chunk
-			// per message via MIN(distance) and limits to KPerSignal+1
-			// distinct messages, so the outer LIMIT is applied after dedup.
-			// The widening loop in FusedSearch grows innerChunks when this
-			// dedup collapses the pool below KPerSignal+1.
+			// Rank chunks before grouping them by message. The generation-aware
+			// candidate query chooses an indexed or exact search as needed.
+
 			annConstraint := "              JOIN filtered f ON f.id = e.message_id\n"
 			annLive := ""
 			if emptyFilter {
@@ -210,22 +197,19 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			omittedANN = fmt.Sprintf(`((SELECT COUNT(*) FROM ann_pool) > %s AND EXISTS (
  SELECT 1 FROM embeddings e %s WHERE e.generation_id = %s AND e.dimension = %d
  %s AND e.message_id NOT IN (SELECT message_id FROM fused)))`, kArg, annConstraint, genArg, dim, annLive)
+			where := "TRUE"
+			if emptyFilter {
+				where = fmt.Sprintf("EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND %s)", liveSQL)
+			}
+			candidates := generationCandidates(dim, vecArg, genArg, innerArg, annConstraint, where)
 			ctes = append(ctes,
 				fmt.Sprintf(`ann_pool AS (
-    SELECT ann.message_id,
-           MIN(ann.distance) AS distance
-      FROM (
-            SELECT e.message_id,
-                   (e.embedding::vector(%[1]d)) <=> %[2]s::vector AS distance
-              FROM embeddings e
-%[6]s             WHERE e.generation_id = %[3]s AND e.dimension = %[1]d
-%[7]s             ORDER BY e.embedding::vector(%[1]d) <=> %[2]s::vector
-             LIMIT %[4]s
-           ) ann
+    SELECT ann.message_id, MIN(ann.distance) AS distance
+      FROM (%s) ann
      GROUP BY ann.message_id
      ORDER BY distance
-     LIMIT %[5]s
-)`, dim, vecArg, genArg, innerArg, kp1Arg, annConstraint, annLive),
+     LIMIT %s
+)`, candidates, kp1Arg),
 				fmt.Sprintf(`ann_ranked AS (
     SELECT message_id, distance,
            ROW_NUMBER() OVER (ORDER BY distance ASC, message_id ASC) AS rnk

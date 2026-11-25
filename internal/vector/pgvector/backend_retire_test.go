@@ -435,3 +435,40 @@ func TestBackend_DeleteOnRetire_KeepsActiveRecallClean(t *testing.T) {
 			"fused hit %d must belong to active generation B, not retired A", h.MessageID)
 	}
 }
+
+// The building generation shares the active generation's dimension index.
+// Its closer vectors must not crowd the active generation out of search.
+func TestBackend_SearchDuringSameDimensionBuild(t *testing.T) {
+	b, ctx, db := newBackendForTest(t)
+	db.SetMaxOpenConns(1)
+	_, err := db.ExecContext(ctx, `SET enable_seqscan = off; SET hnsw.ef_search = 40`)
+	require.NoError(t, err)
+	activeVectors := map[int64][]float32{}
+	for id := int64(1); id <= 5; id++ {
+		activeVectors[id] = midQueryVec(int(id))
+	}
+	active := buildGenWithVectors(t, b, "active", recallDim, activeVectors)
+	require.NoError(t, b.ActivateGeneration(ctx, active, true))
+	buildingVectors := map[int64][]float32{}
+	for id := int64(1000); id < 1300; id++ {
+		buildingVectors[id] = nearQueryVec(int(id), 0.005)
+	}
+	buildGenWithVectors(t, b, "building", recallDim, buildingVectors)
+	_, err = db.ExecContext(ctx, `ANALYZE embeddings`)
+	require.NoError(t, err)
+	query := unitVec(recallDim, 0)
+	for _, filter := range []vector.Filter{{}, {MessageIDs: []int64{1, 2, 3, 4, 5}}} {
+		hits, err := b.Search(ctx, active, query, 5, filter)
+		require.NoError(t, err)
+		require.Len(t, hits, 5)
+		for _, hit := range hits {
+			assert.LessOrEqual(t, hit.MessageID, int64(5))
+		}
+		fused, _, err := b.FusedSearch(ctx, vector.FusedRequest{QueryVec: query, Generation: active, KPerSignal: 5, Limit: 5, RRFK: 60, Filter: filter})
+		require.NoError(t, err)
+		require.Len(t, fused, 5)
+		for _, hit := range fused {
+			assert.LessOrEqual(t, hit.MessageID, int64(5))
+		}
+	}
+}

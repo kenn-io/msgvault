@@ -365,6 +365,27 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 	}
 }
 
+func assertSearchMessage(t *testing.T, response *httptest.ResponseRecorder, id int64) {
+	t.Helper()
+	var body struct {
+		Results []struct {
+			ID int64 `json:"id"`
+		} `json:"results"`
+		Messages []struct {
+			ID int64 `json:"id"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	var ids []int64
+	for _, result := range body.Results {
+		ids = append(ids, result.ID)
+	}
+	for _, message := range body.Messages {
+		ids = append(ids, message.ID)
+	}
+	assert.Contains(t, ids, id)
+}
+
 func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), archive.PostgreSQL{}), "requires an embedding client")
 	require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), archive.PostgreSQL{Embeddings: &archive.Embeddings{}}), "requires an embedding client")
@@ -430,6 +451,7 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	require.NoError(t, err)
 	conversation, err := owner.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
 	require.NoError(t, err)
+	var observatoryID int64
 	for i := range 33 {
 		body := fmt.Sprintf("message %d", i)
 		if i == 0 {
@@ -437,6 +459,9 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 		}
 		id, err := owner.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: body, MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}, Subject: sql.NullString{String: body, Valid: true}})
 		require.NoError(t, err)
+		if i == 0 {
+			observatoryID = id
+		}
 		require.NoError(t, owner.Store().UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
 		require.NoError(t, owner.Store().UpsertFTS(id, body, body, "", "", ""))
 	}
@@ -444,7 +469,7 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	handler := owner.NewServer(archive.ServerOptions{}).Handler(nil)
 	response := sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "observatory")
+	assertSearchMessage(t, response, observatoryID)
 	var oldID int64
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='active'`).Scan(&oldID))
 	original := desc
@@ -476,6 +501,7 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	assert.Equal(t, 33, count)
 	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assertSearchMessage(t, response, observatoryID)
 	require.ErrorContains(t, archive.Setup(t.Context(), opts), "RebuildEmbeddings")
 	opts.Embeddings = settings(original)
 	before := requests.Load()
@@ -485,6 +511,7 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	assert.Zero(t, count)
 	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assertSearchMessage(t, response, observatoryID)
 	before = requests.Load()
 	require.NoError(t, owner.Embed(t.Context()))
 	assert.Equal(t, before, requests.Load())
@@ -521,10 +548,10 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	handler = runtime.NewServer(archive.ServerOptions{}).Handler(nil)
 	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=fts")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "observatory")
+	assertSearchMessage(t, response, observatoryID)
 	response = sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "observatory")
+	assertSearchMessage(t, response, observatoryID)
 	var dimension int
 	var model, fingerprint string
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*), max(dimension), max(model), max(fingerprint) FROM index_generations WHERE state='active'`).Scan(&count, &dimension, &model, &fingerprint))
