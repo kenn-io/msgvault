@@ -92,9 +92,10 @@ func (s *Store) SetConversationPolicyOverride(ctx context.Context, sourceID int6
 		}
 	}
 	return s.withConversationPolicyWrite(ctx, func(tx *loggedTx) error {
-		scope, scopeArgs := sourceScopeClause(ctx, "source_id")
+		scope, scopeArgs := sourceScopeClause(ctx, "c.source_id")
 		var id int64
-		err := tx.QueryRowContext(ctx, s.Rebind(`SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=?`+scope), append([]any{sourceID, providerID}, scopeArgs...)...).Scan(&id)
+		var sourceType string
+		err := tx.QueryRowContext(ctx, s.Rebind(`SELECT c.id, src.source_type FROM conversations c JOIN sources src ON src.id=c.source_id WHERE c.source_id=? AND c.source_conversation_id=?`+scope), append([]any{sourceID, providerID}, scopeArgs...)...).Scan(&id, &sourceType)
 		if err != nil {
 			return fmt.Errorf("find policy conversation: %w", err)
 		}
@@ -110,8 +111,14 @@ func (s *Store) SetConversationPolicyOverride(ctx context.Context, sourceID int6
 		if tier != "" {
 			value = string(tier)
 		}
-		_, err = tx.ExecContext(ctx, s.Rebind(`INSERT INTO conversation_policy(conversation_id,override_tier) VALUES(?,?)
-   ON CONFLICT(conversation_id) DO UPDATE SET override_tier=excluded.override_tier`), id, value)
+		// A chat room without a row is excluded. Record that as its prior
+		// tier, so the refresh below sees an inclusion and replays activity.
+		previous := conversationpolicy.Full
+		if conversationpolicy.Supported(sourceType) {
+			previous = conversationpolicy.Cold
+		}
+		_, err = tx.ExecContext(ctx, s.Rebind(`INSERT INTO conversation_policy(conversation_id,override_tier,effective_tier) VALUES(?,?,?)
+   ON CONFLICT(conversation_id) DO UPDATE SET override_tier=excluded.override_tier`), id, value, string(previous))
 		if err != nil {
 			return fmt.Errorf("save conversation override: %w", err)
 		}

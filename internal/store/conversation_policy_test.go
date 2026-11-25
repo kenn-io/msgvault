@@ -262,3 +262,33 @@ func TestConversationPolicySourceMergeDropsStaleConfiguredOverride(t *testing.T)
 	requirements.NoError(err)
 	assertions.NotEqual(string(conversationpolicy.Cold), tier(), "the moved room no longer matches its configured override")
 }
+
+// A chat room without its classification is excluded, and queue
+// processing skips its activity. Including it with its first override must
+// replay that activity, as any change from excluded to included does.
+func TestConversationPolicyFirstFullOverrideReplaysExcludedActivity(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	source, err := st.GetOrCreateSource("beeper", "first-override")
+	requirements.NoError(err)
+	room, err := st.EnsureConversation(ctx, source.ID, "new-room", "New room")
+	requirements.NoError(err)
+	message, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: "message", MessageType: "beeper"})
+	requirements.NoError(err)
+	// An interrupted save leaves the room without its classification.
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`DELETE FROM conversation_policy WHERE conversation_id = ?`), room)
+	requirements.NoError(err)
+	// Queue processing has seen the message while the room was excluded.
+	_, err = st.DB().ExecContext(ctx, `UPDATE activity_projection_queue SET processed_revision = revision`)
+	requirements.NoError(err)
+
+	requirements.NoError(st.SetConversationPolicyOverride(ctx, source.ID, "new-room", conversationpolicy.Full))
+	queued, err := st.ListActivityProjectionQueueContext(ctx, 10)
+	requirements.NoError(err)
+	ids := make([]int64, 0, len(queued))
+	for _, item := range queued {
+		ids = append(ids, item.MessageID)
+	}
+	assertions.Contains(ids, message, "including the room must replay its activity")
+}
