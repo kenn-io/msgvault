@@ -164,6 +164,10 @@ func (m *cacheBuildJobs) execute(runCtx context.Context, id string, mode buildCa
 	m.runCancel, m.runDone = nil, nil
 	if interrupted {
 		m.requeueInterruptedLocked(id, mode)
+		// A freeze that gave up waiting already resumed; run the job now.
+		if !m.paused {
+			m.dispatchPendingLocked()
+		}
 		m.mu.Unlock()
 		return
 	}
@@ -254,6 +258,11 @@ func (m *cacheBuildJobs) resume() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.paused = false
+	m.dispatchPendingLocked()
+}
+
+// dispatchPendingLocked starts the queued job when no build is running.
+func (m *cacheBuildJobs) dispatchPendingLocked() {
 	if m.current != "" || m.pending == "" {
 		return
 	}

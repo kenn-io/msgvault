@@ -222,3 +222,37 @@ func TestCacheBuildJobsPauseRequeuesInterruptedBuild(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(int32(2), calls.Load())
 }
+
+func TestCacheBuildJobsRunInterruptedBuildAfterPauseGivesUp(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		started := make(chan struct{}, 2)
+		stop := make(chan struct{})
+		var calls atomic.Int32
+		jobs := newCacheBuildJobs(t.Context(), nil, func(ctx context.Context, _ buildCacheMode) error {
+			if calls.Add(1) == 1 {
+				started <- struct{}{}
+				<-ctx.Done()
+				<-stop // the build is slow to stop
+				return ctx.Err()
+			}
+			return nil
+		})
+		job, err := jobs.accept(buildCacheModeAuto)
+		require.NoError(err)
+		<-started
+
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		_, err = jobs.pause(ctx)
+		require.ErrorIs(err, context.DeadlineExceeded)
+
+		close(stop)
+		synctest.Wait()
+		status, ok := jobs.status(job.JobID)
+		require.True(ok)
+		assert.Equal(api.CacheBuildPublished, status.Status, "the interrupted job runs without another resume")
+		assert.Equal(int32(2), calls.Load())
+	})
+}
