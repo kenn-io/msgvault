@@ -5,9 +5,6 @@ import type { CliAccountResponse } from "./cliAccountResponse";
 
 export interface CliAccountsResponse {
   accounts: CliAccountResponse[];
-  as_of?: string;
-  counts_pending?: boolean;
-  stale?: boolean;
   virtual_accounts_unavailable?: boolean;
   [key: string]: unknown;
 }

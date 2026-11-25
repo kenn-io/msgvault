@@ -1130,9 +1130,9 @@ func insertMessagesTriggerPrograms(t *testing.T, st *store.Store, insert string,
 // stamps fresh databases instead, and EnsureTriggers omits the INSERT trigger
 // entirely when that DEFAULT is present.
 //
-// Metadata indexing intentionally adds its own INSERT trigger and index writes.
-// Remove that maintenance trigger in this private fixture to isolate the
-// watermark's cost; metadata index maintenance is covered separately.
+// Metadata indexing and per-source message counts intentionally add their own
+// INSERT triggers and writes. Remove those maintenance triggers in this private
+// fixture to isolate the watermark's cost; each is covered separately.
 //
 // total_changes() is SQLite's per-connection count of rows written, and unlike
 // changes() it does include rows written by trigger programs — which is exactly
@@ -1149,12 +1149,14 @@ func TestContentChangedAt_InsertNeedsNoWatermarkTrigger(t *testing.T) {
 	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS messages_metadata_fts_insert`)
 	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS trg_source_message_counts_insert`)
+	require.NoError(err)
 
 	const insert = `INSERT INTO messages (source_id, source_message_id, conversation_id, message_type, subject)
 		 VALUES (?,?,?,?,?)`
 
 	assert.Equal(1, insertMessagesTriggerPrograms(t, st, insert, src.ID, "explain-only", conv, "email", "x"),
-		"with metadata maintenance excluded, only the retired-source guard must remain; "+
+		"with maintenance triggers excluded, only the retired-source guard must remain; "+
 			"the watermark DEFAULT must not add a second trigger subprogram")
 
 	// One pinned connection: total_changes() is per-connection and the pool

@@ -257,12 +257,10 @@ type analyticsEngineContextKey struct{}
 type Server struct {
 	nativeMCP nativeMCPHandlers
 
-	// statsSnapshots and accountCountSnapshots bound /stats and
-	// /cli/accounts latency under load (see snapshotCache). Background
-	// computations run on importContext, the server-lifetime context that
-	// Shutdown cancels.
-	statsSnapshots        snapshotCache[*StoreStats]
-	accountCountSnapshots snapshotCache[map[int64]store.SourceMessageCounts]
+	// statsSnapshots bounds /stats latency under load (see snapshotCache).
+	// Background computations run on importContext, the server-lifetime
+	// context that Shutdown cancels.
+	statsSnapshots snapshotCache[*StoreStats]
 	// virtualAccountSnapshots bounds the account picker catalog the same way.
 	virtualAccountSnapshots snapshotCache[map[int64][]store.VirtualAccount]
 	statsSnapshotWait       time.Duration
@@ -681,9 +679,6 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		importContext:          importContext,
 		cancelImports:          cancelImports,
 		statsSnapshots:         snapshotCache[*StoreStats]{logger: opts.Logger},
-		accountCountSnapshots: snapshotCache[map[int64]store.SourceMessageCounts]{
-			logger: opts.Logger, staleWait: 500 * time.Millisecond,
-		},
 		virtualAccountSnapshots: snapshotCache[map[int64][]store.VirtualAccount]{
 			logger: opts.Logger, freshFor: virtualAccountCatalogFreshFor,
 		},

@@ -3008,32 +3008,8 @@ func (a *storeAPIAdapter) BackupDatabaseContext(ctx context.Context, dst string)
 	return a.store.BackupDatabaseContext(ctx, dst)
 }
 
-// CountMessagesBySourceContext counts every source's messages in one pass
-// for account listings.
-func (a *storeAPIAdapter) CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error) {
-	return a.store.CountMessagesBySourceContext(ctx)
-}
-
-func (a *storeAPIAdapter) CountMessagesForSource(sourceID int64) (int64, error) {
-	return a.store.CountMessagesForSource(sourceID)
-}
-
-func (a *storeAPIAdapter) CountMessagesForSourceContext(
-	ctx context.Context,
-	sourceID int64,
-) (int64, error) {
-	return a.store.CountMessagesForSourceContext(ctx, sourceID)
-}
-
-func (a *storeAPIAdapter) CountSourceDeletedMessages(sourceIDs ...int64) (int64, error) {
-	return a.store.CountSourceDeletedMessages(sourceIDs...)
-}
-
-func (a *storeAPIAdapter) CountSourceDeletedMessagesContext(
-	ctx context.Context,
-	sourceIDs ...int64,
-) (int64, error) {
-	return a.store.CountSourceDeletedMessagesContext(ctx, sourceIDs...)
+func (a *storeAPIAdapter) SourceMessageCountsContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error) {
+	return a.store.SourceMessageCountsContext(ctx)
 }
 
 func (a *storeAPIAdapter) ListSources(sourceType string) ([]*store.Source, error) {

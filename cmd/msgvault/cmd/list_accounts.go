@@ -9,7 +9,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
@@ -21,10 +20,7 @@ var listAccountsCmd = &cobra.Command{
 	Short: "List archive accounts with type, message count, last sync",
 	Long: `List every account in the archive: email, chat, meeting, and file-import
 sources. JSON rows have id, email, type (gmail, imap, mbox, slack, ...),
-display_name, and last_sync. message_count and source_deleted_count are
-included when ready; counts_pending: true replaces them while refreshing.
-When fresh counts take over 500 ms, earlier counts show their age;
-stale JSON rows add stale and as_of.
+display_name, message_count, source_deleted_count, and last_sync.
 
 Pass email to --account or id to --source-id on other commands;
 export-messages takes --source <type>:<email>.`,
@@ -42,11 +38,11 @@ func listHTTPAccounts(cmd *cobra.Command) error {
 	}
 	defer func() { _ = s.Close() }()
 
-	accounts, countsPending, err := s.GetCLIAccounts(cmd.Context())
+	accounts, err := s.GetCLIAccounts(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("list accounts: %w", err)
 	}
-	return outputAccountStats(daemonAccountsToStats(accounts, countsPending))
+	return outputAccountStats(daemonAccountsToStats(accounts))
 }
 
 func outputAccountStats(stats []accountStats) error {
@@ -63,7 +59,7 @@ func outputAccountStats(stats []accountStats) error {
 	return nil
 }
 
-func daemonAccountsToStats(accounts []daemonclient.CLIAccount, countsPending bool) []accountStats {
+func daemonAccountsToStats(accounts []daemonclient.CLIAccount) []accountStats {
 	stats := make([]accountStats, len(accounts))
 	for i, account := range accounts {
 		stats[i] = accountStats{
@@ -77,10 +73,7 @@ func daemonAccountsToStats(accounts []daemonclient.CLIAccount, countsPending boo
 			Type:               account.Type,
 			DisplayName:        account.DisplayName,
 			MessageCount:       account.MessageCount,
-			CountsPending:      countsPending,
 			SourceDeletedCount: account.SourceDeletedCount,
-			Stale:              account.Stale,
-			AsOf:               account.AsOf,
 			LastSync:           account.LastSync,
 		}
 	}
@@ -111,15 +104,9 @@ func outputAccountsTable(stats []accountStats) {
 // deleted count so the primary column keeps its active-only meaning while
 // still surfacing the retained-but-source-deleted population.
 func formatMessagesCell(s accountStats) string {
-	if s.CountsPending {
-		return "pending"
-	}
 	count := formatCount(s.MessageCount)
 	if s.SourceDeletedCount > 0 {
 		count = fmt.Sprintf("%s (+%s deleted from source)", count, formatCount(s.SourceDeletedCount))
-	}
-	if s.Stale && s.AsOf != nil {
-		count += " (counted " + humanize.Time(time.Now().Add(-max(time.Since(*s.AsOf), 0))) + ")"
 	}
 	return count
 }
@@ -137,16 +124,8 @@ func outputAccountsJSON(stats []accountStats) error {
 			keyEmail:                s.Email,
 			"type":                  s.Type,
 			"display_name":          s.DisplayName,
-		}
-		if s.CountsPending {
-			entry["counts_pending"] = true
-		} else {
-			entry["message_count"] = s.MessageCount
-			entry["source_deleted_count"] = s.SourceDeletedCount
-			if s.Stale {
-				entry["stale"] = true
-				entry["as_of"] = s.AsOf
-			}
+			"message_count":         s.MessageCount,
+			"source_deleted_count":  s.SourceDeletedCount,
 		}
 		if s.LastSync != nil && !s.LastSync.IsZero() {
 			entry["last_sync"] = s.LastSync.Format(time.RFC3339)
@@ -180,7 +159,6 @@ func formatCount(n int64) string {
 }
 
 type accountStats struct {
-	CountsPending      bool
 	Identifier         string
 	Alias              string
 	HistoryOnly        bool
@@ -192,8 +170,6 @@ type accountStats struct {
 	DisplayName        string
 	MessageCount       int64
 	SourceDeletedCount int64
-	Stale              bool
-	AsOf               *time.Time
 	LastSync           *time.Time
 }
 

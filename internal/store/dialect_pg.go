@@ -2305,6 +2305,9 @@ var exclusiveLockTables = []string{
 	// The chat member queue is trigger-written by message and recipient
 	// mutations; the projection cascades with conversations and participants.
 	"chat_members", "chat_members_dirty", "chat_anchors",
+	// Per-source message counts are trigger-written by every message
+	// mutation, and the counts row cascades with its source.
+	"source_message_counts", "source_message_count_deltas",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_merges", "source_settings", "source_merge_preserved_labels",
 	// Source merge takes the identity row before any archive writes, matching

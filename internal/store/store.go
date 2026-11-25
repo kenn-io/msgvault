@@ -2564,6 +2564,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	if err := s.runOnceMigration(ctx, migrationChatMembers, 1, false, s.rebuildChatMembersContext); err != nil {
 		return fmt.Errorf("initialize chat members projection: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationSourceMessageCounts, 1, false, s.initSourceMessageCountsContext); err != nil {
+		return fmt.Errorf("initialize source message counts: %w", err)
+	}
 	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV1, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
 		return fmt.Errorf("initialize calendar event projections: %w", err)
 	}

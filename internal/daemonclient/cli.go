@@ -292,8 +292,6 @@ type CLIAccount struct {
 	AuthMethod         string     `json:"auth_method,omitempty"`
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
-	Stale              bool       `json:"stale,omitempty"`
-	AsOf               *time.Time `json:"as_of,omitempty"`
 	LastSync           *time.Time `json:"last_sync"`
 }
 
@@ -1100,9 +1098,8 @@ func (c *Client) FindSimilarMessages(
 	}, nil
 }
 
-// GetCLIAccounts lists archived accounts. countsPending reports that the
-// daemon's first count refresh is still running, so every count is zero.
-func (c *Client) GetCLIAccounts(ctx context.Context) (accounts []CLIAccount, countsPending bool, err error) {
+// GetCLIAccounts lists archived accounts.
+func (c *Client) GetCLIAccounts(ctx context.Context) ([]CLIAccount, error) {
 	allowPending := func(_ context.Context, req *http.Request) error {
 		req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
 		return nil
@@ -1111,9 +1108,9 @@ func (c *Client) GetCLIAccounts(ctx context.Context) (accounts []CLIAccount, cou
 		return client.ListCLIAccountsWithResponse(ctx, allowPending)
 	})
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	return cliAccountsFromGenerated(resp.JSON200), resp.JSON200 != nil && boolValue(resp.JSON200.CountsPending), nil
+	return cliAccountsFromGenerated(resp.JSON200), nil
 }
 
 // errVirtualAccountsUnavailable means the daemon could not read a current

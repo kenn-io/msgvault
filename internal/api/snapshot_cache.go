@@ -33,9 +33,6 @@ type snapshotCache[T any] struct {
 	// version, or an older one, still serves as the stale fallback. Zero
 	// waits on a fresh computation every time.
 	freshFor time.Duration
-	// staleWait caps how long a caller waits for a fresh computation when an
-	// earlier value can serve as the stale fallback; zero caps only matching optional reads.
-	staleWait time.Duration
 
 	mu      sync.Mutex
 	entries map[string]*snapshotEntry[T]
@@ -69,7 +66,8 @@ func (c *snapshotCache[T]) get(
 
 // getVersion is get for a value that version identifies, such as a revision
 // the computation depends on; only a value read at the same version is
-// served as fresh. Matching optional reads cap their refresh wait at staleWait.
+// served as fresh. An optional read at the version of the earlier value
+// returns that value at once instead of waiting for the refresh.
 func (c *snapshotCache[T]) getVersion(
 	reqCtx context.Context,
 	lifetimeCtx context.Context,
@@ -121,8 +119,8 @@ func (c *snapshotCache[T]) getVersion(
 			return zero, time.Time{}, false, reqCtx.Err()
 		}
 	}
-	if c.staleWait > 0 || optional && sameVersion {
-		wait = min(wait, c.staleWait)
+	if optional && sameVersion {
+		wait = 0
 	}
 	timer := time.NewTimer(wait)
 	defer timer.Stop()

@@ -61,7 +61,7 @@ func preflightAddO365Authorize(cmd *cobra.Command, email string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	accounts, _, err := st.GetCLIAccounts(cmd.Context())
+	accounts, err := st.GetCLIAccounts(cmd.Context())
 	_ = st.Close()
 	if err != nil {
 		return "", fmt.Errorf("look up existing source: %w", err)

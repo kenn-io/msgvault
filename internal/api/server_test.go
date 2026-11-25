@@ -611,12 +611,8 @@ func (m *mockStore) RemoveAccountIdentity(int64, string) (int64, error) {
 	return 0, nil
 }
 
-func (m *mockStore) CountMessagesForSource(int64) (int64, error) {
-	return 0, nil
-}
-
-func (m *mockStore) CountSourceDeletedMessages(...int64) (int64, error) {
-	return 0, nil
+func (m *mockStore) SourceMessageCountsContext(context.Context) (map[int64]store.SourceMessageCounts, error) {
+	return map[int64]store.SourceMessageCounts{}, nil
 }
 
 func (m *mockStore) NeedsFTSBackfill() bool {
