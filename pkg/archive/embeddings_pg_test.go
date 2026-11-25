@@ -387,12 +387,9 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	t.Cleanup(func() { _ = admin.Close() })
 	installTestPgvector(t, admin)
 	schema := "archive_" + strings.ToLower(rand.Text())
-	role := "runtime_" + strings.ToLower(rand.Text())
 	quote := func(s string) string { return pgx.Identifier{s}.Sanitize() }
 	t.Cleanup(func() {
 		_, e := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+quote(schema)+" CASCADE")
-		assert.NoError(t, e)
-		_, e = admin.ExecContext(context.WithoutCancel(t.Context()), "DROP ROLE IF EXISTS "+quote(role))
 		assert.NoError(t, e)
 	})
 	var failOther atomic.Bool
@@ -534,16 +531,6 @@ func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
 	var activeID int64
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='active'`).Scan(&activeID))
 	assert.Equal(t, buildingID, activeID)
-	_, err = admin.ExecContext(t.Context(), "CREATE ROLE "+quote(role)+" LOGIN PASSWORD 'archive_test'")
-	require.NoError(t, err)
-	for _, grant := range []string{"GRANT USAGE ON SCHEMA " + quote(schema) + " TO " + quote(role), "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA " + quote(schema) + " TO " + quote(role), "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA " + quote(schema) + " TO " + quote(role)} {
-		_, err = admin.ExecContext(t.Context(), grant)
-		require.NoError(t, err)
-	}
-	u, err := url.Parse(dsn)
-	require.NoError(t, err)
-	u.User = url.UserPassword(role, "archive_test")
-	opts.URL = u.String()
 	runtime, err := archive.Open(t.Context(), opts)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, runtime.Close()) }()

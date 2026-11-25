@@ -1112,13 +1112,13 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 	if filter.IsEmpty() {
 		// Fast path: let pgvector use the HNSW index by issuing ORDER BY
 		// <=> LIMIT inside a subquery first. The inner SELECT returns at
-		// most innerLimit rows in distance order; the HNSW index applies to that
+		// most innerLimit rows in ANN order; the HNSW index applies to that
 		// inner ORDER BY (ef_search is raised at connect time — see
 		// store.HNSWEfSearch — so the index is not capped at the pgvector
 		// default of 40). When another generation shares the dimension,
-		// generationCandidates uses an exact sort instead. The outer query
-		// re-groups by message_id to collapse multi-chunk messages (best chunk
-		// wins via MIN), then
+		// generationCandidates uses an exact sort instead.
+		// The outer query re-groups by message_id to
+		// collapse multi-chunk messages (best chunk wins via MIN), then
 		// re-sorts and re-limits the deduplicated result. We start at
 		// k*annOverFetchFactor chunks so the common single-chunk case is a
 		// single query; on multi-chunk corpora the dedup can collapse the
@@ -1142,13 +1142,14 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		})
 	}
 
-	// Filtered path: intersecting with a structured filter may cause a
-	// sequential scan within the filtered set. Rather than materializing every
-	// matching message id in Go and shipping it back as one bigint[] param
-	// (which serialized hundreds of
+	// Filtered path: HNSW cannot be applied when intersecting with a
+	// structured filter, so we use the same inner-subquery shape as the
+	// empty-filter path but accept a sequential scan within the filtered
+	// set. Rather than materializing every matching message id in Go and
+	// shipping it back as one bigint[] param (which serialized hundreds of
 	// thousands of ids per query on a broad filter), the filter stays in
 	// SQL as an inline correlated EXISTS against messages — the same shape
-	// the empty-filter fast path uses for liveness,
+	// the empty-filter fast path uses for liveness (backend.go ~816-818),
 	// extended with the structured-filter clauses. [V2]
 	//
 	// The inner ORDER BY <=> LIMIT still short-circuits on chunk count.

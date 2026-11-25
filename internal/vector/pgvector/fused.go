@@ -185,11 +185,11 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			kArg := bind(req.KPerSignal)
 			// Use an inner SELECT with ORDER BY <=> LIMIT so pgvector can
 			// apply the HNSW index before the outer GROUP BY collapses
-			// multi-chunk messages. When another generation shares the
-			// dimension, generationCandidates uses an exact sort instead. The
-			// candidate set is constrained either by an inline correlated EXISTS
-			// against the live-message set
-			// (empty filter — mirrors backend.go, lets the HNSW
+			// multi-chunk messages. When another generation shares the dimension,
+			// generationCandidates uses an exact sort instead.
+			// The candidate set is constrained either
+			// by an inline correlated EXISTS against the live-message set
+			// (empty filter — mirrors backend.go ~816-818, lets the HNSW
 			// index drive the inner ORDER BY without first materializing the
 			// whole universe) or by a JOIN to the materialized `filtered`
 			// CTE (non-empty filter; note that JOIN may, depending on
