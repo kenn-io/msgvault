@@ -44,6 +44,10 @@ type convScope struct {
 	// shared message mapping while replacing file rows from exported bytes.
 	filesHandledExternally bool
 	budgetUsed             int
+	// channelUnreadable is set when a reply fetch finds the conversation
+	// unreadable. A walk that sees it must stop without certifying
+	// coverage, because the threads it queued were dropped unfetched.
+	channelUnreadable bool
 }
 
 type messageRecipient struct {
@@ -759,6 +763,9 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 			if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
 				return err
 			}
+			if cc.channelUnreadable {
+				return nil // resumable; this page's threads were never fetched
+			}
 		}
 		if page.NextCursor == "" {
 			cs.Done = true
@@ -844,6 +851,7 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 				cs.PendingThreads = nil
 				cs.AuditedThrough = ""
 				cs.LastSkippedAt = tsFormat(imp.now())
+				cc.channelUnreadable = true
 				return nil
 			}
 			if errors.Is(err, ErrNotFound) {
@@ -1031,6 +1039,9 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 		}
 		if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
 			return err
+		}
+		if cc.channelUnreadable {
+			return nil // resumable; this page's threads were never fetched
 		}
 		if page.NextCursor == "" {
 			// The WALK is complete: every root it owed is now recorded as
