@@ -2,8 +2,8 @@ module go.kenn.io/msgvault
 
 go 1.27.4
 
-// UTF-8 mailbox names after ENABLE IMAP4rev2: https://github.com/emersion/go-imap/issues/790
-replace github.com/emersion/go-imap/v2 => github.com/mariusvniekerk/go-imap/v2 v2.0.0-beta.8.0.20261125121445-3dca0df52597
+// Carries https://github.com/emersion/go-imap/pull/791 (UTF-8 mailbox names after ENABLE IMAP4rev2)
+replace github.com/emersion/go-imap/v2 => github.com/mariusvniekerk/go-imap/v2 v2.0.0-beta.8.0.20261125121733-f27afa9d3b6a
 
 // Work around scheduled embedding crashes: https://github.com/kenn-io/msgvault/issues/2329
 replace github.com/mattn/go-sqlite3 v1.14.53 => github.com/mattn/go-sqlite3 v1.14.52

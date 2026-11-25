@@ -316,8 +316,8 @@ github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e h1:Q6MvJtQK/iRcRt
 github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e/go.mod h1:autxFIvghDt3jPTLoqZ9OZ7s9qTGNAWmYCjVFWPX/zg=
 github.com/magiconair/properties v1.8.10 h1:s31yESBquKXCV9a/ScB3ESkOjUYYv+X0rg8SYxI99mE=
 github.com/magiconair/properties v1.8.10/go.mod h1:Dhd985XPs7jluiymwWYZ0G4Z61jb3vdS329zhj2hYo0=
-github.com/mariusvniekerk/go-imap/v2 v2.0.0-beta.8.0.20261125121445-3dca0df52597 h1:x13z4PhZRFfuWMMsfi/QssznB1EZM+GIQamuIbIYMJo=
-github.com/mariusvniekerk/go-imap/v2 v2.0.0-beta.8.0.20261125121445-3dca0df52597/go.mod h1:dhoFe2Q0PwLrMD7oZw8ODuaD0vLYPe5uj2wcOMnvh48=
+github.com/mariusvniekerk/go-imap/v2 v2.0.0-beta.8.0.20261125121733-f27afa9d3b6a h1:0teilUFy9/ERl8lmlxCZQTSicMJUZygr1ifJko2Vxnc=
+github.com/mariusvniekerk/go-imap/v2 v2.0.0-beta.8.0.20261125121733-f27afa9d3b6a/go.mod h1:dhoFe2Q0PwLrMD7oZw8ODuaD0vLYPe5uj2wcOMnvh48=
 github.com/mattn/go-colorable v0.1.16 h1:+2YjeAe7xP1OQbZW1jERPWWCDLlNqFNCvjiqGiAt84A=
 github.com/mattn/go-colorable v0.1.16/go.mod h1:6LmQG8QLFO4G5z1gPvYEzlUgJ2wF+stgPZH1UqBm1s8=
 github.com/mattn/go-isatty v0.0.24 h1:tGZZoVgT/KiqK1c8ocVLeDS8BSWMRd47J3Lbz7vsReI=
