@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/embedmodel"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -676,4 +677,71 @@ func TestPostgreSQLEmbeddingsPurgeRetry(t *testing.T) {
 	assert.Zero(t, vectors)
 	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), "SELECT message_count FROM index_generations WHERE state='active'").Scan(&count))
 	assert.Zero(t, count)
+}
+
+// A library host's embedding pass and meaning search follow room policy like
+// the daemon's: a Cold room is neither embedded nor counted as pending, and
+// its messages stay out of vector and hybrid results.
+func TestPostgreSQLLibraryEmbeddingsHideColdRooms(t *testing.T) {
+	dsn := os.Getenv("MSGVAULT_TEST_DB")
+	if !store.IsPostgresURL(dsn) {
+		t.Skip("requires PostgreSQL")
+	}
+	admin, err := sql.Open("pgx", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close() })
+	installTestPgvector(t, admin)
+	schema := "archive_" + strings.ToLower(rand.Text())
+	t.Cleanup(func() {
+		_, e := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		assert.NoError(t, e)
+	})
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Input []string `json:"input"`
+		}
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+			return
+		}
+		data := make([]map[string]any, len(request.Input))
+		for i, input := range request.Input {
+			v := []float32{1, 0}
+			if strings.Contains(input, "second") {
+				v = []float32{0, 1}
+			}
+			data[i] = map[string]any{"index": i, "embedding": v}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data, "model": "test"}))
+	}))
+	t.Cleanup(service.Close)
+	client, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: "test", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}, Retry: embedclient.Retry{MaxAttempts: 1}})
+	require.NoError(t, err)
+	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: &archive.Embeddings{Client: client, Descriptor: testDescriptor()}}
+	require.NoError(t, archive.Setup(t.Context(), opts))
+	a, err := archive.Open(t.Context(), opts)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, a.Close()) }()
+	source, err := a.Store().GetOrCreateSource("slack", "workspace")
+	require.NoError(t, err)
+	for _, body := range []string{"observatory", "second"} {
+		conversation, e := a.Store().EnsureConversation(t.Context(), source.ID, body, body)
+		require.NoError(t, e)
+		id, e := a.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: body, MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}, Subject: sql.NullString{String: body, Valid: true}})
+		require.NoError(t, e)
+		require.NoError(t, a.Store().UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+		require.NoError(t, a.Store().UpsertFTS(id, body, body, "", "", ""))
+	}
+	require.NoError(t, a.Store().SetConversationPolicyOverride(t.Context(), source.ID, "second", conversationpolicy.Cold))
+	require.NoError(t, a.Embed(t.Context()), "a Cold room's messages are not left pending")
+	var coldVectors int
+	require.NoError(t, a.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings e JOIN messages m ON m.id = e.message_id WHERE m.source_message_id = 'second'`).Scan(&coldVectors))
+	assert.Zero(t, coldVectors)
+	handler := a.NewServer(archive.ServerOptions{}).Handler(nil)
+	for _, mode := range []string{"vector", "hybrid"} {
+		response := sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=second&mode="+mode)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		assert.Contains(t, response.Body.String(), `"subject":"observatory"`, mode)
+		assert.NotContains(t, response.Body.String(), `"subject":"second"`, mode)
+	}
 }

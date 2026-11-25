@@ -312,7 +312,7 @@ func TestColdPolicyLedgerBatchReleasesForPromotion(t *testing.T) {
 	require.NoError(t, b.PublishScopes(ctx, gen, []vector.DocumentScopePublication{{ScopeKey: "zero-chunks", SourceSequence: 1, Documents: docs, Chunks: chunks}}))
 	require.NoError(t, b.Delete(ctx, gen, ids))
 	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Cold))
-	_, _, err = b.pruneEmbeddingBatch(ctx, true, true)
+	_, _, err = b.pruneIneligibleBatch(ctx, true)
 	require.NoError(t, err)
 	var current, members int
 	require.NoError(t, b.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embedding_documents WHERE state='current'`).Scan(&current))

@@ -50,7 +50,7 @@ func TestWorkerPG_StampSkippedWithReservedConnection(t *testing.T) {
 	w := NewWorker(WorkerDeps{Backend: backend, VectorsDB: db, MainDB: db, Store: &pgWorkStore{db: db}, Client: &pgFakeEmbeddingClient{dim: 4}, Rebind: (&store.PostgreSQLDialect{}).Rebind})
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	missed, err := w.stampSkipped(ctx, gen, []int64{1, 2}, map[int64]any{1: first, 2: second})
+	missed, err := w.stampSkipped(ctx, gen, []int64{1, 2}, map[int64]any{1: first, 2: second}, map[int64]int64{1: 0, 2: 0})
 	require.NoError(t, err)
 	assert.Equal(t, []int64{2}, missed)
 	var stamped sql.NullInt64
@@ -70,7 +70,7 @@ func TestWorkerPG_StampSkippedWithReservedConnection(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `CREATE FUNCTION reject_embedding_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'delete failed'; END $$;
 		CREATE TRIGGER reject_embedding_delete BEFORE DELETE ON embeddings FOR EACH STATEMENT EXECUTE FUNCTION reject_embedding_delete()`)
 	require.NoError(t, err)
-	_, err = w.stampSkipped(t.Context(), gen, []int64{2}, map[int64]any{2: second})
+	_, err = w.stampSkipped(t.Context(), gen, []int64{2}, map[int64]any{2: second}, map[int64]int64{2: 0})
 	require.ErrorContains(t, err, "delete failed")
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id=2`).Scan(&stamped))
 	assert.False(t, stamped.Valid, "a failed vector delete rolls back the stamp")
