@@ -25,16 +25,14 @@ func (c *suggestionCLIClient) SuggestMeetingLinks(_ context.Context, ref string,
 }
 func TestMeetingSuggestionsCLI(t *testing.T) {
 	for _, tc := range []struct {
-		version string
-		json    bool
-		want    string
-		failure bool
+		json bool
+		want string
 	}{
-		{"5.11.0", false, "Planning", false}, {"5.11.0", true, `"title":"Planning"`, false}, {"5.10.0", false, "5.11.0", true},
+		{false, "Planning"}, {true, `"title":"Planning"`},
 	} {
-		t.Run(tc.version+tc.want, func(t *testing.T) {
+		t.Run(tc.want, func(t *testing.T) {
 			r := require.New(t)
-			client := &suggestionCLIClient{version: tc.version}
+			client := &suggestionCLIClient{}
 			command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 			var out bytes.Buffer
 			command.SetOut(&out)
@@ -43,13 +41,7 @@ func TestMeetingSuggestionsCLI(t *testing.T) {
 				args = append(args, "--json")
 			}
 			command.SetArgs(args)
-			err := command.Execute()
-			if tc.failure {
-				r.ErrorContains(err, tc.want)
-				r.False(client.called)
-				return
-			}
-			r.NoError(err)
+			r.NoError(command.Execute())
 			r.Contains(out.String(), tc.want)
 			r.True(client.called)
 			r.Equal("msg:3", client.ref)

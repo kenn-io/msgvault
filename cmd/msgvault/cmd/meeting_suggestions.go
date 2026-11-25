@@ -12,8 +12,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const meetingSuggestionsMinAPISchemaVersion = "5.11.0"
-
 type meetingSuggestionClient interface {
 	SuggestMeetingLinks(ctx context.Context, ref string, limit int) (store.MeetingSuggestionPage, error)
 }
@@ -32,7 +30,7 @@ func newMeetingSuggestionsCommand(deps meetingCommandDeps) *cobra.Command {
 		if err != nil {
 			return usageErr(cmd, err)
 		}
-		client, cleanup, err := openMeetingCommandClient(cmd.Context(), deps, meetingSuggestionsMinAPISchemaVersion)
+		client, cleanup, err := openMeetingCommandClient(cmd.Context(), deps)
 		if err != nil {
 			return err
 		}

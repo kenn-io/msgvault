@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -146,37 +147,6 @@ func TestPersonDirectoryCommandMapsDirectoryQueryParameters(t *testing.T) {
 			})
 		}
 	}
-}
-
-func TestPersonDirectoryAddressRequiresCurrentDaemonSchema(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var lookups atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/v1/health" {
-			_, _ = io.WriteString(w, `{"status":"ok","api_schema_version":"3.28.0"}`)
-			return
-		}
-		lookups.Add(1)
-		_, _ = io.WriteString(w, `{"people":[]}`)
-	}))
-	t.Cleanup(server.Close)
-	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output, err := runPersonDirectoryCommand(ctx, t, "--address", "alex@example.test", "--json")
-	require.ErrorContains(err, "requires daemon API schema 3.29.0 or newer; upgrade the daemon")
-	assert.Empty(output)
-	assert.Zero(lookups.Load())
-}
-
-func TestPersonDirectoryCadenceRequiresCurrentDaemonSchema(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	requests, ctx := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`)
-	output, err := runPersonDirectoryCommand(ctx, t, "--cadence", "due", "--json")
-	require.ErrorContains(err, "upgrade the daemon to use contact-list filters or sorting")
-	assert.Empty(output)
-	assert.Empty(requests)
 }
 
 func TestPersonDirectoryCommandForwardsCursorAndPrintsNextCursor(t *testing.T) {
@@ -505,7 +475,7 @@ func TestPersonDirectoryCadence(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/v1/health" {
-			_, _ = io.WriteString(w, fmt.Sprintf(`{"status":"ok","api_schema_version":%q}`, daemonclient.DirectoryCadenceMinAPISchemaVersion))
+			_, _ = io.WriteString(w, fmt.Sprintf(`{"status":"ok","api_schema_version":%q}`, api.APISchemaVersion))
 			return
 		}
 		assert.Equal("due", r.URL.Query().Get("cadence"))

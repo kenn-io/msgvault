@@ -57,18 +57,6 @@ Filters combine to narrow the existing Directory page.`,
 				return err
 			}
 			defer func() { _ = client.Close() }()
-			if err := client.RequireDirectoryAddress(cmd.Context(), address); err != nil {
-				return err
-			}
-			if cadence != "" || query.DueWithinDays != nil || sort == "most_overdue" || sort == "next_due" {
-				supported, err := client.SupportsAPISchemaVersion(cmd.Context(), daemonclient.DirectoryCadenceMinAPISchemaVersion)
-				if err != nil {
-					return err
-				}
-				if !supported {
-					return errors.New("upgrade the daemon to use contact-list filters or sorting")
-				}
-			}
 			response, err := daemonclient.APIResponse(client,
 				func(api *apiclient.Client) (*generated.ListDirectoryPeopleResp, error) {
 					return api.ListDirectoryPeopleWithResponse(cmd.Context(), &generated.ListDirectoryPeopleRequestOptions{Query: query})

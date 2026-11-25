@@ -176,8 +176,6 @@ func TestTUISemanticSearcherRequiresEnabledVectorBackend(t *testing.T) {
 		{name: "initializing remains callable", stats: map[string]any{"vector_status": "initializing"}, schemaVersion: api.APISchemaVersion, wantSearch: true},
 		{name: "disabled", stats: map[string]any{"vector_status": "disabled"}, schemaVersion: api.APISchemaVersion},
 		{name: "legacy disabled", stats: map[string]any{"vector_search": map[string]any{"enabled": false}}, schemaVersion: api.APISchemaVersion},
-		{name: "older daemon fails closed", stats: map[string]any{"vector_status": "ready"}, schemaVersion: "2.4.0"},
-		{name: "missing schema version fails closed", stats: map[string]any{"vector_status": "ready"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -208,95 +206,6 @@ func TestTUISemanticSearcherRequiresEnabledVectorBackend(t *testing.T) {
 			} else {
 				assert.Nil(t, searcher)
 			}
-		})
-	}
-}
-
-func TestTUIPeopleBackendRequiresPeopleSchema(t *testing.T) {
-	tests := []struct {
-		name          string
-		schemaVersion string
-		wantBackend   bool
-	}{
-		{name: "people schema", schemaVersion: "2.10.0", wantBackend: true},
-		{name: "newer schema", schemaVersion: "2.11.0", wantBackend: true},
-		{name: "older same-major schema", schemaVersion: "2.9.9"},
-		{name: "missing schema version"},
-		{name: "malformed schema version", schemaVersion: "current"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mux := http.NewServeMux()
-			mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				body := map[string]any{"status": "ok"}
-				if tt.schemaVersion != "" {
-					body["api_schema_version"] = tt.schemaVersion
-				}
-				_ = json.NewEncoder(w).Encode(body)
-			})
-			srv := httptest.NewServer(mux)
-			t.Cleanup(srv.Close)
-
-			client, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true})
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, client.Close()) })
-			engine := daemonclient.NewEngineAdapter(client)
-
-			backend := tuiPeopleBackend(t.Context(), client, engine)
-			if tt.wantBackend {
-				assert.NotNil(t, backend)
-			} else {
-				assert.Nil(t, backend)
-			}
-		})
-	}
-}
-
-// TestTUIPeopleBackendGatesBriefsOnTheBriefSchema checks the second gate: a
-// daemon new enough for People but older than the person brief routes must
-// yield a backend without the brief surfaces, so the People browser hides the
-// brief instead of reporting a failed read on every contact.
-func TestTUIPeopleBackendGatesBriefsOnTheBriefSchema(t *testing.T) {
-	tests := []struct {
-		name          string
-		schemaVersion string
-		wantBriefs    bool
-	}{
-		{name: "brief schema", schemaVersion: "2.20.0", wantBriefs: true},
-		{name: "newer schema", schemaVersion: "2.21.0", wantBriefs: true},
-		{name: "operations without briefs", schemaVersion: "2.19.0"},
-		{name: "people but not briefs", schemaVersion: "2.16.9"},
-		{name: "oldest people schema", schemaVersion: "2.10.0"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-
-			mux := http.NewServeMux()
-			mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"status": "ok", "api_schema_version": tt.schemaVersion,
-				})
-			})
-			srv := httptest.NewServer(mux)
-			t.Cleanup(srv.Close)
-
-			client, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true})
-			require.NoError(err)
-			t.Cleanup(func() { require.NoError(client.Close()) })
-			engine := daemonclient.NewEngineAdapter(client)
-
-			backend := tuiPeopleBackend(t.Context(), client, engine)
-			require.NotNil(backend)
-			assert.Implements((*peoplebrowser.Backend)(nil), backend,
-				"every gated backend still serves the People browser")
-			_, reader := backend.(peoplebrowser.PersonBriefReader)
-			_, writer := backend.(peoplebrowser.PersonBriefWriter)
-			assert.Equal(tt.wantBriefs, reader)
-			assert.Equal(tt.wantBriefs, writer)
 		})
 	}
 }

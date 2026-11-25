@@ -9,8 +9,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const meetingDecisionsMinAPISchemaVersion = "5.10.0"
-
 type meetingDecisionClientBackend interface {
 	DecideMeetingLink(ctx context.Context, left, right, decision string) (store.MeetingLinkDecisionResult, error)
 }
@@ -34,7 +32,7 @@ func newMeetingDecisionCommand(deps meetingCommandDeps, decision string) *cobra.
 			if err != nil {
 				return usageErr(cmd, err)
 			}
-			client, cleanup, err := openMeetingCommandClient(cmd.Context(), deps, meetingDecisionsMinAPISchemaVersion)
+			client, cleanup, err := openMeetingCommandClient(cmd.Context(), deps)
 			if err != nil {
 				return err
 			}

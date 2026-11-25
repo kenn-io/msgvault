@@ -878,108 +878,6 @@ func TestEngineGetDeletionTargetsByFilterForwardsSourceIDs(t *testing.T) {
 	assert.Equal(t, int64(8), targets[0].SourceID)
 }
 
-func TestEngineRejectsListIDFilterAgainstOlderDaemonBeforeScopedRequest(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		call func(*Engine) error
-	}{
-		{name: "list messages", call: func(engine *Engine) error {
-			_, err := engine.ListMessages(t.Context(), query.MessageFilter{ListID: "<dev@example.test>"})
-			return err
-		}},
-		{name: "sub aggregate", call: func(engine *Engine) error {
-			_, err := engine.SubAggregate(t.Context(), query.MessageFilter{ListID: "<dev@example.test>"}, query.ViewLabels, query.DefaultAggregateOptions())
-			return err
-		}},
-		{name: "list aggregate view", call: func(engine *Engine) error {
-			_, err := engine.Aggregate(t.Context(), query.ViewLists, query.DefaultAggregateOptions())
-			return err
-		}},
-		{name: "list sub-aggregate view", call: func(engine *Engine) error {
-			_, err := engine.SubAggregate(t.Context(), query.MessageFilter{}, query.ViewLists, query.DefaultAggregateOptions())
-			return err
-		}},
-		{name: "list fast-stats view", call: func(engine *Engine) error {
-			_, err := engine.SearchFastWithStats(t.Context(), &search.Query{TextTerms: []string{"needle"}}, "needle", query.MessageFilter{}, query.ViewLists, 50, 0)
-			return err
-		}},
-		{name: "list total-stats view", call: func(engine *Engine) error {
-			_, err := engine.GetTotalStats(t.Context(), query.StatsOptions{GroupBy: query.ViewLists})
-			return err
-		}},
-		{name: "aggregate search query", call: func(engine *Engine) error {
-			opts := query.DefaultAggregateOptions()
-			opts.SearchQuery = "list:dev@example.test"
-			_, err := engine.Aggregate(t.Context(), query.ViewLabels, opts)
-			return err
-		}},
-		{name: "sub aggregate search query", call: func(engine *Engine) error {
-			opts := query.DefaultAggregateOptions()
-			opts.SearchQuery = "list:dev@example.test"
-			_, err := engine.SubAggregate(t.Context(), query.MessageFilter{}, query.ViewLabels, opts)
-			return err
-		}},
-		{name: "total stats search query", call: func(engine *Engine) error {
-			_, err := engine.GetTotalStats(t.Context(), query.StatsOptions{
-				SearchQuery: "list:dev@example.test",
-			})
-			return err
-		}},
-		{name: "fast search", call: func(engine *Engine) error {
-			_, err := engine.SearchFast(t.Context(), &search.Query{TextTerms: []string{"needle"}}, query.MessageFilter{ListID: "<dev@example.test>"}, 50, 0)
-			return err
-		}},
-		{name: "fast count", call: func(engine *Engine) error {
-			_, err := engine.SearchFastCount(t.Context(), &search.Query{TextTerms: []string{"needle"}}, query.MessageFilter{ListID: "<dev@example.test>"})
-			return err
-		}},
-		{name: "fast search with stats", call: func(engine *Engine) error {
-			_, err := engine.SearchFastWithStats(t.Context(), &search.Query{TextTerms: []string{"needle"}}, "needle", query.MessageFilter{ListID: "<dev@example.test>"}, query.ViewLabels, 50, 0)
-			return err
-		}},
-		{name: "deletion targets", call: func(engine *Engine) error {
-			_, err := engine.GetDeletionTargetsByFilter(t.Context(), query.MessageFilter{ListID: "<dev@example.test>"})
-			return err
-		}},
-		{name: "deep search query", call: func(engine *Engine) error {
-			_, err := engine.Search(t.Context(), &search.Query{
-				TextTerms: []string{"needle"}, ListIDs: []string{"dev@example.test"},
-			}, 50, 0)
-			return err
-		}},
-		{name: "body search query", call: func(engine *Engine) error {
-			_, err := engine.SearchMessageBodies(t.Context(), &search.Query{
-				TextTerms: []string{"needle"}, ListIDs: []string{"dev@example.test"},
-			}, 50, 0)
-			return err
-		}},
-		{name: "fast search query", call: func(engine *Engine) error {
-			_, err := engine.SearchFastWithStats(t.Context(), &search.Query{
-				TextTerms: []string{"needle"}, ListIDs: []string{"dev@example.test"},
-			}, "", query.MessageFilter{}, query.ViewSenders, 50, 0)
-			return err
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var scopedRequests int
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/health" {
-					writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.13.0"})
-					return
-				}
-				scopedRequests++
-				http.Error(w, "unexpected scoped request", http.StatusInternalServerError)
-			}))
-			t.Cleanup(srv.Close)
-
-			err := tc.call(NewEngineAdapter(newTestStore(srv, "")))
-
-			require.ErrorContains(t, err, "List-ID filter requires daemon API schema 2.14.0 or newer")
-			assert.Zero(t, scopedRequests, "old daemon must not receive an exact list-ID request")
-		})
-	}
-}
-
 func TestEngineGetDeletionTargetsBySearchUsesVersionedExactScope(t *testing.T) {
 	var targetRequests int
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1014,55 +912,35 @@ func TestEngineGetDeletionTargetsBySearchUsesVersionedExactScope(t *testing.T) {
 	}}, targets)
 }
 
-func TestEngineGetDeletionTargetsBySearchBoundedGatesOnDaemonSchemaAndForwardsMaxResults(t *testing.T) {
-	for _, tc := range []struct {
-		name, schema string
-	}{
-		{"supported daemon", "3.26.0"},
-		{"older daemon", "3.25.0"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			var healthRequests, targetRequests int
-			store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/v1/health":
-					healthRequests++
-					writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": tc.schema})
-				case "/api/v1/messages/gmail-ids":
-					targetRequests++
-					assertions.Equal("100001", r.URL.Query().Get("max_results"))
-					writeJSONResponse(t, w, map[string]any{
-						"gmail_ids": []string{"gm-1"}, "search_query": "bodyneedle",
-						"search_mode": "fast", "matched_count": 2,
-						"targets": []map[string]any{{
-							"message_id": 1, "source_id": 7, "source_type": "gmail",
-							"source_identifier": "account@example.test", "source_message_id": "gm-1",
-						}},
-					})
-				default:
-					http.NotFound(w, r)
-				}
+func TestEngineGetDeletionTargetsBySearchBoundedForwardsMaxResults(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var targetRequests int
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/messages/gmail-ids":
+			targetRequests++
+			assertions.Equal("100001", r.URL.Query().Get("max_results"))
+			writeJSONResponse(t, w, map[string]any{
+				"gmail_ids": []string{"gm-1"}, "search_query": "bodyneedle",
+				"search_mode": "fast", "matched_count": 2,
+				"targets": []map[string]any{{
+					"message_id": 1, "source_id": 7, "source_type": "gmail",
+					"source_identifier": "account@example.test", "source_message_id": "gm-1",
+				}},
 			})
+		default:
+			http.NotFound(w, r)
+		}
+	})
 
-			_, matched, err := NewEngineAdapter(store).GetDeletionTargetsBySearchBounded(
-				t.Context(), search.Parse("bodyneedle"), query.MessageFilter{},
-				query.DeletionSearchFast, query.MaxDeletionTargetSearchResults,
-			)
-			assertions.Equal(1, healthRequests)
-			if tc.schema == "3.25.0" {
-				requirements.ErrorIs(err, ErrBoundedDeletionSearchUnsupported)
-				requirements.ErrorContains(err, "requires daemon API schema 3.26.0 or newer")
-				requirements.ErrorContains(err, "upgrade the daemon and retry")
-				assertions.Zero(targetRequests)
-				return
-			}
-			requirements.NoError(err)
-			assertions.Equal(2, matched)
-			assertions.Equal(1, targetRequests)
-		})
-	}
+	_, matched, err := NewEngineAdapter(store).GetDeletionTargetsBySearchBounded(
+		t.Context(), search.Parse("bodyneedle"), query.MessageFilter{},
+		query.DeletionSearchFast, query.MaxDeletionTargetSearchResults,
+	)
+	requirements.NoError(err)
+	assertions.Equal(2, matched)
+	assertions.Equal(1, targetRequests)
 }
 
 func TestEngineGetDeletionTargetsByAggregateSearchForwardsDisplayedRow(t *testing.T) {
@@ -1097,33 +975,6 @@ func TestEngineGetDeletionTargetsByAggregateSearchForwardsDisplayedRow(t *testin
 		MessageID: 1, SourceID: 7, SourceType: "gmail",
 		SourceIdentifier: "account@example.invalid", SourceMessageID: "gm-1",
 	}}, targets)
-}
-
-func TestEngineGetDeletionTargetsBySearchRejectsPreSearchAwareDaemon(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	var healthRequests, targetRequests int
-	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/health":
-			healthRequests++
-			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.15.0"})
-		case "/api/v1/messages/gmail-ids":
-			targetRequests++
-			writeJSONResponse(t, w, map[string]any{
-				"gmail_ids": []string{}, "search_query": "invoice", "search_mode": "fast",
-			})
-		default:
-			http.NotFound(w, r)
-		}
-	})
-
-	_, err := NewEngineAdapter(store).GetDeletionTargetsBySearch(
-		t.Context(), search.Parse("invoice"), query.MessageFilter{}, query.DeletionSearchFast)
-
-	requirements.ErrorContains(err, "requires daemon API schema 2.16.0 or newer")
-	assertions.Equal(1, healthRequests)
-	assertions.Zero(targetRequests)
 }
 
 func TestEngineGetDeletionTargetsBySearchTreatsCanonicalEmptyAsFilter(t *testing.T) {
@@ -1509,19 +1360,6 @@ func TestEngineGetTotalStatsUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal(int64(1), stats.SourceDeletedMessageCount, "source-deleted breakdown must survive the adapter")
 	assert.Equal(int64(25), stats.AttachmentSize)
 	assert.Equal(int64(1), stats.AccountCount)
-}
-
-func TestEngineGetTotalStatsRejectsCompleteFilterAgainstOlderDaemon(t *testing.T) {
-	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/health", r.URL.Path)
-		writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.15.0"})
-	})
-
-	stats, err := NewEngineAdapter(store).GetTotalStats(t.Context(), query.StatsOptions{
-		Filter: &query.MessageFilter{MessageType: "email"},
-	})
-	require.ErrorContains(t, err, "API schema 2.16.0 or newer")
-	assert.Nil(t, stats)
 }
 
 func TestEngineGetTotalStatsOmitsSearchScopeByDefault(t *testing.T) {
@@ -2404,47 +2242,6 @@ func TestEngineSearchFastWithStatsUsesGeneratedClientAdapter(t *testing.T) {
 	require.NotNil(result.Stats, "stats")
 	assert.Equal(int64(2048), result.Stats.TotalSize)
 	assert.Equal(int64(512), result.Stats.AttachmentSize)
-}
-
-func TestEngineSearchFastWithStatsRejectsCompleteFilterAgainstOlderDaemon(t *testing.T) {
-	tests := []struct {
-		name   string
-		filter query.MessageFilter
-	}{
-		{name: "sender name", filter: query.MessageFilter{SenderName: "Alice"}},
-		{name: "recipient name", filter: query.MessageFilter{RecipientName: "Bob"}},
-		{
-			name: "empty target",
-			filter: query.MessageFilter{
-				EmptyValueTargets: map[query.ViewType]bool{query.ViewLabels: true},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-
-			store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/health" {
-					writeJSONResponse(t, w, map[string]any{
-						"status": "ok", "api_schema_version": "2.15.0",
-					})
-					return
-				}
-				http.NotFound(w, r)
-			})
-
-			result, err := NewEngineAdapter(store).SearchFastWithStats(
-				t.Context(), search.Parse("needle"), "needle", tt.filter,
-				query.ViewSenders, 10, 0,
-			)
-			require.Error(err)
-			assert.Nil(result)
-			assert.ErrorContains(err, "requires daemon API schema 2.16.0 or newer")
-		})
-	}
 }
 
 func TestEngineSearchFastWithStatsForwardsSourceIDs(t *testing.T) {

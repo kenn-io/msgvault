@@ -99,8 +99,7 @@ its own prints group help.
 
 ## meetings
 
-Read archived meeting evidence through the selected daemon. This command
-requires API schema 2.27.0 or newer. See the
+Read archived meeting evidence through the selected daemon. See the
 [meeting workflow](usage/meetings.md) for coverage and source limits.
 
 ```bash
@@ -113,22 +112,19 @@ msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 
 Run `msgvault meetings links <note-id|ref> [--json]` to read the calendar copies
 and notes that share an exact meeting occurrence. Pass a note ID, `msg:<id>`, or
-an event `ref` from `calendar events --json`. This command requires daemon API
-schema 5.9.0 or newer.
+an event `ref` from `calendar events --json`.
 
 ### meetings suggest
 
 Run `msgvault meetings suggest <ref> [--limit N] [--json]` to rank overlapping
 meeting notes and calendar events. To accept a suggestion, use `meetings link`.
-This command requires daemon API schema 5.11.0 or newer.
 
 ### meetings link, unlink, and reset-link
 
 Use `msgvault meetings link <ref> <ref>` to join two meeting copies or
 `msgvault meetings unlink <ref> <ref>` to separate them. Either command replaces
 the previous choice. To clear your choice and restore automatic matching, run
-`msgvault meetings reset-link <ref> <ref>`. These commands require daemon API
-schema 5.10.0 or newer.
+`msgvault meetings reset-link <ref> <ref>`.
 
 ### meetings context
 
@@ -230,9 +226,15 @@ default, a newer compatible CLI restarts an older local daemon before sending a
 request. A source-build CLI also replaces the release daemon it was built from,
 or one from an earlier release. If a running daemon comes from another source
 build of the same release, the CLI leaves it running and prints the restart
-command. Set `[server].daemon_auto_restart` to `newer`, `never`, or `always` to
-control this lifecycle behavior. Clients do not restart remote servers, so they
-negotiate compatibility from the API schema version in the OpenAPI document.
+command. A daemon whose API schema is older than the CLI's is still replaced,
+unless `daemon_auto_restart = "never"` or `daemon_auto_start = false`. Set
+`[server].daemon_auto_restart` to `newer`, `never`, or `always` to control this
+lifecycle behavior; see the [restart policy](configuration.md#server).
+
+Clients do not restart remote servers. A `[remote]` server or an `--agent-url`
+daemon must run the same or a newer API schema of the same major version as the
+CLI. Otherwise the CLI stops before sending archive requests and tells you to
+upgrade the daemon.
 
 ---
 
@@ -392,9 +394,8 @@ After you add an account, sync it with `msgvault sync-full`. IMAP accounts use t
 
 ## message-tags
 
-Read or update native tags on one email through the selected daemon. This
-command requires API schema 3.15.0 or newer, and the positional argument is
-msgvault's positive archived message ID.
+Read or update native tags on one email through the selected daemon. The
+positional argument is msgvault's positive archived message ID.
 
 ```bash
 msgvault message-tags 42 --json
@@ -403,8 +404,8 @@ msgvault message-tags 42 --add Next --remove Old --mailbox INBOX
 msgvault message-tags 73 --add Next --remove Old --json
 ```
 
-With daemon API schema 5.4.0 or newer, a plain read can also inspect a message
-marked deleted from its source, including one still in Trash. Reads leave the
+A plain read can also inspect a message marked deleted from its source,
+including one still in Trash. Reads leave the
 archive unchanged, while edits and edit previews still reject source-deleted
 messages. The provider must resolve the recorded message identity. See the
 [native tag API](api-server.md#native-email-tags) for the read contract.
@@ -1026,10 +1027,6 @@ The same `--build-cache` and `--no-build-cache` flags apply to message-writing
 `sync-*` commands, and the two flags are mutually exclusive. By default, manual
 syncs keep a usable stale cache in place until the minimum rebuild interval
 elapses, and the daemon handles any refresh after the sync command returns.
-
-For `sync` and `sync-full`, either cache flag requires daemon API schema 2.31.0
-or newer. Against an older daemon, the CLI reports an upgrade error before
-starting the sync.
 
 Folder filters apply to IMAP accounts only. See
 [IMAP Folder Sync](/docs/usage/imap/) for examples and matching rules.
@@ -2471,8 +2468,8 @@ Each row ID points to the effective archive message, including an edited or
 cancelled copy. JSON carries the series master ID separately in
 `series_message_id`. JSON also includes status, attendees, roles, RSVPs, and
 events that could not be expanded. If the query is too broad, narrow the date window.
-This command requires daemon API schema 3.35.0 or newer and rejects `--account`,
-`--dry-run`, `--read-only`, and `--send-updates`.
+This command rejects `--account`, `--dry-run`, `--read-only`, and
+`--send-updates`.
 
 For live Google Calendar changes, see
 [Calendar event setup](usage/calendar.md#control-events) for consent and source
@@ -3215,8 +3212,7 @@ select that host's local archive.
 
 ## find-chat
 
-Find archived chats when a person's name differs across networks. This command
-requires daemon API schema 3.25.0 or newer.
+Find archived chats when a person's name differs across networks.
 
 ```bash
 msgvault find-chat "Jordan Lee Chen"
@@ -3336,8 +3332,8 @@ deletion scopes. Raise `--limit` when you need a larger candidate pool. See
 
 `filename:` matches a case-insensitive literal substring of an attachment
 filename. Quote spaces; repeated values must all match attachments on the same
-message. This operator requires daemon API schema 3.14.0 or newer. JSON output
-includes `snippet` (the stored preview) and `conversation_id` in every mode,
+message. JSON output includes `snippet` (the stored preview) and
+`conversation_id` in every mode,
 plus `attachment_names` and `attachment_count` when available. Omitted fields
 indicate unavailable metadata, while `[]` and `0` mean known empty values.
 `attachment_names` lists rows currently available, and `attachment_count` can be
@@ -3602,7 +3598,7 @@ msgvault export-eml <id> [flags]
 | Flag | Description |
 |---|---|
 | `-o`, `--output <path>` | Output file (default: `<source_message_id>.eml`, use `-` for stdout). With `--thread`, the output directory (default: current directory) |
-| `--thread` | Write visible archived messages in the conversation that have stored MIME as `<n>-<source_message_id>.eml`, numbered oldest first. Reports skipped messages and when the account last synced. Needs a daemon with API schema 2.33.0 or newer |
+| `--thread` | Write visible archived messages in the conversation that have stored MIME as `<n>-<source_message_id>.eml`, numbered oldest first. Reports skipped messages and when the account last synced |
 | `--account <email>` | With `--thread`, the account that holds a provider message ID found in more than one account |
 
 Thread export captures its message list once. Messages added afterward belong to
@@ -4318,8 +4314,7 @@ msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-js
 msgvault person attributes clear <person-id> <slug> [flags]
 ```
 
-With daemon API schema 5.7.0 or newer, `person get --json` includes the person's
-first archived appearance and first direct contact, along with the appearance
+`person get --json` includes the person's first archived appearance and first direct contact, along with the appearance
 reference, `email_intro` or `observed` kind, and introducer when known. See
 [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance)
 for evidence rules and limits.
@@ -4333,10 +4328,8 @@ observed identities and reports the matched person or participant.
 `--if-exists return` returns a single saved match unchanged, with
 `ensure.status` set to `matched_existing` in JSON; a new person reports
 `created`. Retry safety requires an email or phone; name-only calls create a
-new person each time. Return mode requires a daemon with API schema 5.26.0 or
-newer; the CLI checks this before creation and asks you to upgrade an older
-daemon. Unmatched contacts are reported without being added. Ambiguous matches
-and unbound clusters return coded errors with resolution details (`--json`
+new person each time. Unmatched contacts are reported without being added.
+Ambiguous matches and unbound clusters return coded errors with resolution details (`--json`
 prints the error envelope). `--publish` publishes only a new person. Without
 `--publish`, everything stays local. Publication uses the existing CardDAV
 path; if it fails, the new person stays saved and the output prints its ID so
@@ -4350,8 +4343,7 @@ cleared value. `set-display-name` keeps the profile's stable ID and vCard UID.
 bindings, though you cannot delete a person with active merge lineage until you
 split that lineage completely.
 
-With daemon API schema 3.10.0 or newer, `person get --vcard-uid` looks up a
-person by their current UID, a retired UID that still aliases them after a
+`person get --vcard-uid` looks up a person by their current UID, a retired UID that still aliases them after a
 merge, or a UID on a CardDAV card currently mapped to them. JSON responses for
 `person` and `person directory` include `vcard_uid` and `carddav_bindings`,
 where each binding lists its connection, address book, resource `href`,
@@ -5015,9 +5007,7 @@ active generation. A build started with `--account` or `--collection` reports
 progress only in its own terminal. `status` never starts a build or acquires
 the scheduler slot.
 
-The daemon must report API schema 3.21.0 or newer; if the CLI prompts you to
-upgrade, upgrade and restart the daemon before retrying. If vector search is
-disabled, `status` refuses to run until you set `[vector] enabled = true` and
+If vector search is disabled, `status` refuses to run until you set `[vector] enabled = true` and
 restart the daemon.
 
 `current` counts live messages stamped for this generation, including messages
@@ -5400,14 +5390,13 @@ Start the Model Context Protocol server to connect AI assistants to your
 archive.
 
 Draft tools prepare and manage drafts through the selected daemon with the same
-commands and permissions as the CLI, and msgvault never sends messages. A daemon
-with API schema 3.0.0 or newer exposes eight draft tools to the owner.
+commands and permissions as the CLI, and msgvault never sends messages. The
+owner gets eight draft tools.
 
-When you pass `--agent-url` and `--agent-token-file`, `msgvault mcp` requires a
-daemon with API schema 3.9.0 or newer and serves scoped read tools, up to six
-delegated draft tools, and calendar tools over stdio. Available tools follow the
-token's permissions and granted sources, and the daemon enforces those checks on
-every call. Delegated sessions refuse `--http`.
+When you pass `--agent-url` and `--agent-token-file`, `msgvault mcp` serves
+scoped read tools, up to six delegated draft tools, and calendar tools over
+stdio. Available tools follow the token's permissions and granted sources, and
+the daemon enforces those checks on every call. Delegated sessions refuse `--http`.
 
 ```bash
 msgvault mcp [flags]
@@ -6052,10 +6041,8 @@ exclusive with `--source-id`.
 | `--source-id ID` | Restrict staging to one exact source ID |
 | `--ids IDS` | Stage positive, unique, comma-separated internal message IDs instead of a query |
 
-Query staging requires daemon API schema 2.18.0 or newer so preflight reports
-the exact deletable subset; upgrade the daemon if the CLI rejects its schema
-version. Queries follow the same search rules as `msgvault search`, and
-`--dry-run` previews the set staging would create.
+Query staging preflight reports the exact deletable subset. Queries follow the
+same search rules as `msgvault search`, and `--dry-run` previews the set staging would create.
 
 Deletion staging applies only to email from Gmail and Microsoft Graph mail
 (`msmail`) sources. If a query also matches chats, meetings, calendar entries,
@@ -6602,9 +6589,8 @@ server without local owner configuration. Supported MCP tools cover keyword
 search, message and thread reads, attachment reads, lists, aggregate, and stats.
 Multi-source metadata lists, fast search, aggregates, and stats keep exact
 per-call scopes, whereas deep body search requires a single source (pass
-`account` when the grant spans multiple accounts). Read grants and expiry
-require API schema 3.9.0 or newer; vector and hybrid reads stay unavailable to
-scoped grants.
+`account` when the grant spans multiple accounts). Vector and hybrid reads stay
+unavailable to scoped grants.
 
 Agent searches start a background index check and clear its status once the
 index is complete. If the index is incomplete, the owner is prompted to run

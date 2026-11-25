@@ -22,13 +22,9 @@ import (
 type calendarEventsFakeClient struct {
 	err      error
 	page     store.CalendarOccurrencePage
-	version  string
 	from, to time.Time
 }
 
-func (f *calendarEventsFakeClient) APISchemaVersion(context.Context) (string, error) {
-	return f.version, nil
-}
 func (f *calendarEventsFakeClient) ListCalendarOccurrencesContext(_ context.Context, from, to time.Time) (store.CalendarOccurrencePage, error) {
 	f.from, f.to = from, to
 	return f.page, f.err
@@ -40,7 +36,6 @@ func TestCalendarEventsCommand(t *testing.T) {
 		name                       string
 		args                       []string
 		page                       store.CalendarOccurrencePage
-		version                    string
 		want, wantErr, wantWarning string
 		err                        error
 	}{
@@ -51,7 +46,6 @@ func TestCalendarEventsCommand(t *testing.T) {
 		{name: "terminal controls", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Planning\x1b[31m red\x1b[0m\nmeeting", Status: "confirmed", Start: start, End: start.Add(time.Hour)}}}, want: "Planning red meeting"},
 		{name: "too broad", err: &daemonclient.APIError{Status: 400, Code: "query_too_broad", Message: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"}, wantErr: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"},
 		{name: "series cap", err: &daemonclient.APIError{Status: 400, Code: "query_too_broad", Message: "calendar query is too broad: more than 2000 recurring series overlap the window; a narrower window will not reduce open-ended series"}, wantErr: "calendar query is too broad: more than 2000 recurring series overlap the window; a narrower window will not reduce open-ended series"},
-		{name: "old daemon", version: "3.34.0", wantErr: "calendar events require daemon API schema 3.35.0 or newer"},
 		{name: "account", args: []string{"--account", "calendar@example.com"}, wantErr: "--account is only valid"},
 		{name: "dry run", args: []string{"--dry-run"}, wantErr: "--dry-run is only valid"},
 		{name: "read only", args: []string{"--read-only"}, wantErr: "--read-only is only valid"},
@@ -60,10 +54,7 @@ func TestCalendarEventsCommand(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
-			fake := &calendarEventsFakeClient{page: tc.page, version: tc.version, err: tc.err}
-			if fake.version == "" {
-				fake.version = calendarEventsMinAPISchemaVersion
-			}
+			fake := &calendarEventsFakeClient{page: tc.page, err: tc.err}
 			root := newCalendarControlCmd(nil)
 			for _, child := range root.Commands() {
 				if child.Name() == "events" {
@@ -131,7 +122,7 @@ func TestCalendarEventsHelpOmitsLiveOnlyFlags(t *testing.T) {
 }
 
 func TestCalendarEventsRFC3339Bounds(t *testing.T) {
-	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion}
+	fake := &calendarEventsFakeClient{}
 	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -148,7 +139,7 @@ func TestCalendarEventsDateBoundsSkippedMidnight(t *testing.T) {
 	previous := time.Local
 	time.Local = zone
 	t.Cleanup(func() { time.Local = previous })
-	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion}
+	fake := &calendarEventsFakeClient{}
 	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{"--from", "2018-11-04", "--to", "2018-11-05"})

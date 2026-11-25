@@ -444,23 +444,6 @@ func (c *Client) RunCLISync(
 	req CLISyncRequest,
 	output func(stream, data string) error,
 ) error {
-	if req.BuildCache || req.NoBuildCache {
-		version, err := c.APISchemaVersion(ctx)
-		if err != nil {
-			return fmt.Errorf("check daemon sync cache flags capability: %w", err)
-		}
-		if !apiSchemaVersionAtLeast(version, syncCacheFlagsMinAPISchemaVersion) {
-			return fmt.Errorf(
-				"sync cache flags require daemon API schema %s or newer (daemon reports %q); upgrade the daemon",
-				syncCacheFlagsMinAPISchemaVersion, version,
-			)
-		}
-	}
-	if req.SourceIDSet {
-		if err := c.requireSourceIDSyncCapability(ctx); err != nil {
-			return err
-		}
-	}
 	path := "/api/v1/cli/sync"
 	if req.Full {
 		path = "/api/v1/cli/sync-full"
@@ -492,28 +475,6 @@ func (c *Client) RunCLISync(
 	}, output)
 }
 
-const (
-	sourceIDSyncMinAPISchemaVersion    = "2.4.0"
-	syncCacheFlagsMinAPISchemaVersion  = "2.31.0"
-	searchDeletionMinAPISchemaVersion  = "2.12.0"
-	deduplicatePlanMinAPISchemaVersion = "2.13.0"
-	repairMessageMinAPISchemaVersion   = "2.15.0"
-)
-
-func (c *Client) requireSourceIDSyncCapability(ctx context.Context) error {
-	version, err := c.APISchemaVersion(ctx)
-	if err != nil {
-		return fmt.Errorf("check daemon source-ID sync capability: %w", err)
-	}
-	if !apiSchemaVersionAtLeast(version, sourceIDSyncMinAPISchemaVersion) {
-		return fmt.Errorf(
-			"source-ID sync requires daemon API schema %s or newer (daemon reports %q)",
-			sourceIDSyncMinAPISchemaVersion, version,
-		)
-	}
-	return nil
-}
-
 // Health fetches the daemon's health and capability information.
 func (c *Client) Health(ctx context.Context) (*generated.HealthResponse, error) {
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetHealthResp, error) {
@@ -523,31 +484,6 @@ func (c *Client) Health(ctx context.Context) (*generated.HealthResponse, error) 
 		return nil, err
 	}
 	return resp.JSON200, nil
-}
-
-// APISchemaVersion fetches the daemon API schema version, or an empty string
-// when the daemon does not report one.
-func (c *Client) APISchemaVersion(ctx context.Context) (string, error) {
-	health, err := c.Health(ctx)
-	if err != nil {
-		return "", err
-	}
-	version := ""
-	if health != nil && health.APISchemaVersion != nil {
-		version = *health.APISchemaVersion
-	}
-	return version, nil
-}
-
-// SupportsAPISchemaVersion reports whether the daemon implements at least the
-// requested additive HTTP contract. Missing and malformed versions fail
-// closed, as do health-probe errors.
-func (c *Client) SupportsAPISchemaVersion(ctx context.Context, minimum string) (bool, error) {
-	version, err := c.APISchemaVersion(ctx)
-	if err != nil {
-		return false, err
-	}
-	return apiSchemaVersionAtLeast(version, minimum), nil
 }
 
 func apiSchemaVersionAtLeast(version, minimum string) bool {
@@ -620,26 +556,14 @@ func (c *Client) RunCLIRepairMessage(
 	return c.RunCLIRepairMessageWithPreflight(ctx, req, nil, output)
 }
 
-// RunCLIRepairMessageWithPreflight validates the daemon capability before
-// running the caller's credential preflight, then opens the dedicated repair
-// stream. Keeping that order inside the client prevents credential changes
-// when the selected daemon cannot execute the operation.
+// RunCLIRepairMessageWithPreflight runs the caller's credential preflight,
+// then opens the dedicated repair stream.
 func (c *Client) RunCLIRepairMessageWithPreflight(
 	ctx context.Context,
 	req generated.CLIRepairMessageRequest,
 	preflight func(context.Context) error,
 	output func(stream, data string) error,
 ) error {
-	version, err := c.APISchemaVersion(ctx)
-	if err != nil {
-		return fmt.Errorf("check daemon repair-message capability: %w", err)
-	}
-	if !apiSchemaVersionAtLeast(version, repairMessageMinAPISchemaVersion) {
-		return fmt.Errorf(
-			"repair-message requires daemon API schema %s or newer (daemon reports %q)",
-			repairMessageMinAPISchemaVersion, version,
-		)
-	}
 	if preflight != nil {
 		if err := preflight(ctx); err != nil {
 			return err
@@ -800,18 +724,6 @@ func (c *Client) CreateCLIDeletionManifest(
 	if manifest == nil {
 		return nil, errors.New("missing deletion manifest")
 	}
-	if manifest.Version == 2 {
-		version, err := c.APISchemaVersion(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("check daemon deletion manifest capability: %w", err)
-		}
-		if !apiSchemaVersionAtLeast(version, sourceIDSyncMinAPISchemaVersion) {
-			return nil, fmt.Errorf(
-				"version-2 deletion manifests require daemon API schema %s or newer (daemon reports %q)",
-				sourceIDSyncMinAPISchemaVersion, version,
-			)
-		}
-	}
 	body := cliDeletionManifestToGenerated(manifest)
 	resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.CreateCLIDeletionManifestResp, error) {
 		return client.CreateCLIDeletionManifestWithResponse(ctx, &generated.CreateCLIDeletionManifestRequestOptions{
@@ -834,16 +746,6 @@ func (c *Client) PlanCLIDeduplicate(
 	ctx context.Context,
 	req CLIDeduplicatePlanRequest,
 ) (*CLIDeduplicatePlan, error) {
-	version, err := c.APISchemaVersion(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("check daemon deduplicate-plan capability: %w", err)
-	}
-	if !apiSchemaVersionAtLeast(version, deduplicatePlanMinAPISchemaVersion) {
-		return nil, fmt.Errorf(
-			"deduplicate planning requires daemon API schema %s or newer (daemon reports %q)",
-			deduplicatePlanMinAPISchemaVersion, version,
-		)
-	}
 	body := generated.PlanCLIDeduplicateBody{
 		Account:                    optionalString(req.Account),
 		Collection:                 optionalString(req.Collection),
@@ -958,20 +860,8 @@ func (c *Client) GetCLIStats(
 }
 
 func (c *Client) GetCLISearch(ctx context.Context, req CLISearchRequest) (*CLISearch, error) {
-	if err := c.requireListIDCapability(ctx, search.ParseOR(req.Query), query.MessageFilter{}); err != nil {
+	if err := rejectQueryAccountScopes(search.ParseOR(req.Query)); err != nil {
 		return nil, err
-	}
-	if req.DeletionScope != "" {
-		version, err := c.APISchemaVersion(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("check daemon search deletion-scope capability: %w", err)
-		}
-		if !apiSchemaVersionAtLeast(version, searchDeletionMinAPISchemaVersion) {
-			return nil, fmt.Errorf(
-				"search deletion scope requires daemon API schema %s or newer (daemon reports %q)",
-				searchDeletionMinAPISchemaVersion, version,
-			)
-		}
 	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SearchCLIResp, error) {
 		return client.SearchCLIWithResponse(ctx, &generated.SearchCLIRequestOptions{
@@ -1001,7 +891,7 @@ func (c *Client) GetCLIHybridSearch(
 	ctx context.Context,
 	req CLIHybridSearchRequest,
 ) (*CLIHybridSearch, error) {
-	if err := c.requireListIDCapability(ctx, search.Parse(req.Query), req.Filter); err != nil {
+	if err := rejectQueryAccountScopes(search.Parse(req.Query)); err != nil {
 		return nil, err
 	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SearchMessagesResp, error) {
@@ -1059,9 +949,6 @@ func (c *Client) FindSimilarMessages(
 	req SimilarSearchRequest,
 ) (*SimilarSearch, error) {
 	if err := search.ValidateAccountScopes(req.AccountScopes); err != nil {
-		return nil, err
-	}
-	if err := c.requireListIDCapability(ctx, nil, query.MessageFilter{AccountScopes: req.AccountScopes}); err != nil {
 		return nil, err
 	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.FindSimilarMessagesResp, error) {

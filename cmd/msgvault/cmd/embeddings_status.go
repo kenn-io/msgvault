@@ -16,8 +16,6 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
-const embeddingsStatusMinAPISchemaVersion = "3.21.0"
-
 var embeddingsStatusJSON, embeddingsStatusWatch bool
 var embeddingsStatusSource int64
 var embeddingsStatusInterval time.Duration
@@ -91,31 +89,13 @@ func reconnectLocalDaemon(ctx context.Context, current daemonclient.LocalDaemonE
 	return client, next, nil
 }
 
-// errEmbeddingStatusUnsupported marks a daemon too old to serve status; a
-// watch stops on it instead of retrying.
+// errEmbeddingStatusUnsupported marks a restarted daemon this client cannot
+// use; a watch stops on it instead of retrying.
 var errEmbeddingStatusUnsupported = errors.New("embeddings status unsupported by daemon")
 
-// embeddingStatusReader is the daemon client calls the status command makes.
+// embeddingStatusReader is the daemon client call the status command makes.
 type embeddingStatusReader interface {
-	APISchemaVersion(ctx context.Context) (string, error)
 	EmbeddingStatus(ctx context.Context, sourceID int64) (*vector.EmbeddingStatus, error)
-}
-
-// readEmbeddingStatusOnce checks the daemon's API schema until a check
-// succeeds, then reads status.
-func readEmbeddingStatusOnce(ctx context.Context, client embeddingStatusReader, checked *bool) (*vector.EmbeddingStatus, error) {
-	if !*checked {
-		schemaVersion, err := client.APISchemaVersion(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("check daemon embedding status capability: %w", err)
-		}
-		if !daemonclient.APISchemaVersionAtLeast(schemaVersion, embeddingsStatusMinAPISchemaVersion) {
-			return nil, fmt.Errorf("%w: embeddings status requires daemon API schema %s or newer (daemon reports %q); upgrade and restart the daemon",
-				errEmbeddingStatusUnsupported, embeddingsStatusMinAPISchemaVersion, schemaVersion)
-		}
-		*checked = true
-	}
-	return client.EmbeddingStatus(ctx, embeddingsStatusSource)
 }
 
 // pollEmbeddingStatus prints status once, or until interrupted with --watch.
@@ -124,9 +104,8 @@ func readEmbeddingStatusOnce(ctx context.Context, client embeddingStatusReader, 
 // local daemon can listen on a new port. reconnect returns the client to use,
 // which is the current one when the daemon has not moved.
 func pollEmbeddingStatus(cmd *cobra.Command, client embeddingStatusReader, reconnect func(context.Context) (embeddingStatusReader, error)) error {
-	checked := false
 	for {
-		status, err := readEmbeddingStatusOnce(cmd.Context(), client, &checked)
+		status, err := client.EmbeddingStatus(cmd.Context(), embeddingsStatusSource)
 		switch {
 		case err == nil:
 			if err := writeEmbeddingStatus(cmd.OutOrStdout(), *status, embeddingsStatusJSON); err != nil {
@@ -135,8 +114,6 @@ func pollEmbeddingStatus(cmd *cobra.Command, client embeddingStatusReader, recon
 		case !embeddingsStatusWatch || cmd.Context().Err() != nil || errors.Is(err, errEmbeddingStatusUnsupported):
 			return err
 		default:
-			// The daemon may have restarted on another version.
-			checked = false
 			if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "embeddings status: %v; retrying in %s\n", err, embeddingsStatusInterval); writeErr != nil {
 				return fmt.Errorf("write embedding status error: %w", writeErr)
 			}

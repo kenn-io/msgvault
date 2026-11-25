@@ -3,24 +3,14 @@ package daemonclient
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-const ChatDiscoveryMinAPISchemaVersion = "3.25.0"
-
 // SearchChats forwards name discovery to the archive-owning daemon.
 func (c *Client) SearchChats(ctx context.Context, q store.ChatDiscoveryQuery) (*store.ChatDiscoveryPage, error) {
-	compatible, err := c.SupportsAPISchemaVersion(ctx, ChatDiscoveryMinAPISchemaVersion)
-	if err != nil {
-		return nil, fmt.Errorf("check chat discovery capability: %w", err)
-	}
-	if !compatible {
-		return nil, fmt.Errorf("chat discovery requires daemon API schema %s or newer", ChatDiscoveryMinAPISchemaVersion)
-	}
 	if q.Limit == 0 {
 		q.Limit = store.DefaultChatDiscoveryLimit
 	}

@@ -16,12 +16,10 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const calendarEventsMinAPISchemaVersion = "3.35.0"
 const calendarEventDeletedStatus = "deleted"
 
 type calendarEventsClient interface {
 	ListCalendarOccurrencesContext(ctx context.Context, from, to time.Time) (store.CalendarOccurrencePage, error)
-	APISchemaVersion(ctx context.Context) (string, error)
 }
 type calendarEventsOpen func(context.Context) (calendarEventsClient, func(), error)
 
@@ -73,13 +71,6 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 			return err
 		}
 		defer cleanup()
-		version, err := client.APISchemaVersion(cmd.Context())
-		if err != nil {
-			return err
-		}
-		if !daemonclient.APISchemaVersionAtLeast(version, calendarEventsMinAPISchemaVersion) {
-			return fmt.Errorf("calendar events require daemon API schema %s or newer", calendarEventsMinAPISchemaVersion)
-		}
 		page, err := client.ListCalendarOccurrencesContext(cmd.Context(), bounds[0], bounds[1])
 		if err != nil {
 			var apiError *daemonclient.APIError

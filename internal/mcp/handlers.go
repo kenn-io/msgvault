@@ -2356,9 +2356,6 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		if err == nil && mode == query.DeletionSearchFast && matched == 0 && q.HasTextTerms() {
 			targets, matched, err = resolver.GetDeletionTargetsBySearchBounded(ctx, q, filter, query.DeletionSearchDeep, maxStageDeletionResults+1)
 		}
-		if errors.Is(err, daemonclient.ErrBoundedDeletionSearchUnsupported) {
-			return toolErrorResult(err.Error()), nil
-		}
 		if err != nil {
 			return dependencyError("search messages for deletion", err)
 		}

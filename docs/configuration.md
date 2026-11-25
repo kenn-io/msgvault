@@ -1046,7 +1046,7 @@ setup, see [MCP Server](/docs/usage/chat/#streamablehttp-transport), or fetch
 | `cors_max_age` | `0` | CORS preflight cache duration in seconds |
 | `trusted_proxies` | `[]` | IP addresses or CIDRs allowed to supply forwarded HTTPS/host headers |
 | `daemon_idle_timeout` | `20m` | Idle timeout for automatically started daemons; set to `"0s"` to disable |
-| `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
+| `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version or an older API schema: `newer`, `never`, or `always` |
 | `muesli_recording_max_bytes` | `4294967296` (4 GiB) | Server limit for streamed Muesli audio uploads; `0` uses the default. Independent of the recorder's `recording_max_bytes` |
 | `daemon_auto_start` | `true` | Let CLI, TUI, and MCP commands start a local background daemon when none is running; set `false` when a supervisor runs `msgvault serve` |
 | `remote_clients` | `[]` | Read-only API keys for remote CLIs; requires an effective server API key. See below. |
@@ -1139,6 +1139,13 @@ or `"always"` to restart whenever the recorded daemon version differs. A CLI
 client never auto-restarts a remote server. When automatic replacement is
 suppressed for a daemon that would otherwise be replaced, local commands print
 both versions and `msgvault daemon restart` to stderr.
+
+A local daemon whose API schema is older than the CLI's cannot serve it. Under
+`"newer"` and `"always"`, the CLI replaces that daemon, including one from
+another source build of the same release. With `"never"`, or with
+`daemon_auto_start = false`, the CLI stops with an error that tells you to
+upgrade the daemon. Run `msgvault daemon restart`, or restart it through your
+supervisor.
 
 Set `daemon_auto_start = false` when a supervisor such as launchd, systemd, or
 Docker runs `msgvault serve`. Local archive commands then connect to the
@@ -1391,6 +1398,11 @@ workflow, see [Backup](/docs/usage/backup/).
 When you set `[remote].url`, archive-access CLI commands talk to that remote
 server by default instead of the local background daemon. To target the local
 daemon for a single command, pass `--local`.
+
+The remote server must run the same or a newer API schema of the same major
+version as the CLI. Otherwise the CLI stops before sending archive requests and
+tells you to upgrade the daemon. The same rule applies to the daemon named by
+`--agent-url`.
 
 | Key | Default | Description |
 |---|---|---|

@@ -718,14 +718,6 @@ func getCLIPerson(
 func getCLIPersonByUID(
 	cmd *cobra.Command, client *daemonclient.Client, uid string,
 ) (*generated.GetPersonByUIDResp, error) {
-	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), daemonclient.PersonUIDLookupMinAPISchemaVersion)
-	if err != nil {
-		return nil, fmt.Errorf("check person UID lookup capability: %w", err)
-	}
-	if !supported {
-		return nil, fmt.Errorf("person UID lookup requires daemon API schema %s or newer; upgrade the daemon",
-			daemonclient.PersonUIDLookupMinAPISchemaVersion)
-	}
 	return daemonclient.APIResponse(client,
 		func(api *apiclient.Client) (*generated.GetPersonByUIDResp, error) {
 			return api.GetPersonByUIDWithResponse(cmd.Context(),
@@ -737,10 +729,6 @@ func getCLIPersonByUID(
 
 func writeCLIGetPerson(cmd *cobra.Command, client *daemonclient.Client, person *generated.Person) error {
 	if !personJSON {
-		return writeCLIPerson(cmd, person)
-	}
-	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), daemonclient.FirstAppearanceMinAPISchemaVersion)
-	if err != nil || !supported {
 		return writeCLIPerson(cmd, person)
 	}
 	response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.GetPersonContactStateResp, error) {

@@ -6,7 +6,6 @@ import (
 	"io"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -60,7 +59,7 @@ func runStats(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 	scoped := statsAccount != "" || statsCollection != ""
 
-	s, info, err := OpenHTTPStore(cmd.Context(), daemonclient.AgentReadMinAPISchemaVersion)
+	s, info, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}

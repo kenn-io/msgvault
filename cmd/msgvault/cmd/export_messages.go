@@ -13,9 +13,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// messageExportMinAPISchemaVersion is the first daemon schema with exportCLIMessages.
-const messageExportMinAPISchemaVersion = "5.19.0"
-
 type exportMessagesDeps struct {
 	openStore func(context.Context) (*store.Store, func(), error)
 }
@@ -143,13 +140,6 @@ func runExportMessagesHTTP(cmd *cobra.Command, request export.MessagesRequest) e
 		return err
 	}
 	defer func() { _ = client.Close() }()
-	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), messageExportMinAPISchemaVersion)
-	if err != nil {
-		return fmt.Errorf("check server for message export: %w", err)
-	}
-	if !supported {
-		return fmt.Errorf("export-messages needs a server with API schema %s or newer; upgrade msgvault on the server", messageExportMinAPISchemaVersion)
-	}
 	body, err := client.OpenMessageExport(cmd.Context(), request)
 	if err != nil {
 		return err

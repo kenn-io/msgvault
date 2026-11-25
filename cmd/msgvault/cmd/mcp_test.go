@@ -225,21 +225,15 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 		wantVisual          bool
 		wantEmbeddingStatus bool
 	}{
-		{name: "both disabled", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"disabled","text_enabled":false,"visual_enabled":false}}`},
-		{name: "text only", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":false}}`, wantText: true},
-		{name: "visual only", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"ready","text_enabled":false,"visual_enabled":true}}`, wantVisual: true},
-		{name: "both enabled", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true},
-		{name: "initializing lanes stay registered", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"initializing","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true},
-		{name: "failed lanes stay registered", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"error","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true},
-		{name: "stale lanes stay registered", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"stale","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true},
-		{name: "legacy health without lane fields", health: `{"status":"ok","api_schema_version":"2.26.0","vector":{"status":"ready"}}`},
-		{name: "visual route predecessor", health: `{"status":"ok","api_schema_version":"2.3.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
-		{name: "lane facts predecessor", health: `{"status":"ok","api_schema_version":"2.27.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
-		{name: "missing schema", health: `{"status":"ok","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
-		{name: "malformed schema", health: `{"status":"ok","api_schema_version":"unknown","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
-		{name: "embedding status predecessor", health: `{"status":"ok","api_schema_version":"3.20.0","vector":{"status":"ready","text_enabled":true}}`, wantText: true},
-		{name: "embedding status ready", health: `{"status":"ok","api_schema_version":"3.21.0","vector":{"status":"ready","text_enabled":true}}`, wantText: true, wantEmbeddingStatus: true},
-		{name: "embedding status without vector", health: `{"status":"ok","api_schema_version":"3.21.0"}`},
+		{name: "both disabled", health: `{"status":"ok","vector":{"status":"disabled","text_enabled":false,"visual_enabled":false}}`, wantEmbeddingStatus: true},
+		{name: "text only", health: `{"status":"ok","vector":{"status":"ready","text_enabled":true,"visual_enabled":false}}`, wantText: true, wantEmbeddingStatus: true},
+		{name: "visual only", health: `{"status":"ok","vector":{"status":"ready","text_enabled":false,"visual_enabled":true}}`, wantVisual: true, wantEmbeddingStatus: true},
+		{name: "both enabled", health: `{"status":"ok","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true, wantEmbeddingStatus: true},
+		{name: "initializing lanes stay registered", health: `{"status":"ok","vector":{"status":"initializing","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true, wantEmbeddingStatus: true},
+		{name: "failed lanes stay registered", health: `{"status":"ok","vector":{"status":"error","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true, wantEmbeddingStatus: true},
+		{name: "stale lanes stay registered", health: `{"status":"ok","vector":{"status":"stale","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true, wantEmbeddingStatus: true},
+		{name: "health without lane fields", health: `{"status":"ok","vector":{"status":"ready"}}`, wantEmbeddingStatus: true},
+		{name: "without vector", health: `{"status":"ok"}`},
 		{name: "health unavailable"},
 	}
 	for _, tt := range tests {
@@ -324,71 +318,26 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
 }
 
-func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
+func TestDaemonMCPServeOptionsOffersDaemonTools(t *testing.T) {
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
 	_ = testCtx
-	tests := []struct {
-		name                     string
-		schemaVersion            string
-		wantPeople               bool
-		wantPersonCreate         bool
-		wantPersonCreateIfExists bool
-		wantDirectory            bool
-		wantChatDiscovery        bool
-		wantSavedViews           bool
-		wantMeetings             bool
-		wantMeetingRecords       bool
-		wantMeetingDecisions     bool
-		wantMeetingSuggestions   bool
-		wantAgenda               bool
-		wantArchiveSQL           bool
-		wantReview               bool
-		wantScoring              bool
-		wantCardDAV              bool
-		wantMessageTags          bool
-		wantContacts             bool
+	for _, tc := range []struct {
+		name, analytics string
+		wantArchiveSQL  bool
 	}{
-		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
-		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
-		{name: "directory schema", schemaVersion: "2.13.0", wantPeople: true, wantDirectory: true},
-		{name: "newer schema", schemaVersion: "2.14.0", wantPeople: true, wantDirectory: true},
-		{name: "schema before the Saved View run endpoint", schemaVersion: "2.20.0", wantPeople: true, wantDirectory: true},
-		{name: "saved view run schema", schemaVersion: "2.21.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
-		{name: "schema before the meeting endpoints", schemaVersion: "2.24.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
-		{name: "meeting predecessor 2.25.x", schemaVersion: "2.25.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
-		{name: "meeting predecessor 2.26.x", schemaVersion: "2.26.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
-		{name: "meeting schema", schemaVersion: "2.27.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true},
-		{name: "person agenda predecessor", schemaVersion: "2.29.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true},
-		{name: "person agenda schema", schemaVersion: "2.30.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true},
-		{name: "archive SQL schema", schemaVersion: "2.31.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true},
-		{name: "person CardDAV schema", schemaVersion: "2.32.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
-		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
-		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
-		{name: "native message tags schema", schemaVersion: "3.15.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
-		{name: "meeting record predecessor", schemaVersion: "5.3.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
-		{name: "meeting decisions predecessor", schemaVersion: "5.9.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
-		{name: "suggestion predecessor", schemaVersion: "5.10.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantMeetingDecisions: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
-		{name: "current schema", schemaVersion: api.APISchemaVersion, wantPeople: true, wantPersonCreate: true, wantPersonCreateIfExists: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantMeetingDecisions: true, wantMeetingSuggestions: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
-		{name: "tags predecessor 3.14.0", schemaVersion: "3.14.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
-		{name: "before contact schema", schemaVersion: "3.19.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
-		{name: "contact schema", schemaVersion: "3.20.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantContacts: true, wantMessageTags: true},
-		{name: "chat discovery schema", schemaVersion: "3.25.0", wantPeople: true, wantContacts: true, wantDirectory: true, wantChatDiscovery: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
-		{name: "person create predecessor", schemaVersion: "5.15.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantMeetingDecisions: true, wantMeetingSuggestions: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
-		{name: "older same-major schema", schemaVersion: "2.9.9"},
-		{name: "malformed schema", schemaVersion: "not-a-version"},
-		{name: "missing schema"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		{name: "DuckDB analytics", wantArchiveSQL: true},
+		{name: "PostgreSQL analytics", analytics: api.AnalyticsModePostgres},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
-					body := map[string]any{"status": "ok"}
-					if tt.schemaVersion != "" {
-						body["api_schema_version"] = tt.schemaVersion
+					body := map[string]any{"status": "ok", "api_schema_version": api.APISchemaVersion}
+					if tc.analytics != "" {
+						body["analytics_engine"] = tc.analytics
 					}
 					_ = json.NewEncoder(w).Encode(body)
 				default:
@@ -397,31 +346,23 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			})
 
 			opts := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
-			if tt.wantPeople {
-				assert.NotNil(opts.PeopleBackend)
-			} else {
-				assert.Nil(opts.PeopleBackend)
-			}
-			if tt.wantSavedViews {
-				assert.NotNil(opts.SavedViews, "Saved View tools need the daemon run endpoint")
-			} else {
-				assert.Nil(opts.SavedViews, "an older daemon cannot run Saved Views")
-			}
-			assert.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
-			assert.Equal(tt.wantChatDiscovery, opts.ChatDiscoveryBackend != nil)
-			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
-			assert.Equal(tt.wantMeetingRecords, opts.MeetingRecords)
-			assert.Equal(tt.wantMeetingDecisions, opts.MeetingDecisions)
-			assert.Equal(tt.wantMeetingSuggestions, opts.MeetingSuggestions)
-			assert.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
-			assert.Equal(tt.wantContacts, opts.ContactRoutesBackend != nil)
-			assert.Equal(tt.wantPersonCreate, opts.PersonCreator != nil)
-			assert.Equal(tt.wantPersonCreateIfExists, opts.PersonCreateIfExists)
-			assert.Equal(tt.wantArchiveSQL, opts.ArchiveSQLQuerier != nil)
-			assert.Equal(tt.wantReview, opts.IdentityReview != nil)
-			assert.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
-			assert.Equal(tt.wantScoring, opts.IdentityScoring != nil)
-			assert.Equal(tt.wantMessageTags, opts.MessageTags != nil)
+			assert.NotNil(opts.PeopleBackend)
+			assert.NotNil(opts.DirectoryBackend)
+			assert.NotNil(opts.PersonCreator)
+			assert.True(opts.PersonCreateIfExists)
+			assert.NotNil(opts.ChatDiscoveryBackend)
+			assert.NotNil(opts.SavedViews)
+			assert.NotNil(opts.Meetings)
+			assert.True(opts.MeetingRecords)
+			assert.True(opts.MeetingDecisions)
+			assert.True(opts.MeetingSuggestions)
+			assert.NotNil(opts.PersonAgendaBackend)
+			assert.NotNil(opts.ContactRoutesBackend)
+			assert.Equal(tc.wantArchiveSQL, opts.ArchiveSQLQuerier != nil)
+			assert.NotNil(opts.IdentityReview)
+			assert.NotNil(opts.PersonCardDAV)
+			assert.NotNil(opts.IdentityScoring)
+			assert.NotNil(opts.MessageTags)
 		})
 	}
 }
@@ -455,7 +396,7 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 	assert.Nil(opts.DirectoryBackend)
 	assert.Nil(opts.ChatDiscoveryBackend)
 	assert.Nil(opts.ArchiveSQLQuerier)
-	assert.Contains(logs.String(), "people tools disabled")
+	assert.Contains(logs.String(), "daemon-backed MCP tools disabled")
 }
 
 func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
@@ -616,19 +557,18 @@ func TestNormalizeMCPHTTPAddr(t *testing.T) {
 
 func TestDaemonMCPDocbankCapability(t *testing.T) {
 	for _, tc := range []struct {
-		version          string
 		configured, want bool
 	}{
-		{"3.12.0", true, false}, {"3.13.0", false, false}, {"3.13.0", true, true},
+		{false, false}, {true, true},
 	} {
-		t.Run(tc.version+"/"+strconv.FormatBool(tc.configured), func(t *testing.T) {
+		t.Run(strconv.FormatBool(tc.configured), func(t *testing.T) {
 			assert := assert.New(t)
 			ctx := withStoreResolverConfig(t, &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}})
 			var probes atomic.Int32
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
-					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version}))
+					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": api.APISchemaVersion}))
 				case "/api/v1/media/search/status":
 					probes.Add(1)
 					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"configured": tc.configured}))
@@ -639,11 +579,7 @@ func TestDaemonMCPDocbankCapability(t *testing.T) {
 			opts := daemonMCPServeOptions(ctx, client, invocationFromContext(ctx))
 			assert.True(opts.KataLookup)
 			assert.Equal(tc.want, opts.KataDocbank)
-			if tc.version == "3.12.0" {
-				assert.Zero(probes.Load())
-			} else {
-				assert.Equal(int32(1), probes.Load())
-			}
+			assert.Equal(int32(1), probes.Load())
 		})
 	}
 }

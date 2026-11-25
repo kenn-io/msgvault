@@ -244,30 +244,4 @@ func TestPersonCreateCLIIfExistsRejectsInvalid(t *testing.T) {
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs([]string{"--name", "Alex Example", "--if-exists", "bogus"})
 	require.ErrorContains(t, cmd.Execute(), "if_exists must be error or return")
-	t.Run("older daemon", func(t *testing.T) {
-		var creates int
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			switch r.URL.Path {
-			case "/api/v1/health":
-				_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"5.16.0"}`))
-			case "/api/v1/people/create":
-				creates++
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(`{"error":"bad_request","message":"Invalid person request: unknown object member name if_exists"}`))
-			default:
-				assert.Fail(t, "unexpected path", r.URL.Path)
-			}
-		}))
-		t.Cleanup(server.Close)
-		cmd := newPersonCreateCommand()
-		cmd.SetContext(configureRemoteDaemonForTest(t, server.URL))
-		cmd.SetOut(io.Discard)
-		cmd.SetErr(io.Discard)
-		cmd.SetArgs([]string{"--name", "Alex Example", "--if-exists", "return"})
-		err := cmd.Execute()
-		require.ErrorContains(t, err, "upgrade msgvault")
-		require.ErrorContains(t, err, "does not support person create --if-exists return")
-		assert.Zero(t, creates)
-	})
 }

@@ -121,26 +121,6 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 	require.Error(err)
 }
 
-func TestLoopsRequireDaemonSchema(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var loopRequests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.23.0"}`))
-			return
-		}
-		loopRequests++
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
-	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	_, err := runLoops(ctx, t, "list")
-	require.ErrorContains(err, "require daemon API schema 3.44.0")
-	require.ErrorContains(err, `daemon reports "3.23.0"`)
-	assert.Zero(loopRequests)
-}
-
 func TestWriteLoopsLayout(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

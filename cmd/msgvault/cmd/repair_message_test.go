@@ -202,9 +202,6 @@ func TestRepairMessageCommandUsesDedicatedRemoteEndpoint(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				paths = append(paths, r.URL.Path)
 				switch r.URL.Path {
-				case "/api/v1/health":
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.15.0"}`))
 				case "/api/v1/cli/repair-message":
 					assert.Equal(http.MethodPost, r.Method)
 					assert.Empty(r.URL.RawQuery)
@@ -242,7 +239,7 @@ func TestRepairMessageCommandUsesDedicatedRemoteEndpoint(t *testing.T) {
 			command.SetArgs(test.args)
 
 			require.NoError(command.Execute())
-			assert.Equal([]string{"/api/v1/health", "/api/v1/cli/repair-message"}, paths)
+			assert.Equal([]string{"/api/v1/cli/repair-message"}, paths)
 			assert.Equal(test.stdoutLine, stdout.String())
 			assert.Equal(test.stderrLine, stderr.String())
 			assert.Zero(preflightCalls.Load())
@@ -255,14 +252,7 @@ func TestRepairMessageCommandPreflightsOAuthForSelectedLocalSource(t *testing.T)
 	assert := assert.New(t)
 	require := require.New(t)
 	var sequence atomic.Int32
-	var capabilityStep atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			capabilityStep.Store(sequence.Add(1))
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.15.0"}`))
-			return
-		}
 		http.Error(w, "repair must not start", http.StatusInternalServerError)
 	}))
 	t.Cleanup(server.Close)
@@ -292,64 +282,8 @@ func TestRepairMessageCommandPreflightsOAuthForSelectedLocalSource(t *testing.T)
 	err = command.Execute()
 	require.EqualError(err, "reauth failed")
 	assert.Equal(int64(42), selectedSourceID)
-	assert.Equal(int32(1), capabilityStep.Load())
-	assert.Equal(int32(2), preflightStep.Load())
+	assert.Equal(int32(1), preflightStep.Load())
 	assert.True(command.SilenceUsage, "runtime preflight errors hide usage")
-}
-
-func TestRepairMessageCommandIncompatibleLocalDaemonFailsBeforeOAuthOrMutation(t *testing.T) {
-	tests := []struct {
-		name          string
-		healthPayload string
-	}{
-		{name: "missing version", healthPayload: `{"status":"ok"}`},
-		{name: "malformed version", healthPayload: `{"status":"ok","api_schema_version":"2.13"}`},
-		{name: "older version", healthPayload: `{"status":"ok","api_schema_version":"2.13.0"}`},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			var nonHealthRequests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/health" {
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(test.healthPayload))
-					return
-				}
-				nonHealthRequests.Add(1)
-				w.Header().Set("Content-Type", "application/x-ndjson")
-				_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
-			}))
-			t.Cleanup(server.Close)
-			client, err := daemonclient.New(daemonclient.Config{
-				URL: server.URL, AllowInsecure: true, HTTPClient: server.Client(),
-			})
-			require.NoError(err)
-
-			var preflightCalls atomic.Int32
-			command := newRepairMessageCmd(repairMessageCommandDeps{
-				isDaemonSubprocess: func() bool { return false },
-				openHTTPStore: func(context.Context) (*daemonclient.Client, HTTPStoreInfo, error) {
-					return client, HTTPStoreInfo{Kind: HTTPStoreLocalDaemon}, nil
-				},
-				preflightReauth: func(context.Context, *daemonclient.Client, HTTPStoreInfo, int64) error {
-					preflightCalls.Add(1)
-					return nil
-				},
-			})
-			command.SilenceUsage = true
-			command.SetOut(&bytes.Buffer{})
-			command.SetErr(&bytes.Buffer{})
-			command.SetArgs([]string{"gmail-42", "--source-id", "42"})
-
-			err = command.Execute()
-			require.ErrorContains(err, "requires daemon API schema 2.15.0")
-			assert.Zero(preflightCalls.Load())
-			assert.Zero(nonHealthRequests.Load())
-			assert.True(command.SilenceUsage, "runtime compatibility errors hide usage")
-		})
-	}
 }
 
 func TestRepairMessageCommandResolvesOmittedLocalSourceBeforeScopedOAuthPreflight(t *testing.T) {
@@ -369,15 +303,10 @@ func TestRepairMessageCommandResolvesOmittedLocalSourceBeforeScopedOAuthPrefligh
 	require.NoError(err)
 
 	var sequence atomic.Int32
-	var capabilityStep atomic.Int32
 	var repairStep atomic.Int32
 	requestBody := make(chan generated.CLIRepairMessageRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/health":
-			capabilityStep.Store(sequence.Add(1))
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.15.0"}`))
 		case "/api/v1/cli/repair-message":
 			repairStep.Store(sequence.Add(1))
 			var body generated.CLIRepairMessageRequest
@@ -422,9 +351,8 @@ func TestRepairMessageCommandResolvesOmittedLocalSourceBeforeScopedOAuthPrefligh
 	require.NoError(command.Execute())
 	assert.True(readOnlyOpened)
 	assert.Equal(targetSource.ID, selectedSourceID.Load())
-	assert.Equal(int32(1), capabilityStep.Load())
-	assert.Equal(int32(2), preflightStep.Load())
-	assert.Equal(int32(3), repairStep.Load())
+	assert.Equal(int32(1), preflightStep.Load())
+	assert.Equal(int32(2), repairStep.Load())
 	body := <-requestBody
 	require.NotNil(body.SourceID)
 	assert.Equal(targetSource.ID, *body.SourceID)
@@ -466,11 +394,6 @@ func TestRepairMessageCommandLocalResolutionFailsBeforeOAuthOrRepair(t *testing.
 			require := require.New(t)
 			var repairRequests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/health" {
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.15.0"}`))
-					return
-				}
 				repairRequests.Add(1)
 				w.Header().Set("Content-Type", "application/x-ndjson")
 				_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))

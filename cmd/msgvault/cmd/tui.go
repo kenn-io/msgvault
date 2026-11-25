@@ -100,7 +100,7 @@ HTTP Mode:
 		// The shipped daemon engine provides Texts directly. People uses the
 		// focused wrapper because Engine.Search has a different query contract.
 		var textEngine query.TextEngine = backend.engine
-		peopleBackend := tuiPeopleBackend(cmd.Context(), backend.client, backend.engine)
+		peopleBackend := tuiPeopleBackend(backend.client, backend.engine)
 
 		notice := analyticsCacheNotice(cmd.Context(), backend.client)
 		if notice != "" {
@@ -109,7 +109,7 @@ HTTP Mode:
 
 		// Create and run TUI
 		semanticSearch := tuiSemanticSearcher(cmd.Context(), backend.client, backend.engine)
-		collectionScopes := tuiCollectionScopes(cmd.Context(), backend.client, backend.engine)
+		collectionScopes := tuiCollectionScopes(backend.client, backend.engine)
 		gate := newTUITelemetryGate(currentCfg.Data.DataDir, backend.client.BaseURL())
 		localTimezone, _ := resolveLocalTimezone()
 		model := tui.New(backend.engine, tui.Options{
@@ -215,10 +215,6 @@ func tuiSemanticSearcher(
 	if client == nil || engine == nil {
 		return nil
 	}
-	compatible, err := client.SupportsAPISchemaVersion(ctx, semanticSearchMinAPISchemaVersion)
-	if err != nil || !compatible {
-		return nil
-	}
 	available, err := client.VectorSearchAvailableForMessageType(ctx, tuiSemanticMessageType)
 	if err != nil || !available {
 		return nil
@@ -227,50 +223,24 @@ func tuiSemanticSearcher(
 	return searcher
 }
 
-// tuiPeopleBackend returns the People backend for the selected daemon, or nil
-// when the daemon is too old to serve People at all. The brief routes arrived
-// later than People itself, so a daemon between the two schema versions gets a
-// backend without the brief surfaces: the People browser then hides the brief
-// rather than reporting a failed read on every contact.
+// tuiPeopleBackend returns the People backend for the selected daemon.
 func tuiPeopleBackend(
-	ctx context.Context,
 	client *daemonclient.Client,
 	engine *daemonclient.Engine,
 ) peoplebrowser.Backend {
 	if client == nil || engine == nil {
 		return nil
 	}
-	compatible, err := client.SupportsAPISchemaVersion(ctx, peopleMinAPISchemaVersion)
-	if err != nil || !compatible {
-		return nil
-	}
-	browser := daemonclient.NewPeopleBrowser(engine)
-	briefs, err := client.SupportsAPISchemaVersion(ctx, briefMinAPISchemaVersion)
-	if err != nil || !briefs {
-		return daemonclient.NewPeopleBrowserWithoutBriefs(browser)
-	}
-	return browser
+	return daemonclient.NewPeopleBrowser(engine)
 }
 
-const (
-	semanticSearchMinAPISchemaVersion   = "2.7.0"
-	peopleMinAPISchemaVersion           = "2.10.0"
-	directoryPeopleMinAPISchemaVersion  = "2.13.0"
-	collectionScopesMinAPISchemaVersion = "2.17.0"
-	briefMinAPISchemaVersion            = "2.20.0"
-	tuiSemanticMessageType              = "email"
-)
+const tuiSemanticMessageType = "email"
 
 func tuiCollectionScopes(
-	ctx context.Context,
 	client *daemonclient.Client,
 	engine query.Engine,
 ) query.CollectionScopeLister {
 	if client == nil || engine == nil {
-		return nil
-	}
-	compatible, err := client.SupportsAPISchemaVersion(ctx, collectionScopesMinAPISchemaVersion)
-	if err != nil || !compatible {
 		return nil
 	}
 	lister, _ := engine.(query.CollectionScopeLister)

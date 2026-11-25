@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,9 +18,6 @@ type cliTagsBackend struct {
 	fail    bool
 }
 
-func (b *cliTagsBackend) SupportsAPISchemaVersion(context.Context, string) (bool, error) {
-	return true, nil
-}
 func (b *cliTagsBackend) MessageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string) (*emailtags.MessageTagResult, error) {
 	b.calls++
 	b.id = id
@@ -69,23 +65,4 @@ func TestMessageTagsCommandReadEditAndPartialJSON(t *testing.T) {
 	require.Error(err)
 	assert.Contains(out, `"error":"remote_unknown"`)
 	assert.Contains(out, `"result"`)
-}
-
-func TestMessageTagsClientRequiresSchema(t *testing.T) {
-	requests := 0
-	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.14.0"}`))
-			return
-		}
-		requests++
-	})
-	command := newMessageTagsCommand(client)
-	var out bytes.Buffer
-	command.SetOut(&out)
-	command.SetErr(&out)
-	command.SetArgs([]string{"7"})
-	err := command.Execute()
-	require.ErrorContains(t, err, "API schema "+messageTagsMinAPISchemaVersion)
-	assert.Zero(t, requests)
 }

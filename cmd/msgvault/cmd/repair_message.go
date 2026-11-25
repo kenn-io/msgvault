@@ -43,9 +43,7 @@ func defaultRepairMessageCommandDeps(contexts ...context.Context) repairMessageC
 	return repairMessageCommandDeps{
 		bind:               defaultRepairMessageCommandDepsForContext,
 		isDaemonSubprocess: isDaemonCLISubprocess,
-		openHTTPStore: func(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo, error) {
-			return OpenHTTPStore(ctx)
-		},
+		openHTTPStore:      OpenHTTPStore,
 		preflightReauth: func(
 			ctx context.Context, client *daemonclient.Client, info HTTPStoreInfo, sourceID int64,
 		) error {
@@ -73,9 +71,7 @@ func defaultRepairMessageCommandDepsForContext(ctx context.Context) repairMessag
 	return repairMessageCommandDeps{
 		bind:               defaultRepairMessageCommandDepsForContext,
 		isDaemonSubprocess: isDaemonCLISubprocess,
-		openHTTPStore: func(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo, error) {
-			return OpenHTTPStore(ctx)
-		},
+		openHTTPStore:      OpenHTTPStore,
 		preflightReauth: func(
 			ctx context.Context, client *daemonclient.Client, info HTTPStoreInfo, sourceID int64,
 		) error {

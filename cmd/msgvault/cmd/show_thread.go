@@ -51,7 +51,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			client, _, err := OpenHTTPStore(cmd.Context(), daemonclient.AgentReadMinAPISchemaVersion)
+			client, _, err := OpenHTTPStore(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("open store: %w", err)
 			}

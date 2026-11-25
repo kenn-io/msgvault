@@ -69,6 +69,13 @@ The Jev adapter passes a plain http.Client to Docbank's TypeSafe client,
 which refuses redirects on its own copy. Do not flag redirect handling
 in internal/vector/rerank/jev.go.
 
+The CLI and the daemon it talks to run the same msgvault version. A
+newer CLI never calls an older daemon's API, so an API change does not
+need handling for older daemons. Do not flag a removed or changed
+response field, header, or route because an older daemon would still
+send or expect it, and do not ask for version checks, fallbacks, or
+upgrade errors for that case.
+
 The hidden-text flag (internal/mime/hidden_html.go) is a best-effort
 heuristic, not a security boundary. It reads only inline styles and
 legacy attributes, so a <style> block already bypasses it. Do not flag

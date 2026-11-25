@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"go.kenn.io/msgvault/internal/query"
@@ -20,9 +19,6 @@ import (
 // ErrNotSupported is returned for operations not available through the daemon API.
 var ErrNotSupported = errors.New("operation not supported through daemon API")
 
-// ErrBoundedDeletionSearchUnsupported means the daemon needs an upgrade for bounded staging.
-var ErrBoundedDeletionSearchUnsupported = errors.New("bounded deletion search unsupported")
-
 // ErrMessageRawNotFound means the daemon holds the message but no raw data.
 var ErrMessageRawNotFound = errors.New("message raw data not found")
 
@@ -30,29 +26,11 @@ const (
 	apiValueCount   = "count"
 	apiValueLabels  = "labels"
 	apiValueSubject = "subject"
-
-	// listIDMinAPISchemaVersion is the first daemon contract that guarantees
-	// exact List-ID filtering on every MessageFilter endpoint.
-	listIDMinAPISchemaVersion   = "2.14.0"
-	orSearchMinAPISchemaVersion = "3.19.0"
-
-	// accountAttributionMinAPISchemaVersion is the first daemon contract that
-	// understands account: and received:; older daemons read them as text.
-	accountAttributionMinAPISchemaVersion = "3.5.0"
-	// accountScopeMinAPISchemaVersion is the first daemon contract that reads
-	// structured account scopes from filters.
-	accountScopeMinAPISchemaVersion = "3.11.0"
-	// filenameMinAPISchemaVersion is the first daemon contract with filename: filters.
-	filenameMinAPISchemaVersion = "3.14.0"
-	// boundedDeletionSearchMinAPISchemaVersion adds one-request bounded MCP staging.
-	boundedDeletionSearchMinAPISchemaVersion = "3.26.0"
 )
 
 // Engine implements query.Engine by making HTTP calls to a msgvault daemon.
 type Engine struct {
-	store                *Client
-	originalCapabilityMu sync.Mutex
-	originalCapabilityOK bool
+	store *Client
 }
 
 // QueryArchiveSQL uses the daemon's archive-only SQL endpoint. It never falls
@@ -73,8 +51,6 @@ var _ query.SemanticMessageSearcher = (*Engine)(nil)
 var _ query.DeletionTargetSearchResolver = (*Engine)(nil)
 var _ query.BoundedDeletionTargetSearchResolver = (*Engine)(nil)
 var _ query.DeletionTargetAggregateSearchResolver = (*Engine)(nil)
-
-const tuiSearchContractMinAPISchemaVersion = "2.16.0"
 
 // NewEngine creates a new daemon-backed query engine.
 func NewEngine(cfg Config) (*Engine, error) {
@@ -691,7 +667,7 @@ func (e *Engine) Aggregate(ctx context.Context, groupBy query.ViewType, opts que
 	if opts.SourceIDs != nil && len(opts.SourceIDs) == 0 {
 		return []query.AggregateRow{}, nil
 	}
-	if err := e.requireListIDCapability(ctx, search.ParseOR(opts.SearchQuery), query.MessageFilter{AccountScopes: opts.AccountScopes}, groupBy); err != nil {
+	if err := rejectQueryAccountScopes(search.ParseOR(opts.SearchQuery)); err != nil {
 		return nil, err
 	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetAggregatesResp, error) {
@@ -734,7 +710,7 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 		return []query.AggregateRow{}, nil
 	}
 	filter.AccountScopes = append(search.CloneAccountScopes(filter.AccountScopes), search.CloneAccountScopes(opts.AccountScopes)...)
-	if err := e.requireListIDCapability(ctx, search.ParseOR(opts.SearchQuery), filter, groupBy); err != nil {
+	if err := rejectQueryAccountScopes(search.ParseOR(opts.SearchQuery)); err != nil {
 		return nil, err
 	}
 	limit := optionalPositiveInt64(filter.Pagination.Limit)
@@ -785,9 +761,6 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 func (e *Engine) ListMessages(ctx context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
 	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
 		return []query.MessageSummary{}, nil
-	}
-	if err := e.requireListIDCapability(ctx, nil, filter); err != nil {
-		return nil, err
 	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.FilterMessagesResp, error) {
 		return client.FilterMessagesWithResponse(ctx, &generated.FilterMessagesRequestOptions{
@@ -996,7 +969,7 @@ func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int)
 		return nil, err
 	}
 	q, scoped := hoistQueryScopes(q, query.MessageFilter{})
-	if err := e.requireListIDCapability(ctx, q, scoped); err != nil {
+	if err := rejectQueryAccountScopes(q); err != nil {
 		return nil, err
 	}
 	if hasExplicitEmptyAccountScope(q) {
@@ -1041,14 +1014,7 @@ func (e *Engine) SearchDeep(
 func (e *Engine) SearchDeepWithStats(
 	ctx context.Context, q *search.Query, filter query.MessageFilter, limit, offset int,
 ) (*query.SearchFastResult, error) {
-	compatible, err := e.store.SupportsAPISchemaVersion(ctx, tuiSearchContractMinAPISchemaVersion)
-	if err != nil {
-		return nil, fmt.Errorf("check deep-search capability: %w", err)
-	}
-	if !compatible {
-		return nil, fmt.Errorf("deep search with statistics requires daemon API schema %s or newer", tuiSearchContractMinAPISchemaVersion)
-	}
-	if err := e.requireListIDCapability(ctx, q, filter); err != nil {
+	if err := rejectQueryAccountScopes(q); err != nil {
 		return nil, err
 	}
 	if err := validateParsedSearchQuery(q); err != nil {
@@ -1118,7 +1084,7 @@ func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit
 		return nil, err
 	}
 	q, scoped := hoistQueryScopes(q, query.MessageFilter{})
-	if err := e.requireListIDCapability(ctx, q, scoped); err != nil {
+	if err := rejectQueryAccountScopes(q); err != nil {
 		return nil, err
 	}
 	if q == nil || len(q.TextTerms) == 0 {
@@ -1189,7 +1155,7 @@ func emptyMetadataSearchResult(statsGroupBy query.ViewType) *query.SearchFastRes
 func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter query.MessageFilter, statsGroupBy query.ViewType, limit, offset int) (*query.SearchFastResult, error) {
 	q, filter = hoistQueryScopes(q, filter)
-	if err := e.requireListIDCapability(ctx, q, filter, statsGroupBy); err != nil {
+	if err := rejectQueryAccountScopes(q); err != nil {
 		return nil, err
 	}
 	if err := validateParsedSearchQuery(q); err != nil {
@@ -1197,15 +1163,6 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 	}
 	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
 		return emptyMetadataSearchResult(statsGroupBy), nil
-	}
-	if filter.SenderName != "" || filter.RecipientName != "" || filter.HasEmptyTargets() {
-		compatible, err := e.store.SupportsAPISchemaVersion(ctx, tuiSearchContractMinAPISchemaVersion)
-		if err != nil {
-			return nil, fmt.Errorf("check complete fast-search filter capability: %w", err)
-		}
-		if !compatible {
-			return nil, fmt.Errorf("fast search with complete filters requires daemon API schema %s or newer", tuiSearchContractMinAPISchemaVersion)
-		}
 	}
 	scopedQueryStr, noMatches := fastSearchScopedQueryString(q, queryStr, filter)
 	if noMatches {
@@ -1235,9 +1192,6 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 func (e *Engine) GetDeletionTargetsByFilter(ctx context.Context, filter query.MessageFilter) ([]query.DeletionTarget, error) {
 	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
 		return []query.DeletionTarget{}, nil
-	}
-	if err := e.requireListIDCapability(ctx, nil, filter); err != nil {
-		return nil, err
 	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetGmailIDsByFilterResp, error) {
 		return client.GetGmailIDsByFilterWithResponse(ctx, &generated.GetGmailIDsByFilterRequestOptions{
@@ -1269,15 +1223,8 @@ func (e *Engine) GetDeletionTargetsBySearch(
 	if queryString == "" {
 		return e.GetDeletionTargetsByFilter(ctx, filter)
 	}
-	if err := e.requireListIDCapability(ctx, searchQuery, filter); err != nil {
+	if err := rejectQueryAccountScopes(searchQuery); err != nil {
 		return nil, err
-	}
-	compatible, err := e.store.SupportsAPISchemaVersion(ctx, tuiSearchContractMinAPISchemaVersion)
-	if err != nil {
-		return nil, fmt.Errorf("check daemon search-aware deletion capability: %w", err)
-	}
-	if !compatible {
-		return nil, fmt.Errorf("search-aware deletion resolution requires daemon API schema %s or newer", tuiSearchContractMinAPISchemaVersion)
 	}
 	modeString := string(mode)
 	params := gmailIDsFilterQuery(filter)
@@ -1319,13 +1266,6 @@ func (e *Engine) GetDeletionTargetsBySearchBounded(
 	if queryString == "" {
 		return nil, 0, errors.New("bounded deletion search requires a nonempty query")
 	}
-	compatible, err := e.store.SupportsAPISchemaVersion(ctx, boundedDeletionSearchMinAPISchemaVersion)
-	if err != nil {
-		return nil, 0, fmt.Errorf("check bounded daemon search-aware deletion capability: %w", err)
-	}
-	if !compatible {
-		return nil, 0, fmt.Errorf("%w: bounded search-aware deletion resolution requires daemon API schema %s or newer; upgrade the daemon and retry", ErrBoundedDeletionSearchUnsupported, boundedDeletionSearchMinAPISchemaVersion)
-	}
 	modeString := string(mode)
 	limit := int64(maxResults)
 	params := gmailIDsFilterQuery(filter)
@@ -1363,15 +1303,8 @@ func (e *Engine) GetDeletionTargetsByAggregateSearch(
 	if queryString == "" {
 		return e.GetDeletionTargetsByFilter(ctx, filter)
 	}
-	if err := e.requireListIDCapability(ctx, parsed, filter); err != nil {
+	if err := rejectQueryAccountScopes(parsed); err != nil {
 		return nil, err
-	}
-	compatible, err := e.store.SupportsAPISchemaVersion(ctx, tuiSearchContractMinAPISchemaVersion)
-	if err != nil {
-		return nil, fmt.Errorf("check daemon aggregate deletion capability: %w", err)
-	}
-	if !compatible {
-		return nil, fmt.Errorf("aggregate deletion resolution requires daemon API schema %s or newer", tuiSearchContractMinAPISchemaVersion)
 	}
 
 	modeString := string(query.DeletionSearchAggregate)
@@ -1411,66 +1344,11 @@ func deletionTargetsFromGenerated(resp *generated.GmailIDsResponse) ([]query.Del
 	return targets, nil
 }
 
-func (e *Engine) requireListIDCapability(
-	ctx context.Context, q *search.Query, filter query.MessageFilter, groupBy ...query.ViewType,
-) error {
-	return e.store.requireListIDCapability(ctx, q, filter, groupBy...)
-}
-
-func (c *Client) requireListIDCapability(
-	ctx context.Context, q *search.Query, filter query.MessageFilter, groupBy ...query.ViewType,
-) error {
-	if q.HasOR() {
-		supported, err := c.SupportsAPISchemaVersion(ctx, orSearchMinAPISchemaVersion)
-		if err != nil {
-			return fmt.Errorf("check pipe OR capability: %w", err)
-		}
-		if !supported {
-			return fmt.Errorf("pipe OR requires daemon API schema %s or newer", orSearchMinAPISchemaVersion)
-		}
-	}
+// rejectQueryAccountScopes refuses account scopes parsed from query text:
+// the query text cannot carry them, so callers pass them in the message filter.
+func rejectQueryAccountScopes(q *search.Query) error {
 	if q != nil && len(q.AccountScopes) > 0 {
-		// The query text cannot carry scopes, so they would be dropped.
 		return errors.New("account scopes must travel in the message filter, not the query")
-	}
-	if len(filter.AccountScopes) > 0 {
-		supported, err := c.SupportsAPISchemaVersion(ctx, accountScopeMinAPISchemaVersion)
-		if err != nil {
-			return fmt.Errorf("check daemon account scope capability: %w", err)
-		}
-		if !supported {
-			return fmt.Errorf("account filters require daemon API schema %s or newer", accountScopeMinAPISchemaVersion)
-		}
-	}
-	if q != nil && (len(q.AccountAddrs) > 0 || len(q.ReceivedAddrs) > 0) {
-		supported, err := c.SupportsAPISchemaVersion(ctx, accountAttributionMinAPISchemaVersion)
-		if err != nil {
-			return fmt.Errorf("check daemon account filter capability: %w", err)
-		}
-		if !supported {
-			return fmt.Errorf("account: and received: filters require daemon API schema %s or newer",
-				accountAttributionMinAPISchemaVersion)
-		}
-	}
-	if q != nil && len(q.Filenames) > 0 {
-		supported, err := c.SupportsAPISchemaVersion(ctx, filenameMinAPISchemaVersion)
-		if err != nil {
-			return fmt.Errorf("check daemon filename filter capability: %w", err)
-		}
-		if !supported {
-			return fmt.Errorf("filename filter requires daemon API schema %s or newer", filenameMinAPISchemaVersion)
-		}
-	}
-	if filter.ListID == "" && (q == nil || len(q.ListIDs) == 0) &&
-		!slices.Contains(groupBy, query.ViewLists) {
-		return nil
-	}
-	supported, err := c.SupportsAPISchemaVersion(ctx, listIDMinAPISchemaVersion)
-	if err != nil {
-		return fmt.Errorf("check daemon List-ID filter capability: %w", err)
-	}
-	if !supported {
-		return fmt.Errorf("List-ID filter requires daemon API schema %s or newer", listIDMinAPISchemaVersion)
 	}
 	return nil
 }
@@ -1631,16 +1509,7 @@ func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*q
 	if sourceIDs != nil && len(sourceIDs) == 0 {
 		return &query.TotalStats{}, nil
 	}
-	if opts.Filter != nil {
-		compatible, err := e.store.SupportsAPISchemaVersion(ctx, tuiSearchContractMinAPISchemaVersion)
-		if err != nil {
-			return nil, fmt.Errorf("check filtered-stats capability: %w", err)
-		}
-		if !compatible {
-			return nil, fmt.Errorf("complete filtered statistics require daemon API schema %s or newer", tuiSearchContractMinAPISchemaVersion)
-		}
-	}
-	if err := e.requireListIDCapability(ctx, search.ParseOR(opts.SearchQuery), filter, opts.GroupBy); err != nil {
+	if err := rejectQueryAccountScopes(search.ParseOR(opts.SearchQuery)); err != nil {
 		return nil, err
 	}
 	params := &generated.GetTotalStatsQuery{
