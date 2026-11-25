@@ -1583,3 +1583,27 @@ func TestImportMuesliSuccessStatuses(t *testing.T) {
 		})
 	}
 }
+
+func TestImportHexRegistration(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		check.Equal(http.MethodPost, r.Method)
+		check.Equal("/api/v1/import/hex", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"registered","source_id":3,"changed":false}`))
+	}))
+	t.Cleanup(server.Close)
+	c, err := New(server.URL)
+	must.NoError(err)
+	got, err := c.ImportHex(t.Context(), &generated.ImportHexRequestOptions{Body: &generated.ImportHexBody{}})
+	must.NoError(err)
+	check.Equal(int64(3), got.SourceID)
+}
+
+// Regeneration must not rename Muesli's exported constants when Hex enums collide.
+func TestHexEnumsPreserveMuesliClientExports(_ *testing.T) {
+	_ = []generated.MuesliRemoteRequestAction{generated.Register, generated.Upsert, generated.Refresh}
+	_ = []generated.MuesliRemoteResultStatus{generated.Registered, generated.Created, generated.Updated, generated.Unchanged, generated.Refreshed}
+}

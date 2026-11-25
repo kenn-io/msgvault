@@ -524,6 +524,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerMeetingImportRoute(apiV1)
 	s.registerMessageImportRoute(apiV1)
 	s.registerMuesliImportRoute(apiV1)
+	s.registerHexImportRoute(apiV1)
 	s.registerMeetingRoutes(apiV1)
 	s.registerMeetingRecordRoute(apiV1)
 	s.registerMeetingSuggestionRoute(apiV1)

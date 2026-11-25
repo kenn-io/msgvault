@@ -943,6 +943,9 @@ func validateEditableCandidate(cfg *Config) error {
 	for index, source := range cfg.Twilio {
 		schedules[fmt.Sprintf("twilio[%d].schedule", index)] = source.Schedule
 	}
+	for index, source := range cfg.Hex {
+		schedules[fmt.Sprintf("hex[%d].schedule", index)] = source.Schedule
+	}
 	for index, source := range cfg.Bland {
 		schedules[fmt.Sprintf("bland[%d].schedule", index)] = source.Schedule
 	}

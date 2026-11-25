@@ -68,6 +68,8 @@ func (m Model) meetingSourceLabel(sourceID int64) string {
 			return "Pocket"
 		case meetingSourceNotion:
 			return "Notion"
+		case meetingSourceHex:
+			return "Hex"
 		case meetingSourceMuesli:
 			return "Muesli"
 		case meetingSourceTwilio:

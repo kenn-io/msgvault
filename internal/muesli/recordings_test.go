@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	_ "embed"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -17,24 +16,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 )
-
-func recordingWAV() []byte {
-	data := make([]byte, 48)
-	copy(data, "RIFF")
-	binary.LittleEndian.PutUint32(data[4:], uint32(len(data)-8))
-	copy(data[8:], "WAVEfmt ")
-	binary.LittleEndian.PutUint32(data[16:], 16)
-	binary.LittleEndian.PutUint16(data[20:], 1)
-	binary.LittleEndian.PutUint16(data[22:], 1)
-	binary.LittleEndian.PutUint32(data[24:], 16000)
-	binary.LittleEndian.PutUint32(data[28:], 32000)
-	binary.LittleEndian.PutUint16(data[32:], 2)
-	binary.LittleEndian.PutUint16(data[34:], 16)
-	copy(data[36:], "data")
-	binary.LittleEndian.PutUint32(data[40:], 4)
-	return data
-}
 
 func writeRecording(t *testing.T, dbPath, name string, data []byte) string {
 	t.Helper()
@@ -57,7 +40,7 @@ func TestImportRecordingOptInLateArrivalAndReplacement(t *testing.T) {
 	opts := ImportOptions{Recordings: true, AttachmentsDir: t.TempDir()}
 	_, err := f.run(t, opts)
 	require.NoError(err, "missing audio must not fail transcript sync")
-	writeRecording(t, f.path, "private-title.m4a", recordingWAV())
+	writeRecording(t, f.path, "private-title.m4a", testutil.RecordingWAV())
 	_, err = f.run(t, ImportOptions{})
 	require.NoError(err)
 	candidates, err := f.st.ListBeeperMediaCandidates(t.Context(), 0, 10)
@@ -74,7 +57,7 @@ func TestImportRecordingOptInLateArrivalAndReplacement(t *testing.T) {
 	assert.Equal("audio", candidates[0].MediaType)
 	assert.NotContains(candidates[0].Filename, "private-title")
 	firstHash := candidates[0].ContentHash
-	data := recordingWAV()
+	data := testutil.RecordingWAV()
 	data[len(data)-1] = 1
 	writeRecording(t, f.path, "private-title.m4a", data)
 	_, err = f.run(t, opts)
@@ -97,7 +80,7 @@ func TestImportRecordingThroughDatabaseSymlink(t *testing.T) {
 	f := newImporterFixture(t)
 	path := filepath.Join(filepath.Dir(f.path), "meeting-recordings", "meeting.wav")
 	insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"saved_recording_path": path}))
-	writeRecording(t, f.path, "meeting.wav", recordingWAV())
+	writeRecording(t, f.path, "meeting.wav", testutil.RecordingWAV())
 
 	databaseAlias := filepath.Join(t.TempDir(), "muesli.db")
 	require.NoError(os.Symlink(f.path, databaseAlias))
@@ -121,7 +104,7 @@ func TestPrepareRecordingDefersUnsafeAndUnfinishedFiles(t *testing.T) {
 	require := require.New(t)
 
 	dbPath := filepath.Join(t.TempDir(), "muesli.db")
-	path := writeRecording(t, dbPath, "meeting.wav", recordingWAV())
+	path := writeRecording(t, dbPath, "meeting.wav", testutil.RecordingWAV())
 	recent := time.Now().Add(24 * time.Hour) // a future timestamp keeps the quiet-period test independent of scheduling
 	require.NoError(os.Chtimes(path, recent, recent))
 	recording, err := PrepareRecording(t.Context(), dbPath, path, 0)
@@ -133,7 +116,7 @@ func TestPrepareRecordingDefersUnsafeAndUnfinishedFiles(t *testing.T) {
 	require.ErrorIs(err, ErrRecordingTooLarge)
 	assert.Nil(recording)
 	outside := filepath.Join(filepath.Dir(dbPath), "outside.wav")
-	require.NoError(os.WriteFile(outside, recordingWAV(), 0600))
+	require.NoError(os.WriteFile(outside, testutil.RecordingWAV(), 0600))
 	old = time.Now().Add(-time.Minute)
 	require.NoError(os.Chtimes(outside, old, old))
 	for _, target := range []string{outside, "../outside.wav", filepath.Dir(path)} {
@@ -160,7 +143,7 @@ func TestScanRemoteRecordingLateArrivalAndLostAcknowledgement(t *testing.T) {
 	opts := ImportOptions{Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path, LockDir: t.TempDir(), Recordings: true}
 	_, err := ScanRemote(t.Context(), opts, f.imp.ImportRemote)
 	require.NoError(err)
-	writeRecording(t, f.path, "meeting.wav", recordingWAV())
+	writeRecording(t, f.path, "meeting.wav", testutil.RecordingWAV())
 	attempts := 0
 	opts.SendRecording = func(ctx context.Context, upload RecordingUpload, recording *Recording) error {
 		attempts++
@@ -200,7 +183,7 @@ func TestScanRemoteReoffersContactReviewWithoutResendingRecording(t *testing.T) 
 		"email_address": "attendee@example.com", "display_name": "Meeting Attendee",
 		"source": "calendar", "insertion_order": 0,
 	})
-	writeRecording(t, f.path, "meeting.wav", recordingWAV())
+	writeRecording(t, f.path, "meeting.wav", testutil.RecordingWAV())
 
 	opts := ImportOptions{
 		Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path,
@@ -234,7 +217,7 @@ func TestScanRemoteRecordingNotResentAfterTranscriptEdit(t *testing.T) {
 	registerRemoteFixture(t, f)
 	path := filepath.Join(filepath.Dir(f.path), "meeting-recordings", "meeting.wav")
 	meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"saved_recording_path": path}))
-	writeRecording(t, f.path, "meeting.wav", recordingWAV())
+	writeRecording(t, f.path, "meeting.wav", testutil.RecordingWAV())
 
 	opts := ImportOptions{Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path, LockDir: t.TempDir(), Recordings: true}
 	uploads := 0
@@ -266,7 +249,7 @@ func TestScanRemoteRecordingAcknowledgementUsesMeetingIdentity(t *testing.T) {
 	registerRemoteFixture(t, f)
 	path := filepath.Join(filepath.Dir(f.path), "meeting-recordings", "meeting.wav")
 	meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"saved_recording_path": path}))
-	writeRecording(t, f.path, "meeting.wav", recordingWAV())
+	writeRecording(t, f.path, "meeting.wav", testutil.RecordingWAV())
 
 	opts := ImportOptions{Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path, LockDir: t.TempDir(), Recordings: true}
 	uploads := 0
@@ -323,7 +306,7 @@ func TestScanRemoteRetriesRecordingAfterLostCreatedResponse(t *testing.T) {
 	registerRemoteFixture(t, f)
 	path := filepath.Join(filepath.Dir(f.path), "meeting-recordings", "meeting.wav")
 	meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"saved_recording_path": path}))
-	writeRecording(t, f.path, "meeting.wav", recordingWAV())
+	writeRecording(t, f.path, "meeting.wav", testutil.RecordingWAV())
 
 	opts := ImportOptions{Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path, LockDir: t.TempDir(), Recordings: true}
 	activeImporter := f.imp
@@ -383,7 +366,7 @@ func TestScanRemoteRestoresRecordingAfterArchiveBackupRollback(t *testing.T) {
 			registerRemoteFixture(t, f)
 			path := filepath.Join(filepath.Dir(f.path), "meeting-recordings", "meeting.wav")
 			meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"saved_recording_path": path}))
-			writeRecording(t, f.path, "meeting.wav", recordingWAV())
+			writeRecording(t, f.path, "meeting.wav", testutil.RecordingWAV())
 
 			opts := ImportOptions{Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path, LockDir: t.TempDir(), Recordings: true}
 			activeImporter := f.imp
@@ -423,7 +406,7 @@ func TestScanRemoteRestoresRecordingAfterArchiveBackupRollback(t *testing.T) {
 			require.NoError(err)
 			if tt.deferRecording {
 				assert.Equal(1, uploads, "a deferred recording is not uploaded")
-				writeRecording(t, f.path, "meeting.wav", recordingWAV())
+				writeRecording(t, f.path, "meeting.wav", testutil.RecordingWAV())
 				recoveryOpts.Full = false
 				_, err = ScanRemote(t.Context(), recoveryOpts, restored.imp.ImportRemote)
 				require.NoError(err)
@@ -449,7 +432,7 @@ func TestImportRecordingRejectsSourceMismatchAndTruncatedUpload(t *testing.T) {
 	registerRemoteFixture(t, f)
 	result, err := f.imp.ImportRemote(t.Context(), remoteTestRequest())
 	require.NoError(err)
-	data := recordingWAV()
+	data := testutil.RecordingWAV()
 	hash := sha256.Sum256(data)
 	upload := RecordingUpload{Source: remoteTestRequest().Source, MessageID: result.MessageID, MIMEType: "audio/wav", Size: int64(len(data)), Hash: hex.EncodeToString(hash[:])}
 	dir := t.TempDir()
@@ -475,9 +458,7 @@ func TestImportRecordingRejectsSourceMismatchAndTruncatedUpload(t *testing.T) {
 }
 
 func TestStageRecordingUploadValidatesAndSnapshotsBytes(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	data := recordingWAV()
+	data := testutil.RecordingWAV()
 	digest := sha256.Sum256(data)
 	upload := RecordingUpload{
 		Source: remoteTestRequest().Source, MessageID: 1,
@@ -501,6 +482,8 @@ func TestStageRecordingUploadValidatesAndSnapshotsBytes(t *testing.T) {
 		{name: "over cap", upload: upload, body: data, maxSize: int64(len(data) - 1), wantErr: ErrRecordingTooLarge},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			staged, err := StageRecordingUpload(t.Context(), tt.upload, bytes.NewReader(tt.body), tt.maxSize)
 			if tt.wantErr != nil {
 				require.ErrorIs(err, tt.wantErr)
@@ -527,53 +510,6 @@ func TestStageRecordingUploadValidatesAndSnapshotsBytes(t *testing.T) {
 var syntheticM4A []byte
 
 func recordingM4A() []byte { return append([]byte{}, syntheticM4A...) }
-
-func TestRecordingM4ADetectionAndIncompleteContainers(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "muesli.db")
-	data := recordingM4A()
-	compatible := append([]byte{}, data...)
-	copy(compatible[8:12], "isom")
-	for _, tt := range []struct {
-		name      string
-		data      []byte
-		available bool
-	}{
-		{"m4a", data, true}, {"compatible m4a", compatible, true}, {"short atom", data[:len(data)-1], false}, {"unfinished wav", recordingWAV()[:46], false}, {"unrelated", []byte("arbitrary non-audio file"), false},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-
-			path := writeRecording(t, dbPath, "recording.wav", tt.data)
-			recording, err := PrepareRecording(t.Context(), dbPath, path, 0)
-			require.NoError(err)
-			if tt.available {
-				require.NotNil(recording)
-				assert.Equal("audio/mp4", recording.MIMEType)
-				require.NoError(recording.Close())
-			} else {
-				assert.Nil(recording)
-			}
-		})
-	}
-}
-
-func TestRecordingDefaultCapRejectsSparseFileAboveFourGiB(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	dbPath := filepath.Join(t.TempDir(), "muesli.db")
-	path := writeRecording(t, dbPath, "large.wav", recordingWAV())
-	file, err := os.OpenFile(path, os.O_WRONLY, 0600)
-	require.NoError(err)
-	require.NoError(file.Truncate(DefaultRecordingMaxBytes + 1))
-	require.NoError(file.Close())
-	old := time.Now().Add(-time.Minute)
-	require.NoError(os.Chtimes(path, old, old))
-	recording, err := PrepareRecording(t.Context(), dbPath, path, 0)
-	require.ErrorIs(err, ErrRecordingTooLarge)
-	assert.Nil(recording)
-}
 
 func TestImportRecordingM4AUsesOrdinaryAudioAttachment(t *testing.T) {
 	assert := assert.New(t)

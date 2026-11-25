@@ -87,11 +87,11 @@ func TestMuesliCommandsReadRecorderConfiguration(t *testing.T) {
 func TestMuesliRecordErrorsDoNotMaskTransportFailure(t *testing.T) {
 	assert := assert.New(t)
 
-	assert.True(muesliRecordErrorsOnly(errors.Join(muesli.ErrRemoteValidation, muesli.ErrRemoteTooLarge)))
-	assert.True(muesliRecordErrorsOnly(muesli.ErrRecordingTooLarge))
-	assert.False(muesliRecordErrorsOnly(errors.Join(muesli.ErrRecordingTooLarge, context.Canceled)))
-	assert.False(muesliRecordErrorsOnly(errors.Join(muesli.ErrRemoteValidation, context.Canceled)))
-	assert.False(muesliRecordErrorsOnly(errors.New("server failure")))
+	assert.True(recorderRecordErrorsOnly(errors.Join(muesli.ErrRemoteValidation, muesli.ErrRemoteTooLarge), muesliRecordErrors))
+	assert.True(recorderRecordErrorsOnly(muesli.ErrRecordingTooLarge, muesliRecordErrors))
+	assert.False(recorderRecordErrorsOnly(errors.Join(muesli.ErrRecordingTooLarge, context.Canceled), muesliRecordErrors))
+	assert.False(recorderRecordErrorsOnly(errors.Join(muesli.ErrRemoteValidation, context.Canceled), muesliRecordErrors))
+	assert.False(recorderRecordErrorsOnly(errors.New("server failure"), muesliRecordErrors))
 }
 
 func TestMuesliBuildCacheRefreshesThroughRegisteredSource(t *testing.T) {
@@ -291,9 +291,9 @@ func TestMuesliWatchRetriesTransientDaemonFailures(t *testing.T) {
 			command.SetContext(ctx)
 			command.SetOut(io.Discard)
 			command.SetErr(io.Discard)
-			run := &muesliRemoteRun{cmd: command, cfg: clientCfg}
+			run := newMuesliRemoteRun(command, clientCfg, 0, time.Time{}, false)
 			defer run.close()
-			watched, err := muesliWatchSources(clientCfg.Muesli)
+			watched, err := meetingWatchSources(clientCfg.Muesli, func(s config.MuesliSource) bool { return s.Enabled }, func(s config.MuesliSource) string { return s.Schedule })
 			require.NoError(err)
 
 			stopWaiting := errors.New("synthetic end of watch")
@@ -309,7 +309,7 @@ func TestMuesliWatchRetriesTransientDaemonFailures(t *testing.T) {
 				return stopWaiting
 			}
 			var reported []error
-			err = runMuesliWatch(ctx, watched, run.watchScan, wait, func(err error) { reported = append(reported, err) })
+			err = runMeetingWatch(ctx, watched, run.watchScan, wait, func(err error) { reported = append(reported, err) })
 
 			var archived int
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&archived))

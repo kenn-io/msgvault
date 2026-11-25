@@ -441,7 +441,8 @@ import (
 // 5.25.0 admits read-only Gmail inventory diagnostics through the generic CLI runner.
 // 5.26.0 adds if_exists=return and structured match details to person creation.
 // 5.27.0 supports vector and hybrid search under a source scope.
-const APISchemaVersion = "5.27.0"
+// 5.28.0 adds owner-only Hex meeting imports and optional separate recording track uploads.
+const APISchemaVersion = "5.28.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1500,6 +1501,23 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			"MeetingActionsRequestStatusUnknown",
 		})
 	}
+	// New provider enums must not claim the Muesli client's existing bare constants.
+	if request := schemas["HexRemoteRequest"]; request != nil {
+		setEnumNames(request.Properties["action"], qualifiedEnumNames("HexRemoteRequestAction", []string{"register", "upsert", "refresh"}))
+	}
+	if result := schemas["HexRemoteResult"]; result != nil {
+		setEnumNames(result.Properties["status"], qualifiedEnumNames("HexRemoteResultStatus", []string{"registered", "created", "updated", "unchanged", "refreshed"}))
+	}
+	for _, operation := range documentOperations(doc) {
+		if operation.OperationID == "importHexRecording" {
+			for _, parameter := range operation.Parameters {
+				if parameter.Name == "track" {
+					setEnumNames(parameter.Schema, qualifiedEnumNames("ImportHexRecordingQueryTrack", []string{"system", "microphone"}))
+				}
+			}
+		}
+	}
+
 	for schemaName, properties := range map[string]map[string][]any{
 		"AppendPersonNoteRequest": {
 			exploreFilterSource: {

@@ -2,17 +2,12 @@ package muesli
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"time"
 
-	"github.com/gofrs/flock"
 	"go.kenn.io/msgvault/internal/meetingimport"
 )
 
@@ -27,20 +22,20 @@ func ScanRemote(ctx context.Context, opts ImportOptions, send RemoteSender) (sum
 	started := time.Now()
 	sum = &ImportSummary{}
 	defer func() { sum.Duration = time.Since(started) }()
-	canonical, lockDir, err := remoteSyncPaths(opts.DBPath, opts.LockDir)
+	canonical, lockDir, err := meetingimport.RecorderSyncPaths(opts.DBPath, opts.LockDir)
 	if err != nil {
 		return sum, err
 	}
-	lock, err := lockRemoteSource(ctx, canonical, lockDir)
+	lock, err := meetingimport.LockRecorderSource(ctx, canonical, lockDir)
 	if err != nil {
 		return sum, err
 	}
 	defer func() { _ = lock.Unlock() }()
-	uploads, err := loadRemoteUploads(remoteUploadsPath(lockDir, canonical, opts.Identifier, opts.RemoteTarget))
+	uploads, err := meetingimport.LoadRecorderUploads[int64](meetingimport.RecorderUploadsPath(lockDir, canonical, opts.Identifier, opts.RemoteTarget))
 	if err != nil {
 		return sum, err
 	}
-	defer func() { retErr = errors.Join(retErr, uploads.save()) }()
+	defer func() { retErr = errors.Join(retErr, uploads.Save()) }()
 	reader, err := Open(ctx, opts.DBPath)
 	if err != nil {
 		return sum, err
@@ -100,7 +95,7 @@ func ScanRemote(ctx context.Context, opts ImportOptions, send RemoteSender) (sum
 type remotePush struct {
 	opts     ImportOptions
 	send     RemoteSender
-	uploads  *remoteUploads
+	uploads  *meetingimport.RecorderUploads[int64]
 	sum      *ImportSummary
 	contacts *Contacts
 	shared   map[string]bool
@@ -128,7 +123,7 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 	if int64(len(encoded)) > MaxRemoteRequestBytes {
 		return ErrRemoteTooLarge
 	}
-	digest, err := meetingDigest(r.Meeting)
+	digest, err := meetingimport.MeetingDigest(r.Meeting)
 	if err != nil {
 		return remoteInvalid("meeting", "cannot be encoded as JSON")
 	}
@@ -155,15 +150,15 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 		// A full resync may be rebuilding an archive that no longer contains
 		// previously acknowledged audio. Invalidate the receipt even when the
 		// local recording is currently unavailable.
-		p.uploads.forgetRecording(recordingIdentity)
+		p.uploads.ForgetRecording(recordingIdentity)
 	}
 	if recording != nil {
-		recordingAcknowledged = !p.opts.Full && p.uploads.recordingAcknowledged(recordingIdentity, recording.Hash)
+		recordingAcknowledged = !p.opts.Full && p.uploads.RecordingAcknowledged(recordingIdentity, recording.Hash)
 		if recordingAcknowledged {
-			p.uploads.recordRecording(recordingIdentity, recording.Hash)
+			p.uploads.RecordRecording(recordingIdentity, recording.Hash)
 		}
 	}
-	if !p.opts.Full && !hasContactReview(r.Meeting) && p.uploads.acknowledged(meeting.ID, digest) &&
+	if !p.opts.Full && !hasContactReview(r.Meeting) && p.uploads.Acknowledged(meeting.ID, digest) &&
 		(recording == nil || recordingAcknowledged) {
 		return recordingErr
 	}
@@ -177,14 +172,14 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 		p.sum.MeetingsUpdated++
 	}
 	if result.Status == "created" && recordingIdentity != "" {
-		p.uploads.forgetRecording(recordingIdentity)
+		p.uploads.ForgetRecording(recordingIdentity)
 		recordingAcknowledged = false
 	}
 	if err != nil {
 		// A lost response can hide a successful create. Do not let an old
 		// recording receipt suppress recovery on the next successful scan.
 		if recordingIdentity != "" {
-			p.uploads.forgetRecording(recordingIdentity)
+			p.uploads.ForgetRecording(recordingIdentity)
 		}
 		return err
 	}
@@ -196,10 +191,10 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 		if err := p.opts.SendRecording(ctx, upload, recording); err != nil {
 			return err
 		}
-		p.uploads.recordRecording(recordingIdentity, recording.Hash)
+		p.uploads.RecordRecording(recordingIdentity, recording.Hash)
 		p.sum.RecordingsStored++
 	}
-	p.uploads.record(meeting.ID, digest)
+	p.uploads.Record(meeting.ID, digest)
 	return recordingErr
 }
 
@@ -207,40 +202,4 @@ func hasContactReview(m *RemoteMeeting) bool {
 	return slices.ContainsFunc(m.Participants, func(p RemoteParticipant) bool {
 		return len(p.ContactReviewPhones) > 0
 	})
-}
-
-// remoteSyncPaths resolves the database to one canonical path, so every alias
-// of the same file shares a lock and upload record.
-func remoteSyncPaths(dbPath, lockDir string) (canonical, dir string, err error) {
-	canonical, err = filepath.Abs(dbPath)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve Muesli database: %w", err)
-	}
-	canonical, err = filepath.EvalSymlinks(canonical)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve Muesli database: %w", err)
-	}
-	if lockDir == "" {
-		return "", "", errors.New("muesli remote sync requires a lock directory")
-	}
-	if err := os.MkdirAll(lockDir, 0o700); err != nil {
-		return "", "", fmt.Errorf("create Muesli sync lock directory: %w", err)
-	}
-	return canonical, lockDir, nil
-}
-
-func lockRemoteSource(ctx context.Context, canonical, lockDir string) (*flock.Flock, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	hash := sha256.Sum256([]byte(canonical))
-	lock := flock.New(filepath.Join(lockDir, hex.EncodeToString(hash[:])+".lock"), flock.SetPermissions(0o600))
-	ok, err := lock.TryLockContext(ctx, 100*time.Millisecond)
-	if err != nil {
-		return nil, fmt.Errorf("acquire Muesli source lock: %w", err)
-	}
-	if !ok {
-		return nil, errors.New("muesli source lock unavailable")
-	}
-	return lock, nil
 }

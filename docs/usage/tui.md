@@ -126,7 +126,7 @@ Navigation in Text mode works the same as in Email mode. Press `Enter` to drill 
 
 ## Meetings
 
-Meetings mode lets you browse archived transcripts and notes from [meeting sources](/docs/usage/meetings/), including Omi, Granola, Plaud, Circleback, Notion, Muesli, Twilio, Bland, Twenty, and Chatwoot. It shows a flat, newest-first list with each meeting's date, title, organizer, and source. Press `Enter` to open a meeting's transcript and notes, `Esc` or `Backspace` to return to the list, and the left or right arrow keys to step between meeting details.
+Meetings mode lets you browse archived transcripts and notes from [meeting sources](/docs/usage/meetings/), including Omi, Granola, Plaud, Circleback, Notion, Hex, Muesli, Twilio, Bland, Twenty, and Chatwoot. It shows a flat, newest-first list with each meeting's date, title, organizer, and source. Press `Enter` to open a meeting's transcript and notes, `Esc` or `Backspace` to return to the list, and the left or right arrow keys to step between meeting details.
 
 In the meeting list, press `/` to search titles, people, transcripts, and notes. Meeting search stays scoped to meeting transcripts, even if your query includes explicit message-type syntax. Inside a detail view, press `/` to find text in the current transcript, then press `n` and `N` to jump between matches.
 

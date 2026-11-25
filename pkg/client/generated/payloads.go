@@ -126,6 +126,10 @@ type RunPersonMatchScoringBody = PersonMatchScoringRequest
 
 type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
+type ImportHexBody = HexRemoteRequest
+
+type ImportHexRecordingBody = runtime.File
+
 type ImportMeetingBody = MeetingImportRequest
 
 type ImportMessageBody = MessageImportRequest

@@ -31,6 +31,8 @@ var topLevelCommandGroups = map[string]string{
 	"cli":                      helpGroupOperations,
 	"source":                   helpGroupSources,
 	"address":                  helpGroupPeople,
+	"add-hex":                  helpGroupSources,
+	"sync-hex":                 helpGroupSources,
 	"activity":                 helpGroupIndex,
 	"add-account":              helpGroupSources,
 	"add-beeper":               helpGroupSources,
