@@ -1049,6 +1049,62 @@ func TestCanonicalThreadAuditOwesRepliesPostedWhileConversationUnreadable(t *tes
 	require.Equal(1, n, "the audit after access returns must fetch the reply posted while unreadable")
 }
 
+// An audit can finish its history walk while --limit leaves threads queued.
+// If access is lost before they are fetched, the drain drops them, so the
+// walk's pin no longer proves those threads were fetched. Without search,
+// the audit after access returns is the only way to find their replies.
+func TestCanonicalThreadAuditOwesThreadsDroppedWhileConversationUnreadable(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	f.scopes = "channels:read,channels:history,users:read,users:read.email"
+	imp, opts := testImporter(t, f)
+	start := time.Now()
+	at := func(d time.Duration) { imp.now = func() time.Time { return start.Add(d) } }
+	count := func(sourceMessageID string) int {
+		var n int
+		require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
+			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&n))
+		return n
+	}
+
+	at(0)
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+
+	missed := tsFormat(start.Add(time.Hour))
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: missed, ThreadTS: rootTS, User: "UME", Text: "queued, never fetched"})
+	f.mu.Unlock()
+
+	// The audit reads its only history page, then the limit stops the
+	// drain before it fetches the thread.
+	limited := opts
+	limited.Limit = 2
+	at(2 * time.Hour)
+	_, err = imp.Import(t.Context(), limited)
+	require.NoError(err)
+	require.Zero(count("C09:"+missed), "test setup: the limit must leave the thread queued")
+
+	f.mu.Lock()
+	f.handleGhost(f.conv("C09"))
+	f.mu.Unlock()
+	at(2*time.Hour + time.Minute)
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+
+	f.mu.Lock()
+	f.ghosts = nil
+	f.mu.Unlock()
+	for _, d := range []time.Duration{3 * time.Hour, 3*time.Hour + time.Minute, 3*time.Hour + 2*time.Minute} {
+		at(d)
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+	}
+	require.Equal(1, count("C09:"+missed), "the audit after access returns must fetch the thread the drain dropped")
+}
+
 func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
