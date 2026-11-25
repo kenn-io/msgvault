@@ -227,7 +227,41 @@ func classifyProviderError(profile ProviderProfile, body []byte) (ProviderCapabi
 
 func capabilityMatchesProviderError(profile ProviderProfile, errorObject map[string]jsontext.Value, parameterKey string) bool {
 	parameter, parameterPresent, parameterValid := rawOptionalJSONString(errorObject, parameterKey)
-	return parameterValid && capabilityCodeMatchesProfile(profile, rawJSONString(errorObject["code"]), parameter, parameterPresent)
+	if !parameterValid {
+		return false
+	}
+	if openAISchemaRejected(profile, errorObject["code"], parameter, parameterPresent) {
+		return true
+	}
+	return capabilityCodeMatchesProfile(profile, rawJSONString(errorObject["code"]), parameter, parameterPresent)
+}
+
+// openAISchemaRejected reports whether an OpenAI-compatible provider refused
+// the native JSON schema itself, for example because strict mode rejects a
+// keyword the frozen extraction schema uses. OpenAI reports this as an
+// invalid_request_error on the schema-carrying field with a null or
+// invalid_json_schema code. The next output mode does not send the schema, so
+// the attempt is a representation miss rather than a provider failure.
+func openAISchemaRejected(profile ProviderProfile, rawCode jsontext.Value, parameter string, parameterPresent bool) bool {
+	if profile.OutputMode != OutputModeNativeJSONSchema || !parameterPresent {
+		return false
+	}
+	switch profile.Protocol {
+	case ProtocolOpenAIChat:
+		if parameter != "response_format" && parameter != "response_format.json_schema" {
+			return false
+		}
+	case ProtocolOpenAIResponses:
+		if parameter != "text.format" && parameter != "text.format.schema" {
+			return false
+		}
+	default:
+		return false
+	}
+	if len(rawCode) == 0 || string(rawCode) == "null" {
+		return true
+	}
+	return rawJSONString(rawCode) == "invalid_json_schema"
 }
 
 func diagnosticsForProviderError(profile ProviderProfile, errorObject map[string]jsontext.Value, parameterKey string) ProviderDiagnostics {
@@ -292,7 +326,7 @@ func capabilityCodeClass(protocol Protocol, code string) ProviderDiagnosticCode 
 		if code == "unsupported_parameter" || code == "unsupported_value" {
 			return ProviderDiagnosticCodeRejectedField
 		}
-		if code == "unsupported_response_format" || code == "unsupported_json_schema" {
+		if code == "unsupported_response_format" || code == "unsupported_json_schema" || code == "invalid_json_schema" {
 			return ProviderDiagnosticCodeRejectedRepresentation
 		}
 	case ProtocolAnthropicMessages:
