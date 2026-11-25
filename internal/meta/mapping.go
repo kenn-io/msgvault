@@ -220,7 +220,7 @@ func archiveObject(ctx context.Context, st *store.Store, sum *ImportSummary, o a
 		self = prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool
 		// Preserve stronger prior evidence when the current Graph projection omits
 		// its author or author name. An absent field is not a provider retraction.
-		previous, err := st.GetMessagesSummariesByIDsContext(ctx, []int64{prior.ID})
+		previous, err := st.GetArchivedMessagesSummariesByIDsContext(ctx, []int64{prior.ID})
 		if err != nil {
 			return err
 		}

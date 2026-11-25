@@ -143,7 +143,7 @@ func openEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings, 
 	unavailable := func(err error) (*embeddingRuntime, error) {
 		return nil, fmt.Errorf("pgvector is missing or Setup has not prepared embeddings: %w", err)
 	}
-	backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipMigrate: true, ReadOnly: true})
+	backend, err := pgvector.Open(ctx, pgvector.Options{PolicyStore: st, DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipMigrate: true, ReadOnly: true})
 	if err != nil {
 		return unavailable(err)
 	}

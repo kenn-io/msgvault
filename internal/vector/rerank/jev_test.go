@@ -137,6 +137,66 @@ func TestJevPerCandidateSlowWavesFinish(t *testing.T) {
 	})
 }
 
+// A per-candidate ranking admits each wave separately. When admission ends
+// partway, later candidates are never sent and the sent waves' usage is kept.
+func TestJevPerCandidateAdmitsEachWave(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	profile, err := jevProfile("per-candidate")
+	require.NoError(err)
+	fake := typesafetest.New(profile, func(string, string) (float64, error) { return 0.5, nil })
+	candidates := make([]string, jevConcurrent+2)
+	for i := range candidates {
+		candidates[i] = fmt.Sprintf("candidate %d", i)
+	}
+	stop := errors.New("room turned cold")
+	admitted := 0
+	admit := func(context.Context) error {
+		admitted++
+		if admitted > 1 {
+			return stop
+		}
+		return nil
+	}
+	result, err := (&Jev{scorer: wavedScorer{profile: profile, fake: fake}, perCandidate: true}).Rerank(t.Context(), Request{Query: "renewal", Candidates: candidates, Admit: admit})
+	require.ErrorIs(err, stop)
+	assert.Equal(2, admitted)
+	assert.Len(fake.Requests(), jevConcurrent, "only the first wave reaches the provider")
+	assert.Nil(result.Scores)
+	assert.Equal(jevConcurrent, result.Usage.Requests)
+	assert.True(result.Usage.Complete)
+
+	waves := 0
+	admitAll := func(context.Context) error { waves++; return nil }
+	result, err = (&Jev{scorer: wavedScorer{profile: profile, fake: fake}, perCandidate: true}).Rerank(t.Context(), Request{Query: "renewal", Candidates: candidates, Admit: admitAll})
+	require.NoError(err)
+	assert.Equal(2, waves, "each wave is admitted before it is sent")
+	assert.Len(result.Scores, len(candidates))
+	assert.Equal(len(candidates), result.Usage.Requests)
+}
+
+// Admitting waves one at a time must keep the ranking's single deadline. Four
+// waves of 12-second calls exceed it, as they do when sent in one call.
+func TestJevAdmittedWavesShareTheRankingDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		profile, err := jevProfile("per-candidate")
+		require.NoError(err)
+		fake := typesafetest.New(profile, func(string, string) (float64, error) {
+			time.Sleep(12 * time.Second)
+			return 0.5, nil
+		})
+		candidates := make([]string, MaxCandidates)
+		for i := range candidates {
+			candidates[i] = fmt.Sprintf("candidate %d", i)
+		}
+		_, err = (&Jev{scorer: wavedScorer{profile: profile, fake: fake}, perCandidate: true}).Rerank(t.Context(), Request{Query: "renewal", Candidates: candidates, Admit: func(context.Context) error { return nil }})
+		require.Error(err, "each wave fits a call budget, but all four exceed the ranking's")
+		assert.Equal("provider timeout or cancellation", SafeFailure(err))
+	})
+}
+
 func TestSafeFailureCategories(t *testing.T) {
 	for want, err := range map[string]error{
 		"provider returned HTTP 429":            &typesafe.ProviderError{Kind: typesafe.ErrTransientResponse, StatusCode: 429},

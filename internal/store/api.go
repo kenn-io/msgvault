@@ -442,6 +442,17 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 // summary and hydration queries carry the request_id for SQL logging and are
 // cancelled together with the request.
 func (s *Store) GetMessagesSummariesByIDsContext(ctx context.Context, ids []int64) ([]APIMessage, error) {
+	return s.messageSummariesByIDs(ctx, ids, LiveMessagesWhere("m", true)+" AND "+FullMessageWhere("m"))
+}
+
+// GetArchivedMessagesSummariesByIDsContext returns summaries for known
+// archive rows whatever their room policy. Importers and actions that address
+// a message by ID use it; search hydration must keep cold rooms out.
+func (s *Store) GetArchivedMessagesSummariesByIDsContext(ctx context.Context, ids []int64) ([]APIMessage, error) {
+	return s.messageSummariesByIDs(ctx, ids, LiveMessagesWhere("m", true))
+}
+
+func (s *Store) messageSummariesByIDs(ctx context.Context, ids []int64, visibility string) ([]APIMessage, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -475,7 +486,7 @@ func (s *Store) GetMessagesSummariesByIDsContext(ctx context.Context, ids []int6
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.id IN (%s) AND %s
-	`, participantSummarySenderSQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
+	`, participantSummarySenderSQL, strings.Join(placeholders, ","), visibility)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get message summaries: %w", err)

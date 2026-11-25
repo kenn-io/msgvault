@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,6 +61,45 @@ func seedEmbedScopeFixture(t *testing.T, st *store.Store) embedScopeFixture {
 		`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), fx.deletedA)
 	require.NoError(t, err, "soft-delete message")
 	return fx
+}
+
+func TestMessageEmbeddingRevisionBaselineMigration(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "embedding-revision-baseline")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "revision-baseline", "email_thread", "Revision baseline")
+	requirements.NoError(err)
+	staleID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, SourceMessageID: "legacy-unstamped",
+		ConversationID: conversationID, MessageType: "email",
+	})
+	requirements.NoError(err)
+	currentID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, SourceMessageID: "legacy-stamped",
+		ConversationID: conversationID, MessageType: "email",
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.SetEmbedGen(t.Context(), []int64{currentID}, 7))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
+		"message_embedding_revision_baseline_v1")
+	requirements.NoError(err)
+
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	var staleRevision, currentRevision int64
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), staleID).Scan(&staleRevision))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), currentID).Scan(&currentRevision))
+	assertions.Equal(int64(1), staleRevision, "legacy NULL stamps must invalidate pre-revision vectors")
+	assertions.Zero(currentRevision, "currently stamped vectors keep their original revision")
+
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), staleID).Scan(&staleRevision))
+	assertions.Equal(int64(1), staleRevision, "the baseline migration must be idempotent")
 }
 
 func TestScanForEmbeddingScopedFiltersBySource(t *testing.T) {
@@ -140,8 +181,8 @@ func TestScanEmbeddingCoverageStreamsStampedLiveIDsInBatches(t *testing.T) {
 	live, stamped, err := st.ScanEmbeddingCoverage(ctx, 7, store.EmbeddingCoverageScan{
 		SourceIDs: []int64{fx.srcA.ID},
 		BatchSize: 2,
-		VisitStamped: func(messageIDs []int64) error {
-			batches = append(batches, append([]int64(nil), messageIDs...))
+		VisitStamped: func(revisions map[int64]int64) error {
+			batches = append(batches, slices.Sorted(maps.Keys(revisions)))
 			return nil
 		},
 	})
@@ -161,7 +202,7 @@ func TestScanEmbeddingCoverageStopsOnVisitError(t *testing.T) {
 
 	_, _, err := st.ScanEmbeddingCoverage(ctx, 7, store.EmbeddingCoverageScan{
 		BatchSize:    10,
-		VisitStamped: func([]int64) error { return visitErr },
+		VisitStamped: func(map[int64]int64) error { return visitErr },
 	})
 	require.ErrorIs(t, err, visitErr)
 }
@@ -169,7 +210,7 @@ func TestScanEmbeddingCoverageStopsOnVisitError(t *testing.T) {
 func TestScanEmbeddingCoverageRejectsNonPositiveBatchSize(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	_, _, err := st.ScanEmbeddingCoverage(t.Context(), 7, store.EmbeddingCoverageScan{
-		VisitStamped: func([]int64) error { return nil },
+		VisitStamped: func(map[int64]int64) error { return nil },
 	})
 	require.ErrorContains(t, err, "batch size must be positive")
 }
@@ -180,26 +221,75 @@ func TestSetEmbedGenIfUnchanged(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	id := seedMessageForLM(t, st)
 	tokenAtRead := baselineLM(t, st, id)
+	var revisionAtRead int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), id).Scan(&revisionAtRead))
 
 	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "corrected body", id)
 	require.NoError(err)
-	missed, covered, err := st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead}}, 7)
+	missed, covered, err := st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{
+		ID: id, LastModified: tokenAtRead, EmbeddingRevision: revisionAtRead,
+	}}, 7)
 	require.NoError(err)
 	assert.Equal([]int64{id}, missed)
 	assert.Zero(covered)
 	assert.False(readEmbedGen(t, st, id).Valid, "a stale token must not stamp the row")
 	tokenAtRead = baselineLM(t, st, id)
+	var currentRevision int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), id).Scan(&currentRevision))
 
-	missed, covered, err = st.SetEmbedGenIfUnchanged(
-		t.Context(),
-		[]store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead}}, 7)
+	missed, covered, err = st.SetEmbedGenIfUnchanged(t.Context(),
+		[]store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead, EmbeddingRevision: currentRevision}}, 7)
 	require.NoError(err)
 	assert.Empty(missed)
 	assert.Equal(1, covered)
 	assert.Equal(sql.NullInt64{Int64: 7, Valid: true}, readEmbedGen(t, st, id))
 	coveredToken := readLM(t, st, id)
-	missed, covered, err = st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: id, LastModified: coveredToken}}, 7)
+	missed, covered, err = st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{
+		ID: id, LastModified: coveredToken, EmbeddingRevision: currentRevision,
+	}}, 7)
 	require.NoError(err)
 	assert.Empty(missed, "an already covered row is not a CAS miss")
 	assert.Zero(covered, "an already covered row is not newly covered")
+}
+
+// A subject-only message's first body row can be empty. That leaves the
+// embedding input unchanged, so it must keep the message's revision and the
+// coverage stamp of its existing subject-only vector.
+func TestEmptyFirstBodyKeepsSubjectOnlyEmbedding(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "empty-body@example.test")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "subject-only", "email_thread", "Subject only")
+	requirements.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, SourceMessageID: "subject-only", ConversationID: conversationID, MessageType: "email",
+		Subject: sql.NullString{String: "Subject only", Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.SetEmbedGen(t.Context(), []int64{id}, 7))
+	state := func() (int64, sql.NullInt64) {
+		t.Helper()
+		var revision int64
+		var gen sql.NullInt64
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+			`SELECT embedding_revision, embed_gen FROM messages WHERE id = ?`), id).Scan(&revision, &gen))
+		return revision, gen
+	}
+	revision, gen := state()
+	requirements.True(gen.Valid)
+
+	requirements.NoError(st.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: "", Valid: true}, sql.NullString{}))
+	afterRevision, afterGen := state()
+	assertions.Equal(revision, afterRevision, "an empty first body leaves the embedding input unchanged")
+	assertions.Equal(gen, afterGen, "the subject-only vector stays covered")
+
+	requirements.NoError(st.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: "Real text", Valid: true}, sql.NullString{}))
+	changedRevision, changedGen := state()
+	assertions.NotEqual(revision, changedRevision, "a real body still invalidates the vector")
+	assertions.False(changedGen.Valid)
 }

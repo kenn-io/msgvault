@@ -2,6 +2,7 @@
 package rerank
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
@@ -26,6 +27,11 @@ type Result struct {
 type Request struct {
 	Query      string
 	Candidates []string
+	// Admit, when set, runs before candidate text leaves for the provider. A
+	// per-candidate ranking runs it before each wave of concurrent requests,
+	// so text whose eligibility ends partway through is never sent. Its error
+	// stops the ranking and is returned unchanged.
+	Admit func(context.Context) error
 }
 
 // Order returns stable descending score indices. It rejects a score that

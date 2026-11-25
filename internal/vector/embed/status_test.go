@@ -369,10 +369,14 @@ func TestWorkerDiagnosticsCountCommittedCoverage(t *testing.T) {
 				f.seed("email", f.chatID, time.Now().UTC(), "Second synthetic body"),
 			}
 			tokens := make(map[int64]any)
+			embeddingRevisions := make(map[int64]int64)
 			for _, id := range ids {
 				var token string
 				require.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?`, id).Scan(&token))
 				tokens[id] = token
+				var revision int64
+				require.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT embedding_revision FROM messages WHERE id = ?`, id).Scan(&revision))
+				embeddingRevisions[id] = revision
 			}
 			_, err := f.store.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_second_stamp BEFORE UPDATE OF embed_gen ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'synthetic stamp failure'); END`, ids[1]))
 			require.NoError(err)
@@ -383,15 +387,15 @@ func TestWorkerDiagnosticsCountCommittedCoverage(t *testing.T) {
 			w := NewWorker(WorkerDeps{Store: f.store, MainDB: f.store.DB(), Backend: f.backend})
 			switch mode {
 			case "missing skip":
-				_, err = w.stampSkipped(ctx, f.gen, []int64{ids[0], ids[1] + 1000}, tokens)
+				_, err = w.stampSkipped(ctx, f.gen, []int64{ids[0], ids[1] + 1000}, tokens, embeddingRevisions)
 				require.NoError(err)
 			case "skipped then covered":
-				_, err = w.stampSkipped(ctx, f.gen, ids[:1], tokens)
+				_, err = w.stampSkipped(ctx, f.gen, ids[:1], tokens, embeddingRevisions)
 				require.NoError(err)
 				ids = ids[1:]
 			}
 			if mode != "missing skip" {
-				_, err = w.stampCovered(ctx, f.gen, ids, tokens)
+				_, err = w.stampCovered(ctx, f.gen, ids, tokens, embeddingRevisions)
 				require.ErrorContains(err, "synthetic stamp failure")
 			}
 			d.finish(err)
@@ -481,7 +485,11 @@ func TestContextDiagnosticsSizeRejection(t *testing.T) {
 				inputs = []DocumentInput{{Chunks: []string{strings.Repeat("é", 2048)}}}
 			}
 			d.beginBatch(len(inputs), time.Now())
-			results, err := w.embedDocuments(withEmbeddingDiagnostics(t.Context(), d), inputs, &contextEmbeddingPage{})
+			policyInputs := make([]contextualDocumentInput, len(inputs))
+			for i, input := range inputs {
+				policyInputs[i] = contextualDocumentInput{input: input}
+			}
+			results, err := w.embedDocuments(withEmbeddingDiagnostics(t.Context(), d), policyInputs, &contextEmbeddingPage{})
 			require.NoError(err, "an oversized document is recovered or left uncovered without failing the pass")
 			require.Len(results, len(inputs))
 			d.finish(nil)

@@ -50,7 +50,7 @@ func TestWorkerPG_StampSkippedWithReservedConnection(t *testing.T) {
 	w := NewWorker(WorkerDeps{Backend: backend, VectorsDB: db, MainDB: db, Store: &pgWorkStore{db: db}, Client: &pgFakeEmbeddingClient{dim: 4}, Rebind: (&store.PostgreSQLDialect{}).Rebind})
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	missed, err := w.stampSkipped(ctx, gen, []int64{1, 2}, map[int64]any{1: first, 2: second})
+	missed, err := w.stampSkipped(ctx, gen, []int64{1, 2}, map[int64]any{1: first, 2: second}, map[int64]int64{1: 0, 2: 0})
 	require.NoError(t, err)
 	assert.Equal(t, []int64{2}, missed)
 	var stamped sql.NullInt64
@@ -70,7 +70,7 @@ func TestWorkerPG_StampSkippedWithReservedConnection(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `CREATE FUNCTION reject_embedding_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'delete failed'; END $$;
 		CREATE TRIGGER reject_embedding_delete BEFORE DELETE ON embeddings FOR EACH STATEMENT EXECUTE FUNCTION reject_embedding_delete()`)
 	require.NoError(t, err)
-	_, err = w.stampSkipped(t.Context(), gen, []int64{2}, map[int64]any{2: second})
+	_, err = w.stampSkipped(t.Context(), gen, []int64{2}, map[int64]any{2: second}, map[int64]int64{2: 0})
 	require.ErrorContains(t, err, "delete failed")
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id=2`).Scan(&stamped))
 	assert.False(t, stamped.Valid, "a failed vector delete rolls back the stamp")
@@ -125,7 +125,8 @@ func (s *pgWorkStore) SetEmbedGen(ctx context.Context, ids []int64, target int64
 
 // SetEmbedGenIfUnchanged mirrors store.Store.SetEmbedGenIfUnchanged on the
 // PG test schema: one transaction of per-row optimistic-CAS stamps gated on
-// last_modified. Returns the ids whose UPDATE matched 0 rows (CAS misses).
+// last_modified and the embedding input revision. Returns the ids whose UPDATE
+// matched 0 rows (CAS misses).
 func (s *pgWorkStore) SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, covered int, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -134,8 +135,8 @@ func (s *pgWorkStore) SetEmbedGenIfUnchanged(ctx context.Context, items []store.
 	defer func() { _ = tx.Rollback() }()
 	for _, it := range items {
 		res, err := tx.ExecContext(ctx,
-			`UPDATE messages SET embed_gen = $1 WHERE id = $2 AND last_modified = $3`,
-			target, it.ID, it.LastModified)
+			`UPDATE messages SET embed_gen = $1 WHERE id = $2 AND last_modified = $3 AND embedding_revision = $4`,
+			target, it.ID, it.LastModified, it.EmbeddingRevision)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -230,6 +231,7 @@ func openPGWorkerDB(t *testing.T, n int) *sql.DB {
 			deleted_at TIMESTAMPTZ,
 			deleted_from_source_at TIMESTAMPTZ,
 			embed_gen BIGINT,
+			embedding_revision BIGINT NOT NULL DEFAULT 0,
 			last_modified TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE message_bodies (

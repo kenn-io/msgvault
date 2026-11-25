@@ -14,6 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedconfig"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -738,4 +741,35 @@ func TestClientHostKitMapsPermanentError(t *testing.T) {
 	require.NoError(t, err)
 	_, err = NewClient(Config{Kit: kit, Model: "test", Dimension: 2}).Embed(t.Context(), []string{"example"})
 	assert.ErrorIs(t, err, ErrPermanent4xx)
+}
+
+// A host-managed client sends text through its own transport, so the room
+// policy captured for the work is checked before the text is handed over.
+func TestClientHostKitChecksRoomPolicyBeforeSending(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"index": 0, "embedding": []float32{1, 0}}}, "model": "test"}))
+	}))
+	t.Cleanup(server.Close)
+	kit, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: "test", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: server.URL, TrustPrivateNetwork: true}})
+	require.NoError(t, err)
+	client := NewClient(Config{Kit: kit, Model: "test", Dimension: 2})
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "workspace")
+	require.NoError(t, err)
+	_, err = st.EnsureConversation(t.Context(), source.ID, "room", "Room")
+	require.NoError(t, err)
+	ctx, err := st.CaptureConversationPolicyWork(t.Context())
+	require.NoError(t, err)
+	_, err = client.Embed(ctx, []string{"example"})
+	require.NoError(t, err)
+	require.Equal(t, int32(1), calls.Load())
+
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), source.ID, "room", conversationpolicy.Cold))
+	_, err = client.Embed(ctx, []string{"example"})
+	require.ErrorIs(t, err, store.ErrConversationPolicyStale)
+	assert.Equal(t, int32(1), calls.Load(), "text captured before the change is not sent")
 }

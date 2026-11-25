@@ -7,8 +7,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -118,27 +120,54 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 		return fmt.Errorf("backfill: resolve active generation: %w", err)
 	}
 
-	// Distinct message ids that already have an embedding row for the active
-	// generation, read from vectors.db. This cross-DB read stays OUTSIDE the
+	// Distinct message ids and captured revisions that already have an embedding
+	// row for the active generation, read from vectors.db. This cross-DB read stays OUTSIDE the
 	// main.db transaction below: it is read-only and targets a different
 	// *sql.DB handle, so it cannot participate in the main.db tx.
 	rows, err := b.db.QueryContext(ctx,
-		`SELECT DISTINCT message_id FROM embeddings WHERE generation_id = ?`,
+		`SELECT DISTINCT message_id, embedding_revision FROM embeddings WHERE generation_id = ?`,
 		int64(active.ID))
 	if err != nil {
 		return fmt.Errorf("backfill: list embedded message ids: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	vectorRevisions := make(map[int64]map[int64]struct{})
 	var ids []int64
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var id, revision int64
+		if err := rows.Scan(&id, &revision); err != nil {
 			return fmt.Errorf("backfill: scan embedded message id: %w", err)
 		}
-		ids = append(ids, id)
+		if _, exists := vectorRevisions[id]; !exists {
+			vectorRevisions[id] = make(map[int64]struct{})
+			ids = append(ids, id)
+		}
+		vectorRevisions[id][revision] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("backfill: iterate embedded message ids: %w", err)
+	}
+	currentRevisions, err := b.currentEmbeddingRevisions(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("backfill: read current message revisions: %w", err)
+	}
+	eligibleRevisions := make(map[int64]int64, len(currentRevisions))
+	baselineIDs := make([]int64, 0)
+	for id, revision := range currentRevisions {
+		if _, exists := vectorRevisions[id][revision]; exists {
+			eligibleRevisions[id] = revision
+			continue
+		}
+		// Store upgrade baselines legacy unstamped messages at revision 1.
+		// A revision-zero active vector is still current when that is the only
+		// difference: source changes after the upgrade advance beyond 1, and
+		// legacy pending_embeddings rows below preserve the old re-embed signal.
+		if revision == 1 {
+			if _, exists := vectorRevisions[id][0]; exists {
+				eligibleRevisions[id] = 0
+				baselineIDs = append(baselineIDs, id)
+			}
+		}
 	}
 
 	// Preserve the legacy pending re-embed signal. Under the
@@ -155,18 +184,19 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(pendingIDs) > 0 {
-		pendingSet := make(map[int64]struct{}, len(pendingIDs))
-		for _, id := range pendingIDs {
-			pendingSet[id] = struct{}{}
-		}
-		kept := ids[:0]
-		for _, id := range ids {
-			if _, isPending := pendingSet[id]; !isPending {
-				kept = append(kept, id)
+	pendingSet := make(map[int64]struct{}, len(pendingIDs))
+	for _, id := range pendingIDs {
+		pendingSet[id] = struct{}{}
+		delete(eligibleRevisions, id)
+	}
+	if len(pendingSet) > 0 {
+		remaining := baselineIDs[:0]
+		for _, id := range baselineIDs {
+			if _, pending := pendingSet[id]; !pending {
+				remaining = append(remaining, id)
 			}
 		}
-		ids = kept
+		baselineIDs = remaining
 	}
 
 	// Atomicity (Codex 129d #2/#3): the embed_gen stamp UPDATE(s) and the
@@ -178,6 +208,13 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 	// clobbers any NULL resets repair-encoding made in the interim. With one
 	// tx, a partial-chunk failure rolls back EVERY chunk and the mark, so the
 	// migration stays unmarked and the next Open re-runs cleanly from scratch.
+	if b.policyStore != nil {
+		release, err := b.policyStore.AcquireSQLiteConversationPolicyFence(ctx, store.ConversationPolicyShared)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	tx, err := b.mainDB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("backfill: begin tx: %w", err)
@@ -188,26 +225,62 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 			_ = tx.Rollback()
 		}
 	}()
-
-	// Stamp embed_gen=active for those ids on main.db, but only where it is
-	// still NULL — never overwrite a row already stamped for a different
-	// generation. Chunked to stay under the bind limit; ALL chunks run on the
-	// same tx.
-	for start := 0; start < len(ids); start += backfillStampChunk {
-		end := min(start+backfillStampChunk, len(ids))
-		chunk := ids[start:end]
+	// Restore the pre-upgrade revision for current active-generation vectors.
+	// Rows with a legacy pending re-embed signal were removed from baselineIDs,
+	// so their revision remains 1 and their stale vector stays hidden.
+	for start := 0; start < len(baselineIDs); start += backfillStampChunk {
+		end := min(start+backfillStampChunk, len(baselineIDs))
+		chunk := baselineIDs[start:end]
 		placeholders := make([]string, len(chunk))
-		args := make([]any, 0, 1+len(chunk))
-		args = append(args, int64(active.ID))
+		args := make([]any, 0, len(chunk))
 		for i, id := range chunk {
 			placeholders[i] = "?"
 			args = append(args, id)
 		}
-		q := `UPDATE messages SET embed_gen = ?
-		       WHERE embed_gen IS NULL
-		         AND id IN (` + strings.Join(placeholders, ",") + `)`
+		q := `UPDATE messages SET embedding_revision = 0
+		      WHERE embed_gen IS NULL AND embedding_revision = 1
+		        AND id IN (` + strings.Join(placeholders, ",") + `)`
+		if b.policyStore != nil {
+			q += " AND " + store.FullMessageWhere("messages")
+		}
 		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
-			return fmt.Errorf("backfill: stamp embed_gen: %w", err)
+			return fmt.Errorf("backfill: restore legacy embedding revision baseline: %w", err)
+		}
+	}
+
+	// Stamp embed_gen=active only for message revisions represented by an
+	// active-generation vector. The revision predicate also protects against
+	// archive edits between the cross-database read and this transaction.
+	idsByRevision := make(map[int64][]int64)
+	for id, revision := range eligibleRevisions {
+		idsByRevision[revision] = append(idsByRevision[revision], id)
+	}
+	revisions := make([]int64, 0, len(idsByRevision))
+	for revision := range idsByRevision {
+		revisions = append(revisions, revision)
+	}
+	slices.Sort(revisions)
+	for _, revision := range revisions {
+		ids := idsByRevision[revision]
+		for start := 0; start < len(ids); start += backfillStampChunk {
+			end := min(start+backfillStampChunk, len(ids))
+			chunk := ids[start:end]
+			placeholders := make([]string, len(chunk))
+			args := make([]any, 0, 2+len(chunk))
+			args = append(args, int64(active.ID), revision)
+			for i, id := range chunk {
+				placeholders[i] = "?"
+				args = append(args, id)
+			}
+			q := `UPDATE messages SET embed_gen = ?
+			       WHERE embed_gen IS NULL AND embedding_revision = ?
+			         AND id IN (` + strings.Join(placeholders, ",") + `)`
+			if b.policyStore != nil {
+				q += " AND " + store.FullMessageWhere("messages")
+			}
+			if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+				return fmt.Errorf("backfill: stamp embed_gen: %w", err)
+			}
 		}
 	}
 

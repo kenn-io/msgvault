@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -98,6 +99,11 @@ func (c *Client) embed(ctx context.Context, role embedconfig.Role, inputs []stri
 		return nil, nil
 	}
 	if c.cfg.Kit != nil {
+		// A host-managed client owns its transport and retries, so room
+		// policy can be checked only before the text is handed over.
+		if err := store.CheckConversationPolicyAdmission(ctx); err != nil {
+			return nil, err
+		}
 		vectors, err := c.cfg.Kit.EmbedTexts(ctx, role, inputs)
 		return c.mapResult(ctx, role, inputs, vectors, err)
 	}

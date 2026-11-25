@@ -59,7 +59,7 @@ func (t CommentTarget) Provider() string { return commentPlatforms[t.SourceType]
 // archive message ID. Posts, media captions, comments deleted from Meta and
 // messages from other sources are refused.
 func ResolveCommentTarget(ctx context.Context, st *store.Store, messageID int64) (CommentTarget, error) {
-	found, err := st.GetMessagesSummariesByIDsContext(ctx, []int64{messageID})
+	found, err := st.GetArchivedMessagesSummariesByIDsContext(ctx, []int64{messageID})
 	if err != nil {
 		return CommentTarget{}, err
 	}

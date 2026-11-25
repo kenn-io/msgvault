@@ -117,7 +117,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			return fmt.Sprintf("$%d", len(args))
 		}
 
-		liveSQL := store.LiveMessagesWhere("m", true)
+		liveSQL := b.liveMessageWhere("m")
 		emptyFilter := req.Filter.IsEmpty()
 
 		// When the structured filter is empty the candidate universe is the
@@ -202,21 +202,15 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			// The widening loop in FusedSearch grows innerChunks when this
 			// dedup collapses the pool below KPerSignal+1.
 			annConstraint := "              JOIN filtered f ON f.id = e.message_id\n"
-			annLive := ""
+			annWhere := fmt.Sprintf("EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND %s)", b.embeddedMessageWhere("e"))
+			annLive := "               AND " + annWhere + "\n"
 			if emptyFilter {
 				annConstraint = ""
-				annLive = fmt.Sprintf(
-					"               AND EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND %s)\n",
-					liveSQL)
 			}
 			omittedANN = fmt.Sprintf(`((SELECT COUNT(*) FROM ann_pool) > %s AND EXISTS (
  SELECT 1 FROM embeddings e %s WHERE e.generation_id = %s AND e.dimension = %d
  %s AND e.message_id NOT IN (SELECT message_id FROM fused)))`, kArg, annConstraint, genArg, dim, annLive)
-			where := "TRUE"
-			if emptyFilter {
-				where = fmt.Sprintf("EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND %s)", liveSQL)
-			}
-			candidates := generationCandidates(dim, vecArg, genArg, innerArg, annConstraint, where)
+			candidates := generationCandidates(dim, vecArg, genArg, innerArg, annConstraint, annWhere)
 			ctes = append(ctes,
 				fmt.Sprintf(`ann_pool AS (
     SELECT ann.message_id, MIN(ann.distance) AS distance
@@ -414,7 +408,7 @@ func (b *Backend) filteredChunkMessageCount(ctx context.Context, gen vector.Gene
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
 	}
-	clauses := append([]string{store.LiveMessagesWhere("m", true)}, buildPGFilterClauses(f, bind)...)
+	clauses := append([]string{b.embeddedMessageWhere("e")}, buildPGFilterClauses(f, bind)...)
 	query := `SELECT COUNT(DISTINCT e.message_id)
 	            FROM embeddings e
 	            JOIN messages m ON m.id = e.message_id

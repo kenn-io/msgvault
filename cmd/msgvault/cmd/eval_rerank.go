@@ -407,14 +407,14 @@ func prepareEvalCandidates(ctx context.Context, s *store.Store, keys []string, h
 	return texts, nil
 }
 
-func rerankEvalKeys(ctx context.Context, scorer evalReranker, query string, keys, texts []string) ([]string, rerank.Result, error) {
+func rerankEvalKeys(ctx context.Context, scorer evalReranker, query string, keys, texts []string, admit func(context.Context) error) ([]string, rerank.Result, error) {
 	if len(keys) < 2 || len(texts) < 2 {
 		return slices.Clone(keys), rerank.Result{Usage: rerank.Usage{
 			InputTokens: new(int64(0)), OutputTokens: new(int64(0)), Complete: true,
 		}}, nil
 	}
 	texts = texts[:min(len(texts), len(keys))]
-	result, err := scorer.Rerank(ctx, rerank.Request{Query: query, Candidates: texts})
+	result, err := scorer.Rerank(ctx, rerank.Request{Query: query, Candidates: texts, Admit: admit})
 	if err != nil {
 		return nil, result, err
 	}
@@ -433,6 +433,19 @@ func rerankEvalKeys(ctx context.Context, scorer evalReranker, query string, keys
 	return out, result, nil
 }
 
+// errEvalCandidatePolicy marks a ranking stopped because a candidate's room
+// changed policy after the ranking began.
+var errEvalCandidatePolicy = errors.New("candidate policy changed or is ineligible")
+
+// admitEvalCandidates rechecks the captured candidates' room policy before
+// their text is sent, including between per-candidate request waves.
+func admitEvalCandidates(ctx context.Context) error {
+	if err := store.CheckConversationPolicyAdmission(ctx); err != nil {
+		return fmt.Errorf("%w: %w", errEvalCandidatePolicy, err)
+	}
+	return nil
+}
+
 func (r *evalRerankReport) fail(mode, shape, reason string) {
 	arm := r.arm(mode, shape)
 	arm.Status, arm.Complete, arm.Error = "failed", false, reason
@@ -442,6 +455,10 @@ func (r *evalRerankReport) fail(mode, shape, reason string) {
 func (r *evalRerankReport) scoreRanking(ctx context.Context, s *store.Store, hits map[string]evalHit,
 	mode string, topic eval.Topic, ranked []string, rel map[string]struct{}, cutoffs eval.Cutoffs, elapsed time.Duration,
 ) error {
+	ctx, err := s.CaptureConversationPolicyWork(ctx)
+	if err != nil {
+		return fmt.Errorf("topic %s, mode %s: capture candidate policy: %w", topic.ID, mode, err)
+	}
 	prepStart := time.Now()
 	var texts []string
 	if len(ranked) >= 2 {
@@ -455,11 +472,26 @@ func (r *evalRerankReport) scoreRanking(ctx context.Context, s *store.Store, hit
 		}
 	}
 	prepElapsed := time.Since(prepStart)
+	ids := make([]int64, len(texts))
+	for i, key := range ranked[:len(texts)] {
+		ids[i] = hits[key].MessageID
+	}
+	ctx = store.WithConversationPolicyMessageIDs(ctx, ids)
 	for _, shape := range r.Shapes {
 		arm := r.arm(mode, shape)
+		if len(texts) >= 2 {
+			if err := store.CheckConversationPolicyAdmission(ctx); err != nil {
+				r.fail(mode, shape, "candidate policy changed or is ineligible")
+				return fmt.Errorf("topic %s, mode %s, shape %s: candidate policy changed or is ineligible", topic.ID, mode, shape)
+			}
+		}
 		providerStart := time.Now()
-		reranked, result, err := rerankEvalKeys(ctx, r.scorers[shape], topic.Query, ranked, texts)
+		reranked, result, err := rerankEvalKeys(ctx, r.scorers[shape], topic.Query, ranked, texts, admitEvalCandidates)
 		arm.addUsage(result.Usage, r.InputUSDPerM, r.OutputUSDPerM)
+		if errors.Is(err, errEvalCandidatePolicy) {
+			r.fail(mode, shape, "candidate policy changed or is ineligible")
+			return fmt.Errorf("topic %s, mode %s, shape %s: candidate policy changed or is ineligible", topic.ID, mode, shape)
+		}
 		if err != nil {
 			failure := rerank.SafeFailure(err)
 			r.fail(mode, shape, failure)
