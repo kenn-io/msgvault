@@ -1120,6 +1120,7 @@ func TestWalkStopsWhenRepliesFindConversationUnreadable(t *testing.T) {
 		{
 			name: "initial walk",
 			lose: func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, _ time.Time) string {
+				t.Helper()
 				_, err := imp.Import(t.Context(), opts)
 				require.NoError(t, err)
 				return f.conv("C09").findRoot(rootTS).Replies[0].TS
@@ -1128,6 +1129,7 @@ func TestWalkStopsWhenRepliesFindConversationUnreadable(t *testing.T) {
 		{
 			name: "audit walk",
 			lose: func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, start time.Time) string {
+				t.Helper()
 				f.mu.Lock()
 				f.unreadableReplies = nil
 				f.mu.Unlock()
@@ -1193,6 +1195,7 @@ func TestWalkRevisitsThreadsDroppedWhileConversationUnreadable(t *testing.T) {
 		{
 			name: "initial walk",
 			queue: func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, _ time.Time) string {
+				t.Helper()
 				_, err := imp.Import(t.Context(), opts)
 				require.NoError(t, err)
 				return f.conv("C09").findRoot(rootTS).Replies[0].TS
@@ -1201,6 +1204,7 @@ func TestWalkRevisitsThreadsDroppedWhileConversationUnreadable(t *testing.T) {
 		{
 			name: "audit walk",
 			queue: func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, start time.Time) string {
+				t.Helper()
 				unlimited := opts
 				unlimited.Limit = 0
 				_, err := imp.Import(t.Context(), unlimited)
