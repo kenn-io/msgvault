@@ -6,7 +6,9 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"slices"
+	"strings"
 
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -15,6 +17,11 @@ type changesFilter struct {
 	SourceIDs, ConversationIDs []int64
 	IncomingOnly               bool
 	participants               []int64
+	grantRefs                  []changeGrantRef
+}
+
+func (f changesFilter) hasSelectors() bool {
+	return f.PersonID != 0 || len(f.SourceIDs) != 0 || len(f.ConversationIDs) != 0 || f.IncomingOnly
 }
 
 func parseChangesFilter(r *http.Request) (changesFilter, error) {
@@ -56,15 +63,34 @@ func parseChangesFilter(r *http.Request) (changesFilter, error) {
 	return f, nil
 }
 
+type changeGrantRef struct{ Type, Identifier string }
+
+func (f changesFilter) bindGrant(grant *agentgrant.Grant) changesFilter {
+	// A non-nil slice distinguishes even an empty grant from an owner.
+	f.grantRefs = make([]changeGrantRef, 0, len(grant.Sources))
+	for _, ref := range grant.Sources {
+		f.grantRefs = append(f.grantRefs, changeGrantRef{ref.Type, ref.Identifier})
+	}
+	slices.SortFunc(f.grantRefs, func(a, b changeGrantRef) int {
+		if n := strings.Compare(a.Type, b.Type); n != 0 {
+			return n
+		}
+		return strings.Compare(a.Identifier, b.Identifier)
+	})
+	return f
+}
+
 func (f changesFilter) digest() string {
-	if f.PersonID == 0 && len(f.SourceIDs) == 0 && len(f.ConversationIDs) == 0 && !f.IncomingOnly {
+	if !f.hasSelectors() && f.grantRefs == nil {
 		return ""
 	}
+	// Omit nil grant references to preserve the owner's filter encoding.
 	data, err := json.Marshal(struct {
 		PersonID                   int64
 		SourceIDs, ConversationIDs []int64
 		IncomingOnly               bool
-	}{f.PersonID, f.SourceIDs, f.ConversationIDs, f.IncomingOnly}, json.Deterministic(true))
+		GrantRefs                  []changeGrantRef `json:",omitzero"`
+	}{f.PersonID, f.SourceIDs, f.ConversationIDs, f.IncomingOnly, f.grantRefs}, json.Deterministic(true))
 	if err != nil {
 		panic(err)
 	}

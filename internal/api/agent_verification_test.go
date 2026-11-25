@@ -39,6 +39,7 @@ func TestAgentVerificationReads(t *testing.T) {
 	requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET snippet = ? WHERE id = ?"), "…code is 4829", id)
 	requirements.NoError(err)
+	setChangesWatermark(t, st, "2020-01-01 00:00:00.000", id)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
@@ -50,7 +51,7 @@ func TestAgentVerificationReads(t *testing.T) {
 	for _, path := range []string{
 		"/search?q=verification", "/search/fast?q=verification", "/search/deep?q=verification&scope=body", "/cli/search?q=verification&include_snippet=true",
 		"/search/deep?q=verification",
-		"/messages/filter", "/messages", "/search/domains?domains=example.test",
+		"/messages/filter", "/messages", "/messages/changes", "/search/domains?domains=example.test",
 	} {
 		t.Run(path, func(t *testing.T) {
 			requirements := require.New(t)

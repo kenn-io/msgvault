@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -506,21 +507,23 @@ func writeError(w http.ResponseWriter, status int, err string, message string) {
 // the client surfaces here as context.DeadlineExceeded/Canceled; without this
 // mapping those bubble up as a misleading 400/500 with a raw driver message.
 func (s *Server) writeIfContextError(w http.ResponseWriter, err error) bool {
+	if apiErr := contextAPIHTTPError(err); apiErr != nil {
+		writeAPIHTTPError(w, apiErr)
+		return true
+	}
+	return false
+}
+
+func contextAPIHTTPError(err error) *apiHTTPError {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		writeError(w, http.StatusServiceUnavailable, "query_timeout",
-			"the query exceeded the server time limit; narrow the query and retry")
-		return true
+		return newAPIHTTPError(http.StatusServiceUnavailable, "query_timeout", "the query exceeded the server time limit; narrow the query and retry")
 	case errors.Is(err, context.Canceled):
-		writeError(w, http.StatusServiceUnavailable, "query_canceled",
-			"the query was canceled before it completed")
-		return true
+		return newAPIHTTPError(http.StatusServiceUnavailable, "query_canceled", "the query was canceled before it completed")
 	case errors.Is(err, query.ErrCacheUnavailable):
-		writeError(w, http.StatusServiceUnavailable, "analytical_cache_unavailable",
-			"The committed analytical cache is unavailable")
-		return true
+		return newAPIHTTPError(http.StatusServiceUnavailable, "analytical_cache_unavailable", "The committed analytical cache is unavailable")
 	default:
-		return false
+		return nil
 	}
 }
 
@@ -3260,6 +3263,7 @@ type ChangesResponse struct {
 // the position the cursor encodes, in (content_changed_at, id) order.
 // GET /api/v1/messages/changes?cursor=<next_cursor of the previous page>&limit=100.
 func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
+	grant := s.requestAuthentication(r).Grant
 	// Shape-validated before any capability check: a typo is a 400 on every
 	// backend. Which archive the cursor belongs to needs the store and is
 	// checked below, once the archive can be identified.
@@ -3284,6 +3288,21 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 	}
 	if limit > maxPageSize {
 		limit = maxPageSize
+	}
+
+	if grant != nil {
+		release, apiErr := s.beginAgentRead(r, "listChangedMessages", grant, agentgrant.PermissionSearchRead)
+		if apiErr != nil {
+			writeAPIHTTPError(w, apiErr)
+			return
+		}
+		defer release()
+		for _, id := range filter.SourceIDs {
+			if !slices.Contains(agentReadSourceIDs(r), id) {
+				writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionSearchRead))
+				return
+			}
+		}
 	}
 
 	// Every cursor is a position in ONE archive, so the feed cannot read or issue
@@ -3312,6 +3331,9 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
+	if grant != nil {
+		filter = filter.bindGrant(grant)
+	}
 	digest := filter.digest()
 	if position.filter != "" && position.filter != digest {
 		s.rejectBadParam(w, changesCursorError("was issued for a different filter; restart from an unfiltered cursor or the original filter"))
@@ -3328,7 +3350,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 
 	// One extra row decides has_more without a count == limit false positive.
 	readLimit := limit + 1
-	if digest != "" {
+	if filter.hasSelectors() {
 		readLimit = changesScanBudget + 1
 	}
 	page, err := lister.ListChangedMessages(r.Context(), since, readLimit)
@@ -3344,21 +3366,53 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: filter.PersonID}
 		resolution, resolveErr := resolver.Resolve(r.Context(), s.store, reference, nil)
 		if resolveErr != nil {
+			if grant != nil && (errors.Is(resolveErr, store.ErrPersonNotFound) || errors.Is(resolveErr, resolver.ErrEmptyPopulation)) {
+				writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionSearchRead))
+				return
+			}
 			s.writePersonScopeError(w, reference, resolveErr, "change feed")
 			return
 		}
 		filter.participants = resolution.Scope.ParticipantIDs
+		if grant != nil {
+			checker, ok := s.store.(interface {
+				PersonInSources(ctx context.Context, participantIDs, sourceIDs []int64) (bool, error)
+			})
+			if !ok {
+				writeError(w, 503, "source_scope_unavailable", "Source authorization is unavailable")
+				return
+			}
+			found, err := checker.PersonInSources(r.Context(), filter.participants, agentReadSourceIDs(r))
+			if err != nil {
+				if s.writeIfContextError(w, err) {
+					return
+				}
+				s.logger.Error("check person source scope", "error", err)
+				writeError(w, 500, "internal_error", "Person source scope unavailable")
+				return
+			}
+			if !found {
+				writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionSearchRead))
+				return
+			}
+		}
 	}
 
 	rows := page.Messages
 	hasMore := len(rows) > limit
 	var filteredNext store.ChangedMessagesCursor
-	if digest != "" {
+	if filter.hasSelectors() {
 		rows, filteredNext, hasMore = scanChanges(page, since, filter, limit)
 	} else if hasMore {
 		rows = rows[:limit]
 	}
 
+	if grant != nil {
+		_, ok := withholdRows(s, w, r, rows, func(row *store.ChangedMessage) int64 { return row.ID }, func(row *store.ChangedMessage) { row.Subject, row.Snippet = verification.Masked, verification.Masked })
+		if !ok {
+			return
+		}
+	}
 	messages := make([]ChangedMessageJSON, len(rows))
 	for i, m := range rows {
 		messages[i] = toChangedMessageJSON(m)
@@ -3366,11 +3420,14 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 
 	next := since
 	switch {
-	case digest != "":
+	case filter.hasSelectors():
 		next = filteredNext
 	case len(rows) > 0:
 		last := rows[len(rows)-1]
 		next = store.ChangedMessagesAfter(last.ContentChangedAt, last.ID)
+	case grant != nil && page.CompleteThrough.After(since.At()):
+		// An exhausted scoped page can resume at the safe commit bound.
+		next = store.ChangedMessagesFrom(page.CompleteThrough)
 	case since.At().After(page.ServerTime) && !page.CompleteThrough.IsZero():
 		// A cursor above the database clock is unsatisfiable — the page query stops
 		// strictly below the clock — so echoing it back would wedge the consumer on

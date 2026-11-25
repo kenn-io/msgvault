@@ -179,7 +179,10 @@ limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.27.0**.
+it is separate from the binary release version. The current schema is **5.28.0**.
+
+Schema 5.28.0 lets agents with `search.read` read the
+[message change feed](#get-apiv1messageschanges) for their granted sources.
 
 Schema 5.27.0 accepts `mode=vector` and `mode=hybrid` searches from callers limited to some sources;
 they return hits from those sources only.
@@ -1389,11 +1392,25 @@ conversations, and set `incoming_only=true` to exclude owner-sent messages on a
 best-effort basis. Direction corrections do not move the change watermark, so
 they can leave a missed or stale result. Different filters combine with AND,
 while values within one list combine with OR, up to 50 positive IDs per list.
-Owners can also call the MCP `list_changes` tool. Linking a new identity keeps
-your cursor valid and applies to later changes; run a fresh walk to reconcile
-its older history.
+Owners and agents with `search.read` can also call the MCP `list_changes` tool.
+Linking a new identity keeps your cursor valid and applies to later changes;
+run a fresh walk to reconcile its older history.
 
-A filtered request scans at most 2,000 changes and can return an empty page with
+Agents see only their granted sources. An ungranted `source_id`, or a person
+with no sender, recipient, or conversation roster appearance in a granted
+source, returns `403 permission_denied`. Verification message subjects and
+snippets are masked unless the grant includes `verification.read`. An
+unfiltered request returns an empty `200` page when all of a grant's sources
+are gone.
+
+An agent cursor is bound to the grant's source references. The owner, or a
+token with a different source set, receives `400 invalid_cursor` and must
+restart the walk. A replacement token with the same references can resume,
+including after a source is removed and re-added. An unfiltered owner cursor
+can start an agent walk in the same archive; later cursors carry the grant
+binding.
+
+A filtered request scans at most 2,000 changes in the authorized sources and can return an empty page with
 `has_more=true`; keep following `next_cursor`. A first walk over 400,000
 non-matching changes therefore takes about 200 requests. Once the available range
 is exhausted, the cursor can advance through the empty tail to the commit bound.
@@ -3714,7 +3731,8 @@ Agent requests authenticate with `X-Msgvault-Agent-Token` instead of the owner
 key. Before serving supported archive reads, the daemon checks `search.read`,
 `message.read`, `attachment.read`, or `stats.read` alongside the live source
 identity. Unscoped reads return only granted sources, and explicit accounts,
-collections, and source ID sets must fit entirely inside the grant. A missing
+collections, and source ID sets must fit entirely inside the grant. The
+message change feed requires `search.read` and applies the same source scope. A missing
 permission or an account selector outside the grant returns
 `403 permission_denied` naming the permission, while a message, thread, or
 attachment outside the grant returns the same `404` as a missing one. At most

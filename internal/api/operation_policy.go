@@ -301,7 +301,7 @@ var operationPolicies = map[string]OperationPolicy{
 	"listAgentTokens":                    {},
 	"listCLIAccounts":                    {AgentReadPermission: agentgrant.PermissionSearchRead, RemoteRead: true},
 	"listCLICollections":                 {AgentReadPermission: agentgrant.PermissionSearchRead, RemoteRead: true},
-	"listChangedMessages":                {},
+	"listChangedMessages":                {AgentReadPermission: agentgrant.PermissionSearchRead},
 	"listDeletions":                      {},
 	"listIdentityMatchCandidates":        {},
 	"listMessageRecordings":              {},
