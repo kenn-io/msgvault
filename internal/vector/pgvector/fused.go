@@ -185,7 +185,9 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			kArg := bind(req.KPerSignal)
 			// Use an inner SELECT with ORDER BY <=> LIMIT so pgvector can
 			// apply the HNSW index before the outer GROUP BY collapses
-			// multi-chunk messages. The candidate set is constrained either
+			// multi-chunk messages. When another generation shares the dimension,
+			// generationCandidates uses an exact sort instead.
+			// The candidate set is constrained either
 			// by an inline correlated EXISTS against the live-message set
 			// (empty filter — mirrors backend.go ~816-818, lets the HNSW
 			// index drive the inner ORDER BY without first materializing the
@@ -210,22 +212,19 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			omittedANN = fmt.Sprintf(`((SELECT COUNT(*) FROM ann_pool) > %s AND EXISTS (
  SELECT 1 FROM embeddings e %s WHERE e.generation_id = %s AND e.dimension = %d
  %s AND e.message_id NOT IN (SELECT message_id FROM fused)))`, kArg, annConstraint, genArg, dim, annLive)
+			where := "TRUE"
+			if emptyFilter {
+				where = fmt.Sprintf("EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND %s)", liveSQL)
+			}
+			candidates := generationCandidates(dim, vecArg, genArg, innerArg, annConstraint, where)
 			ctes = append(ctes,
 				fmt.Sprintf(`ann_pool AS (
-    SELECT ann.message_id,
-           MIN(ann.distance) AS distance
-      FROM (
-            SELECT e.message_id,
-                   (e.embedding::vector(%[1]d)) <=> %[2]s::vector AS distance
-              FROM embeddings e
-%[6]s             WHERE e.generation_id = %[3]s AND e.dimension = %[1]d
-%[7]s             ORDER BY e.embedding::vector(%[1]d) <=> %[2]s::vector
-             LIMIT %[4]s
-           ) ann
+    SELECT ann.message_id, MIN(ann.distance) AS distance
+      FROM (%s) ann
      GROUP BY ann.message_id
      ORDER BY distance
-     LIMIT %[5]s
-)`, dim, vecArg, genArg, innerArg, kp1Arg, annConstraint, annLive),
+     LIMIT %s
+)`, candidates, kp1Arg),
 				fmt.Sprintf(`ann_ranked AS (
     SELECT message_id, distance,
            ROW_NUMBER() OVER (ORDER BY distance ASC, message_id ASC) AS rnk

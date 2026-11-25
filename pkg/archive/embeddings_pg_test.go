@@ -359,6 +359,191 @@ func TestPostgreSQLEmbeddingsGenerationIdentity(t *testing.T) {
 	}
 }
 
+func assertSearchMessage(t *testing.T, response *httptest.ResponseRecorder, id int64) {
+	t.Helper()
+	var body struct {
+		Results []struct {
+			ID int64 `json:"id"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.NotEmpty(t, body.Results)
+	assert.Equal(t, id, body.Results[0].ID)
+}
+
+func TestPostgreSQLEmbeddingsRebuild(t *testing.T) {
+	require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), archive.PostgreSQL{}), "requires an embedding client")
+	require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), archive.PostgreSQL{Embeddings: &archive.Embeddings{}}), "requires an embedding client")
+	dsn := os.Getenv("MSGVAULT_TEST_DB")
+	if !store.IsPostgresURL(dsn) {
+		t.Skip("requires PostgreSQL")
+	}
+	admin, err := sql.Open("pgx", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close() })
+	installTestPgvector(t, admin)
+	schema := "archive_" + strings.ToLower(rand.Text())
+	quote := func(s string) string { return pgx.Identifier{s}.Sanitize() }
+	t.Cleanup(func() {
+		_, e := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+quote(schema)+" CASCADE")
+		assert.NoError(t, e)
+	})
+	var failOther atomic.Bool
+	var otherSuccesses atomic.Int64
+	var requests atomic.Int64
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model string   `json:"model"`
+			Input []string `json:"input"`
+		}
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+			return
+		}
+		if request.Model == "other" && failOther.Load() && otherSuccesses.Load() > 0 {
+			http.Error(w, "unavailable", http.StatusInternalServerError)
+			return
+		}
+		if request.Model == "other" {
+			otherSuccesses.Add(1)
+		}
+		requests.Add(1)
+		data := make([]map[string]any, len(request.Input))
+		for i, input := range request.Input {
+			v := []float32{0, 1}
+			if strings.Contains(input, "observatory") {
+				v = []float32{1, 0}
+			}
+			if request.Model == "other" {
+				v = append(v, 0)
+			}
+			data[i] = map[string]any{"index": i, "embedding": v}
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data, "model": request.Model}))
+	}))
+	t.Cleanup(service.Close)
+	settings := func(t *testing.T, d embedmodel.Descriptor) *archive.Embeddings {
+		t.Helper()
+		client, err := embedclient.New(embedclient.Options{Model: d.Model, Roles: d.Roles, Deployment: embedconfig.Deployment{BaseURL: service.URL, TrustPrivateNetwork: true}})
+		require.NoError(t, err)
+		return &archive.Embeddings{Client: client, Descriptor: d}
+	}
+	desc := testDescriptor()
+	opts := archive.PostgreSQL{URL: dsn, Schema: schema, Embeddings: settings(t, desc)}
+	require.NoError(t, archive.Setup(t.Context(), opts))
+	owner, err := archive.Open(t.Context(), opts)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, owner.Close()) }()
+	source, err := owner.Store().GetOrCreateSource("slack", "source")
+	require.NoError(t, err)
+	conversation, err := owner.Store().EnsureConversation(t.Context(), source.ID, "channel", "Channel")
+	require.NoError(t, err)
+	var observatoryID int64
+	for i := range 33 {
+		body := fmt.Sprintf("message %d", i)
+		if i == 0 {
+			body = "observatory"
+		}
+		id, err := owner.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: body, MessageType: "slack", SentAt: sql.NullTime{Time: time.Now(), Valid: true}, Subject: sql.NullString{String: body, Valid: true}})
+		require.NoError(t, err)
+		if i == 0 {
+			observatoryID = id
+		}
+		require.NoError(t, owner.Store().UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+		require.NoError(t, owner.Store().UpsertFTS(id, body, body, "", "", ""))
+	}
+	require.NoError(t, owner.Embed(t.Context()))
+	var oldID int64
+	require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='active'`).Scan(&oldID))
+	original := desc
+	require.True(t, t.Run("unsupported dimension", func(t *testing.T) {
+		unsupported := desc
+		unsupported.Model.Dimensions = 3072
+		opts.Embeddings = settings(t, unsupported)
+		require.Error(t, archive.RebuildEmbeddings(t.Context(), opts))
+	}))
+	var buildingID int64
+	var built int
+	require.True(t, t.Run("failed build and revert", func(t *testing.T) {
+		desc.Model.Name, desc.Model.Dimensions = "other", 3
+		opts.Embeddings = settings(t, desc)
+		require.ErrorContains(t, archive.Setup(t.Context(), opts), "differs from configured")
+		failOther.Store(true)
+		require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), opts), "unavailable")
+		failOther.Store(false)
+		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='building'`).Scan(&buildingID))
+		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&built))
+		require.Positive(t, built)
+		require.Less(t, built, 33)
+		invalid := opts
+		invalid.Embeddings = settings(t, original)
+		invalid.MaxOpenConnections = 1
+		require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), invalid), "MaxOpenConnections")
+		var stillBuilding int64
+		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='building'`).Scan(&stillBuilding))
+		assert.Equal(t, buildingID, stillBuilding)
+		var remaining int
+		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&remaining))
+		assert.Equal(t, built, remaining)
+		var count int
+		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, oldID).Scan(&count))
+		assert.Equal(t, 33, count)
+		response := sourceScopeRequest(t.Context(), t, owner.NewServer(archive.ServerOptions{}).Handler(nil), "/api/v1/search?q=observatory&mode=vector")
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		assertSearchMessage(t, response, observatoryID)
+		require.ErrorContains(t, archive.Setup(t.Context(), opts), "RebuildEmbeddings")
+		opts.Embeddings = settings(t, original)
+		before := requests.Load()
+		require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
+		assert.Greater(t, requests.Load(), before)
+		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM index_generations WHERE state='building'`).Scan(&count))
+		assert.Zero(t, count)
+		before = requests.Load()
+		require.NoError(t, owner.Embed(t.Context()))
+		assert.Equal(t, before, requests.Load())
+	}))
+	require.True(t, t.Run("resume build", func(t *testing.T) {
+		opts.Embeddings = settings(t, desc)
+		otherSuccesses.Store(0)
+		failOther.Store(true)
+		require.ErrorContains(t, archive.RebuildEmbeddings(t.Context(), opts), "unavailable")
+		failOther.Store(false)
+		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='building'`).Scan(&buildingID))
+		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1`, buildingID).Scan(&built))
+		require.Positive(t, built)
+		require.Less(t, built, 33)
+		require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
+		var activeID int64
+		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT id FROM index_generations WHERE state='active'`).Scan(&activeID))
+		assert.Equal(t, buildingID, activeID)
+		runtime, err := archive.Open(t.Context(), opts)
+		require.NoError(t, err)
+		defer func() { assert.NoError(t, runtime.Close()) }()
+		handler := runtime.NewServer(archive.ServerOptions{}).Handler(nil)
+		response := sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=observatory&mode=vector")
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		assertSearchMessage(t, response, observatoryID)
+		var count, dimension int
+		var model string
+		require.NoError(t, owner.Store().DB().QueryRowContext(t.Context(), `SELECT count(*), max(dimension), max(model) FROM index_generations WHERE state='active'`).Scan(&count, &dimension, &model))
+		assert.Equal(t, 1, count)
+		assert.Equal(t, 3, dimension)
+		assert.Equal(t, "other", model)
+	}))
+	require.True(t, t.Run("same dimension", func(t *testing.T) {
+		suffix := desc
+		suffix.Roles.DocumentSuffix = " end"
+		opts.Embeddings = settings(t, suffix)
+		require.ErrorContains(t, archive.Setup(t.Context(), opts), "RebuildEmbeddings")
+		require.NoError(t, archive.RebuildEmbeddings(t.Context(), opts))
+		reopened, err := archive.Open(t.Context(), opts)
+		require.NoError(t, err)
+		defer func() { assert.NoError(t, reopened.Close()) }()
+		response := sourceScopeRequest(t.Context(), t, reopened.NewServer(archive.ServerOptions{}).Handler(nil), "/api/v1/search?q=observatory&mode=vector")
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		assertSearchMessage(t, response, observatoryID)
+	}))
+}
+
 func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {
 	dsn := os.Getenv("MSGVAULT_TEST_DB")
 	if !store.IsPostgresURL(dsn) {
@@ -417,7 +602,7 @@ func TestPostgreSQLEmbeddingsForeignBuild(t *testing.T) {
 	require.NoError(t, check.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE message_id=999`).Scan(&count))
 	assert.Equal(t, 1, count)
 
-	// A matching build must not replace an unfamiliar active generation.
+	// A matching build cannot replace an unknown active generation without a rebuild.
 	_, err = check.ExecContext(t.Context(), `INSERT INTO index_generations (model, dimension, fingerprint, started_at, state) VALUES ('test', 2, $1, 0, 'building')`, matchingFingerprint)
 	require.NoError(t, err)
 	require.ErrorContains(t, archive.Setup(t.Context(), opts), "future-format:v2")

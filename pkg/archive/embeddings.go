@@ -20,7 +20,7 @@ import (
 )
 
 // Embeddings configures a host-owned client and the descriptor used to build it.
-// Changing its vector identity requires retiring the existing generation before Setup.
+// Use RebuildEmbeddings when its vector identity changes.
 type Embeddings struct {
 	Client     *embedclient.Client
 	Descriptor embedmodel.Descriptor
@@ -61,28 +61,32 @@ func embeddingConfig(settings *Embeddings) (vector.Config, error) {
 	return cfg, nil
 }
 
-func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vector.Config, create bool) (vector.Generation, bool, error) {
+func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vector.Config, create, replace bool) (vector.Generation, bool, error) {
 	fingerprint := cfg.GenerationFingerprint()
 	building, err := backend.BuildingGeneration(ctx)
 	if err != nil {
 		return vector.Generation{}, false, err
 	}
-	if building != nil {
-		if building.Fingerprint != fingerprint {
-			return vector.Generation{}, false, fmt.Errorf("%w: building fingerprint %q differs from configured %q; finish the build or retire it", vector.ErrBuildingInProgress, building.Fingerprint, fingerprint)
+	if building != nil && building.Fingerprint != fingerprint {
+		if !replace {
+			return vector.Generation{}, false, fmt.Errorf("%w: building fingerprint %q differs from configured %q; use RebuildEmbeddings to replace it", vector.ErrBuildingInProgress, building.Fingerprint, fingerprint)
 		}
+		if err := backend.RetireGeneration(ctx, building.ID, false); err != nil {
+			return vector.Generation{}, false, err
+		}
+		building = nil
 	}
 	active, err := backend.ActiveGeneration(ctx)
 	if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
 		return vector.Generation{}, false, err
 	}
-	if err == nil && active.Fingerprint != fingerprint {
-		return vector.Generation{}, false, fmt.Errorf("embedding generation %q differs from configured %q; retire it before changing settings", active.Fingerprint, fingerprint)
+	if err == nil && active.Fingerprint != fingerprint && !replace {
+		return vector.Generation{}, false, fmt.Errorf("embedding generation %q differs from configured %q; use RebuildEmbeddings to replace it", active.Fingerprint, fingerprint)
 	}
 	if building != nil {
 		return *building, true, nil
 	}
-	if err == nil {
+	if err == nil && active.Fingerprint == fingerprint {
 		return active, false, nil
 	}
 	if !create {
@@ -95,7 +99,7 @@ func embeddingGeneration(ctx context.Context, backend *pgvector.Backend, cfg vec
 	return vector.Generation{ID: id, Fingerprint: fingerprint}, true, nil
 }
 
-func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config) error {
+func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config, rebuild bool) error {
 	if !pgvector.Available() {
 		return nil
 	}
@@ -111,12 +115,15 @@ func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config) er
 	}
 	// A new generation creates its own indexes; existing generations need migration to check them.
 	dimension := 0
-	if exists {
+	if rebuild {
+		dimension = cfg.Embeddings.Dimension
+	}
+	if exists && !rebuild {
 		backend, err := pgvector.Open(ctx, pgvector.Options{DB: st.DB(), Dimension: cfg.Embeddings.Dimension, SkipMigrate: true, ReadOnly: true})
 		if err != nil {
 			return err
 		}
-		_, _, err = embeddingGeneration(ctx, backend, cfg, false)
+		_, _, err = embeddingGeneration(ctx, backend, cfg, false, false)
 		if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
 			return err
 		}
@@ -128,7 +135,7 @@ func setupEmbeddings(ctx context.Context, st *store.Store, cfg vector.Config) er
 	if err != nil {
 		return err
 	}
-	_, _, err = embeddingGeneration(ctx, backend, cfg, true)
+	_, _, err = embeddingGeneration(ctx, backend, cfg, true, rebuild)
 	return err
 }
 
@@ -156,6 +163,10 @@ func openEmbeddings(ctx context.Context, st *store.Store, settings *Embeddings, 
 // Embed runs a full embedding pass. The caller serializes calls across all handles
 // for the same archive and stops them before Close.
 func (a *Archive) Embed(ctx context.Context) error {
+	return a.embed(ctx, false)
+}
+
+func (a *Archive) embed(ctx context.Context, replace bool) error {
 	if a.vectorErr != nil {
 		return a.vectorErr
 	}
@@ -163,7 +174,7 @@ func (a *Archive) Embed(ctx context.Context) error {
 		return nil
 	}
 	rt := a.embeddings
-	gen, building, err := embeddingGeneration(ctx, rt.backend, rt.config, false)
+	gen, building, err := embeddingGeneration(ctx, rt.backend, rt.config, false, replace)
 	if err != nil {
 		return err
 	}

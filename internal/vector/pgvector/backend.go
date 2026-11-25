@@ -1046,6 +1046,25 @@ func (b *Backend) ResetWatermarkBelow(ctx context.Context, minID int64) error {
 	return nil
 }
 
+// generationCandidates keeps the indexed path for a single generation. While a
+// second generation shares its HNSW graph, an exact sort prevents its vectors
+// from consuming the search budget before the generation filter is applied.
+// The literal dimension lets PostgreSQL match the partial index even with a
+// generic plan. Adding zero to the exact branch's distance prevents an HNSW
+// scan from applying its candidate limit before the generation filter.
+func generationCandidates(dim int, vecArg, genArg, limitArg, from, where string) string {
+	competing := fmt.Sprintf("EXISTS (SELECT 1 FROM index_generations g WHERE g.id <> %s AND g.dimension = %d AND g.state IN ('active', 'building'))", genArg, dim)
+	distance := fmt.Sprintf("e.embedding::vector(%d) <=> %s::vector", dim, vecArg)
+	branch := func(guard, order string) string {
+		return fmt.Sprintf(`SELECT * FROM (
+			SELECT e.message_id, %s AS distance FROM embeddings e %s
+			WHERE e.generation_id = %s AND e.dimension = %d AND %s AND %s
+			ORDER BY %s LIMIT %s
+		) candidates`, distance, from, genArg, dim, where, guard, order, limitArg)
+	}
+	return branch("NOT "+competing, distance) + " UNION ALL " + branch(competing, "("+distance+") + 0")
+}
+
 // Search runs an ANN query against the given generation and returns
 // the top-k hits (optionally intersected with a structured filter).
 // Uses pgvector's cosine-distance operator (<=>), which returns 0..2;
@@ -1096,7 +1115,9 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		// most innerLimit rows in ANN order; the HNSW index applies to that
 		// inner ORDER BY (ef_search is raised at connect time — see
 		// store.HNSWEfSearch — so the index is not capped at the pgvector
-		// default of 40). The outer query re-groups by message_id to
+		// default of 40). When another generation shares the dimension,
+		// generationCandidates uses an exact sort instead.
+		// The outer query re-groups by message_id to
 		// collapse multi-chunk messages (best chunk wins via MIN), then
 		// re-sorts and re-limits the deduplicated result. We start at
 		// k*annOverFetchFactor chunks so the common single-chunk case is a
@@ -1108,24 +1129,10 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		// partial HNSW index's WHERE dimension = <N> in migrate.go and the
 		// fused.go ANN path) rather than a bind param, so a PG generic plan
 		// can prove the partial-index predicate and use the HNSW index.
-		stmt := fmt.Sprintf(`
-			SELECT ann.message_id,
-			       MIN(ann.distance) AS distance
-			  FROM (
-			        SELECT e.message_id,
-			               (e.embedding::vector(%[1]d)) <=> $1::vector AS distance
-			          FROM embeddings e
-			         WHERE e.generation_id = $2
-			           AND e.dimension = %[1]d
-			           AND EXISTS (
-			                SELECT 1 FROM messages m
-			                 WHERE m.id = e.message_id AND %[2]s)
-			         ORDER BY e.embedding::vector(%[1]d) <=> $1::vector
-			         LIMIT $3
-			       ) ann
-			 GROUP BY ann.message_id
-			 ORDER BY distance, ann.message_id
-			 LIMIT $4`, dim, store.LiveMessagesWhere("m", true))
+		candidates := generationCandidates(dim, "$1", "$2", "$3", "", "EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND "+store.LiveMessagesWhere("m", true)+")")
+		stmt := `SELECT ann.message_id, MIN(ann.distance) AS distance FROM (` + candidates + `) ann
+			GROUP BY ann.message_id ORDER BY distance, ann.message_id LIMIT $4`
+
 		// Empty-filter path: the candidate universe is the whole
 		// generation, so the inner-LIMIT ceiling is the generation chunk
 		// count and there is no separate distinct-message early exit
@@ -1187,22 +1194,10 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 	existsClause := filterExistsClause("e", filter, bind)
 	innerArg := fmt.Sprintf("$%d", len(baseArgs)+1)
 	outerArg := fmt.Sprintf("$%d", len(baseArgs)+2)
-	stmt := fmt.Sprintf(`
-		SELECT ann.message_id,
-		       MIN(ann.distance) AS distance
-		  FROM (
-		        SELECT e.message_id,
-		               (e.embedding::vector(%[1]d)) <=> $1::vector AS distance
-		          FROM embeddings e
-		         WHERE e.generation_id = $2
-		           AND e.dimension = $3
-		           AND %[2]s
-		         ORDER BY e.embedding::vector(%[1]d) <=> $1::vector
-		         LIMIT %[3]s
-		       ) ann
-		 GROUP BY ann.message_id
-		 ORDER BY distance, ann.message_id
-		 LIMIT %[4]s`, dim, existsClause, innerArg, outerArg)
+	candidates := generationCandidates(dim, "$1", "$2", innerArg, "", "e.dimension = $3 AND "+existsClause)
+	stmt := `SELECT ann.message_id, MIN(ann.distance) AS distance FROM (` + candidates + `) ann
+		GROUP BY ann.message_id ORDER BY distance, ann.message_id LIMIT ` + outerArg
+
 	return searchWiden(k, filteredChunks, filteredMessages, func(innerLimit int) ([]vector.Hit, error) {
 		runArgs := append(append([]any(nil), baseArgs...), innerLimit, k)
 		return b.scanHits(ctx, stmt, runArgs...)
@@ -1529,6 +1524,8 @@ func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.Gen
 // EmbeddingCoverage counts in-scope live, stamped, and embedded messages for
 // gen in one statement. PostgreSQL gives a statement one snapshot, so a batch
 // committed by a running embedding job cannot make Embedded exceed Stamped.
+// A replacement build moves the shared stamp, but the active generation's
+// retained vectors still count after that build starts or is retired.
 func (b *Backend) EmbeddingCoverage(
 	ctx context.Context, gen vector.GenerationID, scope vector.BuildScope,
 ) (vector.EmbeddingCoverage, error) {
@@ -1537,12 +1534,17 @@ func (b *Backend) EmbeddingCoverage(
 	var coverage vector.EmbeddingCoverage
 	if err := b.db.QueryRowContext(ctx, `
 		SELECT COUNT(*),
-		       COUNT(*) FILTER (WHERE m.embed_gen = $1),
-		       COUNT(*) FILTER (WHERE m.embed_gen = $1 AND EXISTS (
-		           SELECT 1 FROM embeddings e
-		           WHERE e.generation_id = $1 AND e.message_id = m.id))
-		FROM messages m
-		WHERE `+store.LiveMessagesWhere("m", true)+scopeWhere,
+		       COUNT(*) FILTER (WHERE stamped OR (moved AND has_vector)),
+		       COUNT(*) FILTER (WHERE (stamped OR moved) AND has_vector)
+		FROM (
+		    SELECT m.embed_gen = $1 AS stamped,
+		           EXISTS (SELECT 1 FROM embeddings e WHERE e.generation_id = $1 AND e.message_id = m.id) AS has_vector,
+		           EXISTS (SELECT 1 FROM index_generations active
+		                   JOIN index_generations building ON building.id = m.embed_gen AND building.state IN ('building', 'retired')
+		                   WHERE active.id = $1 AND active.state = 'active') AS moved
+		    FROM messages m
+		    WHERE `+store.LiveMessagesWhere("m", true)+scopeWhere+`
+		) coverage`,
 		args...).Scan(&coverage.Live, &coverage.Stamped, &coverage.Embedded); err != nil {
 		return vector.EmbeddingCoverage{}, fmt.Errorf("count embedding coverage: %w", err)
 	}
