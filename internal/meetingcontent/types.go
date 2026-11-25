@@ -92,6 +92,8 @@ type LinkEvidence struct {
 }
 
 type Content struct {
+	// MeetingPlatform preserves the source's recorded call app verbatim.
+	MeetingPlatform    string        `json:"meeting_platform,omitempty"`
 	LinkEvidence       LinkEvidence  `json:"-"`
 	Summary            Section       `json:"summary"`
 	Notes              Section       `json:"notes"`

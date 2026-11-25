@@ -375,7 +375,7 @@ Collection scopes have a few limits in the TUI:
 
 In Meetings mode, pressing `A` opens a separate source selector that does not
 replace the Email account filter. It lists Omi, Granola, Plaud, Pocket,
-Circleback, Notion, Muesli, Twilio, Bland, Twenty, and Chatwoot meeting
+Circleback, Notion, Hex, Muesli, Twilio, Bland, Twenty, and Chatwoot meeting
 sources, plus sources created through the meeting import API.
 
 ## Command reference

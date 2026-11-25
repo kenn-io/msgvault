@@ -489,6 +489,9 @@ func renderMarkdown(packet Packet) string {
 		writeMarkdownField(&builder, "Source type", markdownCode(entry.Meeting.SourceType))
 		writeMarkdownField(&builder, "Source identifier", markdownCode(entry.Meeting.SourceIdentifier))
 		writeMarkdownField(&builder, "Source message ID", markdownCode(entry.Meeting.SourceMessageID))
+		if entry.Content.MeetingPlatform != "" {
+			writeMarkdownField(&builder, "Platform", markdownSingleLine(entry.Content.MeetingPlatform))
+		}
 		if entry.Meeting.OccurredAt == nil {
 			writeMarkdownField(&builder, "Occurred at", "unknown")
 		} else {

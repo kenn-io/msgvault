@@ -53,7 +53,8 @@ attachments alongside the records you browse.
   iMessage, Telegram, X, Discord, Google Voice, Messenger, LinkedIn, TikTok,
   and SMS imports.
 - **Meetings** — Granola, Plaud, Pocket, Circleback, Omi, Twenty, Twilio,
-  Bland, Notion AI Meeting Notes, and Muesli in the same searchable record.
+  Bland, Notion AI Meeting Notes, Muesli, and Hex (builds from `main`) in the same
+  searchable record.
 - **Social and feeds** — Facebook Page and Instagram comments, RSS, Atom, and
   JSON feeds, and messages from any other source through the import API.
 - **Calendar** — Google Calendar events, organizers, and attendees, read-only,

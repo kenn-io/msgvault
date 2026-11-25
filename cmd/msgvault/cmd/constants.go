@@ -23,6 +23,7 @@ const (
 	sourceTypeNotionMeetings = "notion_meetings"
 	sourceTypeTwilio         = "twilio"
 	sourceTypeMuesli         = "muesli"
+	sourceTypeHex            = "hex"
 	sourceTypeTwenty         = "twenty"
 	sourceTypeAppleMessages  = "apple_messages"
 )

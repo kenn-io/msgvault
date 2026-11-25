@@ -23,6 +23,9 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 	if len(raw) > MaxRawBytes {
 		return unavailableContent("raw_too_large")
 	}
+	if rawFormat == "hex_json" {
+		return decodeHex(raw)
+	}
 	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
 		return unavailableContent("invalid_raw")
