@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-20"
+last_edited: "2026-11-25"
 title: Google Calendar
 description: Archive Google Calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
 ---
@@ -27,7 +27,8 @@ msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
 
 Repeating events expand into individual occurrences. Edited occurrences appear
 at their new times, cancelled occurrences show `cancelled`, and a deleted
-series lists only its archived edited or cancelled occurrences. Existing
+or cancelled series lists only its archived edited or cancelled occurrences,
+whether it came from Google Calendar, an invitation, or an `.ics` file. Existing
 archives rebuild event and attendee tables during setup, so you don't need to
 re-sync.
 
