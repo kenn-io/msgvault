@@ -635,7 +635,7 @@ background maintenance establishes readiness separately. Schema migration does
 not scan attachments or populate the index, and suggestion requests never
 perform setup or backfill. Embedded readers require completed version-6 setup.
 
-Conversation-aware search requires version 53. Setup initializes policy for
+Conversation-aware search requires version 54. Setup initializes policy for
 existing chats using saved settings, with automatic classification disabled
 when no settings exist. A failed bootstrap leaves the previous schema version
 in place so runtime readers require setup to finish. Later setup calls also

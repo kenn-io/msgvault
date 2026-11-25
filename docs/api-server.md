@@ -179,7 +179,7 @@ limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.28.0**.
+it is separate from the binary release version. The current schema is **5.29.0**.
 
 Schema 5.27.0 accepts `mode=vector` and `mode=hybrid` searches from callers limited to some sources;
 they return hits from those sources only.
@@ -485,7 +485,7 @@ and the 1.x/2.x transition.
 
 Schema 3.37.0 returns HTTP 200 from `GET /api/v1/participants/{id}` for a participant with no sent or received messages, with `activity_count` set to 0 and `first_at` and `last_at` omitted. `GET /api/v1/participants/{id}/inboxes` also returns HTTP 200 with an empty list for that participant. `GET /api/v1/relationships/{id}/calendar` still returns 404 for that participant because it has no relationship score; check `activity_count` before requesting the calendar. The generated Go client in `pkg/client` declares `PersonSummary.FirstAt` and `LastAt` as `*time.Time`.
 
-Schema 5.28.0 parses the `include:cold` operator in lexical message search, so results can include Cold conversations. Older daemons read `include:cold` as a search word and usually return no matches; the CLI and Go clients refuse to send it to a daemon older than 5.28.0.
+Schema 5.29.0 parses the `include:cold` operator in lexical message search, so results can include Cold conversations. Older daemons read `include:cold` as a search word and usually return no matches; the CLI and Go clients refuse to send it to a daemon older than 5.29.0.
 
 ### Person UIDs and CardDAV bindings
 

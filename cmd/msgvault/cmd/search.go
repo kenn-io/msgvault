@@ -90,7 +90,7 @@ Use | between alternatives, for example invoice from:alice | receipt from:bob.
 filename: values use case-insensitive literal substring matching, including
 %, _, and backslashes. Repeat filename: to require every value to match.
 The filename operator requires daemon API schema 3.14.0 or newer.
-With a remote daemon, include:cold requires daemon API schema 5.28.0 or newer.
+With a remote daemon, include:cold requires daemon API schema 5.29.0 or newer.
 
 Examples:
   msgvault search from:alice@example.com has:attachment

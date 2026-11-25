@@ -3322,7 +3322,7 @@ Both `search` and `stats` reject an explicitly empty collection with
 Newer `main` builds search full conversations by default. Add `include:cold`
 or `--include-cold` with `--mode fts` to search retained cold text. The option
 applies to every pipe alternative. Vector and hybrid search reject it. With a
-remote daemon, `include:cold` requires daemon API schema 5.28.0 or newer. Direct
+remote daemon, `include:cold` requires daemon API schema 5.29.0 or newer. Direct
 message and conversation detail requests can still read retained cold text.
 
 Without a message-type filter, `search` returns all matching cached message
