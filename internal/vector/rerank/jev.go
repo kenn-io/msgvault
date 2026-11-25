@@ -22,6 +22,9 @@ const (
 	jevConcurrent     = 8
 	// jevCallBudget is the time one provider call gets; a ranking's deadline covers every wave of calls.
 	jevCallBudget = 10 * time.Second
+	// jevRankingTimeout bounds one ranking, whether its waves go out in one
+	// provider call or one admitted wave at a time.
+	jevRankingTimeout = time.Duration((MaxCandidates+jevConcurrent-1)/jevConcurrent) * jevCallBudget
 )
 
 // ErrInvalidResponse marks scores the caller cannot use.
@@ -57,7 +60,7 @@ func jevProfile(shape string) (typesafe.Profile, error) {
 		SecretBinding: jevSecretBinding, RequestShape: requestShape,
 		MaxCandidates: MaxCandidates, MaxCandidateBytes: MaxCandidateBytes,
 		MaxConcurrentCalls: jevConcurrent,
-		RequestTimeout:     time.Duration((MaxCandidates+jevConcurrent-1)/jevConcurrent) * jevCallBudget,
+		RequestTimeout:     jevRankingTimeout,
 		EgressPolicy: providerhttp.EgressPolicy{
 			Scheme: "https", Host: "api.typesafe.ai", Port: 443,
 			// api.typesafe.ai resolves to both families, and Docbank rejects any answer outside these.
@@ -86,6 +89,9 @@ func (j *Jev) Rerank(ctx context.Context, request Request) (Result, error) {
 	wave := len(request.Candidates)
 	if j.perCandidate && request.Admit != nil {
 		wave = jevConcurrent
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, jevRankingTimeout)
+		defer cancel()
 	}
 	var total Result
 	var input, output int64
