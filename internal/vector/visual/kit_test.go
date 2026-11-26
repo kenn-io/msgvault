@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestKitProviderInputs(t *testing.T) {
@@ -52,8 +53,8 @@ func TestKitProviderErrors(t *testing.T) {
 		want   error
 	}{
 		{"credentials", 401, ``, ErrProviderUnauthorized},
-		{"model", 400, `{"error":{"code":"model_not_found"}}`, ErrProviderRejected},
-		{"forbidden model", 403, `{"error":{"code":"model_not_found"}}`, ErrProviderRejected},
+		{"model", 400, `{"error":{"code":"model_not_found"}}`, ErrProviderConfiguration},
+		{"forbidden model", 403, `{"error":{"code":"model_not_found"}}`, ErrProviderConfiguration},
 		{"unsupported", 415, `{"error":{"code":"unsupported_content"}}`, ErrProviderRejected},
 		{"bad input", 400, ``, ErrProviderRejected},
 		{"rate limit", 429, ``, ErrProviderRetryable},
@@ -77,4 +78,38 @@ func TestKitProviderErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestKitConfigurationFailureCanRecover(t *testing.T) {
+	f, _, work := workerFixture(t, 2)
+	ready := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !ready {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":"model_not_found"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[3,4]}]}`))
+	}))
+	t.Cleanup(server.Close)
+	provider, err := NewKitProvider("kit", server.URL+"/v1", "model", 2, "", server.Client(), "generation")
+	require.NoError(t, err)
+	for i := range work {
+		work[i].Document.Parts = []InputPart{{Media: work[i].Document.Parts[len(work[i].Document.Parts)-1].Media}}
+	}
+	worker := newTestVisualWorker(t, f, provider, newFakeVisualBackend())
+	worker.config.MaxBatchItems = 1
+	result, err := worker.Run(t.Context(), work)
+	require.Error(t, err)
+	assert.Zero(t, result.Terminal)
+	ready = true
+	for i := range work {
+		claim, ok, err := f.Store.ClaimVisualWork(t.Context(), store.VisualClaimRequest{GenerationID: work[i].Claim.GenerationID, Owner: work[i].Candidate.Owner, ProposedRevision: work[i].Document.Revision, LeaseOwner: "retry", Now: time.Now().UTC(), LeaseDuration: time.Minute, SourceFence: work[i].Claim.SourceFence})
+		require.NoError(t, err)
+		require.True(t, ok)
+		work[i].Claim = claim
+	}
+	result, err = worker.Run(t.Context(), work)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), result.Published)
 }

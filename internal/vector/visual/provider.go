@@ -28,6 +28,12 @@ type Provider interface {
 	EmbedQuery(ctx context.Context, query QueryInput) ([]float32, Usage, error)
 }
 
+// ProviderPolicy holds the media and context rules a provider applies.
+type ProviderPolicy struct {
+	Media          MediaPolicy
+	ExcludeContext bool
+}
+
 type SearchRequest struct {
 	GenerationID GenerationID
 	Vector       []float32
@@ -59,6 +65,7 @@ type Backend interface {
 var (
 	ErrProviderBatchTooLarge = errors.New("visual provider batch is too large")
 	ErrProviderUnauthorized  = errors.New("visual provider authorization failed")
+	ErrProviderConfiguration = errors.New("visual provider configuration is invalid")
 	ErrProviderRejected      = errors.New("visual provider rejected the input")
 	ErrProviderRetryable     = errors.New("visual provider request is retryable")
 	ErrProviderMalformed     = errors.New("visual provider returned a malformed response")

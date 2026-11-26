@@ -629,7 +629,7 @@ func planPersonSearch(loaded *config.Config, plan *setupProvidersPlan, options s
 func planVisualSearch(loaded *config.Config, detection setupDetection) setupLanePlan {
 	lane := setupLanePlan{Lane: laneVisualSearch, Label: "Visual attachment search", Provider: loaded.Vector.Multimodal.Provider, Model: loaded.Vector.Multimodal.Model}
 	switch {
-	case loaded.Vector.Multimodal.Provider == "kit" || loaded.Vector.Multimodal.Provider == "vertex":
+	case loaded.Vector.Multimodal.UsesKit():
 		switch {
 		case detection.visualUnavailable != "":
 			lane.Action, lane.Reason = planActionPending, detection.visualUnavailable

@@ -2285,3 +2285,23 @@ func TestSettingsLocalEmbeddingsRejectsProviderCredentials(t *testing.T) {
 	assert.False(loaded.Vector.Embeddings.LocalOnly)
 	assert.Equal("http://127.0.0.1:11434/v1", loaded.Vector.Embeddings.Endpoint)
 }
+
+func TestVisualContextSettingDoesNotLimitKit(t *testing.T) {
+	srv, _ := newSettingsTestServer(t, "")
+	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+	var body struct {
+		Settings []map[string]any `json:"settings"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
+	for _, setting := range body.Settings {
+		if setting["key"] == "vector.multimodal.max_context_chars" {
+			validation, ok := setting["validation"].(map[string]any)
+			require.True(t, ok)
+			assert.Nil(t, validation["minimum"])
+			assert.Contains(t, validation["hint"], "Voyage")
+			return
+		}
+	}
+	require.Fail(t, "visual context setting is missing")
+}

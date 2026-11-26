@@ -162,3 +162,32 @@ func TestVertexQueryImageAxisHTTP(t *testing.T) {
 		}
 	}
 }
+
+func TestFileSearchInvalidImageWithoutVisualService(t *testing.T) {
+	server, _ := newTestServerWithMockStore(t)
+	for _, tc := range []struct {
+		name   string
+		image  []byte
+		status int
+		code   string
+	}{
+		{"invalid", []byte("not an image"), http.StatusUnsupportedMediaType, "unsupported_image_query"},
+		{"valid", validVisualQueryPNG(t), http.StatusServiceUnavailable, "visual_search_not_ready"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"predicate":{},"visual_image_base64":%q}`, base64.StdEncoding.EncodeToString(tc.image))
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			server.Router().ServeHTTP(response, request)
+			assert.Equal(t, tc.status, response.Code, response.Body.String())
+			assert.Contains(t, response.Body.String(), tc.code)
+		})
+	}
+}
+func validVisualQueryPNG(t *testing.T) []byte {
+	t.Helper()
+	var imageBytes bytes.Buffer
+	require.NoError(t, png.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 2, 2))))
+	return imageBytes.Bytes()
+}

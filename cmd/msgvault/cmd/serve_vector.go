@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -489,6 +488,13 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	if err != nil {
 		return nil, fmt.Errorf("load provider credentials: %w", err)
 	}
+	var multimodalAPIKey string
+	if vecCfg.Multimodal.Enabled && vecCfg.Multimodal.Provider == "voyage" {
+		multimodalAPIKey, err = resolveProviderCredentialFromSnapshot(credentialSnapshot, providercredentials.VectorMultimodalID, vecCfg.Multimodal.Endpoint, vecCfg.Multimodal.APIKeyEnv)
+		if err != nil {
+			return nil, fmt.Errorf("resolve visual embedding credential: %w", err)
+		}
+	}
 	mainDB := mainStore.DB()
 
 	// Resolve the dialect once from the main DSN. The worker is
@@ -643,9 +649,8 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			_ = closeFn()
 			return nil, errors.New("configure multimodal runtime: attachment content store is unavailable")
 		}
-		var multimodalAPIKey string
 		var visualErr error
-		if vecCfg.Multimodal.Provider != "vertex" {
+		if vecCfg.Multimodal.Provider == "kit" {
 			multimodalAPIKey, visualErr = resolveProviderCredentialFromSnapshot(credentialSnapshot, providercredentials.VectorMultimodalID, vecCfg.Multimodal.Endpoint, vecCfg.Multimodal.APIKeyEnv)
 			if visualErr != nil {
 				visualErr = fmt.Errorf("resolve visual embedding credential: %w", visualErr)
@@ -765,7 +770,8 @@ func newVisualRuntime(
 	var provider visual.Provider
 	var policyFingerprint string
 	maxBatch := 1
-	if vecCfg.Multimodal.Provider == "kit" || vecCfg.Multimodal.Provider == "vertex" {
+	excludeContext := false
+	if vecCfg.Multimodal.UsesKit() {
 		if vecCfg.Multimodal.Provider == "vertex" && credential.HTTPClient == nil {
 			httpClient, err = embedclient.GoogleHTTPClient()
 			if err != nil {
@@ -777,10 +783,9 @@ func newVisualRuntime(
 			return nil, err
 		}
 		provider, policyFingerprint = kitProvider, kitProvider.PolicyFingerprint()
-		mediaPolicy.AuthorizedCapabilities = eligibleVisualCapabilities(kitProvider.AuthorizedCapabilities(), false)
-		mediaPolicy.MaxPixels = math.MaxInt64
-		mediaPolicy.MaxImageAxis = kitProvider.MaxImageAxis()
-		mediaPolicy.MaxDurationMS = 120_000
+		kitPolicy := kitProvider.VisualPolicy()
+		kitPolicy.Media.IncludeImages, kitPolicy.Media.IncludeVideo = mediaPolicy.IncludeImages, mediaPolicy.IncludeVideo
+		mediaPolicy, excludeContext = kitPolicy.Media, kitPolicy.ExcludeContext
 	} else {
 		providerConfig, err := visualVoyageConfig(vecCfg)
 		if err != nil {
@@ -819,7 +824,7 @@ func newVisualRuntime(
 		// when one message carries many standalone attachments.
 		PageSize: 2, LeaseOwner: consumerKey, LeaseDuration: 2 * time.Minute,
 		MediaPolicy: mediaPolicy,
-		ContextPolicy: visual.ContextPolicy{ExcludeContext: vecCfg.Multimodal.Provider != "voyage", MaxChars: vecCfg.Multimodal.MaxContextChars,
+		ContextPolicy: visual.ContextPolicy{ExcludeContext: excludeContext, MaxChars: vecCfg.Multimodal.MaxContextChars,
 			InputVersion: fingerprint, EligibilityVersion: fingerprint},
 	})
 	if err != nil {

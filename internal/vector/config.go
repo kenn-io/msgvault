@@ -123,6 +123,9 @@ type MultimodalConfig struct {
 	Schedule            EmbedScheduleConfig `toml:"schedule"`
 }
 
+// UsesKit reports whether visual requests use Kit's client.
+func (m MultimodalConfig) UsesKit() bool { return m.Provider == "kit" || m.Provider == "vertex" }
+
 func configuredBool(value *bool, defaultValue bool) bool {
 	if value == nil {
 		return defaultValue
@@ -625,7 +628,7 @@ func (c *Config) Validate() error {
 func (m MultimodalConfig) Validate() error { return m.validate() }
 
 func (m MultimodalConfig) validate() error {
-	if m.Provider == "kit" || m.Provider == "vertex" {
+	if m.UsesKit() {
 		if err := (embedconfig.Deployment{API: embedconfig.API(m.Provider), BaseURL: m.Endpoint, TrustPrivateNetwork: true}).Validate(); err != nil {
 			return fmt.Errorf("vector.multimodal.endpoint: %w", err)
 		}
@@ -669,7 +672,7 @@ func (m MultimodalConfig) validate() error {
 	} else {
 		return fmt.Errorf("vector.multimodal.provider: must be voyage, kit, or vertex, got %q", m.Provider)
 	}
-	if m.MaxContextChars <= 0 {
+	if m.Provider == "voyage" && m.MaxContextChars <= 0 {
 		return fmt.Errorf("vector.multimodal.max_context_chars: must be positive, got %d", m.MaxContextChars)
 	}
 	if !m.configuredImages() && !m.configuredAnimatedGIFs() && !m.configuredVideo() {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -38,6 +39,11 @@ func NewKitProvider(api, endpoint, model string, dimension int, key string, clie
 }
 
 func (p *KitProvider) PolicyFingerprint() string { return p.fingerprint }
+
+// VisualPolicy leaves Kit-service dimensions to the service and bounds Vertex's axes.
+func (p *KitProvider) VisualPolicy() ProviderPolicy {
+	return ProviderPolicy{Media: MediaPolicy{MaxBytes: defaultMaxMediaBytes, MaxPixels: math.MaxInt64, MaxImageAxis: p.MaxImageAxis(), MaxDurationMS: 120_000, IncludeImages: true, IncludeVideo: true, AuthorizedCapabilities: p.AuthorizedCapabilities()}, ExcludeContext: true}
+}
 
 func (p *KitProvider) MaxImageAxis() int64 {
 	if p.api == "vertex" {
@@ -89,7 +95,7 @@ func kitError(err error) error {
 	if errors.As(err, &api) {
 		switch {
 		case api.Reason == embedclient.ReasonInvalidRequest:
-			return providerError(ErrProviderRejected, api.StatusCode, err)
+			return providerError(ErrProviderConfiguration, api.StatusCode, err)
 		case api.CredentialsRejected():
 			return providerError(ErrProviderUnauthorized, api.StatusCode, err)
 		case api.Retryable():

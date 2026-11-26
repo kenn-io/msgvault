@@ -842,3 +842,17 @@ func TestKitVisualFingerprintIgnoresContext(t *testing.T) {
 	cfg.Multimodal.Model = "text-embedding-005"
 	require.ErrorContains(t, cfg.Multimodal.Validate(), "gemini-embedding-2")
 }
+
+func TestKitIgnoresContextLimit(t *testing.T) {
+	for _, provider := range []string{"kit", "vertex"} {
+		t.Run(provider, func(t *testing.T) {
+			endpoint := "https://embed.example.com/v1"
+			if provider == "vertex" {
+				endpoint = "https://aiplatform.googleapis.com/v1/projects/project-a/locations/global/publishers/google/models"
+			}
+			cfg := Config{Multimodal: MultimodalConfig{Enabled: true, Provider: provider, Endpoint: endpoint, Model: "gemini-embedding-2", Dimension: 1024, MaxContextChars: -1}}
+			cfg.ApplyDefaults()
+			require.NoError(t, cfg.Validate())
+		})
+	}
+}

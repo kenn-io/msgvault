@@ -13,7 +13,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -116,19 +115,19 @@ type SearchService struct {
 // images only; whether the format's query capability was probed is enforced
 // by the provider when the query is embedded.
 func (s *SearchService) DecodeQueryImage(data []byte) (*MediaInput, error) {
+	policy := MediaPolicy{MaxBytes: MaxQueryImageBytes, MaxPixels: defaultMaxPixels, IncludeImages: true}
+	if provider, ok := s.provider.(interface{ VisualPolicy() ProviderPolicy }); ok {
+		policy = provider.VisualPolicy().Media
+	}
+	return decodeQueryImage(data, policy)
+}
+
+func decodeQueryImage(data []byte, policy MediaPolicy) (*MediaInput, error) {
 	if len(data) == 0 || int64(len(data)) > MaxQueryImageBytes {
 		return nil, errors.New("invalid visual query image size")
 	}
-	maxPixels := defaultMaxPixels
-	var maxAxis int64
-	if provider, ok := s.provider.(*KitProvider); ok {
-		maxPixels = math.MaxInt64
-		maxAxis = provider.MaxImageAxis()
-	}
-	metadata, reason := media.InspectBytes(data, "", media.Policy{
-		MaxBytes: MaxQueryImageBytes, MaxPixels: maxPixels, AllowStill: true,
-	})
-	if reason != media.ReasonEligible || metadata.Kind != media.KindImage || metadata.Animated || exceedsImageAxis(metadata, maxAxis) {
+	metadata, reason := media.InspectBytes(data, "", policy.documentPolicy())
+	if reason != media.ReasonEligible || metadata.Kind != media.KindImage || metadata.Animated || exceedsImageAxis(metadata, policy.MaxImageAxis) || len(policy.AuthorizedCapabilities) > 0 && !policy.authorizes(metadata) {
 		return nil, errors.New("unsupported visual query image")
 	}
 	input := mediaInputFrom(metadata)

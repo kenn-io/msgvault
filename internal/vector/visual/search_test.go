@@ -242,3 +242,16 @@ func TestVertexQueryImageAxisLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestKitAndVertexRejectGIFQuery(t *testing.T) {
+	data := mediatest.GIF(2, 2, 1)
+	for _, api := range []string{"kit", "vertex"} {
+		t.Run(api, func(t *testing.T) {
+			service := &SearchService{provider: &KitProvider{api: api}}
+			_, err := service.DecodeQueryImage(data)
+			require.Error(t, err)
+		})
+	}
+	_, err := (&SearchService{}).DecodeQueryImage(data)
+	require.NoError(t, err)
+}

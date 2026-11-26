@@ -451,3 +451,29 @@ func TestKitVisualSetupReportsCredentials(t *testing.T) {
 	env.googleCredentials = func() error { return nil }
 	assert.Equal(t, laneStateOn, visualSearchLane(cfg, env).State)
 }
+
+func TestVoyageCredentialMismatchStopsTextStartup(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "msgvault.db")
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir, cfg.Data.DataDir = dir, dir
+	cfg.Vector.Enabled = true
+	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
+	cfg.Vector.Embeddings.Endpoint = "https://example.com/v1"
+	cfg.Vector.Embeddings.Model = "text-model"
+	cfg.Vector.Embeddings.Dimension = 4
+	cfg.Vector.Multimodal.Enabled = true
+	empty, err := providercredentials.Read(cfg.TokensDir())
+	require.NoError(t, err)
+	_, err = providercredentials.Put(cfg.TokensDir(), empty.ETag, providercredentials.VectorMultimodalID, "https://embed.example.com/v1", "old-key")
+	require.NoError(t, err)
+	ctx := withTestConfig(t, cfg)
+	st := testutil.NewSQLiteTestStoreAt(t, mainPath)
+	for _, readOnly := range []bool{false, true} {
+		features, err := setupVectorFeatures(ctx, st, mainPath, readOnly, unavailableVisualCredentialOpener{})
+		if features != nil {
+			t.Cleanup(func() { _ = features.Close() })
+		}
+		require.ErrorIs(t, err, providercredentials.ErrOriginMismatch)
+	}
+}

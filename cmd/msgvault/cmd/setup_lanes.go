@@ -424,7 +424,7 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 			env.reportVectorCredential(&lane, providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv)
 			return lane
 		}
-		if multimodal.Provider == "kit" || multimodal.Provider == "vertex" {
+		if multimodal.UsesKit() {
 			lane.Reason = "Endpoint: " + multimodal.Endpoint
 			if multimodal.Provider == "vertex" {
 				if err := env.googleCredentialError(); err != nil {
@@ -467,7 +467,7 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		return lane
 	}
 	lane.State = laneStateOff
-	if multimodal.Provider == "kit" || multimodal.Provider == "vertex" {
+	if multimodal.UsesKit() {
 		lane.Provider = multimodal.Provider
 		lane.Model = multimodal.Model
 		lane.Reason = "Endpoint: " + multimodal.Endpoint

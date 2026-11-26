@@ -2745,7 +2745,7 @@ consent with `msgvault person provider consent --semantic-embeddings --yes`.
 
 #### `[vector.multimodal]`
 
-Configure the independently consented visual attachment lane. Voyage requires a probe manifest before uploads. Kit supports Vertex and services that implement its embedding API. Both accept JPEG, PNG, WebP, and MP4 video up to 120 seconds and 20 MiB per file. Vertex limits each image dimension to 16,384 pixels and does not extract audio.
+Configure the independently consented visual attachment lane. Voyage requires a probe manifest before uploads. Kit supports Vertex and services that implement its embedding API. Both accept JPEG, PNG, WebP, and MP4 video up to 120 seconds and 20 MiB per file. Vertex limits each image dimension to 16,384 pixels and does not extract audio. A Kit service determines its own image dimension limits.
 
 | Key | Default | Description |
 |---|---|---|

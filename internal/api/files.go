@@ -407,14 +407,11 @@ func (s *Server) handleSearchFilesRequest(
 			writeError(w, http.StatusBadRequest, "invalid_visual_query", "Visual query image is invalid or too large")
 			return
 		}
-		s.vectorMu.RLock()
-		service := s.visualSearch
-		s.vectorMu.RUnlock()
-		if service == nil {
+		visualQuery.Image, decodeErr = s.decodeFileVisualQuery(image)
+		if errors.Is(decodeErr, visual.ErrSearchNotReady) {
 			writeError(w, http.StatusServiceUnavailable, "visual_search_not_ready", "Visual attachment search is not ready")
 			return
 		}
-		visualQuery.Image, decodeErr = service.DecodeQueryImage(image)
 		if decodeErr != nil {
 			writeError(w, http.StatusUnsupportedMediaType, "unsupported_image_query", decodeErr.Error())
 			return
@@ -622,6 +619,21 @@ func applyVisualSearchScope(visualQuery *visual.SearchQuery, request query.FileS
 	if visualQuery.Filename == "" {
 		visualQuery.Filename = strings.TrimSpace(request.FilenameQuery)
 	}
+}
+
+func (s *Server) decodeFileVisualQuery(data []byte) (*visual.MediaInput, error) {
+	s.vectorMu.RLock()
+	service := s.visualSearch
+	s.vectorMu.RUnlock()
+	missing := service == nil
+	if missing {
+		service = &visual.SearchService{}
+	}
+	input, err := service.DecodeQueryImage(data)
+	if err == nil && missing {
+		return nil, visual.ErrSearchNotReady
+	}
+	return input, err
 }
 
 func (s *Server) searchFilesWithVisual(
