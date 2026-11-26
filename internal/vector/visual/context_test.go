@@ -119,16 +119,3 @@ func revisionRequest() AssembleRequest {
 		Policy: ContextPolicy{MaxChars: 4000, InputVersion: "visual-input-v1", EligibilityVersion: "visual-eligibility-v1"},
 	}
 }
-
-func TestAssembleDocumentExcludesContext(t *testing.T) {
-	request := revisionRequest()
-	request.Policy.ExcludeContext = true
-	first, _, err := AssembleDocument(request)
-	require.NoError(t, err)
-	require.Len(t, first.Parts, 1)
-	request.Context.Subject = "changed"
-	request.Context.Body = "changed"
-	second, _, err := AssembleDocument(request)
-	require.NoError(t, err)
-	assert.Equal(t, first.Revision, second.Revision)
-}

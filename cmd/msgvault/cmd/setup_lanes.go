@@ -464,8 +464,6 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	}
 	lane.State = laneStateOff
 	if multimodal.UsesKit() {
-		lane.Provider = multimodal.Provider
-		lane.Model = multimodal.Model
 		lane.Reason = "Endpoint: " + multimodal.Endpoint
 		return lane
 	}

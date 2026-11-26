@@ -79,40 +79,29 @@ func TestLargeVisualQueryUsesActiveProviderPolicy(t *testing.T) {
 	require.NoError(t, err)
 	kit, err := visual.NewSearchService(&store.Store{}, provider, imageQueryTestBackend{}, true)
 	require.NoError(t, err)
-	for _, tc := range []struct {
-		name    string
-		service *visual.SearchService
-		status  int
-		code    string
-	}{
-		{"kit", kit, http.StatusBadRequest, "invalid_limit"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			server, _ := newTestServerWithMockStore(t)
-			server.SetVisualSearch(tc.service)
-			var upload bytes.Buffer
-			form := multipart.NewWriter(&upload)
-			file, err := form.CreateFormFile("image", "query.png")
-			require.NoError(t, err)
-			_, err = file.Write(imageBytes.Bytes())
-			require.NoError(t, err)
-			require.NoError(t, form.WriteField("limit", "invalid"))
-			require.NoError(t, form.Close())
-			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/attachments/visual", &upload)
-			request.Header.Set("Content-Type", form.FormDataContentType())
-			response := httptest.NewRecorder()
-			server.Router().ServeHTTP(response, request)
-			assert.Equal(t, tc.status, response.Code, response.Body.String())
-			assert.Contains(t, response.Body.String(), tc.code)
-			body := fmt.Sprintf(`{"predicate":{},"visual_image_base64":%q,"limit":-1}`, base64.StdEncoding.EncodeToString(imageBytes.Bytes()))
-			request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", strings.NewReader(body))
-			request.Header.Set("Content-Type", "application/json")
-			response = httptest.NewRecorder()
-			server.Router().ServeHTTP(response, request)
-			assert.Equal(t, tc.status, response.Code, response.Body.String())
-			assert.Contains(t, response.Body.String(), tc.code)
-		})
-	}
+	server, _ := newTestServerWithMockStore(t)
+	server.SetVisualSearch(kit)
+	var upload bytes.Buffer
+	form := multipart.NewWriter(&upload)
+	file, err := form.CreateFormFile("image", "query.png")
+	require.NoError(t, err)
+	_, err = file.Write(imageBytes.Bytes())
+	require.NoError(t, err)
+	require.NoError(t, form.WriteField("limit", "invalid"))
+	require.NoError(t, form.Close())
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/attachments/visual", &upload)
+	request.Header.Set("Content-Type", form.FormDataContentType())
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "invalid_limit")
+	body := fmt.Sprintf(`{"predicate":{},"visual_image_base64":%q,"limit":-1}`, base64.StdEncoding.EncodeToString(imageBytes.Bytes()))
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "invalid_limit")
 }
 
 func TestFileSearchInvalidImageWithoutVisualService(t *testing.T) {

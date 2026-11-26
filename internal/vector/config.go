@@ -634,6 +634,9 @@ func (m MultimodalConfig) validate() error {
 	if m.Dimension != 1024 {
 		return fmt.Errorf("vector.multimodal.dimension: must be 1024, got %d", m.Dimension)
 	}
+	if !m.configuredImages() && !m.configuredAnimatedGIFs() && !m.configuredVideo() {
+		return errors.New("vector.multimodal: at least one document media type must be enabled")
+	}
 	if m.UsesKit() {
 		if err := (embedconfig.Deployment{API: embedconfig.API(m.Provider), BaseURL: m.Endpoint, TrustPrivateNetwork: true}).Validate(); err != nil {
 			return fmt.Errorf("vector.multimodal.endpoint: %w", err)
@@ -646,9 +649,6 @@ func (m MultimodalConfig) validate() error {
 		}
 		if m.configuredAnimatedGIFs() {
 			return errors.New("vector.multimodal.include_animated_gifs: only Voyage supports animated GIFs")
-		}
-		if !m.configuredImages() && !m.configuredVideo() {
-			return errors.New("vector.multimodal: at least one document media type must be enabled")
 		}
 		return nil
 	}
@@ -672,9 +672,6 @@ func (m MultimodalConfig) validate() error {
 	}
 	if m.MaxContextChars <= 0 {
 		return fmt.Errorf("vector.multimodal.max_context_chars: must be positive, got %d", m.MaxContextChars)
-	}
-	if !m.configuredImages() && !m.configuredAnimatedGIFs() && !m.configuredVideo() {
-		return errors.New("vector.multimodal: at least one document media type must be enabled")
 	}
 	// Animated GIFs are an image subtype: the runtime media policy only
 	// admits animated media when still images are enabled, so an
