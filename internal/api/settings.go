@@ -269,14 +269,14 @@ var settingsCatalog = []settingDefinition{
 	stringArraySetting("vector.embed.scope.accounts", "search", func(c *config.Config) []string { return c.Vector.Embed.Scope.Accounts }),
 	stringSetting("vector.embed.backstop_interval", "search", nil, func(c *config.Config) string { return c.Vector.Embed.BackstopInterval.String() }),
 	boolSetting("vector.multimodal.enabled", "search", func(c *config.Config) bool { return c.Vector.Multimodal.Enabled }),
-	stringSetting("vector.multimodal.provider", "search", []string{"voyage", "kit", "vertex"}, func(c *config.Config) string { return c.Vector.Multimodal.Provider }),
+	stringSetting("vector.multimodal.provider", "search", []string{"voyage"}, func(c *config.Config) string { return c.Vector.Multimodal.Provider }),
 	stringSetting("vector.multimodal.endpoint", "search", nil, func(c *config.Config) string { return c.Vector.Multimodal.Endpoint }),
 	localOnlyStringSetting("vector.multimodal.api_key_env", "search", func(c *config.Config) string { return c.Vector.Multimodal.APIKeyEnv }),
 	providerCredentialSetting("vector.multimodal.api_key", "search", providercredentials.VectorMultimodalID,
 		func(c *config.Config) string { return c.Vector.Multimodal.Endpoint },
 		func(c *config.Config) string { return c.Vector.Multimodal.APIKeyEnv }),
 	localOnlyStringSetting("vector.multimodal.capabilities_file", "search", func(c *config.Config) string { return c.Vector.Multimodal.CapabilitiesFile }),
-	stringSetting("vector.multimodal.model", "search", nil, func(c *config.Config) string { return c.Vector.Multimodal.Model }),
+	stringSetting("vector.multimodal.model", "search", []string{"voyage-multimodal-3.5"}, func(c *config.Config) string { return c.Vector.Multimodal.Model }),
 	intSetting("vector.multimodal.dimension", "search", func(c *config.Config) int { return c.Vector.Multimodal.Dimension }),
 	intSetting("vector.multimodal.max_context_chars", "search", func(c *config.Config) int { return c.Vector.Multimodal.MaxContextChars }),
 	// Configured (default-resolved) values, NOT the runtime-gated helpers:
@@ -742,9 +742,6 @@ func (s *Server) buildSettingsResponse(
 			CredentialID:    definition.credentialID,
 			Validation:      validationForSetting(definition.key),
 			Section:         metadata.section,
-		}
-		if definition.key == "vector.multimodal.model" && cfg.Vector.Multimodal.Provider == "voyage" {
-			setting.Options = []string{"voyage-multimodal-3.5"}
 		}
 		if definition.inherited != nil {
 			setting.Inherited = definition.inherited(cfg)

@@ -444,8 +444,7 @@ import (
 // 5.28.0 serves CLI account counts from stored per-source totals, so account
 // listings no longer return stale, as_of, or counts_pending.
 // 5.29.0 fails backup freeze begin with backup_readers_busy when daemon archive readers do not stop.
-// 5.30.0 adds Kit and Vertex visual embedding provider settings.
-const APISchemaVersion = "5.30.0"
+const APISchemaVersion = "5.29.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

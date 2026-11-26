@@ -1004,27 +1004,8 @@ include_video = true
 	assertions.False(*byKey["vector.multimodal.include_images"].Value.Boolean)
 	requirements.NotNil(byKey["vector.multimodal.include_video"].Value.Boolean)
 	assertions.True(*byKey["vector.multimodal.include_video"].Value.Boolean)
-	assertions.Equal([]string{"voyage", "kit", "vertex"}, byKey["vector.multimodal.provider"].Options)
-	assertions.Equal([]string{"voyage-multimodal-3.5"}, byKey["vector.multimodal.model"].Options)
 	assertions.True(byKey["vector.multimodal.api_key_env"].ReadOnly)
 	assertions.NotContains(resp.Body.String(), "synthetic-key-value")
-}
-
-func TestVisualModelOptionsFollowProvider(t *testing.T) {
-	for _, provider := range []string{"kit", "vertex"} {
-		t.Run(provider, func(t *testing.T) {
-			srv, _ := newSettingsTestServer(t, "")
-			body := fmt.Sprintf(`{"updates":[{"key":"vector.multimodal.provider","value":{"string":%q}},{"key":"vector.multimodal.model","value":{"string":"custom-model"}}]}`, provider)
-			response := patchSettings(t, srv, body)
-			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-			var settings SettingsResponse
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &settings))
-			model := settingsByKey(settings.Settings)["vector.multimodal.model"]
-			assert.Empty(t, model.Options)
-			require.NotNil(t, model.Value.String)
-			assert.Equal(t, "custom-model", *model.Value.String)
-		})
-	}
 }
 
 func TestPatchSettingsRequiresMatchingETag(t *testing.T) {

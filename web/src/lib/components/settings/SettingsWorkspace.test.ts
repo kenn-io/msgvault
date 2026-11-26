@@ -153,41 +153,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it('updates the visual model control for an unsaved provider', async () => {
-  const doc = settingsDoc();
-  doc.settings.push(
-    setting('vector.multimodal.enabled', 'search', 'boolean', true, { label: 'Visual search', section: 'visual' }),
-    setting('vector.multimodal.provider', 'search', 'string', 'voyage', { label: 'Visual provider', section: 'visual', options: ['voyage', 'kit', 'vertex'] }),
-    setting('vector.multimodal.model', 'search', 'string', 'voyage-multimodal-3.5', { label: 'Visual model', section: 'visual', options: ['voyage-multimodal-3.5'] }),
-    setting('vector.multimodal.endpoint', 'search', 'string', 'https://api.voyageai.com/v1', { label: 'Visual endpoint', section: 'visual' })
-  );
-  const { client, operationsController, onStatusChange, seen } = fixture(doc);
-  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'search' });
-  const provider = await screen.findByLabelText('Visual provider');
-  expect(screen.getByText('Only https://api.voyageai.com/v1 is accepted.')).toBeDefined();
-  expect(screen.getByLabelText('Visual model').getAttribute('role')).toBe('combobox');
-  await chooseSelectOption(provider, 'Kit');
-  expect(screen.getByText('Use the API root of your Kit embedding service.')).toBeDefined();
-  await fireEvent.input(screen.getByLabelText('Visual model'), { target: { value: 'kit-model' } });
-  await chooseSelectOption(provider, 'Vertex');
-  expect(screen.getByText('Use your Vertex project and location URL ending in /publishers/google/models.')).toBeDefined();
-  await fireEvent.input(screen.getByLabelText('Visual model'), { target: { value: 'gemini-embedding-2' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(seen.find(request => request.method === 'PATCH')?.body).toEqual({ updates: [
-    { key: 'vector.multimodal.provider', value: { string: 'vertex' } },
-    { key: 'vector.multimodal.model', value: { string: 'gemini-embedding-2' } }
-  ] }));
-  await waitFor(() => expect(screen.queryByText(/unsaved changes?/)).toBeNull());
-  await waitFor(() => expect(screen.getByLabelText('Visual provider').matches(':disabled')).toBe(false));
-  await chooseSelectOption(screen.getByLabelText('Visual provider'), 'Voyage');
-  expect(screen.getByLabelText('Visual model').getAttribute('role')).toBe('combobox');
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await waitFor(() => expect(seen.filter(request => request.method === 'PATCH').at(-1)?.body).toEqual({ updates: [
-    { key: 'vector.multimodal.provider', value: { string: 'voyage' } },
-    { key: 'vector.multimodal.model', value: { string: 'voyage-multimodal-3.5' } }
-  ] }));
-});
-
 it('shows the restart cue before saving only while a restart-required draft is pending', async () => {
   const doc = settingsDoc();
   doc.settings.push(setting('log.enabled', 'server', 'boolean', false, { restart_required: true }));
