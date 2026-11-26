@@ -90,10 +90,22 @@ func (w *Worker) Run(ctx context.Context, work []WorkItem) (result WorkerResult,
 	for start := 0; start < len(work); start += w.config.MaxBatchItems {
 		end := min(start+w.config.MaxBatchItems, len(work))
 		if err := w.runBatch(ctx, work[start:end], &result); err != nil {
-			return result, err
+			return result, w.releaseClaims(ctx, work, err)
 		}
 	}
 	return result, nil
+}
+
+func (w *Worker) releaseClaims(ctx context.Context, work []WorkItem, runErr error) error {
+	// Release claims even when the caller canceled, so work can be retried.
+	ctx = context.WithoutCancel(ctx)
+	for _, item := range work {
+		err := w.archive.ReleaseVisualWork(ctx, item.Claim)
+		if err != nil && !errors.Is(err, store.ErrVisualClaimLost) {
+			runErr = errors.Join(runErr, fmt.Errorf("release visual work: %w", err))
+		}
+	}
+	return runErr
 }
 
 // finalizeOutcomes projects durable attachment decisions, not provider calls
