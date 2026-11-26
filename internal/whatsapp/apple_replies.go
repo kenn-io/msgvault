@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"math"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -29,10 +30,14 @@ func appleQuotedStanza(metadata []byte) string {
 			size = 8
 		case 2:
 			length, width := binary.Uvarint(metadata)
-			if width <= 0 || length > uint64(len(metadata)-width) {
+			if width <= 0 || length > math.MaxInt {
 				return ""
 			}
-			size = width + int(length)
+			payloadSize := int(length)
+			if payloadSize > len(metadata)-width {
+				return ""
+			}
+			size = width + payloadSize
 			if field == 5 {
 				stanza = metadata[width:size]
 			}

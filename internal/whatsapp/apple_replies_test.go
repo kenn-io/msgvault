@@ -29,6 +29,7 @@ func TestAppleQuotedStanza(t *testing.T) {
 		{name: "truncated tag", metadata: "\x80"},
 		{name: "truncated length", metadata: "\x2a\x80"},
 		{name: "length exceeds remaining data", metadata: "\x2a\x04abc"},
+		{name: "length exceeds platform int", metadata: "\x2a\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01"},
 		{name: "overflowing length", metadata: "\x2a\xff\xff\xff\xff\xff\xff\xff\xff\xff\x02"},
 		{name: "truncated varint after quote", metadata: "\x2a\x03abc\x08\x80"},
 		{name: "truncated fixed32 after quote", metadata: "\x2a\x03abc\x25ab"},
