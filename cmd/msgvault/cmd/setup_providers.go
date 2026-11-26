@@ -251,7 +251,7 @@ type setupDetection struct {
 }
 
 func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setupProvidersDeps, options setupProvidersOptions) setupDetection {
-	env := setupEnvironment{lookupEnv: deps.lookupEnv, fileExists: deps.fileExists, googleCredentials: deps.googleCredentials}
+	env := setupEnvironment{lookupEnv: deps.lookupEnv, fileExists: deps.fileExists, googleADC: deps.googleCredentials}
 	detection := setupDetection{
 		voyageKey: env.hasEnv(setupVoyageKeyEnv),
 		openAIKey: env.hasEnv(setupOpenAIKeyEnv),
@@ -283,14 +283,12 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 	// Validate the path setup would publish, including an enabled lane whose
 	// capabilities_file was never configured. Status still checks the saved
 	// configuration, so it stays pending until this edit is applied.
-	if multimodal.Provider == "voyage" {
-		manifestConfig := *loaded
-		manifestConfig.Vector.Multimodal.CapabilitiesFile = setupVoyageManifestPath(loaded)
-		if err := setupVisualManifestError(&manifestConfig, env); err != nil {
-			detection.voyageManifestError = err.Error()
-		} else {
-			detection.voyageManifest = setupVoyageManifestPath(loaded)
-		}
+	manifestConfig := *loaded
+	manifestConfig.Vector.Multimodal.CapabilitiesFile = setupVoyageManifestPath(loaded)
+	if err := setupVisualManifestError(&manifestConfig, env); err != nil {
+		detection.voyageManifestError = err.Error()
+	} else {
+		detection.voyageManifest = setupVoyageManifestPath(loaded)
 	}
 	// The local server is consulted only when nothing hosted is available
 	// for the lane it would fill, so a key holder never waits on a probe.

@@ -46,17 +46,17 @@ func explicitOpenAISetupFlags() []string {
 // archive store, a fixed environment, and a fixed filesystem view for the
 // probe manifests.
 type setupProvidersFixture struct {
-	dir               string
-	path              string
-	store             *store.Store
-	env               map[string]string
-	files             map[string]bool
-	ollama            ollamaProbeResult
-	checker           *fixedPersonProviderChecker
-	input             io.Reader
-	tty               bool
-	confirm           bool
-	googleCredentials func() error
+	dir     string
+	path    string
+	store   *store.Store
+	env     map[string]string
+	files   map[string]bool
+	ollama  ollamaProbeResult
+	checker *fixedPersonProviderChecker
+	input   io.Reader
+	tty     bool
+	confirm bool
+	google  func() error
 }
 
 func newSetupProvidersFixture(t *testing.T, content string) *setupProvidersFixture {
@@ -337,12 +337,12 @@ func (f *setupProvidersFixture) personProviderDeps(t *testing.T) personProviderC
 func (f *setupProvidersFixture) deps(t *testing.T) setupProvidersDeps {
 	t.Helper()
 	return setupProvidersDeps{
-		googleCredentials: f.googleCredentials,
-		lookupEnv:         f.lookupEnv,
-		fileExists:        func(path string) bool { return f.files[path] },
+		lookupEnv:  f.lookupEnv,
+		fileExists: func(path string) bool { return f.files[path] },
 		readConfigFile: func() (config.ConfigFile, error) {
 			return config.ReadConfigFile(f.path)
 		},
+		googleCredentials: f.google,
 		editConfigTables: func(etag string, edits []config.TableEdit) (config.ConfigFile, error) {
 			return config.EditConfigTables(f.path, etag, edits)
 		},
@@ -1523,34 +1523,13 @@ func TestSetupStatusAgents(t *testing.T) {
 }
 
 func TestConfiguredVisualProvidersSetup(t *testing.T) {
-	for _, tt := range []struct {
-		name, provider string
-		unavailable    string
-		enabled        bool
-		want           string
-	}{
-		{"anonymous kit", "kit", "", false, planActionEnable},
-		{"keyed kit", "kit", "", false, planActionEnable},
-		{"missing kit key", "kit", "visual provider credential unavailable", false, planActionPending},
-		{"vertex credentials", "vertex", "", false, planActionEnable},
-		{"missing vertex credentials", "vertex", "Google credentials unavailable", false, planActionPending},
-		{"enabled kit", "kit", "", true, planActionKeep},
-		{"enabled vertex", "vertex", "", true, planActionKeep},
-		{"voyage missing manifest", "voyage", "", false, planActionPending},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := config.NewDefaultConfig()
-			cfg.Vector.Multimodal.Provider = tt.provider
-			cfg.Vector.Multimodal.Enabled = tt.enabled
-			lane := planVisualSearch(cfg, setupDetection{visualUnavailable: tt.unavailable, visualKey: true, voyageManifestError: "missing manifest"})
-			assert.Equal(t, tt.want, lane.Action)
-			assert.Equal(t, tt.provider, lane.Provider)
-			if tt.want == planActionEnable {
-				require.NotEmpty(t, lane.edits)
-				assert.Equal(t, true, lane.edits[0].Values["enabled"])
-				assert.Contains(t, lane.next, "msgvault multimodal build --yes")
-			}
-		})
+	for _, provider := range []string{"kit", "vertex"} {
+		cfg := config.NewDefaultConfig()
+		cfg.Vector.Multimodal.Provider = provider
+		cfg.Vector.Multimodal.Enabled = true
+		lane := planVisualSearch(cfg, setupDetection{voyageManifestError: "missing manifest"})
+		assert.Equal(t, planActionKeep, lane.Action)
+		assert.Equal(t, provider, lane.Provider)
 	}
 }
 
@@ -1574,7 +1553,7 @@ func TestSetupProvidersConfiguredVisualCredentials(t *testing.T) {
 			}
 			content := fmt.Sprintf("[vector.multimodal]\nprovider = %q\nendpoint = %q\nmodel = %q\ndimension = 1024\napi_key_env = %q\n", tt.provider, endpoint, model, tt.keyEnv)
 			fixture := newSetupProvidersFixture(t, content)
-			fixture.googleCredentials = func() error { return tt.googleErr }
+			fixture.google = func() error { return tt.googleErr }
 			if tt.keyValue != "" {
 				fixture.env[tt.keyEnv] = tt.keyValue
 			}

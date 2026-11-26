@@ -102,11 +102,11 @@ type setupConsentState struct {
 // setupEnvironment is what the report needs beyond the loaded config: the
 // process environment, stored credentials, filesystem, and archive consent.
 type setupEnvironment struct {
-	lookupEnv         func(string) (string, bool)
-	fileExists        func(string) bool
-	consent           *setupConsentState
-	credentials       providercredentials.Snapshot
-	googleCredentials func() error
+	lookupEnv   func(string) (string, bool)
+	fileExists  func(string) bool
+	consent     *setupConsentState
+	credentials providercredentials.Snapshot
+	googleADC   func() error
 }
 
 func (e setupEnvironment) hasEnv(name string) bool {
@@ -118,8 +118,8 @@ func (e setupEnvironment) hasEnv(name string) bool {
 }
 
 func (e setupEnvironment) googleCredentialError() error {
-	if e.googleCredentials != nil {
-		return e.googleCredentials()
+	if e.googleADC != nil {
+		return e.googleADC()
 	}
 	_, err := embedclient.GoogleHTTPClient()
 	return err
@@ -426,19 +426,13 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		}
 		if multimodal.UsesKit() {
 			lane.Reason = "Endpoint: " + multimodal.Endpoint
-			if multimodal.Provider == "vertex" {
-				if err := env.googleCredentialError(); err != nil {
-					lane.State = laneStatePending
-					lane.Reason += "; Google Application Default Credentials are unavailable"
-					return lane
-				}
-			} else {
+			if multimodal.Provider == "vertex" && env.googleCredentialError() != nil {
+				lane.State = laneStatePending
+				lane.Reason += "; Google Application Default Credentials are unavailable"
+			} else if multimodal.Provider == "kit" {
 				env.reportVectorCredential(&lane, providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv)
-				if lane.State == laneStatePending {
-					return lane
-				}
 			}
-			if lane.Consent != consentActive {
+			if lane.State != laneStatePending && lane.Consent != consentActive {
 				lane.State = laneStatePending
 				lane.Next = []string{"msgvault multimodal build --yes"}
 			}

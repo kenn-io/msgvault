@@ -116,13 +116,9 @@ type SearchService struct {
 // by the provider when the query is embedded.
 func (s *SearchService) DecodeQueryImage(data []byte) (*MediaInput, error) {
 	policy := MediaPolicy{MaxBytes: MaxQueryImageBytes, MaxPixels: defaultMaxPixels, IncludeImages: true}
-	if provider, ok := s.provider.(interface{ VisualPolicy() ProviderPolicy }); ok {
-		policy = provider.VisualPolicy().Media
+	if provider, ok := s.provider.(interface{ VisualPolicy() MediaPolicy }); ok {
+		policy = provider.VisualPolicy()
 	}
-	return decodeQueryImage(data, policy)
-}
-
-func decodeQueryImage(data []byte, policy MediaPolicy) (*MediaInput, error) {
 	if len(data) == 0 || int64(len(data)) > MaxQueryImageBytes {
 		return nil, errors.New("invalid visual query image size")
 	}

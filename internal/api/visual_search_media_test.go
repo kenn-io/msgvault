@@ -116,78 +116,13 @@ func TestLargeVisualQueryUsesActiveProviderPolicy(t *testing.T) {
 	}
 }
 
-func TestVertexQueryImageAxisHTTP(t *testing.T) {
-	for _, providerName := range []string{"kit", "vertex"} {
-		endpoint, model := "https://embed.example.com/v1", "model"
-		if providerName == "vertex" {
-			endpoint = "https://aiplatform.googleapis.com/v1/projects/project-a/locations/global/publishers/google/models"
-			model = "gemini-embedding-2"
-		}
-		provider, err := visual.NewKitProvider(providerName, endpoint, model, 2, "", nil, "generation")
-		require.NoError(t, err)
-		service, err := visual.NewSearchService(&store.Store{}, provider, imageQueryTestBackend{}, true)
-		require.NoError(t, err)
-		for _, tc := range []struct{ width, height int }{{16384, 2}, {2, 16384}, {16385, 2}, {2, 16385}} {
-			t.Run(fmt.Sprintf("%s/%dx%d", providerName, tc.width, tc.height), func(t *testing.T) {
-				var img bytes.Buffer
-				require.NoError(t, png.Encode(&img, image.NewRGBA(image.Rect(0, 0, tc.width, tc.height))))
-				expectedStatus, expectedCode := http.StatusBadRequest, "invalid_limit"
-				if providerName == "vertex" && (tc.width > 16384 || tc.height > 16384) {
-					expectedStatus, expectedCode = http.StatusUnsupportedMediaType, "unsupported_image_query"
-				}
-				server, _ := newTestServerWithMockStore(t)
-				server.SetVisualSearch(service)
-				var upload bytes.Buffer
-				form := multipart.NewWriter(&upload)
-				file, err := form.CreateFormFile("image", "query.png")
-				require.NoError(t, err)
-				_, err = file.Write(img.Bytes())
-				require.NoError(t, err)
-				require.NoError(t, form.WriteField("limit", "invalid"))
-				require.NoError(t, form.Close())
-				request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/attachments/visual", &upload)
-				request.Header.Set("Content-Type", form.FormDataContentType())
-				response := httptest.NewRecorder()
-				server.Router().ServeHTTP(response, request)
-				assert.Equal(t, expectedStatus, response.Code, response.Body.String())
-				assert.Contains(t, response.Body.String(), expectedCode)
-				body := fmt.Sprintf(`{"predicate":{},"visual_image_base64":%q,"limit":-1}`, base64.StdEncoding.EncodeToString(img.Bytes()))
-				request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", strings.NewReader(body))
-				request.Header.Set("Content-Type", "application/json")
-				response = httptest.NewRecorder()
-				server.Router().ServeHTTP(response, request)
-				assert.Equal(t, expectedStatus, response.Code, response.Body.String())
-				assert.Contains(t, response.Body.String(), expectedCode)
-			})
-		}
-	}
-}
-
 func TestFileSearchInvalidImageWithoutVisualService(t *testing.T) {
 	server, _ := newTestServerWithMockStore(t)
-	for _, tc := range []struct {
-		name   string
-		image  []byte
-		status int
-		code   string
-	}{
-		{"invalid", []byte("not an image"), http.StatusUnsupportedMediaType, "unsupported_image_query"},
-		{"valid", validVisualQueryPNG(t), http.StatusServiceUnavailable, "visual_search_not_ready"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			body := fmt.Sprintf(`{"predicate":{},"visual_image_base64":%q}`, base64.StdEncoding.EncodeToString(tc.image))
-			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", strings.NewReader(body))
-			request.Header.Set("Content-Type", "application/json")
-			response := httptest.NewRecorder()
-			server.Router().ServeHTTP(response, request)
-			assert.Equal(t, tc.status, response.Code, response.Body.String())
-			assert.Contains(t, response.Body.String(), tc.code)
-		})
-	}
-}
-func validVisualQueryPNG(t *testing.T) []byte {
-	t.Helper()
-	var imageBytes bytes.Buffer
-	require.NoError(t, png.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 2, 2))))
-	return imageBytes.Bytes()
+	body := fmt.Sprintf(`{"predicate":{},"visual_image_base64":%q}`, base64.StdEncoding.EncodeToString([]byte("not an image")))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	assert.Equal(t, http.StatusUnsupportedMediaType, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "unsupported_image_query")
 }

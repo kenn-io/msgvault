@@ -28,12 +28,6 @@ type Provider interface {
 	EmbedQuery(ctx context.Context, query QueryInput) ([]float32, Usage, error)
 }
 
-// ProviderPolicy holds the media and context rules a provider applies.
-type ProviderPolicy struct {
-	Media          MediaPolicy
-	ExcludeContext bool
-}
-
 type SearchRequest struct {
 	GenerationID GenerationID
 	Vector       []float32

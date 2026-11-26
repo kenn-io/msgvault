@@ -41,15 +41,12 @@ func NewKitProvider(api, endpoint, model string, dimension int, key string, clie
 func (p *KitProvider) PolicyFingerprint() string { return p.fingerprint }
 
 // VisualPolicy leaves Kit-service dimensions to the service and bounds Vertex's axes.
-func (p *KitProvider) VisualPolicy() ProviderPolicy {
-	return ProviderPolicy{Media: MediaPolicy{MaxBytes: defaultMaxMediaBytes, MaxPixels: math.MaxInt64, MaxImageAxis: p.MaxImageAxis(), MaxDurationMS: 120_000, IncludeImages: true, IncludeVideo: true, AuthorizedCapabilities: p.AuthorizedCapabilities()}, ExcludeContext: true}
-}
-
-func (p *KitProvider) MaxImageAxis() int64 {
+func (p *KitProvider) VisualPolicy() MediaPolicy {
+	policy := MediaPolicy{MaxBytes: defaultMaxMediaBytes, MaxPixels: math.MaxInt64, MaxDurationMS: 120_000, IncludeImages: true, IncludeVideo: true, AuthorizedCapabilities: p.AuthorizedCapabilities()}
 	if p.api == "vertex" {
-		return VertexMaxImageAxis
+		policy.MaxImageAxis = 16_384 // Vertex's maximum image width or height
 	}
-	return 0
+	return policy
 }
 
 func (p *KitProvider) AuthorizedCapabilities() []string {

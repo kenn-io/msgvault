@@ -98,7 +98,6 @@ func TestKitConfigurationFailureCanRecover(t *testing.T) {
 		work[i].Document.Parts = []InputPart{{Media: work[i].Document.Parts[len(work[i].Document.Parts)-1].Media}}
 	}
 	worker := newTestVisualWorker(t, f, provider, newFakeVisualBackend())
-	worker.config.MaxBatchItems = 1
 	result, err := worker.Run(t.Context(), work)
 	require.Error(t, err)
 	assert.Zero(t, result.Terminal)

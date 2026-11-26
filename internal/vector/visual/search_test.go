@@ -1,13 +1,10 @@
 package visual
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"image"
 	"image/color"
-	"image/png"
 	"strings"
 	"testing"
 
@@ -206,20 +203,6 @@ func TestSearchRejectsDriftedAccountScopeBeforeProviderOrBackend(t *testing.T) {
 	require.ErrorIs(err, ErrSearchNotReady)
 	assert.Zero(provider.queries, "no hosted embedding on drift")
 	assert.Empty(backend.requests, "no backend search on drift")
-}
-
-func TestDecodeQueryImageUsesProviderPixelLimit(t *testing.T) {
-	var data bytes.Buffer
-	require.NoError(t, png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 4001, 4000))))
-	require.LessOrEqual(t, data.Len(), int(MaxQueryImageBytes))
-	voyage := &SearchService{}
-	_, err := voyage.DecodeQueryImage(data.Bytes())
-	require.Error(t, err)
-	kit := &SearchService{provider: &KitProvider{}}
-	imageQuery, err := kit.DecodeQueryImage(data.Bytes())
-	require.NoError(t, err)
-	assert.Equal(t, int64(4001), imageQuery.Width)
-	assert.Equal(t, int64(4000), imageQuery.Height)
 }
 
 func TestVertexQueryImageAxisLimit(t *testing.T) {

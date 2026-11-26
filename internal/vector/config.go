@@ -632,47 +632,48 @@ func (m MultimodalConfig) validate() error {
 		if err := (embedconfig.Deployment{API: embedconfig.API(m.Provider), BaseURL: m.Endpoint, TrustPrivateNetwork: true}).Validate(); err != nil {
 			return fmt.Errorf("vector.multimodal.endpoint: %w", err)
 		}
+		if strings.TrimSpace(m.Model) == "" {
+			return errors.New("vector.multimodal.model: required")
+		}
 		if m.Provider == "vertex" && !strings.HasPrefix(m.Model, "gemini-embedding-2") {
 			return errors.New("vector.multimodal.model: Vertex visual search requires gemini-embedding-2")
+		}
+		if m.Dimension != 1024 {
+			return fmt.Errorf("vector.multimodal.dimension: must be 1024, got %d", m.Dimension)
 		}
 		if m.configuredAnimatedGIFs() {
 			return errors.New("vector.multimodal.include_animated_gifs: only Voyage supports animated GIFs")
 		}
-		if strings.TrimSpace(m.Model) == "" {
-			return errors.New("vector.multimodal.model: required")
+		if !m.configuredImages() && !m.configuredVideo() {
+			return errors.New("vector.multimodal: at least one document media type must be enabled")
 		}
-		if m.Dimension != 1024 {
-			return fmt.Errorf("vector.multimodal.dimension: must be 1024, got %d", m.Dimension)
-		}
-		if m.APIKeyEnv != "" && !envutil.ValidName(m.APIKeyEnv) {
-			return fmt.Errorf("vector.multimodal.api_key_env: invalid environment variable name %q", m.APIKeyEnv)
-		}
-	} else if m.Provider == "voyage" {
-		normalizedEndpoint, err := normalizedMultimodalEndpoint(m.Endpoint)
-		if err != nil {
-			return fmt.Errorf("vector.multimodal.endpoint: %w", err)
-		}
-		if normalizedEndpoint != defaultMultimodalEndpoint {
-			// The docbank transport pins the provider endpoint into the policy
-			// identity that capability manifests and consent cover. A proxy or
-			// alternate origin configured here would be silently ignored, so it
-			// is refused instead.
-			return fmt.Errorf("vector.multimodal.endpoint: only the pinned provider endpoint %s is supported (got %q)",
-				defaultMultimodalEndpoint, m.Endpoint)
-		}
-		if !envutil.ValidName(m.APIKeyEnv) {
-			return fmt.Errorf("vector.multimodal.api_key_env: must be a valid environment variable name, got %q", m.APIKeyEnv)
-		}
-		if m.Model != "voyage-multimodal-3.5" {
-			return fmt.Errorf("vector.multimodal.model: must be %q, got %q", "voyage-multimodal-3.5", m.Model)
-		}
-		if m.Dimension != 1024 {
-			return fmt.Errorf("vector.multimodal.dimension: must be 1024, got %d", m.Dimension)
-		}
-	} else {
+		return nil
+	}
+	if m.Provider != "voyage" {
 		return fmt.Errorf("vector.multimodal.provider: must be voyage, kit, or vertex, got %q", m.Provider)
 	}
-	if m.Provider == "voyage" && m.MaxContextChars <= 0 {
+	normalizedEndpoint, err := normalizedMultimodalEndpoint(m.Endpoint)
+	if err != nil {
+		return fmt.Errorf("vector.multimodal.endpoint: %w", err)
+	}
+	if normalizedEndpoint != defaultMultimodalEndpoint {
+		// The docbank transport pins the provider endpoint into the policy
+		// identity that capability manifests and consent cover. A proxy or
+		// alternate origin configured here would be silently ignored, so it
+		// is refused instead.
+		return fmt.Errorf("vector.multimodal.endpoint: only the pinned provider endpoint %s is supported (got %q)",
+			defaultMultimodalEndpoint, m.Endpoint)
+	}
+	if !envutil.ValidName(m.APIKeyEnv) {
+		return fmt.Errorf("vector.multimodal.api_key_env: must be a valid environment variable name, got %q", m.APIKeyEnv)
+	}
+	if m.Model != "voyage-multimodal-3.5" {
+		return fmt.Errorf("vector.multimodal.model: must be %q, got %q", "voyage-multimodal-3.5", m.Model)
+	}
+	if m.Dimension != 1024 {
+		return fmt.Errorf("vector.multimodal.dimension: must be 1024, got %d", m.Dimension)
+	}
+	if m.MaxContextChars <= 0 {
 		return fmt.Errorf("vector.multimodal.max_context_chars: must be positive, got %d", m.MaxContextChars)
 	}
 	if !m.configuredImages() && !m.configuredAnimatedGIFs() && !m.configuredVideo() {

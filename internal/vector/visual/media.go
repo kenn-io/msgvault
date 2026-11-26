@@ -19,9 +19,6 @@ import (
 const defaultMaxMediaBytes int64 = 20 << 20
 const defaultMaxPixels int64 = 16_000_000
 
-// VertexMaxImageAxis is the maximum width or height of a Vertex image.
-const VertexMaxImageAxis int64 = 16_384
-
 var ErrContentUnavailable = errors.New("visual attachment content unavailable")
 
 type StreamOpener interface {

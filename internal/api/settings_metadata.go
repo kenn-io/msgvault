@@ -288,7 +288,7 @@ var settingsValidation = map[string]SettingValidation{
 	},
 	"vector.multimodal.model":             {Required: true},
 	"vector.multimodal.dimension":         withHint(numberRange(1024, 1024), "Visual search requires 1024 dimensions."),
-	"vector.multimodal.max_context_chars": {Hint: "Voyage requires a positive value.", Required: true},
+	"vector.multimodal.max_context_chars": atLeast(1),
 	"vector.multimodal.schedule.cron":     cronValidation(false),
 	"vector.search.rrf_k":                 atLeast(1),
 	"vector.search.k_per_signal":          atLeast(1),

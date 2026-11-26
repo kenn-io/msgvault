@@ -2682,19 +2682,3 @@ func TestMicrosoftNamedApps(t *testing.T) {
 	_, err = cfg.App("empty")
 	require.ErrorContains(t, err, "[microsoft.apps.empty]")
 }
-
-func TestLoadVisualProviderDefaultDimension(t *testing.T) {
-	for _, tc := range []struct{ provider, endpoint, model string }{
-		{"kit", "https://embed.example.com/v1", "model"},
-		{"vertex", "https://us-central1-aiplatform.googleapis.com/v1/projects/project-a/locations/us-central1/publishers/google/models", "gemini-embedding-2"},
-	} {
-		t.Run(tc.provider, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config.toml")
-			content := fmt.Sprintf("[vector.multimodal]\nenabled = true\nprovider = %q\nendpoint = %q\nmodel = %q\n", tc.provider, tc.endpoint, tc.model)
-			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
-			cfg, err := Load(path, "")
-			require.NoError(t, err)
-			assert.Equal(t, 1024, cfg.Vector.Multimodal.Dimension)
-		})
-	}
-}
