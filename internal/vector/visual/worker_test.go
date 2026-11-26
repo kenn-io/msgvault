@@ -435,3 +435,33 @@ func TestVisualWorkerBisectsRejectedBatchesSoValidNeighborsPublish(t *testing.T)
 	require.NoError(err)
 	assert.Equal(OutcomeTerminal, publication.OutcomeKind)
 }
+
+func TestKitConfigurationFailureCanRecover(t *testing.T) {
+	f, _, work := workerFixture(t, 2)
+	ready := false
+	provider := &fakeVisualProvider{embed: func(_ context.Context, documents []DocumentInput) ([]EmbeddingResult, error) {
+		if !ready {
+			return nil, ErrProviderConfiguration
+		}
+		results := make([]EmbeddingResult, len(documents))
+		for i := range documents {
+			results[i] = EmbeddingResult{Owner: documents[i].Owner, Vector: []float32{1, 2}}
+		}
+		return results, nil
+	}}
+	worker := newTestVisualWorker(t, f, provider, newFakeVisualBackend())
+	worker.config.MaxBatchItems = 1
+	result, err := worker.Run(t.Context(), work)
+	require.ErrorIs(t, err, ErrProviderConfiguration)
+	assert.Zero(t, result.Terminal)
+	ready = true
+	for i := range work {
+		claim, ok, err := f.Store.ClaimVisualWork(t.Context(), store.VisualClaimRequest{GenerationID: work[i].Claim.GenerationID, Owner: work[i].Candidate.Owner, ProposedRevision: work[i].Document.Revision, LeaseOwner: "retry", Now: time.Now().UTC(), LeaseDuration: time.Minute, SourceFence: work[i].Claim.SourceFence})
+		require.NoError(t, err)
+		require.True(t, ok)
+		work[i].Claim = claim
+	}
+	result, err = worker.Run(t.Context(), work)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), result.Published)
+}

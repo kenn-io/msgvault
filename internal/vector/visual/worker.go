@@ -90,10 +90,21 @@ func (w *Worker) Run(ctx context.Context, work []WorkItem) (result WorkerResult,
 	for start := 0; start < len(work); start += w.config.MaxBatchItems {
 		end := min(start+w.config.MaxBatchItems, len(work))
 		if err := w.runBatch(ctx, work[start:end], &result); err != nil {
-			return result, err
+			return result, errors.Join(err, w.releaseWork(ctx, work[end:]))
 		}
 	}
 	return result, nil
+}
+
+// releaseWork releases claims that a stopped run did not reach.
+func (w *Worker) releaseWork(ctx context.Context, work []WorkItem) error {
+	// Claims must be released even when the caller canceled the run.
+	ctx = context.WithoutCancel(ctx)
+	var err error
+	for _, item := range work {
+		err = errors.Join(err, w.archive.ReleaseVisualWork(ctx, item.Claim))
+	}
+	return err
 }
 
 // finalizeOutcomes projects durable attachment decisions, not provider calls

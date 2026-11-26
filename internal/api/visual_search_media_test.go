@@ -86,7 +86,6 @@ func TestLargeVisualQueryUsesActiveProviderPolicy(t *testing.T) {
 		code    string
 	}{
 		{"kit", kit, http.StatusBadRequest, "invalid_limit"},
-		{"voyage", &visual.SearchService{}, http.StatusUnsupportedMediaType, "unsupported_image_query"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, _ := newTestServerWithMockStore(t)

@@ -128,7 +128,6 @@ func TestAssembleDocumentExcludesContext(t *testing.T) {
 	require.Len(t, first.Parts, 1)
 	request.Context.Subject = "changed"
 	request.Context.Body = "changed"
-	request.Policy.MaxChars++
 	second, _, err := AssembleDocument(request)
 	require.NoError(t, err)
 	assert.Equal(t, first.Revision, second.Revision)

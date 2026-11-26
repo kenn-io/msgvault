@@ -3,7 +3,6 @@ package visual
 import (
 	"context"
 	"errors"
-	"fmt"
 	"image/color"
 	"strings"
 	"testing"
@@ -176,11 +175,6 @@ func TestSearchServicePassesResolvedPersonScopeAndHydratesProvenance(t *testing.
 	}, response.Results[0].PersonProvenance)
 }
 
-func TestDecodeQueryImageRejectsNonImage(t *testing.T) {
-	_, err := (&SearchService{}).DecodeQueryImage([]byte("not an image"))
-	require.Error(t, err)
-}
-
 func TestSearchRejectsDriftedAccountScopeBeforeProviderOrBackend(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -205,36 +199,41 @@ func TestSearchRejectsDriftedAccountScopeBeforeProviderOrBackend(t *testing.T) {
 	assert.Empty(backend.requests, "no backend search on drift")
 }
 
-func TestVertexQueryImageAxisLimit(t *testing.T) {
+func TestDecodeQueryImagePolicy(t *testing.T) {
+	kit, err := NewKitProvider("kit", "https://embed.example.com/v1", "model", 2, "", nil, "generation")
+	require.NoError(t, err)
+	vertex, err := NewKitProvider("vertex", "https://aiplatform.googleapis.com/v1/projects/project-a/locations/global/publishers/google/models", "gemini-embedding-2", 2, "", nil, "generation")
+	require.NoError(t, err)
+	services := map[string]*SearchService{}
+	for name, provider := range map[string]Provider{"kit": kit, "vertex": vertex, "default": &searchProvider{}} {
+		services[name], err = NewSearchService(&store.Store{}, provider, &searchBackend{}, true)
+		require.NoError(t, err)
+	}
+	gif := mediatest.GIF(2, 2, 1)
+	largePhoto := mediatest.PNG(4001, 4000, color.White)
 	for _, tc := range []struct {
-		width, height int
-		accepted      bool
-	}{{16384, 2, true}, {2, 16384, true}, {16385, 2, false}, {2, 16385, false}} {
-		t.Run(fmt.Sprintf("%dx%d", tc.width, tc.height), func(t *testing.T) {
-			data := mediatest.PNG(tc.width, tc.height, color.White)
-			vertex := &SearchService{provider: &KitProvider{api: "vertex"}}
-			_, err := vertex.DecodeQueryImage(data)
-			if tc.accepted {
+		name, provider string
+		data           []byte
+		valid          bool
+	}{
+		{"non-image", "kit", []byte("not an image"), false},
+		{"default large", "default", largePhoto, false},
+		{"kit large", "kit", largePhoto, true},
+		{"vertex width boundary", "vertex", mediatest.PNG(16384, 2, color.White), true},
+		{"vertex height boundary", "vertex", mediatest.PNG(2, 16384, color.White), true},
+		{"vertex width exceeds", "vertex", mediatest.PNG(16385, 2, color.White), false},
+		{"vertex height exceeds", "vertex", mediatest.PNG(2, 16385, color.White), false},
+		{"kit wide", "kit", mediatest.PNG(16385, 2, color.White), true},
+		{"kit tall", "kit", mediatest.PNG(2, 16385, color.White), true},
+		{"kit gif", "kit", gif, false}, {"vertex gif", "vertex", gif, false}, {"default gif", "default", gif, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := services[tc.provider].DecodeQueryImage(tc.data)
+			if tc.valid {
 				require.NoError(t, err)
 			} else {
 				require.Error(t, err)
 			}
-			kit := &SearchService{provider: &KitProvider{api: "kit"}}
-			_, err = kit.DecodeQueryImage(data)
-			require.NoError(t, err)
 		})
 	}
-}
-
-func TestKitAndVertexRejectGIFQuery(t *testing.T) {
-	data := mediatest.GIF(2, 2, 1)
-	for _, api := range []string{"kit", "vertex"} {
-		t.Run(api, func(t *testing.T) {
-			service := &SearchService{provider: &KitProvider{api: api}}
-			_, err := service.DecodeQueryImage(data)
-			require.Error(t, err)
-		})
-	}
-	_, err := (&SearchService{}).DecodeQueryImage(data)
-	require.NoError(t, err)
 }
