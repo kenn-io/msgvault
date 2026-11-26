@@ -39,6 +39,7 @@ type appleMessage struct {
 	GroupMemberJID string              `json:"group_member_jid"`
 	GroupContact   string              `json:"group_contact_name"`
 	GroupFirstName string              `json:"group_first_name"`
+	QuotedStanzaID string              `json:"-"`
 }
 
 // appleTimestampValue accepts both numeric Core Data timestamp values and the
@@ -184,7 +185,9 @@ func (imp *Importer) importApple(
 		return nil, fmt.Errorf("fetch Apple chats: %w", err)
 	}
 
-	aggregates, markersAvailable, err := fetchAppleChatAggregates(ctx, db)
+	hasQuoteMetadata := hasColumn(ctx, db, "ZWAMESSAGE", "ZMEDIAITEM") &&
+		hasColumn(ctx, db, "ZWAMEDIAITEM", "ZMETADATA")
+	aggregates, markersAvailable, err := fetchAppleChatAggregates(ctx, db, hasQuoteMetadata)
 	if err != nil {
 		return nil, fmt.Errorf("read Apple chat change markers: %w", err)
 	}
@@ -224,6 +227,7 @@ func (imp *Importer) importApple(
 	totalLimit := int64(opts.Limit)
 	var totalAdded int64
 	pendingPushNames := make(map[string]string)
+	var replies []appleReply
 
 	for _, chat := range chats {
 		if err := ctx.Err(); err != nil {
@@ -334,7 +338,7 @@ func (imp *Importer) importApple(
 			}
 			// Fetch full pages even under --limit: unchanged rows don't count toward it.
 			messages, err := fetchAppleMessages(
-				ctx, db, chat.RowID, afterRowID, batchSize,
+				ctx, db, chat.RowID, afterRowID, batchSize, hasQuoteMetadata,
 			)
 			if err != nil {
 				return summary, fmt.Errorf("fetch Apple messages: %w", err)
@@ -357,6 +361,7 @@ func (imp *Importer) importApple(
 				return summary, fmt.Errorf("load stored Apple messages: %w", err)
 			}
 
+			var quotedMessages []appleMessage
 			for _, sourceMessage := range messages {
 				if totalLimit > 0 && totalAdded >= totalLimit {
 					break
@@ -369,6 +374,9 @@ func (imp *Importer) importApple(
 				if !isImportableAppleMessage(sourceMessage, duplicateStanzas) {
 					summary.MessagesSkipped++
 					continue
+				}
+				if sourceMessage.QuotedStanzaID != "" {
+					quotedMessages = append(quotedMessages, sourceMessage)
 				}
 
 				senderID, senderPhone, err := resolveAppleMessageSender(
@@ -415,7 +423,8 @@ func (imp *Importer) importApple(
 						FromAddr: senderPhone,
 					},
 				}
-				if existing, ok := stored[sourceMessage.StanzaID]; ok && existing.Matches(data.Message, data.RawMIME) {
+				existing, exists := stored[sourceMessage.StanzaID]
+				if exists && existing.Matches(data.Message, data.RawMIME) {
 					unchanged, err := imp.store.MessageContentMatchesContext(
 						ctx, existing.ID, data.BodyText, *data.FTS,
 					)
@@ -427,10 +436,14 @@ func (imp *Importer) importApple(
 						continue
 					}
 				}
-				if _, err := imp.store.PersistMessageContext(ctx, data); err != nil {
+				messageID, err := imp.store.PersistMessageContext(ctx, data)
+				if err != nil {
 					return summary, fmt.Errorf("persist Apple message: %w", err)
 				}
-				if _, exists := stored[sourceMessage.StanzaID]; exists {
+				existing.ID = messageID
+				existing.Raw = rawJSON
+				stored[sourceMessage.StanzaID] = existing
+				if exists {
 					summary.MessagesUpdated++
 				} else {
 					summary.MessagesAdded++
@@ -438,6 +451,7 @@ func (imp *Importer) importApple(
 				chatAdded++
 				totalAdded++
 			}
+			replies = appendAppleReplies(replies, quotedMessages, stored, duplicateStanzas)
 
 			if err := imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
 				MessagesProcessed: summary.MessagesProcessed,
@@ -465,6 +479,9 @@ func (imp *Importer) importApple(
 			nextMarkers[chat.RowID] = marker
 		}
 		imp.progress.OnChatComplete(canonicalChatJID, chatAdded)
+	}
+	if err := imp.linkAppleReplies(ctx, source.ID, replies); err != nil {
+		return summary, err
 	}
 	for phone, pushName := range pendingPushNames {
 		if _, err := ensureAppleParticipant(
@@ -518,15 +535,20 @@ func fetchAppleMessages(
 	db *sql.DB,
 	chatRowID, afterRowID int64,
 	limit int,
+	hasQuoteMetadata bool,
 ) ([]appleMessage, error) {
+	metadata, mediaJoin := "NULL", ""
+	if hasQuoteMetadata {
+		metadata, mediaJoin = "mi.ZMETADATA", appleMediaJoin
+	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT m.Z_PK, m.ZCHATSESSION, COALESCE(m.ZSTANZAID, ''),
 		       COALESCE(m.ZISFROMME, 0), m.ZMESSAGEDATE, m.ZTEXT,
 		       COALESCE(m.ZMESSAGETYPE, 0), COALESCE(m.ZFROMJID, ''),
 		       COALESCE(gm.ZMEMBERJID, ''), COALESCE(gm.ZCONTACTNAME, ''),
-		       COALESCE(gm.ZFIRSTNAME, '')
+		       COALESCE(gm.ZFIRSTNAME, ''), `+metadata+`
 		FROM ZWAMESSAGE m
-		LEFT JOIN ZWAGROUPMEMBER gm ON gm.Z_PK = m.ZGROUPMEMBER
+		LEFT JOIN ZWAGROUPMEMBER gm ON gm.Z_PK = m.ZGROUPMEMBER `+mediaJoin+`
 		WHERE m.ZCHATSESSION = ? AND m.Z_PK > ?
 		ORDER BY m.Z_PK ASC
 		LIMIT ?
@@ -539,15 +561,17 @@ func fetchAppleMessages(
 	var messages []appleMessage
 	for rows.Next() {
 		var message appleMessage
+		var metadata []byte
 		if err := rows.Scan(
 			&message.RowID, &message.ChatRowID, &message.StanzaID,
 			&message.FromMe, &message.MessageDate, &message.Text,
 			&message.MessageType, &message.FromJID,
 			&message.GroupMemberJID, &message.GroupContact,
-			&message.GroupFirstName,
+			&message.GroupFirstName, &metadata,
 		); err != nil {
 			return nil, err
 		}
+		message.QuotedStanzaID = appleQuotedStanza(metadata)
 		messages = append(messages, message)
 	}
 	return messages, rows.Err()
