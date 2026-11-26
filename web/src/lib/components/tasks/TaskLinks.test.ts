@@ -284,6 +284,38 @@ describe('TaskLinks', () => {
     }
   );
 
+  it('hides the disabled setup notice in the reader once asked, and keeps failures and the add dialog', async () => {
+    let integrationState = 'disabled';
+    const client = createAPIClient(vi.fn(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      return request.url.endsWith('/integrations/tasks/status')
+        ? Response.json({ state: integrationState, project: 'project', message: 'Task integration is disabled.' })
+        : Response.json(taskLookup({ tasks: [{ id: 'task-1', title: 'Cached task' }] }));
+    }));
+    const first = render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
+    await fireEvent.click(await screen.findByRole('button', { name: "Don't show again" }));
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Set up' })).toBeNull();
+    expect(screen.getByText('Cached task')).toBeDefined();
+    first.unmount();
+
+    const reopened = render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
+    expect(await screen.findByText('Cached task')).toBeDefined();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Set up' })).toBeNull();
+    reopened.unmount();
+
+    const dialog = render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Synthetic' });
+    expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: "Don't show again" })).toBeNull();
+    dialog.unmount();
+
+    integrationState = 'unreachable';
+    render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
+    expect((await screen.findByRole('alert')).textContent).toContain('unreachable');
+    expect(screen.getByRole('button', { name: 'Open Settings' })).toBeDefined();
+  });
+
   it.each([
     ['authentication_required', 'Authentication is required'],
     ['incompatible', 'incompatible'],

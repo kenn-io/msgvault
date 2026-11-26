@@ -1,5 +1,5 @@
 import { taskLookup } from './fixtures.test-support';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
@@ -80,6 +80,15 @@ describe('Message task list', () => {
     render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true, showSetup });
     await waitFor(() => expect(screen.queryByRole('status', { hidden: true })).toBeNull());
     expect(screen.queryByRole('region', { name: 'Tasks' }) !== null).toBe(visible);
+  });
+
+  it('hides the Tasks group after the reader hides the disabled setup notice', async () => {
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/status')
+      ? { state: 'disabled', message: 'Task integration is disabled.' }
+      : taskLookup({ tasks: [] })));
+    render(MessageTasks, { client, messageId: 42, title: 'Synthetic', email: true });
+    await fireEvent.click(await screen.findByRole('button', { name: "Don't show again" }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Tasks' })).toBeNull());
   });
 
   it.each([
