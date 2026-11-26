@@ -16,6 +16,7 @@ import (
 	"text/tabwriter"
 
 	"go.kenn.io/kit/agentsetup"
+	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -101,10 +102,11 @@ type setupConsentState struct {
 // setupEnvironment is what the report needs beyond the loaded config: the
 // process environment, stored credentials, filesystem, and archive consent.
 type setupEnvironment struct {
-	lookupEnv   func(string) (string, bool)
-	fileExists  func(string) bool
-	consent     *setupConsentState
-	credentials providercredentials.Snapshot
+	lookupEnv         func(string) (string, bool)
+	fileExists        func(string) bool
+	consent           *setupConsentState
+	credentials       providercredentials.Snapshot
+	googleCredentials func() error
 }
 
 func (e setupEnvironment) hasEnv(name string) bool {
@@ -113,6 +115,14 @@ func (e setupEnvironment) hasEnv(name string) bool {
 	}
 	value, ok := e.lookupEnv(name)
 	return ok && strings.TrimSpace(value) != ""
+}
+
+func (e setupEnvironment) googleCredentialError() error {
+	if e.googleCredentials != nil {
+		return e.googleCredentials()
+	}
+	_, err := embedclient.GoogleHTTPClient()
+	return err
 }
 
 func (e setupEnvironment) reportMissingCredential(lane *laneStatus, name string) {
@@ -248,17 +258,20 @@ func setupVisualConsent(ctx context.Context, cfg *config.Config, st *store.Store
 	if err != nil {
 		return false
 	}
-	providerConfig, err := visualVoyageConfig(vecCfg)
-	if err != nil {
-		return false
-	}
-	policy, err := providerConfig.Policy()
-	if err != nil {
-		return false
-	}
-	policyFingerprint, err := policy.Fingerprint(providerConfig.Manifest)
-	if err != nil {
-		return false
+	policyFingerprint := vecCfg.MultimodalGenerationFingerprint()
+	if vecCfg.Multimodal.Provider == "voyage" {
+		providerConfig, err := visualVoyageConfig(vecCfg)
+		if err != nil {
+			return false
+		}
+		policy, err := providerConfig.Policy()
+		if err != nil {
+			return false
+		}
+		policyFingerprint, err = policy.Fingerprint(providerConfig.Manifest)
+		if err != nil {
+			return false
+		}
 	}
 	fingerprint := vecCfg.MultimodalGenerationFingerprint()
 	for _, read := range []func(context.Context) (store.VisualGeneration, error){st.ActiveVisualGeneration, st.BuildingVisualGeneration} {
@@ -411,6 +424,26 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 			env.reportVectorCredential(&lane, providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv)
 			return lane
 		}
+		if multimodal.Provider == "kit" || multimodal.Provider == "vertex" {
+			lane.Reason = "Endpoint: " + multimodal.Endpoint
+			if multimodal.Provider == "vertex" {
+				if err := env.googleCredentialError(); err != nil {
+					lane.State = laneStatePending
+					lane.Reason += "; Google Application Default Credentials are unavailable"
+					return lane
+				}
+			} else {
+				env.reportVectorCredential(&lane, providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv)
+				if lane.State == laneStatePending {
+					return lane
+				}
+			}
+			if lane.Consent != consentActive {
+				lane.State = laneStatePending
+				lane.Next = []string{"msgvault multimodal build --yes"}
+			}
+			return lane
+		}
 		if multimodal.CapabilitiesFile == "" {
 			lane.State = laneStatePending
 			lane.Reason = "capabilities_file is unset; setup providers can configure a validated default manifest"
@@ -434,6 +467,12 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		return lane
 	}
 	lane.State = laneStateOff
+	if multimodal.Provider == "kit" || multimodal.Provider == "vertex" {
+		lane.Provider = multimodal.Provider
+		lane.Model = multimodal.Model
+		lane.Reason = "Endpoint: " + multimodal.Endpoint
+		return lane
+	}
 	if err := multimodal.Validate(); err != nil {
 		lane.State = laneStatePending
 		lane.Reason = "invalid visual configuration: " + err.Error()

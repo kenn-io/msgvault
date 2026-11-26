@@ -48,6 +48,9 @@ capability profile.`,
 			return errors.New("configuration is unavailable")
 		}
 		cfg := state.cfg
+		if cfg.Vector.Multimodal.Provider != "voyage" {
+			return errors.New("multimodal probe requires the voyage provider")
+		}
 		if strings.TrimSpace(multimodalProbeSeeds) == "" {
 			return usageErr(cmd, errors.New("--seeds is required: a private directory holding synthetic image_webp.webp, image_webp_alt.webp, video_mp4.mp4, and video_mp4_alt.mp4 seeds"))
 		}

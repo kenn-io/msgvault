@@ -33,6 +33,7 @@ type StreamOpener interface {
 type MediaPolicy struct {
 	MaxBytes         int64
 	MaxPixels        int64
+	MaxDurationMS    int64
 	IncludeImages    bool
 	IncludeVideo     bool
 	AllowAnimatedGIF bool
@@ -62,7 +63,7 @@ func (p MediaPolicy) documentPolicy() media.Policy {
 		maxPixels = defaultMaxPixels
 	}
 	return media.Policy{
-		MaxBytes: maxBytes, MaxPixels: maxPixels,
+		MaxBytes: maxBytes, MaxPixels: maxPixels, MaxDurationMS: p.MaxDurationMS,
 		AllowStill:    p.IncludeImages,
 		AllowAnimated: p.IncludeImages && p.AllowAnimatedGIF,
 		AllowVideo:    p.IncludeVideo,

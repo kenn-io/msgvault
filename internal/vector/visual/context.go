@@ -23,6 +23,7 @@ type MessageContext struct {
 }
 
 type ContextPolicy struct {
+	ExcludeContext     bool
 	MaxChars           int
 	InputVersion       string
 	EligibilityVersion string
@@ -50,7 +51,11 @@ func AssembleDocument(request AssembleRequest) (DocumentInput, bool, error) {
 	if request.Policy.MaxChars <= 0 {
 		request.Policy.MaxChars = 4000
 	}
-	contextText, truncated := normalizedMessageContext(request.Context, request.Policy.MaxChars)
+	var contextText string
+	var truncated bool
+	if !request.Policy.ExcludeContext {
+		contextText, truncated = normalizedMessageContext(request.Context, request.Policy.MaxChars)
+	}
 	parts := make([]InputPart, 0, 2)
 	if contextText != "" {
 		parts = append(parts, InputPart{Text: contextText})

@@ -701,7 +701,7 @@ func TestMultimodalFingerprintChangesForPolicyAndScope(t *testing.T) {
 	base := Config{Multimodal: MultimodalConfig{Enabled: true}}
 	base.ApplyDefaults()
 	baseline := base.MultimodalGenerationFingerprint()
-	require.NotEmpty(t, baseline)
+	assert.Equal(t, "visual-v1-2fbd4d25c1f7aea0203e4ae4b535355b5149e0a8b54be698b6215695abfa2643", baseline)
 
 	tests := []struct {
 		name   string
@@ -784,4 +784,61 @@ include_animated_gifs = true
 	err = cfg.Validate()
 	require.Error(err)
 	require.Contains(err.Error(), "include_animated_gifs")
+}
+
+func TestKitMultimodalConfig(t *testing.T) {
+	for _, tt := range []struct {
+		name, api, endpoint string
+		valid               bool
+	}{
+		{"kit", "kit", "https://embed.example.com/v1", true},
+		{"vertex", "vertex", "https://us-central1-aiplatform.googleapis.com/v1/projects/project-a/locations/us-central1/publishers/google/models", true},
+		{"openai", "openai", "https://embed.example.com/v1", false},
+		{"missing endpoint", "kit", "", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{Multimodal: MultimodalConfig{Enabled: true, Provider: tt.api, Endpoint: tt.endpoint, Model: "model", Dimension: 1024}}
+			if tt.api == "vertex" {
+				cfg.Multimodal.Model = "gemini-embedding-2"
+			}
+			cfg.ApplyDefaults()
+			assert.Empty(t, cfg.Multimodal.APIKeyEnv)
+			if tt.valid {
+				require.NoError(t, cfg.Validate())
+			} else {
+				require.Error(t, cfg.Validate())
+			}
+		})
+	}
+	cfg := Config{Multimodal: MultimodalConfig{Provider: "kit"}}
+	cfg.ApplyDefaults()
+	assert.Empty(t, cfg.Multimodal.Endpoint)
+	assert.Empty(t, cfg.Multimodal.Model)
+	assert.Zero(t, cfg.Multimodal.Dimension)
+	for _, provider := range []string{"kit", "vertex"} {
+		cfg.Multimodal.Provider = provider
+		cfg.Multimodal.Endpoint = "https://embed.example.com/v1"
+		cfg.Multimodal.Model = "gemini-embedding-2"
+		cfg.Multimodal.Dimension = 1024
+		if provider == "vertex" {
+			cfg.Multimodal.Endpoint = "https://us-central1-aiplatform.googleapis.com/v1/projects/project-a/locations/us-central1/publishers/google/models"
+		}
+		cfg.Multimodal.IncludeAnimatedGIFs = new(true)
+		require.ErrorContains(t, cfg.Multimodal.Validate(), "animated_gifs")
+	}
+
+}
+
+func TestKitVisualFingerprintIgnoresContext(t *testing.T) {
+	cfg := Config{Multimodal: MultimodalConfig{Provider: "vertex", Endpoint: "https://example.com/v1", Model: "gemini-embedding-2", Dimension: 1024}}
+	cfg.ApplyDefaults()
+	before := cfg.MultimodalGenerationFingerprint()
+	cfg.Multimodal.MaxContextChars++
+	assert.Equal(t, before, cfg.MultimodalGenerationFingerprint())
+	cfg.Multimodal.Provider = "kit"
+	assert.NotEqual(t, before, cfg.MultimodalGenerationFingerprint())
+	cfg.Multimodal.Provider = "vertex"
+	cfg.Multimodal.Endpoint = "https://us-central1-aiplatform.googleapis.com/v1/projects/project-a/locations/us-central1/publishers/google/models"
+	cfg.Multimodal.Model = "text-embedding-005"
+	require.ErrorContains(t, cfg.Multimodal.Validate(), "gemini-embedding-2")
 }

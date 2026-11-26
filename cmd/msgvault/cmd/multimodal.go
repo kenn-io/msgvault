@@ -188,7 +188,7 @@ var multimodalBuildCmd = &cobra.Command{
 	Use: multimodalBuildSubcommand, Short: "Consent and build visual attachment embeddings", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !multimodalBuildYes {
-			return usageErr(cmd, errors.New("hosted visual processing sends eligible attachment bytes and bounded message context to the configured provider; pass --yes to continue"))
+			return usageErr(cmd, errors.New("hosted visual processing sends eligible attachment bytes and, with Voyage, bounded message context to the configured provider; pass --yes to continue"))
 		}
 		return runVisualBuildLoop(cmd, true)
 	},

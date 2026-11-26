@@ -3,19 +3,28 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/voyage"
 	"go.kenn.io/docbank/document/voyage/voyagetest"
 	"go.kenn.io/msgvault/internal/config"
@@ -219,4 +228,192 @@ func TestNewVisualRuntimeUsesStoredCredentialSnapshotAndRejectsRedirectReplay(t 
 	require.Error(t, err)
 	assert.Equal(t, "Bearer stored-at-startup", authorization)
 	assert.Empty(t, redirectedAuthorization)
+}
+
+type kitTestOpener map[string][]byte
+
+func (o kitTestOpener) OpenStream(_ context.Context, hash string) (io.ReadCloser, int64, error) {
+	data := o[hash]
+	return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
+}
+
+func TestKitVisualRuntimeConsentWithoutManifest(t *testing.T) {
+	for _, tc := range []struct{ name, api, key string }{{"kit anonymous", "kit", ""}, {"kit keyed", "kit", "synthetic-kit-key"}, {"vertex", "vertex", ""}} {
+		t.Run(tc.name, func(t *testing.T) { testKitVisualRuntime(t, tc.api, tc.key) })
+	}
+}
+
+func testKitVisualRuntime(t *testing.T, api, key string) {
+	t.Helper()
+	images := make([][]byte, 2)
+	for i, shade := range []uint8{50, 200} {
+		img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+		img.Set(0, 0, color.RGBA{R: shade, A: 255})
+		var buf bytes.Buffer
+		require.NoError(t, png.Encode(&buf, img))
+		images[i] = buf.Bytes()
+	}
+	documentRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if key != "" {
+			assert.Equal(t, "Bearer "+key, r.Header.Get("Authorization"))
+		}
+		if api == "vertex" {
+			assert.Equal(t, "Bearer synthetic-google-token", r.Header.Get("Authorization"))
+		}
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		var data string
+		if api == "vertex" {
+			assert.Equal(t, "/v1/projects/project-a/locations/us-central1/publishers/google/models/gemini-embedding-2:embedContent", r.URL.Path)
+			content := payload["content"].(map[string]any)
+			parts := content["parts"].([]any)
+			part := parts[0].(map[string]any)
+			if inline, ok := part["inlineData"].(map[string]any); ok {
+				assert.Equal(t, "image/png", inline["mimeType"])
+				data = inline["data"].(string)
+			} else {
+				assert.Equal(t, "task: search result | query: beach at sunset", part["text"])
+			}
+		} else {
+			assert.Equal(t, "/v1/embed", r.URL.Path)
+			inputs := payload["inputs"].([]any)
+			input := inputs[0].(map[string]any)
+			data, _ = input["data"].(string)
+		}
+		if data != "" {
+			documentRequests++
+		}
+		vector := make([]float32, 1024)
+		vector[0] = 1
+		if data == base64.StdEncoding.EncodeToString(images[1]) {
+			vector[0], vector[1] = 0, 1
+		}
+		if api == "vertex" {
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"embedding": map[string]any{"values": vector}}))
+		} else {
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": []any{map[string]any{"index": 0, "embedding": vector}}}))
+		}
+	}))
+	t.Cleanup(server.Close)
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "msgvault.db")
+	st := testutil.NewSQLiteTestStoreAt(t, mainPath)
+	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: filepath.Join(dir, "vectors.db"), MainPath: mainPath, MainDB: st.DB(), Dimension: 1024})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = backend.Close() })
+	source, err := st.GetOrCreateSource("gmail", "visual@example.com")
+	require.NoError(t, err)
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Thread")
+	require.NoError(t, err)
+	opener := kitTestOpener{}
+	var messages []int64
+	for i, hash := range []string{strings.Repeat("a1", 32), strings.Repeat("b2", 32)} {
+		id, err := st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: source.ID, SourceMessageID: fmt.Sprintf("photo-%d", i), MessageType: "email"})
+		require.NoError(t, err)
+		messages = append(messages, id)
+		opener[hash] = images[i]
+		require.NoError(t, st.UpsertAttachmentRecord(t.Context(), id, store.AttachmentWrite{Filename: "photo.png", MIMEType: "image/png", StoragePath: hash[:2] + "/" + hash, ContentHash: hash, Size: int64(len(images[i])), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "part:1"}))
+	}
+	for i, data := range [][]byte{mediatest.GIF(2, 2, 1), mediatest.MP4(640, 360, 120001)} {
+		hash := []string{strings.Repeat("c3", 32), strings.Repeat("d4", 32)}[i]
+		id, err := st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: source.ID, SourceMessageID: fmt.Sprintf("excluded-%d", i), MessageType: "email"})
+		require.NoError(t, err)
+		opener[hash] = data
+		require.NoError(t, st.UpsertAttachmentRecord(t.Context(), id, store.AttachmentWrite{Filename: "excluded", StoragePath: hash[:2] + "/" + hash, ContentHash: hash, Size: int64(len(data)), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "part:1"}))
+	}
+	cfg := config.NewDefaultConfig()
+	cfg.Vector.Multimodal.Enabled = true
+	cfg.Vector.Multimodal.Provider = api
+	cfg.Vector.Multimodal.Endpoint = server.URL + "/v1"
+	cfg.Vector.Multimodal.Model = "model"
+	if api == "vertex" {
+		cfg.Vector.Multimodal.Endpoint += "/projects/project-a/locations/us-central1/publishers/google/models"
+		cfg.Vector.Multimodal.Model = "gemini-embedding-2"
+	}
+	cfg.Vector.Multimodal.Dimension = 1024
+	cfg.Vector.Multimodal.APIKeyEnv = ""
+	cfg.Vector.Multimodal.CapabilitiesFile = ""
+	client := server.Client()
+	if api == "vertex" {
+		transport := client.Transport
+		if transport == nil {
+			transport = http.DefaultTransport
+		}
+		client.Transport = visualCredentialRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			request := r.Clone(r.Context())
+			request.Header.Set("Authorization", "Bearer synthetic-google-token")
+			return transport.RoundTrip(request)
+		})
+	}
+	runtime, err := newVisualRuntime(t.Context(), cfg.Vector, st, backend, opener, visualRuntimeCredential{HTTPClient: client, APIKey: key})
+	require.NoError(t, err)
+	require.NoError(t, st.ConsentVisualGeneration(t.Context(), runtime.Generation.ID, runtime.PolicyFingerprint))
+	assert.True(t, setupVisualConsent(t.Context(), cfg, st))
+	for range 10 {
+		_, err = executeVisualPass(t.Context(), runtime)
+		require.NoError(t, err)
+		if _, err = st.ActiveVisualGeneration(t.Context()); err == nil {
+			break
+		}
+	}
+	_, err = st.ActiveVisualGeneration(t.Context())
+	require.NoError(t, err)
+	search, err := visual.NewSearchService(st, runtime.Provider, runtime.Backend, true)
+	require.NoError(t, err)
+	response, err := search.Search(t.Context(), visual.SearchQuery{Text: "beach at sunset", Limit: 5})
+	require.NoError(t, err)
+	require.Len(t, response.Results, 2)
+	assert.Equal(t, messages[0], response.Results[0].MessageID)
+	assert.Equal(t, 2, documentRequests)
+	lane := visualSearchLane(cfg, setupEnvironment{consent: &setupConsentState{Visual: true}, googleCredentials: func() error { return nil }})
+	assert.Equal(t, laneStateOn, lane.State)
+	assert.Equal(t, planActionKeep, planVisualSearch(cfg, setupDetection{}).Action)
+}
+
+func TestMismatchedVisualCredentialKeepsTextSearchAvailable(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "msgvault.db")
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir, cfg.Data.DataDir = dir, dir
+	cfg.Vector.Enabled = true
+	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
+	cfg.Vector.Embeddings.Endpoint = "https://example.com/v1"
+	cfg.Vector.Embeddings.Model = "text-model"
+	cfg.Vector.Embeddings.Dimension = 4
+	cfg.Vector.Multimodal.Enabled = true
+	cfg.Vector.Multimodal.Provider = "kit"
+	cfg.Vector.Multimodal.Endpoint = "https://embed.example.com/v1"
+	cfg.Vector.Multimodal.Model = "model"
+	cfg.Vector.Multimodal.Dimension = 1024
+	cfg.Vector.Multimodal.APIKeyEnv = ""
+	empty, err := providercredentials.Read(cfg.TokensDir())
+	require.NoError(t, err)
+	_, err = providercredentials.Put(cfg.TokensDir(), empty.ETag, providercredentials.VectorMultimodalID, "https://api.voyageai.com/v1", "old-key")
+	require.NoError(t, err)
+	ctx := withTestConfig(t, cfg)
+	st := testutil.NewSQLiteTestStoreAt(t, mainPath)
+	features, err := setupVectorFeatures(ctx, st, mainPath, false, unavailableVisualCredentialOpener{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = features.Close() })
+	assert.NotNil(t, features.HybridEngine)
+	assert.Nil(t, features.Visual)
+}
+
+func TestKitVisualSetupReportsCredentials(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Vector.Multimodal.Enabled = true
+	cfg.Vector.Multimodal.Provider = "kit"
+	cfg.Vector.Multimodal.Endpoint = "https://embed.example.com/v1"
+	cfg.Vector.Multimodal.APIKeyEnv = "EMBED_KEY"
+	env := setupEnvironment{consent: &setupConsentState{Visual: true}, lookupEnv: func(string) (string, bool) { return "", false }}
+	assert.Equal(t, laneStatePending, visualSearchLane(cfg, env).State)
+	assert.Equal(t, planActionPending, planVisualSearch(cfg, setupDetection{visualUnavailable: "credential unavailable"}).Action)
+	env.lookupEnv = func(string) (string, bool) { return "key", true }
+	assert.Equal(t, laneStateOn, visualSearchLane(cfg, env).State)
+	cfg.Vector.Multimodal.Provider = "vertex"
+	env.googleCredentials = func() error { return errors.New("missing") }
+	assert.Equal(t, laneStatePending, visualSearchLane(cfg, env).State)
+	env.googleCredentials = func() error { return nil }
+	assert.Equal(t, laneStateOn, visualSearchLane(cfg, env).State)
 }

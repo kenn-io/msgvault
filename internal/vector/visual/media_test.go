@@ -207,3 +207,26 @@ func encodedAnimatedGIF(t *testing.T) []byte {
 	}, Delay: []int{1, 1}}))
 	return out.Bytes()
 }
+
+func TestVertexMediaEligibility(t *testing.T) {
+	policy := fullyAuthorizedPolicy()
+	policy.AuthorizedCapabilities = []string{voyage.CapabilityImageJPEG, voyage.CapabilityImagePNG, voyage.CapabilityImageWebP, voyage.CapabilityVideoMP4}
+	policy.MaxDurationMS = 120000
+	for _, tt := range []struct {
+		name     string
+		data     []byte
+		eligible bool
+		reason   EligibilityReason
+	}{
+		{"short video", mediatest.MP4(640, 360, 120000), true, ""},
+		{"long video", mediatest.MP4(640, 360, 120001), false, ReasonProviderLimit},
+		{"gif", encodedAnimatedGIF(t), false, ReasonProviderFormatUnsupported},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := InspectMedia(t.Context(), memoryOpener{data: tt.data}, eligibleOccurrence(""), policy)
+			require.NoError(t, err)
+			assert.Equal(t, tt.eligible, got.Eligible)
+			assert.Equal(t, tt.reason, got.Reason)
+		})
+	}
+}

@@ -46,16 +46,17 @@ func explicitOpenAISetupFlags() []string {
 // archive store, a fixed environment, and a fixed filesystem view for the
 // probe manifests.
 type setupProvidersFixture struct {
-	dir     string
-	path    string
-	store   *store.Store
-	env     map[string]string
-	files   map[string]bool
-	ollama  ollamaProbeResult
-	checker *fixedPersonProviderChecker
-	input   io.Reader
-	tty     bool
-	confirm bool
+	dir               string
+	path              string
+	store             *store.Store
+	env               map[string]string
+	files             map[string]bool
+	ollama            ollamaProbeResult
+	checker           *fixedPersonProviderChecker
+	input             io.Reader
+	tty               bool
+	confirm           bool
+	googleCredentials func() error
 }
 
 func newSetupProvidersFixture(t *testing.T, content string) *setupProvidersFixture {
@@ -336,8 +337,9 @@ func (f *setupProvidersFixture) personProviderDeps(t *testing.T) personProviderC
 func (f *setupProvidersFixture) deps(t *testing.T) setupProvidersDeps {
 	t.Helper()
 	return setupProvidersDeps{
-		lookupEnv:  f.lookupEnv,
-		fileExists: func(path string) bool { return f.files[path] },
+		googleCredentials: f.googleCredentials,
+		lookupEnv:         f.lookupEnv,
+		fileExists:        func(path string) bool { return f.files[path] },
 		readConfigFile: func() (config.ConfigFile, error) {
 			return config.ReadConfigFile(f.path)
 		},
@@ -1515,6 +1517,76 @@ func TestSetupStatusAgents(t *testing.T) {
 			case "no_agents":
 				assert.Empty(t, errOutput.String())
 				assert.NotContains(t, output.String(), "Agents:")
+			}
+		})
+	}
+}
+
+func TestConfiguredVisualProvidersSetup(t *testing.T) {
+	for _, tt := range []struct {
+		name, provider string
+		unavailable    string
+		enabled        bool
+		want           string
+	}{
+		{"anonymous kit", "kit", "", false, planActionEnable},
+		{"keyed kit", "kit", "", false, planActionEnable},
+		{"missing kit key", "kit", "visual provider credential unavailable", false, planActionPending},
+		{"vertex credentials", "vertex", "", false, planActionEnable},
+		{"missing vertex credentials", "vertex", "Google credentials unavailable", false, planActionPending},
+		{"enabled kit", "kit", "", true, planActionKeep},
+		{"enabled vertex", "vertex", "", true, planActionKeep},
+		{"voyage missing manifest", "voyage", "", false, planActionPending},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.NewDefaultConfig()
+			cfg.Vector.Multimodal.Provider = tt.provider
+			cfg.Vector.Multimodal.Enabled = tt.enabled
+			lane := planVisualSearch(cfg, setupDetection{visualUnavailable: tt.unavailable, visualKey: true, voyageManifestError: "missing manifest"})
+			assert.Equal(t, tt.want, lane.Action)
+			assert.Equal(t, tt.provider, lane.Provider)
+			if tt.want == planActionEnable {
+				require.NotEmpty(t, lane.edits)
+				assert.Equal(t, true, lane.edits[0].Values["enabled"])
+				assert.Contains(t, lane.next, "msgvault multimodal build --yes")
+			}
+		})
+	}
+}
+
+func TestSetupProvidersConfiguredVisualCredentials(t *testing.T) {
+	for _, tt := range []struct {
+		name, provider, keyEnv, keyValue string
+		googleErr                        error
+		enabled                          bool
+	}{
+		{name: "anonymous kit", provider: "kit", enabled: true},
+		{name: "keyed kit", provider: "kit", keyEnv: "EMBED_KEY", keyValue: "key", enabled: true},
+		{name: "missing kit key", provider: "kit", keyEnv: "EMBED_KEY"},
+		{name: "vertex credentials", provider: "vertex", enabled: true},
+		{name: "missing vertex credentials", provider: "vertex", googleErr: errors.New("missing credentials")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			endpoint, model := "https://embed.example.com/v1", "model"
+			if tt.provider == "vertex" {
+				endpoint = "https://us-central1-aiplatform.googleapis.com/v1/projects/project-a/locations/us-central1/publishers/google/models"
+				model = "gemini-embedding-2"
+			}
+			content := fmt.Sprintf("[vector.multimodal]\nprovider = %q\nendpoint = %q\nmodel = %q\ndimension = 1024\napi_key_env = %q\n", tt.provider, endpoint, model, tt.keyEnv)
+			fixture := newSetupProvidersFixture(t, content)
+			fixture.googleCredentials = func() error { return tt.googleErr }
+			if tt.keyValue != "" {
+				fixture.env[tt.keyEnv] = tt.keyValue
+			}
+			output, err := fixture.run(t, "providers", "--yes")
+			require.NoError(t, err)
+			cfg := fixture.load(t)
+			assert.Equal(t, tt.enabled, cfg.Vector.Multimodal.Enabled)
+			assert.Equal(t, tt.provider, cfg.Vector.Multimodal.Provider)
+			if tt.enabled {
+				assert.Contains(t, output, "msgvault multimodal build --yes")
+			} else {
+				assert.NotContains(t, output, "msgvault multimodal probe")
 			}
 		})
 	}

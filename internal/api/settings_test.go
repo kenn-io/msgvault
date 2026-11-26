@@ -1004,6 +1004,8 @@ include_video = true
 	assertions.False(*byKey["vector.multimodal.include_images"].Value.Boolean)
 	requirements.NotNil(byKey["vector.multimodal.include_video"].Value.Boolean)
 	assertions.True(*byKey["vector.multimodal.include_video"].Value.Boolean)
+	assertions.Equal([]string{"voyage", "kit", "vertex"}, byKey["vector.multimodal.provider"].Options)
+	assertions.Empty(byKey["vector.multimodal.model"].Options)
 	assertions.True(byKey["vector.multimodal.api_key_env"].ReadOnly)
 	assertions.NotContains(resp.Body.String(), "synthetic-key-value")
 }
