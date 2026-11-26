@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -480,9 +481,9 @@ func TestKitWorkerRecoversFromEndpointFailures(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, _, work := workerFixture(t, 2)
-			ready := false
+			var ready atomic.Bool
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				if !ready {
+				if !ready.Load() {
 					w.WriteHeader(tc.status)
 					_, _ = w.Write([]byte(tc.body))
 					return
@@ -501,7 +502,7 @@ func TestKitWorkerRecoversFromEndpointFailures(t *testing.T) {
 				assert.Equal(t, int64(2), result.Retryable)
 			}
 			assert.Zero(t, result.Terminal)
-			ready = true
+			ready.Store(true)
 			for i := range work {
 				claim, ok, err := f.Store.ClaimVisualWork(t.Context(), store.VisualClaimRequest{GenerationID: work[i].Claim.GenerationID, Owner: work[i].Candidate.Owner, ProposedRevision: work[i].Document.Revision, LeaseOwner: "retry", Now: time.Now().UTC(), LeaseDuration: time.Minute, SourceFence: work[i].Claim.SourceFence})
 				require.NoError(t, err)
