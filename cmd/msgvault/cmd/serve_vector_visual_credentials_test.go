@@ -237,6 +237,16 @@ func (o kitTestOpener) OpenStream(_ context.Context, hash string) (io.ReadCloser
 	return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
 }
 
+type countingVisualOpener struct {
+	kitTestOpener
+	reads int
+}
+
+func (o *countingVisualOpener) OpenStream(ctx context.Context, hash string) (io.ReadCloser, int64, error) {
+	o.reads++
+	return o.kitTestOpener.OpenStream(ctx, hash)
+}
+
 func TestKitVisualRuntimeConsentWithoutManifest(t *testing.T) {
 	for _, tc := range []struct{ name, api, key string }{{"kit anonymous", "kit", ""}, {"kit keyed", "kit", "synthetic-kit-key"}, {"vertex", "vertex", ""}} {
 		t.Run(tc.name, func(t *testing.T) { testKitVisualRuntime(t, tc.api, tc.key) })
@@ -351,7 +361,8 @@ func testKitVisualRuntime(t *testing.T, api, key string) {
 			return transport.RoundTrip(request)
 		})
 	}
-	runtime, err := newVisualRuntime(t.Context(), cfg.Vector, st, backend, opener, visualRuntimeCredential{HTTPClient: client, APIKey: key})
+	countedOpener := &countingVisualOpener{kitTestOpener: opener}
+	runtime, err := newVisualRuntime(t.Context(), cfg.Vector, st, backend, countedOpener, visualRuntimeCredential{HTTPClient: client, APIKey: key})
 	require.NoError(t, err)
 	require.NoError(t, st.ConsentVisualGeneration(t.Context(), runtime.Generation.ID, runtime.PolicyFingerprint))
 	assert.True(t, setupVisualConsent(t.Context(), cfg, st))
@@ -366,11 +377,20 @@ func testKitVisualRuntime(t *testing.T, api, key string) {
 	require.NoError(t, err)
 	search, err := visual.NewSearchService(st, runtime.Provider, runtime.Backend, true)
 	require.NoError(t, err)
+	readsBeforeSearch := countedOpener.reads
 	response, err := search.Search(t.Context(), visual.SearchQuery{Text: "beach at sunset", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, response.Results, 2)
 	assert.Equal(t, messages[0], response.Results[0].MessageID)
 	assert.Equal(t, 2, documentRequests)
+	assert.Equal(t, readsBeforeSearch, countedOpener.reads)
+	imageQuery, err := search.DecodeQueryImage(images[0])
+	require.NoError(t, err)
+	imageResponse, err := search.Search(t.Context(), visual.SearchQuery{Image: imageQuery, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, imageResponse.Results, 1)
+	assert.Equal(t, messages[0], imageResponse.Results[0].MessageID)
+	assert.Equal(t, readsBeforeSearch, countedOpener.reads)
 	lane := visualSearchLane(cfg, setupEnvironment{consent: &setupConsentState{Visual: true}, googleCredentials: func() error { return nil }})
 	assert.Equal(t, laneStateOn, lane.State)
 	assert.Equal(t, planActionKeep, planVisualSearch(cfg, setupDetection{}).Action)

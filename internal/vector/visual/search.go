@@ -13,6 +13,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -114,12 +115,16 @@ type SearchService struct {
 // pixel ceiling used for indexed media, without persisting the query. Still
 // images only; whether the format's query capability was probed is enforced
 // by the provider when the query is embedded.
-func DecodeQueryImage(data []byte) (*MediaInput, error) {
+func (s *SearchService) DecodeQueryImage(data []byte) (*MediaInput, error) {
 	if len(data) == 0 || int64(len(data)) > MaxQueryImageBytes {
 		return nil, errors.New("invalid visual query image size")
 	}
+	maxPixels := defaultMaxPixels
+	if _, ok := s.provider.(*KitProvider); ok {
+		maxPixels = math.MaxInt64
+	}
 	metadata, reason := media.InspectBytes(data, "", media.Policy{
-		MaxBytes: MaxQueryImageBytes, MaxPixels: defaultMaxPixels, AllowStill: true,
+		MaxBytes: MaxQueryImageBytes, MaxPixels: maxPixels, AllowStill: true,
 	})
 	if reason != media.ReasonEligible || metadata.Kind != media.KindImage || metadata.Animated {
 		return nil, errors.New("unsupported visual query image")
