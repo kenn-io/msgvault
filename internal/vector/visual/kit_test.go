@@ -56,8 +56,10 @@ func TestKitProviderErrors(t *testing.T) {
 		{"credentials", 401, ``, ErrProviderUnauthorized},
 		{"model", 400, `{"error":{"code":"model_not_found"}}`, ErrProviderConfiguration},
 		{"forbidden model", 403, `{"error":{"code":"model_not_found"}}`, ErrProviderConfiguration},
-		{"unsupported", 415, `{"error":{"code":"unsupported_content"}}`, ErrProviderRejected},
-		{"bad input", 400, ``, ErrProviderRejected},
+		{"unsupported", 415, `{"error":{"code":"unsupported_content"}}`, ErrProviderConfiguration},
+		{"unknown input", 400, ``, ErrProviderRetryable},
+		{"input too long", 400, `{"error":{"code":"input_too_long"}}`, ErrProviderRejected},
+		{"content policy", 400, `{"error":{"code":"content_policy_violation"}}`, ErrProviderRejected},
 		{"rate limit", 429, ``, ErrProviderRetryable},
 		{"bad vector", 200, `{"data":[{"index":0,"embedding":[1]}]}`, ErrProviderMalformed},
 	} {

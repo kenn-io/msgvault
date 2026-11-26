@@ -767,9 +767,7 @@ func newVisualRuntime(
 	if err != nil {
 		return nil, err
 	}
-	mediaPolicy := visual.MediaPolicy{MaxBytes: 20 << 20, MaxPixels: 16_000_000,
-		IncludeImages: vecCfg.Multimodal.ImagesEnabled(), IncludeVideo: vecCfg.Multimodal.VideoEnabled(),
-		AllowAnimatedGIF: vecCfg.Multimodal.AnimatedGIFsEnabled()}
+	var mediaPolicy visual.MediaPolicy
 	var provider interface {
 		visual.Provider
 		AuthorizedCapabilities() []string
@@ -786,9 +784,12 @@ func newVisualRuntime(
 			return nil, err
 		}
 		kitPolicy := kitProvider.VisualPolicy()
-		kitPolicy.IncludeImages, kitPolicy.IncludeVideo = mediaPolicy.IncludeImages, mediaPolicy.IncludeVideo
+		kitPolicy.IncludeImages, kitPolicy.IncludeVideo = vecCfg.Multimodal.ImagesEnabled(), vecCfg.Multimodal.VideoEnabled()
 		provider, mediaPolicy = kitProvider, kitPolicy
 	} else {
+		mediaPolicy = visual.MediaPolicy{MaxBytes: 20 << 20, MaxPixels: 16_000_000,
+			IncludeImages: vecCfg.Multimodal.ImagesEnabled(), IncludeVideo: vecCfg.Multimodal.VideoEnabled(),
+			AllowAnimatedGIF: vecCfg.Multimodal.AnimatedGIFsEnabled()}
 		providerConfig, err := visualVoyageConfig(vecCfg)
 		if err != nil {
 			return nil, err

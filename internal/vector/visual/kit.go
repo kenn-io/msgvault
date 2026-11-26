@@ -86,7 +86,7 @@ func kitError(err error) error {
 		return providerMalformedError(err)
 	}
 	if errors.Is(err, embedmodel.ErrUnsupportedContent) {
-		return providerError(ErrProviderRejected, 0, err)
+		return providerError(ErrProviderConfiguration, 0, err)
 	}
 	if api, ok := errors.AsType[*embedclient.APIError](err); ok {
 		switch {
@@ -94,10 +94,10 @@ func kitError(err error) error {
 			return providerError(ErrProviderConfiguration, api.StatusCode, err)
 		case api.CredentialsRejected():
 			return providerError(ErrProviderUnauthorized, api.StatusCode, err)
-		case api.Retryable():
-			return providerRetryError(api.StatusCode, api.RetryAfter, api.RetryAfter > 0, err)
-		default:
+		case api.InputRejected():
 			return providerError(ErrProviderRejected, api.StatusCode, err)
+		default:
+			return providerRetryError(api.StatusCode, api.RetryAfter, api.RetryAfter > 0, err)
 		}
 	}
 	return providerRetryError(0, 0, false, fmt.Errorf("kit embed: %w", err))

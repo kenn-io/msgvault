@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -464,4 +466,51 @@ func TestKitConfigurationFailureCanRecover(t *testing.T) {
 	result, err = worker.Run(t.Context(), work)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), result.Published)
+}
+
+func TestKitWorkerRecoversFromEndpointFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		wantErr error
+	}{
+		{"unknown", http.StatusBadRequest, `{"error":"request could not be processed"}`, nil},
+		{"unsupported", http.StatusUnsupportedMediaType, `{"error":{"code":"unsupported_content"}}`, ErrProviderConfiguration},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, work := workerFixture(t, 2)
+			ready := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if !ready {
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+					return
+				}
+				_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[3,4]}]}`))
+			}))
+			t.Cleanup(server.Close)
+			provider, err := NewKitProvider("kit", server.URL+"/v1", "model", 2, "", server.Client(), "generation")
+			require.NoError(t, err)
+			worker := newTestVisualWorker(t, f, provider, newFakeVisualBackend())
+			result, err := worker.Run(t.Context(), work)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, int64(2), result.Retryable)
+			}
+			assert.Zero(t, result.Terminal)
+			ready = true
+			for i := range work {
+				claim, ok, err := f.Store.ClaimVisualWork(t.Context(), store.VisualClaimRequest{GenerationID: work[i].Claim.GenerationID, Owner: work[i].Candidate.Owner, ProposedRevision: work[i].Document.Revision, LeaseOwner: "retry", Now: time.Now().UTC(), LeaseDuration: time.Minute, SourceFence: work[i].Claim.SourceFence})
+				require.NoError(t, err)
+				require.True(t, ok)
+				work[i].Claim = claim
+			}
+			result, err = worker.Run(t.Context(), work)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), result.Published)
+		})
+	}
 }

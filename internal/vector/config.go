@@ -631,6 +631,9 @@ func (m MultimodalConfig) validate() error {
 	if m.APIKeyEnv != "" && !envutil.ValidName(m.APIKeyEnv) {
 		return fmt.Errorf("vector.multimodal.api_key_env: must be a valid environment variable name, got %q", m.APIKeyEnv)
 	}
+	if m.Dimension != 1024 {
+		return fmt.Errorf("vector.multimodal.dimension: must be 1024, got %d", m.Dimension)
+	}
 	if m.UsesKit() {
 		if err := (embedconfig.Deployment{API: embedconfig.API(m.Provider), BaseURL: m.Endpoint, TrustPrivateNetwork: true}).Validate(); err != nil {
 			return fmt.Errorf("vector.multimodal.endpoint: %w", err)
@@ -640,9 +643,6 @@ func (m MultimodalConfig) validate() error {
 		}
 		if m.Provider == "vertex" && !strings.HasPrefix(m.Model, "gemini-embedding-2") {
 			return errors.New("vector.multimodal.model: Vertex visual search requires gemini-embedding-2")
-		}
-		if m.Dimension != 1024 {
-			return fmt.Errorf("vector.multimodal.dimension: must be 1024, got %d", m.Dimension)
 		}
 		if m.configuredAnimatedGIFs() {
 			return errors.New("vector.multimodal.include_animated_gifs: only Voyage supports animated GIFs")
@@ -669,9 +669,6 @@ func (m MultimodalConfig) validate() error {
 	}
 	if m.Model != "voyage-multimodal-3.5" {
 		return fmt.Errorf("vector.multimodal.model: must be %q, got %q", "voyage-multimodal-3.5", m.Model)
-	}
-	if m.Dimension != 1024 {
-		return fmt.Errorf("vector.multimodal.dimension: must be 1024, got %d", m.Dimension)
 	}
 	if m.MaxContextChars <= 0 {
 		return fmt.Errorf("vector.multimodal.max_context_chars: must be positive, got %d", m.MaxContextChars)
