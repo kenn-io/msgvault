@@ -328,6 +328,35 @@ func TestSyncMarksEventsOfADeletedCalendar(t *testing.T) {
 	assert.Equal(t, []string{"01-06 15:00 Review deleted=true"}, ts.on(6))
 }
 
+// A deleted series or calendar generates no more occurrences, keeps its
+// archived edit, and generates again once it returns.
+func TestSyncStopsGeneratingADeletedSeries(t *testing.T) {
+	for name, deleteIt := range map[string]func(*graphState, bool){
+		"series":   func(s *graphState, on bool) { s.dropSeries = on },
+		"calendar": func(s *graphState, on bool) { s.noCalendar = on },
+	} {
+		t.Run(name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			ts := newTestSync(t)
+			_, err := ts.run("me@example.com")
+			requirements.NoError(err)
+			assertions.Equal([]string{"01-26 14:00 Standup deleted=false"}, ts.on(26))
+
+			deleteIt(ts.state, true)
+			_, err = ts.run("me@example.com")
+			requirements.NoError(err)
+			assertions.Empty(ts.on(26), "a deleted series generates nothing")
+			assertions.Equal([]string{"01-19 16:00 Standup (moved) deleted=true"}, ts.on(19), "the archive keeps the edit")
+
+			deleteIt(ts.state, false)
+			_, err = ts.run("me@example.com")
+			requirements.NoError(err)
+			assertions.Equal([]string{"01-26 14:00 Standup deleted=false"}, ts.on(26))
+		})
+	}
+}
+
 func TestSyncWithoutAnOwnerKeepsEvents(t *testing.T) {
 	ts := newTestSync(t)
 	_, err := ts.run("me@example.com")

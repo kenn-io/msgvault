@@ -183,8 +183,9 @@ func calendarEventRowsInWindow(ctx context.Context, r SQLReader, dialect Dialect
 	lower, upper := from.UTC().Add(-calendarCandidateMargin), to.UTC().Add(calendarCandidateMargin)
 	// RDATE can precede DTSTART by any amount. Retain those masters for exact
 	// expansion rather than treating their stored start as the earliest instance.
-	// Provider deletions keep only archived exceptions; cancelled ICS series retain their occurrences.
-	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND (e.status <> 'cancelled' OR EXISTS (SELECT 1 FROM message_raw raw WHERE raw.message_id=e.message_id AND raw.raw_format='ics')) AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
+	// Provider deletions, cancelled or removed at the source, keep only archived
+	// exceptions; cancelled ICS series retain their occurrences.
+	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND m.deleted_from_source_at IS NULL AND (e.status <> 'cancelled' OR EXISTS (SELECT 1 FROM message_raw raw WHERE raw.message_id=e.message_id AND raw.raw_format='ics')) AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
 	if err != nil {
 		return nil, err
 	}
