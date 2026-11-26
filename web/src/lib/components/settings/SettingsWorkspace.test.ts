@@ -156,6 +156,7 @@ afterEach(() => {
 it('updates the visual model control for an unsaved provider', async () => {
   const doc = settingsDoc();
   doc.settings.push(
+    setting('vector.multimodal.enabled', 'search', 'boolean', true, { label: 'Visual search', section: 'visual' }),
     setting('vector.multimodal.provider', 'search', 'string', 'voyage', { label: 'Visual provider', section: 'visual', options: ['voyage', 'kit', 'vertex'] }),
     setting('vector.multimodal.model', 'search', 'string', 'voyage-multimodal-3.5', { label: 'Visual model', section: 'visual', options: ['voyage-multimodal-3.5'] }),
     setting('vector.multimodal.endpoint', 'search', 'string', 'https://api.voyageai.com/v1', { label: 'Visual endpoint', section: 'visual' })
