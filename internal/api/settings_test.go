@@ -1008,6 +1008,36 @@ include_video = true
 	assertions.NotContains(resp.Body.String(), "synthetic-key-value")
 }
 
+func TestSettingsVisualProviders(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ provider, endpoint, model string }{
+		{"kit", "https://embed.example.com/v1", "custom-model"},
+		{"vertex", "https://us-central1-aiplatform.googleapis.com/v1/projects/test/locations/us-central1/publishers/google/models", "gemini-embedding-2"},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			t.Parallel()
+			srv, _ := newSettingsTestServer(t, "")
+			get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+			require.Equal(t, http.StatusOK, get.Code, get.Body.String())
+			var body SettingsResponse
+			require.NoError(t, json.Unmarshal(get.Body.Bytes(), &body))
+			settings := settingsByKey(body.Settings)
+			assert.Equal(t, []string{"voyage", "kit", "vertex"}, settings["vector.multimodal.provider"].Options)
+			assert.Empty(t, settings["vector.multimodal.model"].Options)
+			payload := fmt.Sprintf(`{"updates":[{"key":"vector.multimodal.enabled","value":{"boolean":true}},{"key":"vector.multimodal.provider","value":{"string":%q}},{"key":"vector.multimodal.endpoint","value":{"string":%q}},{"key":"vector.multimodal.model","value":{"string":%q}}]}`, tc.provider, tc.endpoint, tc.model)
+			patched := patchSettings(t, srv, payload)
+			require.Equal(t, http.StatusOK, patched.Code, patched.Body.String())
+			get = performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+			require.Equal(t, http.StatusOK, get.Code, get.Body.String())
+			require.NoError(t, json.Unmarshal(get.Body.Bytes(), &body))
+			settings = settingsByKey(body.Settings)
+			assert.True(t, *settings["vector.multimodal.enabled"].Value.Boolean)
+			assert.Equal(t, tc.provider, *settings["vector.multimodal.provider"].Value.String)
+			assert.Equal(t, tc.model, *settings["vector.multimodal.model"].Value.String)
+		})
+	}
+}
+
 func TestPatchSettingsRequiresMatchingETag(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

@@ -59,7 +59,7 @@ func (s *Server) handleVisualSearch(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusRequestEntityTooLarge, "image_query_too_large", "Image query exceeds the upload limit")
 			return
 		}
-		query.Image, err = visual.DecodeQueryImage(data)
+		query.Image, err = service.DecodeQueryImage(data)
 		if err != nil {
 			writeError(w, http.StatusUnsupportedMediaType, "unsupported_image_query", err.Error())
 			return

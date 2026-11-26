@@ -5170,14 +5170,14 @@ backend must support orphan pruning.
 ## multimodal
 
 Build, inspect, and search the optional visual attachment index. The workflow
-requires `[vector.multimodal]` configuration, a probed capability manifest,
-and explicit consent for hosted processing. See
+requires `[vector.multimodal]` configuration and explicit consent for hosted
+processing. Voyage also requires a probed capability manifest. See
 [Visual attachment search](usage/vector-search.md#visual-attachment-search).
 
 | Subcommand | Purpose |
 |---|---|
-| `probe --seeds <dir> --out <file> --yes` | Send synthetic fixtures to the configured provider and write a capability manifest. `--fixtures` keeps the generated fixtures instead of using a temporary directory. |
-| `build --yes` | Record consent for the configured capability profile and build the visual index. |
+| `probe --seeds <dir> --out <file> --yes` | Send synthetic fixtures to Voyage and write a capability manifest. `--fixtures` keeps the generated fixtures instead of using a temporary directory. |
+| `build --yes` | Record consent for the configured generation and build the visual index. |
 | `resume` | Continue a consented build. |
 | `status [--json]` | Report generation state and coverage. |
 | `retry --message <id> --hash <sha256>` | Retry one attachment occurrence. |

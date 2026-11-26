@@ -2745,25 +2745,45 @@ consent with `msgvault person provider consent --semantic-embeddings --yes`.
 
 #### `[vector.multimodal]`
 
-Configure the independently consented visual attachment lane backed by Voyage.
-Every key has a default except `capabilities_file`: uploads fail closed without
-a probe manifest, and a daemon started with `enabled = true` and no manifest
-refuses every vector lane until one exists.
+Configure the independently consented visual attachment lane. Voyage requires a probe manifest before uploads. Kit supports Vertex and services that implement its embedding API. Both accept JPEG, PNG, WebP, and MP4 video up to 120 seconds and 20 MiB per file. Vertex limits each image dimension to 16,384 pixels and does not extract audio. A Kit service determines its own image dimension limits.
 
 | Key | Default | Description |
 |---|---|---|
 | `enabled` | `false` | Turn on the visual lane. |
-| `provider` | `voyage` | Only legal value. |
-| `endpoint` | `https://api.voyageai.com/v1` | Pinned provider root; other origins are refused. |
-| `api_key_env` | `VOYAGE_API_KEY` | Environment variable holding the key. A key alone enables nothing. |
-| `model` | `voyage-multimodal-3.5` | Pinned model. |
-| `dimension` | `1024` | Pinned dimension. |
-| `capabilities_file` | — | Manifest written by `msgvault multimodal probe --seeds <dir> --out <file> --yes`. |
-| `max_context_chars` | `4000` | Owning-message text sent with each attachment. |
+| `provider` | `voyage` | `voyage`, `kit`, or `vertex`. |
+| `endpoint` | `https://api.voyageai.com/v1` | Voyage uses its pinned root. Kit and Vertex use the configured API root. |
+| `api_key_env` | `VOYAGE_API_KEY` | Environment variable holding the key. Kit leaves it unset by default. |
+| `model` | `voyage-multimodal-3.5` | Voyage requires this model. |
+| `dimension` | `1024` | Visual search requires 1024. |
+| `capabilities_file` | — | Voyage manifest written by `msgvault multimodal probe --seeds <dir> --out <file> --yes`. |
+| `max_context_chars` | `4000` | Owning-message text sent with each Voyage attachment. Kit and Vertex ignore this setting. |
 | `include_images` | `true` | Embed still images (JPEG, PNG, WebP). |
-| `include_animated_gifs` | `false` | Embed animated GIFs; requires `include_images` and a manifest that authorized them. |
+| `include_animated_gifs` | `false` | Embed animated GIFs; requires `include_images`; Voyage requires an authorizing manifest. Kit and Vertex do not support animated GIFs. |
 | `include_video` | `true` | Embed direct-input MP4 video. |
 | `allow_image_queries` | `true` | Allow `multimodal search --image`. |
+
+For Vertex, set up Google Application Default Credentials and configure a supported location (`global`, `us`, or `eu`):
+
+```toml
+[vector.multimodal]
+enabled = true
+provider = "vertex"
+endpoint = "https://aiplatform.googleapis.com/v1/projects/project-a/locations/global/publishers/google/models"
+model = "gemini-embedding-2"
+dimension = 1024
+```
+
+For a Kit embedding service, use its API root and an optional key:
+
+```toml
+[vector.multimodal]
+enabled = true
+provider = "kit"
+endpoint = "https://embed.example.com/v1"
+api_key_env = "EMBED_API_KEY"
+model = "gemini-embedding-2"
+dimension = 1024
+```
 
 `[vector.multimodal.scope]` accepts the same `message_types` and `accounts` keys
 as `[vector.embed.scope]`, and `[vector.multimodal.schedule]` accepts the same

@@ -888,27 +888,22 @@ same generation; see
 
 ## Visual attachment search
 
-Visual search lets you find archived images and videos from a text description
-such as "a whiteboard with a project timeline", or from a similar image you
-supply, returning both the attachment and its containing message. It uses a
-separate Voyage index, and enabling message search does not enable visual
-uploads.
+Visual search finds archived images and videos from a text description or a similar image, returning the attachment and its containing message. It uses a separate index, so enabling message search does not enable visual uploads.
 
-An authenticated capability probe checks which formats and query types your
-configured provider can handle. JPEG, PNG, WebP, and direct MP4 are the
-configured defaults, subject to the probe results, while animated GIFs are a
-separate opt-in. Msgvault sends eligible attachment bytes and bounded
-containing-message text to the provider, and visual search sends your query
-text or query image there too.
+Choose Voyage, Vertex, or a service that implements Kit's embedding API in `[vector.multimodal]`. Kit and Vertex accept JPEG, PNG, WebP, and MP4 up to 120 seconds, with a 20 MiB file limit. Vertex does not extract audio. Voyage uses a capability manifest to determine which formats it can send, and supports animated GIFs as a separate opt-in. Voyage sends bounded containing-message text with eligible attachments; Kit and Vertex send the media alone. All providers receive the text or image used as a query.
 
 ### Enable and build
 
-The guided setup path is `msgvault setup providers` with `VOYAGE_API_KEY` set,
-which leaves visual indexing pending until a probe manifest exists. To create
-that manifest, prepare a private directory containing synthetic files named
-`image_webp.webp`, `image_webp_alt.webp`, `video_mp4.mp4`, and
-`video_mp4_alt.mp4`, with visibly different content in each alternate file.
-The probe generates the remaining synthetic fixtures.
+For Kit or Vertex, configure the provider, endpoint, and model using the [configuration reference](/docs/configuration/#vectormultimodal). Vertex uses Google Application Default Credentials. Kit services can use an API key or accept anonymous requests. Then run:
+
+```bash
+msgvault setup providers --yes
+msgvault daemon restart
+msgvault multimodal build --yes
+msgvault multimodal status --json
+```
+
+For Voyage, set `VOYAGE_API_KEY` and prepare a private directory containing synthetic files named `image_webp.webp`, `image_webp_alt.webp`, `video_mp4.mp4`, and `video_mp4_alt.mp4`, with visibly different content in each alternate file. The probe generates the remaining synthetic fixtures.
 
 ```bash
 msgvault multimodal probe \
@@ -920,18 +915,9 @@ msgvault multimodal build --yes
 msgvault multimodal status --json
 ```
 
-Review the probe manifest before enabling visual search. If you prefer manual
-configuration, set `[vector.multimodal].enabled = true` and point
-`capabilities_file` to the manifest path; the
-[configuration reference](/docs/configuration/#vectormultimodal) lists the
-provider, format, scope, context-size, and schedule settings. The manifest
-must be accessible on the daemon host.
+Review the Voyage manifest before enabling visual search. The manifest must be accessible on the daemon host. To configure the lane manually, set `enabled = true` and `capabilities_file` under `[vector.multimodal]`.
 
-Running `multimodal build --yes` records your consent for the exact capability
-profile and builds the index. If a build is interrupted, run
-`multimodal resume` to continue. Any change to configuration or capability
-evidence requires matching consent again. `multimodal status` reports
-coverage, stale items, retryable work, and pending changes.
+Running `multimodal build --yes` records consent for the current generation and builds the index. If interrupted, run `multimodal resume` to continue. Changes to the generation or Voyage capability evidence require consent again. `multimodal status` reports coverage, stale items, retryable work, and pending changes.
 
 ### Search and maintain
 
@@ -943,8 +929,7 @@ msgvault multimodal search "a diagram" --source 4 --after 2026-01-01 --json
 ```
 
 Pass either a single text query or `--image`, not both. Query images must be
-JPEG, PNG, or WebP, at most 20 MiB, and allowed by your configured capability
-profile. For paging, use `--limit` (1–100, default 20) together with the
+JPEG, PNG, or WebP, at most 20 MiB, and, for Voyage, allowed by your capability manifest. For paging, use `--limit` (1–100, default 20) together with the
 returned `--cursor`. You can also filter with `--message`, `--filename`,
 `--mime-prefix`, and `--before`.
 

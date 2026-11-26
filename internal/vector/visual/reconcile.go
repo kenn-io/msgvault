@@ -419,12 +419,18 @@ func (r *Reconciler) reconcileCandidates(
 			}
 			continue
 		}
-		messageContext, err := r.archive.GetVisualMessageContext(ctx, candidate.Owner.MessageID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
+		var messageContext store.VisualMessageContext
+		var contentStamp *string
+		if !r.config.ContextPolicy.ExcludeContext {
+			var err error
+			messageContext, err = r.archive.GetVisualMessageContext(ctx, candidate.Owner.MessageID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
+				return err
 			}
-			return err
+			contentStamp = &messageContext.ContentStamp
 		}
 		document, _, err := AssembleDocument(AssembleRequest{
 			Owner: owner, Media: eligibility.Media,
@@ -467,7 +473,7 @@ func (r *Reconciler) reconcileCandidates(
 			return getErr
 		}
 		claim, acquired, err := r.claimWithStamp(ctx, candidate.Owner, document.Revision,
-			sourceFence, &messageContext.ContentStamp)
+			sourceFence, contentStamp)
 		if err != nil {
 			return err
 		}

@@ -156,6 +156,36 @@ func TestInspectMediaStableExclusions(t *testing.T) {
 	}
 }
 
+func TestInspectMediaProviderLimits(t *testing.T) {
+	kit, err := NewKitProvider("kit", "https://embed.example.com/v1", "model", 2, "", nil, "generation")
+	require.NoError(t, err)
+	vertex, err := NewKitProvider("vertex", "https://aiplatform.googleapis.com/v1/projects/project-a/locations/global/publishers/google/models", "gemini-embedding-2", 2, "", nil, "generation")
+	require.NoError(t, err)
+	kitPolicy, vertexPolicy := kit.VisualPolicy(), vertex.VisualPolicy()
+	tests := []struct {
+		name       string
+		occurrence Occurrence
+		opener     memoryOpener
+		policy     MediaPolicy
+		want       EligibilityReason
+	}{
+		{name: "video at duration limit", occurrence: eligibleOccurrence("video/mp4"), opener: memoryOpener{data: mediatest.MP4(640, 360, 120000)}, policy: kitPolicy},
+		{name: "video over duration limit", occurrence: eligibleOccurrence("video/mp4"), opener: memoryOpener{data: mediatest.MP4(640, 360, 120001)}, policy: kitPolicy, want: ReasonProviderLimit},
+		{name: "vertex width boundary", occurrence: eligibleOccurrence("image/png"), opener: memoryOpener{data: mediatest.PNG(16384, 2, color.White)}, policy: vertexPolicy},
+		{name: "vertex height boundary", occurrence: eligibleOccurrence("image/png"), opener: memoryOpener{data: mediatest.PNG(2, 16384, color.White)}, policy: vertexPolicy},
+		{name: "vertex width over", occurrence: eligibleOccurrence("image/png"), opener: memoryOpener{data: mediatest.PNG(16385, 2, color.White)}, policy: vertexPolicy, want: ReasonPixelLimit},
+		{name: "vertex height over", occurrence: eligibleOccurrence("image/png"), opener: memoryOpener{data: mediatest.PNG(2, 16385, color.White)}, policy: vertexPolicy, want: ReasonPixelLimit},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := InspectMedia(t.Context(), tt.opener, tt.occurrence, tt.policy)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want == "", got.Eligible)
+			assert.Equal(t, tt.want, got.Reason)
+		})
+	}
+}
+
 func TestInspectMediaObservesVerifiedCloseFailure(t *testing.T) {
 	closeErr := errors.New("verification failed")
 	_, err := InspectMedia(t.Context(), memoryOpener{data: encodedPNG(t, 1, 1), closeErr: closeErr}, eligibleOccurrence("image/png"), fullyAuthorizedPolicy())

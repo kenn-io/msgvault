@@ -23,6 +23,7 @@ type MessageContext struct {
 }
 
 type ContextPolicy struct {
+	ExcludeContext     bool
 	MaxChars           int
 	InputVersion       string
 	EligibilityVersion string

@@ -361,6 +361,53 @@ func TestVisualWorkerCanceledRunReleasesClaims(t *testing.T) {
 	assert.True(acquired, "canceled work must be immediately reclaimable")
 }
 
+func TestVisualWorkerErrorReleasesRemainingClaims(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		batchSize int
+		bisect    bool
+		publish   bool
+	}{
+		{name: "later batch", batchSize: 1},
+		{name: "bisected batch", batchSize: 3, bisect: true},
+		{name: "after publication", batchSize: 1, publish: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, work := workerFixture(t, 3)
+			provider := &fakeVisualProvider{embed: func(_ context.Context, documents []DocumentInput) ([]EmbeddingResult, error) {
+				if tc.publish && documents[0].Owner == work[0].Document.Owner {
+					return []EmbeddingResult{{Owner: documents[0].Owner, Vector: []float32{1, 2}}}, nil
+				}
+				if tc.bisect && len(documents) > 1 {
+					return nil, ErrProviderRejected
+				}
+				return nil, ErrProviderConfiguration
+			}}
+			worker := newTestVisualWorker(t, f, provider, newFakeVisualBackend())
+			worker.config.MaxBatchItems = tc.batchSize
+			result, err := worker.Run(t.Context(), work)
+			require.ErrorIs(t, err, ErrProviderConfiguration)
+			remaining := work
+			if tc.publish {
+				assert.Equal(t, int64(1), result.Published)
+				publication, err := f.Store.GetVisualPublication(t.Context(), work[0].Claim.GenerationID, work[0].Candidate.Owner)
+				require.NoError(t, err)
+				assert.Equal(t, store.VisualPublicationCurrent, publication.State)
+				remaining = work[1:]
+			}
+			for _, item := range remaining {
+				_, acquired, err := f.Store.ClaimVisualWork(t.Context(), store.VisualClaimRequest{
+					GenerationID: item.Claim.GenerationID, Owner: item.Candidate.Owner,
+					ProposedRevision: item.Document.Revision, LeaseOwner: "successor",
+					Now: time.Now().UTC(), LeaseDuration: time.Minute, SourceFence: item.Claim.SourceFence,
+				})
+				require.NoError(t, err)
+				assert.True(t, acquired, "work must be immediately reclaimable")
+			}
+		})
+	}
+}
+
 func workerFixture(
 	t *testing.T,
 	count int,
@@ -434,4 +481,33 @@ func TestVisualWorkerBisectsRejectedBatchesSoValidNeighborsPublish(t *testing.T)
 	publication, err := f.Store.GetVisualPublication(t.Context(), work[0].Claim.GenerationID, badOwner)
 	require.NoError(err)
 	assert.Equal(OutcomeTerminal, publication.OutcomeKind)
+}
+
+func TestKitConfigurationFailureCanRecover(t *testing.T) {
+	f, _, work := workerFixture(t, 2)
+	ready := false
+	provider := &fakeVisualProvider{embed: func(_ context.Context, documents []DocumentInput) ([]EmbeddingResult, error) {
+		if !ready {
+			return nil, ErrProviderConfiguration
+		}
+		results := make([]EmbeddingResult, len(documents))
+		for i := range documents {
+			results[i] = EmbeddingResult{Owner: documents[i].Owner, Vector: []float32{1, 2}}
+		}
+		return results, nil
+	}}
+	worker := newTestVisualWorker(t, f, provider, newFakeVisualBackend())
+	result, err := worker.Run(t.Context(), work)
+	require.ErrorIs(t, err, ErrProviderConfiguration)
+	assert.Zero(t, result.Terminal)
+	ready = true
+	for i := range work {
+		claim, ok, err := f.Store.ClaimVisualWork(t.Context(), store.VisualClaimRequest{GenerationID: work[i].Claim.GenerationID, Owner: work[i].Candidate.Owner, ProposedRevision: work[i].Document.Revision, LeaseOwner: "retry", Now: time.Now().UTC(), LeaseDuration: time.Minute, SourceFence: work[i].Claim.SourceFence})
+		require.NoError(t, err)
+		require.True(t, ok)
+		work[i].Claim = claim
+	}
+	result, err = worker.Run(t.Context(), work)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), result.Published)
 }

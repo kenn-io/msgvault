@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/envutil"
 )
@@ -121,6 +122,9 @@ type MultimodalConfig struct {
 	Scope               EmbedScopeConfig    `toml:"scope"`
 	Schedule            EmbedScheduleConfig `toml:"schedule"`
 }
+
+// UsesKit reports whether visual requests use Kit's client.
+func (m MultimodalConfig) UsesKit() bool { return m.Provider == "kit" || m.Provider == "vertex" }
 
 func configuredBool(value *bool, defaultValue bool) bool {
 	if value == nil {
@@ -551,25 +555,19 @@ func (c *Config) MultimodalGenerationFingerprint() string {
 	if err != nil {
 		endpoint = strings.TrimSpace(c.Multimodal.Endpoint)
 	}
-	segments := []string{
-		fmt.Sprintf("provider-api-v%d", multimodalProviderAPIVersion),
-		strings.ToLower(strings.TrimSpace(c.Multimodal.Provider)),
-		endpoint,
-		strings.TrimSpace(c.Multimodal.Model),
-		strconv.Itoa(c.Multimodal.Dimension),
-		fmt.Sprintf("role-map-v%d", multimodalRoleMapVersion),
-		fmt.Sprintf("signature-allowlist-v%d", multimodalSignatureAllowlistVersion),
-		fmt.Sprintf("preprocess-v%d", preprocessVersion),
-		fmt.Sprintf("context-v%d", multimodalContextPolicyVersion),
-		strconv.Itoa(c.Multimodal.MaxContextChars),
-		fmt.Sprintf("input-v%d", multimodalInputPolicyVersion),
-		fmt.Sprintf("eligibility-v%d", multimodalEligibilityPolicyVersion),
-		strconv.FormatBool(c.Multimodal.configuredImages()),
-		strconv.FormatBool(c.Multimodal.configuredAnimatedGIFs()),
-		strconv.FormatBool(c.Multimodal.configuredVideo()),
-		strconv.FormatBool(c.Multimodal.configuredImageQueries()),
-		c.Multimodal.Scope.BuildScope().Fingerprint(),
+	head := []string{
+		fmt.Sprintf("provider-api-v%d", multimodalProviderAPIVersion), strings.ToLower(strings.TrimSpace(c.Multimodal.Provider)), endpoint,
+		strings.TrimSpace(c.Multimodal.Model), strconv.Itoa(c.Multimodal.Dimension), fmt.Sprintf("role-map-v%d", multimodalRoleMapVersion),
+		fmt.Sprintf("signature-allowlist-v%d", multimodalSignatureAllowlistVersion), fmt.Sprintf("preprocess-v%d", preprocessVersion),
 	}
+	var context []string
+	if c.Multimodal.Provider == "voyage" {
+		context = []string{fmt.Sprintf("context-v%d", multimodalContextPolicyVersion), strconv.Itoa(c.Multimodal.MaxContextChars)}
+	}
+	tail := []string{fmt.Sprintf("input-v%d", multimodalInputPolicyVersion), fmt.Sprintf("eligibility-v%d", multimodalEligibilityPolicyVersion),
+		strconv.FormatBool(c.Multimodal.configuredImages()), strconv.FormatBool(c.Multimodal.configuredAnimatedGIFs()),
+		strconv.FormatBool(c.Multimodal.configuredVideo()), strconv.FormatBool(c.Multimodal.configuredImageQueries()), c.Multimodal.Scope.BuildScope().Fingerprint()}
+	segments := append(append(head, context...), tail...)
 	digest := sha256.Sum256([]byte(strings.Join(segments, "\x1f")))
 	return "visual-v1-" + hex.EncodeToString(digest[:])
 }
@@ -630,8 +628,32 @@ func (c *Config) Validate() error {
 func (m MultimodalConfig) Validate() error { return m.validate() }
 
 func (m MultimodalConfig) validate() error {
+	if m.APIKeyEnv != "" && !envutil.ValidName(m.APIKeyEnv) {
+		return fmt.Errorf("vector.multimodal.api_key_env: must be a valid environment variable name, got %q", m.APIKeyEnv)
+	}
+	if m.Dimension != 1024 {
+		return fmt.Errorf("vector.multimodal.dimension: must be 1024, got %d", m.Dimension)
+	}
+	if !m.configuredImages() && !m.configuredAnimatedGIFs() && !m.configuredVideo() {
+		return errors.New("vector.multimodal: at least one document media type must be enabled")
+	}
+	if m.UsesKit() {
+		if err := (embedconfig.Deployment{API: embedconfig.API(m.Provider), BaseURL: m.Endpoint, TrustPrivateNetwork: true}).Validate(); err != nil {
+			return fmt.Errorf("vector.multimodal.endpoint: %w", err)
+		}
+		if strings.TrimSpace(m.Model) == "" {
+			return errors.New("vector.multimodal.model: required")
+		}
+		if m.Provider == "vertex" && !strings.HasPrefix(m.Model, "gemini-embedding-2") {
+			return errors.New("vector.multimodal.model: Vertex visual search requires gemini-embedding-2")
+		}
+		if m.configuredAnimatedGIFs() {
+			return errors.New("vector.multimodal.include_animated_gifs: only Voyage supports animated GIFs")
+		}
+		return nil
+	}
 	if m.Provider != "voyage" {
-		return fmt.Errorf("vector.multimodal.provider: must be %q, got %q", "voyage", m.Provider)
+		return fmt.Errorf("vector.multimodal.provider: must be voyage, kit, or vertex, got %q", m.Provider)
 	}
 	normalizedEndpoint, err := normalizedMultimodalEndpoint(m.Endpoint)
 	if err != nil {
@@ -645,20 +667,11 @@ func (m MultimodalConfig) validate() error {
 		return fmt.Errorf("vector.multimodal.endpoint: only the pinned provider endpoint %s is supported (got %q)",
 			defaultMultimodalEndpoint, m.Endpoint)
 	}
-	if !envutil.ValidName(m.APIKeyEnv) {
-		return fmt.Errorf("vector.multimodal.api_key_env: must be a valid environment variable name, got %q", m.APIKeyEnv)
-	}
 	if m.Model != "voyage-multimodal-3.5" {
 		return fmt.Errorf("vector.multimodal.model: must be %q, got %q", "voyage-multimodal-3.5", m.Model)
 	}
-	if m.Dimension != 1024 {
-		return fmt.Errorf("vector.multimodal.dimension: must be 1024, got %d", m.Dimension)
-	}
 	if m.MaxContextChars <= 0 {
 		return fmt.Errorf("vector.multimodal.max_context_chars: must be positive, got %d", m.MaxContextChars)
-	}
-	if !m.configuredImages() && !m.configuredAnimatedGIFs() && !m.configuredVideo() {
-		return errors.New("vector.multimodal: at least one document media type must be enabled")
 	}
 	// Animated GIFs are an image subtype: the runtime media policy only
 	// admits animated media when still images are enabled, so an
@@ -744,16 +757,16 @@ func (c *Config) ApplyDefaults() {
 		c.Multimodal.Provider = "voyage"
 	}
 	c.Multimodal.Endpoint = strings.TrimSpace(c.Multimodal.Endpoint)
-	if c.Multimodal.Endpoint == "" {
+	if c.Multimodal.Provider == "voyage" && c.Multimodal.Endpoint == "" {
 		c.Multimodal.Endpoint = defaultMultimodalEndpoint
 	}
 	c.Multimodal.APIKeyEnv = strings.TrimSpace(c.Multimodal.APIKeyEnv)
 	endpointIdentity, endpointErr := normalizedMultimodalEndpoint(c.Multimodal.Endpoint)
-	if c.Multimodal.APIKeyEnv == "" && endpointErr == nil && endpointIdentity == defaultMultimodalEndpoint {
+	if c.Multimodal.Provider == "voyage" && c.Multimodal.APIKeyEnv == "" && endpointErr == nil && endpointIdentity == defaultMultimodalEndpoint {
 		c.Multimodal.APIKeyEnv = "VOYAGE_API_KEY"
 	}
 	c.Multimodal.Model = strings.TrimSpace(c.Multimodal.Model)
-	if c.Multimodal.Model == "" {
+	if c.Multimodal.Provider == "voyage" && c.Multimodal.Model == "" {
 		c.Multimodal.Model = "voyage-multimodal-3.5"
 	}
 	if c.Multimodal.Dimension == 0 {

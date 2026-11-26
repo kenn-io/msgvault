@@ -75,6 +75,7 @@ type ollamaProbeResult struct {
 // environment, the config file, the archive, the daemon, and the people
 // provider onboarding machinery are all injectable.
 type setupProvidersDeps struct {
+	googleCredentials func() error
 	bind              func(context.Context) setupProvidersDeps
 	lookupEnv         func(string) (string, bool)
 	fileExists        func(string) bool
@@ -250,7 +251,7 @@ type setupDetection struct {
 }
 
 func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setupProvidersDeps, options setupProvidersOptions) setupDetection {
-	env := setupEnvironment{lookupEnv: deps.lookupEnv, fileExists: deps.fileExists}
+	env := setupEnvironment{lookupEnv: deps.lookupEnv, fileExists: deps.fileExists, googleADC: deps.googleCredentials}
 	detection := setupDetection{
 		voyageKey: env.hasEnv(setupVoyageKeyEnv),
 		openAIKey: env.hasEnv(setupOpenAIKeyEnv),
@@ -263,6 +264,10 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 	multimodal := loaded.Vector.Multimodal
 	if err := multimodal.Validate(); err != nil {
 		detection.visualUnavailable = err.Error() + "; configure [vector.multimodal] before enabling visual search"
+	} else if multimodal.Provider == "vertex" {
+		if err := env.googleCredentialError(); err != nil {
+			detection.visualUnavailable = "Google Application Default Credentials are unavailable"
+		}
 	} else {
 		credentials, _ := providercredentials.Read(loaded.TokensDir())
 		credential, _, err := credentials.Resolve(providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv, deps.lookupEnv)
@@ -270,6 +275,9 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 			detection.visualUnavailable = "visual provider credential unavailable: " + err.Error()
 		} else {
 			detection.visualKey = strings.TrimSpace(credential) != ""
+			if multimodal.Provider == "kit" && multimodal.APIKeyEnv != "" && !detection.visualKey {
+				detection.visualUnavailable = "visual provider credential is unavailable"
+			}
 		}
 	}
 	// Validate the path setup would publish, including an enabled lane whose
@@ -617,8 +625,21 @@ func planPersonSearch(loaded *config.Config, plan *setupProvidersPlan, options s
 }
 
 func planVisualSearch(loaded *config.Config, detection setupDetection) setupLanePlan {
-	lane := setupLanePlan{Lane: laneVisualSearch, Label: "Visual attachment search", Provider: "voyage", Model: loaded.Vector.Multimodal.Model}
+	lane := setupLanePlan{Lane: laneVisualSearch, Label: "Visual attachment search", Provider: loaded.Vector.Multimodal.Provider, Model: loaded.Vector.Multimodal.Model}
 	switch {
+	case loaded.Vector.Multimodal.UsesKit():
+		switch {
+		case detection.visualUnavailable != "":
+			lane.Action, lane.Reason = planActionPending, detection.visualUnavailable
+		case detection.backendUnavailable != "":
+			lane.Action, lane.Reason = planActionPending, detection.backendUnavailable
+		case loaded.Vector.Multimodal.Enabled:
+			lane.Action, lane.Reason = planActionKeep, "already enabled"
+		default:
+			lane.Action, lane.Reason = planActionEnable, "configured provider is ready"
+			lane.edits = append([]config.TableEdit{{Path: []string{tomlTableVector, "multimodal"}, Values: map[string]any{"enabled": true}}}, setupScheduleEdits(detection.configKeys, "multimodal")...)
+			lane.next = []string{"msgvault multimodal build --yes"}
+		}
 	case loaded.Vector.Multimodal.Enabled && loaded.Vector.Multimodal.CapabilitiesFile != "":
 		lane.Action = planActionKeep
 		lane.Reason = "already enabled"
