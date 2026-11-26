@@ -19,6 +19,9 @@ import (
 const defaultMaxMediaBytes int64 = 20 << 20
 const defaultMaxPixels int64 = 16_000_000
 
+// VertexMaxImageAxis is the maximum width or height of a Vertex image.
+const VertexMaxImageAxis int64 = 16_384
+
 var ErrContentUnavailable = errors.New("visual attachment content unavailable")
 
 type StreamOpener interface {
@@ -33,6 +36,7 @@ type StreamOpener interface {
 type MediaPolicy struct {
 	MaxBytes         int64
 	MaxPixels        int64
+	MaxImageAxis     int64
 	MaxDurationMS    int64
 	IncludeImages    bool
 	IncludeVideo     bool
@@ -154,6 +158,9 @@ func InspectMedia(
 	if reason != media.ReasonEligible {
 		return Eligibility{Reason: eligibilityReason(reason)}, nil
 	}
+	if exceedsImageAxis(metadata, policy.MaxImageAxis) {
+		return Eligibility{Reason: ReasonPixelLimit}, nil
+	}
 	if !policy.authorizes(metadata) {
 		return Eligibility{Reason: ReasonProviderFormatUnsupported}, nil
 	}
@@ -161,6 +168,10 @@ func InspectMedia(
 	input.BlobHash = hash
 	input.Bytes = data
 	return Eligibility{Eligible: true, Media: input}, nil
+}
+
+func exceedsImageAxis(metadata media.Metadata, maxAxis int64) bool {
+	return maxAxis > 0 && metadata.Kind == media.KindImage && (metadata.Width > maxAxis || metadata.Height > maxAxis)
 }
 
 // eligibilityReason maps docbank detection and policy outcomes onto the

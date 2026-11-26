@@ -779,6 +779,7 @@ func newVisualRuntime(
 		provider, policyFingerprint = kitProvider, kitProvider.PolicyFingerprint()
 		mediaPolicy.AuthorizedCapabilities = eligibleVisualCapabilities(kitProvider.AuthorizedCapabilities(), false)
 		mediaPolicy.MaxPixels = math.MaxInt64
+		mediaPolicy.MaxImageAxis = kitProvider.MaxImageAxis()
 		mediaPolicy.MaxDurationMS = 120_000
 	} else {
 		providerConfig, err := visualVoyageConfig(vecCfg)

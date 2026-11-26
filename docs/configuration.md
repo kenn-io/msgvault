@@ -2745,7 +2745,7 @@ consent with `msgvault person provider consent --semantic-embeddings --yes`.
 
 #### `[vector.multimodal]`
 
-Configure the independently consented visual attachment lane. Voyage requires a probe manifest before uploads. Kit supports Vertex and services that implement its embedding API. Both accept JPEG, PNG, WebP, and MP4 video up to 120 seconds and 20 MiB per file. Vertex does not extract audio.
+Configure the independently consented visual attachment lane. Voyage requires a probe manifest before uploads. Kit supports Vertex and services that implement its embedding API. Both accept JPEG, PNG, WebP, and MP4 video up to 120 seconds and 20 MiB per file. Vertex limits each image dimension to 16,384 pixels and does not extract audio.
 
 | Key | Default | Description |
 |---|---|---|
@@ -2762,13 +2762,13 @@ Configure the independently consented visual attachment lane. Voyage requires a 
 | `include_video` | `true` | Embed direct-input MP4 video. |
 | `allow_image_queries` | `true` | Allow `multimodal search --image`. |
 
-For Vertex, set up Google Application Default Credentials and configure:
+For Vertex, set up Google Application Default Credentials and configure a supported location (`global`, `us`, or `eu`):
 
 ```toml
 [vector.multimodal]
 enabled = true
 provider = "vertex"
-endpoint = "https://us-central1-aiplatform.googleapis.com/v1/projects/project-a/locations/us-central1/publishers/google/models"
+endpoint = "https://aiplatform.googleapis.com/v1/projects/project-a/locations/global/publishers/google/models"
 model = "gemini-embedding-2"
 dimension = 1024
 ```

@@ -120,13 +120,15 @@ func (s *SearchService) DecodeQueryImage(data []byte) (*MediaInput, error) {
 		return nil, errors.New("invalid visual query image size")
 	}
 	maxPixels := defaultMaxPixels
-	if _, ok := s.provider.(*KitProvider); ok {
+	var maxAxis int64
+	if provider, ok := s.provider.(*KitProvider); ok {
 		maxPixels = math.MaxInt64
+		maxAxis = provider.MaxImageAxis()
 	}
 	metadata, reason := media.InspectBytes(data, "", media.Policy{
 		MaxBytes: MaxQueryImageBytes, MaxPixels: maxPixels, AllowStill: true,
 	})
-	if reason != media.ReasonEligible || metadata.Kind != media.KindImage || metadata.Animated {
+	if reason != media.ReasonEligible || metadata.Kind != media.KindImage || metadata.Animated || exceedsImageAxis(metadata, maxAxis) {
 		return nil, errors.New("unsupported visual query image")
 	}
 	input := mediaInputFrom(metadata)

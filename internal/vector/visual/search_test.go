@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -217,4 +220,25 @@ func TestDecodeQueryImageUsesProviderPixelLimit(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(4001), imageQuery.Width)
 	assert.Equal(t, int64(4000), imageQuery.Height)
+}
+
+func TestVertexQueryImageAxisLimit(t *testing.T) {
+	for _, tc := range []struct {
+		width, height int
+		accepted      bool
+	}{{16384, 2, true}, {2, 16384, true}, {16385, 2, false}, {2, 16385, false}} {
+		t.Run(fmt.Sprintf("%dx%d", tc.width, tc.height), func(t *testing.T) {
+			data := mediatest.PNG(tc.width, tc.height, color.White)
+			vertex := &SearchService{provider: &KitProvider{api: "vertex"}}
+			_, err := vertex.DecodeQueryImage(data)
+			if tc.accepted {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+			kit := &SearchService{provider: &KitProvider{api: "kit"}}
+			_, err = kit.DecodeQueryImage(data)
+			require.NoError(t, err)
+		})
+	}
 }

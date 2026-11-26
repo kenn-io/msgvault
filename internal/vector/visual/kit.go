@@ -18,6 +18,7 @@ import (
 type KitProvider struct {
 	client      *embedclient.Client
 	fingerprint string
+	api         string
 }
 
 func NewKitProvider(api, endpoint, model string, dimension int, key string, client *http.Client, fingerprint string) (*KitProvider, error) {
@@ -33,10 +34,17 @@ func NewKitProvider(api, endpoint, model string, dimension int, key string, clie
 	if err != nil {
 		return nil, err
 	}
-	return &KitProvider{client: c, fingerprint: fingerprint}, nil
+	return &KitProvider{client: c, fingerprint: fingerprint, api: api}, nil
 }
 
 func (p *KitProvider) PolicyFingerprint() string { return p.fingerprint }
+
+func (p *KitProvider) MaxImageAxis() int64 {
+	if p.api == "vertex" {
+		return VertexMaxImageAxis
+	}
+	return 0
+}
 
 func (p *KitProvider) AuthorizedCapabilities() []string {
 	return []string{voyage.CapabilityImageJPEG, voyage.CapabilityImagePNG, voyage.CapabilityImageWebP, voyage.CapabilityVideoMP4}

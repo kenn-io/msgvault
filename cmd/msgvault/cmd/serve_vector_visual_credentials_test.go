@@ -337,6 +337,15 @@ func testKitVisualRuntime(t *testing.T, api, key string) {
 		opener[hash] = data
 		require.NoError(t, st.UpsertAttachmentRecord(t.Context(), id, store.AttachmentWrite{Filename: "excluded", StoragePath: hash[:2] + "/" + hash, ContentHash: hash, Size: int64(len(data)), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "part:1"}))
 	}
+	if api == "vertex" {
+		for i, data := range [][]byte{mediatest.PNG(16385, 2, color.White), mediatest.PNG(2, 16385, color.White)} {
+			hash := []string{strings.Repeat("e5", 32), strings.Repeat("f6", 32)}[i]
+			id, err := st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: source.ID, SourceMessageID: fmt.Sprintf("oversized-%d", i), MessageType: "email"})
+			require.NoError(t, err)
+			opener[hash] = data
+			require.NoError(t, st.UpsertAttachmentRecord(t.Context(), id, store.AttachmentWrite{Filename: "oversized.png", MIMEType: "image/png", StoragePath: hash[:2] + "/" + hash, ContentHash: hash, Size: int64(len(data)), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "part:1"}))
+		}
+	}
 	cfg := config.NewDefaultConfig()
 	cfg.Vector.Multimodal.Enabled = true
 	cfg.Vector.Multimodal.Provider = api

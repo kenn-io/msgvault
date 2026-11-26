@@ -3,6 +3,7 @@ package visual
 import (
 	"fmt"
 	"io/fs"
+	"math"
 	"slices"
 
 	"bytes"
@@ -227,6 +228,26 @@ func TestVertexMediaEligibility(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.eligible, got.Eligible)
 			assert.Equal(t, tt.reason, got.Reason)
+		})
+	}
+}
+
+func TestVertexImageAxisLimit(t *testing.T) {
+	policy := fullyAuthorizedPolicy()
+	policy.MaxPixels = math.MaxInt64
+	policy.MaxImageAxis = VertexMaxImageAxis
+	for _, tc := range []struct {
+		width, height int
+		accepted      bool
+	}{{16384, 2, true}, {2, 16384, true}, {16385, 2, false}, {2, 16385, false}} {
+		t.Run(fmt.Sprintf("%dx%d", tc.width, tc.height), func(t *testing.T) {
+			data := mediatest.PNG(tc.width, tc.height, color.White)
+			got, err := InspectMedia(t.Context(), memoryOpener{data: data}, eligibleOccurrence("image/png"), policy)
+			require.NoError(t, err)
+			assert.Equal(t, tc.accepted, got.Eligible)
+			if !tc.accepted {
+				assert.Equal(t, ReasonPixelLimit, got.Reason)
+			}
 		})
 	}
 }
