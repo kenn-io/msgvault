@@ -15,6 +15,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
@@ -79,7 +81,9 @@ func TestLargeVisualQueryUsesActiveProviderPolicy(t *testing.T) {
 	require.NoError(t, err)
 	kit, err := visual.NewSearchService(&store.Store{}, provider, imageQueryTestBackend{}, true)
 	require.NoError(t, err)
-	server, _ := newTestServerWithMockStore(t)
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: &mockStore{}, Engine: &fileSearchEngine{MockEngine: &querytest.MockEngine{}}, Logger: testLogger()})
+	reached := 0
+	kit.SetScopeCheck(func(context.Context) error { reached++; return fmt.Errorf("test scope reached") })
 	server.SetVisualSearch(kit)
 	var upload bytes.Buffer
 	form := multipart.NewWriter(&upload)
@@ -87,21 +91,19 @@ func TestLargeVisualQueryUsesActiveProviderPolicy(t *testing.T) {
 	require.NoError(t, err)
 	_, err = file.Write(imageBytes.Bytes())
 	require.NoError(t, err)
-	require.NoError(t, form.WriteField("limit", "invalid"))
+	require.NoError(t, form.WriteField("limit", "10"))
 	require.NoError(t, form.Close())
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/attachments/visual", &upload)
 	request.Header.Set("Content-Type", form.FormDataContentType())
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
-	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "invalid_limit")
-	body := fmt.Sprintf(`{"predicate":{},"visual_image_base64":%q,"limit":-1}`, base64.StdEncoding.EncodeToString(imageBytes.Bytes()))
+	assert.Equal(t, 1, reached, response.Body.String())
+	body := fmt.Sprintf(`{"predicate":{},"visual_image_base64":%q,"limit":10}`, base64.StdEncoding.EncodeToString(imageBytes.Bytes()))
 	request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	response = httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
-	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "invalid_limit")
+	assert.Equal(t, 2, reached, response.Body.String())
 }
 
 func TestFileSearchInvalidImageWithoutVisualService(t *testing.T) {

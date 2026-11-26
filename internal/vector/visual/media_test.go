@@ -126,11 +126,6 @@ func TestInspectMediaAnimatedGIFRequiresCapability(t *testing.T) {
 }
 
 func TestInspectMediaStableExclusions(t *testing.T) {
-	kit, err := NewKitProvider("kit", "https://embed.example.com/v1", "model", 2, "", nil, "generation")
-	require.NoError(t, err)
-	vertex, err := NewKitProvider("vertex", "https://aiplatform.googleapis.com/v1/projects/project-a/locations/global/publishers/google/models", "gemini-embedding-2", 2, "", nil, "generation")
-	require.NoError(t, err)
-	kitPolicy, vertexPolicy := kit.VisualPolicy(), vertex.VisualPolicy()
 	pngData := encodedPNG(t, 2, 2)
 	tests := []struct {
 		name       string
@@ -150,7 +145,30 @@ func TestInspectMediaStableExclusions(t *testing.T) {
 		{name: "oversized", occurrence: eligibleOccurrence("image/png"), opener: memoryOpener{data: pngData}, policy: MediaPolicy{MaxBytes: 2, MaxPixels: 100, IncludeImages: true, IncludeVideo: true}, want: ReasonProviderLimit},
 		{name: "pixel limit", occurrence: eligibleOccurrence("image/png"), opener: memoryOpener{data: pngData}, policy: MediaPolicy{MaxBytes: 1024, MaxPixels: 3, IncludeImages: true, IncludeVideo: true}, want: ReasonPixelLimit},
 		{name: "unprobed format", occurrence: eligibleOccurrence("image/png"), opener: memoryOpener{data: pngData}, policy: DefaultMediaPolicy(), want: ReasonProviderFormatUnsupported},
-		{name: "kit large image", occurrence: eligibleOccurrence("image/png"), opener: memoryOpener{data: mediatest.PNG(4001, 4000, color.White)}, policy: kitPolicy},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := InspectMedia(t.Context(), tt.opener, tt.occurrence, tt.policy)
+			require.NoError(t, err)
+			assert.False(t, got.Eligible)
+			assert.Equal(t, tt.want, got.Reason)
+		})
+	}
+}
+
+func TestInspectMediaProviderLimits(t *testing.T) {
+	kit, err := NewKitProvider("kit", "https://embed.example.com/v1", "model", 2, "", nil, "generation")
+	require.NoError(t, err)
+	vertex, err := NewKitProvider("vertex", "https://aiplatform.googleapis.com/v1/projects/project-a/locations/global/publishers/google/models", "gemini-embedding-2", 2, "", nil, "generation")
+	require.NoError(t, err)
+	kitPolicy, vertexPolicy := kit.VisualPolicy(), vertex.VisualPolicy()
+	tests := []struct {
+		name       string
+		occurrence Occurrence
+		opener     memoryOpener
+		policy     MediaPolicy
+		want       EligibilityReason
+	}{
 		{name: "video at duration limit", occurrence: eligibleOccurrence("video/mp4"), opener: memoryOpener{data: mediatest.MP4(640, 360, 120000)}, policy: kitPolicy},
 		{name: "video over duration limit", occurrence: eligibleOccurrence("video/mp4"), opener: memoryOpener{data: mediatest.MP4(640, 360, 120001)}, policy: kitPolicy, want: ReasonProviderLimit},
 		{name: "vertex width boundary", occurrence: eligibleOccurrence("image/png"), opener: memoryOpener{data: mediatest.PNG(16384, 2, color.White)}, policy: vertexPolicy},

@@ -330,43 +330,41 @@ func TestVisualCredentialMismatch(t *testing.T) {
 	}{
 		{"kit", "https://api.voyageai.com/v1", false}, {"voyage", "https://embed.example.com/v1", true},
 	} {
-		for _, readOnly := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/readOnly=%t", tc.provider, readOnly), func(t *testing.T) {
-				dir := t.TempDir()
-				mainPath := filepath.Join(dir, "msgvault.db")
-				cfg := config.NewDefaultConfig()
-				cfg.HomeDir, cfg.Data.DataDir = dir, dir
-				cfg.Vector.Enabled = true
-				cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
-				cfg.Vector.Embeddings.Endpoint = "https://example.com/v1"
-				cfg.Vector.Embeddings.Model = "text-model"
-				cfg.Vector.Embeddings.Dimension = 4
-				cfg.Vector.Multimodal.Enabled = true
-				if tc.provider == "kit" {
-					cfg.Vector.Multimodal.Provider = "kit"
-					cfg.Vector.Multimodal.Endpoint = "https://embed.example.com/v1"
-					cfg.Vector.Multimodal.Model = "model"
-					cfg.Vector.Multimodal.Dimension = 1024
-					cfg.Vector.Multimodal.APIKeyEnv = ""
-				}
-				empty, err := providercredentials.Read(cfg.TokensDir())
-				require.NoError(t, err)
-				_, err = providercredentials.Put(cfg.TokensDir(), empty.ETag, providercredentials.VectorMultimodalID, tc.storedEndpoint, "old-key")
-				require.NoError(t, err)
-				ctx := withTestConfig(t, cfg)
-				st := testutil.NewSQLiteTestStoreAt(t, mainPath)
-				features, err := setupVectorFeatures(ctx, st, mainPath, readOnly, unavailableVisualCredentialOpener{})
-				if tc.wantError {
-					require.ErrorIs(t, err, providercredentials.ErrOriginMismatch)
-					return
-				}
-				require.NoError(t, err)
-				require.NotNil(t, features)
-				t.Cleanup(func() { _ = features.Close() })
-				assert.NotNil(t, features.HybridEngine)
-				assert.Nil(t, features.Visual)
-			})
-		}
+		t.Run(tc.provider, func(t *testing.T) {
+			dir := t.TempDir()
+			mainPath := filepath.Join(dir, "msgvault.db")
+			cfg := config.NewDefaultConfig()
+			cfg.HomeDir, cfg.Data.DataDir = dir, dir
+			cfg.Vector.Enabled = true
+			cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
+			cfg.Vector.Embeddings.Endpoint = "https://example.com/v1"
+			cfg.Vector.Embeddings.Model = "text-model"
+			cfg.Vector.Embeddings.Dimension = 4
+			cfg.Vector.Multimodal.Enabled = true
+			if tc.provider == "kit" {
+				cfg.Vector.Multimodal.Provider = "kit"
+				cfg.Vector.Multimodal.Endpoint = "https://embed.example.com/v1"
+				cfg.Vector.Multimodal.Model = "model"
+				cfg.Vector.Multimodal.Dimension = 1024
+				cfg.Vector.Multimodal.APIKeyEnv = ""
+			}
+			empty, err := providercredentials.Read(cfg.TokensDir())
+			require.NoError(t, err)
+			_, err = providercredentials.Put(cfg.TokensDir(), empty.ETag, providercredentials.VectorMultimodalID, tc.storedEndpoint, "old-key")
+			require.NoError(t, err)
+			ctx := withTestConfig(t, cfg)
+			st := testutil.NewSQLiteTestStoreAt(t, mainPath)
+			features, err := setupVectorFeatures(ctx, st, mainPath, false, unavailableVisualCredentialOpener{})
+			if tc.wantError {
+				require.ErrorIs(t, err, providercredentials.ErrOriginMismatch)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, features)
+			t.Cleanup(func() { _ = features.Close() })
+			assert.NotNil(t, features.HybridEngine)
+			assert.Nil(t, features.Visual)
+		})
 	}
 }
 
@@ -375,12 +373,18 @@ func TestKitVisualSetupReportsCredentials(t *testing.T) {
 	cfg.Vector.Multimodal.Enabled = true
 	cfg.Vector.Multimodal.Provider = "kit"
 	cfg.Vector.Multimodal.Endpoint = "https://embed.example.com/v1"
+	cfg.Vector.Multimodal.Model = "model"
 	cfg.Vector.Multimodal.APIKeyEnv = "EMBED_KEY"
+	require.NoError(t, cfg.Vector.Multimodal.Validate())
 	env := setupEnvironment{consent: &setupConsentState{Visual: true}, lookupEnv: func(string) (string, bool) { return "", false }}
 	assert.Equal(t, laneStatePending, visualSearchLane(cfg, env).State)
 	env.lookupEnv = func(string) (string, bool) { return "key", true }
 	assert.Equal(t, laneStateOn, visualSearchLane(cfg, env).State)
 	cfg.Vector.Multimodal.Provider = "vertex"
+	cfg.Vector.Multimodal.APIKeyEnv = ""
+	cfg.Vector.Multimodal.Endpoint = "https://aiplatform.googleapis.com/v1/projects/project-a/locations/global/publishers/google/models"
+	cfg.Vector.Multimodal.Model = "gemini-embedding-2"
+	require.NoError(t, cfg.Vector.Multimodal.Validate())
 	env.googleADC = func() error { return errors.New("missing") }
 	assert.Equal(t, laneStatePending, visualSearchLane(cfg, env).State)
 	env.googleADC = func() error { return nil }

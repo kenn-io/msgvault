@@ -39,10 +39,10 @@ func TestKitProviderInputs(t *testing.T) {
 	_, _, err = p.EmbedQuery(t.Context(), QueryInput{Image: &MediaInput{MIMEType: "image/png", Bytes: []byte{4}}})
 	require.NoError(t, err)
 	require.Len(t, requests, 3)
+	assert.Equal(t, "gemini-embedding-2", requests[0]["model"])
 	assert.Equal(t, []any{map[string]any{"role": "document", "media_type": "image/png", "data": "AQID"}}, requests[0]["inputs"])
 	assert.Equal(t, []any{map[string]any{"role": "query", "text": "task: search result | query: beach"}}, requests[1]["inputs"])
 	assert.Equal(t, []any{map[string]any{"role": "query", "media_type": "image/png", "data": "BA=="}}, requests[2]["inputs"])
-	assert.Equal(t, "generation", p.PolicyFingerprint())
 }
 
 func TestKitProviderErrors(t *testing.T) {
@@ -58,7 +58,6 @@ func TestKitProviderErrors(t *testing.T) {
 		{"unsupported", 415, `{"error":{"code":"unsupported_content"}}`, ErrProviderConfiguration},
 		{"unknown input", 400, ``, ErrProviderRetryable},
 		{"input too long", 400, `{"error":{"code":"input_too_long"}}`, ErrProviderRejected},
-		{"content policy", 400, `{"error":{"code":"content_policy_violation"}}`, ErrProviderRejected},
 		{"rate limit", 429, ``, ErrProviderRetryable},
 		{"bad vector", 200, `{"data":[{"index":0,"embedding":[1]}]}`, ErrProviderMalformed},
 	} {

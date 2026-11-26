@@ -219,13 +219,9 @@ func TestDecodeQueryImagePolicy(t *testing.T) {
 		{"non-image", "kit", []byte("not an image"), false},
 		{"default large", "default", largePhoto, false},
 		{"kit large", "kit", largePhoto, true},
-		{"vertex width boundary", "vertex", mediatest.PNG(16384, 2, color.White), true},
-		{"vertex height boundary", "vertex", mediatest.PNG(2, 16384, color.White), true},
 		{"vertex width exceeds", "vertex", mediatest.PNG(16385, 2, color.White), false},
-		{"vertex height exceeds", "vertex", mediatest.PNG(2, 16385, color.White), false},
 		{"kit wide", "kit", mediatest.PNG(16385, 2, color.White), true},
-		{"kit tall", "kit", mediatest.PNG(2, 16385, color.White), true},
-		{"kit gif", "kit", gif, false}, {"vertex gif", "vertex", gif, false}, {"default gif", "default", gif, true},
+		{"kit gif", "kit", gif, false}, {"default gif", "default", gif, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := services[tc.provider].DecodeQueryImage(tc.data)

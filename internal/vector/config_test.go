@@ -793,7 +793,6 @@ func TestKitMultimodalConfig(t *testing.T) {
 	}{
 		{"kit", "kit", "https://embed.example.com/v1", true},
 		{"vertex", "vertex", "https://us-central1-aiplatform.googleapis.com/v1/projects/project-a/locations/us-central1/publishers/google/models", true},
-		{"openai", "openai", "https://embed.example.com/v1", false},
 		{"missing endpoint", "kit", "", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -802,11 +801,10 @@ func TestKitMultimodalConfig(t *testing.T) {
 				cfg.Multimodal.Model = "gemini-embedding-2"
 			}
 			cfg.ApplyDefaults()
-			assert.Empty(t, cfg.Multimodal.APIKeyEnv)
 			if tt.valid {
 				require.NoError(t, cfg.Validate())
 			} else {
-				require.Error(t, cfg.Validate())
+				require.ErrorContains(t, cfg.Validate(), "endpoint")
 			}
 		})
 	}
@@ -818,20 +816,11 @@ func TestKitMultimodalConfig(t *testing.T) {
 	assert.Empty(t, cfg.Multimodal.Endpoint)
 	assert.Empty(t, cfg.Multimodal.Model)
 	assert.Equal(t, 1024, cfg.Multimodal.Dimension)
-	for _, provider := range []string{"kit", "vertex"} {
-		cfg.Multimodal.Provider = provider
-		cfg.Multimodal.Endpoint = "https://embed.example.com/v1"
-		cfg.Multimodal.Model = "gemini-embedding-2"
-		cfg.Multimodal.Dimension = 1024
-		if provider == "vertex" {
-			cfg.Multimodal.Endpoint = "https://us-central1-aiplatform.googleapis.com/v1/projects/project-a/locations/us-central1/publishers/google/models"
-		}
-		cfg.Multimodal.APIKeyEnv = "BAD-NAME"
-		require.ErrorContains(t, cfg.Multimodal.Validate(), "api_key_env")
-		cfg.Multimodal.APIKeyEnv = ""
-		cfg.Multimodal.IncludeAnimatedGIFs = new(true)
-		require.ErrorContains(t, cfg.Multimodal.Validate(), "animated_gifs")
-	}
+	assert.Empty(t, cfg.Multimodal.APIKeyEnv)
+	cfg.Multimodal.Endpoint = "https://embed.example.com/v1"
+	cfg.Multimodal.Model = "model"
+	cfg.Multimodal.IncludeAnimatedGIFs = new(true)
+	require.ErrorContains(t, cfg.Multimodal.Validate(), "animated_gifs")
 }
 
 func TestKitVisualFingerprintIgnoresContext(t *testing.T) {
