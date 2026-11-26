@@ -628,6 +628,9 @@ func (c *Config) Validate() error {
 func (m MultimodalConfig) Validate() error { return m.validate() }
 
 func (m MultimodalConfig) validate() error {
+	if m.APIKeyEnv != "" && !envutil.ValidName(m.APIKeyEnv) {
+		return fmt.Errorf("vector.multimodal.api_key_env: must be a valid environment variable name, got %q", m.APIKeyEnv)
+	}
 	if m.UsesKit() {
 		if err := (embedconfig.Deployment{API: embedconfig.API(m.Provider), BaseURL: m.Endpoint, TrustPrivateNetwork: true}).Validate(); err != nil {
 			return fmt.Errorf("vector.multimodal.endpoint: %w", err)
@@ -663,9 +666,6 @@ func (m MultimodalConfig) validate() error {
 		// is refused instead.
 		return fmt.Errorf("vector.multimodal.endpoint: only the pinned provider endpoint %s is supported (got %q)",
 			defaultMultimodalEndpoint, m.Endpoint)
-	}
-	if !envutil.ValidName(m.APIKeyEnv) {
-		return fmt.Errorf("vector.multimodal.api_key_env: must be a valid environment variable name, got %q", m.APIKeyEnv)
 	}
 	if m.Model != "voyage-multimodal-3.5" {
 		return fmt.Errorf("vector.multimodal.model: must be %q, got %q", "voyage-multimodal-3.5", m.Model)

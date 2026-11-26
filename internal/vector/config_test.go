@@ -697,6 +697,37 @@ func TestMultimodalValidation(t *testing.T) {
 	}
 }
 
+func TestMultimodalAPIKeyEnvValidation(t *testing.T) {
+	for _, provider := range []string{"voyage", "kit", "vertex"} {
+		for _, tc := range []struct {
+			name, key string
+			valid     bool
+		}{
+			{"empty", "", true},
+			{"valid", "VISUAL_API_KEY", true},
+			{"invalid", "BAD-NAME", false},
+		} {
+			t.Run(provider+"/"+tc.name, func(t *testing.T) {
+				cfg := Config{Multimodal: MultimodalConfig{Enabled: true, Provider: provider}}
+				if provider != "voyage" {
+					cfg.Multimodal.Endpoint = "https://embed.example.com/v1"
+					cfg.Multimodal.Model = "gemini-embedding-2"
+				}
+				cfg.ApplyDefaults()
+				if provider == "vertex" {
+					cfg.Multimodal.Endpoint = "https://us-central1-aiplatform.googleapis.com/v1/projects/project-a/locations/us-central1/publishers/google/models"
+				}
+				cfg.Multimodal.APIKeyEnv = tc.key
+				if tc.valid {
+					require.NoError(t, cfg.Multimodal.Validate())
+				} else {
+					require.ErrorContains(t, cfg.Multimodal.Validate(), "api_key_env")
+				}
+			})
+		}
+	}
+}
+
 func TestMultimodalFingerprintChangesForPolicyAndScope(t *testing.T) {
 	base := Config{Multimodal: MultimodalConfig{Enabled: true}}
 	base.ApplyDefaults()
