@@ -187,7 +187,7 @@ func (imp *Importer) importApple(
 
 	hasQuoteMetadata := hasColumn(ctx, db, "ZWAMESSAGE", "ZMEDIAITEM") &&
 		hasColumn(ctx, db, "ZWAMEDIAITEM", "ZMETADATA")
-	aggregates, markersAvailable, err := fetchAppleChatAggregates(ctx, db, hasQuoteMetadata)
+	aggregates, markersAvailable, err := fetchAppleChatAggregates(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("read Apple chat change markers: %w", err)
 	}
@@ -480,8 +480,15 @@ func (imp *Importer) importApple(
 		}
 		imp.progress.OnChatComplete(canonicalChatJID, chatAdded)
 	}
-	if err := imp.linkAppleReplies(ctx, source.ID, replies); err != nil {
+	unresolvedChats, err := imp.linkAppleReplies(ctx, source.ID, replies)
+	if err != nil {
 		return summary, err
+	}
+	// The limit may have left a quoted message unread in a later chat.
+	if totalLimit > 0 && totalAdded >= totalLimit {
+		for chatRowID := range unresolvedChats {
+			delete(nextMarkers, chatRowID)
+		}
 	}
 	for phone, pushName := range pendingPushNames {
 		if _, err := ensureAppleParticipant(

@@ -61,6 +61,7 @@ func appleQuotedStanza(metadata []byte) string {
 
 type appleReply struct {
 	messageID int64
+	chatRowID int64
 	targetID  int64
 	stanzaID  string
 }
@@ -80,7 +81,7 @@ func appendAppleReplies(
 		if archived.ReplyToMessageID.Valid {
 			continue
 		}
-		reply := appleReply{messageID: archived.ID, stanzaID: quoted}
+		reply := appleReply{messageID: archived.ID, chatRowID: message.ChatRowID, stanzaID: quoted}
 		if target := stored[quoted]; target.Raw != nil {
 			reply.targetID = target.ID
 		}
@@ -89,7 +90,10 @@ func appendAppleReplies(
 	return replies
 }
 
-func (imp *Importer) linkAppleReplies(ctx context.Context, sourceID int64, replies []appleReply) error {
+// linkAppleReplies returns the chat rows that still have unresolved replies.
+func (imp *Importer) linkAppleReplies(
+	ctx context.Context, sourceID int64, replies []appleReply,
+) (map[int64]struct{}, error) {
 	var pending []string
 	for _, reply := range replies {
 		if reply.targetID == 0 {
@@ -98,8 +102,9 @@ func (imp *Importer) linkAppleReplies(ctx context.Context, sourceID int64, repli
 	}
 	targets, err := imp.store.StoredMessagesContext(ctx, sourceID, appleRawFormat, pending)
 	if err != nil {
-		return fmt.Errorf("load Apple reply targets: %w", err)
+		return nil, fmt.Errorf("load Apple reply targets: %w", err)
 	}
+	unresolvedChats := make(map[int64]struct{})
 	for _, reply := range replies {
 		targetID := reply.targetID
 		if targetID == 0 {
@@ -107,13 +112,14 @@ func (imp *Importer) linkAppleReplies(ctx context.Context, sourceID int64, repli
 			// A same-source message imported from Android does not establish
 			// that the quoted stanza was imported from ChatStorage.sqlite.
 			if target.Raw == nil {
+				unresolvedChats[reply.chatRowID] = struct{}{}
 				continue
 			}
 			targetID = target.ID
 		}
 		if err := imp.store.SetMessageReplyContext(ctx, reply.messageID, targetID); err != nil {
-			return fmt.Errorf("link Apple reply: %w", err)
+			return nil, fmt.Errorf("link Apple reply: %w", err)
 		}
 	}
-	return nil
+	return unresolvedChats, nil
 }

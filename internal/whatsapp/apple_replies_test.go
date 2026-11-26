@@ -64,10 +64,11 @@ func TestImportAppleReplyLinks(t *testing.T) {
 			(14, 2, NULL, 'image-reply', 1, 700000014, 'reply to an image', 0, '', 1, 4),
 			(15, 1, NULL, 'malformed-reply', 1, 700000015, 'reply with malformed metadata', 0, '', 1, 5),
 			(16, 1, NULL, 'duplicate-reply', 1, 700000016, 'reply to a duplicate', 0, '', 1, 6),
-			(17, 1, NULL, 'other-chat-reply', 1, 700000017, 'reply quoting another chat', 0, '', 1, 7);
+			(17, 1, NULL, 'other-chat-reply', 1, 700000017, 'https://example.com', 7, '', 1, 7);
 	`)
 	st := testutil.NewTestStore(t)
-	summary, err := NewImporter(st, nil).Import(t.Context(), path, appleTestOptions())
+	importer := NewImporter(st, nil)
+	summary, err := importer.Import(t.Context(), path, appleTestOptions())
 	require.NoError(t, err)
 	replies := appleStoredReplyLinks(t, st, summary.SourceID)
 	assert.Equal(t, sql.NullString{String: "direct-in", Valid: true}, replies["direct-out"])
@@ -78,6 +79,77 @@ func TestImportAppleReplyLinks(t *testing.T) {
 		assert.False(t, replies[stanza].Valid, stanza)
 	}
 	assert.NotContains(t, replies, "group-image")
+
+	rerun, err := importer.Import(t.Context(), path, appleTestOptions())
+	require.NoError(t, err)
+	assert.Zero(t, rerun.MessagesProcessed)
+}
+
+func TestImportAppleReplyIgnoresAndroidTarget(t *testing.T) {
+	path := createAppleMarkerFixture(t)
+	execAppleFixture(t, path, appleReplySchema+`
+		INSERT INTO ZWAMEDIAITEM (Z_PK, ZMETADATA)
+		VALUES (1, CAST(X'2A10' || 'message-incoming' AS BLOB));
+		UPDATE ZWAMESSAGE SET ZMEDIAITEM = 1 WHERE Z_PK = 2;
+	`)
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, nil)
+	opts := appleTestOptions()
+	android, err := importer.Import(t.Context(), createGroupParticipantsImportFixture(t, nil), opts)
+	require.NoError(t, err)
+	targets, err := st.StoredMessagesContext(t.Context(), android.SourceID, "whatsapp_json", []string{"message-incoming"})
+	require.NoError(t, err)
+	require.NotEmpty(t, targets["message-incoming"].Raw)
+
+	apple, err := importer.Import(t.Context(), path, opts)
+	require.NoError(t, err)
+	require.Equal(t, android.SourceID, apple.SourceID)
+	replies := appleStoredReplyLinks(t, st, apple.SourceID)
+	require.Contains(t, replies, "direct-out")
+	assert.False(t, replies["direct-out"].Valid)
+}
+
+func TestImportAppleReplyToLaterChat(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		limit int
+	}{
+		{name: "unlimited"},
+		{name: "stopped before the target", limit: 3},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			path := createAppleMarkerFixture(t)
+			// The fixture reads the group chat before the direct chat.
+			execAppleFixture(t, path, appleReplySchema+`
+				INSERT INTO ZWAMEDIAITEM (Z_PK, ZMETADATA) VALUES (1, X'2A0A6469726563742D6F7574');
+				UPDATE ZWAMESSAGE SET ZMEDIAITEM = 1 WHERE Z_PK = 3;
+			`)
+			st := testutil.NewTestStore(t)
+			importer := NewImporter(st, nil)
+			opts := appleTestOptions()
+			opts.Limit = tt.limit
+			first, err := importer.Import(t.Context(), path, opts)
+			require.NoError(t, err)
+			replies := appleStoredReplyLinks(t, st, first.SourceID)
+			require.Contains(t, replies, "group-in")
+			want := sql.NullString{String: "direct-out", Valid: true}
+			if tt.limit == 0 {
+				assert.Equal(t, want, replies["group-in"])
+				return
+			}
+			assert.NotContains(t, replies, "direct-out")
+			assert.False(t, replies["group-in"].Valid)
+
+			opts.Limit = 0
+			_, err = importer.Import(t.Context(), path, opts)
+			require.NoError(t, err)
+			assert.Equal(t, want, appleStoredReplyLinks(t, st, first.SourceID)["group-in"])
+
+			third, err := importer.Import(t.Context(), path, opts)
+			require.NoError(t, err)
+			assert.Zero(t, third.MessagesProcessed)
+		})
+	}
 }
 
 func TestImportAppleReplyBackfill(t *testing.T) {
@@ -125,7 +197,7 @@ func TestImportAppleReplyBackfill(t *testing.T) {
 func TestImportAppleReplyMetadataChange(t *testing.T) {
 	path := createAppleMarkerFixture(t)
 	execAppleFixture(t, path, appleReplySchema+`
-		INSERT INTO ZWAMEDIAITEM (Z_PK, ZMETADATA) VALUES (1, NULL);
+		INSERT INTO ZWAMEDIAITEM (Z_PK, ZMETADATA) VALUES (1, X'2A096469726563742D696E');
 		UPDATE ZWAMESSAGE SET ZMEDIAITEM = 1 WHERE Z_PK = 2;
 	`)
 	st := testutil.NewTestStore(t)
@@ -133,22 +205,19 @@ func TestImportAppleReplyMetadataChange(t *testing.T) {
 	opts := appleTestOptions()
 	first, err := importer.Import(t.Context(), path, opts)
 	require.NoError(t, err)
-	assert.False(t, appleStoredReplyLinks(t, st, first.SourceID)["direct-out"].Valid)
-
-	// Core Data can update the metadata without changing the message row.
-	execAppleFixture(t, path, `
-		UPDATE ZWAMEDIAITEM SET ZMETADATA = X'2A096469726563742D696E', Z_OPT = Z_OPT + 1 WHERE Z_PK = 1;
-	`)
-	second, err := importer.Import(t.Context(), path, opts)
-	require.NoError(t, err)
-	assert.Zero(t, second.MessagesUpdated)
 	want := sql.NullString{String: "direct-in", Valid: true}
-	assert.Equal(t, want, appleStoredReplyLinks(t, st, first.SourceID)["direct-out"])
+	require.Equal(t, want, appleStoredReplyLinks(t, st, first.SourceID)["direct-out"])
 
-	// A later metadata change leaves an existing link intact.
+	// A media-only revision leaves the chat marker valid.
 	execAppleFixture(t, path, `
 		UPDATE ZWAMEDIAITEM SET ZMETADATA = X'2A0867726F75702D696E', Z_OPT = Z_OPT + 1 WHERE Z_PK = 1;
 	`)
+	second, err := importer.Import(t.Context(), path, opts)
+	require.NoError(t, err)
+	assert.Zero(t, second.MessagesProcessed)
+
+	// Re-reading the changed quote leaves the existing link intact.
+	opts.Full = true
 	third, err := importer.Import(t.Context(), path, opts)
 	require.NoError(t, err)
 	assert.Positive(t, third.MessagesProcessed)
