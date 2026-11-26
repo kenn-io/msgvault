@@ -24,7 +24,12 @@ func TestKitProviderInputs(t *testing.T) {
 	t.Cleanup(server.Close)
 	p, err := NewKitProvider("kit", server.URL+"/v1", "gemini-embedding-2", 2, "", server.Client(), "generation")
 	require.NoError(t, err)
-	result, err := p.EmbedDocuments(t.Context(), []DocumentInput{{Owner: Owner{MessageID: 1}, Parts: []InputPart{{Text: "private context"}, {Media: &MediaInput{MIMEType: "image/png", Bytes: []byte{1, 2, 3}}}}}})
+	doc, _, err := AssembleDocument(AssembleRequest{
+		Owner: Owner{MessageID: 1, BlobHash: testHash}, Media: &MediaInput{MIMEType: "image/png", BlobHash: testHash, Bytes: []byte{1, 2, 3}},
+		Context: MessageContext{Body: "private context"}, Policy: ContextPolicy{ExcludeContext: true},
+	})
+	require.NoError(t, err)
+	result, err := p.EmbedDocuments(t.Context(), []DocumentInput{doc})
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, int64(1), result[0].Owner.MessageID)

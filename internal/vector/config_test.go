@@ -814,7 +814,7 @@ func TestKitMultimodalConfig(t *testing.T) {
 	cfg.ApplyDefaults()
 	assert.Empty(t, cfg.Multimodal.Endpoint)
 	assert.Empty(t, cfg.Multimodal.Model)
-	assert.Zero(t, cfg.Multimodal.Dimension)
+	assert.Equal(t, 1024, cfg.Multimodal.Dimension)
 	for _, provider := range []string{"kit", "vertex"} {
 		cfg.Multimodal.Provider = provider
 		cfg.Multimodal.Endpoint = "https://embed.example.com/v1"

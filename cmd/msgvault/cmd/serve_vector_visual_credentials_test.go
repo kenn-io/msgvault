@@ -247,11 +247,16 @@ func testKitVisualRuntime(t *testing.T, api, key string) {
 	t.Helper()
 	images := make([][]byte, 2)
 	for i, shade := range []uint8{50, 200} {
-		img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+		width, height := 2, 2
+		if i == 0 {
+			width, height = 4001, 4000
+		}
+		img := image.NewRGBA(image.Rect(0, 0, width, height))
 		img.Set(0, 0, color.RGBA{R: shade, A: 255})
 		var buf bytes.Buffer
 		require.NoError(t, png.Encode(&buf, img))
 		images[i] = buf.Bytes()
+		require.LessOrEqual(t, len(images[i]), 20<<20)
 	}
 	documentRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

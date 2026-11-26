@@ -44,12 +44,8 @@ func (p *KitProvider) AuthorizedCapabilities() []string {
 func (p *KitProvider) EmbedDocuments(ctx context.Context, documents []DocumentInput) ([]EmbeddingResult, error) {
 	inputs := make([]embedclient.Input, len(documents))
 	for i, doc := range documents {
-		for _, part := range doc.Parts {
-			if part.Media != nil {
-				inputs[i] = embedclient.Input{Role: embedconfig.RoleDocument, MediaType: part.Media.MIMEType, Data: part.Media.Bytes}
-				break
-			}
-		}
+		media := doc.Parts[0].Media
+		inputs[i] = embedclient.Input{Role: embedconfig.RoleDocument, MediaType: media.MIMEType, Data: media.Bytes}
 	}
 	vectors, err := p.client.EmbedInputs(ctx, inputs)
 	if err != nil {

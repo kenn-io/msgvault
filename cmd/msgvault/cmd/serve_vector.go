@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -777,6 +778,7 @@ func newVisualRuntime(
 		}
 		provider, policyFingerprint = kitProvider, kitProvider.PolicyFingerprint()
 		mediaPolicy.AuthorizedCapabilities = eligibleVisualCapabilities(kitProvider.AuthorizedCapabilities(), false)
+		mediaPolicy.MaxPixels = math.MaxInt64
 		mediaPolicy.MaxDurationMS = 120_000
 	} else {
 		providerConfig, err := visualVoyageConfig(vecCfg)

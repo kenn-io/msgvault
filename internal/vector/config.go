@@ -771,7 +771,7 @@ func (c *Config) ApplyDefaults() {
 	if c.Multimodal.Provider == "voyage" && c.Multimodal.Model == "" {
 		c.Multimodal.Model = "voyage-multimodal-3.5"
 	}
-	if c.Multimodal.Provider == "voyage" && c.Multimodal.Dimension == 0 {
+	if c.Multimodal.Dimension == 0 {
 		c.Multimodal.Dimension = 1024
 	}
 	if c.Multimodal.MaxContextChars == 0 {
