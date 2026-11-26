@@ -15,7 +15,7 @@ import (
 // appleChatMarkerVersion names the marker layout and the message derivation
 // it vouches for. Bump it when either changes so the next import compares
 // every chat again.
-const appleChatMarkerVersion = 1
+const appleChatMarkerVersion = 2
 
 // appleChatMarkerState is the Apple import's source sync cursor: one change
 // marker per chat, valid only after the sync run that wrote it and under the
@@ -50,15 +50,17 @@ type appleChatAggregate struct {
 	Members      int64
 	MemberRowSum int64
 	MemberOptSum int64
+	MediaItems   int64
+	MediaOptMix  int64
 	// Ambiguous marks a chat with rows lacking Z_OPT; it is always read.
 	Ambiguous bool
 }
 
-// fetchAppleChatAggregates returns per-chat aggregates of ZWAMESSAGE and the
-// group members its rows join. It reports false when the database has no
-// Z_OPT columns, so every chat is read.
+// fetchAppleChatAggregates returns per-chat aggregates of messages, group
+// members, and media metadata revisions. It reports false when the database
+// has no message or group member Z_OPT columns, so every chat is read.
 func fetchAppleChatAggregates(
-	ctx context.Context, db *sql.DB,
+	ctx context.Context, db *sql.DB, hasQuoteMetadata bool,
 ) (map[int64]appleChatAggregate, bool, error) {
 	for _, table := range []string{"ZWAMESSAGE", "ZWAGROUPMEMBER"} {
 		var columns int
@@ -72,15 +74,23 @@ func fetchAppleChatAggregates(
 		}
 	}
 
+	mediaID, mediaOpt, mediaJoin := "NULL", "NULL", ""
+	if hasQuoteMetadata {
+		mediaID, mediaJoin = "mi.Z_PK", appleMediaJoin
+		if hasColumn(ctx, db, "ZWAMEDIAITEM", "Z_OPT") {
+			mediaOpt = "mi.Z_OPT"
+		}
+	}
 	// mix scrambles Z_PK with a multiply, an xor-shift (SQLite has no xor
 	// operator) and a second multiply, so sums of it share no algebra with
 	// sums of Z_PK.
 	rows, err := db.QueryContext(ctx, `
 		WITH scrambled AS (
-			SELECT ZCHATSESSION, Z_PK, Z_OPT, ZGROUPMEMBER, ZMESSAGEDATE,
-			       (Z_PK * 2654435761) % 4294967291 AS x
-			FROM ZWAMESSAGE
-			WHERE ZCHATSESSION IS NOT NULL
+			SELECT m.ZCHATSESSION, m.Z_PK, m.Z_OPT, m.ZGROUPMEMBER, m.ZMESSAGEDATE,
+			       (m.Z_PK * 2654435761) % 4294967291 AS x,
+			       `+mediaID+` AS media_id, `+mediaOpt+` AS media_opt
+			FROM ZWAMESSAGE m `+mediaJoin+`
+			WHERE m.ZCHATSESSION IS NOT NULL
 		), mixed AS (
 			SELECT *, ((x | (x >> 16)) - (x & (x >> 16))) * 73244475 % 4294967291 AS mix
 			FROM scrambled
@@ -90,7 +100,8 @@ func fetchAppleChatAggregates(
 		       COALESCE(SUM(m.Z_OPT), 0), COALESCE(SUM(m.mix * m.Z_OPT), 0),
 		       SUM(m.Z_PK), SUM(m.mix), COUNT(gm.Z_PK),
 		       COALESCE(SUM(gm.Z_PK), 0), COUNT(gm.Z_OPT),
-		       COALESCE(SUM(gm.Z_OPT), 0)
+		       COALESCE(SUM(gm.Z_OPT), 0), COUNT(m.media_id),
+		       COUNT(m.media_opt), COALESCE(SUM(m.mix * m.media_opt), 0)
 		FROM mixed m
 		LEFT JOIN ZWAGROUPMEMBER gm ON gm.Z_PK = m.ZGROUPMEMBER
 		GROUP BY m.ZCHATSESSION
@@ -102,19 +113,20 @@ func fetchAppleChatAggregates(
 
 	aggregates := make(map[int64]appleChatAggregate)
 	for rows.Next() {
-		var chatRowID, messagesWithOpt, membersWithOpt int64
+		var chatRowID, messagesWithOpt, membersWithOpt, mediaWithOpt int64
 		var aggregate appleChatAggregate
 		if err := rows.Scan(
 			&chatRowID, &aggregate.Messages, &aggregate.MaxRowID, &aggregate.LatestDate,
 			&messagesWithOpt,
 			&aggregate.OptSum, &aggregate.OptMix, &aggregate.RowSum, &aggregate.RowMix,
 			&aggregate.Members, &aggregate.MemberRowSum,
-			&membersWithOpt, &aggregate.MemberOptSum,
+			&membersWithOpt, &aggregate.MemberOptSum, &aggregate.MediaItems,
+			&mediaWithOpt, &aggregate.MediaOptMix,
 		); err != nil {
 			return nil, false, fmt.Errorf("scan Apple message aggregate: %w", err)
 		}
 		aggregate.Ambiguous = messagesWithOpt != aggregate.Messages ||
-			membersWithOpt != aggregate.Members
+			membersWithOpt != aggregate.Members || mediaWithOpt != aggregate.MediaItems
 		aggregates[chatRowID] = aggregate
 	}
 	if err := rows.Err(); err != nil {
@@ -163,11 +175,12 @@ func appleChatMarker(
 	}
 	// Stored as a short digest: the cursor is read with every source and
 	// shouldn't carry contact names.
-	sum := sha256.Sum256(fmt.Appendf(nil, "%d %q %q %d %d %v %d %d %d %d %d %d %d",
+	sum := sha256.Sum256(fmt.Appendf(nil, "%d %q %q %d %d %v %d %d %d %d %d %d %d %d %d",
 		conversationID, chat.RawJID, chat.Name, aggregate.Messages, aggregate.MaxRowID,
 		aggregate.LatestDate,
 		aggregate.OptSum, aggregate.OptMix, aggregate.RowSum, aggregate.RowMix,
 		aggregate.Members, aggregate.MemberRowSum, aggregate.MemberOptSum,
+		aggregate.MediaItems, aggregate.MediaOptMix,
 	))
 	return hex.EncodeToString(sum[:8])
 }
