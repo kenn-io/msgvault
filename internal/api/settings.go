@@ -743,6 +743,9 @@ func (s *Server) buildSettingsResponse(
 			Validation:      validationForSetting(definition.key),
 			Section:         metadata.section,
 		}
+		if definition.key == "vector.multimodal.model" && cfg.Vector.Multimodal.Provider == "voyage" {
+			setting.Options = []string{"voyage-multimodal-3.5"}
+		}
 		if definition.inherited != nil {
 			setting.Inherited = definition.inherited(cfg)
 		}
