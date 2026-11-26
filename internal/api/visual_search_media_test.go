@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -83,7 +84,7 @@ func TestLargeVisualQueryUsesActiveProviderPolicy(t *testing.T) {
 	require.NoError(t, err)
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: &mockStore{}, Engine: &fileSearchEngine{MockEngine: &querytest.MockEngine{}}, Logger: testLogger()})
 	reached := 0
-	kit.SetScopeCheck(func(context.Context) error { reached++; return fmt.Errorf("test scope reached") })
+	kit.SetScopeCheck(func(context.Context) error { reached++; return errors.New("test scope reached") })
 	server.SetVisualSearch(kit)
 	var upload bytes.Buffer
 	form := multipart.NewWriter(&upload)
