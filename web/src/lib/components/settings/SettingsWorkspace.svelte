@@ -342,6 +342,16 @@
   function currentValue(setting: SettingState): unknown {
     return Object.hasOwn(drafts, setting.key) ? drafts[setting.key] : persistedValue(setting);
   }
+  function settingHint(setting: SettingState): string | undefined {
+    if (setting.key !== 'vector.multimodal.endpoint') return setting.validation?.hint;
+    const provider = find('vector.multimodal.provider');
+    switch (provider && currentValue(provider)) {
+      case 'voyage': return 'Use https://api.voyageai.com/v1.';
+      case 'kit': return 'Use the API root of your Kit embedding service.';
+      case 'vertex': return 'Use your Vertex project and location URL ending in /publishers/google/models.';
+      default: return setting.validation?.hint;
+    }
+  }
   function setDraft(key: string, value: unknown) {
     const setting = find(key);
     if (setting && !isChange(setting, value)) {
@@ -580,7 +590,7 @@
           />
         {/if}
       </div>
-      {#if setting.validation?.hint}<small class="setting__hint">{setting.validation.hint}</small>{/if}
+      {#if settingHint(setting)}<small class="setting__hint">{settingHint(setting)}</small>{/if}
     {/if}
     {#if isDirty(setting.key)}<span class="kit-sr-only"> (unsaved)</span>{/if}
   </div>

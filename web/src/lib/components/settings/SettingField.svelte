@@ -100,7 +100,7 @@
       />
     </label>
   {:else}
-    <label class="field" data-size={setting.key === 'vector.multimodal.endpoint' ? 'wide' : off ? 'sm' : 'lg'}>
+    <label class="field" data-size={setting.key === 'vector.multimodal.endpoint' ? 'wide' : setting.key === 'vector.multimodal.model' ? 'md' : off ? 'sm' : 'lg'}>
       <span class="kit-sr-only">{label}</span>
       <TextInput
         value={text}
