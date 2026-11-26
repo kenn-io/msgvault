@@ -100,7 +100,7 @@
       />
     </label>
   {:else}
-    <label class="field" data-size={off ? 'sm' : 'lg'}>
+    <label class="field" data-size={setting.key === 'vector.multimodal.endpoint' ? 'wide' : off ? 'sm' : 'lg'}>
       <span class="kit-sr-only">{label}</span>
       <TextInput
         value={text}
@@ -136,6 +136,9 @@
   }
   .field[data-size='lg'] {
     width: 15rem;
+  }
+  .field[data-size='wide'] {
+    width: 100%;
   }
   /* A schedule is one line: presets, the expression when custom, and the zone. */
   .field[data-size='cron'] {
