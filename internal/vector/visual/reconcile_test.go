@@ -54,6 +54,21 @@ func TestFullReconcileClaimsExactRevisionAndCompletesBaseline(t *testing.T) {
 	assert.Equal(consumer.BaselineSequence, sourceFence)
 }
 
+func TestFullReconcileMediaOnlyDoesNotReadMessageBody(t *testing.T) {
+	f := storetest.New(t)
+	generation := testVisualGeneration(t, f)
+	testVisualCandidate(t, f, "media-only", strings.Repeat("a1", 32))
+	reconciler := testReconciler(t, f, generation.ID, memoryOpener{data: encodedPNG(t, 2, 2)}, "visual-test/media-only")
+	reconciler.config.ContextPolicy.ExcludeContext = true
+	_, err := f.Store.DB().ExecContext(t.Context(), `DROP TABLE message_bodies`)
+	require.NoError(t, err)
+
+	result, err := reconciler.FullReconcile(t.Context())
+	require.NoError(t, err)
+	require.Len(t, result.Work, 1)
+	assert.Len(t, result.Work[0].Document.Parts, 1)
+}
+
 func TestReplayReclaimsMessageTextRevisionThenTombstonesRoleChange(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

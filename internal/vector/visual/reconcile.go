@@ -419,20 +419,23 @@ func (r *Reconciler) reconcileCandidates(
 			}
 			continue
 		}
-		messageContext, err := r.archive.GetVisualMessageContext(ctx, candidate.Owner.MessageID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
+		var messageContext MessageContext
+		var contentStamp *string
+		if !r.config.ContextPolicy.ExcludeContext {
+			message, err := r.archive.GetVisualMessageContext(ctx, candidate.Owner.MessageID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
+				return err
 			}
-			return err
+			messageContext = MessageContext{Subject: message.Subject, Body: message.Body, MessageType: message.MessageType, Filename: candidate.Filename}
+			contentStamp = &message.ContentStamp
 		}
 		document, _, err := AssembleDocument(AssembleRequest{
 			Owner: owner, Media: eligibility.Media,
-			Context: MessageContext{
-				Subject: messageContext.Subject, Body: messageContext.Body,
-				MessageType: messageContext.MessageType, Filename: candidate.Filename,
-			},
-			Role: candidate.Role, SourceSequence: sourceFence, Policy: r.config.ContextPolicy,
+			Context: messageContext,
+			Role:    candidate.Role, SourceSequence: sourceFence, Policy: r.config.ContextPolicy,
 		})
 		if err != nil {
 			return err
@@ -467,7 +470,7 @@ func (r *Reconciler) reconcileCandidates(
 			return getErr
 		}
 		claim, acquired, err := r.claimWithStamp(ctx, candidate.Owner, document.Revision,
-			sourceFence, &messageContext.ContentStamp)
+			sourceFence, contentStamp)
 		if err != nil {
 			return err
 		}

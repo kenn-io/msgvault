@@ -51,9 +51,10 @@ func AssembleDocument(request AssembleRequest) (DocumentInput, bool, error) {
 	if request.Policy.MaxChars <= 0 {
 		request.Policy.MaxChars = 4000
 	}
-	contextText, truncated := normalizedMessageContext(request.Context, request.Policy.MaxChars)
-	if request.Policy.ExcludeContext {
-		contextText, truncated = "", false
+	var contextText string
+	var truncated bool
+	if !request.Policy.ExcludeContext {
+		contextText, truncated = normalizedMessageContext(request.Context, request.Policy.MaxChars)
 	}
 	parts := make([]InputPart, 0, 2)
 	if contextText != "" {
