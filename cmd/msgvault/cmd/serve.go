@@ -1083,6 +1083,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			return runDaemonSQLQueryWithJobs(requestCtx, cfg, s, nil, sql, daemonSQLQueryOptions{fresh: fresh, archiveOnly: true}, cacheJobs)
 		},
 		CacheBuildStatusReader:        cacheJobs.status,
+		BackupQuiesce:                 daemonBackupQuiesce(cacheRefresher, cacheJobs, cfg.AnalyticsDir()),
 		ShutdownToken:                 ownership.shutdownToken,
 		ShutdownFunc:                  cancel,
 		Scheduler:                     schedAdapter,

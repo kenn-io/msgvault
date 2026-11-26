@@ -32,6 +32,11 @@ type backgroundCacheRefresher struct {
 	pending   bool
 	pendingID string
 	closed    bool
+	// paused holds new runs while a backup freeze checkpoints the archive.
+	// runCancel and runDone belong to the run in progress, if any.
+	paused    bool
+	runCancel context.CancelFunc
+	runDone   chan struct{}
 	// delayed is the single outstanding RequestAfter timer, due at delayedAt.
 	delayed   *time.Timer
 	delayedAt time.Time
@@ -63,7 +68,7 @@ func (r *backgroundCacheRefresher) Request(identifier string) bool {
 	if r.closed {
 		return false
 	}
-	if r.running {
+	if r.running || r.paused {
 		r.pending = true
 		r.pendingID = identifier
 		return true
@@ -151,8 +156,11 @@ func (r *backgroundCacheRefresher) loop(identifier string) {
 	for {
 		r.runOnce(identifier)
 		r.mu.Lock()
-		if !r.pending || r.closed {
-			r.pending = false
+		if !r.pending || r.closed || r.paused {
+			// A paused refresher keeps its pending request for resume.
+			if !r.paused {
+				r.pending = false
+			}
 			r.running = false
 			r.mu.Unlock()
 			return
@@ -171,8 +179,69 @@ func (r *backgroundCacheRefresher) runOnce(identifier string) {
 		}
 		defer done()
 	}
-	if err := r.run(r.ctx, identifier); err != nil && r.ctx.Err() == nil {
+	runCtx, cancel := context.WithCancel(r.ctx)
+	defer cancel()
+	runDone := make(chan struct{})
+	defer close(runDone)
+	r.mu.Lock()
+	if r.paused {
+		r.pending = true
+		r.pendingID = identifier
+		r.mu.Unlock()
+		return
+	}
+	r.runCancel, r.runDone = cancel, runDone
+	r.mu.Unlock()
+
+	err := r.run(runCtx, identifier)
+
+	r.mu.Lock()
+	r.runCancel, r.runDone = nil, nil
+	interrupted := r.ctx.Err() == nil && runCtx.Err() != nil
+	if interrupted && !r.closed {
+		// A backup freeze stopped this run; repeat it after resume.
+		r.pending = true
+		r.pendingID = identifier
+	}
+	r.mu.Unlock()
+	if err != nil && r.ctx.Err() == nil && !interrupted {
 		loggerFromContext(r.ctx).Warn("background analytics cache refresh failed",
 			"identifier", identifier, "error", err)
 	}
+}
+
+// pause cancels the run in progress, waits for it to return, and holds new
+// runs until the returned resume is called. Requests that arrive meanwhile,
+// and the interrupted run, collapse into one run after resume. On error the
+// refresher is already resumed.
+func (r *backgroundCacheRefresher) pause(ctx context.Context) (func(), error) {
+	r.mu.Lock()
+	r.paused = true
+	cancel, runDone := r.runCancel, r.runDone
+	r.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		select {
+		case <-runDone:
+		case <-ctx.Done():
+			r.resume()
+			return nil, ctx.Err()
+		}
+	}
+	var once sync.Once
+	return func() { once.Do(r.resume) }, nil
+}
+
+func (r *backgroundCacheRefresher) resume() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.paused = false
+	if !r.pending || r.running || r.closed {
+		return
+	}
+	identifier := r.pendingID
+	r.pending = false
+	r.running = true
+	r.wg.Add(1)
+	go r.loop(identifier)
 }

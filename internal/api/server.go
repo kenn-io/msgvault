@@ -274,6 +274,7 @@ type Server struct {
 	sqlQueryRunner         SQLQueryRunner
 	archiveSQLQueryRunner  SQLQueryRunner
 	cacheBuildStatusReader CacheBuildStatusReader
+	backupQuiesce          BackupQuiesceFunc
 	shutdownToken          string
 	shutdownFunc           func()
 	scheduler              SyncScheduler
@@ -511,6 +512,13 @@ func (s *Server) clockNow() time.Time {
 type SQLQueryRunner func(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *CacheBuildAccepted, error)
 type CacheBuildStatusReader func(id string) (CacheBuildStatus, bool)
 
+// BackupQuiesceFunc stops daemon-owned archive readers that do not take the
+// operation gate, such as analytics cache builds, and holds them stopped until
+// the returned release runs. A backup freeze calls it after acquiring the gate
+// so no daemon reader blocks the backup's truncating WAL checkpoint. It must
+// return within ctx and must not leave readers held when it returns an error.
+type BackupQuiesceFunc func(ctx context.Context) (release func(), err error)
+
 const (
 	DaemonLongRequestTimeout = 30 * time.Minute
 	daemonReadTimeout        = 15 * time.Second
@@ -549,11 +557,13 @@ type ServerOptions struct {
 	SQLQueryRunner         SQLQueryRunner
 	ArchiveSQLQueryRunner  SQLQueryRunner
 	CacheBuildStatusReader CacheBuildStatusReader
-	ShutdownToken          string
-	ShutdownFunc           func()
-	HybridEngine           *hybrid.Engine
-	VectorCfg              vector.Config
-	Backend                vector.Backend
+	// BackupQuiesce, when set, runs inside each backup freeze window.
+	BackupQuiesce BackupQuiesceFunc
+	ShutdownToken string
+	ShutdownFunc  func()
+	HybridEngine  *hybrid.Engine
+	VectorCfg     vector.Config
+	Backend       vector.Backend
 	// PersonSearchEngine is the optional semantic people service.
 	PersonSearchEngine PersonSearchEngine
 	// VectorStatus is the initial vector subsystem status. Zero value
@@ -658,6 +668,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		sqlQueryRunner:         opts.SQLQueryRunner,
 		archiveSQLQueryRunner:  opts.ArchiveSQLQueryRunner,
 		cacheBuildStatusReader: opts.CacheBuildStatusReader,
+		backupQuiesce:          opts.BackupQuiesce,
 		shutdownToken:          opts.ShutdownToken,
 		shutdownFunc:           opts.ShutdownFunc,
 		hybridEngine:           opts.HybridEngine,

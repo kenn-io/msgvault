@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -347,4 +348,71 @@ func TestBackupFreezeEndRejectsInvalidJSON(t *testing.T) {
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
 	assert.Equal(http.StatusBadRequest, resp.Code, "status: %s", resp.Body.String())
+}
+
+func TestBackupFreezeQuiescesReadersUntilEndOrWatchdog(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var quiesced, resumed int
+		srv := NewServerWithOptions(ServerOptions{
+			Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Logger:        testLogger(),
+			OperationGate: NewSerialOperationGate(),
+			BackupQuiesce: func(context.Context) (func(), error) {
+				quiesced++
+				return func() { resumed++ }, nil
+			},
+		})
+		defer func() { require.NoError(srv.Shutdown(t.Context())) }()
+
+		token := beginBackupFreeze(t, srv)
+		assert.Equal(1, quiesced)
+		assert.Equal(0, resumed, "readers stay stopped while frozen")
+		endResp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(endResp, endBackupFreeze(t, token))
+		require.Equal(http.StatusOK, endResp.Code, "end status: %s", endResp.Body.String())
+		assert.Equal(1, resumed, "end resumes readers")
+
+		beginBackupFreeze(t, srv)
+		synctest.Sleep(backupFreezeWatchdogTimeout)
+		assert.Equal(2, resumed, "watchdog resumes readers")
+	})
+}
+
+func TestBackupFreezeBeginFailsAndReleasesGateWhenReadersDoNotStop(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var waited time.Duration
+		srv := NewServerWithOptions(ServerOptions{
+			Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Logger:        testLogger(),
+			OperationGate: NewSerialOperationGate(),
+			BackupQuiesce: func(ctx context.Context) (func(), error) {
+				start := time.Now()
+				<-ctx.Done()
+				waited = time.Since(start)
+				return nil, fmt.Errorf("the running analytics cache build did not stop: %w", ctx.Err())
+			},
+		})
+		defer func() { require.NoError(srv.Shutdown(t.Context())) }()
+
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, loopbackRequest(t.Context(), backupFreezeBeginPath, nil))
+		require.Equal(http.StatusServiceUnavailable, resp.Code, "begin status: %s", resp.Body.String())
+		var errResp ErrorResponse
+		require.NoError(json.Unmarshal(resp.Body.Bytes(), &errResp), "decode error envelope")
+		assert.Equal("backup_readers_busy", errResp.Error)
+		assert.Contains(errResp.Message, "analytics cache build did not stop")
+		assert.Equal(backupFreezeQuiesceTimeout, waited, "quiesce wait is bounded")
+
+		assert.Equal(http.StatusBadRequest, gatedProbeStatus(t.Context(), srv), "gate released after failed begin")
+		second := httptest.NewRecorder()
+		srv.Router().ServeHTTP(second, loopbackRequest(t.Context(), backupFreezeBeginPath, nil))
+		assert.Equal(http.StatusServiceUnavailable, second.Code, "a later begin is not blocked by a stale freeze: %s", second.Body.String())
+		assert.NotContains(second.Body.String(), "backup_freeze_active")
+	})
 }
