@@ -342,11 +342,21 @@
   function currentValue(setting: SettingState): unknown {
     return Object.hasOwn(drafts, setting.key) ? drafts[setting.key] : persistedValue(setting);
   }
+  function settingForDraft(setting: SettingState): SettingState {
+    if (setting.key !== 'vector.multimodal.model') return setting;
+    const provider = find('vector.multimodal.provider');
+    switch (provider && currentValue(provider)) {
+      case 'voyage': return { ...setting, options: ['voyage-multimodal-3.5'] };
+      case 'kit':
+      case 'vertex': return { ...setting, options: [] };
+      default: return setting;
+    }
+  }
   function settingHint(setting: SettingState): string | undefined {
     if (setting.key !== 'vector.multimodal.endpoint') return setting.validation?.hint;
     const provider = find('vector.multimodal.provider');
     switch (provider && currentValue(provider)) {
-      case 'voyage': return 'Use https://api.voyageai.com/v1.';
+      case 'voyage': return 'Only https://api.voyageai.com/v1 is accepted.';
       case 'kit': return 'Use the API root of your Kit embedding service.';
       case 'vertex': return 'Use your Vertex project and location URL ending in /publishers/google/models.';
       default: return setting.validation?.hint;
@@ -354,13 +364,17 @@
   }
   function setDraft(key: string, value: unknown) {
     const setting = find(key);
-    if (setting && !isChange(setting, value)) {
-      const next = { ...drafts };
-      delete next[key];
-      drafts = next;
-      return;
+    const next = { ...drafts };
+    if (setting && !isChange(setting, value)) delete next[key];
+    else next[key] = value;
+    if (key === 'vector.multimodal.provider' && value === 'voyage') {
+      const model = find('vector.multimodal.model');
+      if (model) {
+        if (isChange(model, 'voyage-multimodal-3.5')) next[model.key] = 'voyage-multimodal-3.5';
+        else delete next[model.key];
+      }
     }
-    drafts = { ...drafts, [key]: value };
+    drafts = next;
   }
   // After a reload that keeps local edits, drop the ones the daemon already
   // holds: a draft equal to the new persisted value, or a clear for a secret
@@ -582,7 +596,7 @@
           {/if}
         {:else}
           <SettingField
-            {setting}
+            setting={settingForDraft(setting)}
             label={text}
             value={currentValue(setting)}
             optionLabels={OPTION_LABELS[setting.key]}

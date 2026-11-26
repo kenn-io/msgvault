@@ -778,7 +778,7 @@ func newVisualRuntime(
 	if vecCfg.Multimodal.UsesKit() {
 		if vecCfg.Multimodal.Provider == "vertex" && credential.HTTPClient == nil {
 			if httpClient, err = embedclient.GoogleHTTPClient(); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("create Google embedding client: %w", err)
 			}
 		}
 		kitProvider, err := visual.NewKitProvider(vecCfg.Multimodal.Provider, vecCfg.Multimodal.Endpoint, vecCfg.Multimodal.Model, vecCfg.Multimodal.Dimension, apiKey, providerHTTPClientWithoutRedirects(httpClient), fingerprint)

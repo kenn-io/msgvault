@@ -121,8 +121,10 @@ func (e setupEnvironment) googleCredentialError() error {
 	if e.googleADC != nil {
 		return e.googleADC()
 	}
-	_, err := embedclient.GoogleHTTPClient()
-	return err
+	if _, err := embedclient.GoogleHTTPClient(); err != nil {
+		return fmt.Errorf("create Google embedding client: %w", err)
+	}
+	return nil
 }
 
 func (e setupEnvironment) reportMissingCredential(lane *laneStatus, name string) {

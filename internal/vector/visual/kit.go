@@ -33,7 +33,7 @@ func NewKitProvider(api, endpoint, model string, dimension int, key string, clie
 		Batch:      embedconfig.Batch{Items: 1}, Transport: embedconfig.Transport{Timeout: 45 * time.Second}, APIKey: key, HTTP: client,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create visual embedding client: %w", err)
 	}
 	return &KitProvider{client: c, fingerprint: fingerprint, api: api}, nil
 }
@@ -88,8 +88,7 @@ func kitError(err error) error {
 	if errors.Is(err, embedmodel.ErrUnsupportedContent) {
 		return providerError(ErrProviderRejected, 0, err)
 	}
-	var api *embedclient.APIError
-	if errors.As(err, &api) {
+	if api, ok := errors.AsType[*embedclient.APIError](err); ok {
 		switch {
 		case api.Reason == embedclient.ReasonInvalidRequest:
 			return providerError(ErrProviderConfiguration, api.StatusCode, err)
