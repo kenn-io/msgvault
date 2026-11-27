@@ -321,6 +321,11 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(ct
 
 	// Set up sync options
 	opts := sync.DefaultOptions()
+	skipSpamTrash, err := gmailSkipsSpamTrash(ctx, cfg, s, source)
+	if err != nil {
+		return err
+	}
+	opts.GmailSkipSpamTrash = skipSpamTrash
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 
 	// Create syncer with progress reporter

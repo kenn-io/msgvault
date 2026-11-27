@@ -26,6 +26,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
@@ -5348,6 +5349,35 @@ func TestHandleAddAccountDuplicate(t *testing.T) {
 	var resp map[string]string
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
 	assert.Equal(t, "exists", resp["status"], "status")
+}
+
+func TestHandleAddAccountSchedulesEntryWithoutSchedule(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Server:   config.ServerConfig{APIPort: 8080},
+		HomeDir:  tmpDir,
+		Accounts: []config.AccountSchedule{{Email: "filtered@example.com", GmailSkipSpamTrash: true}},
+	}
+	sched := newMockScheduler()
+	srv := NewServer(cfg, nil, sched, testLogger())
+
+	body := `{"email": "filtered@example.com", "schedule": "0 3 * * *"}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/accounts", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "status (body: %s)", w.Body.String())
+	assert.Equal(t, []string{"filtered@example.com"}, sched.addedAccts)
+	var saved struct {
+		Accounts []config.AccountSchedule `toml:"accounts"`
+	}
+	_, err := toml.DecodeFile(filepath.Join(tmpDir, "config.toml"), &saved)
+	require.NoError(t, err)
+	assert.Equal(t, []config.AccountSchedule{
+		{Email: "filtered@example.com", Schedule: "0 3 * * *", Enabled: true, GmailSkipSpamTrash: true},
+	}, saved.Accounts)
 }
 
 func TestHandleAddAccountInvalidCron(t *testing.T) {

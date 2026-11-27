@@ -76,6 +76,23 @@ type gmailCoverageTransport struct {
 	failPage    bool
 	failGet     bool
 	omitSpecial bool
+	// labels overrides a message's current label; moveOnList changes a
+	// message's label right after a listing returns it.
+	labels     map[string]string
+	moveOnList map[string]string
+}
+
+func (f *gmailCoverageTransport) label(id string) string {
+	if label, ok := f.labels[id]; ok {
+		return label
+	}
+	switch id {
+	case "spam":
+		return "SPAM"
+	case "trash":
+		return "TRASH"
+	}
+	return "INBOX"
 }
 
 func (f *gmailCoverageTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -113,15 +130,24 @@ func (f *gmailCoverageTransport) RoundTrip(r *http.Request) (*http.Response, err
 			f.failPage = false
 			break
 		}
-		ids := []string{"normal1", "normal2"}
-		if q.Get("includeSpamTrash") == "true" && !f.omitSpecial && !strings.Contains(q.Get("q"), "-in:spam") {
-			ids = append(ids, "spam", "trash")
+		var ids []string
+		for _, id := range []string{"normal1", "normal2", "spam", "trash"} {
+			special := f.label(id) == "SPAM" || f.label(id) == "TRASH"
+			switch {
+			case q.Get("q") == gmailSpamTrashQuery:
+				if special {
+					ids = append(ids, id)
+				}
+			case special && (q.Get("includeSpamTrash") != "true" || f.omitSpecial || strings.Contains(q.Get("q"), "-in:spam")):
+			default:
+				ids = append(ids, id)
+			}
 		}
 		page := 0
 		if q.Get("pageToken") == "p2" {
 			page = 1
 		}
-		half := len(ids) / 2
+		half := (len(ids) + 1) / 2
 		chosen := ids[:half]
 		if page == 1 {
 			chosen = ids[half:]
@@ -129,6 +155,12 @@ func (f *gmailCoverageTransport) RoundTrip(r *http.Request) (*http.Response, err
 		messages := []any{}
 		for _, id := range chosen {
 			messages = append(messages, map[string]any{"id": id, "threadId": "thread_" + id})
+			if label, ok := f.moveOnList[id]; ok {
+				if f.labels == nil {
+					f.labels = map[string]string{}
+				}
+				f.labels[id] = label
+			}
 		}
 		resp := map[string]any{"messages": messages, "resultSizeEstimate": len(ids)}
 		if page == 0 {
@@ -145,13 +177,7 @@ func (f *gmailCoverageTransport) RoundTrip(r *http.Request) (*http.Response, err
 			body = map[string]any{"error": map[string]any{"code": 400, "message": "synthetic transient fetch"}}
 			break
 		}
-		label := "INBOX"
-		if id == "spam" {
-			label = "SPAM"
-		}
-		if id == "trash" {
-			label = "TRASH"
-		}
+		label := f.label(id)
 		body = map[string]any{"id": id, "threadId": "thread_" + id, "labelIds": []string{label}}
 		if q.Get("format") == "raw" {
 			body = map[string]any{"id": id, "threadId": "thread_" + id, "labelIds": []string{label}, "historyId": strconv.FormatUint(f.history, 10), "internalDate": "1700000000000", "raw": base64.RawURLEncoding.EncodeToString(testMIME())}

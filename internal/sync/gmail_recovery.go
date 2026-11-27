@@ -89,10 +89,11 @@ func decodeRecoveryCheckpoint(token string) (recoveryCheckpoint, error) {
 	return cp, nil
 }
 
-func restoreRecoveryCheckpoint(state *syncState, run *store.SyncRun) error {
+func restoreRecoveryCheckpoint(state *syncState, run *store.SyncRun, fingerprint string) error {
 	state.recoveryPhase = recoveryEnumerate
-	if !checkpointMatchesRequest(run, gmailHistoryRecoveryCoverageFingerprint) {
-		return nil // Legacy scans did not reconcile all memberships; restart, keeping H.
+	if !checkpointMatchesRequest(run, fingerprint) {
+		// Restart older scans and scans with a different filter, keeping H.
+		return nil
 	}
 	cp, err := decodeRecoveryCheckpoint(run.CursorBefore.String)
 	if err != nil {

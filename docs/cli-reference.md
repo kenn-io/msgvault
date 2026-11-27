@@ -967,10 +967,11 @@ only during the complete mailbox recovery described under [`sync`](#sync).
 
 ### Gmail Spam and Trash coverage
 
-Gmail full sync includes messages in Spam and Trash, while `--query`,
-`--after`, `--before`, and `--limit` still narrow the scope. To pick up
-historical Spam and Trash messages skipped by an earlier full sync, run a
-complete full sync for the account with none of those options:
+Gmail full sync includes messages in Spam and Trash by default. You can
+[exclude both for a Gmail account](configuration.md#accounts). The `--query`,
+`--after`, `--before`, and `--limit` flags also narrow the scope. To backfill
+messages still in Spam or Trash, turn off the account exclusion and run a
+full sync with none of those flags:
 
 ```bash
 msgvault sync-full account@example.com
@@ -982,11 +983,12 @@ resumes from its saved checkpoint. An unfiltered, unlimited full sync keeps your
 existing History cursor, even when resumed. The next incremental sync can then
 read pending label changes and deletions as well as new arrivals. If that cursor expires,
 the next incremental sync runs History recovery. A first full sync seeds the
-History point recorded at its start, while filtered or limited full syncs leave
-the source cursor unchanged. A full sync interrupted under an earlier release
-starts from the first page once. Previously archived messages are not downloaded
-again or duplicated. Gmail returns only messages that still exist in the
-mailbox; permanently deleted messages cannot be backfilled.
+History point recorded at its start, even with the account exclusion enabled.
+Query, date, and limit flags leave the source cursor unchanged. A full sync
+interrupted under an earlier release starts from the first page once. Previously
+archived messages are not downloaded again or duplicated. Gmail returns only
+messages that still exist in the mailbox, so permanently deleted messages
+cannot be backfilled.
 
 At the current 500-ID page size, a listing of N matching messages takes roughly
 `ceil(N / 500)` Gmail list requests, and each newly discovered message takes one
@@ -1004,8 +1006,9 @@ Sync new and changed messages. Gmail accounts use the Gmail History API, while
 IMAP accounts scan mailboxes and skip messages already in the database. You can
 pass an account identifier or display name; if you omit it, the command syncs
 every account that has completed an initial full sync. Each Gmail incremental
-sync starts by retrying messages an earlier sync could not download or save
-until they are archived or Gmail reports them gone.
+sync starts by retrying messages an earlier sync could not download or save.
+Retries stop once the message is archived, the account's Spam and Trash setting
+excludes it, or Gmail reports it gone.
 
 ```bash
 msgvault sync [account] [flags]
@@ -1036,11 +1039,11 @@ those messages as deleted from the source. If saving a label change or
 source-deletion marker fails, the sync returns an error and keeps its previous
 History position. The next sync retries those changes.
 
-If Gmail reports that the saved history cursor has expired, msgvault recovers by
-taking an unfiltered, unlimited snapshot of the complete mailbox, then applying
-changes made while that snapshot ran. msgvault uses only a successfully
-completed snapshot to mark missing messages as source-deleted; interrupted or
-partial listings never reconcile absence.
+If Gmail reports that the saved history cursor has expired, msgvault runs a full
+sync, checks which messages are still in the complete mailbox, then applies
+changes made during recovery. The presence check always includes Spam and Trash.
+msgvault marks missing messages as source-deleted only after the presence check
+completes.
 
 Recovery saves both its phase and the history cursor captured before
 enumeration. After an interruption, running `sync` or an unfiltered `sync-full`
@@ -1052,8 +1055,10 @@ repeats reconciliation safely, and the source cursor advances only after catch-u
 succeeds. If the saved recovery cursor also expires, msgvault starts a new
 complete recovery, attempting at most one restart per invocation. During
 recovery, msgvault re-reads each archived message's labels with one metadata
-request without downloading MIME again. If a label read or save fails, recovery
-stops at that page and the next `sync` retries it. Other per-message fetch and
+request without downloading MIME again. When an account excludes Spam and Trash,
+msgvault lists both folders to refresh labels for messages already archived and
+skips acquiring new messages from those folders. If a label read or save fails,
+recovery stops at that page and the next `sync` retries it. Other per-message fetch and
 ingest errors are recorded without stopping the run, and fetches that fail during
 catch-up are retried on the next `sync`.
 

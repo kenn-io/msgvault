@@ -1493,8 +1493,9 @@ for how the helper works.
 
 ### `[[accounts]]`
 
-Add `[[accounts]]` entries to schedule automatic background syncs for Gmail,
-IMAP, Microsoft Teams, and Discord sources. For IMAP or Teams, use the account
+Use `[[accounts]]` entries to configure sync for individual accounts. You can
+schedule automatic background syncs for Gmail, IMAP, Microsoft Teams, and
+Discord sources. For IMAP or Teams, use the account
 display name or email when available instead of a raw provider identifier. For
 Discord, always use the exact guild ID because guild display names can change
 or collide.
@@ -1504,6 +1505,25 @@ or collide.
 | `email` | (required) | Account identifier/display name, or exact Discord guild ID, to sync |
 | `schedule` | — | Cron expression for sync schedule (e.g., `0 * * * *`) |
 | `enabled` | `false` | Whether scheduled sync is active for this account |
+| `gmail_skip_spam_trash` | `false` | Skip acquiring messages in Gmail Spam or Trash during full, incremental, and History recovery syncs |
+
+To exclude Spam and Trash for a Gmail account, set the key on its entry. As
+with schedules, `email` matches the account's identifier, display name, or
+alias, ignoring case. The setting also applies when the entry has no schedule.
+Add the key to the existing entry if one already exists.
+
+```toml
+[[accounts]]
+email = "account@example.com"
+gmail_skip_spam_trash = true
+```
+
+Messages already in the archive stay there. When Gmail History reports a move
+to Trash, incremental sync updates the message's label. A permanent deletion
+marks it as deleted from the source. Previously skipped messages can be
+acquired when Gmail History reports that they have left Spam or Trash. To
+backfill messages still in those folders, disable the setting and run an
+unrestricted `sync-full`.
 
 For example, to schedule a registered Discord guild on its own cadence:
 

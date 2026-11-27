@@ -25,6 +25,7 @@ const (
 	syncItemKindAttachmentAndRemoteImageError = "attachment_remote_image_error"
 	syncItemKindDeleteError                   = "delete_error"
 	syncItemKindAcquired                      = "acquired"
+	syncItemKindExcludedGmailLabel            = "excluded_gmail_label"
 )
 
 // AcquisitionFailureDescription describes an acquisition error kind for users.
