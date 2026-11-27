@@ -87,12 +87,12 @@ Examples:
 					continue
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Slack workspace %s\n", teamID)
-				token, terr := slack.LoadToken(cfg.TokensDir(), teamID, userID)
+				client, terr := slack.LoadClient("", cfg.TokensDir(), teamID, userID)
 				if terr != nil {
 					syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", teamID, terr))
 					continue
 				}
-				imp := slack.NewImporter(s, slack.NewClient("", token), teamID)
+				imp := slack.NewImporter(s, client, teamID)
 				opts := slackImportOptions(teamID, userID, cfg)
 				applySlackConversationOverrides(cmd, &opts, syncPrivateChannels, syncDMs, syncGroupDMs)
 				opts.Limit = syncSlackLimit
@@ -272,11 +272,11 @@ func runConfiguredSlackSync(ctx context.Context, s *store.Store) error {
 			if !ok {
 				return false, fmt.Errorf("slack %s: malformed identifier", src.Identifier)
 			}
-			token, terr := slack.LoadToken(cfg.TokensDir(), teamID, userID)
+			client, terr := slack.LoadClient("", cfg.TokensDir(), teamID, userID)
 			if terr != nil {
 				return false, fmt.Errorf("slack %s: %w", teamID, terr)
 			}
-			imp := slack.NewImporter(s, slack.NewClient("", token), teamID)
+			imp := slack.NewImporter(s, client, teamID)
 			if _, serr := imp.Import(ctx, slackImportOptions(teamID, userID, cfg)); serr != nil {
 				return true, fmt.Errorf("slack %s: %w", teamID, serr)
 			}

@@ -81,17 +81,17 @@ func fetchableURL(rawURL string) (string, error) {
 	return u.String(), nil
 }
 
-// DownloadFile fetches a files.slack.com URL with the bearer token, capped at
-// maxBytes.
+// DownloadFile fetches a files.slack.com URL with the client's credentials,
+// capped at maxBytes.
 //
 // Slack answers a file GET with a 302 to a pre-signed URL on a delivery host
 // (slack-files.com), so refusing every redirect leaves those files permanently
-// undownloadable. The redirect is followed, but the bearer token is stripped
-// from the hop: the signed target authenticates with its own query parameter
-// and needs no Authorization header, so the token never travels off
-// files.slack.com. This keeps the guarantee that motivated the original
-// refusal — the token reaches exactly one host — while letting the download
-// complete.
+// undownloadable. The redirect is followed, but the credentials (the bearer
+// token and, for a browser session, the d cookie) are stripped from the hop:
+// the signed target authenticates with its own query parameter and needs no
+// Authorization header, so the credentials never travel off files.slack.com.
+// This keeps the guarantee that motivated the original refusal — the
+// credentials reach exactly one host — while letting the download complete.
 func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
 	fetchURL, err := fetchableURL(rawURL)
 	if err != nil {
@@ -101,7 +101,10 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if err := (Credentials{Token: c.token, Cookie: c.cookie}).Validate(); err != nil {
+		return nil, err
+	}
+	c.authenticate(req)
 	// Ask for the stored bytes. Left to itself the transport requests gzip and
 	// inflates the body through a 4 KiB reader, which acknowledges every 4 KiB
 	// with its own HTTP/2 WINDOW_UPDATE. Slack's delivery host drops the
@@ -123,10 +126,16 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 				return fmt.Errorf(
 					"slack file GET: refusing non-HTTPS redirect to %s", req.URL.Host)
 			}
+			// Userinfo on a hop would let the target rewrite the credentials
+			// the request carries.
+			if req.URL.User != nil {
+				return errors.New("slack file GET: refused unsafe redirect")
+			}
 			// Carrying the token to another host would hand it to whoever
 			// controls that host. The signed redirect target does not need it.
 			if !strings.EqualFold(req.URL.Host, mediaHost) {
 				req.Header.Del("Authorization")
+				req.Header.Del("Cookie")
 			}
 			return nil
 		},

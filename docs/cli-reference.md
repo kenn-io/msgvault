@@ -2297,12 +2297,16 @@ policy choice and source-availability limits.
 
 ## add-slack
 
-Register a [Slack workspace](/docs/usage/slack/) as a `slack` source using a
-user token (`xoxp-…`) from an internal Slack app you create (see the usage
-guide for setup and scope choices). The command validates the token with
-`auth.test` and saves it at `tokens/slack_<team-id>_<user-id>.json`.
-Public-channel-only tokens need no search, file, or reaction permissions, and
-sync revisits history for thread replies when `search:read` is absent.
+Register a [Slack workspace](/docs/usage/slack/) as a `slack` source. Use a
+user token (`xoxp-…`) from an internal Slack app you create, or a browser
+token (`xoxc-…`) together with its raw `d` cookie. See the usage guide for
+permission choices and [browser-session limits](/docs/usage/slack/#browser-session).
+
+The command validates the credentials with `auth.test` and saves them in a
+protected file at `tokens/slack_<team-id>_<user-id>.json`. Browser sessions
+archive your memberships and DMs. Public-channel-only app tokens need no search,
+file, or reaction permissions, and sync revisits history for thread replies
+when `search:read` is absent.
 
 ```bash
 msgvault add-slack
@@ -2313,6 +2317,7 @@ MSGVAULT_SLACK_TOKEN="xoxp-..." msgvault add-slack
 | Flag | Default | Description |
 |---|---|---|
 | `--token-file` | | Read the user token from a file instead of prompting |
+| `--cookie-file` | | Read the raw `d` cookie for an `xoxc` browser token |
 | `--no-default-identity` | `false` | Do not auto-confirm the workspace user ID as the source's "me" identity |
 
 After you add a workspace, sync it with `msgvault sync-slack`.
