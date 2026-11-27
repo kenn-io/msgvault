@@ -42,8 +42,9 @@ and rerun the command.
 Servers that advertise both IMAP4rev1 and IMAP4rev2 require explicit negotiation
 before using UTF-8 mailbox names. msgvault enables IMAP4rev2 after login on
 every connection, including reconnects, so folders with non-ASCII names can be
-included in a complete incremental baseline. If a server refuses that
-negotiation, the connection ends with an error.
+included in a complete incremental baseline. Folder names are then exchanged
+as plain UTF-8, so characters such as `&` need no escaping. If a server refuses
+that negotiation, the connection ends with an error.
 
 ## Handle server command limits
 
