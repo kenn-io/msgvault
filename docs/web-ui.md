@@ -261,7 +261,10 @@ The **⋯** menu offers **Add to task…**, **Download original** for email,
 available. Inside **Add to task…**, you can create a task, search existing
 tasks, and set priority and labels; outbound task metadata appears under
 **What's sent**. Disabled Tasks connections offer **Set up**, while other
-service or index failures offer **Open Settings**.
+service or index failures offer **Open Settings**. Select **Don't show again**
+on the disabled notice to stop showing it below messages; your browser
+remembers that choice. Service and index failures still appear, and
+**Settings › Tasks** and **Add to task…** still offer setup.
 
 ### Related copies
 

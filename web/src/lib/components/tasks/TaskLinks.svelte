@@ -53,6 +53,23 @@
     title: string;
     onsettings?: () => void;
   } = $props();
+  const setupHiddenKey = 'msgvault.tasks.setup-notice-hidden';
+  function readSetupHidden(): boolean {
+    try {
+      return globalThis.localStorage?.getItem(setupHiddenKey) === 'true';
+    } catch {
+      return false;
+    }
+  }
+  let setupHidden = $state(readSetupHidden());
+  function hideSetup(): void {
+    setupHidden = true;
+    try {
+      globalThis.localStorage?.setItem(setupHiddenKey, 'true');
+    } catch {
+      // The notice still stays hidden for this page without browser storage.
+    }
+  }
   const conversationStatus = getContext<ConversationTaskStatus | undefined>(conversationTaskStatusKey);
   let loading = $state(true);
   let localStatus = $state<{ state: string; project?: string; message?: string }>({ state: 'loading' });
@@ -229,8 +246,10 @@
   const degraded = $derived(!mutationReady);
   const partialIndex = $derived(mutationReady && indexState === 'partial');
   const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
+  // The reader can hide only the disabled-integration setup notice; failures and the Add to task dialog keep theirs.
+  const stateNoticeVisible = $derived(degraded && (showSetup || integrationState === 'ready') && !(mode === 'list' && setupHidden && integrationState === 'disabled'));
   const rowsVisible = $derived(mode === 'list' && integrationState !== 'authentication_required' && indexState !== 'authentication_required' && tasks.length > 0);
-  const noticeVisible = $derived((degraded && (showSetup || integrationState === 'ready')) || partialIndex || sessionOnlyIndex || !!error);
+  const noticeVisible = $derived(stateNoticeVisible || partialIndex || sessionOnlyIndex || !!error);
   $effect(() => {
     actionReady = mutationReady;
     present = mode === 'list' && ((!loading && noticeVisible) || rowsVisible);
@@ -267,7 +286,9 @@
 <section class="task-links" class:add={mode === 'add'} aria-label="Linked tasks">
   {#if loading && !rowsVisible}<p role="status">Loading linked tasks…</p>
   {:else}
-    {#if degraded && (showSetup || integrationState === 'ready')}
+    {#if stateNoticeVisible && mode === 'list' && integrationState === 'disabled'}
+      <InlineNotice tone="info" message={stateMessage} actions={[{ label: 'Set up', onclick: onsettings }, { label: "Don't show again", onclick: hideSetup }]} />
+    {:else if stateNoticeVisible}
       <InlineNotice tone={integrationState === 'disabled' ? 'info' : 'error'} message={stateMessage} actionLabel={integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onaction={onsettings} />
     {/if}
     {#if partialIndex}<InlineNotice message={stateMessage} />{/if}
