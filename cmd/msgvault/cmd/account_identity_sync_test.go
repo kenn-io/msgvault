@@ -85,7 +85,7 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 		err := cmd.ExecuteContext(ctx)
 		output := stop()
 		require.NoError(err)
-		assert.Contains(output, "msgvault sync-full -- user@example.com")
+		assert.Contains(output, "msgvault sync-full user@example.com\n")
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -214,7 +214,7 @@ func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 		err := cmd.ExecuteContext(ctx)
 		output := stop()
 		require.NoError(err)
-		assert.Contains(output, "msgvault sync-full -- imap://"+testutil.IMAPTestUsername+"@"+net.JoinHostPort(host, port))
+		assert.Contains(output, "msgvault sync-full imap://"+testutil.IMAPTestUsername+"@"+net.JoinHostPort(host, port)+"\n")
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -255,8 +255,8 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 		args       []string
 		output     string
 	}{
-		{"o365", newAddO365LocalCmd, nil, "msgvault sync-full -- user@example.com"},
-		{"graph", newAddO365LocalCmd, []string{"--graph"}, "msgvault sync -- user@example.com"},
+		{"o365", newAddO365LocalCmd, nil, "msgvault sync-full user@example.com\n"},
+		{"graph", newAddO365LocalCmd, []string{"--graph"}, "msgvault sync user@example.com\n"},
 		{"teams", newAddTeamsLocalCmd, nil, "msgvault sync-teams user@example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
