@@ -365,6 +365,16 @@ func HeadlessAccountArgs(command, email, app string, readonly, write bool) []str
 	return args
 }
 
+// HeadlessSyncArgs builds the sync command printed after an account is added.
+// It puts "--" before the identifier only when the identifier starts with "-",
+// so the usual command still accepts flags appended after it.
+func HeadlessSyncArgs(command, identifier string) []string {
+	if strings.HasPrefix(identifier, "-") {
+		return []string{"msgvault", command, "--", identifier}
+	}
+	return []string{"msgvault", command, identifier}
+}
+
 func headlessArgumentSafe(arg string) bool {
 	if arg == "" || arg[0] == '@' {
 		return false

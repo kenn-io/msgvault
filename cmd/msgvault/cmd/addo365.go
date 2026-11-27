@@ -408,7 +408,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Identifier: %s\n", identifier)
 	fmt.Println()
 	fmt.Println("You can now run:")
-	oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync-full", "--", email)
+	oauth.PrintHeadlessCommand(os.Stdout, oauth.HeadlessSyncArgs("sync-full", email)...)
 
 	return nil
 }
@@ -506,7 +506,7 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool, s *s
 	fmt.Printf("  Email: %s\n", email)
 	fmt.Println()
 	fmt.Println("You can now run:")
-	oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync", "--", email)
+	oauth.PrintHeadlessCommand(os.Stdout, oauth.HeadlessSyncArgs("sync", email)...)
 	return nil
 }
 

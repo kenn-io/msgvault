@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -509,19 +510,43 @@ func TestHeadlessCommandsPreserveNativeArguments(t *testing.T) {
 			})
 		}
 	}
-	var out bytes.Buffer
-	oauth.PrintHeadlessCommand(&out, "msgvault", "sync-full", "--", "imap://reader$tag@host.example:143")
-	var lines []string
-	for line := range strings.SplitSeq(out.String(), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "msgvault ") {
-			lines = append(lines, strings.TrimSpace(line))
+	resetSyncFullFlagsForTest(t)
+	for _, identifier := range []string{"reader@example.com", "imap://reader$tag@host.example:143", "-reader@example.org"} {
+		var out bytes.Buffer
+		oauth.PrintHeadlessCommand(&out, oauth.HeadlessSyncArgs("sync-full", identifier)...)
+		var lines []string
+		for line := range strings.SplitSeq(out.String(), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "msgvault ") {
+				lines = append(lines, strings.TrimSpace(line))
+			}
 		}
-	}
-	require.Len(t, lines, 2)
-	for i, shell := range []string{"sh", "pwsh"} {
-		t.Run("sync/"+shell, func(t *testing.T) {
-			assert.Equal(t, []string{"sync-full", "--", "imap://reader$tag@host.example:143"}, headlessNativeArgs(t, shell, fixture, lines[i]))
-		})
+		require.NotEmpty(t, lines)
+		for _, shell := range []string{"sh", "pwsh"} {
+			t.Run("sync/"+identifier+"/"+shell, func(t *testing.T) {
+				line := lines[0]
+				if shell == "pwsh" && len(lines) == 2 {
+					line = lines[1]
+				}
+				// Users extend the suggested command with flags such as --limit.
+				// After "--" only positional arguments follow, so the flag goes
+				// before it for an identifier that needs one.
+				got := headlessNativeArgs(t, shell, fixture, line)
+				if strings.HasPrefix(identifier, "-") {
+					require.Equal(t, []string{"sync-full", "--", identifier}, got)
+					got = slices.Insert(got, 1, "--limit", "100")
+				} else {
+					require.Equal(t, []string{"sync-full", identifier}, got)
+					got = append(got, "--limit", "100")
+				}
+				syncLimit = 0
+				cmd := &cobra.Command{Use: syncFullCmd.Use, Args: syncFullCmd.Args}
+				cmd.Flags().IntVar(&syncLimit, "limit", 0, "")
+				require.NoError(t, cmd.ParseFlags(got[1:]))
+				require.NoError(t, cmd.Args(cmd, cmd.Flags().Args()))
+				assert.Equal(t, []string{identifier}, cmd.Flags().Args())
+				assert.Equal(t, 100, syncLimit)
+			})
+		}
 	}
 }
 
