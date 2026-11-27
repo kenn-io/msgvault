@@ -22,6 +22,8 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'kenn-io/kit@v0.58.1'
+    '.github/workflows/delete-waiting-runs.yml':
+        - 'kenn-io/actions@main'
     '.github/workflows/docker-pr.yml': []
     '.github/workflows/docker.yml':
         - 'actions/checkout@v7.0.1'
@@ -99,7 +101,7 @@ dependencies:
             - 'step-security/paths-filter@5f3d1a83daa17363d18b529d60375e1e36566799'
     'kenn-io/actions@main':
         ref: 'main'
-        commit: 'sha1-bf69dc4b28904ae38986fff0b67ced643b67768c'
+        commit: 'sha1-0275b7bfe16ba7d0d7c086e00598fb315a7f32ca'
         owner_id: 259885253
         repo_id: 1427332808
         uses:
