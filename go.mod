@@ -25,7 +25,6 @@ require (
 	github.com/danielgtaylor/huma/v2 v2.41.0
 	github.com/doordash-oss/oapi-codegen-dd/v3 v3.76.5
 	github.com/duckdb/duckdb-go/v2 v2.20001.0
-	github.com/dustin/go-humanize v1.1.0
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
@@ -56,8 +55,8 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/teambition/rrule-go v1.8.2
 	go.kenn.io/docbank v0.18.0
-	go.kenn.io/kata v0.23.0
-	go.kenn.io/kit v0.60.1-0.20261126051518-a857958897e7
+	go.kenn.io/kata v0.24.0
+	go.kenn.io/kit v0.60.1-0.20261127225127-6d9c5e6dc4a9
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
@@ -107,6 +106,7 @@ require (
 	github.com/dnephin/pflag v1.0.7 // indirect
 	github.com/duckdb/duckdb-go-bindings v0.20001.0 // indirect
 	github.com/dunglas/httpsfv v1.1.2 // indirect
+	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/ebitengine/purego v0.12.0-alpha.1.0.20261015130536-d456b1bb95e8 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect

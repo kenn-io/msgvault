@@ -64,7 +64,7 @@ jobs:
       # Same image as the Dockerfile's runtime stage.
       image: debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
     steps:
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Install build tools
         env:
@@ -206,7 +206,7 @@ jobs:
           trim: "true"
           extra-path: .git/golangci-lint-cache
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -268,7 +268,7 @@ jobs:
           group: linux-test
           trim: "true"
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -370,7 +370,7 @@ jobs:
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Set API contract base
         if: ${{ matrix.name == 'api' }}
@@ -423,7 +423,7 @@ jobs:
           group: macos
           trim: "true"
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Set API contract base
         shell: bash
@@ -482,7 +482,7 @@ jobs:
         with:
           bun-version-file: web/package.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Install frontend dependencies
         run: DOWNLOAD_RETRY='kit-retry 3 5' make web-install
@@ -594,7 +594,7 @@ jobs:
         with:
           bun-version-file: web/package.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Install frontend dependencies
         run: DOWNLOAD_RETRY='kit-retry 3 5' make web-install
@@ -695,7 +695,7 @@ jobs:
           group: windows
           trim: "true"
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       # sqlite-vec's CGo bindings #include <sqlite3.h>, which isn't on
       # the default include path. Install it from MSYS2 and point
@@ -810,7 +810,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Install SQLite development headers
         shell: bash
@@ -859,7 +859,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Set API contract base
         shell: bash
@@ -943,7 +943,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Install SQLite development headers
         shell: bash
@@ -1006,7 +1006,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Install SQLite development headers
         shell: bash
@@ -1072,7 +1072,7 @@ jobs:
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
@@ -1162,7 +1162,7 @@ jobs:
           group: linux-postgres
           trim: "true"
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -1256,7 +1256,7 @@ jobs:
         with:
           group: linux-postgres
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.58.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.60.0
 
       - name: Set API contract base
         if: ${{ matrix.name == 'api' }}
