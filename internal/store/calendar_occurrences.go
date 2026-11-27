@@ -33,6 +33,7 @@ type CalendarUnexpandable struct {
 type CalendarOccurrencePage struct {
 	Occurrences  []CalendarOccurrence   `json:"occurrences"`
 	Unexpandable []CalendarUnexpandable `json:"unexpandable"`
+	Coverage     *CalendarCoverage      `json:"coverage,omitempty"`
 }
 
 // ListCalendarOccurrencesContext expands archived series in a half-open window.
@@ -43,6 +44,11 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return page, err
 	}
 	defer release()
+	coverage, err := calendarCoverageContext(ctx, s, time.Now())
+	if err != nil {
+		return page, err
+	}
+	page.Coverage = &coverage
 	rows, err := calendarEventRowsInWindow(ctx, s.db, s.dialect, from, to)
 	if err != nil {
 		return page, err

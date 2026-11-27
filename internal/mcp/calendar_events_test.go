@@ -16,7 +16,7 @@ type calendarEventsTestBackend struct{ from, to time.Time }
 
 func (s *calendarEventsTestBackend) ListCalendarOccurrencesContext(_ context.Context, from, to time.Time) (store.CalendarOccurrencePage, error) {
 	s.from, s.to = from, to
-	return store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Subject: "Planning"}}}, nil
+	return store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Subject: "Planning"}}, Coverage: &store.CalendarCoverage{Notice: "Archive only", Sources: []store.CalendarSourceCoverage{{Name: "Work", Status: "no_baseline"}}}}, nil
 }
 
 func TestCalendarEventsTool(t *testing.T) {
@@ -39,6 +39,7 @@ func TestCalendarEventsTool(t *testing.T) {
 			result := rawCallTool(t, opts, ToolListCalendarEvents, map[string]any{"from": "2027-03-01T00:00:00Z", "to": "2027-03-02T00:00:00Z"})
 			require.NotEqual(t, true, result["isError"], fmt.Sprint(result["content"]))
 			assertions.Contains(fmt.Sprint(result), "Planning")
+			assertions.Contains(fmt.Sprint(result), "no_baseline")
 			assertions.Equal(time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC), backend.from)
 			assertions.Equal(time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC), backend.to)
 		})

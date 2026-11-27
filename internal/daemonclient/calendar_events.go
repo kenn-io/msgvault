@@ -23,6 +23,13 @@ func (c *Client) ListCalendarOccurrencesContext(ctx context.Context, from, to ti
 	}
 	decoded := response.JSON200
 	page := store.CalendarOccurrencePage{Occurrences: make([]store.CalendarOccurrence, 0, len(decoded.Occurrences)), Unexpandable: make([]store.CalendarUnexpandable, 0, len(decoded.Unexpandable))}
+	if decoded.Coverage != nil {
+		coverage := decoded.Coverage
+		page.Coverage = &store.CalendarCoverage{Complete: coverage.Complete, Notice: coverage.Notice, Sources: make([]store.CalendarSourceCoverage, 0, len(coverage.Sources))}
+		for _, source := range coverage.Sources {
+			page.Coverage.Sources = append(page.Coverage.Sources, store.CalendarSourceCoverage{SourceID: source.SourceID, Name: source.Name, Status: string(source.Status), AsOf: source.AsOf})
+		}
+	}
 	for _, o := range decoded.Occurrences {
 		attendees := make([]calevent.Attendee, 0, len(o.Attendees))
 		for _, a := range o.Attendees {
