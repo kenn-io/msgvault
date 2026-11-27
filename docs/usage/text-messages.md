@@ -99,6 +99,10 @@ those counters or that ID. To compare every message regardless, for example
 after restoring an older WhatsApp backup or editing archived messages by other
 means, pass `--full`.
 
+Apple imports link text and URL replies to quoted messages in the same source.
+If the quoted message is in another chat and only becomes available in a later
+run, use `--full` to revisit the reply's chat and fill in the link.
+
 The first import of a large database can take several minutes. To pull in
 recent messages first, pass `--after` (`YYYY-MM-DD` in local time; `--before`
 also works), then run the command again without date flags:
@@ -117,10 +121,10 @@ reject `--after` and `--before`.
 
 ### Format limits
 
-| Format                     | Imported today                                                                                                            | Not included                  |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| Android `msgstore.db`      | Chats, messages, participants, reactions, attachment metadata, and available media from `--media-dir`                     | Database decryption           |
-| Apple `ChatStorage.sqlite` | Text and URL messages from direct and group chats, sender attribution, and available contact, participant, and push names | Media downloads and reactions |
+| Format                     | Imported today                                                                                                                                            | Not included                  |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| Android `msgstore.db`      | Chats, messages, participants, reactions, attachment metadata, and available media from `--media-dir`                                                     | Database decryption           |
+| Apple `ChatStorage.sqlite` | Text and URL messages from direct and group chats, reply links to archived quotes, sender attribution, and available contact, participant, and push names | Media downloads and reactions |
 
 When you use `--contacts` for name matching, vCard phone numbers must include a
 country code. msgvault does not guess a country for local numbers. Apple

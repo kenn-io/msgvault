@@ -2793,8 +2793,10 @@ See [Importing Local Email](/docs/usage/importing/) for usage examples.
 ## import-whatsapp
 
 Import messages from a decrypted Android `msgstore.db` or Apple
-`ChatStorage.sqlite` WhatsApp database. Apple support currently imports text,
-participants, and available names, without importing native Apple attachments.
+`ChatStorage.sqlite` WhatsApp database. Apple imports include text and URL
+messages, participants, and available names. They link text and URL replies to
+quoted messages archived from the same Apple source, including messages imported
+in the same run. Native Apple attachments are skipped.
 
 ```bash
 msgvault import-whatsapp <msgstore.db> --phone <your-number>
