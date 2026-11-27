@@ -499,3 +499,51 @@ allow_sensitive = true
 		})
 	}
 }
+
+func TestLoadPeopleSweepExtractionMaxOutputTokens(t *testing.T) {
+	assert.Equal(t, 4096, NewDefaultConfig().People.Sweep.ExtractionMaxOutputTokens)
+
+	load := func(t *testing.T, sweep string) (*Config, error) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.toml")
+		require.NoError(t, os.WriteFile(path, []byte(`
+[people.sweep]
+enabled = true
+provider = "primary"
+`+sweep+`
+
+[people.sweep.providers.primary]
+protocol = "openai_chat"
+endpoint = "https://api.example.test/v1/"
+model = "gpt-test"
+auth = "bearer"
+credential = "env"
+credential_env = "TEST_KEY"
+output_mode = "native_json_schema"
+token_limit_parameter = "max_completion_tokens"
+retention_posture = "zero_retention"
+training_posture = "no_training"
+allowed_sources = ["conversation_text"]
+source_since = "2025-01-01"
+allow_sensitive = true
+`), 0o600))
+		return Load(path, "")
+	}
+
+	t.Run("raised cap with matching budget", func(t *testing.T) {
+		loaded, err := load(t, `extraction_max_output_tokens = 16384
+
+[people.sweep.budgets]
+max_output_tokens_per_person = 65536`)
+		require.NoError(t, err)
+		assert.Equal(t, 16384, loaded.People.Sweep.ExtractionMaxOutputTokens)
+	})
+	t.Run("cap above the per-person budget", func(t *testing.T) {
+		_, err := load(t, `extraction_max_output_tokens = 16384`)
+		require.ErrorContains(t, err, "max_output_tokens_per_person: must be at least 16384")
+	})
+	t.Run("cap above the limit", func(t *testing.T) {
+		_, err := load(t, `extraction_max_output_tokens = 32769`)
+		require.ErrorContains(t, err, "extraction_max_output_tokens: must be between 1 and 32768")
+	})
+}

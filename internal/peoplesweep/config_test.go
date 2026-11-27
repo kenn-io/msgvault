@@ -98,6 +98,24 @@ func TestConfigDefaultsStayDisabled(t *testing.T) {
 	require.ErrorContains(err, "disabled")
 }
 
+func TestConfigExtractionMaxOutputTokens(t *testing.T) {
+	var config peoplesweep.Config
+	config.ApplyDefaults()
+	require.Equal(t, 4096, config.ExtractionMaxOutputTokens)
+	require.NoError(t, config.Validate())
+
+	config.ExtractionMaxOutputTokens = 16_384
+	config.Budgets.MaxOutputTokensPerPerson = 65_536
+	require.NoError(t, config.Validate())
+
+	config.Budgets.MaxOutputTokensPerPerson = 16_000
+	require.ErrorContains(t, config.Validate(), "max_output_tokens_per_person: must be at least 16384")
+
+	config.Budgets.MaxOutputTokensPerPerson = 1_000_000
+	config.ExtractionMaxOutputTokens = 32_769
+	require.ErrorContains(t, config.Validate(), "extraction_max_output_tokens")
+}
+
 func TestConfigRejectsUnsafeActiveAndInactiveProviderProfileNames(t *testing.T) {
 	for _, test := range []struct {
 		name   string
