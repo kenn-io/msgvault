@@ -389,10 +389,17 @@ func headlessArgumentSafe(arg string) bool {
 
 // PrintHeadlessCommand preserves native arguments in the supported shells.
 func PrintHeadlessCommand(out io.Writer, args ...string) {
-	if slices.ContainsFunc(args, func(arg string) bool { return !headlessArgumentSafe(arg) }) {
+	// PowerShell parses a bare word starting with "-" as a parameter and
+	// splits it at ".", so a value after "--" that starts with "-" is quoted.
+	quote := make([]bool, len(args))
+	separator := slices.Index(args, "--")
+	for i, arg := range args {
+		quote[i] = !headlessArgumentSafe(arg) || (separator >= 0 && i > separator && strings.HasPrefix(arg, "-"))
+	}
+	if slices.Contains(quote, true) {
 		posix, powershell := slices.Clone(args), slices.Clone(args)
 		for i, arg := range args {
-			if !headlessArgumentSafe(arg) {
+			if quote[i] {
 				posix[i] = ShellQuote(arg)
 				powershell[i] = "'" + strings.ReplaceAll(arg, "'", "''") + "'"
 			}
