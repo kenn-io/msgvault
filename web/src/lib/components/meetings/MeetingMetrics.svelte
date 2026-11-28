@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Table } from '@kenn-io/kit-ui';
+  import { overlayScrollbars, Table } from '@kenn-io/kit-ui';
 
   import EmptyLine from '../common/EmptyLine.svelte';
   import { formatMeetingDuration } from '../../meetings/format';
@@ -34,7 +34,7 @@
   {#if metrics.duration_by_basis.length > 0}
     <section class="evidence-section" aria-labelledby={`${headingID}-duration-evidence`}>
       <h4 id={`${headingID}-duration-evidence`}>Duration evidence</h4>
-      <div class="table-scroll">
+      <div class="table-scroll" {@attach overlayScrollbars({ axis: 'x' })}>
         <Table unsorted bare ariaLabel="Duration evidence">
           <thead><tr><th scope="col">Evidence</th><th scope="col">Meetings</th><th scope="col">Known time</th></tr></thead>
           <tbody>{#each metrics.duration_by_basis as basis (basis.basis)}
@@ -47,7 +47,7 @@
   {#if metrics.months.length > 0}
     <section class="evidence-section" aria-labelledby={`${headingID}-monthly`}>
       <h4 id={`${headingID}-monthly`}>Monthly activity</h4>
-      <div class="table-scroll">
+      <div class="table-scroll" {@attach overlayScrollbars({ axis: 'x' })}>
         <Table unsorted bare ariaLabel="Monthly meeting activity">
           <thead><tr><th scope="col">Month</th><th scope="col">Meetings</th><th scope="col">Known</th><th scope="col">Unknown</th><th scope="col">Known time</th><th scope="col">Average</th></tr></thead>
           <tbody>{#each metrics.months as month (month.month)}

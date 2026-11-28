@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { Disclosure, Notice, type NoticeTone } from '@kenn-io/kit-ui';
+  import { Disclosure, Notice, overlayScrollbars, type NoticeTone } from '@kenn-io/kit-ui';
 
   interface Props {
     tone?: NoticeTone;
@@ -24,7 +24,7 @@
       <div class="inline-notice__lead"><p>{message}</p><span>{#each actions as action (action.label)}<button class="kit-control-states" type="button" disabled={action.disabled} onclick={action.onclick}>{action.label}</button>{/each}</span></div>
     {:else}<p>{message}</p>{/if}
     {@render children?.()}
-    {#if details}<Disclosure variant="plain" title="Details"><pre>{details}</pre></Disclosure>{/if}
+    {#if details}<Disclosure variant="plain" title="Details"><pre {@attach overlayScrollbars()}>{details}</pre></Disclosure>{/if}
   </Notice>
 </div>
 

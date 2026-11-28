@@ -1,7 +1,7 @@
 <script lang="ts">
   import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
-  import { Button, Card, IconButton } from '@kenn-io/kit-ui';
+  import { Button, Card, IconButton, overlayScrollbars } from '@kenn-io/kit-ui';
 
   import type {
     RelationshipCalendar as RelationshipCalendarModel,
@@ -280,7 +280,7 @@
       <Button label="Retry" onclick={() => onYearChange(selectedYear)} />
     </div>
   {:else if calendar}
-    <div class="calendar-graphs" onscroll={scrollTooltip}>
+    <div class="calendar-graphs" onscroll={scrollTooltip} {@attach overlayScrollbars({ axis: 'x', host: root })}>
       {@render panel(fullPanel!, 'full')}
       <div class="split-panels">
         {#each halfPanels as half (half.key)}

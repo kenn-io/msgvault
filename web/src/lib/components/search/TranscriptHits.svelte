@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { admitsMediaQuery, refusedMediaSearchNotice } from '../../search/media-query';
-  import { Button, Chip } from '@kenn-io/kit-ui';
+  import { Button, Chip, overlayScrollbars } from '@kenn-io/kit-ui';
   import FileText from '@lucide/svelte/icons/file-text';
   import FileVolume from '@lucide/svelte/icons/file-volume';
   import type { APIClient } from '../../api/client';
@@ -168,7 +168,7 @@
   </li>
 {/snippet}
 
-<section class="transcript-hits" aria-label="Media search" tabindex="-1" data-recording-hits>
+<section class="transcript-hits" aria-label="Media search" tabindex="-1" data-recording-hits {@attach overlayScrollbars()}>
   <section aria-label="Recordings">
     <header>
       <h2>Recordings{#if result && admitted && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>

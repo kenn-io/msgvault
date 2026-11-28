@@ -1,7 +1,7 @@
 <script lang="ts">
   import { groupRowName, type SourceInventory } from '../../explore/labels';
   import { tasksSettingsDestination } from './navigation';
-  import { Button, MEDIA, PageHeader, SearchByMeaningHint } from '@kenn-io/kit-ui';
+  import { Button, MEDIA, overlayScrollbars, PageHeader, SearchByMeaningHint } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
 
@@ -778,7 +778,7 @@
 
   {#if meetingContext?.error}<p role="status">{meetingContext.error}</p>{/if}
   {#if meetingContext?.scope || meetingScope}
-    <div class="meeting-overview">
+    <div class="meeting-overview" {@attach overlayScrollbars({ axis: 'y' })}>
       <MessageMeetingSummary {client} scope={(meetingContext?.scope ?? meetingScope)!} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
         onReloadScope={reloadOverviewMeetings} {onOpenMeeting} />
     </div>

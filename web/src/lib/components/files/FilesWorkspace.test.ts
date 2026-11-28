@@ -559,15 +559,16 @@ describe('FilesWorkspace', () => {
     });
 
     await screen.findByText('fixture.pdf');
-    expect(records).toHaveLength(0);
+    expect(records.some((record) => record.observed.some((el) => el.matches('[role="grid"], .table-header')))).toBe(false);
 
     await view.rerender({ personPresentation: 'files' });
 
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     const header = grid.querySelector('.table-header');
     expect(header).not.toBeNull();
-    expect(records).toHaveLength(1);
-    expect(records[0]!.observed).toEqual([grid, header]);
+    const gridObservers = records.filter((record) => record.observed[0] === grid && record.observed[1] === header && record.observed.length === 2);
+    expect(gridObservers).toHaveLength(1);
+    expect(gridObservers[0]!.disconnected).toBe(false);
   });
 
   it('disconnects the old observer and observes replacement elements across a Files transition', async () => {
@@ -582,13 +583,13 @@ describe('FilesWorkspace', () => {
     const initialGrid = await screen.findByRole('grid', { name: 'Files results' });
     const initialHeader = initialGrid.querySelector('.table-header');
     expect(initialHeader).not.toBeNull();
-    expect(records).toHaveLength(1);
-    expect(records[0]!.observed).toEqual([initialGrid, initialHeader]);
+    const initialObservers = records.filter((record) => record.observed.includes(initialGrid));
+    expect(initialObservers.some((record) => record.observed.length === 2 && record.observed[0] === initialGrid && record.observed[1] === initialHeader)).toBe(true);
 
     await view.rerender({ personPresentation: 'media' });
     await screen.findByRole('radio', { name: 'Media' });
     expect(screen.queryByRole('grid', { name: 'Files results' })).toBeNull();
-    expect(records[0]!.disconnected).toBe(true);
+    for (const observer of initialObservers) expect(observer.disconnected).toBe(true);
 
     await view.rerender({ personPresentation: 'files' });
 
@@ -597,8 +598,8 @@ describe('FilesWorkspace', () => {
     expect(replacementHeader).not.toBeNull();
     expect(replacementGrid).not.toBe(initialGrid);
     expect(replacementHeader).not.toBe(initialHeader);
-    expect(records).toHaveLength(2);
-    expect(records[1]!.observed).toEqual([replacementGrid, replacementHeader]);
+    const replacementObservers = records.filter((record) => !record.disconnected && record.observed.length === 2 && record.observed[0] === replacementGrid && record.observed[1] === replacementHeader);
+    expect(replacementObservers).toHaveLength(1);
   });
 
   it('restarts a media gallery after a terminal cursor failure', async () => {

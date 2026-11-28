@@ -401,6 +401,13 @@ it.each([
     Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
     return preview;
   }, 'ArrowLeft'],
+  ['scrollable CSV table preview', 'text/csv', async () => {
+    await screen.findByRole('table', { name: 'File contents' });
+    const viewport = document.querySelector<HTMLElement>('.kit-table-viewport')!;
+    Object.defineProperty(viewport, 'scrollWidth', { configurable: true, value: 600 });
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 200 });
+    return screen.getByRole('region', { name: 'File preview preview.png' });
+  }, 'ArrowRight'],
   ['audio controls', 'audio/wav', async () => {
     await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('blob:audio-preview'));
     return document.querySelector('audio')!;
@@ -415,7 +422,8 @@ it.each([
   const onStep = vi.fn();
   Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:audio-preview') });
   const target = file({ mime_type });
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, new TextEncoder().encode(mime_type === 'application/pdf' ? '%PDF-1.4 synthetic' : 'Example text'))), file: target, position: { index: 1, total: 3 }, onStep });
+  const payload = mime_type === 'application/pdf' ? '%PDF-1.4 synthetic' : mime_type === 'text/csv' ? 'a,b\n1,2\n' : 'Example text';
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, new TextEncoder().encode(payload))), file: target, position: { index: 1, total: 3 }, onStep });
   await fireEvent.keyDown(await targetElement(), { key });
   expect(onStep).not.toHaveBeenCalled();
 });

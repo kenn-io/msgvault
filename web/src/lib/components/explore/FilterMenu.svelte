@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { autoReposition, Button, Checkbox, dismissable } from '@kenn-io/kit-ui';
+  import { autoReposition, Button, Checkbox, dismissable, overlayScrollbars } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack, type Snippet } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -148,7 +148,7 @@
 {#if extraActive}<span id={visualStatusId} class="kit-sr-only">Visual search active</span>{/if}
 
 {#if open}
-  <div class="filter-panel kit-popover-card" role="dialog" aria-label="Filter" data-form bind:this={panelElement} style={panelStyle}>
+  <div class="filter-panel kit-popover-card" role="dialog" aria-label="Filter" data-form bind:this={panelElement} style={panelStyle} {@attach overlayScrollbars({ axis: 'y' })}>
     {#if kinds.length > 0}
       <fieldset class="field">
         <legend>Kind</legend>

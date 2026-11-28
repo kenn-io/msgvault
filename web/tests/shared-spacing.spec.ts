@@ -532,7 +532,7 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   expect.soft(statusShape.radius).toBeGreaterThanOrEqual(statusShape.height / 2);
 });
 
-test('Settings uses the shared scrollbar and integer field sizes', async ({ page }) => {
+test('Settings uses overlay scrollbars and integer field sizes', async ({ page }) => {
   await page.route('**/api/v1/settings', route => route.fulfill({ json: {
     groups: [{ id: 'sources', label: 'Sources' }],
     settings: [{ key: 'slack.media_max_participants', group: 'sources', kind: 'integer', label: 'Participant limit', value: { integer: 25 }, restart_required: true }],
@@ -541,8 +541,12 @@ test('Settings uses the shared scrollbar and integer field sizes', async ({ page
   await selectWorkspace(page, 'Settings');
   await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Sources', exact: true }).click();
   await expect(page.getByRole('spinbutton').locator('..')).toHaveCSS('height', '32px');
-  const size = await page.locator('.kit-settings__scroll').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar').width);
-  expect(size).toBe('8px');
+  const scrollbar = await page.locator('.kit-settings__scroll').evaluate((element) => ({
+    overlay: element.hasAttribute('data-kit-overlay-scroll-viewport'),
+    gutter: (element as HTMLElement).offsetWidth - element.clientWidth,
+    size: getComputedStyle(element).getPropertyValue('--scrollbar-size').trim()
+  }));
+  expect(scrollbar).toEqual({ overlay: true, gutter: 0, size: '6px' });
 });
 test.describe('touch reading', () => {
   test.use({ isMobile: true, hasTouch: true, viewport: { width: 620, height: 900 } });

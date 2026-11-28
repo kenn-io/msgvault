@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Chip, Notice, Spinner } from '@kenn-io/kit-ui';
+  import { Button, Chip, Notice, overlayScrollbars, Spinner } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import { getEmailFamily } from '../../api/generated/api/api';
   import type { EmailFamily, EmailFamilyMember } from '../../api/generated/models';
@@ -153,7 +153,7 @@
 <Button size="sm" surface="soft" label="Related copies" ariaExpanded={open} onclick={toggle} />
 
 {#if open}
-  <section class="related-copies" aria-label="Related copies of this email">
+  <section class="related-copies" aria-label="Related copies of this email" {@attach overlayScrollbars({ axis: 'y' })}>
     {#if loading}
       <p class="state" role="status"><span aria-hidden="true"><Spinner size={14} label="" /></span> Loading related copies…</p>
     {:else if failed}

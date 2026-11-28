@@ -1,7 +1,7 @@
 <script lang="ts">
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import X from '@lucide/svelte/icons/x';
-  import { appShortcuts, Button, IconButton, Modal } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, IconButton, Modal, overlayScrollbars } from '@kenn-io/kit-ui';
   import { onMount, type Snippet } from 'svelte';
 
   const id = $props.id();
@@ -107,7 +107,7 @@
       <IconButton ariaLabel="Close" disabled={busy} onclick={dismiss}><X size={14} aria-hidden="true" /></IconButton>
     </div>
     <!-- One scroll pane between the header and the footer: the fields, then the notice when one shows. -->
-    <div class="dialog-content">
+    <div class="dialog-content" {@attach overlayScrollbars({ axis: 'y' })}>
       {@render children()}
       {#if notice}<div class="dialog-notice">{@render notice()}</div>{/if}
     </div>
@@ -137,7 +137,6 @@
     min-height: 0;
     padding: 0;
     overflow: hidden;
-    scrollbar-gutter: auto;
   }
   /* A 44 band: a 28 control 8 above and below, the title 12 from the left edge. A long title wraps, so what it
    * names stays readable; its first line stays centered on the controls. */
@@ -163,14 +162,13 @@
     outline: none;
     overflow-wrap: anywhere;
   }
-  /* The body pads 12 on every side; on the right that is 4 plus the bar's reserved 8. Long words wrap. */
+  /* The body pads 12 on every side; overlay scrollbars take no layout gutter. Long words wrap. */
   .dialog-content {
     flex: 1 1 auto;
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
-    scrollbar-gutter: stable;
-    padding: var(--pane-pad-x) calc(var(--pane-pad-x) - var(--scrollbar-gutter-size)) var(--pane-pad-x) var(--pane-pad-x);
+    padding: var(--pane-pad-x);
     overflow-wrap: anywhere;
   }
   .dialog-notice { margin-top: var(--pane-pad-x); }

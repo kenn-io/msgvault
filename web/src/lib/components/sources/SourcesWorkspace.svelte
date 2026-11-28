@@ -587,7 +587,6 @@
   :global(.kit-table-wrapper.source-table) {
     min-height: 0;
     flex: 0 1 auto;
-    overflow: auto;
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
   }

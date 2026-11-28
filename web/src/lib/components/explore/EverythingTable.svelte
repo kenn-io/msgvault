@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, EmptyState, MEDIA, Tooltip, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, MEDIA, overlayScrollbars, Tooltip, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
 
@@ -77,6 +77,7 @@
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
 
+  let tableHost = $state<HTMLElement>();
   let gridElement = $state<HTMLDivElement>();
   let headerElement = $state<HTMLDivElement>();
   let scrollTop = $state(0);
@@ -407,7 +408,7 @@
   }
 </script>
 
-<section class="everything-table" aria-label="Messages table">
+<section class="everything-table" aria-label="Messages table" bind:this={tableHost}>
   <div
     class="table-grid"
     bind:this={gridElement}
@@ -421,6 +422,7 @@
     tabindex="0"
     onkeydown={handleKeydown}
     onscroll={handleScroll}
+    {@attach overlayScrollbars({ host: tableHost, insetTop: () => headerElement })}
   >
     <div class="table-header" bind:this={headerElement} role="row" style:--row-template={template}>
       {#if selection}<span role="columnheader" class="selection-header">

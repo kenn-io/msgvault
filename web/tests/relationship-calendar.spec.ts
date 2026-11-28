@@ -69,6 +69,7 @@ test('calendar heading clears the graph and uses the touch type scale', async ({
 });
 
 test('calendar fills its card at medium and narrow widths without clipping edge tooltips', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await openCalendar(page);
   const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
 

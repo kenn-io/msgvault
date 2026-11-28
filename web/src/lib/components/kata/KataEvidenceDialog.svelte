@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, SegmentedControl, TextInput } from '@kenn-io/kit-ui';
+  import { Button, overlayScrollbars, SegmentedControl, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
   import { createKataIssue, linkKataEvidence, prepareKataEvidence, listOpenKataIssues } from '../../api/generated/api/api';
   import { kataReadiness } from '../../kata/kata-ready.svelte';
@@ -31,6 +31,7 @@
   let narrowed = $state<{ start: number; end: number }>();
   // Whether the window, not a narrowed selection, has text after it.
   let windowHasMore = $state(false);
+  let excerptHost = $state<HTMLDivElement>();
   let excerptElement = $state<HTMLPreElement>();
   let preview = $state<PreparedEvidence>();
   let loading = $state(false);
@@ -153,7 +154,7 @@
         <section aria-label="Quoted passage">
           <p class="disclosure">Message quote</p>
           {#if loading}<p role="status">Preparing the passage…</p>{/if}
-          {#if preview}<pre bind:this={excerptElement}>{preview.excerpt}</pre>{/if}
+          {#if preview}<div class="excerpt-frame" bind:this={excerptHost}><pre bind:this={excerptElement} {@attach overlayScrollbars({ host: excerptHost })}>{preview.excerpt}</pre></div>{/if}
           {#if windowed}
             <div class="passage-controls">
               {#if narrowed}

@@ -2,7 +2,7 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { groupRowName, type SourceInventory } from '../../explore/labels';
   import { formatBytes, formatDate } from '../../util/format';
-  import { Button, IconButton, MEDIA, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, IconButton, MEDIA, overlayScrollbars, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
 
@@ -78,6 +78,7 @@
   const template = $derived(narrow
     ? `minmax(0,480px) 80px ${timeGroup ? 'minmax(96px,1fr) 40px' : 'minmax(40px,1fr)'}`
     : `minmax(200px,480px) 88px 96px 128px ${timeGroup ? 'minmax(96px,1fr) 40px' : 'minmax(40px,1fr)'}`);
+  let tableHost = $state<HTMLElement>();
   let gridElement = $state<HTMLDivElement>();
   let headerElement = $state<HTMLDivElement>();
   let scrollTop = $state(0);
@@ -284,7 +285,7 @@
   }
 </script>
 
-<section class="group-table" aria-label={`Grouped by ${dimension}`}>
+<section class="group-table" aria-label={`Grouped by ${dimension}`} bind:this={tableHost}>
   <div
     class="group-grid"
     bind:this={gridElement}
@@ -298,6 +299,7 @@
     tabindex="0"
     onkeydown={handleKeydown}
     onscroll={handleScroll}
+    {@attach overlayScrollbars({ host: tableHost, insetTop: () => headerElement })}
   >
     <div class="group-header" bind:this={headerElement} role="row">
       <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Group</span>

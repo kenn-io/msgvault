@@ -39,6 +39,7 @@
     Button,
     Checkbox,
     MEDIA,
+    overlayScrollbars,
     SearchInput,
     SegmentedControl,
     Toggle,
@@ -193,6 +194,7 @@
   $effect(() => { rejectedImages; if (error || pageError || unavailable && unavailable.readiness !== 'building') return reportError(() => client, () => predicate.query?.trim() || hostedVisualSearch ? 'search' : 'other'); });
   let pageError = $state('');
   let unavailable = $state<ExploreCacheUnavailable>();
+  let tableHost = $state<HTMLElement>();
   let grid = $state<HTMLDivElement>();
   let headerElement = $state<HTMLDivElement>();
   let viewport = $state(360);
@@ -918,7 +920,7 @@
   {#if toolbar}
     {@render toolbar(controls, clearVisualSearch, hostedVisualSearch && Boolean(visualQuery.trim() || visualImageBase64))}
   {:else}
-    <div class="embedded-controls">
+    <div class="embedded-controls" {@attach overlayScrollbars()}>
       <div class="embedded-filters">
         <FileFilters {filenameQuery} mimeFamilies={personScoped ? effectiveMIMEFamilies : mimeFamilies} available={visibleMIMEFamilies} keepOne={personScoped} onFilenameQueryChange={(value) => onFilenameQueryChange?.(value)} onMIMEFamiliesChange={(value) => onMIMEFamiliesChange?.(value)} />
       </div>
@@ -943,7 +945,7 @@
       onReload={reloadListing}
     />
   {:else}
-    <section class="files-table" aria-label="Files table">
+    <section class="files-table" aria-label="Files table" bind:this={tableHost}>
       <div
         class="files-grid"
         bind:this={grid}
@@ -959,6 +961,7 @@
         tabindex="0"
         onkeydown={handleKeydown}
         onscroll={handleScroll}
+        {@attach overlayScrollbars({ host: tableHost, insetTop: () => headerElement })}
       >
         <div class="table-header" style:--row-template={columns} bind:this={headerElement} role="row">
           {@render sortHeader('occurred_at', 'Date')}

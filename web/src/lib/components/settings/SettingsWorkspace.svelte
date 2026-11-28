@@ -768,22 +768,15 @@
   .settings :global(.kit-settings) {
     background: var(--bg-surface);
   }
-  /* Reserve the scrollbar's width up front so the centered panel does not
-     shift left when a long category makes it scroll. Positioning contains the
-     rows' absolutely positioned screen-reader labels, which otherwise stretch
-     the document past the viewport and add a second scrollbar. */
+  /* Positioning contains the rows' absolutely positioned screen-reader labels,
+     which otherwise stretch the document past the viewport and add a second
+     scrollbar. */
   .settings :global(.kit-settings__scroll) {
     position: relative;
-    scrollbar-gutter: stable;
   }
   .settings :global(.kit-settings__panel),
   .settings :global(.kit-settings__footer) {
     padding: var(--pane-pad-y) var(--pane-pad-x);
-  }
-  /* The scroll pane reserves the 8px bar on its right edge (above), so the panel pads its right side by
-     the bar's width less than its left, and the content's inset reads the same on both sides. */
-  .settings :global(.kit-settings__scroll > .kit-settings__panel) {
-    padding-right: calc(var(--pane-pad-x) - var(--scrollbar-gutter-size));
   }
   @media (max-width: 760px) {
     .settings :global(.kit-settings__sidebar) {
