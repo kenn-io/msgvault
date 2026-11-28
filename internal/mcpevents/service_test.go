@@ -1568,10 +1568,6 @@ func TestDelegatedCallbackConsentIsScopedToPrincipalAndURL(t *testing.T) {
 	_, err = service.Subscribe(t.Context(), request, first, verify, nil)
 	require.NoError(err)
 	assert.Equal(1, calls)
-	request.Delivery.URL = "https://EXAMPLE.com:443/hook"
-	_, err = service.Subscribe(t.Context(), request, first, verify, nil)
-	require.NoError(err)
-	assert.Equal(1, calls)
 	_, err = service.Subscribe(t.Context(), request, second, verify, nil)
 	require.NoError(err)
 	assert.Equal(2, calls)

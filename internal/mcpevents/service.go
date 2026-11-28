@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"strings"
+	"strconv"
 	"sync"
 	"time"
 
@@ -109,7 +109,7 @@ func (s *Service) deleteCredential(id string) error {
 func subscriptionID(owner string, args MCPEventsArguments, url string) string {
 	incoming := "missing"
 	if args.IncomingOnly != nil {
-		incoming = fmt.Sprintf("%t", *args.IncomingOnly)
+		incoming = strconv.FormatBool(*args.IncomingOnly)
 	}
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%s\x00%s", owner, Name, args.PersonID, args.SourceID, incoming, url)))
 	return hex.EncodeToString(sum[:16])
@@ -512,26 +512,11 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 
 func isGrantOwner(owner string) bool { _, ok := agentgrant.OwnerID(owner); return ok }
 
-// verificationKey folds equivalent HTTPS origin spellings while retaining the path and query.
-func verificationKey(owner, raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return owner + "\x00" + raw
-	}
-	u.Scheme = strings.ToLower(u.Scheme)
-	u.Host = strings.ToLower(u.Host)
-	u.Host = strings.TrimSuffix(u.Host, ":443")
-	if u.Path == "" {
-		u.Path = "/"
-	}
-	return owner + "\x00" + u.String()
-}
-
 // Verification is process-local soft state scoped to a principal and URL.
 func (s *Service) callbackVerified(owner, url string) bool {
 	s.verifiedMu.Lock()
 	defer s.verifiedMu.Unlock()
-	return s.now().Before(s.verified[verificationKey(owner, url)])
+	return s.now().Before(s.verified[owner+"\x00"+url])
 }
 func (s *Service) rememberCallback(owner, url string, ttl time.Duration) {
 	s.verifiedMu.Lock()
@@ -546,6 +531,6 @@ func (s *Service) rememberCallback(owner, url string, ttl time.Duration) {
 		}
 	}
 	if len(s.verified) < 32 {
-		s.verified[verificationKey(owner, url)] = now.Add(min(ttl, time.Hour))
+		s.verified[owner+"\x00"+url] = now.Add(min(ttl, time.Hour))
 	}
 }

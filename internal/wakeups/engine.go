@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/netip"
 	"net/url"
@@ -377,7 +378,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				if state.NativeDelivery == nil {
 					var random [32]byte
 					if _, err := rand.Read(random[:]); err != nil {
-						return err
+						return fmt.Errorf("generate native delivery IDs: %w", err)
 					}
 					endID, endRow := next.AfterID()
 					state.NativeDelivery = &store.NativeDelivery{

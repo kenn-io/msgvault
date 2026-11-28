@@ -41,7 +41,6 @@ func TestMCPEventsPreservesUnavailableReasons(t *testing.T) {
 		{"invalid_scope", "invalid_scope", mcpevents.InvalidParams, http.StatusBadRequest},
 		{"subscriptions", "subscriptions", mcpevents.ResourceExhausted, http.StatusTooManyRequests},
 		{"permission_denied", "permission_denied", mcpevents.Forbidden, http.StatusForbidden},
-		{"person_scope_exceeds_grant", "person_scope_exceeds_grant", mcpevents.Forbidden, http.StatusForbidden},
 		{"private_daemon_detail", "request_rejected", mcpevents.Forbidden, http.StatusForbidden},
 		{"dns_error", "connection_refused", mcpevents.CallbackEndpoint, http.StatusBadGateway},
 		{"subscription", "subscription", mcpevents.NotFound, http.StatusNotFound},

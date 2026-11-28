@@ -115,7 +115,7 @@ func rpcEventError(err error, mode ...string) error {
 	case mcpevents.NotFound:
 		payload = map[string]any{"kind": e.Reason}
 	case mcpevents.ResourceExhausted:
-		payload = map[string]any{"limit": e.Reason}
+		payload = map[string]any{toolArgLimit: e.Reason}
 	case mcpevents.Unsupported:
 		payload = map[string]any{"feature": "deliveryMode"}
 		if len(mode) != 0 {
