@@ -162,6 +162,13 @@ func registerNativeEvents(server *sdkmcp.Server, backend EventsBackend, allowWri
 			if err != nil {
 				return nil, rpcEventError(err, in.Delivery.Mode)
 			}
+			switch out.DeliveryStatus.LastError {
+			case "connection_refused", "timeout", "tls_error", "http_4xx", "http_5xx", "challenge_failed":
+			case "dns_error":
+				out.DeliveryStatus.LastError = "connection_refused"
+			default:
+				out.DeliveryStatus.LastError = ""
+			}
 			return &nativeEventResult{value: out, complete: p.modern()}, nil
 		})
 		_ = sdkmcp.AddReceivingCustomMethod(server, "events/unsubscribe", func(ctx context.Context, _ *sdkmcp.ServerSession, p *nativeEventParams) (*nativeEventResult, error) {

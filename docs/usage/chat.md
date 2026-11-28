@@ -60,7 +60,7 @@ a public HTTPS URL on port 443 or 8443, and a Standard Webhooks `whsec_` secret
 containing 24–64 bytes. The subscription lasts 24 hours by default; `ttlMs`
 is clamped to one minute through 30 days, and null selects 30 days. Refreshing
 with the same event, arguments and URL replaces the secret and lease while
-keeping the saved position. After a default restore, refresh the secret to resume; a backup with `--include-tokens` restores it. If the refresh returns `lastError: "secret_unavailable"`, immediately read `list_changes` from your own cursor to catch up. This historical signal does not mean an earlier delivery retry succeeded. `events/unsubscribe` uses the same identity.
+keeping the saved position. After a default restore, refresh the secret to resume; a backup with `--include-tokens` restores it. After any refresh, read `list_changes` from your own cursor to catch up. `events/unsubscribe` uses the same identity.
 
 An unverified callback receives a signed HTTP POST with JSON body `{"type":"verification","challenge":"..."}`. The receiver must verify its Standard Webhooks signature using the subscription secret and return a successful 2xx JSON response containing the same `challenge` value, for example `{"challenge":"..."}`. The response body must be at most 4096 bytes. A callback that cannot confirm the challenge returns `-32027`. Verification is reused for the same owner and URL for up to one hour; after a restart, the next subscribe verifies again.
 

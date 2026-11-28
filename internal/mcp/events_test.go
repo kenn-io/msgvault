@@ -23,6 +23,7 @@ type eventTestBackend struct {
 	unsubscribe  mcpevents.MCPEventsUnsubscribeRequest
 	listErr      error
 	subscribeErr error
+	lastError    string
 }
 
 func (b *eventTestBackend) MCPEventsList(context.Context) (mcpevents.MCPEventsListResult, error) {
@@ -38,7 +39,7 @@ func (b *eventTestBackend) MCPEventsSubscribe(_ context.Context, in mcpevents.MC
 	if b.subscribeErr != nil {
 		return mcpevents.MCPEventsSubscribeResult{}, b.subscribeErr
 	}
-	return mcpevents.MCPEventsSubscribeResult{ID: "fixture", RefreshBefore: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), DeliveryStatus: mcpevents.MCPEventsDeliveryStatus{Active: true}}, nil
+	return mcpevents.MCPEventsSubscribeResult{ID: "fixture", RefreshBefore: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), DeliveryStatus: mcpevents.MCPEventsDeliveryStatus{Active: true, LastError: b.lastError}}, nil
 }
 
 func TestEventsListPropagatesBackendFailure(t *testing.T) {
@@ -282,4 +283,29 @@ func TestEventsDiscoveryAndLegacyWire(t *testing.T) {
 	assert.NotContains(t, modernCaps, "events")
 	assert.Contains(t, modernCaps["extensions"], "io.modelcontextprotocol/events")
 	assert.Equal(t, "complete", discover.Result["resultType"])
+}
+
+func TestEventsDeliveryStatusUsesSEPCategories(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"dns_error", "connection_refused"},
+		{"timeout", "timeout"},
+		{"http_4xx", "http_4xx"},
+		{"secret_unavailable", ""},
+		{"person_unavailable", ""},
+		{"http_3xx", ""},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			backend := &eventTestBackend{lastError: tc.input}
+			params := map[string]any{"name": mcpevents.Name, "arguments": map[string]any{"source_id": 1}, "delivery": map[string]any{"mode": "webhook", "url": "https://example.com/hook", "secret": "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
+			response := rawModernCall(t, ServeOptions{Events: backend}, HTTPOptions{APIKey: "fixture-key", AllowWrites: true}, "events/subscribe", params)
+			require.Nil(t, response.Error)
+			status, ok := response.Result["deliveryStatus"].(map[string]any)
+			require.True(t, ok)
+			if tc.want == "" {
+				assert.NotContains(t, status, "lastError")
+			} else {
+				assert.Equal(t, tc.want, status["lastError"])
+			}
+		})
+	}
 }
