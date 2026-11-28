@@ -37,9 +37,6 @@ func (p *nativeEventParams) clean() ([]byte, error) {
 	if p == nil || len(p.raw) > 64<<10 {
 		return nil, rpcEventError(&mcpevents.Error{Code: mcpevents.InvalidParams, Reason: "invalid_params"})
 	}
-	if len(p.raw) == 0 {
-		return []byte(`{}`), nil
-	}
 	var fields map[string]jsontext.Value
 	if json.Unmarshal(p.raw, &fields) != nil || fields == nil {
 		return nil, rpcEventError(&mcpevents.Error{Code: mcpevents.InvalidParams, Reason: "invalid_params"})
