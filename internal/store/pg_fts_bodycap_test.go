@@ -1,12 +1,14 @@
 package store_test
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -374,4 +376,68 @@ func TestPG_PersistMessage_OverflowingIndexKeepsMessage(t *testing.T) {
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(),
 		"SELECT search_fts = ''::tsvector FROM messages WHERE id = $1", messageID).Scan(&unsearchable))
 	assert.True(t, unsearchable, "the overflowing message is marked unsearchable")
+}
+
+// The standalone entries return real vector overflow without marking a saved
+// message terminal. Stored-message indexing can fail during comparison itself.
+func TestPG_DirectFTSOverflowReturnsError(t *testing.T) {
+	skipUnlessPostgres(t)
+	for _, tc := range []struct {
+		name         string
+		index        func(context.Context, *store.Store, store.FTSDoc) error
+		errorContext string
+	}{
+		{
+			name: "supplied document",
+			index: func(ctx context.Context, st *store.Store, doc store.FTSDoc) error {
+				return st.UpsertFTSContext(ctx, doc.MessageID, doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs)
+			},
+		},
+		{
+			name: "stored document comparison",
+			index: func(ctx context.Context, st *store.Store, doc store.FTSDoc) error {
+				return st.IndexStoredMessageContext(ctx, doc.MessageID)
+			},
+			errorContext: "compare stored search entry",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := storetest.New(t)
+			body := denseShortTokenBody()
+			raw := []byte("Content-Type: text/plain; charset=UTF-8\r\n\r\n" + body)
+			id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID: f.Source.ID, ConversationID: f.ConvID,
+					SourceMessageID: "saved-before-indexing", MessageType: store.MessageTypeEmail,
+				},
+				BodyText: sql.NullString{String: body, Valid: true}, RawMIME: raw,
+			})
+			require.NoError(err)
+			err = tc.index(t.Context(), f.Store, store.FTSDoc{MessageID: id, Body: body})
+			var overflow *pgconn.PgError
+			require.ErrorAs(err, &overflow)
+			assert.Equal("54000", overflow.Code)
+			if tc.errorContext != "" {
+				require.ErrorContains(err, tc.errorContext)
+			}
+			var missing bool
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(),
+				`SELECT search_fts IS NULL AND search_fts_fields IS NULL FROM messages WHERE id = $1`, id).Scan(&missing))
+			assert.True(missing, "a direct failure must not record the terminal empty vector")
+			gotRaw, err := f.Store.GetMessageRaw(id)
+			require.NoError(err)
+			assert.Equal(raw, gotRaw, "the earlier message commit survives")
+			needs, err := f.Store.NeedsFTSBackfillContext(t.Context())
+			require.NoError(err)
+			assert.True(needs)
+
+			require.NoError(f.Store.UpsertMessageBodyContext(t.Context(), id,
+				sql.NullString{String: "orchard", Valid: true}, sql.NullString{}))
+			require.NoError(f.Store.IndexStoredMessageContext(t.Context(), id))
+			_, found, err := f.Store.SearchMessages("orchard", 0, 10)
+			require.NoError(err)
+			assert.Equal(int64(1), found, "saved data can be indexed after reducing the document")
+		})
+	}
 }

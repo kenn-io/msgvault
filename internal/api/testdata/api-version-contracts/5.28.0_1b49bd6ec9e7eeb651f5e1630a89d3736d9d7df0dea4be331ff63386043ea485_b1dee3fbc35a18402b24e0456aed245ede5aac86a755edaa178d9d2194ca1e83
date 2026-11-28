@@ -1,0 +1,1 @@
+CLI account listings serve stored per-source counts and no longer return stale, as_of, or counts_pending.

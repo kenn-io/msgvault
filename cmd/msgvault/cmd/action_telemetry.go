@@ -7,7 +7,6 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/telemetry"
 	apiclient "go.kenn.io/msgvault/pkg/client/generated"
@@ -34,7 +33,7 @@ func reportCLIAction(cmd *cobra.Command, client *daemonclient.Client, event, pro
 	if inv == nil {
 		return
 	}
-	if !clientTelemetryEnabled(inv.cfg) {
+	if !clientTelemetryEnabled() {
 		return
 	}
 	ctx := cmd.Context()
@@ -45,12 +44,8 @@ func reportCLIAction(cmd *cobra.Command, client *daemonclient.Client, event, pro
 	})
 }
 
-func clientTelemetryEnabled(cfg *config.Config) bool {
-	enabled := true
-	if cfg != nil {
-		enabled = cfg.Telemetry.EnabledOrDefault()
-	}
-	return telemetry.Enabled(enabled)
+func clientTelemetryEnabled() bool {
+	return telemetry.Enabled()
 }
 
 // reportCLISyncFinished counts a completed manual sync. The Muesli completion

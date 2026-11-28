@@ -161,14 +161,14 @@ func TestAgentToolsFollowGrantPermissions(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	readTools := []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains, ToolGetMessage, ToolListThread, ToolSearchInMessage, ToolGetAttachment, ToolGetStats}
+	readTools := []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains, ToolGetMessage, ToolGetMessageRecords, ToolListThread, ToolSearchInMessage, ToolGetAttachment, ToolGetStats}
 	for _, tc := range []struct {
 		permission string
 		want       []string
 	}{
 		{"draft.create", nil},
 		{"search.read", []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains}},
-		{"message.read", []string{ToolGetMessage, ToolListThread, ToolSearchInMessage}},
+		{"message.read", []string{ToolGetMessage, ToolGetMessageRecords, ToolListThread, ToolSearchInMessage}},
 		{"attachment.read", []string{ToolGetAttachment}},
 		{"stats.read", []string{ToolGetStats}},
 	} {

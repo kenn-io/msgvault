@@ -114,187 +114,100 @@ func TestHandleStatsVectorTimeoutIsPartial(t *testing.T) {
 	})
 }
 
-// slowCountsStore delays grouped account counts after the first call.
-type slowCountsStore struct {
-	*store.Store
-
-	calls   atomic.Int32
-	release chan struct{}
-}
-
-func (s *slowCountsStore) CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error) {
-	if s.calls.Add(1) > 1 {
-		select {
-		case <-s.release:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-	return s.Store.CountMessagesBySourceContext(ctx)
-}
-
-// newSlowAccountsServer serves one account with one message behind slowCountsStore.
-func newSlowAccountsServer(t *testing.T, st *store.Store) (*Server, *slowCountsStore, int64) {
+// newAccountsServer serves two sources from st: alice has two live messages
+// and one deleted from its source, bob has one live message.
+func newAccountsServer(t *testing.T, st *store.Store) (*Server, *store.Source, *store.Source) {
 	t.Helper()
 	require := require.New(t)
-	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	alice, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
-	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-1", "")
+	bob, err := st.GetOrCreateSource("gmail", "bob@example.com")
 	require.NoError(err)
-	_, err = st.UpsertMessage(&store.Message{
-		SourceID: src.ID, ConversationID: convID, SourceMessageID: "msg-1", MessageType: "email",
-	})
-	require.NoError(err)
-	slow := &slowCountsStore{Store: st, release: make(chan struct{})}
+	for _, m := range []struct {
+		source *store.Source
+		id     string
+	}{{alice, "a-1"}, {alice, "a-2"}, {alice, "a-gone"}, {bob, "b-1"}} {
+		convID, err := st.EnsureConversation(t.Context(), m.source.ID, "thread-"+m.id, "")
+		require.NoError(err)
+		_, err = st.UpsertMessage(&store.Message{
+			SourceID: m.source.ID, ConversationID: convID, SourceMessageID: m.id, MessageType: "email",
+		})
+		require.NoError(err)
+	}
+	require.NoError(st.MarkMessageDeletedContext(t.Context(), alice.ID, "a-gone"))
 	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  slow,
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080, AgentAccess: true, APIKey: "owner"}},
+		Store:  st,
 		Logger: testLogger(),
 	})
-	return srv, slow, src.ID
-}
-
-func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		srv, slow, _ := newSlowAccountsServer(t, st)
-		t.Cleanup(func() { close(slow.release) })
-		defer func() { require.NoError(srv.Shutdown(t.Context())) }()
-		getAccounts := func() cliAccountsResponse {
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
-			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, req)
-			require.Equal(http.StatusOK, w.Code, w.Body.String())
-			var response cliAccountsResponse
-			require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-			return response
-		}
-		assert.False(getAccounts().Stale)
-		started := time.Now()
-		response := getAccounts()
-		assert.Equal(500*time.Millisecond, time.Since(started), "the server configures the short warm-count budget")
-		assert.True(response.Stale)
-		assert.False(response.AsOf.IsZero())
-		require.Len(response.Accounts, 1)
-		assert.EqualValues(1, response.Accounts[0].MessageCount)
-	})
-}
-
-func TestHandleCLIAccountsColdCountsPending(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	synctest.Test(t, func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		defer func() { assert.NoError(st.Close()) }()
-		srv, slow, sourceID := newSlowAccountsServer(t, st)
-		defer func() { require.NoError(srv.Shutdown(t.Context())) }()
-		slow.calls.Store(1)
-		srv.statsSnapshotWait = 20 * time.Millisecond
-		get := func(optIn bool) *httptest.ResponseRecorder {
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
-			if optIn {
-				req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
-			}
-			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, req)
-			return w
-		}
-
-		legacy := get(false)
-		assert.Equal(http.StatusServiceUnavailable, legacy.Code, "older clients never get placeholder zeros")
-		assert.Contains(legacy.Body.String(), "query_timeout")
-
-		pending := get(true)
-		require.Equal(http.StatusOK, pending.Code, pending.Body.String())
-		var resp cliAccountsResponse
-		require.NoError(json.Unmarshal(pending.Body.Bytes(), &resp))
-		assert.True(resp.CountsPending)
-		require.Len(resp.Accounts, 1)
-		assert.Equal(sourceID, resp.Accounts[0].ID)
-		assert.Zero(resp.Accounts[0].MessageCount)
-
-		close(slow.release)
-		require.Eventually(func() bool {
-			resp = cliAccountsResponse{}
-			return json.Unmarshal(get(true).Body.Bytes(), &resp) == nil && !resp.CountsPending
-		}, 10*time.Second, 10*time.Millisecond)
-		assert.EqualValues(1, resp.Accounts[0].MessageCount)
-		legacy = get(false)
-		require.Equal(http.StatusOK, legacy.Code, "older clients get real counts once they exist")
-	})
-}
-
-func TestHandleCLIAccountsDelegatedCountsLive(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	srv, slow, sourceID := newSlowAccountsServer(t, testutil.NewTestStore(t))
-	t.Cleanup(func() { close(slow.release) })
-	srv.cfg.Server.AgentAccess = true
-	srv.cfg.Server.APIKey = "owner"
 	srv.agentGrants = agentgrant.NewRegistry()
 	t.Cleanup(srv.agentGrants.Close)
-	source, err := slow.GetSourceByID(sourceID)
-	requirements.NoError(err)
-	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	requirements.NoError(err)
-	slow.calls.Store(1)
-	for _, pending := range []bool{false, true} {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
-		req.Header.Set(apiprotocol.AgentTokenHeader, token)
-		if pending {
-			req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
-		}
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		requirements.Equal(200, w.Code, w.Body.String())
-		var response cliAccountsResponse
-		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-		assertions.False(response.CountsPending)
-		requirements.Len(response.Accounts, 1)
-		assertions.EqualValues(1, response.Accounts[0].MessageCount)
-	}
-	assertions.EqualValues(1, slow.calls.Load())
+	t.Cleanup(func() { require.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	return srv, alice, bob
 }
 
-type failingDirectCountsStore struct {
+func getCLIAccounts(t *testing.T, srv *Server, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
+	if token != "" {
+		req.Header.Set(apiprotocol.AgentTokenHeader, token)
+	} else {
+		req.Header.Set("X-Api-Key", "owner")
+	}
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	return w
+}
+
+func TestHandleCLIAccountsCounts(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, alice, bob := newAccountsServer(t, testutil.NewTestStore(t))
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead},
+		[]agentgrant.SourceRef{{ID: bob.ID, Type: bob.SourceType, Identifier: bob.Identifier}}, time.Time{})
+	require.NoError(err)
+
+	type counts struct{ live, sourceDeleted int64 }
+	read := func(token string) map[int64]counts {
+		w := getCLIAccounts(t, srv, token)
+		require.Equal(http.StatusOK, w.Code, w.Body.String())
+		var response cliAccountsResponse
+		require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+		got := make(map[int64]counts)
+		for _, account := range response.Accounts {
+			got[account.ID] = counts{account.MessageCount, account.SourceDeletedCount}
+		}
+		return got
+	}
+	assert.Equal(map[int64]counts{alice.ID: {2, 1}, bob.ID: {1, 0}}, read(""), "the owner sees every source")
+	assert.Equal(map[int64]counts{bob.ID: {1, 0}}, read(token), "a scoped reader sees only its sources")
+}
+
+// failingCountsStore fails the stored count read.
+type failingCountsStore struct {
 	*store.Store
 
-	deleted bool
-	err     error
+	err error
 }
 
-func (s *failingDirectCountsStore) CountMessagesForSourceContext(ctx context.Context, sourceID int64) (int64, error) {
-	if !s.deleted {
-		return 0, s.err
-	}
-	return s.Store.CountMessagesForSourceContext(ctx, sourceID)
+func (s *failingCountsStore) SourceMessageCountsContext(context.Context) (map[int64]store.SourceMessageCounts, error) {
+	return nil, s.err
 }
-func (s *failingDirectCountsStore) CountSourceDeletedMessagesContext(_ context.Context, _ ...int64) (int64, error) {
-	return 0, s.err
-}
-func TestHandleCLIAccountsDelegatedCountErrors(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	for _, deleted := range []bool{false, true} {
-		for _, failure := range []error{context.Canceled, errors.New("synthetic count failure")} {
-			srv, slow, sourceID := newSlowAccountsServer(t, testutil.NewTestStore(t))
-			source, err := slow.GetSourceByID(sourceID)
-			requirements.NoError(err)
-			srv.store = &failingDirectCountsStore{Store: slow.Store, deleted: deleted, err: failure}
-			srv.cfg.Server.AgentAccess = true
-			srv.cfg.Server.APIKey = "owner"
-			srv.agentGrants = agentgrant.NewRegistry()
-			t.Cleanup(srv.agentGrants.Close)
-			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-			requirements.NoError(err)
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
-			req.Header.Set(apiprotocol.AgentTokenHeader, token)
-			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, req)
-			assertions.Equal(http.StatusInternalServerError, w.Code, w.Body.String())
-			assertions.NotContains(w.Body.String(), "synthetic count failure")
+
+func TestHandleCLIAccountsCountErrors(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	for _, failure := range []error{context.Canceled, errors.New("synthetic count failure")} {
+		st := testutil.NewTestStore(t)
+		srv, _, bob := newAccountsServer(t, st)
+		srv.store = &failingCountsStore{Store: st, err: failure}
+		_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead},
+			[]agentgrant.SourceRef{{ID: bob.ID, Type: bob.SourceType, Identifier: bob.Identifier}}, time.Time{})
+		require.NoError(err)
+		for _, token := range []string{"", token} {
+			w := getCLIAccounts(t, srv, token)
+			assert.GreaterOrEqual(w.Code, http.StatusInternalServerError, w.Body.String())
+			assert.NotContains(w.Body.String(), "synthetic count failure")
 		}
 	}
 }

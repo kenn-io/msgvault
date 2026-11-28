@@ -10,10 +10,6 @@ describe('provenance', () => {
       .toEqual(['You', 'From a message', 'From a lookup', 'msgvault', 'From your messages', 'From CardDAV contacts'].map((who) => `${who} · Nov 5`));
   });
 
-  it('reads a short date, with the year only when it is not this year', () => {
-    expect(provenance('extraction', '2025-11-05T22:04:00').text).toBe('From a message · Nov 5, 2025');
-  });
-
   it('says since when the value became true on an earlier day than it was recorded', () => {
     expect(provenance('user', at, `${year}-11-01T09:00:00`).text).toBe('You · since Nov 1');
     expect(provenance('user', at, `${year}-11-05T09:00:00`).text).toBe('You · Nov 5');

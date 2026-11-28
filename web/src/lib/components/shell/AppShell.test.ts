@@ -6,7 +6,7 @@ import { appShortcuts } from '@kenn-io/kit-ui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRawSnippet, getContext, mount, tick, unmount, type ComponentProps } from 'svelte';
 
-import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
+import { meetingFixtureResponse, meetingMetrics } from '../../meetings/fixtures.test-support';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { sourceGroup } from '../../explore/fixtures.test-support';
@@ -879,6 +879,164 @@ describe('AppShell', () => {
       await waitFor(() => expect(document.title).toBe('People · msgvault'));
     });
 
+    it('updates the tab as the selected message changes and clears it on close', async () => {
+      const state = shellState('everything');
+      const rows = [1, 2, 3].map(id => ({ ...entry(id), key: `source:1:message:${id}`, kind: 'email', anchor_message_id: id, conversation_id: id, title: `Snippet ${id}`, preview: `Snippet ${id}` }));
+      const requests: string[] = [];
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        requests.push(path);
+        const match = path.match(/\/conversations\/(\d+)$/);
+        if (match) {
+          const id = Number(match[1]);
+          return Response.json({ id, anchor_id: id, messages: [{ id, conversation_id: id, subject: id === 1 ? 'Subject' : '', tab_title: id === 1 ? 'Subject' : id === 2 ? 'Conv title' : '', conversation_title: id === 2 ? 'Conv title' : '', snippet: `Snippet ${id}`, sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: `Body ${id}`, attachments: [] }], total: 1, has_before: false, has_after: false });
+        }
+        return Response.json(exploreResponse({ rows, total_count: 3 }));
+      });
+      render(AppShell, { client, state });
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      for (const [id, title] of [[1, 'Subject'], [2, 'Conv title'], [3, '(untitled)']] as const) {
+        await fireEvent.click((await within(grid).findAllByText(`Snippet ${id}`))[0]!);
+        await waitFor(() => expect(document.title).toBe(`${title} · Messages · msgvault`));
+        expect(document.title).not.toContain('Snippet');
+      }
+      expect(requests).not.toContain('/api/v1/messages/1');
+      await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
+      await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
+    });
+
+    it('keeps the workspace title while a message loads or is missing', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'source:1:message:1' });
+      let finish!: (response: Response) => void;
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/conversations/1')) return await new Promise<Response>(resolve => { finish = resolve; });
+        return Response.json(exploreResponse({ rows: [{ ...entry(1), key: 'source:1:message:1', kind: 'email', anchor_message_id: 1, conversation_id: 1 }], total_count: 1 }));
+      });
+      render(AppShell, { client, state });
+      await waitFor(() => expect(finish).toBeTypeOf('function'));
+      expect(document.title).toBe('Messages · msgvault');
+      finish(Response.json({ message: 'Conversation unavailable' }, { status: 404 }));
+      await screen.findByText('Conversation unavailable');
+      expect(document.title).toBe('Messages · msgvault');
+    });
+
+    it('archive selection uses its message tab_title', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'recording:1' });
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/messages/1')) return Response.json({ id: 1, conversation_id: 1, subject: 'Thread subject', tab_title: 'Thread subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Selected body', labels: [], attachments: [] });
+        if (path.endsWith('/conversations/1')) return Response.json({ id: 1, anchor_id: 1, messages: [
+          { id: 1, conversation_id: 1, subject: 'Thread subject', tab_title: 'Thread subject', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Selected body', attachments: [] },
+          { id: 2, conversation_id: 1, subject: 'Other message subject', tab_title: '', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Other body', attachments: [] },
+        ], total: 2, has_before: false, has_after: true });
+        return Response.json(exploreResponse());
+      });
+      render(AppShell, { client, state });
+      await screen.findByText('Selected body');
+      await waitFor(() => expect(document.title).toBe('Thread subject · Messages · msgvault'));
+    });
+
+    it('updates the tab when another item in the same thread opens', async () => {
+      const state = shellState('everything');
+      const rows = [1, 2].map(id => ({
+        ...entry(id),
+        key: id === 1 ? 'source:1:message:1' : 'source:1:conversation:9',
+        kind: id === 1 ? 'email' : 'conversation',
+        anchor_message_id: id,
+        conversation_id: 9,
+        conversation_type: 'email_thread',
+        message_count: 2,
+        title: `Message subject ${id}`,
+      }));
+      const client = createAPIClient(async input => {
+        const url = new URL((input as Request).url);
+        if (url.pathname.endsWith('/messages/2')) return Response.json({ id: 2, conversation_id: 9, subject: 'Thread subject', tab_title: 'Thread subject', message_type: 'email', sent_at: '2026-07-18T12:00:00Z', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] });
+        if (url.pathname.endsWith('/conversations/9')) {
+          const anchor = Number(url.searchParams.get('anchor'));
+          return Response.json({ id: 9, anchor_id: anchor, messages: [
+            { id: 1, conversation_id: 9, subject: 'Earlier message subject', tab_title: anchor === 1 ? 'Earlier message subject' : '', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Earlier body', attachments: [] },
+            { id: 2, conversation_id: 9, subject: 'Thread subject', tab_title: anchor === 2 ? 'Thread subject' : '', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
+          ], total: 2, has_before: true, has_after: false });
+        }
+        return Response.json(exploreResponse({ rows, total_count: 2 }));
+      });
+      render(AppShell, { client, state });
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await fireEvent.click((await within(grid).findAllByText('Synthetic excerpt 1'))[0]!);
+      await waitFor(() => expect(document.title).toBe('Earlier message subject · Messages · msgvault'));
+      await fireEvent.click((await within(grid).findAllByText('Synthetic excerpt 2'))[0]!);
+      await waitFor(() => expect(document.title).toBe('Thread subject · Messages · msgvault'));
+    });
+
+    it('keeps the opened title when the window reloads around another message', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'source:1:message:99', conversationAnchor: '30' });
+      const row = { ...entry(99), key: 'source:1:message:99', kind: 'email', anchor_message_id: 99, conversation_id: 9, message_count: 100 };
+      const client = createAPIClient(async input => {
+        const url = new URL((input as Request).url);
+        if (url.pathname.endsWith('/conversations/9')) {
+          const anchor = Number(url.searchParams.get('anchor'));
+          // Message 31 disappears between reads, shifting 30 into the next window.
+          return Response.json({ id: 9, anchor_id: anchor, messages: Array.from({ length: 51 }, (_, index) => {
+            const id = anchor === 30 ? index + 5 : index === 0 ? 30 : index + 31;
+            const subject = id === 30 ? 'Opened from file' : `Message ${id}`;
+            return { id, conversation_id: 9, subject, tab_title: id === anchor ? subject : '', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: `Body ${id}`, attachments: [] };
+          }), total: anchor === 30 ? 100 : 99, has_before: true, has_after: true });
+        }
+        return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
+      });
+      render(AppShell, { client, state });
+      await screen.findByText('Body 30');
+      await waitFor(() => expect(document.title).toBe('Opened from file · Messages · msgvault'));
+      state.commitNavigation({ conversationAnchor: '56' });
+      await screen.findByText('Body 56');
+      await tick();
+      expect(document.title).toBe('Opened from file · Messages · msgvault');
+    });
+
+    it.each(['Selected subject', 'failure'])('loads the selected non-anchor title: %s', async (title) => {
+      const state = shellState('everything');
+      state.commitNavigation({ selectedRow: 'source:1:message:2', conversationAnchor: '1' });
+      const row = { ...entry(2), key: 'source:1:message:2', kind: 'email', anchor_message_id: 2, conversation_id: 9, message_count: 2 };
+      let resolveDetail!: (response: Response) => void;
+      let detailReturned = false;
+      const detail = new Promise<Response>((resolve) => { resolveDetail = resolve; });
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/messages/2')) { const response = await detail; detailReturned = true; return response; }
+        if (path.endsWith('/conversations/9')) return Response.json({ id: 9, anchor_id: 1, messages: [
+          { id: 1, conversation_id: 9, subject: 'Anchor', tab_title: 'Anchor', sent_at: '2026-07-18T11:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Anchor body', attachments: [] },
+          { id: 2, conversation_id: 9, subject: 'Sensitive subject', tab_title: '', sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [], body: 'Body 2', attachments: [] },
+        ], total: 2, has_before: false, has_after: false });
+        return Response.json(exploreResponse({ rows: [row], total_count: 1 }));
+      });
+      render(AppShell, { client, state });
+      await screen.findByText('Anchor body');
+      await waitFor(() => expect(document.title).toBe('Messages · msgvault'));
+      resolveDetail(title === 'failure' ? Response.json({ message: 'Unavailable' }, { status: 503 }) : Response.json({ id: 2, conversation_id: 9, subject: title, tab_title: title, message_type: 'email', sent_at: '2026-07-18T12:00:00Z', from: 'sender@example.com', to: [], body: 'Message body', attachments: [] }));
+      await waitFor(() => expect(detailReturned).toBe(true));
+      await tick();
+      await waitFor(() => expect(document.title).toBe(title === 'failure' ? 'Messages · msgvault' : `${title} · Messages · msgvault`));
+    });
+
+    it('names a resolved archived meeting', async () => {
+      const state = shellState('everything');
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/messages/42')) return Response.json({ id: 42, conversation_id: 8, subject: 'Planning meeting', tab_title: 'Planning meeting', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', labels: [], attachments: [] });
+        if (path.endsWith('/conversations/8')) return Response.json({ id: 8, anchor_id: 42, messages: [{ id: 42, conversation_id: 8, subject: 'Planning meeting', tab_title: 'Planning meeting', message_type: 'meeting_transcript', sent_at: '2026-07-18T12:00:00Z', from: 'Example', to: [], body: 'Transcript', attachments: [] }], total: 1, has_before: false, has_after: false });
+        if (path.endsWith('/meetings/metrics')) return Response.json(meetingMetrics({ totals: { meeting_count: 1, known_duration_count: 0, unknown_duration_count: 1, total_known_seconds: 0, average_known_seconds: null } }));
+        return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+      });
+      render(AppShell, { client, state });
+      state.commitNavigation({ selectedRow: 'archive-meeting:42' });
+      await screen.findByText('Transcript');
+      await waitFor(() => expect(document.title).toBe('Planning meeting · Messages · msgvault'));
+    });
+
     it.each([
       ['relationships', 'People'],
       ['everything', 'Messages'], ['files', 'Files'],
@@ -1207,6 +1365,21 @@ describe('AppShell', () => {
       first.unmount();
       render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
       expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeTruthy();
+    });
+
+    it('restores the saved sidebar state after leaving Settings', async () => {
+      for (const collapsed of [false, true]) {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+        const state = shellState('settings');
+        const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+        const sidebar = screen.getByRole('complementary', { name: 'Sidebar' });
+        expect(sidebar.classList.contains('sidebar--rail')).toBe(true);
+        expect(within(sidebar).queryByRole('button', { name: 'Expand sidebar' })).toBeNull();
+        await fireEvent.click(within(sidebar).getByRole('button', { name: 'Messages' }));
+        expect(sidebar.classList.contains('sidebar--rail')).toBe(collapsed);
+        expect(within(sidebar).getByRole('button', { name: collapsed ? 'Expand sidebar' : 'Collapse sidebar' })).toBeTruthy();
+        rendered.unmount();
+      }
     });
 
     it('opens a modal navigation menu on narrow screens and closes it on Escape', async () => {
@@ -1606,14 +1779,7 @@ describe('AppShell', () => {
     }
   });
 
-  it.each([
-    ['the Close button', async () => {
-      await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
-    }],
-    ['Escape', async () => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-    }]
-  ])('clears a legacy attachment selection when its viewer closes with %s', async (_label, close) => {
+  it('clears a legacy attachment selection when its viewer closes', async () => {
     window.history.replaceState(null, '', `/?workspace=everything&explore=${encodeURIComponent(JSON.stringify({
       presentation: 'files', selectedRow: 'attachment:5'
     }))}`);
@@ -1630,7 +1796,7 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
       expect(await screen.findByRole('dialog', { name: 'View legacy-report.pdf' })).toBeDefined();
-      await close();
+      await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'View legacy-report.pdf' })).toBeNull());
       expect(state.current.selectedRow).toBeNull();
       expect(new URLSearchParams(window.location.search).get('explore') ?? '').not.toContain('attachment:5');
@@ -1640,15 +1806,7 @@ describe('AppShell', () => {
     }
   });
 
-  it.each([
-    ['the Close button', async () => {
-      await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
-    }],
-    ['Escape', async () => {
-      const escape = { key: 'Escape', bubbles: true, cancelable: true };
-      window.dispatchEvent(new KeyboardEvent('keydown', escape));
-    }]
-  ])('focuses the Files grid when a legacy file viewer closes with %s', async (_label, close) => {
+  it('focuses the Files grid when a legacy file viewer closes', async () => {
     const explore = encodeURIComponent(JSON.stringify({ selectedRow: 'attachment:5' }));
     window.history.replaceState(null, '', `/?workspace=files&explore=${explore}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -1670,7 +1828,7 @@ describe('AppShell', () => {
       const grid = await screen.findByRole('grid', { name: 'Files results' });
       // Let the Files list finish restoring so its settle-time focus cannot mask the close.
       await waitFor(() => expect(state.peekRestorationEpoch()).toBeUndefined());
-      await close();
+      await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
       await waitFor(() => expect(viewer.isConnected).toBe(false));
       await waitFor(() => expect(document.activeElement).toBe(grid));
     } finally {
@@ -1954,7 +2112,7 @@ describe('AppShell', () => {
     } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
   });
 
-  it.each(['reader next', 'Filter shortcut'])('supports %s in the person Messages table', async (control) => {
+  it.each(['reader next', 'Filter shortcut', 'reading title'])('supports %s in the person Messages table', async (control) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -1964,7 +2122,7 @@ describe('AppShell', () => {
         source_counts: [], first_at: '2026-07-18T12:00:00Z', last_at: '2026-07-18T12:00:00Z', cache_revision: 'cache-1'
       });
       if (path === '/api/v1/participants/1/timeline') return Response.json(exploreResponse({
-        rows: [1, 2].map(id => ({ ...entry(id), conversation_id: id, anchor_message_id: id })), total_count: 2
+        rows: [1, 2].map(id => ({ ...entry(id), key: `source:1:message:${id}`, kind: 'email', conversation_id: id, anchor_message_id: id })), total_count: 2
       }));
       if (path === '/api/v1/relationships/1/calendar') return Response.json({
         participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC',
@@ -1974,7 +2132,7 @@ describe('AppShell', () => {
       });
       if (/\/conversations\/[12]$/.test(path)) {
         const id = Number(path.split('/').at(-1));
-        return Response.json({ id, messages: [{ id, conversation_id: id, subject: `Synthetic subject ${id}`,
+        return Response.json({ id, messages: [{ id, conversation_id: id, subject: `Synthetic subject ${id}`, tab_title: `Synthetic subject ${id}`,
           sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [],
           body: `Reader body ${id}`, snippet: `Reader body ${id}`, attachments: [] }],
           anchor_id: id, total: 1, has_before: false, has_after: false });
@@ -1986,12 +2144,16 @@ describe('AppShell', () => {
     try {
       const grid = await screen.findByRole('grid', { name: 'Messages results' });
       await within(grid).findByText('Synthetic subject 1');
-      if (control === 'reader next') {
+      if (control === 'reader next' || control === 'reading title') {
         await fireEvent.click(within(grid).getByText('Synthetic subject 1'));
         await screen.findByText('Reader body 1');
-        grid.focus();
-        await fireEvent.keyDown(grid, { key: 'l' });
-        await screen.findByText('Reader body 2');
+        if (control === 'reading title') {
+          await waitFor(() => expect(document.title).toBe('Synthetic subject 1 · People · msgvault'));
+        } else {
+          grid.focus();
+          await fireEvent.keyDown(grid, { key: 'l' });
+          await screen.findByText('Reader body 2');
+        }
       } else {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'f' });
@@ -2607,7 +2769,7 @@ describe('AppShell', () => {
       expect(selectionStatus().textContent).toBe('1 selected');
       await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
       await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
-      await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
+      await openBudgetThreads();
       const stay = await screen.findByRole('button', { name: 'Stay' });
       await tick();
       expect(document.activeElement).toBe(stay);
@@ -2618,7 +2780,7 @@ describe('AppShell', () => {
       await waitFor(() => expect(selectionStatus().textContent).toBe('1 selected'));
       await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
       await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
-      await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
+      await openBudgetThreads();
       await fireEvent.click(await screen.findByRole('button', { name: 'Discard and leave' }));
       await screen.findByRole('grid', { name: 'Messages results' });
       expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull();
@@ -2815,15 +2977,27 @@ describe('AppShell', () => {
       await waitFor(() => expect(isOuterClosed(state)).toBe(true));
     });
 
-    it('closes the reading pane again once the narrow navigation menu is gone', async () => {
+    it.each([
+      { scenario: 'the reading pane', filterWasOpen: false },
+      { scenario: 'a Filter left open, then navigation opened by clicking its focused button', filterWasOpen: true },
+    ])('closes navigation before $scenario', async ({ filterWasOpen }) => {
       window.innerWidth = 480;
       const state = await openReadingPane();
+      if (filterWasOpen) {
+        await clickFocused(screen.getByRole('button', { name: 'Filter' }));
+        await screen.findByRole('dialog', { name: 'Filter' });
+      }
       const opener = screen.getByRole('button', { name: 'Open navigation' });
       await clickFocused(opener);
       await screen.findByRole('dialog', { name: 'Navigation' });
 
       await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull());
+      if (filterWasOpen) {
+        expect(screen.getByRole('dialog', { name: 'Filter' })).toBeDefined();
+        await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+        await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull());
+      }
       expect(state.current.selectedRow).toBe('message:1');
       expect(appShortcuts.activeScope()).toBe('root');
 
@@ -3006,6 +3180,12 @@ function settingsLeaveClient() {
   });
 }
 
+async function openBudgetThreads() {
+  await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+  const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+  await fireEvent.click(await within(palette).findByRole('option', { name: 'Budget threads' }));
+}
+
 function settingsWithLeaveGuard(client: ReturnType<typeof createAPIClient>) {
   return createRawSnippet<Parameters<NonNullable<ComponentProps<typeof AppShell>['settings']>>>((...args) => {
     const registerLeave = getContext('msgvault:hold-settings-leave');
@@ -3032,7 +3212,7 @@ it.each(['Stay', 'Discard and leave'])('restores held Back before a saved view r
     expect(state.current.workspace).toBe('settings');
     expect(window.location.search).toBe('?workspace=files');
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
+    await openBudgetThreads();
     expect(window.location.search).toBe('?workspace=settings&mode=full_text');
     await fireEvent.click(await screen.findByRole('button', { name: choice }));
     if (choice === 'Stay') {
@@ -3169,24 +3349,27 @@ it.each(['', 'invoice'])('clears Files filters and a pending filename edit from 
   } finally { view.unmount(); state.destroy(); vi.useRealTimers(); }
 });
 
-it('opens the surviving person and keeps the merged pair instruction after resolving duplicates', async () => {
+it('opens the survivor and refreshes the duplicate pair after merging saved people', async () => {
   let merged = false;
+  let refreshes = 0;
   const profile = (id: number) => person(id, id === 7 ? 4 : 2, [id === 7 ? 1 : 2]);
   const conflict = { error: 'person_merge_required', message: 'Choose a survivor', profiles: [7, 9].map(id => ({ person: profile(id), etag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' })) };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
+    if (path.endsWith('/identity/cache-refresh')) { refreshes++; return Response.json({ identity_revision: 8, cache_state: 'ready' }); }
     if (path.endsWith('/people/directory')) return Response.json({ people: merged ? [directoryPerson(7)] : [directoryPerson(7), directoryPerson(9)] });
     if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: merged ? 'refreshed-17' : 'review-17', actionable: merged, ...(merged ? {} : { blocker: 'person_merge_required' }) }], limit: Number(url.searchParams.get('limit')), offset: 0 });
     if (path.endsWith('/17/review/accept')) return Response.json(conflict, { status: 409 });
-    if (path.endsWith('/people/7/merge')) { merged = true; return Response.json(mergeResult({ ...profile(7), revision: 5, participant_ids: [1, 2] }), { headers: { ETag: '"person-7-r5"' } }); }
+    if (path.endsWith('/people/7/merge')) { merged = true; return Response.json(mergeResult({ ...profile(7), revision: 5, participant_ids: [1, 2] }, 'stale'), { headers: { ETag: '"person-7-r5"' } }); }
     if (/\/people\/(7|9)\/profile$/.test(path)) { const id = Number(path.split('/').at(-2)); if (merged && id === 9) return Response.json({ message: 'Person no longer exists' }, { status: 404 }); return Response.json({ person: profile(id), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }); }
     if (/\/people\/(7|9)$/.test(path)) { const id = Number(path.split('/').at(-1)); if (merged && id === 9) return Response.json({ message: 'Person no longer exists' }, { status: 404 }); return Response.json(profile(id), { headers: { ETag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' } }); }
-    if (/\/participants\/(1|2)$/.test(path)) { const id = Number(path.split('/').at(-1)); return Response.json({ id, display_label: id === 1 ? 'Synthetic One' : 'Synthetic Two', identifiers: [], activity_count: 3 }); }
+    if (/\/participants\/(1|2)$/.test(path)) { const id = Number(path.split('/').at(-1)); return Response.json({ id, display_label: id === 1 ? (refreshes ? 'Refreshed One' : 'Synthetic One') : 'Synthetic Two', identifiers: [], activity_count: 3 }); }
     if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     if (path.endsWith('/deletions')) return Response.json({ manifests: [] });
+    const meeting = meetingFixtureResponse(path); if (meeting) return meeting;
     return Response.json({ rows: [] });
   });
   const state = new ExploreState(null);
@@ -3207,6 +3390,10 @@ it('opens the surviving person and keeps the merged pair instruction after resol
     await fireEvent.click(within(modal).getByRole('button', { name: 'Merge into selected survivor' }));
     await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
     await waitFor(() => expect(document.getElementById('duplicate-17')?.textContent).toContain('Choose Merge to record this pair.'));
+    await waitFor(() => expect(document.getElementById('duplicate-17')?.textContent).toContain('Synthetic One'));
+    await screen.findByText('Changes saved, but related views may be out of date.');
+    await fireEvent.click(within(screen.getByText('Changes saved, but related views may be out of date.').closest('.inline-notice') as HTMLElement).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(document.getElementById('duplicate-17')?.textContent).toContain('Refreshed One'));
   } finally { view.unmount(); state.destroy(); }
 });
 
@@ -3215,7 +3402,7 @@ function duplicateReviewArchive(savedViews: ReturnType<typeof view>[] = []) {
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
-    if (path.endsWith('/17/review/reject')) { server.decisions.push(await request.json()); return Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }); }
+    if (path.endsWith('/17/review/reject')) { server.decisions.push(await request.json()); return Response.json({ candidate: { ...pair, state: 'rejected' }, identity_revision: 1, cache_state: 'ready' }); }
     if (path.endsWith('/saved-views/3') && request.method === 'DELETE') { server.deleted = true; return new Response(null, { status: 204 }); }
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: server.deleted ? [] : savedViews });
     if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: server.changed ? 'fresh-17' : pair.review_token }], limit: Number(url.searchParams.get('limit')), offset: 0 });
@@ -3300,10 +3487,10 @@ it.each([
       await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: /^People(?: |$)/ }));
       await screen.findByRole('dialog', { name: 'Resolve person merge' });
     } else {
-      finish(Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }));
+      finish(Response.json({ candidate: { ...pair, state: 'rejected' }, identity_revision: 1, cache_state: 'ready' }));
       await waitFor(() => expect(document.activeElement).toBe(outcome === 'pagehide' ? screen.getByRole('radio', { name: 'To review' }) : messages));
     }
-  } finally { finish?.(Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' })); rendered.unmount(); state.destroy(); vi.useRealTimers(); }
+  } finally { finish?.(Response.json({ candidate: { ...pair, state: 'rejected' }, identity_revision: 1, cache_state: 'ready' })); rendered.unmount(); state.destroy(); vi.useRealTimers(); }
 });
 
 it('refreshes cached duplicate cards after explicit reentry', async () => {
@@ -3323,5 +3510,165 @@ it('refreshes cached duplicate cards after explicit reentry', async () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Keep separate' }));
     await fireEvent(window, new Event('pagehide'));
     await waitFor(() => expect(server.decisions).toEqual([{ review_token: 'fresh-17' }]));
+  } finally { rendered.unmount(); state.destroy(); }
+});
+
+it.each(['everything', 'files', 'ungrouped files'] as const)('reloads %s after identity recovery', async workspace => {
+  let recovered = false;
+  const fileRequests: unknown[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/participants/1')) return Response.json({ id: 1, display_label: 'Original person', identifiers: [], activity_count: 1 });
+    if (path.endsWith('/participants/search')) return Response.json({ rows: [{ id: 2, display_label: 'Peer Example', identifiers: [], activity_count: 1 }] });
+    if (path.endsWith('/identity/links')) return Response.json({ identity_revision: 2, cache_state: 'stale' });
+    if (path.endsWith('/identity/cache-refresh')) { recovered = true; return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
+    if (path.endsWith('/groups')) return Response.json(exploreResponse({ rows: [{ ...sourceGroup, label: recovered ? 'Updated group' : 'Original group' }], total_count: 1 }));
+    if (path.endsWith('/files/search')) { fileRequests.push(await request.json()); return Response.json({ files: [{ id: 7, key: 'file:7', entry_key: 'message:11', message_id: 11, conversation_id: 21, occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic', source_identifier: 'archive@example.com', containing_title: 'Containing item', filename: recovered ? 'updated.pdf' : 'original.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048, participant_labels: [], participant_domains: [], content_state: 'unverified', content_available: null }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} }); }
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Merge with…' }));
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Peer' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer Example/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    const notice = await screen.findByText('Changes saved, but related views may be out of date.');
+    const ungrouped = workspace === 'ungrouped files';
+    state.commitNavigation({ workspace: ungrouped ? 'files' : workspace, groupingChain: ungrouped ? [] : ['source'], filters: ungrouped ? [{ dimension: 'participant', values: ['1'] }] : [] });
+    await screen.findByText(ungrouped ? 'original.pdf' : 'Original group');
+    await fireEvent.click(within(notice.closest('.inline-notice') as HTMLElement).getByRole('button', { name: 'Retry' }));
+    await screen.findByText(ungrouped ? 'updated.pdf' : 'Updated group');
+    if (ungrouped) expect(fileRequests).toEqual([expect.objectContaining({ predicate: expect.objectContaining({ filters: [{ dimension: 'participant', values: ['1'] }] }) }), expect.objectContaining({ predicate: expect.objectContaining({ filters: [{ dimension: 'participant', values: ['1'] }] }) })]);
+  } finally { rendered.unmount(); state.destroy(); }
+});
+
+it.each(['ready', 'build required', 'build dismissed', 'unsupported', 'failure', 'failure dismissed'] as const)('keeps link recovery across workspaces: %s', async outcome => {
+  let writes = 0, refreshes = 0, recovered = false;
+  let release!: (response: Response) => void;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/participants/1')) return Response.json({ id: 1, display_label: recovered ? 'Updated person' : 'Original person', identifiers: [], activity_count: 1 });
+    if (path.endsWith('/participants/search')) return Response.json({ rows: [{ id: 2, display_label: 'Peer Example', identifiers: [], activity_count: 1 }] });
+    if (path.endsWith('/people/directory')) return Response.json({ people: [] });
+    if (path.endsWith('/identity/links')) { writes++; return Response.json({ identity_revision: 2, cache_state: 'stale' }); }
+    if (path.endsWith('/identity/cache-refresh')) {
+      refreshes++;
+      if (refreshes === 1 && (outcome === 'build required' || outcome === 'build dismissed')) return Response.json({ error: 'identity_cache_build_required', message: 'Run msgvault build-cache to refresh related views.' }, { status: 503 });
+      if (refreshes === 1 && outcome === 'unsupported') return Response.json({ error: 'identity_cache_unsupported', message: 'People and relationship analytics are unavailable with PostgreSQL.' }, { status: 503 });
+      if (refreshes === 1 && (outcome === 'failure' || outcome === 'failure dismissed')) return Response.json({ error: 'internal_error', message: "Couldn't refresh related views." }, { status: 500 });
+      recovered = true;
+      if (outcome === 'ready') return new Promise<Response>(resolve => { release = resolve; });
+      return Response.json({ identity_revision: 2, cache_state: 'ready' });
+    }
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Merge with…' }));
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Peer' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer Example/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await screen.findByText('Changes saved, but related views may be out of date.');
+    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: /^Messages(?: |$)/ }));
+    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: /^People(?: |$)/ }));
+    const notice = screen.getByText('Changes saved, but related views may be out of date.').closest('.inline-notice') as HTMLElement;
+    await fireEvent.click(within(notice).getByRole('button', { name: 'Retry' }));
+    if (outcome === 'ready') {
+      await screen.findByText('Refreshing...');
+      expect(within(notice).getByRole('button', { name: 'Retry' })).toHaveProperty('disabled', true);
+      release(Response.json({ identity_revision: 2, cache_state: 'ready' }));
+    } else if (outcome === 'build required' || outcome === 'build dismissed') {
+      await screen.findByText('Run msgvault build-cache to refresh related views.');
+      expect(within(notice).getByRole('button', { name: 'Retry' })).toBeDefined();
+      await fireEvent.click(within(notice).getByRole('button', { name: outcome === 'build required' ? 'Retry' : 'Dismiss' }));
+      if (outcome === 'build dismissed') expect(screen.queryByText('Run msgvault build-cache to refresh related views.')).toBeNull();
+    } else if (outcome === 'failure' || outcome === 'failure dismissed') {
+      await screen.findByText("Couldn't refresh related views.");
+      expect(within(notice).getByRole('button', { name: 'Retry' })).toBeDefined();
+      expect(within(notice).getByRole('button', { name: 'Dismiss' })).toBeDefined();
+      await fireEvent.click(within(notice).getByRole('button', { name: outcome === 'failure' ? 'Retry' : 'Dismiss' }));
+      if (outcome === 'failure dismissed') expect(screen.queryByText("Couldn't refresh related views.")).toBeNull();
+    } else {
+      await screen.findByText('People and relationship analytics are unavailable with PostgreSQL.');
+      expect(within(notice).queryByRole('button', { name: 'Retry' })).toBeNull();
+      await fireEvent.click(within(notice).getByRole('button', { name: 'Dismiss' }));
+      expect(screen.queryByText('People and relationship analytics are unavailable with PostgreSQL.')).toBeNull();
+    }
+    if (outcome !== 'unsupported' && outcome !== 'build dismissed' && outcome !== 'failure dismissed') await screen.findByRole('heading', { name: 'Updated person' });
+    await waitFor(() => expect(screen.queryByText('Changes saved, but related views may be out of date.')).toBeNull());
+    expect(writes).toBe(1);
+    expect(refreshes).toBe(outcome === 'failure' || outcome === 'build required' ? 2 : 1);
+  } finally { release?.(Response.json({ identity_revision: 2, cache_state: 'ready' })); rendered.unmount(); state.destroy(); }
+});
+
+it('recovers a stale bulk link', async () => {
+  let refreshes = 0;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/relationships')) return Response.json({ rows: [1, 2].filter(id => !refreshes || id === 1).map(id => ({ canonical_id: id, display_label: `Person ${id}`, member_ids: id === 1 && refreshes ? [1, 2] : [id], score: 2, signals: { sent_count: 1, received_from_them: 1, modalities: 1, sent_to_them: 1, meetings_together: 0, meeting_count: 0, last_interaction_at: '2026-01-01T00:00:00Z' } })) });
+    if (path.endsWith('/identity/links')) return Response.json({ identity_revision: 2, cache_state: 'stale' });
+    if (path.endsWith('/identity/cache-refresh')) { refreshes++; return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships' });
+  const rendered = render(AppShell, { client, state });
+  try {
+    for (const id of [1, 2]) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select Person ${id}` }));
+    expect(screen.getByRole('button', { name: 'Clear selection' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    const notice = await screen.findByText('Changes saved, but related views may be out of date.');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
+    await fireEvent.click(within(notice.closest('.inline-notice') as HTMLElement).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('checkbox', { name: 'Select Person 2' })).toBeNull());
+  } finally { rendered.unmount(); state.destroy(); }
+});
+
+it('recovers a stale unlink and reloads the addresses', async () => {
+  let refreshes = 0;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/participants/1')) return Response.json({ id: 1, display_label: 'Person One', identifiers: refreshes ? [] : [{ type: 'email', value: 'peer@example.com', participant_id: 2, is_primary: true, provenance: 'participant_identifiers' }], cluster: { canonical_id: 1, member_ids: refreshes ? [1] : [1, 2], edges: refreshes ? [] : [{ participant_a: 1, participant_b: 2 }] }, activity_count: 1 });
+    if (path.endsWith('/identity/unlinks')) return Response.json({ identity_revision: 2, cache_state: 'stale' });
+    if (path.endsWith('/identity/cache-refresh')) { refreshes++; return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Unlink peer@example.com' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    const notice = await screen.findByText('Changes saved, but related views may be out of date.');
+    await fireEvent.click(within(notice.closest('.inline-notice') as HTMLElement).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Unlink peer@example.com' })).toBeNull());
+  } finally { rendered.unmount(); state.destroy(); }
+});
+
+it('offers cache recovery after accepting a duplicate', async () => {
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [pair], limit: 10, offset: 0 });
+    if (path.endsWith('/17/review/accept')) return Response.json({ candidate: { ...pair, state: 'accepted' }, identity_revision: 8, cache_state: 'stale' });
+    if (/\/participants\/(1|2)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
+    await fireEvent(window, new Event('pagehide'));
+    await screen.findByText('Changes saved, but related views may be out of date.');
   } finally { rendered.unmount(); state.destroy(); }
 });

@@ -16,11 +16,30 @@ type SQLReader interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+type reboundSQLReader struct {
+	SQLReader
+
+	rebind func(string) string
+}
+
+func (r reboundSQLReader) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return r.SQLReader.QueryContext(ctx, r.rebind(query), args...)
+}
+
+func (r reboundSQLReader) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return r.SQLReader.QueryRowContext(ctx, r.rebind(query), args...)
+}
+
+func (s *Store) meetingSQLReader(ctx context.Context) SQLReader {
+	return reboundSQLReader{SQLReader: ReadDBContext(ctx, s.db.DB), rebind: s.dialect.Rebind}
+}
+
 type readSnapshotKey struct{}
 
 type readSnapshot struct {
 	db       *sql.DB
 	tx       *loggedTx
+	reader   SQLReader
 	writable bool
 	bounds   *WatermarkBounds
 }
@@ -98,6 +117,11 @@ func WithReadSnapshotContext(ctx context.Context, db *sql.DB, tx *sql.Tx) contex
 	return context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: db, tx: &loggedTx{Tx: tx}})
 }
 
+// WithReadSnapshotReaderContext binds archive reads to a caller-owned snapshot reader.
+func WithReadSnapshotReaderContext(ctx context.Context, db *sql.DB, reader SQLReader) context.Context {
+	return context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: db, reader: reader})
+}
+
 // WithoutReadSnapshotContext preserves request lifetime and values for physical reads.
 func WithoutReadSnapshotContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, readSnapshotKey{}, struct{}{})
@@ -106,6 +130,9 @@ func WithoutReadSnapshotContext(ctx context.Context) context.Context {
 // ReadDBContext selects the snapshot only for its owning database.
 func ReadDBContext(ctx context.Context, db *sql.DB) SQLReader {
 	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); ok && snapshot.db == db {
+		if snapshot.reader != nil {
+			return snapshot.reader
+		}
 		return snapshot.tx.Tx
 	}
 	return db

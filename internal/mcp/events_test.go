@@ -24,6 +24,7 @@ type eventTestBackend struct {
 	unsubscribe  mcpevents.MCPEventsUnsubscribeRequest
 	listErr      error
 	subscribeErr error
+	lastError    string
 }
 
 func (b *eventTestBackend) MCPEventsList(context.Context) (mcpevents.MCPEventsListResult, error) {
@@ -39,7 +40,7 @@ func (b *eventTestBackend) MCPEventsSubscribe(_ context.Context, in mcpevents.MC
 	if b.subscribeErr != nil {
 		return mcpevents.MCPEventsSubscribeResult{}, b.subscribeErr
 	}
-	return mcpevents.MCPEventsSubscribeResult{ID: "fixture", RefreshBefore: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), DeliveryStatus: mcpevents.MCPEventsDeliveryStatus{Active: true}}, nil
+	return mcpevents.MCPEventsSubscribeResult{ID: "fixture", RefreshBefore: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), DeliveryStatus: mcpevents.MCPEventsDeliveryStatus{Active: true, LastError: b.lastError}}, nil
 }
 
 func TestEventsListPropagatesBackendFailure(t *testing.T) {
@@ -53,6 +54,7 @@ func TestEventsListPropagatesBackendFailure(t *testing.T) {
 		{"disabled list", "events/list", &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "disabled"}, "disabled", mcpevents.Unavailable, http.StatusOK},
 		{"invalid", "events/subscribe", &mcpevents.Error{Code: mcpevents.InvalidParams, Reason: "invalid_scope"}, "invalid_scope", mcpevents.InvalidParams, http.StatusBadRequest},
 		{"not found", "events/subscribe", &mcpevents.Error{Code: mcpevents.NotFound, Reason: "event"}, "event", mcpevents.NotFound, http.StatusOK},
+		{"forbidden", "events/subscribe", &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "grant_denied"}, "grant_denied", mcpevents.Forbidden, http.StatusOK},
 		{"capacity", "events/subscribe", &mcpevents.Error{Code: mcpevents.ResourceExhausted, Reason: "subscriptions"}, "subscriptions", mcpevents.ResourceExhausted, http.StatusOK},
 		{"unsupported", "events/subscribe", &mcpevents.Error{Code: mcpevents.Unsupported, Reason: "delivery"}, "delivery", mcpevents.Unsupported, http.StatusOK},
 		{"callback", "events/subscribe", &mcpevents.Error{Code: mcpevents.CallbackEndpoint, Reason: "challenge_failed"}, "challenge_failed", mcpevents.CallbackEndpoint, http.StatusOK},
@@ -88,13 +90,16 @@ func TestEventsListPropagatesBackendFailure(t *testing.T) {
 			var response rawRPCResponse
 			require.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
 			assert.InDelta(float64(tc.code), response.Error["code"], 0)
-			assert.Equal(map[string]any{"reason": tc.reason}, response.Error["data"])
-			if tc.code == mcpevents.Forbidden {
-				assert.Equal("Forbidden", response.Error["message"])
+			data := map[string]any{"reason": tc.reason}
+			switch tc.code {
+			case mcpevents.NotFound:
+				data = map[string]any{"kind": tc.reason}
+			case mcpevents.ResourceExhausted:
+				data = map[string]any{"limit": tc.reason}
+			case mcpevents.Unsupported:
+				data = map[string]any{"feature": "deliveryMode", "value": "webhook"}
 			}
-			if tc.code == mcpevents.CallbackEndpoint {
-				assert.Equal("CallbackEndpointError", response.Error["message"])
-			}
+			assert.Equal(data, response.Error["data"])
 		})
 	}
 }
@@ -270,4 +275,50 @@ func TestDelegatedHTTPEventsDoNotReachBackend(t *testing.T) {
 	h.ServeHTTP(w, r)
 	assert.Contains(t, w.Body.String(), `"code":-32601`)
 	assert.Zero(t, backend.calls)
+}
+
+func TestEventsDiscoveryAndLegacyWire(t *testing.T) {
+	peer := newTask5RawStdioPeer(t, ServeOptions{Events: &eventTestBackend{}})
+	initialized := peer.call(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"fixture","version":"1"}}}`)
+	require.Nil(t, initialized.Error)
+	caps := initialized.Result["capabilities"].(map[string]any)
+	assert.NotContains(t, caps, "events")
+	assert.Contains(t, caps["extensions"], "io.modelcontextprotocol/events")
+	peer.writeLiteralLine(t, `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`)
+	list := peer.call(t, `{"jsonrpc":"2.0","id":2,"method":"events/list"}`)
+	require.Nil(t, list.Error)
+	assert.Len(t, list.Result["events"], 1)
+	assert.NotContains(t, list.Result, "resultType")
+
+	discover := rawModernCall(t, ServeOptions{Events: &eventTestBackend{}}, HTTPOptions{APIKey: "fixture-key"}, "server/discover", nil)
+	require.Nil(t, discover.Error)
+	modernCaps := discover.Result["capabilities"].(map[string]any)
+	assert.NotContains(t, modernCaps, "events")
+	assert.Contains(t, modernCaps["extensions"], "io.modelcontextprotocol/events")
+	assert.Equal(t, "complete", discover.Result["resultType"])
+}
+
+func TestEventsDeliveryStatusUsesSEPCategories(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"dns_error", "connection_refused"},
+		{"timeout", "timeout"},
+		{"http_4xx", "http_4xx"},
+		{"secret_unavailable", ""},
+		{"person_unavailable", ""},
+		{"http_3xx", ""},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			backend := &eventTestBackend{lastError: tc.input}
+			params := map[string]any{"name": mcpevents.Name, "arguments": map[string]any{"source_id": 1}, "delivery": map[string]any{"mode": "webhook", "url": "https://example.com/hook", "secret": "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
+			response := rawModernCall(t, ServeOptions{Events: backend}, HTTPOptions{APIKey: "fixture-key", AllowWrites: true}, "events/subscribe", params)
+			require.Nil(t, response.Error)
+			status, ok := response.Result["deliveryStatus"].(map[string]any)
+			require.True(t, ok)
+			if tc.want == "" {
+				assert.NotContains(t, status, "lastError")
+			} else {
+				assert.Equal(t, tc.want, status["lastError"])
+			}
+		})
+	}
 }

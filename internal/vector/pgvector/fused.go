@@ -61,7 +61,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	}
 
 	var dim int
-	err := b.db.QueryRowContext(ctx,
+	err := store.ReadDBContext(ctx, b.db).QueryRowContext(ctx,
 		`SELECT dimension FROM index_generations WHERE id = $1`, int64(req.Generation)).Scan(&dim)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, vector.SearchMetadata{}, fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, req.Generation)
@@ -185,7 +185,9 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			kArg := bind(req.KPerSignal)
 			// Use an inner SELECT with ORDER BY <=> LIMIT so pgvector can
 			// apply the HNSW index before the outer GROUP BY collapses
-			// multi-chunk messages. The candidate set is constrained either
+			// multi-chunk messages. When another generation shares the dimension,
+			// generationCandidates uses an exact sort instead.
+			// The candidate set is constrained either
 			// by an inline correlated EXISTS against the live-message set
 			// (empty filter — mirrors backend.go ~816-818, lets the HNSW
 			// index drive the inner ORDER BY without first materializing the
@@ -210,22 +212,19 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			omittedANN = fmt.Sprintf(`((SELECT COUNT(*) FROM ann_pool) > %s AND EXISTS (
  SELECT 1 FROM embeddings e %s WHERE e.generation_id = %s AND e.dimension = %d
  %s AND e.message_id NOT IN (SELECT message_id FROM fused)))`, kArg, annConstraint, genArg, dim, annLive)
+			where := "TRUE"
+			if emptyFilter {
+				where = fmt.Sprintf("EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND %s)", liveSQL)
+			}
+			candidates := generationCandidates(dim, vecArg, genArg, innerArg, annConstraint, where)
 			ctes = append(ctes,
 				fmt.Sprintf(`ann_pool AS (
-    SELECT ann.message_id,
-           MIN(ann.distance) AS distance
-      FROM (
-            SELECT e.message_id,
-                   (e.embedding::vector(%[1]d)) <=> %[2]s::vector AS distance
-              FROM embeddings e
-%[6]s             WHERE e.generation_id = %[3]s AND e.dimension = %[1]d
-%[7]s             ORDER BY e.embedding::vector(%[1]d) <=> %[2]s::vector
-             LIMIT %[4]s
-           ) ann
+    SELECT ann.message_id, MIN(ann.distance) AS distance
+      FROM (%s) ann
      GROUP BY ann.message_id
      ORDER BY distance
-     LIMIT %[5]s
-)`, dim, vecArg, genArg, innerArg, kp1Arg, annConstraint, annLive),
+     LIMIT %s
+)`, candidates, kp1Arg),
 				fmt.Sprintf(`ann_ranked AS (
     SELECT message_id, distance,
            ROW_NUMBER() OVER (ORDER BY distance ASC, message_id ASC) AS rnk
@@ -293,7 +292,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
  ORDER BY rrf_score DESC, message_id ASC
  LIMIT %s`, ftsPoolExpr, annPoolExpr, bind(req.Limit), omittedFTS, omittedANN, limitArg)
 
-		rows, err := b.db.QueryContext(ctx, query, args...)
+		rows, err := store.ReadDBContext(ctx, b.db).QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, 0, 0, false, fmt.Errorf("fused query: %w", err)
 		}
@@ -337,13 +336,13 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 			prefix := "WITH " + strings.Join(poolCTEs, ",\n") + "\n"
 			prefixArgs := args[:poolArgsLen]
 			if useFTS {
-				if err := b.db.QueryRowContext(ctx,
+				if err := store.ReadDBContext(ctx, b.db).QueryRowContext(ctx,
 					prefix+"SELECT COUNT(*) FROM fts_pool", prefixArgs...).Scan(&ftsPoolSize); err != nil {
 					return nil, 0, 0, false, fmt.Errorf("count fts_pool: %w", err)
 				}
 			}
 			if useANN {
-				if err := b.db.QueryRowContext(ctx,
+				if err := store.ReadDBContext(ctx, b.db).QueryRowContext(ctx,
 					prefix+"SELECT COUNT(*) FROM ann_pool", prefixArgs...).Scan(&annPoolSize); err != nil {
 					return nil, 0, 0, false, fmt.Errorf("count ann_pool: %w", err)
 				}
@@ -421,7 +420,7 @@ func (b *Backend) filteredChunkMessageCount(ctx context.Context, gen vector.Gene
 	            JOIN messages m ON m.id = e.message_id
 	           WHERE e.generation_id = $1 AND ` + strings.Join(clauses, " AND ")
 	var n int
-	if err := b.db.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+	if err := store.ReadDBContext(ctx, b.db).QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("filtered chunk message count: %w", err)
 	}
 	return n, nil
@@ -488,7 +487,7 @@ func (b *Backend) batchGetSubjects(ctx context.Context, ids []int64) (map[int64]
 	if len(ids) == 0 {
 		return nil, nil //nolint:nilnil // empty input → no subjects and no error; callers range the map
 	}
-	rows, err := b.db.QueryContext(ctx,
+	rows, err := store.ReadDBContext(ctx, b.db).QueryContext(ctx,
 		`SELECT id, COALESCE(subject, '') FROM messages WHERE id = ANY($1::bigint[])`,
 		int64Array(ids))
 	if err != nil {

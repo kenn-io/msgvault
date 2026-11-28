@@ -2,6 +2,7 @@ package daemonclient_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -207,4 +208,18 @@ func TestMeetingClientPropagatesDaemonErrorsAndRequestContext(t *testing.T) {
 		assertions.Nil(result)
 		requirements.ErrorIs(err, context.Canceled)
 	})
+}
+
+func TestMeetingDecisionClientRoundTrip(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	client, imported := newMeetingDaemonClient(t)
+	left := fmt.Sprintf("msg:%d", imported[0].MessageID)
+	right := fmt.Sprintf("msg:%d", imported[1].MessageID)
+	for _, tc := range []struct{ decision, state string }{{"link", "link"}, {"unlink", "split"}, {"clear", "automatic"}} {
+		result, err := client.DecideMeetingLink(t.Context(), left, right, tc.decision)
+		requirements.NoError(err)
+		assertions.Equal(left, result.Left)
+		assertions.Equal(right, result.Right)
+		assertions.Equal(tc.state, result.State)
+	}
 }

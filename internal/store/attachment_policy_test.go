@@ -18,6 +18,7 @@ import (
 func TestInitSchemaAddsAttachmentOutcomeColumns(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
+	// The attachments table as the first release created it.
 	dbPath := filepath.Join(t.TempDir(), "legacy-attachments.db")
 	st, err := store.Open(dbPath)
 	require.NoError(err)
@@ -26,10 +27,21 @@ func TestInitSchemaAddsAttachmentOutcomeColumns(t *testing.T) {
 		CREATE TABLE attachments (
 			id INTEGER PRIMARY KEY,
 			message_id INTEGER NOT NULL,
+			filename TEXT,
+			mime_type TEXT,
+			size INTEGER,
 			content_hash TEXT,
 			storage_path TEXT NOT NULL,
+			media_type TEXT,
+			width INTEGER,
+			height INTEGER,
+			duration_ms INTEGER,
 			thumbnail_hash TEXT,
-			thumbnail_path TEXT
+			thumbnail_path TEXT,
+			source_attachment_id TEXT,
+			attachment_metadata JSON,
+			encryption_version INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
 	require.NoError(err)

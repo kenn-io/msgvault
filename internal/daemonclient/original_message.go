@@ -13,10 +13,6 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-// originalMessageMinAPISchemaVersion is the first daemon API schema that
-// serves /api/v1/cli/message/original and /api/v1/cli/message/thread.
-const originalMessageMinAPISchemaVersion = "2.33.0"
-
 var _ query.OriginalMessageReader = (*Engine)(nil)
 
 // ReadOriginalMessage fetches a message's original MIME and provenance.
@@ -26,9 +22,6 @@ func (e *Engine) ReadOriginalMessage(ctx context.Context, ref query.MessageRef, 
 	}
 	if (ref.ID == 0) == (ref.SourceMessageID == "") {
 		return nil, query.ErrInvalidMessageRef
-	}
-	if err := e.requireOriginalMessageCapability(ctx); err != nil {
-		return nil, err
 	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetCLIMessageOriginalResp, error) {
 		return client.GetCLIMessageOriginalWithResponse(ctx, &generated.GetCLIMessageOriginalRequestOptions{
@@ -56,9 +49,6 @@ func (e *Engine) ListThread(ctx context.Context, q query.ThreadQuery) (*query.Th
 	if q.All {
 		q.Limit, q.Offset = 0, 0
 	}
-	if err := e.requireOriginalMessageCapability(ctx); err != nil {
-		return nil, err
-	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetCLIMessageThreadResp, error) {
 		return client.GetCLIMessageThreadWithResponse(ctx, &generated.GetCLIMessageThreadRequestOptions{
 			Query: &generated.GetCLIMessageThreadQuery{
@@ -76,24 +66,6 @@ func (e *Engine) ListThread(ctx context.Context, q query.ThreadQuery) (*query.Th
 		return nil, originalExportError(err)
 	}
 	return threadPageFromGenerated(resp.JSON200), nil
-}
-
-func (e *Engine) requireOriginalMessageCapability(ctx context.Context) error {
-	e.originalCapabilityMu.Lock()
-	defer e.originalCapabilityMu.Unlock()
-	if e.originalCapabilityOK {
-		return nil
-	}
-	supported, err := e.store.SupportsAPISchemaVersion(ctx, originalMessageMinAPISchemaVersion)
-	if err != nil {
-		return fmt.Errorf("check daemon original-message capability: %w", err)
-	}
-	if !supported {
-		return fmt.Errorf("original message export needs daemon API schema %s or newer: %w: %w",
-			originalMessageMinAPISchemaVersion, ErrNotSupported, query.ErrOriginalExportUnsupported)
-	}
-	e.originalCapabilityOK = true
-	return nil
 }
 
 // originalExportError maps the routes' stable error codes back to the

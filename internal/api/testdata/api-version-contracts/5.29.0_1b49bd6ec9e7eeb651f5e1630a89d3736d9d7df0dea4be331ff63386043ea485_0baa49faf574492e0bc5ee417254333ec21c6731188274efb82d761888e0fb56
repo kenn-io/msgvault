@@ -1,0 +1,1 @@
+Fails backup freeze begin with backup_readers_busy when daemon archive readers do not stop.

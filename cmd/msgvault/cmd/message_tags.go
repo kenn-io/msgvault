@@ -14,7 +14,6 @@ import (
 )
 
 type messageTagBackend interface {
-	SupportsAPISchemaVersion(ctx context.Context, version string) (bool, error)
 	MessageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string) (*emailtags.MessageTagResult, error)
 }
 
@@ -47,13 +46,6 @@ Use --dry-run with an edit to preview it without writing.`,
 				}
 				defer func() { _ = st.Close() }()
 				client = st
-			}
-			supported, err := client.SupportsAPISchemaVersion(cmd.Context(), messageTagsMinAPISchemaVersion)
-			if err != nil {
-				return fmt.Errorf("check daemon native tag support: %w", err)
-			}
-			if !supported {
-				return fmt.Errorf("this daemon is too old for native email tags; upgrade it to API schema %s or newer", messageTagsMinAPISchemaVersion)
 			}
 			result, err := client.MessageTags(cmd.Context(), id, input, change.Mailbox)
 			if asJSON {

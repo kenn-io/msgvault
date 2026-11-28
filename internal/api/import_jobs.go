@@ -298,11 +298,16 @@ func validateImportJobRequest(req ImportJobRequest) string {
 	if req.Limit < 0 {
 		return "limit must be a non-negative integer"
 	}
-	after, afterSet, err := parseImportDate(req.After)
+	return ValidateImportJobDates(req.After, req.Before)
+}
+
+// ValidateImportJobDates checks the optional bounds of a historical import.
+func ValidateImportJobDates(afterRaw, beforeRaw string) string {
+	after, afterSet, err := parseImportDate(afterRaw)
 	if err != nil {
 		return "after must use YYYY-MM-DD"
 	}
-	before, beforeSet, err := parseImportDate(req.Before)
+	before, beforeSet, err := parseImportDate(beforeRaw)
 	if err != nil {
 		return "before must use YYYY-MM-DD"
 	}

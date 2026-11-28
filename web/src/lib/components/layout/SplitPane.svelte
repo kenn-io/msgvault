@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { SplitResizeHandle, type SplitResizeEvent } from '@kenn-io/kit-ui';
+  import { overlayScrollbars, SplitResizeHandle, type SplitResizeEvent } from '@kenn-io/kit-ui';
   import { untrack, type Snippet } from 'svelte';
   import { splitHandleSize } from './split-handle';
 
@@ -166,6 +166,7 @@
     class="pane primary"
     data-pane="primary"
     style:flex-basis={vertical ? undefined : `${sizedSize}px`}
+    {@attach overlayScrollbars()}
   >
     {#if primary}{@render primary()}{/if}
   </section>
@@ -189,6 +190,7 @@
       class="pane secondary"
       data-pane="secondary"
       style:flex-basis={vertical ? `${sizedSize}px` : undefined}
+      {@attach overlayScrollbars()}
     >
       {#if secondary}{@render secondary()}{/if}
     </section>

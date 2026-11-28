@@ -1,13 +1,13 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-19"
 title: Meeting Transcripts
-description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Pocket, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
+description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Bland, Granola, Plaud, Pocket, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
 
-Find meeting decisions and transcripts in the same archive as your email and
-chats. Each meeting becomes one searchable message with a title, notes or
+You can search meeting decisions and transcripts right alongside your email and
+chats. Each meeting becomes one searchable message with a title, notes or a
 summary, and a transcript when the source provides one. Verified participant
-emails connect meetings to the people you already know in msgvault.
+emails connect those meetings to the people you already have in msgvault.
 
 ## Choose a meeting source
 
@@ -15,6 +15,7 @@ emails connect meetings to the people you already know in msgvault.
 |---|---|---|
 | [Omi](#omi) | Developer API key | Completed, non-discarded, unlocked conversations exposed by the backend |
 | [Twilio](#twilio) | Account auth token or API key | Recordings and transcripts Twilio still retains |
+| [Bland](#bland) | Org API key | Calls and the postcall data Bland still retains |
 | [Chatwoot](../guides/chatwoot.md) calls | Account API token | Calls in selected inboxes; recordings and transcripts refresh for seven days |
 | [Granola](#granola) | API key | Requires access to Granola's public API |
 | [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Meeting PAT or integration, optional users integration | At most 50 attendee-visible meetings per discovery query |
@@ -25,57 +26,144 @@ emails connect meetings to the people you already know in msgvault.
 | [Twenty](#twenty-call-recordings) | Read-only workspace API key | Reads every call recording in the workspace, whichever Twenty app wrote it |
 | [Another meeting source](#import-from-any-meeting-source) | Authenticated JSON import | Your integration supplies each meeting and its updates |
 
-Provider sync reads meeting data without changing the source service. Recording
-media is not downloaded by the Omi, Notion, Plaud, Pocket, Circleback,
-or Twenty integrations.
-Muesli can optionally archive locally retained recordings.
+Provider sync is read-only and never changes the source service. The Omi,
+Notion, Plaud, Pocket, Circleback, and Twenty integrations do not download
+recording media, while Muesli can optionally archive locally retained
+recordings.
 
 ## Browse and search
 
-Start `msgvault serve` and open the [Web UI](/docs/web-ui/) to find meetings in
-Messages. Filter to meeting notes or search across notes, email, and chats.
-To search only meetings from the CLI:
+Start `msgvault serve` and open the [Web UI](/docs/web-ui/) to browse meetings
+in **Messages**. From there, you can filter to meeting notes or search across
+notes, email, and chats together. To search only meetings from the CLI, run:
 
 ```bash
 msgvault search "quarterly budget" --message-type meeting_transcript
 ```
 
 In the [TUI](/docs/usage/tui/), press `m` until the title shows **Meetings**.
-Use `A` to select a source, `/` to search, and `Enter` to open the note and
-transcript. In the detail view, `/` finds text and `n`/`N` moves between
-matches. Meetings mode does not offer selection or deletion.
+Press `A` to select a source, `/` to search, and `Enter` to open the note and
+transcript. Inside the detail view, `/` finds text and `n`/`N` moves between
+matches. Meetings mode does not support selection or deletion.
 
 Unscoped search includes meetings and chats. Email-specific CLI and TUI
-aggregates remain email-only unless you choose another message type.
+aggregates stay email-only unless you pick another message type.
+
+## Link calendar events and notes
+
+Run `msgvault meetings links <note-id>` to see the calendar copies and notes
+that share an exact occurrence. You can also pass `msg:<id>` or an event `ref`
+from the `REF` column of `msgvault calendar events`, for example
+`msgvault meetings links evt:23@20270321T100000Z`. The API and MCP return the
+same record.
+
+Automatic matching depends on the source format:
+
+- Twenty notes match on their iCalendar UID and scheduled time.
+- Granola notes match on their Google event ID only when their owner matches
+  the archived calendar's mailbox.
+- Twenty notes with the same UID and time, and Granola notes with the same
+  instance-suffixed Google ID, can link even before you import a calendar.
+- A bare Google series ID cannot identify a single week, so those notes stay
+  separate. A calendar single event or exception can prove that a bare ID names
+  one event, including after a reschedule.
+- Other note formats stay separate unless the owner links them.
+
+To find calendar events that overlap a meeting note, or notes that overlap a
+calendar event, run `msgvault meetings suggest <ref>`. Suggestions rank shared
+attendees, overlap, and title words. You can accept a suggestion with
+`msgvault meetings link <ref> <ref>`. The API and the MCP tool
+`suggest_meeting_links` return the same suggestions.
+
+When a note has no known duration, the search uses a 30-minute window and
+reports the resulting estimated overlap. Known overlaps rank ahead of estimated
+overlaps when attendee counts tie, and title words break ties between estimates.
+
+In each suggestion, `ref` identifies the calendar event and `member_message_id`
+identifies the meeting note. For a note seed, `ref` is the suggested event; for
+an event seed, `member_message_id` is the suggested note. The `title` and
+`start` fields describe the suggestion.
+
+You can manage links manually with three commands:
+
+- `msgvault meetings link <ref> <ref>` joins copies, including notes from an
+  unscheduled call.
+- `msgvault meetings unlink <ref> <ref>` separates an automatic match.
+- `msgvault meetings reset-link <ref> <ref>` clears your choice and restores
+  automatic matching.
+
+Running `link` or `unlink` replaces any previous choice, and choices survive
+projection rebuilds. Deduplication and source merges carry choices to the kept
+copy, while undoing deduplication leaves that copy unchanged. If carried
+choices conflict, a choice already on the kept copy wins; otherwise, the newest
+carried choice wins. When a third copy matches both sides of a split, it joins
+the first compatible group in a stable order. If a link or split would break
+another saved link, msgvault returns a conflict; reset the conflicting pair
+first to make that change.
+
+Link records show whether a calendar copy was cancelled or deleted at its
+source. When a recurrence cannot be expanded, the record keeps the copies it
+found and lists the affected message IDs and reasons in `unexpandable`. The CLI
+table prints those warnings to stderr, while JSON and MCP return them with the
+record.
+
+An archived cancellation stays in the record even when its series master has
+not been archived. Its `start` and `end` are `null` in JSON and `unknown` in
+the CLI table, and `unexpandable` reports the missing series and bounds. A
+known bound stays intact even if the other is missing, and importing the master
+later fills in the times. Note matches, calendar candidate reads, and
+recurrence steps share one request work limit; exceeding it returns
+`query_too_broad`.
 
 ## Export context and read follow-ups
 
-In Messages, select meeting rows and choose **Meeting context…** in the
-selection bar. In its popover, choose JSON or Markdown, optionally turn on
-**Include transcript**, and choose **Export meeting context**. You can select
-explicit rows or **Select all N matching** for the current
-search and filters. The export includes exactly that selection. Mixed selections
-fail with **Select meetings only**; narrow selections larger than 100 meetings.
-For one meeting, expand its message and choose **⋯ → Export meeting…**. Choose JSON or Markdown. **Include transcript** is off by default.
+You can export a structured context packet for one or more meetings from
+**Messages**:
 
-The downloaded file contains the server's context packet, including meeting
-references, participants, summary, notes, recorded actions, and coverage states.
-The default content budget is 131072 UTF-8 bytes. CLI and API clients can set
-4096 through 1048576 bytes. Packets report truncation and omitted meeting IDs;
-check those fields before treating an export as complete. A missing summary
-stays missing. msgvault does not generate a replacement from the transcript.
+1. Select the meeting rows you want, or choose **Select all N matching** for
+   the current search and filters. Mixed selections fail with **Select meetings
+   only**, and selections larger than 100 meetings need to be narrowed first.
+2. In the selection bar, choose **Meeting context…**.
+3. In the popover, pick JSON or Markdown. Turn on **Include transcript** if you
+   want the transcript included (**Include transcript** is off by default).
+4. Choose **Export meeting context**.
 
-A meeting-filtered Messages view shows a count and known duration. Choose **Action items** to open recorded follow-ups, filter by status or exact assignee email, or show more results. Expand **Meeting metrics** in that dialog for duration evidence, average duration, and monthly activity. Each expanded meeting also lists its own recorded actions below the body. **Open archived meeting** opens the source evidence, and Back returns to the same workspace and scope. People offers the same meeting summary and **Action items** for a selected person or domain, including a selected calendar day. Participant and domain reading panes retain the full meeting activity panel. A saved person’s Details shows that panel across all their resolved identities; people without identities have no meeting panel.
+To export a single meeting instead, expand its message, choose
+**⋯ → Export meeting…**, and pick JSON or Markdown. The export always includes
+only your exact selection.
 
-Action status is the last archived source status, not a local task list.
-msgvault does not infer assignees, create follow-ups, or mark source tasks done.
-Supported empty action lists, unsupported sources, unavailable evidence, and
-partial evidence remain distinct. Granola and Twenty have no structured action support;
-Omi, Circleback, and generic imports preserve explicit actions; Notion exposes
-checkboxes from archived summary and notes blocks. A Notion checkbox does not
-supply an assignee merely because a name appears in its text.
+The downloaded file holds the server's context packet: meeting references,
+participants, summary, notes, recorded actions, and coverage states. The
+default content budget is 131072 UTF-8 bytes, while CLI and API clients can set
+anywhere from 4096 to 1048576 bytes. Packets report truncation and omitted
+meeting IDs; check those fields before treating an export as complete. A
+missing summary stays missing; msgvault does not generate a replacement from
+the transcript.
 
-Use the daemon-backed CLI for the same evidence:
+When you filter **Messages** to meetings, the view displays a meeting count and
+total known duration. Choose **Action items** to view recorded follow-ups,
+filter by status or exact assignee email, or load more results. Expand
+**Meeting metrics** in that dialog to see duration evidence, average duration,
+and monthly activity. Each expanded meeting also lists its own recorded actions
+below the body. Choose **Open archived meeting** to view the source evidence;
+**Back** returns you to the same workspace and scope.
+
+**People** offers the same meeting summary and **Action items** for a selected
+person or domain, including a selected calendar day. Participant and domain
+reading panes keep the full meeting activity panel. A saved person's **Details**
+view shows that panel across all of their resolved identities; people without
+identities have no meeting panel.
+
+Action status reflects the last archived source status rather than a local task
+list. msgvault does not infer assignees, create follow-ups, or mark source
+tasks done. Supported empty action lists, unsupported sources, unavailable
+evidence, and partial evidence stay distinct. Granola and Twenty have no
+structured action support. Omi, Circleback, and generic imports preserve
+explicit actions, and Notion exposes checkboxes from archived summary and notes
+blocks. A Notion checkbox does not supply an assignee merely because a name
+appears in its text.
+
+You can pull the same evidence from the daemon-backed CLI:
 
 ```bash
 msgvault meetings context --id 42 --id 43 --format json --output meeting-context.json
@@ -84,18 +172,18 @@ msgvault meetings metrics --person-id 7 --after 2026-01-01 --before 2026-03-01 -
 ```
 
 The three MCP read tools are `get_meeting_context`, `list_meeting_action_items`,
-and `get_meeting_metrics`. They require no AI provider call or profile-write
-permission. CLI dates use `YYYY-MM-DD`; HTTP and MCP scope dates use full
-RFC3339 timestamps. See the [CLI flags](../cli-reference.md#meetings),
+and `get_meeting_metrics`. None of them require an AI provider call or
+profile-write permission. CLI dates use `YYYY-MM-DD`, while HTTP and MCP scope
+dates use full RFC3339 timestamps. See the [CLI flags](../cli-reference.md#meetings),
 [HTTP contract](../api-server.md#meeting-intelligence), and
-[MCP examples](chat.md#meeting-evidence).
+[MCP examples](chat.md#meeting-evidence) for the full contracts.
 
 ## Understand meeting time and coverage
 
-Meeting metrics show the number of meetings, known and unknown durations,
-total known time, average known duration, and monthly activity. Unknown
-durations are excluded from averages. When no duration is known, the average
-is unavailable (`null` in JSON), not zero.
+Meeting metrics report your meeting count, known and unknown durations, total
+known time, average known duration, and monthly activity. Unknown durations are
+left out of averages. When no duration is known, the average is unavailable
+(`null` in JSON), not zero.
 
 | Duration basis | Evidence |
 |---|---|
@@ -105,58 +193,65 @@ is unavailable (`null` in JSON), not zero.
 | Unknown duration | No usable duration evidence; no duration basis is assigned |
 
 JSON names these bases `provider`, `scheduled`, and `transcript_span`.
-Scheduled time and transcript span are estimates of different things. The
-basis breakdown keeps those differences visible. Months without meetings are
-omitted; undated meetings appear in a separate count.
+Scheduled time and transcript span estimate different things, and the basis
+breakdown keeps those differences visible. Months with no meetings are omitted,
+and undated meetings appear in their own count.
 
-Meeting reads include source-deleted records by default while their archive
-content remains present. Use `--deletion active` or `--deletion deleted` to
-narrow actions and metrics. Locally deleted records are excluded. This does not
-change the [garbage collection workflow](../cli-reference.md#gc).
+Meeting reads include source-deleted records by default as long as their
+archive content is still present. Pass `--deletion active` or
+`--deletion deleted` to narrow actions and metrics. Locally deleted records are
+excluded. This does not change the
+[garbage collection workflow](../cli-reference.md#gc).
 
 Explore scopes preserve the full search predicate and its cache/search
-identity. Their transfer ceiling is 10000 matching message IDs; narrow a scope
-that exceeds it. A changed or expired result requires a reload. Errors remain
-visible instead of silently dropping filters or sampling visible rows.
+identity. Their transfer ceiling is 10000 matching message IDs; narrow any
+scope that exceeds it. If a result changes or expires, you need to reload it.
+Errors stay visible instead of silently dropping filters or sampling visible
+rows.
 
 Existing archives gain meeting projections from their stored raw evidence on
-upgrade, without a provider resync. Evidence absent from an older raw snapshot
-still appears as unavailable or partial. Upgrade the daemon as well as clients;
-meeting operations need daemon API schema 2.27.0 or newer.
+upgrade, with no provider resync required. Evidence missing from an older raw
+snapshot still shows as unavailable or partial. Upgrade both the daemon and
+clients; meeting operations require daemon API schema 2.27.0 or newer.
 
 ## Twenty call recordings
 
-Archive summaries and diarized transcripts from the call recordings in a Twenty
-workspace. msgvault reads existing recordings through Twenty's GraphQL API; it
-does not install apps, operate recording bots, or download recording media.
+You can archive summaries and diarized transcripts from the call recordings in
+a Twenty workspace. msgvault reads existing recordings through Twenty's GraphQL
+API; it does not install apps, run recording bots, or download recording media.
 See [Twenty releases](https://twenty.com/releases) and the
 [official API guide](https://docs.twenty.com/developers/extend/capabilities/apis).
 
-Call recordings are a shared Twenty object. Call Recorder writes them, and so do
-Twenty's Granola, Fathom, Fireflies, and Teams integrations. msgvault syncs every
-call recording the API key can read and stores the writing app's
+Call recordings are a shared Twenty object written by Call Recorder as well as
+Twenty's Granola, Fathom, Fireflies, and Teams integrations. msgvault syncs
+every call recording the API key can read and stores the writing app's
 `applicationId` in the archived evidence and as `application_id` in meeting
 metadata. If you also sync Granola directly with msgvault, a meeting that
 Twenty's Granola integration copied appears once from each source.
 
-Create an API key in Twenty's **Settings → APIs & Webhooks**. Assign a role
-with read access to Call Recordings, Calendar Events, and Calendar Event
-Participants. Store the configuration on the host running `msgvault serve`:
+To connect a Twenty workspace:
 
-```toml
-[[twenty]]
-identifier = "work"
-account_email = "you@example.com"
-base_url = "https://api.twenty.com"
-api_key = "YOUR_READ_ONLY_API_KEY"
-enabled = true
-schedule = "15 */6 * * *"
-```
+1. Create an API key in Twenty under **Settings → APIs & Webhooks**.
+2. Assign a role with read access to Call Recordings, Calendar Events, and
+    Calendar Event Participants.
+3. Add the configuration on the host running `msgvault serve`:
 
-For self-hosted Twenty, set `base_url` to the instance's API origin, such as
-`https://crm.example.com`. Use a root URL without a path, query, or embedded
+    ```toml
+    [[twenty]]
+    identifier = "work"
+    account_email = "you@example.com"
+    base_url = "https://api.twenty.com"
+    api_key = "YOUR_READ_ONLY_API_KEY"
+    enabled = true
+    schedule = "15 */6 * * *"
+    ```
+
+For self-hosted Twenty, set `base_url` to your instance's API origin, such as
+`https://crm.example.com`, using a root URL with no path, query, or embedded
 credentials. HTTPS is required except for loopback HTTP. Requests reject
-redirects so the key remains at the configured origin.
+redirects so your key stays at the configured origin.
+
+Register, probe, and sync the source from the CLI:
 
 ```bash
 msgvault add-twenty work
@@ -166,96 +261,99 @@ msgvault sync-twenty work --after 2026-01-01 --limit 10
 msgvault sync-twenty work --full
 ```
 
-Registration checks all three object types and the required fields before
-creating the archive source. `--probe` performs the same read-only check
-without writing the archive or printing meeting content. With several
-configured sources, specify one for registration or probing; ordinary sync
-without an identifier syncs them all. When the check or a sync fails, the error
-includes Twenty's own error code and message, such as a missing permission or
-a field an older self-hosted version lacks.
+Registration verifies all three object types and their required fields before
+creating the archive source. Running with `--probe` performs the same read-only
+check without writing to the archive or printing meeting content. If you have
+multiple configured sources, specify an identifier when registering or probing;
+running `sync-twenty` with no identifier syncs all of them. When a check or
+sync fails, the error includes Twenty's own error code and message, such as a
+missing permission or a field an older self-hosted version lacks.
 
-Each run reads recordings updated since the previous successful run, along with
-their calendar events and participants, a page at a time. It also re-reads the
-five minutes before that point, so an edit saved while the previous run was
-scanning still arrives; recordings already archived at the same update time are
-skipped. Late summaries and transcripts update the recording, so the next run
-picks them up and updates the same meeting. Attendee edits made after the
-recording show up on the next `--full` run. Requests are paced for Twenty's
-documented API rate limit, and rate limits, server errors, and network failures
-are retried. Pending, failed, or empty transcript markers are never archived as
-text, and Call Recorder's "Summary unavailable" notice is not archived as a
-summary. A usable summary can be archived while the transcript is pending.
+Each incremental run fetches recordings updated since the previous successful
+run, along with their calendar events and participants, one page at a time. It
+also re-reads the five minutes before that cutoff, so an edit saved while the
+previous run was scanning still arrives; recordings already archived at the
+same update time are skipped. Because late summaries and transcripts update the
+recording, the next run picks them up and updates the same meeting. Attendee
+edits made after the recording show up on the next `--full` run.
 
-A recording that can't be archived, such as one with no usable time or one
-too large for the 64 MiB response or content cap, is skipped, reported in the
-sync summary, and recorded on the sync run. The sync carries on with the next
-recording and retries the skipped one when it changes in Twenty. When a page of
-recordings exceeds the response cap, the sync retries it with fewer recordings
-and keeps the smaller page size for the rest of the run.
+msgvault paces requests to match Twenty's documented API rate limit and retries
+rate limits, server errors, and network failures. Pending, failed, or empty
+transcript markers are never archived as text, and Call Recorder's "Summary
+unavailable" notice is not archived as a summary. A usable summary can still be
+archived while the transcript is pending.
 
-`--after` is an inclusive UTC meeting-date filter that msgvault applies after
-reading recordings. Occurrence time uses the recording start, then calendar
-start, then recording creation time. A run with `--after` leaves the sync
-position unchanged, so it suits one-off backfills. `--limit` caps eligible
-meetings and reports partial coverage when discovery stops early; the next run
-without `--after` continues where it stopped. `--full` rescans every recording
-and refreshes projections and attribution even when evidence matches. Run it
-after changing account identities. When `--limit` stops a full rescan, the next
-run without `--after`, with or without `--full`, continues the rescan from where
-it stopped until it reaches the end.
+If a recording cannot be archived, for example because it has no usable time or
+exceeds the 64 MiB response or content cap, msgvault skips it, reports it in
+the sync summary, and records it on the sync run. Sync continues with the next
+recording and retries the skipped one when it changes in Twenty. If a page of
+recordings exceeds the response cap, msgvault retries it with fewer recordings
+and keeps that smaller page size for the rest of the run.
 
-Raw evidence retains the returned recording, calendar, and participant fields.
-Calendar email handles supply identities; speaker names and display-only
-handles remain display evidence. A malformed transcript word or speaker entry
-is left out without discarding the rest of the transcript. Duration uses valid
+- `--after` is an inclusive UTC meeting-date filter applied after reading
+  recordings. Occurrence time uses the recording start, then calendar start,
+  then recording creation time. A run with `--after` leaves the sync position
+  unchanged, so it suits one-off backfills.
+- `--limit` caps eligible meetings and reports partial coverage when discovery
+  stops early. The next run without `--after` continues where it stopped.
+- `--full` rescans every recording and refreshes projections and attribution
+  even when evidence matches. Run it after changing account identities. If
+  `--limit` stops a full rescan, the next run without `--after` (with or
+  without `--full`) continues the rescan until it reaches the end.
+
+Raw evidence keeps the returned recording, calendar, and participant fields.
+Calendar email handles supply identities, while speaker names and display-only
+handles remain display evidence. Malformed transcript word or speaker entries
+are omitted without discarding the rest of the transcript. Duration uses valid
 recording start/end, then scheduled calendar time, then transcript timing.
-Structured actions are unsupported; summary prose does not create action items.
+Structured actions are not supported, and summary prose does not create action
+items.
 
-Recordings deleted in Twenty remain archived. A recording whose calendar event
-is deleted or unlinked keeps the attendees already archived; a recording linked
-to a different event that the key can't read drops the old event's attendees.
-API, permission, and cancellation failures fail the sync and preserve
-previously committed evidence. Removing the local source prevents scheduled
-sync from recreating it; use `add-twenty` to register it again.
+Recordings deleted in Twenty stay in your archive. A recording whose calendar
+event is deleted or unlinked keeps its already-archived attendees; a recording
+linked to a different event that the key cannot read drops the old event's
+attendees. API, permission, and cancellation failures fail the sync and
+preserve previously committed evidence. Removing the local source stops
+scheduled sync from recreating it; run `add-twenty` to register it again.
 
 ## Source labels and account identity
 
-Each meeting source has two distinct values:
+Each meeting source uses two distinct values:
 
 - `identifier` is a stable label used in commands, source metadata, schedules,
-  and (for Circleback and Plaud) the token filename. It can be an arbitrary name such as
-  `work`.
+  and, for Circleback and Plaud, the token filename. It can be any name you
+  like, such as `work`.
 - `account_email` is the normalized primary email used to determine whether
-  the meeting organizer is you (`is_from_me`).
+  you organized the meeting (`is_from_me`).
 
-`account_email` is required independently of `identifier`. Config loading
-rejects a missing or invalid value with guidance to preserve the source label
-and add the account email separately. Plaud validates this against the live
-account; it does not assume the account owner organized every recording.
+`account_email` is required independently of `identifier`. If it is missing or
+invalid, config loading rejects it and prompts you to keep the source label and
+add the account email separately. Plaud validates this against the live account
+and does not assume the account owner organized every recording.
 
 `add-omi`, `add-granola`, `add-plaud`, `add-pocket`, `add-circleback`,
 `add-notion-meetings`, and `add-muesli` always confirm the primary email for
-their source. Add other confirmed aliases with the identity command:
+their source. To add other confirmed aliases, run:
 
 ```bash
 msgvault identity add work you+meetings@example.com
 ```
 
-Adding a new confirmed identity immediately repairs `is_from_me` on matching
-messages already stored for that source. No provider resync is required.
+Adding a confirmed identity immediately repairs `is_from_me` on matching
+messages already stored for that source, with no provider resync needed.
 
 ## How meetings connect to people
 
-A meeting shows up on a person when one of its attendees is an email or phone
-number that already belongs to that person, for example from mail, chat, or a
-promoted profile. The attendee becomes a participant, and the next activity
-update (hourly, or `msgvault activity build`) adds the meeting to the person's
-timeline, relationships, and last-contact information.
+A meeting appears on a person's record when one of its attendees has an email
+or phone number that already belongs to that person, for example from mail,
+chat, or a promoted profile. That attendee becomes a participant, and the next
+activity update (hourly, or when you run `msgvault activity build`) adds the
+meeting to the person's timeline, relationships, and last-contact information.
 
-Some sources also know that several emails and phone numbers are the same
-human. msgvault links those identities through the source's stable identifier,
-so a meeting reaches the person even when it only names an address the person
-has never used with you:
+Some sources also know when several emails and phone numbers belong to the same
+person. msgvault links those identities through the source's stable identifier,
+so a meeting reaches the person even when it only names an address they have
+never used with you:
 
 | Source | Identities per attendee | Linked through |
 |---|---|---|
@@ -269,25 +367,26 @@ These links follow the same rules as other automatic identity links:
 
 - Only a shared stable identifier links identities. Matching names never do.
 - Muesli excludes addresses shared by unlinked Contacts cards from automatic
-  linking, even when only one card appears in a meeting. The addresses remain
-  in the meeting evidence.
+  linking, even when only one card appears in a meeting. Those addresses still
+  stay in the meeting evidence.
 - If the identities already belong to two different people, msgvault leaves
-  them apart and records a conflict. So does an address that another card or
-  `id` from the same source already claims in archived observations.
-  Review conflicts in the Web [People: Possible duplicates](/docs/web-ui/#saved-profiles-and-possible-duplicates).
-- Rejecting a proposed link keeps that pair apart. The same identities can
-  still connect through another identity of the same person.
+  them separate and records a conflict. The same happens when another card or
+  `id` from the same source already claims an address in archived observations.
+  Review conflicts in the Web UI under
+  [People: Possible duplicates](/docs/web-ui/#saved-profiles-and-possible-duplicates).
+- Rejecting a proposed link keeps that pair apart, though the same identities
+  can still connect through another identity belonging to the same person.
 
 Attendees known only by name appear in the meeting body but do not link to a
-person. A profile imported from CardDAV links meetings once its email or phone
-participant is promoted or linked to it; see [people](/docs/usage/people/).
+person. A profile imported from CardDAV links to meetings once its email or
+phone participant is promoted or linked to it; see [people](/docs/usage/people/).
 
 ## Import from any meeting source
 
-The provider-neutral import API archives one meeting at a time and requires no
-`[[granola]]`, `[[plaud]]`, `[[circleback]]`, or other provider configuration.
-Configure an API key, start `msgvault serve`, then send authenticated JSON to
-`POST /api/v1/import/meeting`:
+The provider-neutral import API lets you archive one meeting at a time without
+configuring `[[granola]]`, `[[plaud]]`, `[[circleback]]`, or any other
+provider. Configure an API key, start `msgvault serve`, and send authenticated
+JSON to `POST /api/v1/import/meeting`:
 
 ```bash
 curl http://localhost:8080/api/v1/import/meeting \
@@ -314,128 +413,140 @@ curl http://localhost:8080/api/v1/import/meeting \
   }'
 ```
 
-Each organizer or attendee needs an `email`, a `phone`, or both. A phone must be
-international (a leading `+` or `00`) and is stored in E.164 form; national
-numbers are rejected rather than guessed. Add a stable `id` for the person in
-your source to link their email and phone, including across meetings:
+Each organizer or attendee needs an `email`, a `phone`, or both. Phone numbers
+must be international (starting with `+` or `00`) and are stored in E.164 form;
+national numbers are rejected rather than guessed. Include a stable `id` for
+the person in your source to link their email and phone, including across
+meetings:
 
 ```json
 {"name": "Alex Example", "email": "alex@example.com", "phone": "+1 604 555 0100", "id": "crm-42"}
 ```
 
-Choose a stable `source.identifier` for the upstream dataset and preserve the
-upstream meeting ID as `meeting.external_id`. That pair is the idempotency key:
-the first import returns `201` with status `created`; unchanged retries and
-replacements return `200` with status `updated` without creating duplicates.
-`source.account_email` identifies you for sender attribution and becomes a
-confirmed identity for the whole source.
+Pick a stable `source.identifier` for your upstream dataset and preserve the
+upstream meeting ID as `meeting.external_id`. Together, that pair is the
+idempotency key: the first import returns `201` with status `created`, and
+unchanged retries or replacements return `200` with status `updated` without
+creating duplicates. `source.account_email` identifies you for sender
+attribution and becomes a confirmed identity for the whole source.
 
-Use `"action_items": []` when the source supports actions and recorded none.
-Omit `action_items` when it does not provide structured actions. These states
-are different: omission is unsupported, while an explicit empty list is
-available evidence with zero actions. `null` is invalid. Each action needs a
-nonblank `title`; optional fields are `source_id`, `description`,
-`assignee_name`, `assignee_email`, `status`, and `due_date`.
+Pass `"action_items": []` when your source supports actions and recorded none,
+and omit `action_items` when it does not provide structured actions. Omitting
+the field marks actions as unsupported, whereas an explicit empty list records
+available evidence with zero actions. Passing `null` is invalid. Every action
+requires a nonblank `title`, with optional `source_id`, `description`,
+`assignee_name`, `assignee_email`, `status`, and `due_date` fields.
 
-Each meeting needs at least one summary, a plain transcript, or segmented
-transcript. Plain and segmented transcripts are mutually exclusive. Timestamps
-use RFC 3339 with an explicit offset, request bodies are limited to 16 MiB, and
-provider-specific fields belong under `meeting.metadata`. These sources are
-on-demand: import through the API again to add or update meetings rather than
-using **Sync now** or a scheduler.
+Each meeting needs at least one of a summary, a plain transcript, or a
+segmented transcript. Plain and segmented transcripts are mutually exclusive.
+Timestamps use RFC 3339 with an explicit offset, request bodies are capped at
+16 MiB, and provider-specific fields belong under `meeting.metadata`. Imported
+sources are on-demand. To add or update meetings, import through the API again
+rather than using **Sync now** or a scheduler.
 
 ## Omi
 
-Archive conversations from Omi's hosted service, including paid accounts, or
-from your own Omi backend. This integration uses the read-only
-[Developer API](https://docs.omi.me/doc/developer/api/conversations).
-Create a Developer API key with `conversations:read` in **Settings → Developer**
-on the account and backend that hold your conversations. MCP keys (`omi_mcp_…`)
-do not authenticate this REST API.
+You can archive conversations from Omi's hosted service, including paid
+accounts, or from your own Omi backend. This integration reads from the
+read-only [Developer API](https://docs.omi.me/doc/developer/api/conversations).
 
-Add an entry to `config.toml`:
+To connect Omi:
 
-```toml
-[[omi]]
-identifier = "omi-personal"
-account_email = "you@example.com"
-api_key = "omi_dev_..."
-enabled = true
-schedule = "0 */6 * * *"
-# For a self-hosted backend, uncomment and set its root URL:
-# base_url = "http://localhost:8000"
-```
+1. Create a Developer API key with `conversations:read` in
+    **Settings → Developer** on the account and backend that hold your
+    conversations. MCP keys (`omi_mcp_…`) do not authenticate this REST API.
+2. Add an entry to `config.toml`:
 
-Keep the key private. For self-hosting, use the backend URL reachable from the
-msgvault daemon. A reverse-proxy path prefix is allowed; omit `/v1/dev`.
-Use HTTPS for non-loopback backends; plain HTTP is accepted only for loopback
-hosts such as `localhost`, `127.0.0.1`, or `[::1]`.
-An omitted `base_url` uses `https://api.omi.me`. Hosted and self-hosted accounts
-can coexist as separate entries with different identifiers and keys. Register
-and validate each source, then sync:
+    ```toml
+    [[omi]]
+    identifier = "omi-personal"
+    account_email = "you@example.com"
+    api_key = "omi_dev_..."
+    enabled = true
+    schedule = "0 */6 * * *"
+    # For a self-hosted backend, uncomment and set its root URL:
+    # base_url = "http://localhost:8000"
+    ```
 
-```bash
-msgvault add-omi omi-personal
-msgvault sync-omi omi-personal --limit 5
-msgvault sync-omi omi-personal
-```
+    Keep the key private. For a self-hosted backend, set `base_url` to the URL
+    reachable from the msgvault daemon; a reverse-proxy path prefix is allowed,
+    and you should omit `/v1/dev`. Use HTTPS for non-loopback backends. Plain
+    HTTP is accepted only for loopback hosts such as `localhost`, `127.0.0.1`,
+    or `[::1]`. If you omit `base_url`, msgvault uses `https://api.omi.me`.
+    Hosted and self-hosted accounts can coexist as separate entries with
+    different identifiers and keys.
 
-Registration spends one transcript-list request and may wait for shared pacing or a provider cooldown.
+3. Register and validate each source, then sync:
+
+    ```bash
+    msgvault add-omi omi-personal
+    msgvault sync-omi omi-personal --limit 5
+    msgvault sync-omi omi-personal
+    ```
+
+Registration uses one transcript-list request and can wait for shared pacing or
+a provider cooldown.
 
 Each conversation becomes a meeting with its summary, action descriptions,
 completion status, due dates, and timestamped speaker transcript when available.
-Omi's Developer API returns a smaller projection than its backend records. It
-does not include note sections, attendee rosters, action owner names or action
-IDs. The original returned JSON, including fields msgvault does not project, stays in the archive.
+Omi's Developer API returns a smaller projection than its backend records: it
+does not include note sections, attendee rosters, action owner names, or action
+IDs. msgvault keeps the original returned JSON in the archive, including fields
+it does not project.
 
-Speaker names and IDs provide display labels. Omi supplies no verified attendee emails, so these labels do not create email identities. The configured account email records archive ownership; it does not establish who organized the meeting or mean that Omi verified the address.
+Speaker names and IDs appear as display labels. Because Omi supplies no
+verified attendee emails, these labels do not create email identities. Your
+configured account email records archive ownership; it does not establish who
+organized the meeting or mean that Omi verified the address.
 
 ### How Omi sync runs
 
 Omi allows 25 transcript list requests per hour per API key, and each request
-returns up to 200 conversations. msgvault spaces these requests about 144
-seconds apart. Scheduled syncs, manual commands, and every source that uses
-the same key and backend share that spacing.
+returns up to 200 conversations. msgvault spaces requests about 144 seconds
+apart, and scheduled syncs, manual commands, and every source sharing the same
+key and backend share that spacing.
 
 - **First sync.** The first scan reads all accessible history. Each page of 200
-  needs two requests: one reads ahead and one confirms the page did not shift.
-  Every scan ends with one more request that confirms no conversation appeared
+  takes two requests: one reads ahead and one confirms the page did not shift.
+  Every scan finishes with one more request to confirm no conversation appeared
   and pushed an older one past the last page. A 10,000-conversation archive
-  needs about 100 requests, or roughly four hours.
+  takes about 100 requests, or roughly four hours.
 - **Later syncs.** Later scans read conversations created since the last
-  complete scan, plus a 48-hour overlap that catches late processing and recent
+  complete scan, plus a 48-hour overlap to catch late processing and recent
   edits. Unchanged conversations are not rewritten.
 - **Passes.** Each source syncs in passes of up to five minutes. A pass saves
   its place, and the next pass continues the same scan with the same options
   and date range. Conversations created during a scan arrive in the next one.
-  With several sources, `sync-omi` moves on to the next source when a pass pauses.
+  With multiple sources, `sync-omi` moves on to the next source when a pass
+  pauses.
 - **Paused passes.** A pass that runs out of time, yields to other archive
-  work, or waits on a provider cooldown shows as **Paused** in Sources and
-  Past runs. It keeps its checkpoint and records no error. A scheduled pass
-  that saved progress continues right away; a cooldown waits for the next
-  scheduled trigger.
+  work, or waits on a provider cooldown appears as **Paused** in **Sources**
+  and **Past runs**. It keeps its checkpoint and records no error. A scheduled
+  pass that saved progress continues right away, while a cooldown waits for the
+  next scheduled trigger.
 - **Cooldowns.** When Omi returns HTTP 429, msgvault waits for its
-  `Retry-After` delay, up to 24 hours, or one hour when the header is missing or
+  `Retry-After` delay, up to 24 hours, or one hour if the header is missing or
   malformed. Cooldowns survive restarts and apply to every process using the
-  key. A manual sync reports when requests can resume.
+  key. A manual sync tells you when requests can resume.
 - **Server errors.** If the backend keeps returning HTTP 5xx errors until the
-  pass ends, the sync is recorded as failed with the HTTP status. The next run
-  resumes from the saved checkpoint.
+  pass ends, msgvault records the sync as failed with the HTTP status. The next
+  run resumes from the saved checkpoint.
 
 An enabled entry with a schedule supports daemon sync and **Sync Now**.
 
 ### Rescans and scan flags
 
-Omi has no updated-since filter. Run `sync-omi --full` to pick up edits to
-conversations older than the 48-hour overlap, or conversations that become
-visible later with an older creation date.
+Omi has no updated-since filter. To pick up edits to conversations older than
+the 48-hour overlap, or conversations that become visible later with an older
+creation date, run `sync-omi --full`.
 
 - `--after YYYY-MM-DD` limits the scan to conversations created on or after
   that date and implies `--full`.
 - `--limit N` caps processed conversations, including unchanged ones.
 - Runs with either flag keep the creation watermark that later syncs start from.
 - Passing any scan flag explicitly, even `--limit=0` or `--full=false`, replaces
-  an unfinished scan whose options differ, and the command reports the replacement.
+  an unfinished scan whose options differ, and the command reports the
+  replacement.
 
 ### Omi coverage limits
 
@@ -449,24 +560,24 @@ visible later with an older creation date.
 - Conversations without a transcript, including title-only records, are
   archived with transcript coverage marked unavailable. If a later response
   omits a transcript msgvault already archived, msgvault keeps the archived
-  record and says so in the sync output.
-- An explicit empty transcript is valid. Blank speech is skipped. Speech with
-  missing, reversed, or negative timestamps is kept without a timestamp.
+  record and notes that in the sync output.
+- An explicit empty transcript is valid. Blank speech is skipped, and speech
+  with missing, reversed, or negative timestamps is kept without a timestamp.
 - A conversation with malformed field types stops the scan. Meetings already
   saved are kept, and the next run retries the saved page.
-- Recording media and photos stay at Omi. Archived meetings remain after they
-  are deleted upstream.
+- Recording media and photos stay at Omi. Archived meetings stay in your
+  archive even after they are deleted upstream.
 
 Use a new source identifier for a different account or backend dataset. When
-you rotate the key for the same account, keep the identifier so the sync keeps
+you rotate the key for the same account, keep the same identifier so sync keeps
 its saved progress.
 
 ## Twilio
 
-Each recorded Twilio call becomes one meeting
-with its recordings saved as audio attachments, so you keep the audio after
-Twilio deletes it. Calls without a recording aren't archived. Sync only reads: it never places calls, turns on recording, or
-starts paid transcription.
+Each recorded Twilio call becomes one meeting with its recordings saved as
+audio attachments, so you keep the audio even after Twilio deletes it. Calls
+without a recording are not archived. Sync is read-only: it never places calls,
+turns on recording, or starts paid transcription.
 
 ### Connect and sync
 
@@ -481,83 +592,195 @@ msgvault sync-twilio work --limit 20     # process at most 20 calls
 msgvault sync-twilio work --full         # revisit every call Twilio still lists
 ```
 
-`sync-twilio` with no identifier syncs every configured account. Set `schedule`
-on the entry to let the daemon sync it. See the
+Running `sync-twilio` with no identifier syncs every configured account. Set
+`schedule` on the entry to let the daemon sync it automatically. See the
 [CLI reference](../cli-reference.md#sync-twilio) for every flag.
 
-A `--limit` run that stops before the end of the call list says so and prints
-the command to continue, for example `Run: msgvault sync-twilio work --limit 20`.
-Run it again until the summary says the sync is complete.
+When a `--limit` run stops before reaching the end of the call list, it tells
+you and prints the command to continue, for example
+`Run: msgvault sync-twilio work --limit 20`. Repeat that command until the
+summary reports that the sync is complete.
 
 ### What gets stored
 
 - **Audio.** Each completed recording is downloaded as WAV, in two channels
-  when Twilio has them. WAV takes about 1 MB per minute of a mono recording
-  and 2 MB for dual-channel. The default limit is 1 GiB per recording, the
-  largest file msgvault's Docbank audio route delivers;
-  [`max_media_mb`](../configuration.md#twilio-sources) changes it.
-  An opened meeting in the Web UI links each stored recording for download.
-- **Transcripts.** Legacy recording transcriptions and completed Conversation
-  Intelligence transcripts. When a recording has both, the Intelligence
-  transcript is the one you read and search. Transcripts are stored as
-  Twilio serves them, so an Intelligence service with PII redaction on
+  when Twilio has them. WAV takes about 1 MB per minute for a mono recording
+  and 2 MB per minute for dual-channel. The default cap is 1 GiB per recording,
+  which matches the largest file msgvault's Docbank audio route delivers; you
+  can change it with [`max_media_mb`](../configuration.md#twilio-sources). When
+  you open a meeting in the Web UI, each stored recording has a download link.
+- **Transcripts.** msgvault archives legacy recording transcriptions and
+  completed Conversation Intelligence transcripts. When a recording has both,
+  you read and search the Intelligence transcript. Transcripts are stored as
+  Twilio serves them, so an Intelligence service with PII redaction turned on
   stores redacted text.
-- **Call details.** Phone numbers, direction, status and duration stay as
+- **Call details.** Phone numbers, direction, status, and duration stay as
   provider evidence. A phone number is not treated as proof of who spoke.
 
-Summaries and action items are not available from Twilio. A call with audio
-but no transcript shows the transcript as unavailable. An encrypted recording
-is archived as an unavailable attachment with no audio. Recordings kept on
+Twilio does not provide summaries or action items. A call with audio and no
+transcript shows the transcript as unavailable. An encrypted recording is
+archived as an unavailable attachment with no audio. Recordings stored on
 external storage, Relay and Batch transcripts, and recordings without a call
-SID aren't archived.
+SID are not archived.
 
 ### Late recordings, failures, and coverage
 
 Twilio adds recordings and transcripts after a call ends. Each sync lists every
-recording created since seven days before the previous sync started, and
-fetches each listed recording's call again, so audio and transcripts that
-arrive within seven days of a recording's creation reach its meeting on a later
-sync. Ones that arrive after that need `msgvault sync-twilio work --full`,
-which reaches calls whose recordings Twilio still lists, including ones
-deleted within the last 40 days. Each listed call costs about 4 to 6 Twilio requests per sync, which
-suits a schedule of every few hours for up to a few hundred calls a day.
+recording created since seven days before the previous sync started and fetches
+each listed recording's call again, so audio and transcripts that arrive within
+seven days of a recording's creation reach its meeting on a later sync.
+Audio and transcripts arriving after that window need
+`msgvault sync-twilio work --full`, which reaches calls whose recordings Twilio
+still lists, including recordings deleted within the last 40 days.
+Each listed call takes about 4 to 6 Twilio
+requests per sync, which fits a schedule of every few hours for up to a few
+hundred calls a day.
 
-If Twilio refuses a recording download (HTTP 400, 401, 403, 404 or 410) or
-returns something other than audio, the sync still completes and the recording
-shows as failed. A refused transcript read (an HTTP 4xx other than 429), or a
-completed transcription with no text, leaves that transcript unavailable with a note. A
-network, rate-limit or server error on a call marks the sync failed and names
-the call; other calls still sync. Failed calls stay queued for later syncs,
-even when they are older than seven days. Runs without `--after` retry them,
-and pending recordings are not aged out while a retry is queued.
-Retries count toward `--limit`. Limited runs resume unfinished discovery before
-retrying failed calls. Once a call leaves the window with no queued
-failure, recordings still waiting for audio are marked failed, or unavailable
-if Twilio never finished them, and the sync summary says how many; only `--full`
-tries them again. A full sync bounded by `--after` advances the incremental
-starting point only if it covers the previous incremental window.
-A local storage failure
-stops the sync. A recording over the size cap is skipped with a note naming
-it; raise `max_media_mb` and run `--full` to fetch it. Recordings skipped while
-`media = false` are not retried either; after turning `media` back on, run
-`--full` to download them.
+If Twilio refuses a recording download (HTTP 400, 401, 403, 404, or 410) or
+returns something other than audio, the sync still finishes and marks the
+recording as failed. A refused transcript read (an HTTP 4xx other than 429) or
+a completed transcription with no text leaves that transcript unavailable with
+a note.
 
-Twilio can delete call details while keeping the recording. msgvault then
-reports `call_metadata_unavailable` and archives the audio and transcript
-without the phone numbers. Archived audio and text survive later deletions.
+A network, rate-limit, or server error on a call marks the sync failed and names
+the call, while other calls still sync. Failed calls stay queued for later
+syncs even when they are older than seven days. Runs without `--after` retry
+them, pending recordings do not age out while a retry is queued, and retries
+count toward `--limit`. Limited runs resume unfinished discovery before
+retrying failed calls.
 
-US1, IE1 (Dublin) and AU1 (Sydney) each use their own regional credentials.
+Once a call leaves the seven-day window with no queued failure, recordings
+still waiting for audio are marked failed, or unavailable if Twilio never
+finished them. The sync summary reports how many, and only `--full` tries them
+again. A full sync bounded by `--after` advances the incremental starting point
+only if it covers the previous incremental window. A local storage failure
+stops the sync.
+
+If a recording exceeds the size cap, msgvault skips it with a note naming the
+recording; raise `max_media_mb` and run `--full` to fetch it. Recordings
+skipped while `media = false` are not retried automatically either; after
+turning `media` back on, run `--full` to download them.
+
+Twilio can delete call details while keeping the recording. In that case,
+msgvault reports `call_metadata_unavailable` and archives the audio and
+transcript without the phone numbers. Archived audio and text survive later
+deletions in Twilio.
+
+US1, IE1 (Dublin), and AU1 (Sydney) each use their own regional credentials.
 Conversation Intelligence transcripts are read in US1 only, so an IE1 or AU1
 account archives legacy transcriptions alone.
+
+## Bland
+
+Each Bland call becomes one meeting with its summary, transcript, and recording,
+so you keep them even after Bland deletes them. Sync is read-only: it never
+places calls or sets up webhooks.
+
+### Connect and sync
+
+Add a [`[[bland]]` entry](../configuration.md#bland-sources) for each org API
+key, then register and sync it:
+
+```bash
+msgvault add-bland work
+msgvault sync-bland work --probe        # check access without showing calls
+msgvault sync-bland work
+msgvault sync-bland work --limit 20     # fetch at most 20 calls
+msgvault sync-bland work --full         # revisit every call
+```
+
+Running `sync-bland` with no identifier syncs every configured account. Set
+`schedule` on the entry to let the daemon sync it automatically. See the
+[CLI reference](../cli-reference.md#sync-bland) for every flag.
+
+When a `--limit` run stops before the end of the call list, it prints the
+command to continue, for example `Run: msgvault sync-bland work --limit 20`.
+Run that command again until the summary reports that the sync is complete.
+
+### What gets stored
+
+- **Summary and transcript.** msgvault stores the call's summary and its
+  corrected transcript from Bland's delayed postcall webhook payload. Bland
+  produces this only for calls with a configured postcall webhook (with
+  citation extraction); without one, Bland keeps only the original transcript
+  from the call record, and msgvault archives that instead. Transferred
+  conversations are appended with their offsets. If Bland later omits text it
+  sent earlier, the archived text stays intact.
+- **Audio.** msgvault downloads the call's MP3 or WAV recording. The default
+  cap is 1 GiB per recording, the same as Twilio's; change it with
+  [`max_media_mb`](../configuration.md#bland-sources).
+- **Call details.** msgvault keeps the call record and the last postcall
+  webhook payload Bland retains. It stores the payload itself, not the webhook
+  URL or delivery history around it, because a webhook URL is often a secret.
+  Phone numbers stay as provider evidence, not proof of who spoke.
+
+### Late artifacts and coverage
+
+Bland adds summaries, corrected transcripts, and recordings after a call ends.
+
+- **Relist window.** Each sync lists every call created since seven days before
+  the previous sync started and fetches each one again. A summary, transcript,
+  or recording that arrives within seven days of the call's creation reaches
+  its meeting on a later sync. Anything arriving later needs
+  `msgvault sync-bland work --full`.
+- **Calls in progress.** A call is archived before its artifacts exist with
+  whatever data it has, and later syncs update it once it ends. A call
+  scheduled to run more than a week after it was created needs `--full` after
+  it finishes.
+- **Recordings.** msgvault fetches a recording once the call details or
+  postcall data report its URL; a call without a URL gets no recording. Bland
+  deletes recordings after a retention period, which the postcall data reports
+  as `recording_expiration`. Schedule syncs well inside that period; a
+  recording Bland deleted before msgvault stored it cannot be recovered.
+- **Deleted calls.** If a call is deleted on Bland during a first sync or
+  `--full`, that sync can skip one other call. The next sync picks it up if it
+  falls within the seven-day window; otherwise, run `--full` again.
+- **Request cost.** Each listed call takes about 2 Bland requests per sync,
+  plus the recording download until it is stored. That fits a schedule of every
+  few hours for up to a few hundred calls a day.
+
+### Failures
+
+- **Refused recording.** If Bland refuses a recording download (HTTP 400, 401,
+  403, 404, or 410) or returns something other than audio, the sync still
+  finishes and marks the recording as failed.
+- **Refused details or postcall read.** An HTTP 4xx answer other than 404 or
+  429 leaves that part out, and the sync summary counts the affected calls in
+  one note per read and status, such as
+  `postcall data refused (HTTP 403) for 12 call(s)`. A call whose details are
+  refused is archived from the call list, and its postcall data is still
+  fetched. A call whose postcall read is refused is archived from its details.
+  Any transcript the call already has is kept; if it has none, the stored
+  transcript is marked unavailable with the status `provider_refused`. Both
+  `add-bland` and `--probe` report a refused read instead of failing.
+- **Malformed answer.** A malformed call detail answer, including one without
+  a creation time or with a malformed transcript, leaves the call as it was
+  archived. A malformed postcall answer archives the call from its details.
+- **Call errors.** A malformed answer, or a network, rate-limit, or server
+  error on a call, marks the sync failed and names the call along with any
+  malformed field. Other calls still sync. Failed calls stay queued for later
+  syncs even when they are older than seven days. Runs without `--after` retry
+  them, retries count toward `--limit`, and pending recordings do not age out
+  while a retry is queued.
+- **Aged-out recordings.** Once a call leaves the window with no queued
+  failure, recordings still waiting for audio are marked failed, or unavailable
+  if Bland never produced them. The sync summary reports how many, and only
+  `--full` tries them again.
+- **Size cap.** A recording over the size cap is skipped with a note naming it;
+  raise `max_media_mb` and run `--full` to fetch it. Recordings skipped while
+  `media = false` are not retried automatically either; after turning `media`
+  back on, run `--full` to download them.
+- **Local storage failure.** A failure writing to the local attachment store
+  stops the sync.
 
 ## Granola
 
 ### Prerequisites
 
-- A [Granola](https://granola.ai) account on a **Business** plan — the public
+- A [Granola](https://granola.ai) account on a **Business** plan. The public
   API is not available on individual plans.
-- An API key, created in the Granola desktop app under **Settings**. Keys look
-  like `grn_…`.
+- An API key, created in the Granola desktop app under **Settings**. Keys start
+  with `grn_…`.
 
 !!! note "Why not the local cache?"
     Current Granola versions encrypt their on-disk cache, so msgvault reads
@@ -582,7 +805,7 @@ Then validate the key and register the source:
 msgvault add-granola work
 ```
 
-With a single configured entry the identifier argument may be omitted.
+If you have only one configured entry, you can omit the identifier argument.
 
 ### Sync
 
@@ -594,36 +817,36 @@ msgvault sync-granola --full               # re-fetch everything, repair in plac
 msgvault sync-granola --after 2024-01-01   # bound a full sync by creation date
 ```
 
-Sync is incremental: only notes updated since the last successful run are
-fetched (Granola's `updated_after` filter), so edits to notes and late
-transcription both flow into the archive. Re-fetched notes are upserted in
-place — no duplicates.
+Sync is incremental: msgvault fetches only notes updated since the last
+successful run (using Granola's `updated_after` filter), so note edits and late
+transcriptions both flow into your archive. Re-fetched notes update in place
+without creating duplicates.
 
-To try a newly configured account with a small production sync, start with:
+To test a newly configured account with a small production sync, run:
 
 ```bash
 msgvault sync-granola work --limit 5
 msgvault search "meeting topic" --message-type meeting_transcript
 ```
 
-Inspect a few results for the expected title, summary, speaker-labeled
-transcript, organizer, attendees, and `is_from_me` attribution. Running the
-same limited sync again updates the existing meeting rows rather than creating
-duplicates. Once the results look correct, run `msgvault sync-granola work`
-without a limit to continue normal incremental operation.
+Check a few results to confirm the title, summary, speaker-labeled transcript,
+organizer, attendees, and `is_from_me` attribution look right. Running the same
+limited sync again updates the existing meeting rows rather than creating
+duplicates. Once everything looks good, run `msgvault sync-granola work`
+without a limit to switch to normal incremental sync.
 
 ### Scheduling and partial results
 
-With a `schedule` set, `msgvault serve` runs the sync on that cron cadence,
-like `[[gcal]]` calendar sources. Registration is intentionally durable: if
-the Granola source is removed from the archive, a configured schedule refuses
-to recreate it and tells you to run `msgvault add-granola <identifier>`.
+When `schedule` is set, `msgvault serve` runs the sync on that cron cadence,
+like `[[gcal]]` calendar sources. Registration stays durable: if you
+remove the Granola source from the archive, a configured schedule refuses to
+recreate it and prompts you to run `msgvault add-granola <identifier>`.
 
-If one note fails after other notes were written, the run is recorded and
-reported as failed and the successful cursor does not advance. The CLI or
-scheduler refreshes the searchable cache for any successful additions or
-updates before returning that partial-sync error, so already-written notes
-remain searchable. Fix the reported problem and rerun the same sync.
+If one note fails after other notes were written, msgvault records and reports
+the run as failed and does not advance the successful cursor. Before returning
+that partial-sync error, the CLI or scheduler refreshes the searchable cache
+for any successful additions or updates, so already-written notes stay
+searchable. Fix the reported problem and rerun the same sync.
 
 ### What gets stored
 
@@ -639,20 +862,20 @@ remain searchable. Fix the reported problem and rerun the same sync.
 
 ## Notion AI Meeting Notes
 
-Notion sync uses the official read-only Meeting Notes and block APIs. It does
-not modify pages, upload content, or download recording media. Visibility is
-attendee-scoped to the Notion user associated with the integration; it is not
-a workspace-wide export.
+Notion sync uses the official read-only Meeting Notes and block APIs. It never
+modifies pages, uploads content, or downloads recording media. Visibility is
+attendee-scoped to the Notion user tied to the integration. It is not a
+workspace-wide export.
 
 ### Configure and register
 
-Use a personal access token (PAT) or integration with AI Meeting Notes and
+Use a personal access token (PAT) or an integration with AI Meeting Notes and
 Read Content access for meeting content. PATs cannot list workspace users or
-retrieve other users, and have no User Information capability toggle.
-For attendee emails, create an internal integration in the same workspace
-with **Read user information including email addresses**, then supply its token
-as `users_token`. Keep the meeting PAT so discovery
-continues to use the meeting owner's attendee visibility.
+retrieve other users, and they have no User Information capability toggle. To
+include attendee emails, create an internal integration in the same workspace
+with **Read user information including email addresses**, then pass its token
+as `users_token`. Keep the meeting PAT so discovery continues to use the
+meeting owner's attendee visibility.
 
 ```toml
 [[notion_meetings]]
@@ -664,8 +887,11 @@ schedule = "15 */6 * * *"         # optional daemon schedule
 enabled = true
 ```
 
-Keep `config.toml` owner-readable: the token is read from config and is never
-written to logs, sync cursors, archived raw evidence, or command output.
+Keep `config.toml` owner-readable. msgvault reads the token from config and
+never writes it to logs, sync cursors, archived raw evidence, or command
+output.
+
+Register and probe the source:
 
 ```bash
 msgvault add-notion-meetings notion-personal
@@ -674,24 +900,24 @@ msgvault sync-notion-meetings notion-personal --probe
 
 Both commands print capability and result-count diagnostics without printing
 meeting titles, notes, transcripts, attendee details, block IDs, page URLs, or
-the tokens. Probe output checks the optional users token on one sampled attendee
+the tokens. Probe output tests the optional users token on one sampled attendee
 and reports whether that attendee has a verified email.
 
 ### Notion attendee emails
 
 The users token retrieves known attendee IDs directly, including workspace
 members and guests. Only users with `person.email_verified = true` and a usable
-email become anchored participants. Healthy unverified users stay display-only.
+email become anchored participants; healthy unverified users stay display-only.
 
-Each optional user lookup has a 60-second timeout, including retries. Healthy
-lookups can continue throughout the sync. Successful responses and missing IDs
-are cached for the run.
-Invalid credentials, missing User Information capability, provider retry
-exhaustion, and transport failures stop further uncached lookups for that sync.
-Previously verified attendees survive failed or skipped lookups. The next sync
-retries with fresh state. People without a Notion account can't be resolved.
+Each optional user lookup has a 60-second timeout, including retries, and
+healthy lookups can continue throughout the sync. msgvault caches successful
+responses and missing IDs for the duration of the run. Invalid credentials, a
+missing User Information capability, provider retry exhaustion, and transport
+failures stop further uncached lookups for that sync. Previously verified
+attendees survive failed or skipped lookups, and the next sync retries with
+fresh state. People without a Notion account cannot be resolved.
 
-After adding a users token, run `msgvault sync-notion-meetings <identifier>`
+After you add a users token, run `msgvault sync-notion-meetings <identifier>`
 to update participants on existing visible meetings. The 50-meeting discovery
 window still applies.
 
@@ -705,86 +931,110 @@ msgvault sync-notion-meetings --full
 msgvault sync-notion-meetings --after 2026-01-01
 ```
 
-Notion's Meeting Notes query currently returns at most 50 records and can say
-that more exist without providing a cursor. msgvault makes one maximum-size
-query per run, never loops the same page, and reports partial coverage when
-Notion sets `has_more`. This means native sync is reliable for the visible
-recent window but is not a complete historical workspace export.
+Notion's Meeting Notes query currently returns at most 50 records and can
+indicate that more exist without returning a cursor. msgvault makes one
+maximum-size query per run, never loops the same page, and reports partial
+coverage when Notion sets `has_more`. Native sync is reliable for the visible
+recent window, but it is not a complete historical workspace export.
 
-Every run fetches the details of visible meetings that pass your filters.
-Unchanged content is skipped. Use `--full` to send those meetings through the
+Every run fetches the details of visible meetings that pass your filters and
+skips unchanged content. Run with `--full` to send those meetings through the
 archive update path again when stored sync state and archived content disagree.
-It still cannot discover history beyond the visible window.
+Even with `--full`, sync cannot discover history beyond the visible window.
 
 - `--after` filters meetings returned by Notion locally and implies `--full`.
 - `--limit` caps the visible meetings fetched and checked.
-- Due transcript retries run in addition to that limit.
+- Due meeting retries run in addition to that limit.
 
-Notion may publish notes before a transcript. Missing transcripts retry every
-six hours until seven days after the best known meeting end, or for 48 hours
-from discovery when timing is unknown. A temporary omission never erases a
-transcript already archived. Hard per-meeting failures retain the previous
-successful state; meetings written earlier in that failed run remain safe and
-idempotent.
+Meetings under data sources import their summary, notes, and transcript from
+their referenced section blocks. When a page meeting has no transcript section
+or its section reads completely empty, msgvault uses a complete transcript from
+the parent page's Markdown. An incomplete section keeps its saved text for
+retry.
+
+Provider or network errors, incomplete pagination, and request, response-size,
+block-count, and nesting limits can leave sections incomplete. msgvault keeps
+their archived text and evidence and retries section blocks every six hours,
+even after a meeting leaves the query window. Incomplete sections stay queued
+until a complete read is saved.
+
+If page Markdown is incomplete, msgvault keeps the saved transcript and
+retries. When a transcript is missing without an incomplete section, background
+retries stop at the deadline. The sync summary reports partial coverage when a
+section is incomplete or the Notion query reports more meetings.
+
+When a transcript reference disappears without a replacement, msgvault keeps
+the saved transcript and retries. A complete empty referenced transcript
+section clears saved text when page Markdown has no replacement, and other
+omitted sections clear saved text.
+
+If combined evidence exceeds 64 MiB, msgvault keeps the last readable archive
+and reports partial coverage.
+
+A meeting whose saved evidence has a newer version keeps that evidence, and the
+sync reports an error for it. Existing `[[notion_meetings]]` settings need no
+changes. Other hard per-meeting failures retain the previous successful state,
+and meetings written earlier in that failed run stay safe and idempotent.
 
 ### What gets stored (Notion)
 
 Each meeting-note block becomes one `meeting_transcript` message in a
-`meeting` conversation. Its block ID identifies the meeting on later syncs.
-The body includes title, time, attendees, summary, notes, and transcript
-sections. The raw archive (`notion_meeting_json`) keeps the source meeting
-object, note blocks, Markdown, attendee labels, resolved user details, and
-warnings for later inspection.
+`meeting` conversation, identified on later syncs by its block ID. The body
+includes title, time, attendees, summary, notes, and transcript sections. The
+raw archive (`notion_meeting_json`) keeps the source meeting object, note
+blocks, Markdown, attendee labels, resolved user details, and warnings for
+later inspection.
 
 Notion's `created_by` user is stored as creator metadata and is never assumed
 to be the organizer. Only attendees with provider-verified email addresses
-become participant rows. Unknown IDs and names remain display-only evidence.
+become participant rows; unknown IDs and names remain display-only evidence.
 
-If registration reports invalid token, Meeting Notes access, or Read Content
-errors, correct that integration capability and rerun `add-notion-meetings`.
-For attendee emails, correct the separate users integration and its Read user
-information including email addresses capability. A PAT cannot resolve other
-users. Optional lookup failures preserve meeting content. Remove the source with:
+If registration reports an invalid token, Meeting Notes access, or Read Content
+errors, fix that integration capability and rerun `add-notion-meetings`. For
+attendee emails, fix the separate users integration and its **Read user
+information including email addresses** capability (a PAT cannot resolve other
+users). Optional lookup failures preserve meeting content. To remove the
+source, run:
 
 ```bash
 msgvault remove-account notion-personal --type notion_meetings --yes
 ```
 
-A configured schedule will then refuse to recreate it until
-`add-notion-meetings` is run again.
+After removal, a configured schedule refuses to recreate the source until you
+run `add-notion-meetings` again.
 
 ## Plaud
 
-Archive cloud recordings from an ordinary active Plaud account as searchable
-meetings. Enable Cloud Sync and transcribe recordings in Plaud first. msgvault
-reads the full transcripts, speaker labels, recording dates, duration, and every
-note tab through Plaud's hosted MCP service. It does not download audio or
-change recordings in Plaud.
+You can archive cloud recordings from an ordinary active Plaud account as
+searchable meetings. Enable Cloud Sync and transcribe recordings in Plaud
+first. msgvault reads the full transcripts, speaker labels, recording dates,
+duration, and every note tab through Plaud's hosted MCP service. It does not
+download audio or change recordings in Plaud.
 
 ### Authorize your account
 
-Add an entry to `config.toml` on the daemon host:
+1. Add an entry to `config.toml` on the daemon host:
 
-```toml
-[[plaud]]
-identifier = "work"
-account_email = "you@example.com"
-enabled = true
-schedule = "30 */6 * * *"
-```
+    ```toml
+    [[plaud]]
+    identifier = "work"
+    account_email = "you@example.com"
+    enabled = true
+    schedule = "30 */6 * * *"
+    ```
 
-Run `msgvault add-plaud work` on that host and approve the browser request.
-Plaud redirects to `localhost:8091/callback/plaud`. For a headless host,
-forward that port with SSH and open the authorization URL in your local
-browser. A configured remote refuses `add-plaud` before proxying; run
-`msgvault --local add-plaud work` in the remote shell instead.
+2. Run `msgvault add-plaud work` on that host and approve the browser request.
+    Plaud redirects to `localhost:8091/callback/plaud`. On a headless host,
+    forward that port over SSH and open the authorization URL in your local
+    browser. A configured remote refuses `add-plaud` before proxying; run
+    `msgvault --local add-plaud work` in the remote shell instead.
 
-msgvault checks the live account email before registration and on every sync.
-It must match `account_email`. The identifier is a stable label, not an email
-or organizer identity. A registered source retains its confirmed owner. Use a
-new identifier for another account. Credentials are stored in
-`tokens/plaud_<identifier>.json`; changing the MCP endpoint requires fresh
-authorization before those credentials can be used there.
+msgvault checks the live account email before registration and on every sync,
+and it must match `account_email`. The identifier is a stable label, not an
+email or organizer identity. A registered source retains its confirmed owner.
+Use a new identifier for another account. Credentials live in
+`tokens/plaud_<identifier>.json`; if you change the MCP endpoint, you need to
+authorize again before using those credentials there.
 
 ### Sync recordings
 
@@ -795,111 +1045,118 @@ msgvault sync-plaud work --full --after 2025-01-01
 msgvault sync-plaud work --probe
 ```
 
-Every normal run enumerates the recording inventory and checks complete
-transcripts and notes for edits, including speaker corrections and later
-transcript pages. Unchanged content skips archive writes. `--full` repairs
-existing records while preserving stable file IDs. `--after` filters by
-recording date locally and implies `--full`.
+Every normal run lists the recording inventory and checks complete transcripts
+and notes for edits, including speaker corrections and later transcript pages.
+Unchanged content skips archive writes. `--full` repairs existing records while
+keeping stable file IDs, and `--after` filters by recording date locally and
+implies `--full`.
 
-`--limit` bounds the recordings hydrated per run. New recordings come first;
-then runs rotate through the least recently attempted recordings. Failed and
-date-scoped runs save this rotation state too. A failed recording remains
+`--limit` caps how many recordings are hydrated per run. New recordings come
+first, then runs rotate through the least recently attempted recordings. Failed
+and date-scoped runs save this rotation state as well. A failed recording stays
 eligible on its next turn, so it cannot block later recordings in limited runs.
-Rotation state is stored once per source; run history retains outcomes and counts.
-Plaud pagination is eventually consistent, so changes during a run may be
-reconciled on a later run.
+Rotation state is stored once per source, while run history keeps outcomes and
+counts. Because Plaud pagination is eventually consistent, changes made during
+a run may be reconciled on a later run.
 
 Plaud limits how fast an account can call its service. When Plaud rejects a
 call, msgvault waits up to a minute before each retry and slows its remaining
-calls for the rest of the run. Large libraries can still hit the limit on
-every scheduled run. Set `limit` on the `[[plaud]]` entry to spread checks over
+calls for the rest of the run. Large libraries can still hit the limit on every
+scheduled run; set `limit` on the `[[plaud]]` entry to spread checks across
 several scheduled runs, for example `limit = 50` with a six-hour schedule.
 
-A recording awaiting transcription can still archive its metadata and notes.
-Later runs retry pending content. Temporarily missing transcripts or note tabs
-preserve the previously archived content. Recordings deleted from Plaud remain
-in the archive. A failed or canceled run remains marked failed and refreshes
+A recording waiting for transcription can still archive its metadata and notes,
+and later runs retry pending content. Temporarily missing transcripts or note
+tabs keep the previously archived content. Recordings deleted from Plaud stay
+in your archive. A failed or canceled run stays marked failed and refreshes
 search and cache for additions or updates already committed.
 
-`--probe` prints tool names, input schemas, and a first-page recording count.
-It prints no meeting titles, file IDs, transcripts, or note bodies. It helps
-diagnose provider contract changes without modifying the archive.
+Run with `--probe` to print tool names, input schemas, and a first-page
+recording count without printing meeting titles, file IDs, transcripts, or note
+bodies. Use it to diagnose provider contract changes without touching the
+archive.
 
-`msgvault serve` runs enabled entries with a schedule. Removing the registered
-source stops sync from recreating it; run `add-plaud` to register it again.
-See the [configuration reference](../configuration.md#plaud-sources) and
-[CLI reference](../cli-reference.md#sync-plaud) for exact fields and flags.
+`msgvault serve` runs enabled entries that have a schedule. Removing the
+registered source stops sync from recreating it; run `add-plaud` to register
+it again. See the [configuration reference](../configuration.md#plaud-sources)
+and [CLI reference](../cli-reference.md#sync-plaud) for exact fields and flags.
 
 ## Pocket
 
-Archive personal Pocket recordings with their transcripts, completed summaries,
-structured actions, speaker labels, and provider durations.
+You can archive personal Pocket recordings with their transcripts, completed
+summaries, structured actions, speaker labels, and provider durations.
 
-1. Obtain a personal API key in Pocket Settings → Developer → API Keys,
+1. Create a personal API key in Pocket under **Settings → Developer → API Keys**,
    as described in [Pocket's MCP setup](https://docs.heypocketai.com/docs/mcp).
-2. Add a [`[[pocket]]` entry](../configuration.md#pocket-sources) with your account
-   email and a stable label.
+2. Add a [`[[pocket]]` entry](../configuration.md#pocket-sources) with your
+   account email and a stable label.
 3. Set `POCKET_API_KEY`, or your configured `api_key_env`, in the daemon's
    environment and restart the daemon.
-4. Run `msgvault add-pocket personal`, then `msgvault sync-pocket personal`.
+4. Run `msgvault add-pocket personal`, then run `msgvault sync-pocket personal`.
 
-REST discovers recordings and fetches their contents. Pocket's MCP
-`get_account_info` tool verifies the email and stable user ID before registration
-and every sync. Organization membership on a personal account is allowed;
-organization API keys and recordings belonging to other owners are outside
-this integration's scope.
+msgvault uses REST to discover recordings and fetch their contents, and Pocket's
+MCP `get_account_info` tool to verify the email and stable user ID before
+registration and on every sync. Organization membership on a personal account
+is allowed, while organization API keys and recordings belonging to other
+owners are outside this integration's scope.
 
-Each sync checks all recording metadata, so old edited meetings can be refreshed.
-Use [`--limit`, `--after`, and `--full`](../cli-reference.md#sync-pocket) to bound
-or repair a run. Missing, pending, or failed transcript and summary processing
-retains prior usable sections. A successfully completed empty section clears
-that section. Source disappearance never deletes archived evidence.
+Each sync checks all recording metadata, so edits to older meetings can be
+refreshed. Use [`--limit`, `--after`, and `--full`](../cli-reference.md#sync-pocket)
+to bound or repair a run. Missing, pending, or failed transcript and summary
+processing keeps prior usable sections, while a successfully completed empty
+section clears that section. If something disappears from Pocket, msgvault never
+deletes the archived evidence.
 
 Transcripts follow the `transcript.segments` schema in the
 [REST detail reference](https://docs.heypocketai.com/docs/api/recordings/get-recording-details).
-msgvault archives each segment's original-language text, not a translation.
-Segments show Pocket's resolved speaker name when one exists. Otherwise they
-show the raw label, such as `SPEAKER_00`. Only resolved names become meeting
-participants.
+msgvault archives each segment's original-language text rather than a
+translation. Segments show Pocket's resolved speaker name when one exists, or
+the raw label such as `SPEAKER_00` otherwise. Only resolved names become
+meeting participants.
 
-The REST reference leaves summarizations unspecified. msgvault parses completed
-`v2.summary` and `v2.actionItems` packages in the shapes shown in
+The REST reference leaves summarizations unspecified. msgvault parses
+completed `v2.summary` and `v2.actionItems` packages in the shapes shown in
 [Pocket's webhook examples](https://docs.heypocketai.com/docs/api/webhooks).
-Tests use synthetic responses, not captured live accounts, so live summary
-compatibility and plan entitlement remain unverified. An incompatible non-null
-shape fails its recording without replacing existing evidence. API responses
-and combined archived evidence are limited to 64 MiB.
+Tests use synthetic responses rather than captured live accounts, so live
+summary compatibility and plan entitlement remain unverified. An incompatible
+non-null shape fails its recording without replacing existing evidence. API
+responses and combined archived evidence are capped at 64 MiB.
 
-Recording audio, source task updates, and fabricated speaker identities are
-not included. Names without email addresses remain speaker labels. The source
-does not generate a replacement summary or infer an action assignee.
+Recording audio, source task updates, and fabricated speaker identities are not
+included. Names without email addresses stay speaker labels. msgvault does not
+generate a replacement summary or infer an action assignee.
 
 ## Circleback
 
-Circleback exposes no REST API — msgvault pulls data through its MCP server
-(OAuth with dynamic client registration; no secret lives in your config).
+Circleback has no REST API, so msgvault pulls data through its MCP server using
+OAuth with dynamic client registration. No secret lives in your config.
 
 ### Configure and authorize
 
-```toml
-[[circleback]]
-identifier = "work"              # stable source label and token key
-account_email = "you@example.com" # primary identity for organizer matching
-schedule = "30 */6 * * *"        # optional: daemon cron schedule
-enabled = true
-```
+1. Add a `[[circleback]]` entry to `config.toml`:
 
-```bash
-msgvault add-circleback work
-```
+    ```toml
+    [[circleback]]
+    identifier = "work"              # stable source label and token key
+    account_email = "you@example.com" # primary identity for organizer matching
+    schedule = "30 */6 * * *"        # optional: daemon cron schedule
+    enabled = true
+    ```
 
-This opens a browser for Circleback authorization and stores the token under
-`tokens/circleback_<identifier>.json`.
+2. Run the authorization command:
 
-Circleback OAuth uses a fixed `localhost:8090` callback. With a configured
-remote msgvault server, `add-circleback` fails before proxying because the
-callback and token must live on the daemon host. Run the command in a shell on
-that host instead. When connecting over SSH, forward the callback port:
+    ```bash
+    msgvault add-circleback work
+    ```
+
+    This opens a browser for Circleback authorization and saves the token under
+    `tokens/circleback_<identifier>.json`.
+
+Circleback OAuth uses a fixed `localhost:8090` callback. If you have a
+configured remote msgvault server, `add-circleback` fails before proxying
+because the callback and token must live on the daemon host. Run the command in
+a shell on that host instead. When connecting over SSH, forward the callback
+port:
 
 ```bash
 ssh -L 8090:localhost:8090 user@daemon-host
@@ -909,9 +1166,9 @@ msgvault --local add-circleback work
 
 If the remote host cannot open your workstation's browser, copy the printed
 authorization URL into a local browser. The callback reaches the daemon-host
-process through the SSH tunnel. On the daemon host, `--local` means that host's
-own archive; on a workstation it would authorize a separate local archive
-instead of the configured remote.
+process through the SSH tunnel. On the daemon host, `--local` targets that
+host's own archive; on a workstation, it would authorize a separate local
+archive instead of your configured remote.
 
 ### Sync
 
@@ -922,62 +1179,66 @@ msgvault sync-circleback --full              # re-fetch everything
 msgvault sync-circleback --probe             # print tool inventory + sample result
 ```
 
-Each incremental run enumerates meeting IDs without a scheduled-date bound,
-so a newly created backfill is discovered even when the meeting happened long
-ago. Unknown meetings and known meetings created within the 48-hour refresh
-overlap are fetched in detail. Identical snapshots are skipped without
-invalidating the search cache; edits to older known meetings are picked up by
+Each incremental run lists meeting IDs with no scheduled-date bound, so newly
+created backfills show up even when the meeting happened long ago. msgvault
+fetches full details for unknown meetings and for known meetings created within
+the 48-hour refresh overlap. Identical snapshots are skipped without
+invalidating the search cache. To pick up edits to older known meetings, run
 `--full`.
 
 Circleback can publish notes before its transcript is ready. A recognized
-missing or empty transcript is archived with state `pending`, then retried on
-a six-hour cadence. The retry deadline is seven days after the scheduled
-meeting time; records without usable times use a bounded 48-hour window.
-Future meetings first retry at their known end time (or start plus one hour).
-When the deadline expires the state becomes `unavailable`; `--full` can check
+missing or empty transcript is archived with state `pending`, then retried
+every six hours. The retry deadline is seven days after the scheduled meeting
+time, or a bounded 48-hour window for records without usable times. Future
+meetings first retry at their known end time, or start plus one hour. When the
+deadline expires, the state becomes `unavailable`, and `--full` can still check
 and promote it later if a transcript appears.
 
-Due transcript maintenance is processed before newly searched meetings and is
-not counted against `--limit`. For example, `--limit 5` means at most five new
+Due transcript maintenance runs before newly searched meetings and does not
+count toward `--limit`. For example, `--limit 5` processes at most five new
 search results plus every bounded maintenance item that is due. Provider,
 contract, missing-result, ingest, archive-recovery, and cancellation failures
-fail the sync run and leave the prior successful cursor in place; item-atomic
-writes completed before the error remain safe to revisit on the next run.
+fail the sync run and leave the prior successful cursor in place. Item-atomic
+writes completed before the error stay safe to revisit on the next run.
 
-Circleback's tool outputs have no published schema. If a sync imports
-meetings with missing fields, run `--probe` to see the live field names —
-the importer archives verbatim payloads for successfully decoded results.
-Schema-drift payloads that cannot be decoded are rejected instead; diagnose
+Circleback's tool outputs have no published schema. If a sync imports meetings
+with missing fields, run `--probe` to inspect the live field names; the
+importer archives verbatim payloads for successfully decoded results.
+Schema-drift payloads that cannot be decoded are rejected instead. Diagnose
 them with `--probe`, then run `--full` after decoder support is updated.
 
 ### What gets stored (Circleback)
 
-In addition to the shared fields above: action items (title, assignee,
-status), insights, and tags land in the message metadata and body; the
-meeting recording URL and `recording_url_fetched_at` remain in the archived
-provider metadata. msgvault does not expose recording URLs as durable
-attachments, and downloading or archiving recording media is not supported.
+In addition to the shared fields above, action items (title, assignee, status),
+insights, and tags go into the message metadata and body, while the meeting
+recording URL and `recording_url_fetched_at` stay in the archived provider
+metadata. msgvault does not expose recording URLs as durable attachments, and
+downloading or archiving recording media is not supported.
 
 ## Muesli
 
 [Muesli](https://github.com/Muesli-HQ/muesli) records and transcribes meetings
-on a Mac and keeps them in a local SQLite database. msgvault reads that
-database directly and read-only. It never changes Muesli's meetings or schema,
-and it does not call `muesli-cli`, which updates the database whenever it runs.
+on a Mac and stores them in a local SQLite database. msgvault reads that
+database directly in read-only mode. It never modifies Muesli's meetings or
+schema, and it does not call `muesli-cli`, which updates the database whenever
+it runs.
 
 ### Prerequisites
 
-Run the normal msgvault client on the Mac where Muesli records. The archive
-can stay on another host: configure the existing [remote connection](../configuration.md#remote)
-on the Mac. The client reads Muesli and Contacts locally; the daemon owns the
-archive and accepts authenticated, bounded meeting transfers. It never receives
-a Muesli or Contacts database.
+Run the normal msgvault client on the Mac where Muesli records. Your archive
+can still live on another host by configuring the existing
+[remote connection](../configuration.md#remote) on the Mac. The client reads
+Muesli and Contacts locally, while the daemon owns the archive and accepts
+authenticated, bounded meeting transfers. The daemon never receives a Muesli or
+Contacts database.
 
-Without remote mode, same-host sync continues through the local daemon. If
-macOS blocks the read, grant Full Disk Access to the process reading the files:
-the client in remote mode, or `msgvault serve` in same-host mode.
+Without remote mode, same-host sync runs through the local daemon. If macOS
+blocks the read, grant Full Disk Access to the process reading the files: the
+client in remote mode, or `msgvault serve` in same-host mode.
 
 ### Configure and register
+
+Add a `[[muesli]]` entry to `config.toml`:
 
 ```toml
 [[muesli]]
@@ -988,41 +1249,41 @@ schedule = "*/30 * * * *"           # daemon schedule, or remote recorder --watc
 enabled = true
 ```
 
-`db_path` defaults to the stable app's database. Development builds of Muesli
-use a different support folder, such as `MuesliDev`; set `db_path` for those.
+`db_path` defaults to the stable app's database. If you run development builds
+of Muesli, they use a different support folder such as `MuesliDev`, so set
+`db_path` to point there.
 
 ### Attendees from Apple Contacts
 
 People you tag in Muesli usually come from Apple Contacts. msgvault reads the
 Mac's Contacts stores read-only, finds each attendee's card by its Contacts ID
-or exact email, and links its unshared emails and phones. An address on multiple
-unlinked Contacts cards stays in the meeting evidence but does not create an
-identity link. A contact tagged
-with only a phone number therefore reaches the person you already chat with at
-that number.
+or exact email, and links its unshared emails and phones. An address on
+multiple unlinked Contacts cards stays in the meeting evidence without creating
+an identity link. A contact tagged with only a phone number therefore reaches
+the person you already chat with at that number.
 
-- Reading Contacts needs Full Disk Access for the process that runs
-  the client in remote mode or `msgvault serve` in same-host mode. Without it,
-  meetings still sync, and `sync-muesli` reports
-  `Contacts: unavailable`.
-- Phone numbers typed with `+` or `00` always work. Set `phone_country_code`
-  (for example `"1"` or `"44"`) to also use numbers typed without a country
-  code.
+- Reading Contacts requires Full Disk Access for the process running the client
+  in remote mode or `msgvault serve` in same-host mode. Without it, meetings
+  still sync, and `sync-muesli` reports `Contacts: unavailable`.
+- Phone numbers typed with `+` or `00` always work. To also use numbers typed
+  without a country code, set `phone_country_code`, for example `"1"` or `"44"`.
 - When only some Contacts accounts can be read, msgvault still uses Contacts
   IDs to retain meeting evidence, but stops matching by email and creating
-  automatic identity links. An unreadable account could hold another card
-  with the same address. Linking resumes when every account is readable.
+  automatic identity links. An unreadable account could hold another card with
+  the same address. Linking resumes once every account is readable.
 - When Contacts is unreadable or a card disappears, an attendee still present
   in Muesli keeps the identities archived for that meeting. Those retained
-  addresses do not assert current Contacts ownership. Removing the attendee
-  in Muesli removes its meeting association.
-- Set `contacts = false` to turn the lookup off.
+  addresses do not assert current Contacts ownership. Removing the attendee in
+  Muesli removes its meeting association.
+- Set `contacts = false` to turn off the Contacts lookup.
+
+Register the source:
 
 ```bash
 msgvault add-muesli mac
 ```
 
-`add-muesli` checks that the file opens read-only as a Muesli database, then
+`add-muesli` verifies that the file opens read-only as a Muesli database, then
 registers the source.
 
 ### Sync
@@ -1034,7 +1295,7 @@ msgvault sync-muesli --after 2026-01-01
 msgvault sync-muesli --full
 ```
 
-Every run reads the whole database and updates meetings that changed in place,
+Every run reads the whole database and updates changed meetings in place,
 including title, notes, transcript, participant, and folder edits. Unchanged
 meetings are skipped.
 
@@ -1042,8 +1303,8 @@ meetings are skipped.
 - Meetings deleted in Muesli stay in the archive unchanged.
 - `--after` keeps meetings that start on or after the date, read as UTC.
 - `--limit` caps the meetings processed in one run.
-- `--full` rewrites every archived meeting, which refreshes attribution after
-  you add an identity.
+- `--full` rewrites every archived meeting, refreshing attribution after you
+  add an identity.
 
 ### Automatic sync on a remote recorder
 
@@ -1053,41 +1314,45 @@ After registration, keep the native watcher running on the Mac:
 msgvault sync-muesli --watch
 ```
 
-It immediately scans enabled sources with a `schedule`, then rescans on their
-5-field cron schedules. The process must remain running; msgvault does not
-install a service. Each rescan reads the whole database, so late transcript,
+The watcher immediately scans enabled sources with a `schedule`, then rescans
+on their 5-field cron schedules. The process must stay running. msgvault does
+not install a service. Each rescan reads the whole database so late transcript,
 notes, and participant edits import. It uploads only meetings that are new or
 changed since the daemon acknowledged them, plus meetings with pending
 duplicate-card suggestions. The record of acknowledged meetings lives in
 `<data_dir>/muesli-sync` on the Mac; `add-muesli` clears it and `--full`
 ignores it. Source locks in the same directory serialize overlapping native
-watcher, hook, and manual processes before they read a snapshot. A lost acknowledgement is safe to retry:
-the source label, meeting row ID, and creation time preserve archive identity.
+watcher, hook, and manual processes before they read a snapshot. A lost
+acknowledgement is safe to retry: the source label, meeting row ID, and
+creation time preserve archive identity.
 
-For prompt import after recording, install the native executable launcher:
+For prompt import after a recording ends, install the native executable
+launcher:
 
 ```bash
 msgvault muesli-hook --install /path/to/launchers
 ```
 
 Select the resulting `msgvault-muesli-hook` executable in Muesli. Its event
-contains a meeting ID, not an archive export or webhook URL. The launcher reads
+carries a meeting ID, not an archive export or webhook URL. The launcher reads
 that row using msgvault's default configuration and requires exactly one Muesli
-source. The link points at the `msgvault` you ran, such as Homebrew's `bin`
-entry, so upgrades keep it working; rerun the install to repoint it. Keep
-scheduled rescanning enabled to recover missed hooks and later edits. See the [CLI contract](../cli-reference.md#muesli-hook) for event fields,
-limits, and failure behavior.
+source. Because the link points at the `msgvault` you ran (such as Homebrew's
+`bin` entry), upgrades keep it working; rerun the install to repoint it. Keep
+scheduled rescanning enabled to recover missed hooks and later edits. See the
+[CLI contract](../cli-reference.md#muesli-hook) for event fields, limits, and
+failure behavior.
 
 ### Review duplicate Contacts cards
 
 When an attendee's email appears on multiple unlinked Contacts cards, msgvault
-keeps the ambiguity and offers matches to phone identities already in your
-archive. This built-in path works with local and remote sync when every Contacts
-store is readable. Unknown phones do not create archive identities. An email
-shared by so many cards that its phones exceed the 50-identity transfer limit
-gets no suggestions; its meetings still import.
+preserves the ambiguity and offers matches to phone identities already in your
+archive. This built-in path works with both local and remote sync when every
+Contacts store is readable. Unknown phones do not create archive identities. An
+email shared by so many cards that its phones exceed the 50-identity transfer
+limit gets no suggestions, though its meetings still import.
 
-Inspect the suggested email and phone in People’s Possible duplicates or the CLI:
+Inspect the suggested email and phone in **People** under **Possible
+duplicates** or from the CLI:
 
 ```bash
 msgvault identity matches list
@@ -1097,27 +1362,27 @@ msgvault identity matches accept <candidate-id> --review-token <token>
 msgvault identity matches reject <candidate-id> --review-token <token>
 ```
 
-Use the token from `show` after checking its evidence. Acceptance connects the
-meeting attendee to the existing phone-backed person; the next activity update
-includes the meeting without reimporting its transcript. Repeated scans preserve
-accepted and rejected choices. An unchanged meeting can gain a suggestion when
-its phone identity arrives in the archive later.
+Use the token from `show` after reviewing its evidence. Accepting a match
+connects the meeting attendee to the existing phone-backed person, and the next
+activity update includes the meeting without reimporting its transcript.
+Repeated scans preserve accepted and rejected choices. An unchanged meeting can
+gain a suggestion if its phone identity arrives in the archive later.
 
-Evidence describes a historical Contacts observation. It does not establish
+Evidence describes a historical Contacts observation and does not establish
 current ownership. Sync never chooses between divergent phones or merges two
-curated people. If both endpoints already have curated profiles, use the
-[explicit profile merge workflow](/docs/usage/people/#merge-duplicate-profiles-and-reverse-a-merge)
-after reviewing them.
+curated people. If both endpoints already have curated profiles, review them
+and use the
+[explicit profile merge workflow](/docs/usage/people/#merge-duplicate-profiles-and-reverse-a-merge).
 
 Routine imports follow the existing automatic analytics-refresh policy. An
 unchanged remote upload does not request a build. A same-host scheduled scan
-checks the cache even when nothing changed, so a build that
-`min_rebuild_interval` delayed after a hook or manual import still happens. Use
+checks the cache even when nothing changed, so a build delayed by
+`min_rebuild_interval` after a hook or manual import still runs. Pass
 `--build-cache` for an explicit refresh or `--no-build-cache` to skip it.
 
 ### Muesli recordings
 
-Enable recording capture per source on the Mac that reads Muesli:
+To capture recordings, enable them per source on the Mac that reads Muesli:
 
 ```toml
 [[muesli]]
@@ -1128,38 +1393,39 @@ recording_max_bytes = 4294967296  # optional; 4 GiB by default
 ```
 
 Muesli must retain the audio through `meeting_recording_save_policy`. Its
-`meeting_recording_file_format` can be M4A or WAV; msgvault detects the actual
-file format. It reads `meetings.saved_recording_path` within the
+`meeting_recording_file_format` can be M4A or WAV, and msgvault detects the
+actual file format. It reads `meetings.saved_recording_path` within the
 `meeting-recordings` folder beside the configured database. Older databases
 without that column still sync transcripts. Temporary mic and system captures,
 paths outside that folder, and symlinks to files are skipped.
 
 Run `msgvault sync-muesli mac` normally. Audio becomes an ordinary attachment
-on the meeting message, available through the Web UI and message/file API.
-The archive stores bytes by content hash and updates one recording attachment
-per meeting. Rescanning also checks unchanged meetings for late audio. Missing,
-unreadable, incomplete or recently modified files wait for a later sync;
-a file must be untouched for at least five seconds. Keep scheduled rescanning
-or remote `--watch` enabled to pick up deferred files. Source deletion never
-removes an archived recording.
+on the meeting message, available in the Web UI and through the message/file
+API. The archive stores bytes by content hash and updates one recording
+attachment per meeting. Rescanning also checks unchanged meetings for late
+audio. Missing, unreadable, incomplete, or recently modified files wait for a
+later sync, and a file must be untouched for at least five seconds. Keep
+scheduled rescanning or remote `--watch` enabled to pick up deferred files.
+Source deletion never removes an archived recording.
 
-Remote mode snapshots the local audio and streams it separately with owner
-credentials. Neither the database nor the recording path reaches the daemon.
-The recorder's `recording_max_bytes` and the daemon's
+In remote mode, the client snapshots the local audio and streams it separately
+with owner credentials. Neither the database nor the recording path reaches the
+daemon. The recorder's `recording_max_bytes` and the daemon's
 `[server].muesli_recording_max_bytes` each default to 4 GiB per file. An
 oversized recording reports a retryable error while its meeting still imports;
-increase both applicable caps and sync again. Transfers use bounded memory
-and the existing 30-minute upload read deadline. Interrupted transfers restart
-on the next sync and cannot publish truncated audio.
+raise both applicable caps and sync again. Transfers use bounded memory and the
+existing 30-minute upload read deadline. Interrupted transfers restart on the
+next sync and cannot publish truncated audio.
 
 Stored recordings use the shared Docbank attachment and audio classification,
 consent, and content-hash deduplication. The existing audio worker uploads WAV
-(up to its 1 GiB inspection limit) when `[integrations.docbank].enabled` and
-`all_sources_upload_consent` are true. Disabled Docbank sends nothing; enabling
-it without upload consent only records local discovery. M4A and larger files
-need the general attachment mirror proposed in
-[PR #1240](https://github.com/kenn-io/msgvault/pull/1240), with its separate
-`attachment_upload_consent`. See [Docbank configuration](../configuration.md#send-stored-audio-to-docbank)
+files (up to its 1 GiB inspection limit) when `[integrations.docbank].enabled`
+and `all_sources_upload_consent` are true. When Docbank is disabled, nothing is
+sent; enabling it without upload consent only records local discovery. M4A and
+larger files go through the attachment mirror, which has its own separate
+`attachment_upload_consent`; see
+[Mirror stored attachments to Docbank](../configuration.md#mirror-stored-attachments-to-docbank).
+See [Docbank configuration](../configuration.md#send-stored-audio-to-docbank)
 for the shared integration's settings and limits.
 
 ### What gets stored (Muesli)
@@ -1171,16 +1437,16 @@ the summary, the body omits that notice instead of showing it as a summary.
 
 Muesli does not record an organizer. msgvault attributes each meeting to
 `account_email` as its organizer. Participants with an email address become
-recipients and connect to your existing people. Participants without one,
-such as a contact picked by name, appear only by name.
+recipients and connect to your existing people. Participants without one, such
+as a contact picked by name, appear only by name.
 
 The raw archive (`muesli_json`) keeps the meeting's text, times, status,
 template name, calendar event ID, folder path, and participant names, emails,
 phones, review-only phone suggestions, and sources. Suggestions never become
-attendee recipients or automatic links. It never stores audio file paths, screen text,
-template prompts, or Apple Contacts identifiers.
+attendee recipients or automatic links. The raw archive never stores audio file
+paths, screen text, template prompts, or Apple Contacts identifiers.
 
-Remove the archive source with:
+To remove the archive source, run:
 
 ```bash
 msgvault remove-account mac --type muesli --yes

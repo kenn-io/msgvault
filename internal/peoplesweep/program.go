@@ -214,8 +214,14 @@ func extractionPacketFromBatch(batch PacketBatch) (EvidencePacket, error) {
 		return EvidencePacket{}, err
 	}
 	digest := sha256.Sum256(packetJSON)
+	// The output cap is an operator setting, not part of the packet binding.
+	if batch.Request.MaxOutputTokens <= 0 || batch.Request.MaxOutputTokens > extractionMaxOutputTokensLimit {
+		return EvidencePacket{}, errors.New("person fact extraction batch has an invalid output cap")
+	}
+	expected := extractionStructuredRequest(packet, packetJSON)
+	expected.MaxOutputTokens = batch.Request.MaxOutputTokens
 	if batch.InputHash != hex.EncodeToString(digest[:]) ||
-		!reflect.DeepEqual(batch.Request, extractionStructuredRequest(packet, packetJSON)) {
+		!reflect.DeepEqual(batch.Request, expected) {
 		return EvidencePacket{}, errors.New("person fact extraction batch is not bound to its provider request")
 	}
 	return packet, nil

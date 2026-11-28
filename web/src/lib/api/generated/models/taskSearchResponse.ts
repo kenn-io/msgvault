@@ -5,5 +5,7 @@ import type { TaskSummary } from "./taskSummary";
 
 export interface TaskSearchResponse {
   tasks: TaskSummary[];
+  /** More tasks matched than were returned */
+  truncated: boolean;
   [key: string]: unknown;
 }

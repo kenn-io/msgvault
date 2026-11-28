@@ -41,6 +41,8 @@ export interface MessageDetail {
   source_id?: number;
   source_message_id?: string;
   subject: string;
+  /** Title suitable for a browser tab; empty when unavailable. */
+  tab_title: string;
   to: string[];
   /** Recipient participants, populated for conversation windows. */
   to_participants?: ConversationParticipant[];

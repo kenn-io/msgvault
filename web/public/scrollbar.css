@@ -1,15 +1,25 @@
+/* Scrollbar styling for sandboxed archived mail frames (frame-document.ts),
+ * where kit-ui's JS overlay scrollbars cannot run. Matches kit-ui's light/dark
+ * --scrollbar-thumb tokens while keeping an 8px arrowless bar for wide emails. */
 :root {
   --scrollbar-size: 8px;
+  --scrollbar-thumb: color-mix(in srgb, var(--scrollbar-ink) 42%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--scrollbar-ink) 68%, transparent);
 }
 
-/* One scrollbar everywhere: thin, themed, no arrow buttons. Chrome ignores
- * the ::-webkit-scrollbar rules once scrollbar-width or scrollbar-color is
- * set, and Windows then falls back to the classic bar with arrows, so the
- * standard properties apply only where the pseudo-elements don't exist. */
+:root.dark {
+  --scrollbar-thumb: color-mix(in srgb, var(--scrollbar-ink) 46%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--scrollbar-ink) 72%, transparent);
+}
+
+/* Chrome ignores ::-webkit-scrollbar rules once scrollbar-width or
+ * scrollbar-color is set, and Windows then falls back to the classic bar with
+ * arrows, so the standard properties apply only where the pseudo-elements
+ * don't exist. */
 @supports not selector(::-webkit-scrollbar) {
   * {
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--scrollbar-ink) 38%, transparent) transparent;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
   }
 }
 
@@ -27,12 +37,12 @@
 ::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: var(--scrollbar-size);
-  background: color-mix(in srgb, var(--scrollbar-ink) 38%, transparent);
+  background: var(--scrollbar-thumb);
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--scrollbar-ink) 65%, transparent);
+  background: var(--scrollbar-thumb-hover);
   background-clip: content-box;
 }
 

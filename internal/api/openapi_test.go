@@ -563,6 +563,9 @@ func TestPersonFactOpenAPIOperationsContainNoReviewMutation(t *testing.T) {
 		"/api/v1/people/{id}/fact-decisions": {
 			http.MethodGet: "listPersonFactDecisions",
 		},
+		"/api/v1/people/{id}/fact-summary": {
+			http.MethodGet: "getPersonFactSummary",
+		},
 		"/api/v1/people/{id}/fact-pins": {
 			http.MethodGet: "listPersonFactPins",
 		},
@@ -1459,7 +1462,7 @@ func TestOpenAPIDirectoryLastContactParametersAreTyped(t *testing.T) {
 	requirements.Contains(parameters, "sort")
 	assertions.Equal("date-time", parameters["last_contact_after"].Schema.Format)
 	assertions.Equal("date-time", parameters["last_contact_before"].Schema.Format)
-	assertions.ElementsMatch([]any{"name", "last_contact_desc", "last_contact_asc"}, parameters["sort"].Schema.Enum)
+	assertions.ElementsMatch([]any{"name", "last_contact_desc", "last_contact_asc", "most_overdue", "next_due"}, parameters["sort"].Schema.Enum)
 }
 
 func TestOpenAPICardDAVConflictArraysAreRequiredAndNonNull(t *testing.T) {
@@ -2367,5 +2370,18 @@ func TestSearchAttachmentMetadataSchemaScope(t *testing.T) {
 		}
 		assert.Contains(schemas["HybridSearchItem"].Properties, "attachment_count")
 		assert.Contains(schemas["CLIQueryMessageSummary"].Properties, "attachment_count")
+	}
+}
+
+func TestPersonFactDecisionOutcomeOpenAPIEnum(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		schema := document.Components.Schemas.Map()["PersonFactDecision"]
+		require.NotNil(schema)
+		outcome := schema.Properties["outcome"]
+		require.NotNil(outcome)
+		assert.ElementsMatch([]any{"saved", "value-retired", "current-value-kept", "pinned-value-kept", "too-close-to-choose", "not-used"}, outcome.Enum)
+		assert.True(outcome.Nullable)
 	}
 }

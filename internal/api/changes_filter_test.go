@@ -16,11 +16,6 @@ import (
 func TestChangesFilteredCursorPagination(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/?person_id=4&source_id=2&source_id=1&source_id=2&conversation_id=8&incoming_only=true", nil)
-	filter, err := parseChangesFilter(r)
-	requirements.NoError(err)
-	assertions.Equal([]int64{1, 2}, filter.SourceIDs)
-	assertions.Equal("7725ea5be9477647", filter.Digest())
 	srv, st := newChangesServer(t)
 	ids := seedChangedMessages(t, st, 3)
 	setChangesWatermark(t, st, "2020-01-01 00:00:00.000", ids...)
@@ -45,6 +40,13 @@ func TestChangesFilteredCursorPagination(t *testing.T) {
 	refused = doGet(t.Context(), srv, "/api/v1/messages/changes?source_id=999999&cursor="+url.QueryEscape(first.NextCursor))
 	assertions.Equal(http.StatusBadRequest, refused.Code, refused.Body.String())
 	assertions.Contains(refused.Body.String(), "different filter")
+}
+
+func TestChangesFilterDigestStable(t *testing.T) {
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/?person_id=4&source_id=2&source_id=1&source_id=2&conversation_id=8&incoming_only=true", nil)
+	filter, err := parseChangesFilter(r)
+	require.NoError(t, err)
+	assert.Equal(t, "7725ea5be9477647", filter.Digest())
 }
 
 func TestChangesPersonMatchesLinkedSenders(t *testing.T) {

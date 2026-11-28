@@ -114,14 +114,16 @@ type SearchService struct {
 // pixel ceiling used for indexed media, without persisting the query. Still
 // images only; whether the format's query capability was probed is enforced
 // by the provider when the query is embedded.
-func DecodeQueryImage(data []byte) (*MediaInput, error) {
+func (s *SearchService) DecodeQueryImage(data []byte) (*MediaInput, error) {
+	policy := MediaPolicy{MaxBytes: MaxQueryImageBytes, MaxPixels: defaultMaxPixels, IncludeImages: true}
+	if provider, ok := s.provider.(interface{ VisualPolicy() MediaPolicy }); ok {
+		policy = provider.VisualPolicy()
+	}
 	if len(data) == 0 || int64(len(data)) > MaxQueryImageBytes {
 		return nil, errors.New("invalid visual query image size")
 	}
-	metadata, reason := media.InspectBytes(data, "", media.Policy{
-		MaxBytes: MaxQueryImageBytes, MaxPixels: defaultMaxPixels, AllowStill: true,
-	})
-	if reason != media.ReasonEligible || metadata.Kind != media.KindImage || metadata.Animated {
+	metadata, reason := media.InspectBytes(data, "", policy.documentPolicy())
+	if reason != media.ReasonEligible || metadata.Kind != media.KindImage || metadata.Animated || exceedsImageAxis(metadata, policy.MaxImageAxis) || len(policy.AuthorizedCapabilities) > 0 && !policy.authorizes(metadata) {
 		return nil, errors.New("unsupported visual query image")
 	}
 	input := mediaInputFrom(metadata)

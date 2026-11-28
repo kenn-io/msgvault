@@ -25,7 +25,26 @@ const (
 	syncItemKindAttachmentAndRemoteImageError = "attachment_remote_image_error"
 	syncItemKindDeleteError                   = "delete_error"
 	syncItemKindAcquired                      = "acquired"
+	syncItemKindExcludedGmailLabel            = "excluded_gmail_label"
 )
+
+// AcquisitionFailureDescription describes an acquisition error kind for users.
+func AcquisitionFailureDescription(kind string) string {
+	switch kind {
+	case syncItemKindFetchError, syncItemKindBatchFetchError:
+		return "message download failed"
+	case syncItemKindIngestError:
+		return "message processing failed"
+	case syncItemKindAttachmentError:
+		return "attachment saving failed"
+	case syncItemKindRemoteImageError:
+		return "remote image saving failed"
+	case syncItemKindAttachmentAndRemoteImageError:
+		return "attachment and remote image saving failed"
+	default:
+		return "message acquisition failed"
+	}
+}
 
 // isAcquisitionReplayCandidate reports whether a failed fetch or ingest names
 // a usable Gmail message ID.

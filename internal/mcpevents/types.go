@@ -50,8 +50,10 @@ func (e *Error) Status() int {
 // CallbackReason limits diagnostics to transport-owned categories.
 func CallbackReason(reason string) string {
 	switch reason {
-	case "challenge_failed", "timeout", "dns_error", "invalid_callback", "connection_refused", "tls_error", "http_3xx", "http_4xx", "http_5xx":
+	case "challenge_failed", "timeout", "connection_refused", "tls_error", "http_4xx", "http_5xx":
 		return reason
+	case "dns_error":
+		return "connection_refused"
 	default:
 		return "challenge_failed"
 	}

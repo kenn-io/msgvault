@@ -1,17 +1,17 @@
 ---
-last_edited: "2026-11-10"
-title: Choose a Source
+last_edited: "2026-11-19"
+title: Choose a source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
 
-Bring a live account or a local export into the same archive. **Sync** contacts
-a service to collect new and changed records. **Import** reads an export you
-already have. Available history and attachments depend on the service's access
-rules and what the export contains.
+You can bring live accounts and local exports into the same archive. **Sync**
+connects to a service to pull in new and changed records, while **import** reads
+an export you already have. The history and attachments you get depend on
+each service's access rules and what the export includes.
 
-Install msgvault with the [setup guide](../setup.md), then choose a source below.
-You do not need Google OAuth credentials to import local files or use a
-non-Google provider.
+Start by installing msgvault with the [setup guide](../setup.md), then pick a
+source below. You do not need Google OAuth credentials for local imports or
+non-Google providers.
 
 ## Email
 
@@ -24,10 +24,10 @@ non-Google provider.
 | MailMate-style `.mailbox` directories | [EML import](../usage/importing.md) | A `.mailbox` tree containing `.eml` files and an archive identifier |
 | MBOX, Apple Mail, or Outlook PST | [Local email import](../usage/importing.md) | An exported mailbox or readable local mail directory |
 
-Sync preserves mail in the archive without sending or replying to messages.
-[Removing mail from a provider](../usage/deletion.md) is a separate, explicitly
-authorized operation. [Remote image archiving](../usage/remote-images.md) is
-also a separate opt-in because downloading an image can activate email tracking.
+Syncing only saves mail to your archive and never sends or replies to messages.
+[Removing mail from a provider](../usage/deletion.md) is a separate step that
+requires explicit authorization. [Remote image archiving](../usage/remote-images.md)
+is also a separate opt-in, because downloading an image can trigger email tracking.
 
 ## Chat and text messages
 
@@ -36,49 +36,60 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Slack | [Slack sync](../usage/slack.md) | Channels you have joined, group DMs, DMs, threads, and available files |
 | Slackdump export | [Slackdump import](../usage/slack.md) | Local directory or ZIP; no Slack token needed |
 | Microsoft Teams | [Teams sync](../usage/teams.md) | Chats, self-chat, channels, replies, and available media |
-| Discord | [Discord sync and packages](../usage/discord.md) | Bot-accessible guild history; on `main`, official packages import sent-only messages, including DMs, into a separate account source |
+| Discord | [Discord sync and packages](../usage/discord.md) | Bot-accessible guild history; official packages import sent-only messages, including DMs, into a separate account source |
 | Chatwoot | [Chatwoot sync](chatwoot.md) | Shared inboxes, contact and employee messages, media, and linked call meetings |
-| Facebook Page comments | [Page comment sync](../usage/facebook-comments.md) | Selected Page token and app/Page IDs; returned organic, visitor, and ad-post comment conversations; unreleased |
-| Instagram comments | [Professional account sync](../usage/instagram-comments.md) | Selected Page token and linked professional account; returned media comments and replies; unreleased |
+| Facebook Page comments | [Page comment sync](../usage/facebook-comments.md) | Selected Page token and app/Page IDs; returned organic, visitor, and ad-post comment conversations |
+| Instagram comments | [Professional account sync](../usage/instagram-comments.md) | Selected Page token and linked professional account; returned media comments and replies |
+| Facebook and Instagram messages | [Inbox sync](../usage/meta-messages.md) | Page token; Page Messenger or linked Instagram inbox, the 20 most recent messages per conversation |
+| Instagram mentions | [Tagged media sync](../usage/instagram-comments.md#archive-media-that-tags-the-account) | Same profile with `mentions = true`; media where other accounts tag the account |
 | Beeper Desktop | [Beeper sync](../usage/beeper.md) | History and media exposed by the running local Beeper API |
 | Inline | [Inline sync](../usage/inline.md) | All accessible chats, including hidden, archived, and child threads; optional exact chat filter; requires a complete catalog from the connected backend |
 | Matrix | [Matrix sync](../usage/matrix.md) | Joined-room history on any homeserver, with encrypted messages recovered from the account's key backup |
-| WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger, Telegram, X DMs (unreleased on `main`) | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
+| WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger, Telegram, X DMs | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
+| TikTok data export | [TikTok export import](../usage/tiktok-export.md) | Local ZIP or extracted folder; DMs, your own comments, and profile identity |
+| LinkedIn member export | [LinkedIn import](../usage/linkedin.md) | Local ZIP or extracted folder; DMs, your own posts and comments, and optional connection identities |
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
-| Another source, such as feed items or tool notifications | [Messages from any source](../usage/message-import.md) | Provider-neutral ingestion keyed by source and external message ID |
+| RSS, Atom, or JSON feeds | [Feeds](../usage/feeds.md) | Followed feeds fetched on a schedule; each item archived once |
+| Another source, such as tool notifications | [Messages from any source](../usage/message-import.md) | Provider-neutral ingestion keyed by source and external message ID |
 
-Some chat providers apply size and room-participant limits to media. A message can be archived
-without all its media. Review [media policy](../configuration.md#media-policy)
-before a large sync. Providers with a backfill command use it to retry eligible
-missing downloads. [Chatwoot](chatwoot.md) retries recent `--no-media` downloads
-through normal sync; use `--full` after raising a size cap or to retry older quiet files.
+Some chat providers apply size and room-participant limits to media, and a
+message can be archived without all of its media. Before you run a
+large sync, check the [media policy](../configuration.md#media-policy). For
+providers that offer a backfill command, run it to retry eligible missing
+downloads. [Chatwoot](chatwoot.md) retries recent `--no-media` downloads during
+normal sync; pass `--full` after raising a size cap or to retry older quiet
+files.
 
 ## Meetings, calendars, and contacts
 
 | Your source | Start here | What it adds |
 |---|---|---|
-| Omi, Granola, Plaud, Pocket, Circleback, Notion AI Meeting Notes, Muesli, Twilio calls, or Twenty call recordings | [Meeting notes and transcripts](../usage/meetings.md) | Searchable notes, context exports, recorded actions, and meeting-time coverage |
+| Omi, Granola, Plaud, Pocket, Circleback, Notion AI Meeting Notes, Muesli, Twilio or Bland calls, or Twenty call recordings | [Meeting notes and transcripts](../usage/meetings.md) | Searchable notes, context exports, recorded actions, and meeting-time coverage |
 | Another meeting capture tool | [Meeting import workflow](../usage/meetings.md#import-from-any-meeting-source) | Provider-neutral ingestion keyed by source and external meeting ID |
 | Google Calendar | [Calendar sync](../usage/calendar.md) | Events, organizers, attendees, recurrence, and cancellation state |
+| Calendar `.ics` file | [Calendar import](../cli-reference.md#import-ics) | Events, organizers, attendees, recurrence, and cancellation state |
 | CardDAV address book | [CardDAV contacts](../usage/people-carddav.md) | Imported contacts and explicit publication of curated profiles |
 
-Meeting and calendar sync reads source data. CardDAV can also write to address
-books when you select a publication role and explicitly publish a person;
-review its conflict and consent workflow before enabling that direction.
+Meeting and calendar sync only reads from the source. CardDAV can also write
+back to your address books if you pick a publication role and explicitly publish
+a person. Before you turn on writing, read through its conflict and consent
+workflow.
 
 ## After the first import or sync
 
-1. Open the [Web UI](../web-ui.md) or [TUI](../usage/tui.md) and inspect a small
-   sample, including attachments and dates.
+1. Open the [Web UI](../web-ui.md) or [TUI](../usage/tui.md) and check a small
+   sample of messages, including attachments and dates.
 2. Confirm [which identifiers mean you](../usage/people.md) so sent/received
-   classification and contact activity have the right starting point.
-3. Set a provider schedule if you want ongoing sync. Local export imports remain
-   separate commands; see each guide for repeat-import behavior.
-4. Create a [backup](../usage/backup.md). Add more sources and
-   [organize accounts into collections](../usage/multi-account.md) as needed.
+   classification and contact activity start from the right identity.
+3. If you want ongoing sync, set a provider schedule. Local export imports
+   remain separate commands; check each guide for how repeat imports behave.
+4. Create a [backup](../usage/backup.md), then add more sources and
+   [organize accounts into collections](../usage/multi-account.md) as you need
+   them.
 
-For records already stored, keyword search and analytics use the archive.
-Optional [semantic search and profile automation](../usage/recommended-configuration.md)
-have their own provider configuration. Message embeddings are enabled through
-configuration; people, visual, and document features also require their stated
+Keyword search and analytics work directly on the records already in your
+archive. Optional
+[semantic search and profile automation](../usage/recommended-configuration.md)
+need their own provider configuration. You turn on message embeddings in your
+config, while people, visual, and document features also require their stated
 consent steps.

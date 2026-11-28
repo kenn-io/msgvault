@@ -34,55 +34,60 @@ type messageMetadata struct {
 	ProjectionFormat    string    `json:"projection_format"`
 }
 
-func (imp *Importer) validateOptions(ctx context.Context, opts ImportOptions) (ImportOptions, error) {
+// validateOptions also returns the discovered catalog by chat ID; an explicit
+// chat selection skips discovery and returns none.
+func (imp *Importer) validateOptions(ctx context.Context, opts ImportOptions) (ImportOptions, map[int64]Conversation, error) {
 	if imp.store == nil || imp.client == nil {
-		return opts, errors.New("inline importer requires a store and client")
+		return opts, nil, errors.New("inline importer requires a store and client")
 	}
 	if !validID(opts.Account.UserID) || opts.Limit < 0 {
-		return opts, errors.New("valid Inline account and non-negative message limit required")
+		return opts, nil, errors.New("valid Inline account and non-negative message limit required")
 	}
 	origin, err := CanonicalOrigin(opts.Account.Origin)
 	if err != nil {
-		return opts, err
+		return opts, nil, err
 	}
 	opts.Account.Origin = origin
 	seen := map[int64]bool{}
 	for _, id := range opts.ChatIDs {
 		if !validID(id) || seen[id] {
-			return opts, errors.New("inline selected chat IDs must be valid and unique")
+			return opts, nil, errors.New("inline selected chat IDs must be valid and unique")
 		}
 		seen[id] = true
 	}
 	opts.ChatIDs = slices.Clone(opts.ChatIDs)
 	if err := opts.MediaPolicy.Validate(); err != nil {
-		return opts, err
+		return opts, nil, err
 	}
 	actual, err := imp.client.Me(ctx)
 	if err != nil {
-		return opts, fmt.Errorf("authenticate Inline account: %w", err)
+		return opts, nil, fmt.Errorf("authenticate Inline account: %w", err)
 	}
 	actualOrigin, err := CanonicalOrigin(actual.Origin)
 	if err != nil {
-		return opts, err
+		return opts, nil, err
 	}
 	if actual.UserID != opts.Account.UserID || actualOrigin != origin {
-		return opts, errors.New("inline client authenticated a different account")
+		return opts, nil, errors.New("inline client authenticated a different account")
 	}
+	var listed map[int64]Conversation
 	if len(opts.ChatIDs) == 0 {
 		catalog, discoverErr := imp.client.Discover(ctx)
 		if discoverErr != nil {
-			return opts, fmt.Errorf("discover Inline conversations: %w", discoverErr)
+			return opts, nil, fmt.Errorf("discover Inline conversations: %w", discoverErr)
 		}
+		listed = make(map[int64]Conversation, len(catalog))
 		for _, chat := range catalog {
 			if !validID(chat.ID) || seen[chat.ID] {
-				return opts, errors.New("inline discovery returned an invalid or repeated chat identity")
+				return opts, nil, errors.New("inline discovery returned an invalid or repeated chat identity")
 			}
 			seen[chat.ID] = true
+			listed[chat.ID] = chat
 			opts.ChatIDs = append(opts.ChatIDs, chat.ID)
 		}
 		slices.Sort(opts.ChatIDs)
 	}
-	return opts, nil
+	return opts, listed, nil
 }
 
 func (imp *Importer) loadState(ctx context.Context, sourceID int64, account string) (*SyncState, error) {
@@ -131,7 +136,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	started := time.Now()
 	sum = &ImportSummary{}
 	defer func() { sum.Duration = time.Since(started) }()
-	opts, err = imp.validateOptions(ctx, opts)
+	var catalog map[int64]Conversation
+	opts, catalog, err = imp.validateOptions(ctx, opts)
 	if err != nil {
 		return sum, err
 	}
@@ -143,6 +149,18 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	state, err := imp.loadState(ctx, source.ID, opts.Account.Identifier())
 	if err != nil {
 		return sum, fmt.Errorf("load Inline resume state: %w", err)
+	}
+	// Archived titles let a renamed chat be read even without new messages.
+	var titles map[string]string
+	if len(catalog) > 0 {
+		keys := make([]string, 0, len(catalog))
+		for id := range catalog {
+			keys = append(keys, chatKey(id))
+		}
+		titles, err = imp.store.ConversationTitlesBatchContext(ctx, source.ID, keys)
+		if err != nil {
+			return sum, err
+		}
 	}
 	// Paused chats retain their own repair debt, but cannot prevent a full
 	// repair of the currently selected scope from starting or completing.
@@ -221,6 +239,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		// Per-message and failure checkpoints retain this rotation while each
 		// chat's existing history, scan and repair cursors retain its debt.
 		state.NextChatID = chatIDs[(index+1)%len(chatIDs)]
+		// A scan captures only messages newer than the archived head, so a
+		// chat whose listed newest message is already archived has nothing
+		// to read. --full still revisits it through its repair walk.
+		if unchangedSinceArchive(catalog[chatID], state.chat(chatID), titles) {
+			continue
+		}
 		var conversation Conversation
 		conversation, err = scoped.client.Conversation(ctx, chatID)
 		if err != nil {
@@ -306,6 +330,18 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	err = scoped.store.CompleteSyncAndPreserveSourceCursorContext(ctx, runID, source.ID, blob)
 	return sum, err
+}
+
+// unchangedSinceArchive reports whether a catalog entry shows nothing a scan
+// would capture: the chat's history is complete with no scan or repair in
+// progress, its listed newest message is already archived, and its archived
+// title matches. A catalog without lastMessageId never qualifies.
+func unchangedSinceArchive(listed Conversation, chat *ChatState, titles map[string]string) bool {
+	if !listed.LastMessageKnown || !chat.Initialized || !chat.HistoryDone || chat.ScanActive || chat.RepairActive {
+		return false
+	}
+	title, archived := titles[chatKey(listed.ID)]
+	return archived && title == listed.Title && listed.LastMessageID <= chat.Head
 }
 
 func (imp *Importer) persistConversation(ctx context.Context, sourceID int64, conversation Conversation, account Account) (int64, error) {

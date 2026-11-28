@@ -31,6 +31,12 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 		{MessageID: 2, ChunkIndex: 0, Vector: unitVec(5, 0)},
 		{MessageID: 3, ChunkIndex: 0, Vector: unitVec(5, 1)},
 	}))
+	checkpoints := backend.EmbeddingCheckpoints()
+	require.NoError(t, checkpoints.Save(t.Context(), building, []vector.EmbeddingCheckpoint{
+		{Owner: "message:1", Revision: "r", Key: "input", Vectors: [][]float32{{1, 0}}},
+		{Owner: "message:3", Revision: "r", Key: "input", Vectors: [][]float32{{1, 0}}},
+		{Owner: "context:chat-a", Revision: "r", Key: "input", Vectors: [][]float32{{1, 0}}},
+	}))
 
 	_, err = db.ExecContext(t.Context(), `
 		UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = 2;
@@ -42,6 +48,9 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 	pruned, err := pruner.PruneOrphanEmbeddings(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), pruned, "generation/message pairs pruned")
+	owners, err := checkpoints.Owners(t.Context(), building, "", "", 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"context:chat-a", "message:1"}, owners)
 
 	var embeddings int64
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embeddings`).Scan(&embeddings))

@@ -2713,6 +2713,7 @@ var RequiredParquetDirs = []string{
 	identityindex.DatasetRelationshipDaily,
 	identityindex.DatasetLogicalContributions,
 	identityindex.DatasetTemperatureContributions,
+	identityindex.DatasetMeetingGroups,
 }
 
 // SearchFast searches message metadata in Parquet files (no body text).

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Disclosure, Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, EmptyState, overlayScrollbars, SegmentedControl } from '@kenn-io/kit-ui';
 
   import { tick, untrack } from 'svelte';
   import type { IdentityMatchCandidate } from '../../api/generated/models';
@@ -81,7 +81,7 @@
   const decidedLabel: Record<string, string> = { accepted: 'Merged', rejected: 'Kept separate' };
 </script>
 
-<div class="duplicates">
+<div class="duplicates" {@attach overlayScrollbars()}>
   <div class="toolbar">
     <SegmentedControl
       ariaLabel="Show"

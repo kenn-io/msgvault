@@ -395,7 +395,7 @@ func lookupGmailAccountBinding(ctx context.Context, email string) (sql.NullStrin
 		return sql.NullString{}, false, err
 	}
 	defer func() { _ = st.Close() }()
-	accounts, _, err := st.GetCLIAccounts(ctx)
+	accounts, err := st.GetCLIAccounts(ctx)
 	if err != nil {
 		return sql.NullString{}, false, fmt.Errorf("look up existing source: %w", err)
 	}
@@ -537,7 +537,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("Account %s authorized via service account.\n", email)
 		fmt.Println("Next step:")
-		oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync-full", "--", email)
+		oauth.PrintHeadlessCommand(os.Stdout, oauth.HeadlessSyncArgs("sync-full", email)...)
 		return nil
 	}
 
@@ -640,7 +640,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Account %s is already authorized.\n", email)
 		}
 		fmt.Println("Next step:")
-		oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync-full", "--", email)
+		oauth.PrintHeadlessCommand(os.Stdout, oauth.HeadlessSyncArgs("sync-full", email)...)
 		return nil
 	}
 
@@ -697,7 +697,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\nAccount %s authorized successfully!\n", email)
 	fmt.Println("You can now run:")
-	oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync-full", "--", email)
+	oauth.PrintHeadlessCommand(os.Stdout, oauth.HeadlessSyncArgs("sync-full", email)...)
 
 	return nil
 }

@@ -26,6 +26,15 @@ func TestProhibitedHostnameRejectsPrivateAndObfuscatedNames(t *testing.T) {
 	assert.False(t, ProhibitedHostname("images.example.com"))
 }
 
+func TestLocalHostnameExcludesNumericNames(t *testing.T) {
+	for _, hostname := range []string{"localhost", "api.localhost", "printer.local.", "nas.home.arpa", "api.internal", "nas"} {
+		assert.Truef(t, LocalHostname(hostname), "%q", hostname)
+	}
+	for _, hostname := range []string{"", "16843009", "0x01010101", "1.1", "images.7", "images.example.com"} {
+		assert.Falsef(t, LocalHostname(hostname), "%q", hostname)
+	}
+}
+
 func TestProhibitedIPRejectsPrivateAndTranslatedDestinations(t *testing.T) {
 	for _, raw := range []string{
 		"127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "fd00::1",

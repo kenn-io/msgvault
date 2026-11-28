@@ -1855,7 +1855,7 @@ func TestGetMessage(t *testing.T) {
 					assert.Equal(t, "unsupported_format", got.SegmentsUnavailable)
 					assert.Empty(t, got.SegmentsVersion)
 				} else {
-					assert.Equal(t, "seg-v1", got.SegmentsVersion)
+					assert.Equal(t, msgsegment.Version, got.SegmentsVersion)
 					assert.Empty(t, got.SegmentsUnavailable)
 				}
 			})
@@ -1901,7 +1901,7 @@ func TestGetMessage(t *testing.T) {
 		require.NoError(err)
 		require.False(result.IsError)
 		got := task5StructuredAs[map[string]any](t, result)
-		assert.Equal("seg-v1", got["segments_version"])
+		assert.Equal(msgsegment.Version, got["segments_version"])
 		assert.Equal([]any{
 			map[string]any{"kind": "authored", "start": float64(0), "end": float64(4)},
 			map[string]any{"kind": "quoted", "start": float64(4), "end": float64(10), "depth": float64(1)},
@@ -3332,18 +3332,6 @@ func TestStageDeletion(t *testing.T) {
 			},
 		)
 		assert.Contains(t, resultText(t, r), "matches multiple sources")
-	})
-
-	t.Run("older daemon returns an upgrade error without a batch", func(t *testing.T) {
-		assertions := assert.New(t)
-		engine := &querytest.MockEngine{GetDeletionTargetsBySearchBoundedFunc: func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, int, error) {
-			return nil, 0, daemonclient.ErrBoundedDeletionSearchUnsupported
-		}}
-		saver := &captureDeletionManifestSaver{}
-		h := &handlers{engine: engine, manifestSaver: saver}
-		result := runToolExpectError(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "from:news"})
-		assertions.Contains(resultText(t, result), daemonclient.ErrBoundedDeletionSearchUnsupported.Error())
-		assertions.Nil(saver.manifest)
 	})
 
 	t.Run("selection over the limit is refused without a batch", func(t *testing.T) {

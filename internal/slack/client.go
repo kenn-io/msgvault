@@ -13,8 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/httpretry"
 	"golang.org/x/time/rate"
+
+	"go.kenn.io/msgvault/internal/httpretry"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 const (
@@ -50,6 +52,10 @@ var methodTiers = map[string]int{
 
 // ErrNotFound reports a channel/thread/user that no longer exists.
 var ErrNotFound = errors.New("not found")
+
+// ErrChannelNotFound is the ErrNotFound for a conversation that is gone or
+// unreadable, as distinct from one missing thread or message inside it.
+var ErrChannelNotFound = fmt.Errorf("channel %w", ErrNotFound)
 
 // ErrAssetTooLarge reports a file exceeding the caller's size cap; the cap is
 // enforced while reading so oversized bodies are never fully buffered.
@@ -94,6 +100,7 @@ var authAPIErrors = map[string]bool{
 type Client struct {
 	baseURL string
 	token   string
+	cookie  string // optional d cookie, paired with an xoxc browser token
 	http    *http.Client
 	// scopes is refreshed from Slack's X-OAuth-Scopes response header.
 	scopes []string
@@ -116,7 +123,14 @@ func NewClient(baseURL, token string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
-		http:    &http.Client{Timeout: 60 * time.Second},
+		http: &http.Client{
+			Timeout: 60 * time.Second,
+			// API methods have no legitimate redirects. Refuse them before
+			// bearer credentials or browser cookies can leave the API host.
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 		limiters: map[int]*rate.Limiter{
 			2: perMinute(18),
 			3: perMinute(45),
@@ -149,6 +163,9 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, out
 	if !ok {
 		return fmt.Errorf("slack client: method %q is not allowlisted", method)
 	}
+	if err := (Credentials{Token: c.token, Cookie: c.cookie}).Validate(); err != nil {
+		return err
+	}
 	reqURL := c.baseURL + "/" + method
 	body := params.Encode()
 	for attempt := range maxRetries {
@@ -163,7 +180,7 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, out
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Authorization", "Bearer "+c.token)
+		c.authenticate(req)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		resp, err := c.http.Do(req) // #nosec G704 -- see reqURL above
 		if err != nil {
@@ -216,6 +233,8 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, out
 // apiError maps a Slack method-level error string to a typed error.
 func apiError(method string, envelope *apiResponse) error {
 	switch {
+	case envelope.Error == "channel_not_found":
+		return fmt.Errorf("slack %s: %s: %w", method, envelope.Error, ErrChannelNotFound)
 	case notFoundAPIErrors[envelope.Error]:
 		return fmt.Errorf("slack %s: %s: %w", method, envelope.Error, ErrNotFound)
 	case envelope.Error == "invalid_cursor":
@@ -236,7 +255,7 @@ func truncate(b []byte, n int) string {
 	if len(b) <= n {
 		return string(b)
 	}
-	return string(b[:n]) + "…"
+	return textutil.PrefixBytes(string(b), n) + "…"
 }
 
 // AuthTest validates the token and identifies its workspace and user.
@@ -260,7 +279,7 @@ func (c *Client) AllConversations(ctx context.Context, fn func(Conversation) err
 		{"channels:read", "public_channel"}, {"groups:read", "private_channel"},
 		{"mpim:read", "mpim"}, {"im:read", "im"},
 	} {
-		if slices.Contains(c.scopes, scope.read) {
+		if c.canRead(scope.read) {
 			types = append(types, scope.kind)
 		}
 	}

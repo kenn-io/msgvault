@@ -103,22 +103,19 @@ func TestMeetingAccountsExcludeUnrelatedSources(t *testing.T) {
 		query.AccountInfo{ID: 7, SourceType: "muesli", Identifier: "mac"},
 		query.AccountInfo{ID: 8, SourceType: "twilio", Identifier: "twilio-calls"},
 		query.AccountInfo{ID: 9, SourceType: "chatwoot", Identifier: "https://chatwoot.example.com/accounts/3/inboxes/7", DisplayName: "Support inbox"},
+		query.AccountInfo{ID: 10, SourceType: "bland", Identifier: "bland-calls"},
 	).Build()
 
 	accounts := model.meetingAccounts()
 
-	require.Len(t, accounts, 7)
-	assert.Equal([]string{"work-notes", "team-meetings", "local-meetings", "notion-notes", "mac", "twilio-calls", "https://chatwoot.example.com/accounts/3/inboxes/7"}, []string{
-		accounts[0].Identifier,
-		accounts[1].Identifier,
-		accounts[2].Identifier,
-		accounts[3].Identifier,
-		accounts[4].Identifier,
-		accounts[5].Identifier,
-		accounts[6].Identifier,
-	})
+	identifiers := make([]string, 0, len(accounts))
+	for _, account := range accounts {
+		identifiers = append(identifiers, account.Identifier)
+	}
+	assert.Equal([]string{"work-notes", "team-meetings", "local-meetings", "notion-notes", "mac", "twilio-calls", "https://chatwoot.example.com/accounts/3/inboxes/7", "bland-calls"}, identifiers)
 	assert.Equal("Twilio", model.meetingSourceLabel(8))
 	assert.Equal("Support inbox", model.meetingSourceLabel(9))
+	assert.Equal("Bland", model.meetingSourceLabel(10))
 }
 
 func TestMeetingImportedSourceLabelUsesDisplayNameAndFallbacks(t *testing.T) {

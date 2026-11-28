@@ -387,6 +387,11 @@ type GetMessagePath struct {
 	ID int64 `json:"id"`
 }
 
+type GetEmailFamilyPath struct {
+	// ID Live archived email message ID
+	ID int64 `json:"id"`
+}
+
 type GetMessageInlinePartPath struct {
 	// ID Message ID
 	ID int64 `json:"id"`
@@ -741,6 +746,11 @@ func (s SetPersonFactPinPath) Validate() error {
 	return errors
 }
 
+type GetPersonFactSummaryPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type SearchPersonFilesPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
@@ -1021,6 +1031,11 @@ type PutSettingsProviderCredentialPath struct {
 
 func (p PutSettingsProviderCredentialPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type RepairAccountAttributionPath struct {
+	// SourceID Source ID
+	SourceID int64 `json:"source_id"`
 }
 
 type ListSourceIdentitiesPath struct {

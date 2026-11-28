@@ -93,6 +93,10 @@ func TestBuildCache_RefreshesReplyUpdatedBeforeSlackYield(t *testing.T) {
 	require.Equal("Original reply @Example", snippet)
 
 	edited.Store(true)
+	// Plain syncs ignore edits to archived replies; a --full repair
+	// re-fetches them. Its session outlives the yield, so the resumed
+	// plain sync below continues it.
+	opts.Full = true
 	ctx, cancel := context.WithCancelCause(t.Context())
 	defer cancel(nil)
 	opts.Progress = func(line string) {
@@ -102,13 +106,14 @@ func TestBuildCache_RefreshesReplyUpdatedBeforeSlackYield(t *testing.T) {
 	}
 	yielded, err := imp.Import(ctx, opts)
 	require.ErrorIs(err, context.Canceled)
-	require.Equal(1, yielded.MessagesUpdated)
+	require.Equal(2, yielded.MessagesUpdated, "the repair re-saves the root and its edited reply")
 	latest, err := st.GetLatestSync(yielded.SourceID)
 	require.NoError(err)
 	require.Equal(store.SyncStatusCancelled, latest.Status)
 	requestsBeforeResume := replyRequests.Load()
 
 	opts.Progress = nil
+	opts.Full = false
 	resumed, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	require.Zero(resumed.MessagesUpdated, "the continuation skips the visited channel")
@@ -124,6 +129,6 @@ func TestBuildCache_RefreshesReplyUpdatedBeforeSlackYield(t *testing.T) {
 	assert.Equal("Updated reply @Example", snippet)
 	state, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
-	assert.Equal(int64(1), state.LastCacheUpdateCount)
+	assert.Equal(int64(2), state.LastCacheUpdateCount)
 	assert.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild, "the repaired cache must converge")
 }

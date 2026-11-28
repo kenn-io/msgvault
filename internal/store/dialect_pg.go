@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for database/sql
@@ -326,6 +325,8 @@ func (d *PostgreSQLDialect) RFC822CanonicalIDIndexDefinition() string {
 // mismatch on the sources.sync_config write path.
 func (d *PostgreSQLDialect) JSONBindExpr() string { return "?::JSONB" }
 
+func (d *PostgreSQLDialect) JSONTextBindExpr() string { return "?::JSON" }
+
 func (d *PostgreSQLDialect) JSONIsDistinctExpr(col string) string {
 	return col + " IS DISTINCT FROM ?::JSONB"
 }
@@ -375,8 +376,9 @@ func (d *PostgreSQLDialect) InsertOrIgnoreSuffix() string {
 // empirically). The 600000-char cap makes the error unlikely for typical
 // (mostly-ASCII, repetitive) bodies, but does not make it impossible.
 //
-// Dense tokens can still exceed the limit. The write and backfill paths
-// mark such messages unsearchable and continue.
+// Dense tokens can still exceed the limit. Atomic message persistence, email
+// repair and backfill mark recognized overflows unsearchable; direct indexing
+// entries propagate the error.
 const maxFTSBodyChars = 600000
 
 // maxFTSBodyBytes bounds each input before PostgreSQL builds the vector.
@@ -385,18 +387,6 @@ const maxFTSBodyBytes = 700000
 // truncateBytesRuneSafe returns s truncated to at most maxFTSBodyBytes bytes
 // without splitting a multibyte UTF-8 rune. If s already fits it is returned
 // unchanged.
-func truncateBytesRuneSafe(s string) string {
-	if len(s) <= maxFTSBodyBytes {
-		return s
-	}
-	// Walk back from maxFTSBodyBytes to the start of the rune that straddles
-	// the boundary so we never emit a partial rune.
-	cut := maxFTSBodyBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
-}
 
 // FTSUpsert updates the tsvector column on messages for a single message.
 // PostgreSQL stores the FTS index inline on `messages.search_fts`, so there
@@ -406,9 +396,14 @@ func truncateBytesRuneSafe(s string) string {
 // tokens can still exceed PostgreSQL limits; upsertFTSOrUnsearchable handles
 // that case.
 func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
+	if !doc.voiceLoaded {
+		if err := q.QueryRow(`SELECT `+voiceSearchSQL(true, "$1"), doc.MessageID).Scan(&doc.voice); err != nil {
+			return err
+		}
+	}
 	vector, args := pgFTSVector(doc)
 	_, err := q.Exec(
-		`UPDATE messages SET search_fts = v.vector, search_fts_fields = $7::text[],
+		`UPDATE messages SET search_fts = v.vector, search_fts_fields = $8::text[],
 			indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`
 		FROM (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
@@ -418,11 +413,16 @@ func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 
 // FTSMatches compares the stored tsvector with the one FTSUpsert would write.
 func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
+	if !doc.voiceLoaded {
+		if err := q.QueryRow(`SELECT `+voiceSearchSQL(true, "$1"), doc.MessageID).Scan(&doc.voice); err != nil {
+			return false, err
+		}
+	}
 	vector, args := pgFTSVector(doc)
 	var matches bool
 	err := q.QueryRow(
 		`SELECT COALESCE(search_fts = v.vector
-			AND search_fts_fields IS NOT DISTINCT FROM $7::text[]
+			AND search_fts_fields IS NOT DISTINCT FROM $8::text[]
 			AND indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`, FALSE)
 		FROM messages, (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
@@ -438,25 +438,26 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 // a position between fields and cannot appear in a normalized search term.
 func pgFTSVector(doc FTSDoc) (string, []any) {
 	doc, fields := preparePostgresFTSDoc(doc)
-	vector := pgFTSVectorFields("$2", "$3", "$4", "$5", "$6")
-	return vector, []any{doc.MessageID, doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, fields}
+	vector := pgFTSVectorFields("$2", "$3", "$4", "$5", "$6", "$7")
+	return vector, []any{doc.MessageID, doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.voice, fields}
 }
 
 func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
 	prepare := func(s string) string {
-		s = truncateBytesRuneSafe(s)
+		s = textutil.PrefixBytes(s, maxFTSBodyBytes)
 		s = textutil.PrefixRunes(s, maxFTSBodyChars)
 		s = sqldialect.CanonicalFTSText(s)
-		return truncateBytesRuneSafe(s)
+		return textutil.PrefixBytes(s, maxFTSBodyBytes)
 	}
 	doc.Subject = prepare(doc.Subject)
 	doc.Body = prepare(doc.Body)
 	doc.FromAddr = prepare(doc.FromAddr)
 	doc.ToAddrs = prepare(doc.ToAddrs)
 	doc.CcAddrs = prepare(doc.CcAddrs)
-	fields := []string{doc.Subject, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.Body}
+	doc.voice = prepare(doc.voice)
+	fields := []string{doc.Subject, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.Body, doc.voice}
 	counts := make(map[string]int)
-	positions := 4 // Separator lexemes between the five fields.
+	positions := 5 // Separator lexemes between the six fields.
 	saturated := false
 	for _, field := range fields {
 		for token := range strings.FieldsSeq(field) {
@@ -478,12 +479,13 @@ func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
 	return doc, fields
 }
 
-func pgFTSVectorFields(subject, body, sender, to, cc string) string {
+func pgFTSVectorFields(subject, body, sender, to, cc, voice string) string {
 	return `setweight(to_tsvector('simple', COALESCE(` + subject + `, '')), 'A') || '''!'':1'::tsvector ||
 			setweight(to_tsvector('simple', COALESCE(` + sender + `, '')), 'B') || '''!'':1'::tsvector ||
 			setweight(to_tsvector('simple', COALESCE(` + to + `, '')), 'C') || '''!'':1'::tsvector ||
 			setweight(to_tsvector('simple', COALESCE(` + cc + `, '')), 'C') || '''!'':1'::tsvector ||
-			setweight(to_tsvector('simple', COALESCE(` + body + `, '')), 'D')`
+			setweight(to_tsvector('simple', COALESCE(` + body + `, '')), 'D') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', COALESCE(` + voice + `, '')), 'C')`
 }
 
 // FTSSearchClause returns SQL fragments for tsvector full-text search.
@@ -615,6 +617,11 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 //	TEXT → TEXT, DATETIME → TIMESTAMPTZ, JSON → JSONB.
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE meeting_details ADD COLUMN IF NOT EXISTS link_key TEXT`, "meeting_details.link_key"},
+		{`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS ical_uid TEXT NOT NULL DEFAULT ''`, "calendar_events.ical_uid"},
+		{`ALTER TABLE person_fact_decisions ADD COLUMN IF NOT EXISTS outcome TEXT`, "person_fact_decisions.outcome"},
+		{`ALTER TABLE carddav_sync_runs ADD COLUMN IF NOT EXISTS binding_conflicts BIGINT CHECK (binding_conflicts IS NULL OR binding_conflicts >= 0)`, "carddav_sync_runs.binding_conflicts"},
+		{`ALTER TABLE person_participants ADD COLUMN IF NOT EXISTS carddav_owned BOOLEAN NOT NULL DEFAULT FALSE`, "person_participants.carddav_owned"},
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS locally_published BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.locally_published"},
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN IF NOT EXISTS started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
@@ -719,6 +726,8 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// projection write moves it, so no backfill is needed.
 		{`ALTER TABLE persons ADD COLUMN IF NOT EXISTS vcard_projection_revision BIGINT NOT NULL DEFAULT 1`,
 			"persons.vcard_projection_revision"},
+		{`ALTER TABLE persons ADD COLUMN IF NOT EXISTS display_name_source_name_id BIGINT`,
+			"persons.display_name_source_name_id"},
 		{`ALTER TABLE person_names ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_names.source_resource_uid"},
 		{`ALTER TABLE person_contact_points ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_contact_points.source_resource_uid"},
 		{`ALTER TABLE person_addresses ADD COLUMN IF NOT EXISTS source_resource_uid TEXT`, "person_addresses.source_resource_uid"},
@@ -2267,14 +2276,14 @@ var exclusiveLockTables = []string{
 	// lockSyncMaintenanceGate before their source lock, so maintenance waits
 	// here without holding tables those transactions still need.
 	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "conversation_participants",
-	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
+	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw", "voice_transcripts", "email_calendar_pending",
 	// Recording reconciliation and visual publication transactions take the
 	// sync_runs gate before child writes (including FK checks on messages).
 	// Publication commit writes publications then claims; generation cleanup
 	// uses the reverse order, so table ordering alone cannot fence both safely.
 	"recording_references",
 	"message_delivery_addresses", "email_link_keys",
-	"meeting_details", "meeting_action_items",
+	"meeting_link_decisions", "meeting_copy_survivors", "meeting_details", "meeting_action_items",
 	"calendar_events", "calendar_event_attendees",
 	"attachments", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	// Ungated attachment updates invalidate publications through triggers.
@@ -2296,6 +2305,9 @@ var exclusiveLockTables = []string{
 	// The chat member queue is trigger-written by message and recipient
 	// mutations; the projection cascades with conversations and participants.
 	"chat_members", "chat_members_dirty", "chat_anchors",
+	// Per-source message counts are trigger-written by every message
+	// mutation, and the counts row cascades with its source.
+	"source_message_counts", "source_message_count_deltas",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_merges", "source_settings", "source_merge_preserved_labels",
 	// Source merge takes the identity row before any archive writes, matching
@@ -2306,6 +2318,7 @@ var exclusiveLockTables = []string{
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
 	"loop_decisions", "loop_message_evidence",
+	"meta_comment_replies",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the

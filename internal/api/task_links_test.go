@@ -44,12 +44,14 @@ func (s *taskLinkMessageStore) GetMessageContext(_ context.Context, id int64) (*
 }
 
 type fakeTaskLinkOperations struct {
-	createKeys []string
-	creates    []taskclient.TaskCreate
-	identities []tasklinks.MessageIdentity
-	lookup     tasklinks.LookupResult
-	search     []tasklinks.TaskSummary
-	err        error
+	createKeys  []string
+	creates     []taskclient.TaskCreate
+	identities  []tasklinks.MessageIdentity
+	lookup      tasklinks.LookupResult
+	search      []tasklinks.TaskSummary
+	searchQuery string
+	truncated   bool
+	err         error
 }
 
 func (f *fakeTaskLinkOperations) Create(_ context.Context, key string, create taskclient.TaskCreate, identity tasklinks.MessageIdentity, addedAt time.Time) (taskclient.Task, error) {
@@ -71,8 +73,9 @@ func (f *fakeTaskLinkOperations) Lookup(_ context.Context, identity tasklinks.Me
 	f.identities = append(f.identities, identity)
 	return f.lookup
 }
-func (f *fakeTaskLinkOperations) Search(context.Context, string) ([]tasklinks.TaskSummary, error) {
-	return f.search, f.err
+func (f *fakeTaskLinkOperations) Search(_ context.Context, query string) ([]tasklinks.TaskSummary, bool, error) {
+	f.searchQuery = query
+	return f.search, f.truncated, f.err
 }
 
 func emailMessage(messageType string) *APIMessage {
@@ -360,16 +363,27 @@ func TestTaskLookupDisclosesExactSanitizedOutboundMetadata(t *testing.T) {
 
 func TestTaskSearchReturnsConfiguredProjectResults(t *testing.T) {
 	t.Parallel()
-	ops := &fakeTaskLinkOperations{search: []tasklinks.TaskSummary{{ID: "task-1", Title: "Synthetic result", Revision: "r1"}}}
+	assert := assert.New(t)
+	require := require.New(t)
+	ops := &fakeTaskLinkOperations{truncated: true, search: []tasklinks.TaskSummary{{ID: "task-1", Title: "Synthetic result", Revision: "r1"}}}
 	srv := taskLinkServer(t, "email", ops)
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/integrations/tasks/search?q=Synthetic", nil)
+	for _, tc := range []struct{ query, want string }{{"", ""}, {"?q=+Synthetic+", "Synthetic"}} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/integrations/tasks/search"+tc.query, nil)
+		req.Header.Set("X-Api-Key", "test-key")
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, req)
+		require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+		assert.Equal(tc.want, ops.searchQuery)
+		var got TaskSearchResponse
+		require.NoError(json.Unmarshal(resp.Body.Bytes(), &got))
+		assert.Equal(ops.search, got.Tasks)
+		assert.True(got.Truncated)
+	}
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/integrations/tasks/search?q="+strings.Repeat("x", 257), nil)
 	req.Header.Set("X-Api-Key", "test-key")
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
-	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
-	var got TaskSearchResponse
-	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &got))
-	assert.Equal(t, ops.search, got.Tasks)
+	assert.Equal(http.StatusBadRequest, resp.Code)
 }
 
 func TestTaskLinkSecondConflictIsSurfaced(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // PostgreSQL selects a database and optionally a schema. Empty Schema preserves
@@ -29,9 +30,18 @@ type PostgreSQL struct {
 	URL                string
 	Schema             string
 	MaxOpenConnections int
+	Embeddings         *Embeddings
 }
 
-func (p PostgreSQL) connectionURL() (string, error) {
+func (p PostgreSQL) validatePool() error {
+	if p.MaxOpenConnections < 0 || p.MaxOpenConnections == 1 {
+		return fmt.Errorf("PostgreSQL MaxOpenConnections %d cannot hold a sync lock and run its work; "+
+			"use 0 for the default pool or at least 2", p.MaxOpenConnections)
+	}
+	return nil
+}
+
+func (p PostgreSQL) connectionURL(extensionSchema, currentPath string) (string, error) {
 	if strings.TrimSpace(p.URL) == "" {
 		return "", errors.New("archive requires an explicit PostgreSQL connection")
 	}
@@ -39,14 +49,27 @@ func (p PostgreSQL) connectionURL() (string, error) {
 	if err != nil {
 		return "", errors.New("invalid archive PostgreSQL connection")
 	}
-	if p.Schema == "" {
+	if p.Schema == "" && extensionSchema == "" {
 		return p.URL, nil
 	}
 	if parsed.RuntimeParams["options"] != "" {
-		return "", errors.New("use PostgreSQL connection parameters instead of options when selecting a schema")
+		return "", errors.New("use PostgreSQL connection parameters instead of options when selecting an archive or pgvector schema")
+	}
+	path := currentPath
+	if p.Schema != "" {
+		path = pgx.Identifier{p.Schema}.Sanitize()
+	}
+	if extensionSchema != "" && extensionSchema != p.Schema {
+		if path != "" {
+			path += ","
+		}
+		path += pgx.Identifier{extensionSchema}.Sanitize()
+	}
+	if p.Schema != "" {
+		path += ",pg_catalog"
 	}
 	if !store.IsPostgresURL(p.URL) {
-		quoted := strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(pgx.Identifier{p.Schema}.Sanitize() + ",pg_catalog")
+		quoted := strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(path)
 		return p.URL + " search_path='" + quoted + "'", nil
 	}
 	u, err := url.Parse(p.URL)
@@ -54,7 +77,7 @@ func (p PostgreSQL) connectionURL() (string, error) {
 		return "", errors.New("invalid archive PostgreSQL URL")
 	}
 	params := u.Query()
-	params.Set("search_path", pgx.Identifier{p.Schema}.Sanitize()+",pg_catalog")
+	params.Set("search_path", path)
 	u.RawQuery = params.Encode()
 	return u.String(), nil
 }
@@ -63,7 +86,40 @@ func (p PostgreSQL) connectionURL() (string, error) {
 // using a schema-owning database role, before starting runtime readers/writers.
 // The caller serializes setup with other setup/upgrade processes.
 func Setup(ctx context.Context, postgres PostgreSQL) error {
-	dsn, err := postgres.connectionURL()
+	return setup(ctx, postgres, false)
+}
+
+// RebuildEmbeddings builds and activates embeddings for the configured model.
+// Run it as the schema owner with Embed stopped on every archive handle. If it
+// fails, call it again to resume. Reopen handles with the new settings afterward.
+func RebuildEmbeddings(ctx context.Context, postgres PostgreSQL) (retErr error) {
+	if postgres.Embeddings == nil || postgres.Embeddings.Client == nil {
+		return errors.New("rebuild embeddings requires an embedding client and descriptor")
+	}
+	if err := postgres.validatePool(); err != nil {
+		return err
+	}
+	if err := setup(ctx, postgres, true); err != nil {
+		return err
+	}
+	a, err := Open(ctx, postgres)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, a.Close()) }()
+	return a.embed(ctx, true)
+}
+
+func setup(ctx context.Context, postgres PostgreSQL, rebuild bool) error {
+	var cfg vector.Config
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
+		var err error
+		cfg, err = embeddingConfig(postgres.Embeddings)
+		if err != nil {
+			return fmt.Errorf("embedding descriptor: %w", err)
+		}
+	}
+	dsn, err := postgres.connectionURL("", "")
 	if err != nil {
 		return err
 	}
@@ -87,30 +143,68 @@ func Setup(ctx context.Context, postgres PostgreSQL) error {
 			}
 		}
 	}
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil && postgres.Schema == "" {
+		var schema string
+		if err := db.QueryRowContext(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+			return err
+		}
+		archiveOnly := postgres
+		archiveOnly.Schema = schema
+		dsn, err = archiveOnly.connectionURL("", "")
+		if err != nil {
+			return err
+		}
+	}
 	st, err := store.OpenPostgresContext(ctx, dsn)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
-	return st.InitSchemaContext(ctx)
+	if err := st.InitSchemaContext(ctx); err != nil {
+		return err
+	}
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
+		return setupEmbeddings(ctx, st, cfg, rebuild)
+	}
+	return nil
 }
 
 // Archive owns its connection pool.
 // Stop and drain calls into it before Close.
 type Archive struct {
-	store *store.Store
+	store      *store.Store
+	embeddings *embeddingRuntime
+	vectorErr  error
 }
 
 // Open connects to a previously set up archive. It runs no DDL and can use a
 // runtime role with only USAGE on the schema and DML on its tables/sequences.
 func Open(ctx context.Context, postgres PostgreSQL) (*Archive, error) {
-	if postgres.MaxOpenConnections < 0 || postgres.MaxOpenConnections == 1 {
-		return nil, fmt.Errorf("PostgreSQL MaxOpenConnections %d cannot hold a sync lock and run its work; "+
-			"use 0 for the default pool or at least 2", postgres.MaxOpenConnections)
+	var cfg vector.Config
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
+		var err error
+		cfg, err = embeddingConfig(postgres.Embeddings)
+		if err != nil {
+			return nil, fmt.Errorf("embedding descriptor: %w", err)
+		}
 	}
-	dsn, err := postgres.connectionURL()
+	if err := postgres.validatePool(); err != nil {
+		return nil, err
+	}
+	dsn, err := postgres.connectionURL("", "")
 	if err != nil {
 		return nil, err
+	}
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
+		db, openErr := sql.Open("pgx", dsn)
+		if openErr != nil {
+			return nil, openErr
+		}
+		dsn, err = embeddingConnectionURL(ctx, postgres, db)
+		_ = db.Close()
+		if err != nil {
+			return nil, err
+		}
 	}
 	st, err := store.OpenPostgresContext(ctx, dsn)
 	if err != nil {
@@ -131,7 +225,11 @@ func Open(ctx context.Context, postgres PostgreSQL) (*Archive, error) {
 	if postgres.MaxOpenConnections != 0 {
 		st.DB().SetMaxOpenConns(postgres.MaxOpenConnections)
 	}
-	return &Archive{store: st}, nil
+	a := &Archive{store: st}
+	if postgres.Embeddings != nil && postgres.Embeddings.Client != nil {
+		a.embeddings, a.vectorErr = openEmbeddings(ctx, st, postgres.Embeddings, cfg)
+	}
+	return a, nil
 }
 
 // Close releases the connection pool. Callers stop their sync workers first.

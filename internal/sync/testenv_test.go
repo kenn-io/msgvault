@@ -265,12 +265,12 @@ func assertDateFallback(t *testing.T, st *store.Store, sourceMessageID, wantDate
 func assertMessageHasLabel(t *testing.T, st *store.Store, sourceMessageID, sourceLabelID string) {
 	t.Helper()
 	var count int
-	err := st.DB().QueryRowContext(t.Context(), `
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_labels ml
 		JOIN messages m ON ml.message_id = m.id
 		JOIN labels l ON ml.label_id = l.id
 		WHERE m.source_message_id = ? AND l.source_label_id = ?
-	`, sourceMessageID, sourceLabelID).Scan(&count)
+	`), sourceMessageID, sourceLabelID).Scan(&count)
 	require.NoError(t, err, "assertMessageHasLabel(%s, %s)", sourceMessageID, sourceLabelID)
 	assert.NotZero(t, count, "message %s should have label %s", sourceMessageID, sourceLabelID)
 }
@@ -279,12 +279,12 @@ func assertMessageHasLabel(t *testing.T, st *store.Store, sourceMessageID, sourc
 func assertMessageNotHasLabel(t *testing.T, st *store.Store, sourceMessageID, sourceLabelID string) {
 	t.Helper()
 	var count int
-	err := st.DB().QueryRowContext(t.Context(), `
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_labels ml
 		JOIN messages m ON ml.message_id = m.id
 		JOIN labels l ON ml.label_id = l.id
 		WHERE m.source_message_id = ? AND l.source_label_id = ?
-	`, sourceMessageID, sourceLabelID).Scan(&count)
+	`), sourceMessageID, sourceLabelID).Scan(&count)
 	require.NoError(t, err, "assertMessageNotHasLabel(%s, %s)", sourceMessageID, sourceLabelID)
 	assert.Zero(t, count, "message %s should NOT have label %s", sourceMessageID, sourceLabelID)
 }

@@ -4,13 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "$script_dir/../.." && pwd -P)"
 fixture_lock="$repo_root/docs/fixtures/fixture.lock.json"
-output_dir="${MSGVAULT_DOCS_SCREENSHOT_OUTPUT_DIR:-$repo_root/docs/assets/static}"
-platform="${MSGVAULT_DOCS_SCREENSHOT_PLATFORM:-darwin}"
-
-case "$platform" in
-  darwin|linux) ;;
-  *) printf 'unsupported screenshot platform: %s\n' "$platform" >&2; exit 2 ;;
-esac
+output_dir="${MSGVAULT_DOCS_SCREENSHOT_OUTPUT_DIR:-$repo_root/docs/assets/generated/web}"
 
 for command in bun go gzip python3; do
   command -v "$command" >/dev/null || { printf 'required command unavailable: %s\n' "$command" >&2; exit 1; }
@@ -81,19 +75,16 @@ for _ in $(seq 1 180); do
 done
 [[ -n "$base_url" && -s "$scratch/session.json" ]] || { sed -n '1,240p' "$scratch/serve.log" >&2; exit 1; }
 
-# The capture itself only needs the running web app. Maintainers review and
-# publish each platform's rasterization through the docs asset branch.
-(cd "$repo_root/web" && MSGVAULT_DOCS_BASE_URL="$base_url" MSGVAULT_DOCS_SCREENSHOT_OUTPUT="$scratch/output" MSGVAULT_DOCS_SCREENSHOT_PLATFORM="$platform" bunx playwright test tests/docs-fixture-screenshots.spec.ts --config "$repo_root/docs/screenshots/playwright-fixture.config.ts")
+(cd "$repo_root/web" && MSGVAULT_DOCS_BASE_URL="$base_url" MSGVAULT_DOCS_SCREENSHOT_OUTPUT="$scratch/output" bunx playwright test tests/docs-fixture-screenshots.spec.ts --config "$repo_root/docs/screenshots/playwright-fixture.config.ts")
 
 expected=(
-  "analytical-dark-comfortable-$platform.png"
-  "analytical-dark-compact-$platform.png"
-  "analytical-light-comfortable-$platform.png"
-  "analytical-light-compact-$platform.png"
+  messages-dark-comfortable.png
+  messages-dark-compact.png
+  messages-light-comfortable.png
+  messages-light-compact.png
+  people-dark-comfortable.png
+  people-light-compact.png
 )
-if [[ "$platform" == darwin ]]; then
-  expected+=(relationships-dark-comfortable-darwin.png relationships-light-compact-darwin.png)
-fi
 mkdir -p "$output_dir"
 for asset in "${expected[@]}"; do
   [[ -s "$scratch/output/$asset" ]] || { printf 'capture missing or empty: %s\n' "$asset" >&2; exit 1; }

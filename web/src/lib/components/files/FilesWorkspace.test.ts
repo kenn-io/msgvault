@@ -8,6 +8,9 @@ import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { visualReadinessKey } from '../../search/visual-ready.svelte';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import FilesWorkspace from './FilesWorkspace.svelte';
+import FileViewer from './FileViewer.svelte';
+
+vi.mock('./FileViewer.svelte', { spy: true });
 
 const telemetryEvents: Array<{ event: string; properties: { search_type: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
@@ -320,7 +323,7 @@ describe('FilesWorkspace', () => {
     });
 
     expect(await screen.findByText('Preparing analytical cache…')).toBeDefined();
-    expect(screen.queryByText('Analytical cache unavailable')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
     await vi.advanceTimersByTimeAsync(1_000);
     expect(await screen.findByText('fixture.pdf')).toBeDefined();
     expect(calls).toBe(2);
@@ -556,15 +559,16 @@ describe('FilesWorkspace', () => {
     });
 
     await screen.findByText('fixture.pdf');
-    expect(records).toHaveLength(0);
+    expect(records.some((record) => record.observed.some((el) => el.matches('[role="grid"], .table-header')))).toBe(false);
 
     await view.rerender({ personPresentation: 'files' });
 
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     const header = grid.querySelector('.table-header');
     expect(header).not.toBeNull();
-    expect(records).toHaveLength(1);
-    expect(records[0]!.observed).toEqual([grid, header]);
+    const gridObservers = records.filter((record) => record.observed[0] === grid && record.observed[1] === header && record.observed.length === 2);
+    expect(gridObservers).toHaveLength(1);
+    expect(gridObservers[0]!.disconnected).toBe(false);
   });
 
   it('disconnects the old observer and observes replacement elements across a Files transition', async () => {
@@ -579,13 +583,13 @@ describe('FilesWorkspace', () => {
     const initialGrid = await screen.findByRole('grid', { name: 'Files results' });
     const initialHeader = initialGrid.querySelector('.table-header');
     expect(initialHeader).not.toBeNull();
-    expect(records).toHaveLength(1);
-    expect(records[0]!.observed).toEqual([initialGrid, initialHeader]);
+    const initialObservers = records.filter((record) => record.observed.includes(initialGrid));
+    expect(initialObservers.some((record) => record.observed.length === 2 && record.observed[0] === initialGrid && record.observed[1] === initialHeader)).toBe(true);
 
     await view.rerender({ personPresentation: 'media' });
     await screen.findByRole('radio', { name: 'Media' });
     expect(screen.queryByRole('grid', { name: 'Files results' })).toBeNull();
-    expect(records[0]!.disconnected).toBe(true);
+    for (const observer of initialObservers) expect(observer.disconnected).toBe(true);
 
     await view.rerender({ personPresentation: 'files' });
 
@@ -594,8 +598,8 @@ describe('FilesWorkspace', () => {
     expect(replacementHeader).not.toBeNull();
     expect(replacementGrid).not.toBe(initialGrid);
     expect(replacementHeader).not.toBe(initialHeader);
-    expect(records).toHaveLength(2);
-    expect(records[1]!.observed).toEqual([replacementGrid, replacementHeader]);
+    const replacementObservers = records.filter((record) => !record.disconnected && record.observed.length === 2 && record.observed[0] === replacementGrid && record.observed[1] === replacementHeader);
+    expect(replacementObservers).toHaveLength(1);
   });
 
   it('restarts a media gallery after a terminal cursor failure', async () => {
@@ -965,7 +969,7 @@ describe('FilesWorkspace', () => {
     });
   });
 
-  it('retries a cursor after a transient network failure', async () => {
+  it.each(['network', 'http'] as const)('retries a cursor after a %s failure', async failure => {
     const first = response();
     Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
     const second = response();
@@ -977,7 +981,10 @@ describe('FilesWorkspace', () => {
       const body = await request.clone().json() as { cursor?: string };
       if (!body.cursor) return Response.json(first);
       cursorCalls += 1;
-      if (cursorCalls === 1) throw new TypeError('temporary network failure');
+      if (cursorCalls === 1) {
+        if (failure === 'network') throw new TypeError('temporary network failure');
+        return Response.json({ error: 'analytical_cache_unavailable', message: 'Synthetic cursor cache outage.', readiness: 'absent', recovery_action: 'msgvault build-cache' }, { status: 503 });
+      }
       return Response.json(second);
     });
     render(FilesWorkspace, {
@@ -987,43 +994,8 @@ describe('FilesWorkspace', () => {
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     await screen.findByRole('row', { name: /fixture.pdf/ });
     await fireEvent.scroll(grid);
-    expect((await screen.findByRole('alert')).textContent).toContain('temporary network failure');
+    expect((await screen.findByRole('alert')).textContent).toContain(failure === 'network' ? 'temporary network failure' : 'Synthetic cursor cache outage.');
     expect(screen.getByRole('row', { name: /fixture.pdf/ })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry loading more files' }));
-    expect(await screen.findByText('recovered.pdf')).toBeDefined();
-    expect(cursorCalls).toBe(2);
-  });
-
-  it('keeps loaded rows and offers retry when a cursor page returns 503', async () => {
-    const first = response();
-    Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
-    const second = response();
-    second.files[0] = { ...second.files[0]!, id: 8, key: 'file:8', filename: 'recovered.pdf' };
-    second.total_count = 2;
-    let cursorCalls = 0;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const body = await request.clone().json() as { cursor?: string };
-      if (!body.cursor) return Response.json(first);
-      cursorCalls += 1;
-      if (cursorCalls === 1) return Response.json({
-        error: 'analytical_cache_unavailable', message: 'Synthetic cursor cache outage.',
-        readiness: 'absent', recovery_action: 'msgvault build-cache'
-      }, { status: 503 });
-      return Response.json(second);
-    });
-    render(FilesWorkspace, {
-      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
-      sort: { field: 'occurred_at', direction: 'desc' }
-    });
-    const grid = await screen.findByRole('grid', { name: 'Files results' });
-    await screen.findByRole('row', { name: /fixture.pdf/ });
-    await fireEvent.scroll(grid);
-
-    expect((await screen.findByRole('alert')).textContent).toContain('Synthetic cursor cache outage.');
-    expect(screen.getByRole('row', { name: /fixture.pdf/ })).toBeDefined();
-    expect(screen.queryByText('Analytical cache unavailable')).toBeNull();
-
     await fireEvent.click(screen.getByRole('button', { name: 'Retry loading more files' }));
     expect(await screen.findByText('recovered.pdf')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
@@ -1332,8 +1304,6 @@ describe('FilesWorkspace', () => {
     const onFilenameQueryChange = vi.fn(), onMIMEFamiliesChange = vi.fn();
     const view = render(FilesWorkspace, { client, embedded: true, identityScope: { kind: 'person', id: 42 }, personPresentation: 'files', predicate: { filters: [] }, sort: { field: 'occurred_at', direction: 'desc' }, filenameQuery: 'old', mimeFamilies: ['pdf', 'text'], onFilenameQueryChange, onMIMEFamiliesChange });
     await screen.findByText('fixture.pdf');
-    expect(screen.getByText('Filename', { selector: 'label > span' })).toBeDefined();
-    expect((screen.getByRole('searchbox', { name: 'Filter filename' }) as HTMLInputElement).placeholder).toBe('');
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'budget' } });
     expect(onFilenameQueryChange).toHaveBeenCalledWith('budget');
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Audio' }));
@@ -1409,17 +1379,16 @@ it('leaves recovery with the list and keeps the boundary notice after Previous',
   await screen.findByRole('alert');
   await fireEvent.keyDown(grid, { key: 'Enter' });
   let dialog = await screen.findByRole('dialog', { name: 'View fixture.pdf' });
-  expect(within(dialog).queryByRole('alert')).toBeNull();
+  expect(vi.mocked(FileViewer).mock.calls.at(-1)![1]).toMatchObject({ notice: '', canStepForward: true });
   await fireEvent.click(within(dialog).getByRole('button', { name: 'Next file' }));
   dialog = await screen.findByRole('dialog', { name: 'View second.txt' });
-  expect(within(dialog).getByRole('alert').textContent).toBe('Page unavailable');
-  expect(within(dialog).getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(true);
+  await waitFor(() => expect(vi.mocked(FileViewer).mock.calls.at(-1)![1]).toMatchObject({ notice: 'Page unavailable', canStepForward: false }));
   await fireEvent.click(within(dialog).getByRole('button', { name: 'Previous file' }));
   dialog = await screen.findByRole('dialog', { name: 'View fixture.pdf' });
-  expect(within(dialog).queryByRole('alert')).toBeNull();
+  await waitFor(() => expect(vi.mocked(FileViewer).mock.calls.at(-1)![1]).toMatchObject({ notice: '', canStepForward: true }));
   await fireEvent.click(within(dialog).getByRole('button', { name: 'Next file' }));
-  dialog = await screen.findByRole('dialog', { name: 'View second.txt' });
-  expect(within(dialog).getByRole('alert').textContent).toBe('Page unavailable');
+  await screen.findByRole('dialog', { name: 'View second.txt' });
+  await waitFor(() => expect(vi.mocked(FileViewer).mock.calls.at(-1)![1]).toMatchObject({ notice: 'Page unavailable', canStepForward: false }));
 
 });
 

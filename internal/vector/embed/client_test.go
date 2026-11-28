@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/embedclient"
+	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -727,4 +729,13 @@ func TestClient_Embed_RejectsExtraOrDuplicateResponseItems(t *testing.T) {
 			assert.ErrorIs(t, err, vector.ErrInvalidProviderShape)
 		})
 	}
+}
+
+func TestClientHostKitMapsPermanentError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "bad request", http.StatusBadRequest) }))
+	t.Cleanup(server.Close)
+	kit, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: "test", Dimensions: 2, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: server.URL, TrustPrivateNetwork: true}})
+	require.NoError(t, err)
+	_, err = NewClient(Config{Kit: kit, Model: "test", Dimension: 2}).Embed(t.Context(), []string{"example"})
+	assert.ErrorIs(t, err, ErrPermanent4xx)
 }

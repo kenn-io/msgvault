@@ -3,11 +3,13 @@ package visual
 import (
 	"context"
 	"errors"
+	"image/color"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -173,11 +175,6 @@ func TestSearchServicePassesResolvedPersonScopeAndHydratesProvenance(t *testing.
 	}, response.Results[0].PersonProvenance)
 }
 
-func TestDecodeQueryImageRejectsNonImage(t *testing.T) {
-	_, err := DecodeQueryImage([]byte("not an image"))
-	require.Error(t, err)
-}
-
 func TestSearchRejectsDriftedAccountScopeBeforeProviderOrBackend(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -200,4 +197,39 @@ func TestSearchRejectsDriftedAccountScopeBeforeProviderOrBackend(t *testing.T) {
 	require.ErrorIs(err, ErrSearchNotReady)
 	assert.Zero(provider.queries, "no hosted embedding on drift")
 	assert.Empty(backend.requests, "no backend search on drift")
+}
+
+func TestDecodeQueryImagePolicy(t *testing.T) {
+	kit, err := NewKitProvider("kit", "https://embed.example.com/v1", "model", 2, "", nil, "generation")
+	require.NoError(t, err)
+	vertex, err := NewKitProvider("vertex", "https://aiplatform.googleapis.com/v1/projects/project-a/locations/global/publishers/google/models", "gemini-embedding-2", 2, "", nil, "generation")
+	require.NoError(t, err)
+	services := map[string]*SearchService{}
+	for name, provider := range map[string]Provider{"kit": kit, "vertex": vertex, "default": &searchProvider{}} {
+		services[name], err = NewSearchService(&store.Store{}, provider, &searchBackend{}, true)
+		require.NoError(t, err)
+	}
+	gif := mediatest.GIF(2, 2, 1)
+	largePhoto := mediatest.PNG(4001, 4000, color.White)
+	for _, tc := range []struct {
+		name, provider string
+		data           []byte
+		valid          bool
+	}{
+		{"non-image", "kit", []byte("not an image"), false},
+		{"default large", "default", largePhoto, false},
+		{"kit large", "kit", largePhoto, true},
+		{"vertex width exceeds", "vertex", mediatest.PNG(16385, 2, color.White), false},
+		{"kit wide", "kit", mediatest.PNG(16385, 2, color.White), true},
+		{"kit gif", "kit", gif, false}, {"default gif", "default", gif, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := services[tc.provider].DecodeQueryImage(tc.data)
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
 }

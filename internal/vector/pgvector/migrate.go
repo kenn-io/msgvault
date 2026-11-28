@@ -7,6 +7,9 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"regexp"
+
+	"github.com/jackc/pgx/v5"
 )
 
 //go:embed schema.sql
@@ -39,6 +42,10 @@ type migrateExecer interface {
 // dimension. If defaultDim > 0, Migrate eagerly creates the index for
 // that dimension so the first ANN query doesn't pay the index build.
 func Migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtension bool) error {
+	return migrate(ctx, db, defaultDim, skipExtension, "")
+}
+
+func migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtension bool, extensionSchema string) error {
 	// CREATE EXTENSION runs OUTSIDE the maintenance tx: it is fast and is
 	// gated by skipExtension (a non-superuser would be rejected before any
 	// DDL we care about). Keeping it on the pool keeps the gate observable.
@@ -77,7 +84,7 @@ func Migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 		ADD COLUMN IF NOT EXISTS source_basis SMALLINT NOT NULL DEFAULT 0`); err != nil {
 		return fmt.Errorf("add embeddings.source_basis: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
+	if _, err := tx.ExecContext(ctx, qualifyVectorSQL(schemaSQL, extensionSchema)); err != nil {
 		return fmt.Errorf("apply pgvector schema: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS document_vector_embeddings;
@@ -126,10 +133,10 @@ func Migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 	if defaultDim > 0 {
 		// EnsureVectorIndex opens its own statement_timeout-disabling tx
 		// (HNSW builds are slow), so it runs after the migrate tx commits.
-		if err := EnsureVectorIndex(ctx, db, defaultDim); err != nil {
+		if err := EnsureVectorIndex(ctx, db, defaultDim, extensionSchema); err != nil {
 			return err
 		}
-		if err := EnsurePersonVectorIndex(ctx, db, defaultDim); err != nil {
+		if err := EnsurePersonVectorIndex(ctx, db, defaultDim, extensionSchema); err != nil {
 			return err
 		}
 	}
@@ -141,7 +148,7 @@ func Migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 // with different dimensions coexist in the same embeddings table — the
 // expression cast `(embedding::vector(dim))` only fires for rows that
 // already match, so a 4-dim row never trips a 768-dim index. Idempotent.
-func EnsureVectorIndex(ctx context.Context, db migrateExecer, dim int) error {
+func EnsureVectorIndex(ctx context.Context, db migrateExecer, dim int, extensionSchema string) error {
 	if dim <= 0 {
 		return fmt.Errorf("invalid dimension %d", dim)
 	}
@@ -173,7 +180,7 @@ func EnsureVectorIndex(ctx context.Context, db migrateExecer, dim int) error {
 	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
 		return fmt.Errorf("disable statement_timeout for hnsw index: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, stmt); err != nil {
+	if _, err := tx.ExecContext(ctx, qualifyVectorSQL(stmt, extensionSchema)); err != nil {
 		return fmt.Errorf("create hnsw index for dim %d: %w", dim, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -186,4 +193,14 @@ func EnsureVectorIndex(ctx context.Context, db migrateExecer, dim int) error {
 // Exposed mainly for diagnostic purposes.
 func VectorIndexName(dim int) string {
 	return fmt.Sprintf("idx_embeddings_hnsw_d%d", dim)
+}
+
+var vectorTypeName = regexp.MustCompile(`\b(vector|vector_cosine_ops)\b`)
+
+func qualifyVectorSQL(statement, schema string) string {
+	if schema == "" {
+		return statement
+	}
+	prefix := pgx.Identifier{schema}.Sanitize() + "."
+	return vectorTypeName.ReplaceAllStringFunc(statement, func(name string) string { return prefix + name })
 }

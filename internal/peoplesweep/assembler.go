@@ -62,6 +62,22 @@ type Assembler struct {
 	MaxProgressWindows   int
 	ContextPerTarget     int
 	HistoricalMessageCap int
+	// MaxOutputTokens is the output cap of each extraction request. Zero
+	// keeps the default cap.
+	MaxOutputTokens int
+}
+
+// partition splits the packet into provider batches and applies the
+// configured output cap to each batch request.
+func (a Assembler) partition(packet EvidencePacket) ([]PacketBatch, error) {
+	batches, err := PartitionEvidencePacket(packet, a.MaxBytes, a.MaxItems)
+	if err != nil || a.MaxOutputTokens <= 0 {
+		return batches, err
+	}
+	for index := range batches {
+		batches[index].Request.MaxOutputTokens = a.MaxOutputTokens
+	}
+	return batches, nil
 }
 
 func (a Assembler) Build(ctx context.Context, request AssemblyRequest) (Assembly, error) {
@@ -331,7 +347,7 @@ func (a Assembler) BuildPacket(ctx context.Context, request AssemblyRequest, pro
 		result.Packet.Context = evidenceMapValues(contextByID)
 		result.ContextPriority = mergeContextPriority(perTarget)
 	}
-	result.Batches, err = PartitionEvidencePacket(result.Packet, a.MaxBytes, a.MaxItems)
+	result.Batches, err = a.partition(result.Packet)
 	if err != nil {
 		return Assembly{}, err
 	}
@@ -345,7 +361,7 @@ func (a Assembler) BuildPacket(ctx context.Context, request AssemblyRequest, pro
 				break
 			}
 		}
-		result.Batches, err = PartitionEvidencePacket(result.Packet, a.MaxBytes, a.MaxItems)
+		result.Batches, err = a.partition(result.Packet)
 		if err != nil {
 			return Assembly{}, err
 		}

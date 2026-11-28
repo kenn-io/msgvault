@@ -258,11 +258,5 @@ func callTitle(call Call) string {
 	case strings.HasPrefix(direction, "outbound"):
 		other = call.To
 	}
-	if other = strings.TrimSpace(other); other == "" {
-		return "Twilio call"
-	}
-	if direction == "inbound" {
-		return "Call from " + other
-	}
-	return "Call to " + other
+	return meetingarchive.CallTitle("Twilio call", other, direction == "inbound")
 }

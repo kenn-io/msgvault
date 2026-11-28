@@ -17,11 +17,14 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/msgvault/internal/httpretry"
 )
 
 const (
 	DefaultMCPEndpoint  = "https://mcp.inline.chat/mcp/v2"
 	mcpMaxResponseBytes = 32 << 20
+	// mcpRateLimitRetries bounds how often one read waits out HTTP 429.
+	mcpRateLimitRetries = 3
 )
 
 // ErrContract means a provider result cannot be archived without risking
@@ -35,9 +38,14 @@ type MCPClient struct {
 	endpoint         string
 	http             *http.Client
 	session          *mcp.ClientSession
+	transport        *mcpResponseTransport
+	wait             func(context.Context, time.Duration) error
 	ownerID          int64
 	closed           bool
 	invalidPrincipal bool
+	// reconnectPending blocks reads until a replacement session's principal
+	// is verified. Only a rate-limited attempt leaves it pending for retry.
+	reconnectPending bool
 }
 
 var _ Client = (*MCPClient)(nil)
@@ -59,8 +67,9 @@ func NewMCPClient(ctx context.Context, endpoint string, httpClient *http.Client)
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	boundedClient.Transport = &mcpResponseTransport{base: base, limit: mcpMaxResponseBytes}
-	c := &MCPClient{endpoint: endpoint, http: &boundedClient}
+	transport := &mcpResponseTransport{base: base, limit: mcpMaxResponseBytes}
+	boundedClient.Transport = transport
+	c := &MCPClient{endpoint: endpoint, http: &boundedClient, transport: transport, wait: waitForRetry}
 	if err := c.connect(ctx); err != nil {
 		return nil, err
 	}
@@ -74,12 +83,38 @@ func NewMCPClient(ctx context.Context, endpoint string, httpClient *http.Client)
 type mcpResponseTransport struct {
 	base  http.RoundTripper
 	limit int64
+
+	// The SDK reports an HTTP 429 only as status text, so the transport
+	// records it and the server's delay, which may be zero, for the client.
+	mu          sync.Mutex
+	rateLimited bool
+	retryAfter  time.Duration
+}
+
+func (t *mcpResponseTransport) rateLimit() (time.Duration, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.retryAfter, t.rateLimited
+}
+
+func (t *mcpResponseTransport) resetRateLimit() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.rateLimited = false
+	t.retryAfter = 0
 }
 
 func (t *mcpResponseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		delay := httpretry.RetryAfter(resp.Header.Get("Retry-After"), 0, httpretry.DefaultMaxRetryAfter)
+		t.mu.Lock()
+		t.rateLimited = true
+		t.retryAfter = delay
+		t.mu.Unlock()
 	}
 	if resp.ContentLength > t.limit {
 		_ = resp.Body.Close()
@@ -163,9 +198,36 @@ func (c *MCPClient) Close() error {
 	return nil
 }
 
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// call waits out the server's Retry-After when it rate-limits a read, so a
+// busy sync slows down instead of failing and restarting its pass.
 func (c *MCPClient) call(ctx context.Context, name string, args map[string]any) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for attempt := 0; ; attempt++ {
+		c.transport.resetRateLimit()
+		raw, err := c.callOnce(ctx, name, args)
+		delay, limited := c.transport.rateLimit()
+		if err == nil || !limited || attempt >= mcpRateLimitRetries || ctx.Err() != nil {
+			return raw, err
+		}
+		if waitErr := c.wait(ctx, delay); waitErr != nil {
+			return nil, errors.Join(err, waitErr)
+		}
+	}
+}
+
+func (c *MCPClient) callOnce(ctx context.Context, name string, args map[string]any) ([]byte, error) {
 	if c.closed {
 		return nil, errors.New("inline MCP client is closed")
 	}
@@ -174,33 +236,19 @@ func (c *MCPClient) call(ctx context.Context, name string, args map[string]any) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
+	if c.reconnectPending {
+		if err := c.reconnect(ctx); err != nil {
+			return nil, err
+		}
+	}
 	result, err := c.session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	if errors.Is(err, mcp.ErrSessionMissing) {
 		// A provider restart or idle expiry invalidates the session, not the
-		// archive cursor. Reinitialize once, verify its principal, then retry.
-		// Any reconnect or verification failure must also block later reads.
-		c.invalidPrincipal = true
-		_ = c.session.Close()
-		if err = c.connect(ctx); err != nil {
+		// archive cursor. Reinitialize, verify its principal, then retry.
+		c.reconnectPending = true
+		if err = c.reconnect(ctx); err != nil {
 			return nil, err
 		}
-		me, checkErr := c.session.CallTool(ctx, &mcp.CallToolParams{Name: "account.me", Arguments: map[string]any{}})
-		if checkErr != nil {
-			return nil, fmt.Errorf("verify reconnected Inline account: %w", checkErr)
-		}
-		raw, checkErr := inlineToolJSON(me)
-		if checkErr != nil {
-			return nil, checkErr
-		}
-		account, checkErr := decodeAccount(raw)
-		if checkErr != nil {
-			return nil, checkErr
-		}
-		if c.ownerID != 0 && account.UserID != c.ownerID {
-			return nil, fmt.Errorf("%w: reconnected account differs from archive owner", ErrContract)
-		}
-		c.ownerID = account.UserID
-		c.invalidPrincipal = false
 		result, err = c.session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	}
 	if err != nil {
@@ -211,6 +259,45 @@ func (c *MCPClient) call(ctx context.Context, name string, args map[string]any) 
 		return nil, fmt.Errorf("inline tool %s: %w", name, err)
 	}
 	return raw, nil
+}
+
+// reconnect replaces the session and verifies it belongs to the archive owner.
+// A rate-limited attempt stays pending, so the caller's bounded retry can try
+// again while reads remain blocked. Any other failure blocks later reads.
+func (c *MCPClient) reconnect(ctx context.Context) error {
+	err := c.reconnectOnce(ctx)
+	if err == nil {
+		c.reconnectPending = false
+		return nil
+	}
+	if _, limited := c.transport.rateLimit(); !limited {
+		c.invalidPrincipal = true
+	}
+	return err
+}
+
+func (c *MCPClient) reconnectOnce(ctx context.Context) error {
+	_ = c.session.Close()
+	if err := c.connect(ctx); err != nil {
+		return err
+	}
+	me, err := c.session.CallTool(ctx, &mcp.CallToolParams{Name: "account.me", Arguments: map[string]any{}})
+	if err != nil {
+		return fmt.Errorf("verify reconnected Inline account: %w", err)
+	}
+	raw, err := inlineToolJSON(me)
+	if err != nil {
+		return err
+	}
+	account, err := decodeAccount(raw)
+	if err != nil {
+		return err
+	}
+	if c.ownerID != 0 && account.UserID != c.ownerID {
+		return fmt.Errorf("%w: reconnected account differs from archive owner", ErrContract)
+	}
+	c.ownerID = account.UserID
+	return nil
 }
 
 func inlineToolJSON(result *mcp.CallToolResult) ([]byte, error) {
@@ -285,6 +372,7 @@ type mcpChat struct {
 	Peer   *struct {
 		UserID jsontext.Value `json:"userId"`
 	} `json:"peer"`
+	LastMessageID jsontext.Value `json:"lastMessageId"`
 }
 
 // Discover enumerates the complete catalog authorized by the OAuth grant.
@@ -326,7 +414,21 @@ func (c *MCPClient) Discover(ctx context.Context) ([]Conversation, error) {
 			if chat.Kind != "dm" && chat.Kind != "home_thread" && chat.Kind != "space_chat" {
 				return nil, fmt.Errorf("%w: unknown catalog conversation kind", ErrContract)
 			}
-			out = append(out, Conversation{ID: id, Title: chat.Title, Type: conversationType(chat.Kind), MemberCountKnown: false, Raw: item})
+			conversation := Conversation{ID: id, Title: chat.Title, Type: conversationType(chat.Kind), MemberCountKnown: false, Raw: item}
+			// Older servers omit lastMessageId; null means the chat is empty.
+			if chat.LastMessageID != nil {
+				if string(chat.LastMessageID) != "null" {
+					var rawLast string
+					if err := json.Unmarshal(chat.LastMessageID, &rawLast); err != nil {
+						return nil, fmt.Errorf("%w: malformed catalog last message", ErrContract)
+					}
+					if conversation.LastMessageID, err = positiveID(rawLast); err != nil {
+						return nil, err
+					}
+				}
+				conversation.LastMessageKnown = true
+			}
+			out = append(out, conversation)
 			last = id
 		}
 		if string(v.Next) == "null" {

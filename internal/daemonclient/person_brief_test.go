@@ -323,29 +323,6 @@ func TestPeopleBrowserProfileCarriesTheCurrentBrief(t *testing.T) {
 	assert.Nil(profile.Brief, "a person without a brief still has a profile")
 }
 
-func TestPeopleBrowserWithoutBriefsHidesTheBriefSurfacesAndForwardsTheRest(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var paths []string
-	full := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.Path)
-		writePeopleBrowserJSON(t, w, http.StatusOK, `{
-			"person":{"id":51,"participant_id":11,"display_label":"Alice Contact"}
-		}`)
-	}))
-	gated := NewPeopleBrowserWithoutBriefs(full)
-
-	_, reader := gated.(peoplebrowser.PersonBriefReader)
-	assert.False(reader, "a gated backend must not advertise a brief read")
-	_, writer := gated.(peoplebrowser.PersonBriefWriter)
-	assert.False(writer, "a gated backend must not advertise brief mutations")
-
-	_, err := gated.GetContact(t.Context(), 11)
-	require.NoError(err)
-	assert.Equal([]string{"/api/v1/participants/11"}, paths,
-		"every other People operation still reaches the daemon")
-}
-
 func TestDaemonPeopleBrowserImplementsBriefSurfaces(t *testing.T) {
 	var backend peoplebrowser.Backend = &PeopleBrowser{}
 	_, reader := backend.(peoplebrowser.PersonBriefReader)

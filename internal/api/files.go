@@ -143,6 +143,7 @@ type FileMetadataResponse struct {
 	Docbank          []store.DocbankAttachmentRef `json:"docbank,omitempty"`
 	ID               int64                        `json:"id"`
 	MessageID        int64                        `json:"message_id"`
+	MessageType      string                       `json:"message_type"`
 	ConversationID   int64                        `json:"conversation_id"`
 	EntryKey         string                       `json:"entry_key"`
 	Filename         string                       `json:"filename"`
@@ -406,7 +407,13 @@ func (s *Server) handleSearchFilesRequest(
 			writeError(w, http.StatusBadRequest, "invalid_visual_query", "Visual query image is invalid or too large")
 			return
 		}
-		visualQuery.Image, decodeErr = visual.DecodeQueryImage(image)
+		s.vectorMu.RLock()
+		service := s.visualSearch
+		s.vectorMu.RUnlock()
+		if service == nil {
+			service = &visual.SearchService{}
+		}
+		visualQuery.Image, decodeErr = service.DecodeQueryImage(image)
 		if decodeErr != nil {
 			writeError(w, http.StatusUnsupportedMediaType, "unsupported_image_query", decodeErr.Error())
 			return
@@ -875,7 +882,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, FileMetadataResponse{
-		ID: file.ID, MessageID: file.MessageID, ConversationID: file.ConversationID,
+		ID: file.ID, MessageID: file.MessageID, MessageType: file.MessageType, ConversationID: file.ConversationID,
 		EntryKey: fileEntryKey(*file),
 		Filename: file.Filename, MimeType: file.MimeType, Size: file.Size,
 		ContentHash: file.ContentHash, URL: file.URL, ContentState: state, ContentAvailable: available, Docbank: file.Docbank,

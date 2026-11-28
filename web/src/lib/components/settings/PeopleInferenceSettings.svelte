@@ -83,7 +83,7 @@
   {:else}
     {#if controller.error}<p role="alert" class="error">{controller.error}</p>{/if}
     {#if controller.status.pending_restart}
-      <p role="status">Restart the daemon to use the saved people sweep profile. The running daemon still uses {controller.status.running_name || 'no profile'}.</p>
+      <p role="status">The running daemon still uses {controller.status.running_name || 'no profile'}.</p>
     {/if}
     <div class="state">
       <p><strong>Configured:</strong> {controller.status.configured_name || 'None'} ({controller.status.configured_enabled ? 'enabled' : 'disabled'})</p>

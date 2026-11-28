@@ -18,6 +18,7 @@
     FilterDropdown,
     EmptyState,
     IconButton,
+    overlayScrollbars,
     SegmentedControl,
     SelectDropdown,
     Tooltip,
@@ -105,6 +106,7 @@
     onMerge,
   }: Props = $props();
 
+  let listHost = $state<HTMLElement>();
   let gridElement = $state<HTMLDivElement>();
   let focusKey = $state<string | null>(null);
   let pointerFocus = $state(false);
@@ -157,7 +159,7 @@
   }
 </script>
 
-<aside class="people-list" aria-label="People">
+<aside class="people-list" aria-label="People" bind:this={listHost}>
   <div class="toolbar touch-controls">
     <div class="toolbar-row">
       <SegmentedControl
@@ -225,6 +227,7 @@
       bind:this={gridElement}
       onkeydown={handleKeydown}
       onscroll={handleScroll}
+      {@attach overlayScrollbars({ host: listHost })}
     >
       {#if loading && rows.length === 0}
         <p class="list-status" role="status">Loading…</p>
@@ -254,6 +257,7 @@
           >
             <div role="gridcell">
               <span class="avatar-slot">
+                <!-- kit-ui-check-ignore: this tile gives way to selection while the row is hovered or focused. -->
                 <span class="avatar">
                   <IdentityAvatar label={row.label} seed={row.key} shape={row.domain ? 'domain' : 'person'} size={32} />
                 </span>
@@ -384,7 +388,7 @@
   .row.open {
     border-start-start-radius: 0;
     border-end-start-radius: 0;
-    background: var(--selected-bg);
+    background: var(--selected-list-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
@@ -397,6 +401,7 @@
     place-items: center;
   }
 
+  /* kit-ui-check-ignore: the custom identity tile swaps with the selection control. */
   .avatar,
   .avatar-slot :global(.selection-checkbox) {
     position: absolute;
@@ -410,8 +415,11 @@
     transform: scale(0.9);
   }
 
+  /* kit-ui-check-ignore: the tile gives way to selection while a row is active. */
   .row:hover .avatar,
+  /* kit-ui-check-ignore: the tile gives way to selection while a row is active. */
   .row:focus-within .avatar,
+  /* kit-ui-check-ignore: the tile gives way to selection while a row is active. */
   .rows.selection-mode .avatar {
     opacity: 0;
     transform: scale(0.9);

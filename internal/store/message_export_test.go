@@ -82,6 +82,39 @@ func TestExportMessagesInMemory(t *testing.T) {
 	})
 }
 
+// A webhook run applies single changes between polling syncs, so the source's
+// last successful sync stays the polling sync's.
+func TestExportMessagesSourceSyncLeavesOutWebhookRuns(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("facebook_comments", "app:1:page:2")
+	requirements.NoError(err)
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	for _, run := range []struct {
+		syncType  string
+		completed time.Time
+	}{
+		{"incremental", start},
+		{store.SyncTypeWebhook, start.Add(2 * time.Hour)},
+	} {
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
+			INSERT INTO sync_runs (source_id, sync_type, started_at, completed_at, status)
+			VALUES (?, ?, ?, ?, 'completed')
+		`), source.ID, run.syncType, run.completed.Add(-time.Minute), run.completed)
+		requirements.NoError(err)
+	}
+	conversation := insertMessageExportConversation(t, st, source.ID, "post-1", "Post", "thread", `{}`)
+	insertMessageExportMessage(t, st, source.ID, conversation, "comment-1", "facebook_comment", start.Add(time.Hour), "Comment body", "", 0, false, false)
+
+	sink := &collectingMessageExportSink{}
+	_, err = st.ExportMessages(t.Context(), store.MessageExportFilter{Start: start, End: start.Add(24 * time.Hour)}, sink)
+	requirements.NoError(err)
+	requirements.Len(sink.sources, 1)
+	requirements.NotNil(sink.sources[0].LastSuccessfulSyncAt)
+	assertions.Equal(start, *sink.sources[0].LastSuccessfulSyncAt)
+}
+
 func TestExportMessagesStreamsDeterministicPhases(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

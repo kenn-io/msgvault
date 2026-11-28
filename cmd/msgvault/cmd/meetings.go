@@ -20,11 +20,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-const meetingsMinAPISchemaVersion = "2.27.0"
-
 type meetingCommandClient interface {
 	mcpserver.MeetingBackend
-	APISchemaVersion(ctx context.Context) (string, error)
 }
 
 type meetingCommandDeps struct {
@@ -46,7 +43,7 @@ func newMeetingsCommand(deps meetingCommandDeps) *cobra.Command {
 		Use:   "meetings",
 		Short: "Read archived meeting context, actions, and metrics",
 		Long: `Read meetings archived from meeting sources (Granola, Circleback, Plaud,
-Muesli, Notion, Twenty, Twilio). Meeting IDs are message IDs; find them with
+Muesli, Notion, Twenty, Twilio, Bland). Meeting IDs are message IDs; find them with
   msgvault search 'message_type:meeting_transcript newer_than:30d' --json`,
 		Example: `  msgvault meetings context --id 42 --format json`,
 	}
@@ -54,6 +51,11 @@ Muesli, Notion, Twenty, Twilio). Meeting IDs are message IDs; find them with
 		newMeetingContextCommand(deps),
 		newMeetingActionsCommand(deps),
 		newMeetingMetricsCommand(deps),
+		newMeetingLinksCommand(deps),
+		newMeetingSuggestionsCommand(deps),
+		newMeetingDecisionCommand(deps, "link"),
+		newMeetingDecisionCommand(deps, "unlink"),
+		newMeetingDecisionCommand(deps, "clear"),
 	)
 	return command
 }
@@ -71,18 +73,6 @@ func openMeetingCommandClient(
 	}
 	if cleanup == nil {
 		cleanup = func() {}
-	}
-	version, err := client.APISchemaVersion(ctx)
-	if err != nil {
-		cleanup()
-		return nil, func() {}, fmt.Errorf("check daemon meeting capability: %w", err)
-	}
-	if !daemonclient.APISchemaVersionAtLeast(version, meetingsMinAPISchemaVersion) {
-		cleanup()
-		return nil, func() {}, fmt.Errorf(
-			"meeting commands require daemon API schema %s or newer (daemon reports %q); upgrade the daemon",
-			meetingsMinAPISchemaVersion, version,
-		)
 	}
 	return client, cleanup, nil
 }
@@ -469,10 +459,7 @@ func meetingCommandError(err error) error {
 		if apiErr.APIErrorCode() != "not_found" {
 			return err
 		}
-		return fmt.Errorf(
-			"meeting intelligence is unavailable from this daemon; upgrade it to API schema %s or newer: %w",
-			meetingsMinAPISchemaVersion, err,
-		)
+		return fmt.Errorf("meeting intelligence is unavailable from this daemon: %w", err)
 	case http.StatusServiceUnavailable:
 		return fmt.Errorf("meeting intelligence is unavailable: %w", err)
 	default:

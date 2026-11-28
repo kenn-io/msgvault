@@ -475,6 +475,8 @@ var readOnlyPostRoutePatterns = []string{
 	"/api/v1/meetings/context",
 	"/api/v1/meetings/metrics",
 	"/api/v1/search/coverage",
+	// Account matching retry only queues work; its coordinator takes the gate.
+	"/api/v1/sources/{source_id}/account-attribution/repair",
 }
 
 var (
@@ -619,17 +621,18 @@ func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err
 // cliRunReadOnlyCommands are proxied CLI commands that only read. Keys are
 // the leading command-path words of CLIRunRequest args (flags follow them).
 var cliRunReadOnlyCommands = map[string]bool{
-	"export-messages":   true,
-	"export-discord":    true,
-	"list-folders":      true,
-	"policy list":       true,
-	"draft-get":         true,
-	"draft-send-as":     true,
-	"logs":              true,
-	"list-deletions":    true,
-	"show-deletion":     true,
-	"embeddings list":   true,
-	"embeddings status": true,
+	"diagnose-gmail-inventory": true,
+	"export-messages":          true,
+	"export-discord":           true,
+	"list-folders":             true,
+	"policy list":              true,
+	"draft-get":                true,
+	"draft-send-as":            true,
+	"logs":                     true,
+	"list-deletions":           true,
+	"show-deletion":            true,
+	"embeddings list":          true,
+	"embeddings status":        true,
 	// Tier previews only read.
 	"person tiers preview": true,
 	"person tiers explain": true,

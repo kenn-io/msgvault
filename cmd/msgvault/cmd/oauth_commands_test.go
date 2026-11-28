@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -352,6 +353,43 @@ func TestCommandForcePreflightFinalReadHonorsCancellation(t *testing.T) {
 	}
 }
 
+func TestSyncFullCredentialDiscoveryHonorsCancellation(t *testing.T) {
+	resetSyncFullFlagsForTest(t)
+	_, state := setupCommandOAuth(t)
+	state.cfg.OAuth.ClientSecretsCommand = testutil.SecretCommand(t, "client-after-wait")
+	st := testutil.NewSQLiteTestStoreAt(t, state.cfg.DatabaseDSN())
+	_, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+	ctx, cancel := context.WithCancel(withInvocation(t.Context(), state))
+	defer cancel()
+	command := &cobra.Command{Use: "sync-full", RunE: runSyncFullLocalForTest}
+	command.SetContext(ctx)
+	result := make(chan error, 1)
+	done := make(chan struct{})
+	go func() { defer close(done); result <- command.Execute() }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			assert.Fail(t, "credential command did not stop")
+		}
+	}()
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(filepath.Join(os.Getenv("MSGVAULT_TEST_SECRET_ROOT"), "client-after-wait.started"))
+		return err == nil
+	}, 15*time.Second, 10*time.Millisecond)
+	cancel()
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorContains(t, err, "reader@example.test")
+	case <-time.After(15 * time.Second):
+		require.FailNow(t, "credential discovery did not stop")
+	}
+}
+
 func TestCommandGrantDecisionReadsExactTokenOnce(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
@@ -401,7 +439,7 @@ func headlessNativeArgs(t *testing.T, shell, fixture, line string) []string {
 	if err != nil {
 		t.Skipf("native shell unavailable: %s", shell)
 	}
-	tail := strings.TrimPrefix(line, "msgvault ")
+	tail := strings.TrimPrefix(strings.TrimPrefix(line, "'msgvault' "), "msgvault ")
 	var command *exec.Cmd
 	switch shell {
 	case "cmd":
@@ -472,19 +510,43 @@ func TestHeadlessCommandsPreserveNativeArguments(t *testing.T) {
 			})
 		}
 	}
-	var out bytes.Buffer
-	oauth.PrintHeadlessCommand(&out, "msgvault", "sync-full", "--", "imap://reader$tag@host.example:143")
-	var lines []string
-	for line := range strings.SplitSeq(out.String(), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "msgvault ") {
-			lines = append(lines, strings.TrimSpace(line))
+	resetSyncFullFlagsForTest(t)
+	for _, identifier := range []string{"reader@example.com", "imap://reader$tag@host.example:143", "-reader@example.org"} {
+		var out bytes.Buffer
+		oauth.PrintHeadlessCommand(&out, oauth.HeadlessSyncArgs("sync-full", identifier)...)
+		var lines []string
+		for line := range strings.SplitSeq(out.String(), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "msgvault ") {
+				lines = append(lines, strings.TrimSpace(line))
+			}
 		}
-	}
-	require.Len(t, lines, 2)
-	for i, shell := range []string{"sh", "pwsh"} {
-		t.Run("sync/"+shell, func(t *testing.T) {
-			assert.Equal(t, []string{"sync-full", "--", "imap://reader$tag@host.example:143"}, headlessNativeArgs(t, shell, fixture, lines[i]))
-		})
+		require.NotEmpty(t, lines)
+		for _, shell := range []string{"sh", "pwsh"} {
+			t.Run("sync/"+identifier+"/"+shell, func(t *testing.T) {
+				line := lines[0]
+				if shell == "pwsh" && len(lines) == 2 {
+					line = lines[1]
+				}
+				// Users extend the suggested command with flags such as --limit.
+				// After "--" only positional arguments follow, so the flag goes
+				// before it for an identifier that needs one.
+				got := headlessNativeArgs(t, shell, fixture, line)
+				if strings.HasPrefix(identifier, "-") {
+					require.Equal(t, []string{"sync-full", "--", identifier}, got)
+					got = slices.Insert(got, 1, "--limit", "100")
+				} else {
+					require.Equal(t, []string{"sync-full", identifier}, got)
+					got = append(got, "--limit", "100")
+				}
+				syncLimit = 0
+				cmd := &cobra.Command{Use: syncFullCmd.Use, Args: syncFullCmd.Args}
+				cmd.Flags().IntVar(&syncLimit, "limit", 0, "")
+				require.NoError(t, cmd.ParseFlags(got[1:]))
+				require.NoError(t, cmd.Args(cmd, cmd.Flags().Args()))
+				assert.Equal(t, []string{identifier}, cmd.Flags().Args())
+				assert.Equal(t, 100, syncLimit)
+			})
+		}
 	}
 }
 

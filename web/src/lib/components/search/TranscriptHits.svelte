@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { admitsMediaQuery, refusedMediaSearchNotice } from '../../search/media-query';
-  import { Button, Chip } from '@kenn-io/kit-ui';
+  import { Button, Chip, overlayScrollbars } from '@kenn-io/kit-ui';
   import FileText from '@lucide/svelte/icons/file-text';
   import FileVolume from '@lucide/svelte/icons/file-volume';
   import type { APIClient } from '../../api/client';
@@ -168,7 +168,7 @@
   </li>
 {/snippet}
 
-<section class="transcript-hits" aria-label="Media search" tabindex="-1" data-recording-hits>
+<section class="transcript-hits" aria-label="Media search" tabindex="-1" data-recording-hits {@attach overlayScrollbars()}>
   <section aria-label="Recordings">
     <header>
       <h2>Recordings{#if result && admitted && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>
@@ -255,7 +255,7 @@
   a { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; column-gap: var(--space-3); row-gap: var(--space-1); padding: var(--space-2); color: var(--text-primary); text-decoration: none; border-radius: var(--radius-sm); }
   a:hover strong { text-decoration: underline; }
   a:focus-visible { outline: 2px solid var(--text-primary); outline-offset: -2px; }
-  a[aria-current='true'] { background: var(--selected-bg); border-start-start-radius: 0; border-end-start-radius: 0; box-shadow: inset 2px 0 0 var(--accent-blue); }
+  a[aria-current='true'] { background: var(--selected-list-bg); border-start-start-radius: 0; border-end-start-radius: 0; box-shadow: inset 2px 0 0 var(--accent-blue); }
   strong { align-self: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
   .recording-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: var(--radius-md); background: var(--bg-inset); color: var(--text-secondary); }
   .date { align-self: center; white-space: nowrap; }

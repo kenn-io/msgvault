@@ -26,13 +26,13 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 		attachmentsError string
 		terminal         bool
 	}{
-		{name: "table", args: []string{"search", "quarterly", "numbers", "--person", "7", "--direction", "from_person"}, status: 200, want: []string{"Coverage complete", "generated", "quarterly numbers", "report.pdf", "More may match"}},
+		{name: "table", args: []string{"search", "quarterly", "numbers", "--person", "7", "--direction", "from_person"}, status: 200, want: []string{"Recordings mode lexical; coverage complete", "generated", "quarterly numbers", "report.pdf", "More may match"}},
 		{name: "recordings unavailable", args: []string{"search", "quartz"}, status: 200, recordingsError: "media_search_unavailable", want: []string{"partial true", "Docbank transcript search is unavailable", "Attachments mode lexical; coverage unknown; partial false; truncated true", "report.pdf", "More may match"}, absent: []string{"quarterly numbers", "generated"}},
-		{name: "attachments unavailable", args: []string{"search", "quarterly numbers"}, status: 200, attachmentsError: "transport", want: []string{"Coverage complete", "generated", "quarterly numbers", "Attachments mode unavailable; coverage unknown; partial false; truncated false", "Attachment search is unavailable."}, absent: []string{"report.pdf", "More may match"}},
+		{name: "attachments unavailable", args: []string{"search", "quarterly numbers"}, status: 200, attachmentsError: "transport", want: []string{"Recordings mode lexical; coverage complete", "generated", "quarterly numbers", "Attachments mode unavailable; coverage unknown; partial false; truncated false", "Attachment search is unavailable."}, absent: []string{"report.pdf", "More may match"}},
 		{name: "terminal", args: []string{"search", "quarterly numbers"}, status: 200, terminal: true},
 		{name: "json", args: []string{"search", "quarterly numbers", "--json"}, status: 200, want: []string{`"message_id":11`, "generated", "quarterly numbers", "report.pdf"}},
-		{name: "semantic", args: []string{"search", "words", "--mode", "semantic"}, status: 200, want: []string{"Attachments mode semantic; coverage complete", "report.pdf"}},
-		{name: "fallback", args: []string{"search", "words", "--mode", "hybrid"}, status: 200, want: []string{"Attachments mode lexical; coverage unknown; partial true", "Semantic search is not configured."}, absent: []string{"semantic_unconfigured"}},
+		{name: "semantic", args: []string{"search", "words", "--mode", "semantic"}, status: 200, want: []string{"Recordings mode semantic; coverage complete", "quarterly numbers", "Attachments mode semantic; coverage complete", "report.pdf"}},
+		{name: "fallback", args: []string{"search", "words", "--mode", "hybrid"}, status: 200, want: []string{"Recordings mode lexical; coverage complete; pending 0; unavailable 0; attribution unavailable 0; partial true", "Attachments mode lexical; coverage unknown; partial true", "Semantic search is not configured."}, absent: []string{"semantic_unconfigured"}},
 		{name: "fallback json", args: []string{"search", "words", "--mode", "hybrid", "--json"}, status: 200, want: []string{"semantic_unconfigured"}, absent: []string{"Semantic search is not configured."}},
 		{name: "upper limit delegated", args: []string{"search", "words", "--limit", "101"}, status: 400, want: []string{"invalid_limit"}},
 		{name: "person relation delegated", args: []string{"search", "words", "--direction", "from_person"}, status: 400, want: []string{"invalid_person"}},
@@ -72,22 +72,20 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 					state, excerpt = "\x1b[31mcomplete\x1b[0m\a", "quarterly\x1b[31m numbers\x1b[0m\a"
 				}
 				response := generated.MediaSearchResponse{
-					Coverage:    generated.SearchCoverage{State: state},
-					Results:     []generated.MediaSearchResult{{MessageID: 11, ConversationID: 22, AttachmentID: 33, Origin: generated.MediaSearchResultOriginGenerated, Excerpt: excerpt}},
-					Attachments: &generated.MediaAttachmentSearch{RequestedMode: "lexical", ActualMode: "lexical", Coverage: generated.SearchCoverage{State: "unknown"}, Degradations: []string{}, Results: []generated.MediaAttachmentResult{{MessageID: 44, ConversationID: 22, AttachmentID: 55, Filename: "report.pdf", Excerpt: "quartz"}}, Truncated: true},
-				}
-				if test.name == "semantic" || test.name == "fallback" || test.name == "fallback json" {
-					response.Results = []generated.MediaSearchResult{}
-					response.Coverage = generated.SearchCoverage{State: "unknown"}
-					response.Partial = true
-					response.RecordingsError = &generated.ErrorResponse{ErrorData: "media_search_mode_unavailable", Message: new("Recordings require lexical mode")}
+					ActualMode:   "lexical",
+					Degradations: []string{},
+					Coverage:     generated.SearchCoverage{State: state},
+					Results:      []generated.MediaSearchResult{{MessageID: 11, ConversationID: 22, AttachmentID: 33, Origin: generated.MediaSearchResultOriginGenerated, Excerpt: excerpt}},
+					Attachments:  &generated.MediaAttachmentSearch{RequestedMode: "lexical", ActualMode: "lexical", Coverage: generated.SearchCoverage{State: "unknown"}, Degradations: []string{}, Results: []generated.MediaAttachmentResult{{MessageID: 44, ConversationID: 22, AttachmentID: 55, Filename: "report.pdf", Excerpt: "quartz"}}, Truncated: true},
 				}
 				if test.name == "semantic" {
+					response.ActualMode = "semantic"
 					response.Attachments.RequestedMode, response.Attachments.ActualMode = "semantic", "semantic"
 					response.Attachments.Coverage = generated.SearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}
 					response.Attachments.Results[0].Excerpt = ""
 				}
 				if test.name == "fallback" || test.name == "fallback json" {
+					response.Partial, response.Degradations = true, []string{"semantic_unconfigured"}
 					response.Attachments.RequestedMode = "hybrid"
 					response.Attachments.Partial = true
 					response.Attachments.Degradations = []string{"semantic_unconfigured"}

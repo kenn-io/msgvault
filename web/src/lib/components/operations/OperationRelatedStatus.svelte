@@ -2,7 +2,7 @@
   import {
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
   } from '../../api/generated/api/api';
-  import { Button, Chip, StatusDot } from '@kenn-io/kit-ui';
+  import { Button, Chip, overlayScrollbars, StatusDot } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -67,7 +67,7 @@
   }
 </script>
 
-<section class="related-status" aria-label={labels[authority]}>
+<section class="related-status" aria-label={labels[authority]} {@attach overlayScrollbars()}>
   <header>
     <Button size="sm" surface="soft" label="Back" onclick={onClose} />
   </header>

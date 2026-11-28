@@ -52,13 +52,13 @@ func TestPersonGetLooksUpVCardUIDAndJSONIncludesCardDAVBindings(t *testing.T) {
 	var requestedPath string
 	var requestedUID string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestedPath = r.URL.Path
-		requestedUID = r.URL.Query().Get("uid")
+		if r.URL.Path == "/api/v1/people/by-uid" {
+			requestedPath = r.URL.Path
+			requestedUID = r.URL.Query().Get("uid")
+		}
 		assert.Equal(http.MethodGet, r.Method)
-		if r.URL.Path == "/api/v1/health" {
-			w.Header().Set("Content-Type", "application/json")
-			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"3.10.0"}`))
-			assert.NoError(err)
+		if r.URL.Path == "/api/v1/people/7/contact-state" {
+			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -97,38 +97,6 @@ func TestPersonGetLooksUpVCardUIDAndJSONIncludesCardDAVBindings(t *testing.T) {
 		`"href":"https://contacts.example.test/book/person.vcf","remote_uid":"`+uid+`",`+
 		`"mapping_status":"mapped"}],"created_at":"2026-07-29T12:00:00Z",`+
 		`"updated_at":"2026-07-29T12:00:00Z"}`, stdout.String())
-}
-
-func TestPersonGetByUIDRequiresCurrentDaemonSchema(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var uidLookups atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			w.Header().Set("Content-Type", "application/json")
-			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"3.9.0"}`))
-			assert.NoError(err)
-			return
-		}
-		if r.URL.Path == "/api/v1/people/by-uid" {
-			uidLookups.Add(1)
-		}
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
-	testCtx := withStoreResolverConfig(t, &config.Config{
-		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
-	})
-	command := &cobra.Command{
-		Use: personGetCmd.Use, Args: personGetCmd.Args, RunE: personGetCmd.RunE,
-	}
-	command.Flags().String("vcard-uid", "", "")
-	command.SetContext(testCtx)
-	command.SetArgs([]string{"--vcard-uid", "urn:uuid:person-example"})
-	err := command.Execute()
-	require.Error(err)
-	assert.Contains(err.Error(), "daemon API schema 3.10.0 or newer")
-	assert.Zero(uidLookups.Load(), "the unsupported route must not be sent to an older daemon")
 }
 
 func TestPersonGetRejectsInvalidIDBeforeOpeningDaemonConnection(t *testing.T) {

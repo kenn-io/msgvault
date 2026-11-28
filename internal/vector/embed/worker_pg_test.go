@@ -11,11 +11,13 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/pgvector"
 )
 
@@ -24,6 +26,56 @@ import (
 // fakeEmbeddingClient is behind a different build tag.
 type pgFakeEmbeddingClient struct {
 	dim int
+}
+
+func TestWorkerPG_StampSkippedWithReservedConnection(t *testing.T) {
+	db := openPGWorkerDB(t, 2)
+	backend, err := pgvector.Open(t.Context(), pgvector.Options{DB: db, Dimension: 4})
+	require.NoError(t, err)
+	gen, err := backend.CreateGeneration(t.Context(), "test", 4, "test:4")
+	require.NoError(t, err)
+	require.NoError(t, backend.Upsert(t.Context(), gen, []vector.Chunk{
+		{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
+		{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
+	}))
+	var first, second time.Time
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT last_modified FROM messages WHERE id=1`).Scan(&first))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT last_modified FROM messages WHERE id=2`).Scan(&second))
+	_, err = db.ExecContext(t.Context(), `UPDATE messages SET subject='changed' WHERE id=2`)
+	require.NoError(t, err)
+	db.SetMaxOpenConns(2)
+	reserved, err := db.Conn(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reserved.Close() })
+	w := NewWorker(WorkerDeps{Backend: backend, VectorsDB: db, MainDB: db, Store: &pgWorkStore{db: db}, Client: &pgFakeEmbeddingClient{dim: 4}, Rebind: (&store.PostgreSQLDialect{}).Rebind})
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	missed, err := w.stampSkipped(ctx, gen, []int64{1, 2}, map[int64]any{1: first, 2: second})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{2}, missed)
+	var stamped sql.NullInt64
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id=1`).Scan(&stamped))
+	assert.Equal(t, int64(gen), stamped.Int64)
+	require.True(t, stamped.Valid)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id=2`).Scan(&stamped))
+	assert.False(t, stamped.Valid)
+	var count int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1 AND message_id=1`, gen).Scan(&count))
+	assert.Zero(t, count)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1 AND message_id=2`, gen).Scan(&count))
+	assert.Equal(t, 1, count)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT message_count FROM index_generations WHERE id=$1`, gen).Scan(&count))
+	assert.Equal(t, 1, count)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT last_modified FROM messages WHERE id=2`).Scan(&second))
+	_, err = db.ExecContext(t.Context(), `CREATE FUNCTION reject_embedding_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'delete failed'; END $$;
+		CREATE TRIGGER reject_embedding_delete BEFORE DELETE ON embeddings FOR EACH STATEMENT EXECUTE FUNCTION reject_embedding_delete()`)
+	require.NoError(t, err)
+	_, err = w.stampSkipped(t.Context(), gen, []int64{2}, map[int64]any{2: second})
+	require.ErrorContains(t, err, "delete failed")
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id=2`).Scan(&stamped))
+	assert.False(t, stamped.Valid, "a failed vector delete rolls back the stamp")
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM embeddings WHERE generation_id=$1 AND message_id=2`, gen).Scan(&count))
+	assert.Equal(t, 1, count)
 }
 
 func (c *pgFakeEmbeddingClient) Embed(_ context.Context, inputs []string) ([][]float32, error) {

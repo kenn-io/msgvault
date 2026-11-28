@@ -3,7 +3,6 @@ package daemonclient
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -16,10 +15,6 @@ import (
 
 var _ peoplebrowser.ProfileReader = (*PeopleBrowser)(nil)
 var _ peoplebrowser.ProfileUIDReader = (*PeopleBrowser)(nil)
-
-// PersonUIDLookupMinAPISchemaVersion is the first daemon schema that supports
-// resolving a person profile by current or CardDAV UID.
-const PersonUIDLookupMinAPISchemaVersion = "3.10.0"
 
 // maxProfileOrganizationLookups bounds the per-organization name resolution
 // a single profile read may perform beyond the primary-employment projection.
@@ -70,14 +65,11 @@ func (b *PeopleBrowser) GetPersonProfile(
 					PathParams: &generated.GetPersonContactStatePath{ID: personID},
 				})
 		})
-	switch {
-	case err == nil:
+	if err == nil {
 		// A missing projection is an HTTP 200 response with zero ComputedAt.
-		if !state.JSON200.ComputedAt.IsZero() {
+		if !state.JSON200.ComputedAt.IsZero() || state.JSON200.FirstSeenAt != nil {
 			profile.ContactState = contactStateFromGenerated(*state.JSON200)
 		}
-	case !absentAPIResource(err):
-		return nil, err
 	}
 
 	profile.Brief, err = b.GetPersonBrief(ctx, personID)
@@ -147,14 +139,6 @@ func (b *PeopleBrowser) GetPersonProfileByUID(
 	uid = strings.TrimSpace(uid)
 	if uid == "" {
 		return nil, errors.New("vCard UID must not be empty")
-	}
-	supported, err := b.engine.store.SupportsAPISchemaVersion(ctx, PersonUIDLookupMinAPISchemaVersion)
-	if err != nil {
-		return nil, fmt.Errorf("check person UID lookup capability: %w", err)
-	}
-	if !supported {
-		return nil, fmt.Errorf("person UID lookup requires daemon API schema %s or newer; upgrade the daemon",
-			PersonUIDLookupMinAPISchemaVersion)
 	}
 	resp, err := APIResponse(b.engine.store,
 		func(client *apiclient.Client) (*generated.GetPersonByUIDResp, error) {
@@ -244,7 +228,15 @@ func absentAPIResource(err error) bool {
 }
 
 func contactStateFromGenerated(state generated.ContactState) *store.ContactState {
+	var introducer *store.FirstContactIntroducer
+	if state.Introducer != nil {
+		introducer = &store.FirstContactIntroducer{ParticipantID: state.Introducer.ParticipantID, DisplayName: state.Introducer.DisplayName, PersonID: copyInt64(state.Introducer.PersonID)}
+	}
 	return &store.ContactState{
+		FirstSeenAt:         copyTime(state.FirstSeenAt),
+		FirstSeenRef:        stringValue(state.FirstSeenRef),
+		FirstContactKind:    store.FirstContactKind(stringValue(state.FirstContactKind)),
+		Introducer:          introducer,
 		PersonID:            state.PersonID,
 		FirstContactAt:      copyTime(state.FirstContactAt),
 		FirstContactRef:     stringValue(state.FirstContactRef),

@@ -812,7 +812,11 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			requirements.NoError(err)
 			_, err = service.Subscribe(t.Context(), in, "owner", verify, nil)
 			requirements.NoError(err)
-			assertions.Equal(3, calls)
+			other := in
+			other.Arguments.IncomingOnly = new(false)
+			_, err = service.Subscribe(t.Context(), other, verify)
+			requirements.NoError(err)
+			assertions.Equal(2, calls)
 		}},
 		{"SubscribeRejectsLocalFailuresBeforeVerification", func(t *testing.T) {
 			t.Helper()
@@ -1055,8 +1059,10 @@ func TestNativeRemovesSubscriptionsWhenGrantEnds(t *testing.T) {
 	require.True(reg.Revoke(id))
 	subs, err = service.Native(t.Context())
 	require.NoError(err)
-	assert.Empty(subs)
-	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(created.ID))
+	require.Len(subs, 1)
+	assert.True(subs[0].Terminated)
+	assert.Equal(created.ID, subs[0].Name)
+	_, position, err := st.LoadWakeupStateKey(t.Context(), subs[0].StateKey)
 	require.NoError(err)
 	assert.Nil(position)
 }
@@ -1125,7 +1131,7 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 					return nil
 				}, nil)
 				require.NoError(err)
-				assert.NotEqual(id, challenged)
+				assert.Equal(id, challenged)
 				return nil
 			}
 			_, err = service.Subscribe(t.Context(), first, owner, verifyLoser, nil)
@@ -1142,7 +1148,10 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			require.NoError(err)
 			origin, err := callbackOrigin(first.Delivery.URL)
 			require.NoError(err)
-			encoded, _, err := credentials.Resolve(providercredentials.EventsID(winner.ID), origin, "", nil)
+			entries, _, err := service.catalog(t.Context())
+			require.NoError(err)
+			require.Len(entries, 1)
+			encoded, _, err := credentials.Resolve(providercredentials.EventsID(entries[0].ID), origin, "", nil)
 			require.NoError(err)
 			var private privateCallback
 			require.NoError(json.Unmarshal([]byte(encoded), &private))
@@ -1160,7 +1169,7 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			assert.Equal(winner.ID, retry.ID)
 			credentials, err = providercredentials.ReadEvents(service.TokensDir)
 			require.NoError(err)
-			encoded, _, err = credentials.Resolve(providercredentials.EventsID(retry.ID), origin, "", nil)
+			encoded, _, err = credentials.Resolve(providercredentials.EventsID(entries[0].ID), origin, "", nil)
 			require.NoError(err)
 			require.NoError(json.Unmarshal([]byte(encoded), &private))
 			secret, err = base64.StdEncoding.DecodeString(private.Secret)
@@ -1177,6 +1186,10 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			verify := func(context.Context, string, string, []byte) error { return nil }
 			first, err := service.Subscribe(t.Context(), in, owner, verify, nil)
 			require.NoError(err)
+			entries, _, err := service.catalog(t.Context())
+			require.NoError(err)
+			require.Len(entries, 1)
+			oldKey := store.MCPEventsPositionKey(entries[0].ID)
 			_, err = service.Subscribe(t.Context(), in, owner, func(_ context.Context, _ string, challenged string, _ []byte) error {
 				assert.Equal(first.ID, challenged)
 				*now = first.RefreshBefore
@@ -1186,7 +1199,7 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			require.ErrorAs(err, &failure)
 			assert.Equal(Unavailable, failure.Code)
 			assert.Equal("verification_changed", failure.Reason)
-			_, oldPosition, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
+			_, oldPosition, err := st.LoadWakeupStateKey(t.Context(), oldKey)
 			require.NoError(err)
 			assert.Nil(oldPosition)
 			_, gapID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "gap@example.test", "gap", "gap", "")
@@ -1198,10 +1211,14 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 				return nil
 			}, func(context.Context, bool) error { checks++; return nil })
 			require.NoError(err)
-			assert.NotEqual(first.ID, retry.ID)
+			assert.Equal(first.ID, retry.ID)
 			assert.Equal(retryID, retry.ID)
 			assert.GreaterOrEqual(checks, 1)
-			state, _, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(retry.ID))
+			entries, _, err = service.catalog(t.Context())
+			require.NoError(err)
+			require.Len(entries, 1)
+			assert.NotEqual(oldKey, store.MCPEventsPositionKey(entries[0].ID))
+			state, _, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(entries[0].ID))
 			require.NoError(err)
 			assert.False(state.At.IsZero())
 			page, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(state.At), 100)
@@ -1225,7 +1242,7 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			*now = first.RefreshBefore.Add(time.Second)
 			next, err := service.Subscribe(t.Context(), in, owner, acceptCallback, nil)
 			require.NoError(err)
-			assert.NotEqual(first.ID, next.ID)
+			assert.Equal(first.ID, next.ID)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1445,4 +1462,18 @@ func TestNativeRejectsSuffixedOwnerIdentity(t *testing.T) {
 	targets, err := service.Native(t.Context())
 	requirements.NoError(err)
 	assert.Empty(t, targets)
+}
+
+func TestCallbackReasonUsesSEPCategories(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"dns_error", "connection_refused"},
+		{"invalid_callback", "challenge_failed"},
+		{"http_3xx", "challenge_failed"},
+		{"http_4xx", "http_4xx"},
+		{"http_5xx", "http_5xx"},
+		{"timeout", "timeout"},
+		{"tls_error", "tls_error"},
+	} {
+		t.Run(tc.input, func(t *testing.T) { assert.Equal(t, tc.want, CallbackReason(tc.input)) })
+	}
 }

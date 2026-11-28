@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS carddav_sync_runs (
     created       INTEGER NOT NULL DEFAULT 0 CHECK (created >= 0),
     updated       INTEGER NOT NULL DEFAULT 0 CHECK (updated >= 0),
     removed       INTEGER NOT NULL DEFAULT 0 CHECK (removed >= 0),
+    binding_conflicts INTEGER CHECK (binding_conflicts IS NULL OR binding_conflicts >= 0),
     error_code    TEXT NOT NULL DEFAULT '' CHECK (
         error_code = '' OR (length(error_code) <= 64 AND
                             substr(error_code, 1, 1) GLOB '[a-z]' AND
@@ -370,6 +371,7 @@ CREATE TABLE IF NOT EXISTS persons (
     id                        INTEGER PRIMARY KEY AUTOINCREMENT,
     vcard_uid                 TEXT NOT NULL UNIQUE,
     display_name              TEXT,
+    display_name_source_name_id INTEGER,
     revision                  INTEGER NOT NULL DEFAULT 1,
     vcard_projection_revision INTEGER NOT NULL DEFAULT 1,
     created_at                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -398,6 +400,7 @@ CREATE TABLE IF NOT EXISTS person_carddav_inference_state (
 CREATE TABLE IF NOT EXISTS person_participants (
     person_id      INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
     participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    carddav_owned BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (person_id, participant_id),
     UNIQUE(participant_id)
 );
@@ -1076,6 +1079,7 @@ CREATE TABLE IF NOT EXISTS person_fact_decisions (
                            'competing-tie', 'explicit-contradiction', 'explicit-supersession',
                            'organization-ambiguous', 'applied-projection', 'evidence-unsupported',
                            'outside-validity')),
+    outcome            TEXT,
     score_json         JSON NOT NULL,
     competing_claim_id INTEGER REFERENCES person_fact_claims(id) ON DELETE SET NULL,
     projection_kind    TEXT,
@@ -1594,6 +1598,8 @@ CREATE TABLE IF NOT EXISTS attachments (
     size INTEGER,
 
     -- Content-addressed storage (deduplication)
+    -- A row holds archived bytes only when content_hash is set. A hashless
+    -- storage_path is a source locator or placeholder, never archived bytes.
     content_hash TEXT,              -- SHA-256 of content
     storage_path TEXT NOT NULL,     -- relative path: ab/abcd1234...
 
@@ -1789,6 +1795,10 @@ CREATE TABLE IF NOT EXISTS message_raw (
 
     compression TEXT DEFAULT 'zlib',
     encryption_version INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS email_calendar_pending (
+    message_id INTEGER PRIMARY KEY REFERENCES message_raw(message_id) ON DELETE CASCADE
 );
 
 -- Explicit MIME identifiers (In-Reply-To, References, attached originals),
@@ -2812,7 +2822,7 @@ CREATE TABLE IF NOT EXISTS person_attribute_values (
     -- the portable CHECK below only pins separator positions and length.
     value_date        TEXT,
     value_timestamp   DATETIME,
-    value_json        JSON,
+    value_json        TEXT,
     value_record_type TEXT,
     value_record_id   INTEGER,
     active_from       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -3007,7 +3017,7 @@ CREATE TABLE IF NOT EXISTS organization_attribute_values (
     value_boolean     BOOLEAN,
     value_date        TEXT,
     value_timestamp   DATETIME,
-    value_json        JSON,
+    value_json        TEXT,
     value_record_type TEXT,
     value_record_id   INTEGER,
     active_from       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -4136,6 +4146,17 @@ BEGIN
     WHERE person_id = OLD.person_id;
 END;
 
+CREATE TABLE IF NOT EXISTS voice_transcripts (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    attachment_id BIGINT NOT NULL,
+    vault_uid TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_version_id TEXT NOT NULL,
+    content_version_id TEXT NOT NULL,
+    transcript_text TEXT NOT NULL,
+    PRIMARY KEY (message_id, attachment_id, vault_uid, source_id, source_version_id, content_version_id)
+);
+
 -- Current normalized source evidence, rebuilt from authoritative meeting raw.
 CREATE TABLE IF NOT EXISTS meeting_details (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
@@ -4145,7 +4166,8 @@ CREATE TABLE IF NOT EXISTS meeting_details (
     duration_seconds REAL,
     duration_basis TEXT NOT NULL DEFAULT '',
     action_coverage TEXT NOT NULL,
-    transcript_state TEXT NOT NULL
+    transcript_state TEXT NOT NULL,
+    link_key TEXT
 );
 CREATE TABLE IF NOT EXISTS meeting_action_items (
     message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -4222,6 +4244,7 @@ CREATE TABLE IF NOT EXISTS source_merge_archive_only_messages (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     original_source_message_id TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_source_merge_archive_only_original ON source_merge_archive_only_messages(original_source_message_id);
 
 CREATE TRIGGER IF NOT EXISTS source_retired_conversations_insert
 BEFORE INSERT ON conversations
@@ -4307,6 +4330,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     projection_version INTEGER NOT NULL,
     content_hash TEXT NOT NULL,
     provider_event_id TEXT NOT NULL DEFAULT '',
+    ical_uid TEXT NOT NULL DEFAULT '',
     series_provider_id TEXT NOT NULL DEFAULT '',
     kind TEXT NOT NULL DEFAULT '',
     original_start_at DATETIME,
@@ -4325,6 +4349,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_id ON calendar_events(provider_event_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_series_id ON calendar_events(series_provider_id, message_id);
 CREATE TABLE IF NOT EXISTS calendar_event_attendees (
     message_id INTEGER NOT NULL REFERENCES calendar_events(message_id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL,
@@ -4390,3 +4415,38 @@ CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
 CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
  ON docbank_attachment_processing(destination_key, fingerprint, next_action_at, content_hash)
  WHERE next_action_at IS NOT NULL;
+
+-- Public replies msgvault posts to archived Facebook and Instagram comments.
+-- A row is written before the send. A row left 'sending' means Meta's answer
+-- was lost, so an identical reply is refused until the owner clears it.
+CREATE TABLE IF NOT EXISTS meta_comment_replies (
+ id INTEGER PRIMARY KEY,
+ source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ comment_id TEXT NOT NULL,
+ body TEXT NOT NULL,
+ state TEXT NOT NULL CHECK (state IN ('sending', 'sent', 'failed')),
+ reply_id TEXT,
+ created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_meta_comment_replies_comment
+ ON meta_comment_replies(source_id, comment_id);
+CREATE INDEX IF NOT EXISTS idx_meta_comment_replies_sent
+ ON meta_comment_replies(source_id, reply_id) WHERE state = 'sent';
+CREATE TABLE IF NOT EXISTS meeting_link_decisions (
+    id INTEGER PRIMARY KEY,
+    left_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    left_kind TEXT NOT NULL CHECK (left_kind IN ('msg', 'evt')),
+    left_key TEXT NOT NULL,
+    right_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    right_kind TEXT NOT NULL CHECK (right_kind IN ('msg', 'evt')),
+    right_key TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK (decision IN ('link', 'split'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_pair ON meeting_link_decisions(left_message_id, left_kind, left_key, right_message_id, right_kind, right_key);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_right ON meeting_link_decisions(right_message_id);
+CREATE TABLE IF NOT EXISTS meeting_copy_survivors (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    survivor_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_copy_survivors_survivor ON meeting_copy_survivors(survivor_message_id);

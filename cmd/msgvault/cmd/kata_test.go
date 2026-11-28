@@ -156,54 +156,6 @@ func runKataCommand(ctx context.Context, t *testing.T, input string, args ...str
 	return output.Bytes()
 }
 
-func TestKataCommandsRefuseAnOlderDaemon(t *testing.T) {
-	var version atomic.Pointer[string]
-	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/health" {
-			assert.Fail(t, "unexpected request", r.URL.Path)
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"` + *version.Load() + `"}`))
-	}))
-	t.Cleanup(daemon.Close)
-	ctx := configureRemoteDaemonForTest(t, daemon.URL)
-	for _, args := range [][]string{{"evidence", "prepare"}, {"create", "--idempotency-key", "key-1"}, {"link", "example#abcd"}, {"issues", "--message", "1"}, {"context", "example#abcd"}} {
-		// The lookup and the context read need newer daemons than the other commands.
-		version.Store(new("3.3.0"))
-		switch args[0] {
-		case "issues", "context":
-			version.Store(new("3.11.0"))
-		}
-		command := newKataCmd()
-		command.SetArgs(args)
-		command.SetIn(strings.NewReader(kataInputFor(args[0])))
-		command.SetOut(io.Discard)
-		command.SetErr(io.Discard)
-		err := command.ExecuteContext(ctx)
-		require.ErrorContains(t, err, "too old for Kata issues", args[0])
-	}
-	// Citing a Docbank transcript needs a daemon that reads them.
-	version.Store(new("3.12.0"))
-	command := newKataCmd()
-	command.SetArgs([]string{"evidence", "prepare"})
-	command.SetIn(strings.NewReader(`{"selectors":[{"kind":"docbank_rendition","message_id":1,"attachment_id":2,"max_chars":1000}]}`))
-	command.SetOut(io.Discard)
-	command.SetErr(io.Discard)
-	require.ErrorContains(t, command.ExecuteContext(ctx), "API schema 3.13.0")
-}
-
-func kataInputFor(command string) string {
-	switch command {
-	case "evidence":
-		return `{"selectors":[{"kind":"message","message_id":1,"max_chars":1000}]}`
-	case "create":
-		return `{"title":"Send the budget","evidence":[]}`
-	}
-	return `{"evidence":[]}`
-}
-
 // A passage names its source from its reference, then its subject or
 // filename, and drops IDs that may belong to another archive.
 func TestKataContextLabelsPassagesWithoutDisplay(t *testing.T) {

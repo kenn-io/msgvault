@@ -234,8 +234,8 @@ func TestMCPPeopleCapabilityAndWritePolicy(t *testing.T) {
 		assert.Contains(writable, name)
 	}
 	assert.Equal([]string{"cursor", "limit", "query"}, toolPropertyNames(t, writable[ToolSearchPeople]))
-	assert.Equal([]string{"address", "category", "contact_state", "cursor", "last_contact_after", "last_contact_before", "limit", "organization", "primary_channel", "query", "sort"}, toolPropertyNames(t, writable[ToolListDirectoryPeople]))
-	assert.Equal([]any{"name", "last_contact_desc", "last_contact_asc"}, toolInputProperty(t, writable[ToolListDirectoryPeople], "sort")["enum"])
+	assert.Equal([]string{"address", "cadence", "category", "contact_state", "cursor", "due_within_days", "last_contact_after", "last_contact_before", "limit", "organization", "primary_channel", "query", "sort"}, toolPropertyNames(t, writable[ToolListDirectoryPeople]))
+	assert.Equal([]any{"name", "last_contact_desc", "last_contact_asc", "most_overdue", "next_due"}, toolInputProperty(t, writable[ToolListDirectoryPeople], "sort")["enum"])
 	assert.Equal([]any{"active", "inactive"}, toolInputProperty(t, writable[ToolListDirectoryPeople], "contact_state")["enum"])
 	assert.InDelta(float64(store.DefaultDirectoryPeopleLimit), toolInputProperty(t, writable[ToolListDirectoryPeople], "limit")["default"], 0)
 	assert.Equal([]string{"person_id"}, toolPropertyNames(t, writable[ToolGetPersonNotes]))
@@ -268,7 +268,7 @@ func TestMCPGetPersonRelationshipReturnsSummaryAndOptionalCalendar(t *testing.T)
 	}
 	calendar := &query.RelationshipCalendarResponse{
 		CanonicalID: 7, Year: 2025, Timezone: "America/New_York",
-		Days:            []query.RelationshipCalendarDay{{Date: "2025-01-02", Total: 4}},
+		Days:            []query.RelationshipCalendarDay{{Date: "2025-01-02", Meetings: 1, Total: 4}},
 		PeakTemperature: 87, PeakYear: 2018, ScoringTimezone: "UTC",
 		ScoreVersion: 1, EffectiveDate: "2026-08-22", CacheRevision: "cache-8", IdentityRevision: 12,
 	}
@@ -293,6 +293,11 @@ func TestMCPGetPersonRelationshipReturnsSummaryAndOptionalCalendar(t *testing.T)
 	assert.InDelta(float64(12), structured["identity_revision"], 0)
 	assert.InDelta(float64(2025), structured["year"], 0)
 	assert.Len(structured["days"], 1)
+	days, ok := structured["days"].([]any)
+	require.True(t, ok)
+	day, ok := days[0].(map[string]any)
+	require.True(t, ok)
+	assert.InDelta(float64(1), day["meetings"], 0)
 
 	backend.calendarRequest = peoplebrowser.CalendarRequest{}
 	result = rawCallTool(t, peopleToolOptions(backend), ToolGetPersonRelationship, map[string]any{

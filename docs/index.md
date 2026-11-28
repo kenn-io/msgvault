@@ -6,13 +6,13 @@ description: Set up your archive, find messages and files, maintain people, and 
 
 # Use your communications archive
 
-msgvault keeps email, chat, meetings, calendars, and contacts on your own
-hardware. These guides help you bring data in, find what matters, and maintain
-the archive through the browser, terminal, CLI, or an agent.
+msgvault keeps your email, chat, meetings, calendars, and contacts on your own
+hardware. Use these guides to bring data in, find what matters, and maintain
+your archive from the browser, terminal, CLI, or an agent.
 
 <p class="hero-actions">
   <a class="md-button md-button--primary" href="/docs/setup/">Get started</a>
-  <a class="md-button" href="/docs/changelog/#0230">Changelog</a>
+  <a class="md-button" href="/docs/changelog/#0260">Changelog</a>
 </p>
 
 ## Start an archive
@@ -20,11 +20,12 @@ the archive through the browser, terminal, CLI, or an agent.
 1. [Install msgvault](setup.md).
 2. [Choose a source](guides/sources.md) and follow its sync or import guide.
 3. Open the [Web UI](web-ui.md) or [TUI](usage/tui.md) to browse your messages.
-4. [Create a backup](usage/backup.md) before making substantial changes.
+4. [Create a backup](usage/backup.md) before you make substantial changes.
 
-Google OAuth setup is needed for Google-backed sources. Local imports and other
-providers have their own requirements. To understand the product first, read
-the [archive lifecycle](/guide/) or the [project's origin](introduction.md).
+Google-backed sources require Google OAuth setup, while local imports and other
+providers have their own requirements. If you want an overview of the product
+first, read the [archive lifecycle](/guide/) or the
+[project's origin](introduction.md).
 
 ## Find messages and files
 
@@ -32,18 +33,18 @@ the [archive lifecycle](/guide/) or the [project's origin](introduction.md).
 |---|---|
 | Who sent this, and when? | [Keyword search and filters](usage/searching.md) |
 | How do I search by meaning? | [Semantic and hybrid search](usage/vector-search.md) |
-| How do I search inside attachments? | [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) |
+| How do I search inside attachments? | [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank) |
 | Which model settings should I use? | [Recommended configuration](usage/recommended-configuration.md) |
 | What does my archive contain? | [Analytics](usage/analytics.md) and [SQL queries](usage/querying.md) |
 | How can an AI assistant use it? | [MCP](usage/chat.md) and [agent skills](guides/agent-skills.md) |
 
 ## Keep track of people
 
-[People and profiles](usage/people.md) explains observed identities, durable
-profiles, contact activity, and relationship curation. Start there to connect
-addresses and handles, maintain contacts, or set up optional profile automation.
-Use [accounts and collections](usage/multi-account.md) to organize sources and
-limit an archive view.
+[People and profiles](usage/people.md) covers observed identities, durable
+profiles, contact activity, and relationship curation. Start there when you want
+to connect addresses and handles, maintain contacts, or set up optional profile
+automation. To organize your sources and limit an archive view, use
+[accounts and collections](usage/multi-account.md).
 
 ## Maintain and operate the archive
 

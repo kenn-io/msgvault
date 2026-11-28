@@ -1,18 +1,14 @@
 ---
-last_edited: "2026-10-09"
+last_edited: "2026-11-20"
 title: Interactive TUI
 description: Browse messages and people, search your archive, save attachments, and stage email deletion from the terminal.
 ---
 
-The TUI lets you explore your archive from the terminal. Group messages by
-sender, list, or date; open a conversation; find an attachment; or review a
-person before your next conversation.
+Use the TUI to browse your archive right from the terminal. You can group messages by sender, list, or date, open a conversation, find an attachment, or look up a person before your next conversation.
 
 1. Run `msgvault tui`.
-2. Press `m` to cycle through Email, Texts, Meetings, and People. Unavailable
-   Texts and People modes are skipped.
-3. Use `j`/`k` or the arrow keys to move, `Enter` to open a row, and `Esc` to go
-   back. Press `?` for the shortcuts available in the current mode.
+2. Press `m` to cycle through Email, Texts, Meetings, and People. The TUI skips Texts or People if those modes are unavailable.
+3. Move with `j`/`k` or the arrow keys, press `Enter` to open a row, and press `Esc` to go back. Press `?` to see the shortcuts for your current mode.
 
 ## Launch
 
@@ -20,19 +16,11 @@ person before your next conversation.
 msgvault tui
 ```
 
-The TUI always talks to a msgvault HTTP server. Without `[remote].url`, it starts or reuses the local background daemon. The daemon owns database access, analytics engine selection, and cache rebuilds.
+The TUI always talks to a msgvault HTTP server. If you haven't set `[remote].url`, it starts or reuses the local background daemon, which owns database access, analytics engine selection, and cache rebuilds.
 
-The daemon starts its HTTP health endpoint and API routes before analytics cache
-maintenance. Clients can connect while startup work runs.
+The daemon opens its HTTP health endpoint and API routes before running analytics cache maintenance, and you can connect while startup work is still running.
 
-With `engine = "auto"` (the default), aggregate views initially use live SQL
-(`sql-fallback`). When `auto_build_cache = true` and the cache is stale or
-missing, the daemon builds it in the background; after the cache is ready and
-DuckDB opens successfully, aggregate views switch to DuckDB. A failed build or
-open leaves auto mode on live SQL. With `engine = "duckdb"`, analytics remain
-unavailable until the required cache is ready; analytics routes return `503`
-during initialization. `engine = "sql"` always uses live SQL. Configure engine
-selection in `config.toml`:
+With the default `engine = "auto"`, aggregate views start on live SQL (`sql-fallback`). If `auto_build_cache = true` and the cache is missing or stale, the daemon builds it in the background and switches aggregate views to DuckDB once the cache is ready and DuckDB opens. If the build or open fails, auto mode stays on live SQL. With `engine = "duckdb"`, analytics stay unavailable and return `503` until the required cache is ready. With `engine = "sql"`, aggregate views always use live SQL. You can configure engine selection in `config.toml`:
 
 ```toml
 [analytics]
@@ -40,15 +28,11 @@ engine = "auto"          # auto, sql, or duckdb
 auto_build_cache = true  # build a stale/missing cache in the background at startup
 ```
 
-Opening aggregate views does not trigger a build mid-session. Scheduled syncs
-and ingest commands can refresh the cache, and `msgvault build-cache` builds or
-repairs it on demand. Set `auto_build_cache = false` to skip automatic startup
-maintenance; use `msgvault build-cache` for an explicit build. See
-[Configuration: analytics](/docs/configuration/#analytics).
+Opening aggregate views does not start a cache build mid-session. Scheduled syncs and ingest commands can refresh the cache, and you can run `msgvault build-cache` to build or repair it on demand. To skip automatic startup maintenance, set `auto_build_cache = false` and run `msgvault build-cache` when you want a build. See [Configuration: analytics](/docs/configuration/#analytics).
 
-### Local And Remote
+### Local and remote
 
-When your `config.toml` has a `[remote]` section configured, the TUI connects to the remote server automatically. All views, drill-downs, search, and filtering work the same as local-daemon mode. Use `--local` only when you want to force this machine's local daemon instead of the configured remote server.
+If your `config.toml` has a `[remote]` section, the TUI connects to that remote server automatically, and all views, drill-downs, search, and filtering work the same as in local-daemon mode. Pass `--local` only when you want to force this machine's local daemon instead of the configured remote server.
 
 ```bash
 # Connects to remote server if [remote] is configured
@@ -58,37 +42,21 @@ msgvault tui
 msgvault tui --local
 ```
 
-Deletion staging and attachment export use the selected daemon. When connected to a configured remote server, staged deletion manifests are saved on that remote host; attachment export streams bytes from the daemon and writes the zip file on the CLI machine.
+Deletion staging and attachment export both use the selected daemon. When you connect to a remote server, staged deletion manifests live on that remote host, while attachment export streams the bytes from the daemon and writes the zip file on the CLI machine.
 
-### Email Account and Collection Scopes
+### Email account and collection scopes
 
-Press `A` in Email mode to choose `All Accounts`, an individual account, a
-receiving address, or a named collection. When confirmed addresses divide a
-source's mail, the picker lists each address under the source, plus an
-Unattributed entry for mail no confirmed address claims; see
-[Searching](searching.md#find-mail-by-the-address-that-received-it). A collection is a daemon-owned group of accounts, and the
-title shows `Collection: <name>` while its exact member sources scope
-aggregates, message lists, fast search, statistics, and deletion-target
-inspection. An empty collection shows no results and makes no scoped HTTP read.
+In Email mode, press `A` to pick `All Accounts`, a single account, a receiving address, or a named collection. When confirmed addresses divide a source's mail, the picker lists each address under that source along with an **Unattributed** entry for mail that no confirmed address claims; see [Searching](searching.md#find-mail-by-the-address-that-received-it). A collection is a daemon-owned group of accounts. While one is active, the title shows `Collection: <name>` and its exact member sources scope aggregates, message lists, fast search, statistics, and deletion-target inspection. An empty collection shows no results and makes no scoped HTTP read.
 
-Collections require a daemon with API schema `2.17.0` or newer. Older or
-unavailable daemons keep the account selector usable and hide collection rows.
-Changing the Email scope returns to the top-level view and clears the current
-search and selection. Texts and Meetings keep separate account or source
-selectors; changing one mode's selection does not change another mode's scope.
+Collections require a daemon with API schema `2.17.0` or newer. If the daemon is older or unavailable, the account selector stays usable and hides collection rows. Switching the Email scope returns you to the top-level view and clears your current search and selection. Texts and Meetings keep their own account or source selectors; changing one mode's scope leaves the other modes unchanged.
 
-Collections with multiple sources offer Fast search only. Deep search is
-available for single-source collections; Semantic search requires an individual
-account or All Accounts, subject to its other filter limits.
+Collections with multiple sources offer Fast search only. Deep search works on single-source collections, and Semantic search requires an individual account or All Accounts, subject to its other filter limits.
 
-Deletion staging requires the selected messages to belong to one source.
-You can stage messages from one source within a larger collection, but a
-selection spanning sources is rejected. The TUI does not offer deduplication
-operations; use the collection-scoped CLI commands for those.
+To stage messages for deletion, every selected message must belong to one source. You can stage messages from a single source inside a larger collection, and the TUI rejects any selection that spans multiple sources. The TUI does not offer deduplication operations; use the collection-scoped CLI commands for those.
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view with message counts and sizes" loading="lazy">
 </figure>
-Press `a` from any aggregate view to show all individual messages in that view. Press `Enter` on a message to view its full detail, including headers and body.
+From any aggregate view, press `a` to list all individual messages in that view, then press `Enter` on a message to read its headers and body.
 
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
   <figure style="margin: 0; text-align: center;" data-lightbox>
@@ -101,7 +69,7 @@ Press `a` from any aggregate view to show all individual messages in that view. 
   </figure>
 </div>
 
-## View Modes
+## View modes
 
 Email has eight aggregate views. Press `g` or `Tab` to cycle through them:
 
@@ -120,9 +88,9 @@ Email has eight aggregate views. Press `g` or `Tab` to cycle through them:
   <img src="/docs/assets/generated/tui-labels.svg" alt="msgvault TUI Labels view showing Gmail label breakdown" loading="lazy">
 </figure>
 
-### Time View
+### Time view
 
-Press `t` from any view to jump directly to the Time view. The Time view aggregates messages by time period. When already in Time view, pressing `t` cycles between monthly, daily, and yearly granularity:
+Press `t` from any view to jump straight to the Time view, which groups messages by time period. Once you are in Time view, pressing `t` again cycles through monthly, daily, and yearly granularity:
 
 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
   <figure style="margin: 0; text-align: center;" data-lightbox>
@@ -139,15 +107,11 @@ Press `t` from any view to jump directly to the Time view. The Time view aggrega
   </figure>
 </div>
 
-## Text Messages
+## Text messages
 
-Press `m` to switch modes. Texts is skipped when no text/chat engine is
-available, but Meetings remains in the cycle even before a meeting source has
-been configured. See [Text Messages](/docs/usage/text-messages/)
-for local chat imports, [Microsoft Teams](/docs/usage/teams/) for Teams sync, and
-[Discord](/docs/usage/discord/) for guild channel and thread sync.
+Press `m` to switch modes. If no text/chat engine is available, the TUI skips Texts, while Meetings stays in the cycle even before you configure a meeting source. See [Text Messages](/docs/usage/text-messages/) for local chat imports, [Microsoft Teams](/docs/usage/teams/) for Teams sync, and [Discord](/docs/usage/discord/) for guild channel and thread sync.
 
-Text mode provides the following view types. Press `g` to cycle through them:
+Text mode provides the following view types. Press `Tab` to cycle through them (`Shift+Tab` goes back):
 
 | View | Description |
 |---|---|
@@ -158,61 +122,37 @@ Text mode provides the following view types. Press `g` to cycle through them:
 | Labels | Aggregate by custom labels or categories |
 | Time | Aggregate by time period (year/month/day) |
 
-Navigation and interaction in Text mode work the same as Email mode. Press `Enter` to drill into a conversation and view individual messages. Press `Esc` or `Backspace` to go back. Use `g` to re-aggregate from a drill-down view, `/` to search, and `f` to filter. The stats display shows message count and total size for text conversations.
+Navigation in Text mode works the same as in Email mode. Press `Enter` to drill into a conversation and view its messages, `Esc` or `Backspace` to go back, and `/` to search. The stats display shows message count and total size for text conversations.
 
 ## Meetings
 
-Meetings mode is a read-only browser for archived transcripts and notes from
-[meeting sources](/docs/usage/meetings/), including Omi, Granola, Plaud, Circleback,
-Notion, Muesli, Twilio, Twenty, and Chatwoot. It shows a flat, newest-first list
-with each meeting's date, title, organizer, and source. Press `Enter` to open
-the transcript and notes, `Esc` or `Backspace` to return to the list, and the
-left/right arrow keys to move between meeting details.
+Meetings mode lets you browse archived transcripts and notes from [meeting sources](/docs/usage/meetings/), including Omi, Granola, Plaud, Circleback, Notion, Muesli, Twilio, Bland, Twenty, and Chatwoot. It shows a flat, newest-first list with each meeting's date, title, organizer, and source. Press `Enter` to open a meeting's transcript and notes, `Esc` or `Backspace` to return to the list, and the left or right arrow keys to step between meeting details.
 
-Press `/` in the meeting list to search titles, people, transcripts, and notes.
-Meeting search is always scoped to meeting transcripts, including when the
-search text contains explicit message-type syntax. In the detail view, `/`
-finds text within the current transcript; use `n` and `N` to move between
-matches.
+In the meeting list, press `/` to search titles, people, transcripts, and notes. Meeting search stays scoped to meeting transcripts, even if your query includes explicit message-type syntax. Inside a detail view, press `/` to find text in the current transcript, then press `n` and `N` to jump between matches.
 
-Press `A` to select all meeting sources or one configured source. This source
-choice is independent of the Email account filter. If an
-older remote daemon does not provide source identity, the Source column shows
-`—` instead of a misleading blank value.
+Press `A` to pick all meeting sources or a single configured source. That choice is independent of the Email account filter. If an older remote daemon does not provide source identity, the **Source** column displays `—` instead of a misleading blank value.
 
-Selection and deletion keys are disabled in Meetings mode. Meeting sync is
-read-only, and browsing a transcript never changes the source service.
+Meetings mode disables selection and deletion keys. Meeting sync is read-only, and browsing a transcript never modifies the source service.
 
 ## People
 
-People brings the contact directory into the terminal. Press `/` to search
-names and identifiers, `Enter` to open a person, and `Tab` or `Shift+Tab` to
-move between their detail tabs. The browser brings profile information,
-attributes, inboxes, meetings, files, and dated activity together. See
-[People, Profiles, and Source Identities](/docs/usage/people/)
-for curation, tracking, and provider setup.
+People brings your contact directory into the terminal. Press `/` to search names and identifiers, `Enter` to open a person, and `Tab` or `Shift+Tab` to move between their detail tabs. Each person's view pulls together their profile information, attributes, inboxes, meetings, files, and dated activity. See [People, Profiles, and Source Identities](/docs/usage/people/) for curation, tracking, and provider setup.
 
-The Relationship calendar groups days in your system's named timezone. When the system zone can't be named, such as on Windows, it uses UTC and shows "UTC" by the year. Dated activity lists show local time.
+The Relationship calendar groups days in your system's named timezone. If your system zone can't be named, such as on Windows, it falls back to UTC and displays "UTC" next to the year. Dated activity lists show local time.
 
 ### Person briefs
 
-In the People browser, a person's Overview tab shows their **Last time we
-talked** brief: a short summary to read before your next conversation. Press
-`b` for its details and sources, then `b` or `Esc` to return.
+In the People browser, a person's **Overview** tab shows their **Last time we talked** brief, a short summary you can read before your next conversation. Press `b` to view its details and sources, then press `b` or `Esc` to go back.
 
-Press `:` to enter `brief enroll`, `brief generate`, or `brief reject <reason>`.
-Enrollment also enables tracking. Generation sends eligible message text to
-your consented provider and spends its budget. A person needs a saved profile
-first; see [person briefs](/docs/usage/people-briefs/)
-for setup and supported sources.
+Press `:` to run `brief enroll`, `brief generate`, or `brief reject <reason>`. Enrolling a person also turns on tracking. Generating a brief sends eligible message text to your consented provider and spends its budget. A person needs a saved profile first; see [person briefs](/docs/usage/people-briefs/) for setup and supported sources.
 
-## Drill-down and Sub-grouping
+## Drill down and sub-group
 
-Press `Enter` to drill into any row. For example, selecting a sender shows their individual messages. Press `Esc` or `Backspace` to go back.
+Press `Enter` on any row to drill into it. For example, selecting a sender lists their individual messages. Press `Esc` or `Backspace` to go back.
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/tui-drilldown.svg" alt="msgvault TUI drill-down showing messages from a specific sender" loading="lazy">
 </figure>
-From a drill-down view, press `g` to re-aggregate the filtered messages by a different dimension. You can think of this like an interactive pivot table. The cycle skips the dimension you drilled into — and when drilling from an email address view (Senders or Recipients), it also skips the corresponding name view since it would be redundant. For example, drilling into a sender and pressing `g` cycles through Recipients, Recipient Names, Domains, Labels, and Time.
+From a drill-down message list, press `g` to group those filtered messages by another dimension, much like an interactive pivot table. When you drill in from Senders or Recipients, that first grouping skips the matching name view; drilling into a sender opens Recipients rather than Sender Names. After that, each `g` press cycles through every view except the one you drilled into. For example, if you drill into a sender and press `g`, the TUI opens Recipients, and each further `g` press cycles through Recipient Names, Domains, Labels, Lists, Time, and Sender Names.
 
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
   <figure style="margin: 0; text-align: center;" data-lightbox>
@@ -225,13 +165,13 @@ From a drill-down view, press `g` to re-aggregate the filtered messages by a dif
   </figure>
 </div>
 
-## Searching
+## Search
 
-Press `/` to open a search bar that filters the current view in real time. Matching text is highlighted in the results. At the aggregate level (Senders, Domains, etc.), search uses the daemon's configured analytics engine, so the default local-daemon setup uses DuckDB over Parquet when the cache is usable.
+Press `/` to open a search bar that filters the current view as you type and highlights matching text in the results. At the aggregate level, such as Senders or Domains, search runs on the daemon's configured analytics engine, so the default local-daemon setup queries DuckDB over Parquet whenever the cache is usable.
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/tui-search-sender.svg" alt="msgvault TUI search filtering senders by name with highlighted matches" loading="lazy">
 </figure>
-In a message list, press `Tab` while the search bar is open to choose a mode:
+In a message list, press `Tab` while the search bar is open to switch search modes:
 
 | Mode | What it searches | When to use it |
 |---|---|---|
@@ -239,20 +179,11 @@ In a message list, press `Tab` while the search bar is open to choose a mode:
 | Deep | Subjects and full message bodies | Find a word absent from the snippet |
 | Semantic | Hybrid keyword and vector ranking over active messages | Describe a topic in your own words |
 
-The TUI offers only modes that can preserve the current scope. Semantic search
-needs a configured [vector index](/docs/usage/vector-search/) and free text.
-It is unavailable inside sender-name, recipient-name, or mailing-list
-drill-downs and for named collection scopes. Deep search supports collections
-with one source; collections with several sources offer Fast search.
+The TUI only offers modes that can preserve your current scope. Semantic search requires a configured [vector index](/docs/usage/vector-search/) and free text, and it is unavailable inside sender-name, recipient-name, or mailing-list drill-downs and for named collection scopes. Deep search works on single-source collections; collections with several sources offer Fast search.
 
-Press `Enter` to keep the search, or `Esc` to clear it and restore the prior
-list. While the search bar is open, `↑` and `↓` recall recent searches from
-this session. Deep search loads another page when you navigate to the bottom;
-semantic results are bounded by the server's ranking window.
+Press `Enter` to keep the search, or press `Esc` to clear it and restore the previous list. While the search bar is open, press `↑` and `↓` to recall recent searches from the current session. Deep search loads another page when you reach the bottom of the list, while semantic results are bounded by the server's ranking window.
 
-You can progressively narrow a question: search the sender list, open a sender,
-then search their messages. See [Searching](/docs/usage/searching/) for query
-operators, including `list:` and `conversation_id:`.
+You can narrow a question step by step: search the sender list, open a sender, and then search their messages. See [Searching](/docs/usage/searching/) for query operators, including `list:` and `conversation_id:`.
 
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
 <figure class="screenshot" data-lightbox>
@@ -263,9 +194,9 @@ operators, including `list:` and `conversation_id:`.
 </figure>
 </div>
 
-## Filtering
+## Filter messages
 
-Press `f` to open the filter modal. The modal presents two independent toggles that you can combine:
+Press `f` to open the filter modal, which gives you two independent toggles you can combine:
 
 | Filter | Effect |
 |---|---|
@@ -274,11 +205,11 @@ Press `f` to open the filter modal. The modal presents two independent toggles t
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/tui-filter-modal.svg" alt="msgvault TUI filter modal with checkbox toggles for attachments and hide deleted" loading="lazy">
 </figure>
-Use `↑`/`↓` to navigate, `Space` or `x` to toggle a filter, and `Enter` or `Esc` to apply and close. Active filters are shown in the title bar (e.g. `[Attachments]`, `[Hide Deleted]`). Filters apply to all views: aggregates, drill-downs, sub-aggregates, search results, and stats.
+Move between options with `↑`/`↓`, toggle a filter with `Space` or `x`, and press `Enter` or `Esc` to apply and close. Active filters appear in the title bar, for example `[Attachments]` and `[Hide Deleted]`, and apply across aggregates, drill-downs, sub-aggregates, search results, and stats.
 
-## Viewing Email Threads
+## View email threads
 
-From any message list (after drilling into a sender, label, domain, etc.), press `T` to open the full email thread for the highlighted message. This renders the complete conversation inline in the terminal, including sender, date, and body text for each message in the thread.
+From any message list after drilling into a sender, label, domain, or other group, press `T` to open the full email thread for the highlighted message. The TUI renders the entire conversation inline in the terminal, showing the sender, date, and body text for each message.
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/tui-thread.svg" alt="msgvault TUI showing a full email thread conversation" loading="lazy">
 </figure>
@@ -286,16 +217,11 @@ Press `Esc` to return to the message list.
 
 ## Save an email
 
-Open an email with `Enter`, then press `s` to save its original MIME content,
-including attachments, as `message-<id>.eml` in the directory where you launched
-the TUI. Existing files are preserved: repeated saves add `_1`, `_2`, and so on.
-The result dialog shows the saved path or the error if the email could not be
-saved. This requires raw email content in the archive.
+Open an email with `Enter`, then press `s` to save its original MIME content, including attachments, as `message-<id>.eml` in the directory where you launched the TUI. Saving does not overwrite existing files; repeated saves append `_1`, `_2`, and so on. A result dialog shows the saved path or reports an error if the email could not be saved. Saving requires raw email content in the archive.
 
-When connected to a remote server, the file is saved on the machine running the
-TUI. In message lists and aggregate views, `s` continues to cycle the sort field.
+If you are connected to a remote server, the TUI writes the file on the machine running the TUI. In message lists and aggregate views, `s` still cycles the sort field.
 
-## Keyboard Shortcuts
+## Keyboard shortcuts
 
 | Key | Action |
 |---|---|
@@ -322,20 +248,15 @@ TUI. In message lists and aggregate views, `s` continues to cycle the sort field
 | `?` | Help |
 | `q` | Quit |
 
-## Marking Emails for Deletion
+## Mark emails for deletion
 
-Use `Space` to select rows and `d` to review them for staging. With no selection,
-`d` uses the highlighted row. Press `D` to target the highlighted aggregate
-group, or all messages matching the current message list and its filter.
+Select rows with `Space` and press `d` to review them for staging. If nothing is selected, `d` targets the highlighted row. Press `D` to target the highlighted aggregate group, or all messages matching the current message list and filter.
 
-Fast and Deep searches preserve the current search when resolving deletion
-targets, including matches beyond the visible page. Semantic search allows
-staging explicit result rows; it does not offer an all-matching deletion because
-its results are a bounded ranking. The selection must belong to one source.
+Fast and Deep searches keep the active search when resolving deletion targets, including matches past the visible page. Semantic search lets you stage explicit result rows, and does not offer an all-matching deletion because its results are a bounded ranking. All selected messages must belong to one source.
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/tui-selection.svg" alt="msgvault TUI with rows selected for deletion staging" loading="lazy">
 </figure>
-A confirmation dialog shows exactly how many messages will be staged before anything happens. Messages are not deleted immediately; they are placed in a deletion batch that you review and execute separately with `msgvault delete-staged`.
+Before anything changes, a confirmation dialog shows the exact number of messages to stage. The TUI does not delete messages right away; it puts them into a deletion batch that you review and run separately with `msgvault delete-staged`.
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/tui-deletion.svg" alt="msgvault TUI deletion confirmation dialog showing bulk staging" loading="lazy">
 </figure>
@@ -354,32 +275,16 @@ Open a message and press `e` to browse its attachments:
 | `o` | Open the highlighted attachment with the system's default app |
 | `Esc` | Close the attachment browser |
 
-Files are written on the machine running the TUI, including when the archive
-is on a remote daemon. Set `[data].export_dir` to choose the directory; the
-default is `exports/` under the local data directory. Individual downloads
-choose a new filename when one already exists. The result dialog reports the
-saved path and any per-file failures.
+The TUI writes exported files on the machine where it runs, even when the archive lives on a remote daemon. Set `[data].export_dir` to change the destination; otherwise files go to `exports/` under your local data directory. Individual downloads pick a new filename if one already exists, and the result dialog shows the saved path along with any per-file failures.
 
-Opening archived content first downloads it locally. URL-backed attachments
-open their HTTP or HTTPS address and cannot be downloaded through this dialog.
-Executable or active-content formats may be blocked from automatic opening;
-use download when you need to inspect such a file yourself.
+Opening an archived attachment downloads it locally first. URL-backed attachments open their HTTP or HTTPS address instead and cannot be downloaded from this dialog. The TUI may block executable or active-content formats from opening automatically; download those files when you want to inspect them yourself.
 
 ## Settings
 
-Press `,` outside an input or modal to edit settings on the selected daemon.
-Use the arrow keys to choose a category and field, `Enter` to edit, `Space` to
-toggle a boolean, and `Ctrl+S` to save. `Esc` asks before discarding unsaved
-changes. Fields marked restart-required remain pending until the daemon
-restarts. Named person-enrichment provider policies are read-only here; edit
-them in [Web Settings](/docs/web-ui/#settings-and-restart-behavior).
+Outside an input or modal, press `,` to edit settings on the selected daemon. Pick a category and field with the arrow keys, press `Enter` to edit, press `Space` to toggle a boolean, and press `Ctrl+S` to save. If you have unsaved changes, `Esc` prompts before discarding them. Fields marked restart-required stay pending until the daemon restarts. Settings displays the daemon host's restart command with custom option and service guidance, and `PgUp` and `PgDn` scroll long views. Named person-enrichment provider policies are read-only here; edit them in [Web Settings](/docs/web-ui/#settings-and-restart-behavior).
 
 ## Performance
 
-The default SQLite archive path uses DuckDB over Parquet metadata exports for
-aggregate views. This avoids repeated joins over the full archive when grouping
-by sender, domain, label, or date. Message bodies stay in the archive and are
-loaded for detail views and full-text search. Configure `[analytics].engine`
-if you need to force live SQL or require DuckDB.
+For the default SQLite archive path, aggregate views query DuckDB over Parquet metadata exports instead of running repeated joins across the full archive when grouping by sender, domain, label, or date. Message bodies stay in the archive and load for detail views and full-text search. Configure `[analytics].engine` if you need to force live SQL or require DuckDB.
 
 See [Data Storage](/docs/architecture/storage/) for details on how this works.

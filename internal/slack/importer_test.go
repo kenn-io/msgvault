@@ -456,6 +456,28 @@ func TestImportEndToEnd(t *testing.T) {
 	assert.Equal(3, members)
 }
 
+func TestImportKeepsSlackIdentityWhenEmailMergeConflicts(t *testing.T) {
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+	previous, err := st.EnsureParticipant("previous@example.test", "Alice", "example.test")
+	require.NoError(t, err)
+	require.NoError(t, st.SetParticipantIdentifier(previous, "slack", "T01:UALICE"))
+	third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
+	require.NoError(t, err)
+	require.NoError(t, st.SetParticipantIdentifier(third, "email", "previous@example.test"))
+
+	summary, err := imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	assert.Zero(t, summary.FetchErrors)
+	owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "slack", "T01:UALICE")
+	require.NoError(t, err)
+	assert.Equal(t, previous, owner)
+	var messages int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE sender_id = ?`), previous).Scan(&messages))
+	assert.Positive(t, messages)
+}
+
 func TestImportUsesNextCursorWhenHasMoreIsFalse(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
@@ -935,6 +957,364 @@ func TestCanonicalThreadAuditRecoversReplyNeverServedBySearch(t *testing.T) {
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
 	require.Equal(1, n,
 		"a canonical history/thread audit must eventually recover replies regardless of search indexing lag")
+}
+
+// A canonical walk already fetched every thread whole, so the next one only
+// owes threads that gained a reply since. Re-fetching the rest made each
+// audit of a busy channel re-read its entire reply history.
+func TestCanonicalThreadAuditSkipsThreadsSettledBeforeLastAudit(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	quietRoot := ts(-14300)
+	f.conv("C09").Msgs = append(f.conv("C09").Msgs, fakeMsg{
+		TS: quietRoot, User: "UME", Text: "quiet root",
+		Replies: []fakeMsg{
+			{TS: ts(-14290), ThreadTS: quietRoot, User: "UME", Text: "quiet reply one"},
+			{TS: ts(-14280), ThreadTS: quietRoot, User: "UME", Text: "quiet reply two"},
+		},
+	})
+	imp, opts := testImporter(t, f)
+
+	sum, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.Equal(3, sum.RepliesFetched, "test setup: the initial walk fetches every reply")
+
+	// One thread gains a reply that search never serves; the other is quiet.
+	lateReply := tsFresh(0)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "never indexed"})
+	f.searchIndexedThrough = tsMinusMicro(lateReply)
+	f.mu.Unlock()
+
+	imp.now = func() time.Time { return time.Now().Add(8 * 24 * time.Hour) }
+	sum, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.Zero(sum.RepliesFetched, "test setup: this run only schedules the audit")
+
+	imp.now = func() time.Time { return time.Now().Add(8*24*time.Hour + time.Minute) }
+	sum, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(2, sum.RepliesFetched,
+		"the audit must fetch the thread with a new reply and skip the quiet one")
+	var n int
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+	assert.Equal(1, n, "the audit must still recover the reply search never served")
+}
+
+// An audit attempt that finds the conversation unreadable fetched no thread,
+// so it must not count as coverage. Without search, the audit is the only
+// reply discovery: a reply posted while access was lost has to be fetched
+// once access returns.
+func TestCanonicalThreadAuditOwesRepliesPostedWhileConversationUnreadable(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	f.scopes = "channels:read,channels:history,users:read,users:read.email"
+	imp, opts := testImporter(t, f)
+	start := time.Now()
+	at := func(d time.Duration) { imp.now = func() time.Time { return start.Add(d) } }
+
+	at(0)
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+
+	// Access is lost, and a reply lands an hour before the next sync.
+	missed := tsFormat(start.Add(time.Hour))
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: missed, ThreadTS: rootTS, User: "UME", Text: "posted while unreadable"})
+	f.handleGhost(f.conv("C09"))
+	f.mu.Unlock()
+	for _, d := range []time.Duration{2 * time.Hour, 2*time.Hour + time.Minute} {
+		at(d)
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+	}
+
+	f.mu.Lock()
+	f.ghosts = nil
+	f.mu.Unlock()
+	for _, d := range []time.Duration{3 * time.Hour, 3*time.Hour + time.Minute, 3*time.Hour + 2*time.Minute} {
+		at(d)
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+	}
+	var n int
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+missed).Scan(&n))
+	require.Equal(1, n, "the audit after access returns must fetch the reply posted while unreadable")
+}
+
+// An audit can finish its history walk while --limit leaves threads queued.
+// If access is lost before they are fetched, the drain drops them, so the
+// walk's pin no longer proves those threads were fetched. Without search,
+// the audit after access returns is the only way to find their replies.
+func TestCanonicalThreadAuditOwesThreadsDroppedWhileConversationUnreadable(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	f.scopes = "channels:read,channels:history,users:read,users:read.email"
+	imp, opts := testImporter(t, f)
+	start := time.Now()
+	at := func(d time.Duration) { imp.now = func() time.Time { return start.Add(d) } }
+	count := func(sourceMessageID string) int {
+		var n int
+		require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
+			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&n))
+		return n
+	}
+
+	at(0)
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+
+	missed := tsFormat(start.Add(time.Hour))
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: missed, ThreadTS: rootTS, User: "UME", Text: "queued, never fetched"})
+	f.mu.Unlock()
+
+	// The audit reads its only history page, then the limit stops the
+	// drain before it fetches the thread.
+	limited := opts
+	limited.Limit = 2
+	at(2 * time.Hour)
+	_, err = imp.Import(t.Context(), limited)
+	require.NoError(err)
+	require.Zero(count("C09:"+missed), "test setup: the limit must leave the thread queued")
+
+	f.mu.Lock()
+	f.handleGhost(f.conv("C09"))
+	f.mu.Unlock()
+	at(2*time.Hour + time.Minute)
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+
+	f.mu.Lock()
+	f.ghosts = nil
+	f.mu.Unlock()
+	for _, d := range []time.Duration{3 * time.Hour, 3*time.Hour + time.Minute, 3*time.Hour + 2*time.Minute} {
+		at(d)
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+	}
+	require.Equal(1, count("C09:"+missed), "the audit after access returns must fetch the thread the drain dropped")
+}
+
+// Access can be lost after a walk reads its last history page but before it
+// fetches that page's threads. The walk must not then certify coverage it
+// never fetched: without search, the threads it dropped would be skipped as
+// settled by every later audit.
+func TestWalkStopsWhenRepliesFindConversationUnreadable(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		// lose runs the sync that loses reply access and returns the
+		// reply that must be archived once access returns.
+		lose func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, start time.Time) string
+	}{
+		{
+			name: "initial walk",
+			lose: func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, _ time.Time) string {
+				t.Helper()
+				_, err := imp.Import(t.Context(), opts)
+				require.NoError(t, err)
+				return f.conv("C09").findRoot(rootTS).Replies[0].TS
+			},
+		},
+		{
+			name: "audit walk",
+			lose: func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, start time.Time) string {
+				t.Helper()
+				f.mu.Lock()
+				f.unreadableReplies = nil
+				f.mu.Unlock()
+				_, err := imp.Import(t.Context(), opts)
+				require.NoError(t, err)
+				missed := tsFormat(start.Add(time.Hour))
+				f.mu.Lock()
+				root := f.conv("C09").findRoot(rootTS)
+				root.Replies = append(root.Replies, fakeMsg{TS: missed, ThreadTS: rootTS, User: "UME", Text: "posted before access was lost"})
+				f.unreadableReplies = map[string]bool{"C09": true}
+				f.mu.Unlock()
+				imp.now = func() time.Time { return start.Add(2 * time.Hour) }
+				_, err = imp.Import(t.Context(), opts)
+				require.NoError(t, err)
+				return missed
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			f, rootTS := oldThreadWorkspace(t)
+			f.scopes = "channels:read,channels:history,users:read,users:read.email"
+			f.unreadableReplies = map[string]bool{"C09": true}
+			imp, opts := testImporter(t, f)
+			start := time.Now()
+			imp.now = func() time.Time { return start }
+
+			want := tc.lose(t, f, imp, opts, rootTS, start)
+			count := func() int {
+				var n int
+				require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
+					`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+want).Scan(&n))
+				return n
+			}
+			require.Zero(count(), "test setup: the reply fetch must fail while access is lost")
+
+			f.mu.Lock()
+			f.unreadableReplies = nil
+			f.mu.Unlock()
+			for _, d := range []time.Duration{3 * time.Hour, 3*time.Hour + time.Minute, 3*time.Hour + 2*time.Minute} {
+				imp.now = func() time.Time { return start.Add(d) }
+				_, err := imp.Import(t.Context(), opts)
+				require.NoError(err)
+			}
+			require.Equal(1, count(), "the reply must be archived once access returns")
+		})
+	}
+}
+
+// --limit can stop a walk with threads queued from a page its cursor has
+// already passed. If the next run drops them because the conversation is
+// unreadable, the walk must revisit their roots once access returns instead
+// of resuming past them and certifying coverage it never fetched.
+func TestWalkRevisitsThreadsDroppedWhileConversationUnreadable(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		// queue runs the limited sync that leaves the thread queued and
+		// returns the reply that must be archived once access returns.
+		queue func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, start time.Time) string
+	}{
+		{
+			name: "initial walk",
+			queue: func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, _ time.Time) string {
+				t.Helper()
+				_, err := imp.Import(t.Context(), opts)
+				require.NoError(t, err)
+				return f.conv("C09").findRoot(rootTS).Replies[0].TS
+			},
+		},
+		{
+			name: "audit walk",
+			queue: func(t *testing.T, f *fakeSlack, imp *Importer, opts ImportOptions, rootTS string, start time.Time) string {
+				t.Helper()
+				unlimited := opts
+				unlimited.Limit = 0
+				_, err := imp.Import(t.Context(), unlimited)
+				require.NoError(t, err)
+				missed := tsFormat(start.Add(time.Hour))
+				f.mu.Lock()
+				root := f.conv("C09").findRoot(rootTS)
+				root.Replies = append(root.Replies, fakeMsg{TS: missed, ThreadTS: rootTS, User: "UME", Text: "queued, then dropped"})
+				f.mu.Unlock()
+				imp.now = func() time.Time { return start.Add(2 * time.Hour) }
+				_, err = imp.Import(t.Context(), opts)
+				require.NoError(t, err)
+				return missed
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			f, rootTS := oldThreadWorkspace(t)
+			f.scopes = "channels:read,channels:history,users:read,users:read.email"
+			// An older message puts a second history page behind the root.
+			c := f.conv("C09")
+			c.Msgs = append([]fakeMsg{{TS: ts(-15000), User: "UME", Text: "older chatter"}}, c.Msgs...)
+			imp, opts := testImporter(t, f)
+			start := time.Now()
+			imp.now = func() time.Time { return start }
+			limited := opts
+			limited.Limit = 2
+
+			want := tc.queue(t, f, imp, limited, rootTS, start)
+			count := func() int {
+				var n int
+				require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
+					`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+want).Scan(&n))
+				return n
+			}
+			require.Zero(count(), "test setup: the limit must leave the thread queued")
+
+			f.mu.Lock()
+			f.unreadableReplies = map[string]bool{"C09": true}
+			f.mu.Unlock()
+			imp.now = func() time.Time { return start.Add(2*time.Hour + time.Minute) }
+			_, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+
+			f.mu.Lock()
+			f.unreadableReplies = nil
+			f.mu.Unlock()
+			for _, d := range []time.Duration{3 * time.Hour, 3*time.Hour + time.Minute, 3*time.Hour + 2*time.Minute} {
+				imp.now = func() time.Time { return start.Add(d) }
+				_, err := imp.Import(t.Context(), opts)
+				require.NoError(err)
+			}
+			require.Equal(1, count(), "the dropped thread's reply must be archived once access returns")
+		})
+	}
+}
+
+// A backfill begun under --no-threads and finished by a threaded run stamps
+// AuditedThrough without having fetched its early threads; its catch-up walk
+// owes them. If that catch-up finds the conversation unreadable, the stamp
+// proves nothing, so the audit after access returns must fetch every thread.
+func TestCatchUpAbandonedWhileUnreadableDoesNotCertifyThreads(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	f.scopes = "channels:read,channels:history,users:read,users:read.email"
+	// The root leads the first history page; older chatter fills the second.
+	c := f.conv("C09")
+	c.Msgs = []fakeMsg{{TS: ts(-15000), User: "UME", Text: "older chatter"}, *c.findRoot(rootTS)}
+	reply := c.Msgs[1].Replies[0].TS
+	imp, opts := testImporter(t, f)
+	start := time.Now()
+	at := func(d time.Duration) { imp.now = func() time.Time { return start.Add(d) } }
+	count := func() int {
+		var n int
+		require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
+			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+reply).Scan(&n))
+		return n
+	}
+
+	threadless := opts
+	threadless.Limit, threadless.NoThreads = 1, true
+	at(0)
+	_, err := imp.Import(t.Context(), threadless)
+	require.NoError(err)
+	limited := opts
+	limited.Limit = 1
+	at(time.Minute)
+	_, err = imp.Import(t.Context(), limited)
+	require.NoError(err)
+	require.Zero(count(), "test setup: the root's thread must still be owed to catch-up")
+
+	f.mu.Lock()
+	f.handleGhost(f.conv("C09"))
+	f.mu.Unlock()
+	at(2 * time.Minute)
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+
+	f.mu.Lock()
+	f.ghosts = nil
+	f.mu.Unlock()
+	for _, d := range []time.Duration{3 * time.Hour, 3*time.Hour + time.Minute, 3*time.Hour + 2*time.Minute} {
+		at(d)
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+	}
+	require.Equal(1, count(), "the reply catch-up never fetched must be archived once access returns")
 }
 
 func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
@@ -3366,6 +3746,8 @@ func TestParentArchivedRequiresRawCompletionMarker(t *testing.T) {
 	assert.True(archived,
 		"row plus raw archive is a complete parent snapshot")
 
+	_, err = st.DB().ExecContext(t.Context(), "DROP TABLE email_calendar_pending")
+	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), `DROP TABLE message_raw`)
 	require.NoError(err)
 	_, err = imp.parentArchived(t.Context(), src.ID, "C80", "123.000100")

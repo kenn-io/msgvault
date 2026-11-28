@@ -49,7 +49,16 @@ test('page content uses its header gap across workspaces', async ({ page }) => {
       await panel.getByRole('button', { name: 'Close', exact: true }).click();
     }
     if (label === 'Sources') await expect(page.getByRole('table', { name: 'Sources' }).getByText('Archive', { exact: true })).toBeVisible();
-    if (label === 'Settings') await expect(page.locator('.kit-settings')).toBeVisible();
+    if (label === 'Settings') {
+      const sidebar = page.locator('.kit-settings__sidebar');
+      const title = sidebar.getByRole('heading', { name: 'Settings', level: 2 });
+      const navigation = sidebar.getByRole('navigation', { name: 'Settings' });
+      await expect(title).toBeVisible();
+      await expect(navigation).toBeVisible();
+      const titleBox = (await title.boundingBox())!;
+      gaps[label] = (await navigation.boundingBox())!.y - (titleBox.y + titleBox.height);
+      continue;
+    }
     const header = page.locator('.kit-page-header:visible');
     await expect(header).toHaveCount(1);
     gaps[label] = await header.evaluate((element) => {
@@ -124,6 +133,7 @@ for (const width of [1280, 420]) {
       }] } }));
       await page.reload();
       const opener = page.getByRole('button', { name: 'Open navigation' });
+      const navigation = page.getByRole('dialog', { name: 'Navigation', exact: true });
       if (await opener.isVisible()) await opener.click();
       const view = page.locator('.saved-view').filter({ hasText: 'Long archive search' });
       await expect(view).toBeVisible();
@@ -138,7 +148,7 @@ for (const width of [1280, 420]) {
         await action.click({ trial: true });
       }
       await page.keyboard.press('Escape');
-      if (await opener.isVisible()) await opener.click();
+      if (await opener.isVisible() && !(await navigation.isVisible())) await opener.click();
       await open.click();
       const label = page.locator('.context-chips .kit-chip__label').filter({ hasText: query });
       await expect(label).toBeVisible();
@@ -163,13 +173,16 @@ test('a long sidebar saved view list keeps every row at its full height and scro
   const sidebar = page.getByRole('complementary', { name: 'Sidebar', exact: true });
   const views = sidebar.locator('.saved-view');
   await expect(views).toHaveCount(40);
+  const first = views.first();
+  await expect(first).toHaveCSS('height', '26px');
+  await first.hover();
   const rows = await views.evaluateAll((elements) => elements.map((element) => {
     const box = element.getBoundingClientRect();
     return { top: box.top, bottom: box.bottom, overflow: element.scrollHeight - element.clientHeight };
   }));
   for (const [index, current] of rows.entries()) {
     expect(current.overflow, `row ${index + 1} content overflows its row`).toBeLessThanOrEqual(0);
-    expect(current.bottom - current.top, `row ${index + 1} is squashed`).toBeGreaterThanOrEqual(28);
+    expect(current.bottom - current.top, `row ${index + 1} has the wrong height`).toBe(26);
     if (index > 0) expect(current.top, `row ${index + 1} overlaps the row above`).toBeGreaterThanOrEqual(rows[index - 1]!.bottom - 1);
   }
   const last = sidebar.getByRole('button', { name: 'Saved view 40', exact: true });
@@ -178,11 +191,84 @@ test('a long sidebar saved view list keeps every row at its full height and scro
   expect(await sidebar.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 });
 
-test('every sidebar item, footer included, is one height', async ({ page }) => {
-  const items = page.getByRole('complementary', { name: 'Sidebar', exact: true }).locator('.sidebar__item');
+test('every sidebar row, including the sync status control, uses the shared height', async ({ page }) => {
+  const sidebar = page.getByRole('complementary', { name: 'Sidebar', exact: true });
+  await expect(sidebar.locator('.sync-status')).toHaveCount(1);
+  const items = sidebar.locator('.sidebar__item, .sync-status');
   const heights = await items.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
   expect(heights.length).toBeGreaterThan(3);
-  expect(new Set(heights)).toEqual(new Set([36]));
+  expect(new Set(heights)).toEqual(new Set([34]));
+
+  await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
+  const railSizes = await items.evaluateAll((elements) => elements.map((element) => {
+    const { width, height } = element.getBoundingClientRect();
+    return [width, height];
+  }));
+  expect(new Set(railSizes.map(([width, height]) => `${width}x${height}`))).toEqual(new Set(['34x34']));
+});
+
+test.describe('wide touch sidebar', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 1280, height: 844 } });
+
+  test('keeps sidebar targets at 44px on a wide touch screen', async ({ page }) => {
+    await page.route('**/api/v1/saved-views', route => route.fulfill({
+      json: {
+        saved_views: Array.from({ length: 3 }, (_, index) => ({
+          id: index + 1,
+          name: `Touch saved view ${index + 1}`,
+          schema_version: 2,
+          revision: 1,
+          canonical_state: {
+            filters: [{ field: 'source', operator: 'eq', values: ['1'] }],
+            grouping: ['year'],
+            presentation: index < 2 ? 'table' : 'files'
+          },
+          created_at: row.occurred_at,
+          updated_at: row.occurred_at
+        }))
+      }
+    }));
+    await page.goto('/?workspace=everything');
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+
+    const sidebar = page.getByRole('complementary', { name: 'Sidebar', exact: true });
+    const views = sidebar.locator('.saved-view');
+    await expect(views).toHaveCount(3);
+    const navRight = await sidebar.locator('nav').evaluate(element => element.getBoundingClientRect().right);
+    const expandedTargets = await sidebar.locator('.sidebar__item, .sync-status, .saved-view__open, .saved-view__menu button').evaluateAll(elements => elements.map(element => {
+      const { right, width, height } = element.getBoundingClientRect();
+      return { right, width, height };
+    }));
+    expect(expandedTargets.length).toBeGreaterThan(8);
+    for (const [index, target] of expandedTargets.entries()) {
+      expect(target.width, `expanded touch target ${index + 1} width`).toBeGreaterThanOrEqual(44);
+      expect(target.height, `expanded touch target ${index + 1} height`).toBeGreaterThanOrEqual(44);
+      expect(target.right, `expanded touch target ${index + 1} right edge`).toBeLessThanOrEqual(navRight);
+    }
+    const firstViewLabel = await sidebar.locator('.saved-view__open span').first().evaluate(element => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth
+    }));
+    expect(firstViewLabel.scrollWidth).toBeLessThanOrEqual(firstViewLabel.clientWidth);
+    const firstView = views.first();
+    const firstViewBounds = await firstView.boundingBox();
+    const actionBounds = await firstView.locator('.saved-view__menu button').boundingBox();
+    const actionRight = actionBounds!.x + actionBounds!.width;
+    const rowRight = firstViewBounds!.x + firstViewBounds!.width;
+    expect(actionRight).toBeLessThanOrEqual(rowRight);
+    expect(actionRight).toBeGreaterThanOrEqual(rowRight - 2);
+
+    await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
+    const railTargets = await sidebar.locator('.sidebar__item, .sync-status').evaluateAll(elements => elements.map(element => {
+      const { width, height } = element.getBoundingClientRect();
+      return { width, height };
+    }));
+    expect(railTargets.length).toBeGreaterThan(3);
+    for (const [index, target] of railTargets.entries()) {
+      expect(target.width, `rail touch target ${index + 1} width`).toBeGreaterThanOrEqual(44);
+      expect(target.height, `rail touch target ${index + 1} height`).toBeGreaterThanOrEqual(44);
+    }
+  });
 });
 
 for (const width of [1280, 390]) {
@@ -446,7 +532,7 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   expect.soft(statusShape.radius).toBeGreaterThanOrEqual(statusShape.height / 2);
 });
 
-test('Settings uses the shared scrollbar and integer field sizes', async ({ page }) => {
+test('Settings uses overlay scrollbars and integer field sizes', async ({ page }) => {
   await page.route('**/api/v1/settings', route => route.fulfill({ json: {
     groups: [{ id: 'sources', label: 'Sources' }],
     settings: [{ key: 'slack.media_max_participants', group: 'sources', kind: 'integer', label: 'Participant limit', value: { integer: 25 }, restart_required: true }],
@@ -455,8 +541,12 @@ test('Settings uses the shared scrollbar and integer field sizes', async ({ page
   await selectWorkspace(page, 'Settings');
   await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Sources', exact: true }).click();
   await expect(page.getByRole('spinbutton').locator('..')).toHaveCSS('height', '32px');
-  const size = await page.locator('.kit-settings__scroll').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar').width);
-  expect(size).toBe('8px');
+  const scrollbar = await page.locator('.kit-settings__scroll').evaluate((element) => ({
+    overlay: element.hasAttribute('data-kit-overlay-scroll-viewport'),
+    gutter: (element as HTMLElement).offsetWidth - element.clientWidth,
+    size: getComputedStyle(element).getPropertyValue('--scrollbar-size').trim()
+  }));
+  expect(scrollbar).toEqual({ overlay: true, gutter: 0, size: '6px' });
 });
 test.describe('touch reading', () => {
   test.use({ isMobile: true, hasTouch: true, viewport: { width: 620, height: 900 } });

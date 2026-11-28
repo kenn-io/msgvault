@@ -23,12 +23,13 @@ var (
 )
 
 func newAddSlackCmd() *cobra.Command {
-	return newAddSlackCmdWithClientFactory(func(token string) *slack.Client {
-		return slack.NewClient("", token)
+	return newAddSlackCmdWithClientFactory(func(credentials slack.Credentials) (*slack.Client, error) {
+		return slack.NewClientWithCredentials("", credentials)
 	})
 }
 
-func newAddSlackCmdWithClientFactory(clientFactory func(token string) *slack.Client) *cobra.Command {
+func newAddSlackCmdWithClientFactory(clientFactory func(slack.Credentials) (*slack.Client, error)) *cobra.Command {
+	var cookieFile string
 	cmd := &cobra.Command{
 		Use:   "add-slack",
 		Short: "Add a Slack workspace as an archive source",
@@ -38,7 +39,7 @@ Archives conversations allowed by your Slack user token. A token limited to
 public-channel scopes archives all public channels, including ones you have
 not joined. Broader tokens archive your channel memberships and DMs.
 
-Requires a user token (xoxp-...) from an internal Slack app you create:
+Use a user token (xoxp-...) from an internal Slack app you create:
 
   1. https://api.slack.com/apps > Create New App > From scratch, in your
      workspace.
@@ -55,6 +56,14 @@ rate limits, so backfills run at full speed.
 Provide the token via --token-file, the MSGVAULT_SLACK_TOKEN environment
 variable, or the interactive prompt.
 
+Alternatively, supply your own browser session token (xoxc-...) together with
+its raw d cookie value via --cookie-file or MSGVAULT_SLACK_COOKIE. Browser
+sessions archive your channel memberships and DMs, including files and thread
+replies, within the account's existing permissions. Session credentials are
+not read-only: protect them like a password. The msgvault client uses only
+read methods. This unofficial authentication can expire or stop working;
+re-run add-slack with a fresh token and cookie when Slack rejects the session.
+
 Without search:read, each sync revisits channel history to find replies on old
 threads. search:read can read private conversations through search; files:read
 and reactions:read also grant access beyond public-channel messages. Omit them
@@ -64,6 +73,7 @@ reinstalling an existing app can retain previously granted scopes.
 Examples:
   msgvault add-slack
   msgvault add-slack --token-file ~/slack-token.txt
+  msgvault add-slack --token-file ~/slack-session.txt --cookie-file ~/slack-cookie.txt
   MSGVAULT_SLACK_TOKEN="xoxp-..." msgvault add-slack`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -77,8 +87,17 @@ Examples:
 				if err != nil {
 					return err
 				}
+				cookie, err := readAddSlackCookie(cookieFile)
+				if err != nil {
+					return err
+				}
+				credentials := slack.Credentials{Token: token, Cookie: cookie}
+				if err := credentials.Validate(); err != nil {
+					return err
+				}
 				return runDaemonCLICommandHTTPFromCobraWithEnv(cmd, args, map[string]string{
-					clirun.EnvSlackToken: token,
+					clirun.EnvSlackToken:  token,
+					clirun.EnvSlackCookie: cookie,
 				})
 			}
 
@@ -86,13 +105,20 @@ Examples:
 			if token == "" {
 				return errors.New("missing Slack token in daemon subprocess (set MSGVAULT_SLACK_TOKEN)")
 			}
-			client := clientFactory(token)
+			credentials := slack.Credentials{Token: token, Cookie: os.Getenv(clirun.EnvSlackCookie)}
+			if err := credentials.Validate(); err != nil {
+				return err
+			}
+			client, err := clientFactory(credentials)
+			if err != nil {
+				return err
+			}
 			auth, err := client.AuthTest(cmd.Context())
 			if err != nil {
 				return err
 			}
 			teamDomain := strings.TrimSuffix(strings.TrimPrefix(auth.URL, "https://"), ".slack.com/")
-			if err := slack.SaveToken(cfg.TokensDir(), auth.TeamID, teamDomain, auth.UserID, token); err != nil {
+			if err := slack.SaveCredentials(cfg.TokensDir(), auth.TeamID, teamDomain, auth.UserID, credentials); err != nil {
 				return fmt.Errorf("save slack token: %w", err)
 			}
 
@@ -125,6 +151,7 @@ Examples:
 		},
 	}
 	cmd.Flags().StringVar(&addSlackTokenFile, "token-file", "", "read the Slack user token from this file")
+	cmd.Flags().StringVar(&cookieFile, "cookie-file", "", "read the raw d cookie for an xoxc browser token from this file")
 	cmd.Flags().BoolVar(&noDefaultIdentityAddSlack, "no-default-identity", false, noDefaultIdentityHelp)
 	return cmd
 }
@@ -137,6 +164,24 @@ func writeAddedSlackWorkspace(out io.Writer, team, teamID, identifier string) {
 func confirmDefaultSlackIdentity(ctx context.Context, out io.Writer, s *store.Store, sourceID int64, teamID, userID string, logger *slog.Logger) {
 	account := teamID + ":" + userID
 	confirmDefaultIdentity(ctx, out, s, sourceID, account, account, "account-identifier", logger)
+}
+
+func readAddSlackCookie(path string) (string, error) {
+	if cookie := os.Getenv(clirun.EnvSlackCookie); cookie != "" {
+		return cookie, nil
+	}
+	if path == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read Slack cookie file: %w", err)
+	}
+	cookie := strings.TrimSpace(string(data))
+	if cookie == "" {
+		return "", errors.New("slack cookie file is empty")
+	}
+	return cookie, nil
 }
 
 // readAddSlackToken resolves the user token: env var, then --token-file,

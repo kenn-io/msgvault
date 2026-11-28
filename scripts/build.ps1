@@ -264,13 +264,13 @@ function Initialize-Arm64DuckDB {
         [string]$CompilerDirectory
     )
 
-    # duckdb-go v2.20000.0 uses DuckDB 2.0.0. Keep the native library pins
+    # duckdb-go v2.20001.0 uses DuckDB 2.0.1. Keep the native library pins
     # aligned with the Go binding version checked below.
-    $duckdbVersion = '2.0.0'
-    $duckdbCommit = 'd54cbbe3df17e8e5ce68312f483b4155836112aa'
+    $duckdbVersion = '2.0.1'
+    $duckdbCommit = '8d78114e90a53823803660bf821f6073ac87da8c'
     $duckdbGoVersion = (Invoke-Checked go list -m -f '{{.Version}}' github.com/duckdb/duckdb-go/v2 | Out-String).Trim()
-    if ($duckdbGoVersion -ne 'v2.20000.0') {
-        throw "scripts/build.ps1 expects duckdb-go v2.20000.0, but go.mod uses $duckdbGoVersion. Update the pinned DuckDB version and commit before building."
+    if ($duckdbGoVersion -ne 'v2.20001.0') {
+        throw "scripts/build.ps1 expects duckdb-go v2.20001.0, but go.mod uses $duckdbGoVersion. Update the pinned DuckDB version and commit before building."
     }
     $source = Join-Path $CacheRoot "duckdb-$duckdbVersion"
     $build = Join-Path $source 'build\windows-arm64-static'

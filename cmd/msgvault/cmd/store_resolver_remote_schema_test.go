@@ -3,9 +3,12 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -82,18 +85,44 @@ func TestOpenRemoteStoreRejectsPreviousMajorSchema(t *testing.T) {
 	require.ErrorContains(err, `daemon API schema version "2.35.0" is incompatible`)
 }
 
-func TestOpenRemoteStoreAcceptsCompatibleNewerMinorSchema(t *testing.T) {
-	healthRequests, testCtx := remoteSchemaStub(t, func(w http.ResponseWriter) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "ok", "api_schema_version": "5.1.0",
-		})
-	})
-
-	client, _, err := OpenHTTPStore(testCtx)
+// newerMinorAPISchemaVersion returns the next minor version after this CLI's.
+func newerMinorAPISchemaVersion(t *testing.T) string {
+	t.Helper()
+	parts := strings.Split(api.APISchemaVersion, ".")
+	require.Len(t, parts, 3)
+	minor, err := strconv.Atoi(parts[1])
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-	assert.Equal(t, int32(1), healthRequests.Load())
+	return fmt.Sprintf("%s.%d.0", parts[0], minor+1)
+}
+
+func TestOpenRemoteStoreSchemaMinorVersions(t *testing.T) {
+	for _, tc := range []struct {
+		name, version, wantErr string
+	}{
+		{name: "same", version: api.APISchemaVersion},
+		{name: "newer minor", version: newerMinorAPISchemaVersion(t)},
+		{name: "older minor", version: "5.1.0", wantErr: `daemon API schema version "5.1.0" is older than this CLI's`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			healthRequests, testCtx := remoteSchemaStub(t, func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status": "ok", "api_schema_version": tc.version,
+				})
+			})
+
+			client, _, err := OpenHTTPStore(testCtx)
+			if client != nil {
+				t.Cleanup(func() { _ = client.Close() })
+			}
+			assert.Equal(t, int32(1), healthRequests.Load())
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestOpenRemoteStoreRejectsDaemonWithoutSchemaVersion(t *testing.T) {
@@ -181,7 +210,11 @@ func TestDaemonRuntimeCompatibilityRejectsLegacyRecordWithoutSchemaVersion(t *te
 	require.ErrorContains(daemonRuntimeCompatibilityError(previousMajor),
 		`daemon API schema version "4.1.0" is incompatible`)
 
-	newerMinor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "5.1.0"}
+	olderMinor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "5.1.0"}
+	require.ErrorContains(daemonRuntimeCompatibilityError(olderMinor),
+		`daemon API schema version "5.1.0" is older than this CLI's`)
+
+	newerMinor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: newerMinorAPISchemaVersion(t)}
 	require.NoError(daemonRuntimeCompatibilityError(newerMinor))
 
 	previousSchema := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "2.35.0"}
@@ -283,7 +316,7 @@ func TestOpenAgentDelegatedStoreRequiresDelegatedAuthentication(t *testing.T) {
 				})
 			})
 
-			client, info, err := OpenHTTPStore(ctx, daemonclient.AgentReadMinAPISchemaVersion)
+			client, info, err := OpenHTTPStore(ctx)
 			if client != nil {
 				t.Cleanup(func() { _ = client.Close() })
 			}

@@ -63,6 +63,7 @@ var assetErrorPhrases = []struct {
 	err    error
 }{
 	{"media is no longer available", ErrAssetUnavailable},
+	{"media no longer exists", ErrAssetUnavailable},
 	{"media not found", ErrAssetNotFound},
 	{"m_not_found", ErrAssetNotFound},
 	{"failed to download file: http 404", ErrAssetNotFound},

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"sync"
 	"time"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -42,6 +43,8 @@ type Service struct {
 	ConfigTargets int
 	Now           func() time.Time
 	Logger        *slog.Logger
+	verifiedMu    sync.Mutex
+	verified      map[string]time.Time
 }
 
 func (s *Service) now() time.Time {
@@ -57,7 +60,7 @@ func (s *Service) catalog(ctx context.Context) ([]entry, []byte, error) {
 	}
 	var entries []entry
 	if raw != nil {
-		if err = json.Unmarshal(raw, &entries, json.RejectUnknownMembers(true)); err != nil {
+		if err = json.Unmarshal(raw, &entries); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -100,6 +103,14 @@ func (s *Service) deleteCredential(id string) error {
 func subscriptionID(owner string, args MCPEventsArguments, url string) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%t\x00%s", owner, Name, args.PersonID, args.SourceID, *args.IncomingOnly, url)))
 	return hex.EncodeToString(sum[:16])
+}
+
+// wireID hides the internal generation used to distinguish expired leases.
+func wireID(owner, id string) string {
+	if isGrantOwner(owner) && len(id) == 64 {
+		return id[:32]
+	}
+	return id
 }
 
 // Delegated IDs combine the existing identity digest with a random generation.
@@ -222,7 +233,11 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 			}
 		}
 		if challengedID == "" {
-			if err := verify(ctx, in.Delivery.URL, id, in.secret); err != nil {
+			if owner == "owner" && s.callbackVerified(in.Delivery.URL) {
+				challengedID, challengedRefresh, ownerHead = id, refresh, initial
+				continue
+			}
+			if err := verify(ctx, in.Delivery.URL, wireID(owner, id), in.secret); err != nil {
 				var callbackErr *Error
 				if errors.As(err, &callbackErr) && (callbackErr.Code == Unavailable || callbackErr.Code == Forbidden) {
 					return out, callbackErr
@@ -232,6 +247,9 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 					reason = CallbackReason(callbackErr.Reason)
 				}
 				return out, failure(CallbackEndpoint, reason)
+			}
+			if owner == "owner" {
+				s.rememberCallback(in.Delivery.URL, in.TTL.Duration())
 			}
 			challengedID, challengedRefresh, ownerHead = id, refresh, initial
 			continue
@@ -287,7 +305,7 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 			status.LastError = "secret_unavailable"
 			status.FailedSince = nil
 		}
-		return MCPEventsSubscribeResult{ID: id, RefreshBefore: expires, DeliveryStatus: status}, nil
+		return MCPEventsSubscribeResult{ID: wireID(owner, id), RefreshBefore: expires, DeliveryStatus: status}, nil
 	}
 }
 
@@ -373,7 +391,7 @@ func (s *Service) purgeExpired(ctx context.Context) error {
 		}
 		index := -1
 		for i, e := range entries {
-			if !s.now().Before(e.Expires) || (isGrantOwner(e.Owner) && !s.liveGrant(e.Owner)) {
+			if !s.now().Before(e.Expires) {
 				index = i
 				break
 			}
@@ -395,7 +413,7 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 	if err := s.purgeExpired(ctx); err != nil {
 		return nil, err
 	}
-	entries, _, err := s.catalog(ctx)
+	entries, raw, err := s.catalog(ctx)
 	if err != nil || len(entries) == 0 {
 		return nil, err
 	}
@@ -405,7 +423,7 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 	}
 	var out []wakeups.Subscription
 	logger := s.logger()
-	for _, e := range entries {
+	for index, e := range entries {
 		if e.Owner != "owner" && !isGrantOwner(e.Owner) {
 			continue
 		}
@@ -422,14 +440,45 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		secret, secretErr := base64.StdEncoding.DecodeString(private.Secret)
 		origin, originErr := callbackOrigin(private.URL)
 		if err != nil || decodeErr != nil || secretErr != nil || len(secret) == 0 || originErr != nil || origin != e.Origin || config.ValidateWakeupDestination(private.URL) != nil || find([]entry{e}, e.Owner, e.Arguments, private.URL) < 0 {
+			if isGrantOwner(e.Owner) && !s.liveGrant(e.Owner) {
+				_, err := s.removeEntryAndCredential(ctx, entries, raw, index)
+				return out, err
+			}
 			logger.Debug("native wakeup unavailable", "id", e.ID, "category", "secret_unavailable")
 			continue
 		}
 		f := e.Arguments.filter()
-		sub := wakeups.NewSubscription(e.ID, private.URL, secret, f, 72*time.Hour, 10*time.Second, nil, nil)
+		sub := wakeups.NewSubscription(wireID(e.Owner, e.ID), private.URL, secret, f, 72*time.Hour, 10*time.Second, nil, nil)
 		sub.Native, sub.Expires = true, e.Expires
+		sub.StateKey = store.MCPEventsPositionKey(e.ID)
+		if isGrantOwner(e.Owner) && !s.liveGrant(e.Owner) {
+			// Tear down under the setup gate; the engine sends after releasing it.
+			removed, err := s.removeEntryAndCredential(ctx, entries, raw, index)
+			if err != nil {
+				return nil, err
+			}
+			if !removed {
+				return out, nil
+			}
+			sub.Terminated = true
+			out = append(out, sub)
+			return out, nil
+		}
 		if id, ok := agentgrant.OwnerID(e.Owner); ok {
 			sub.GrantID, sub.Grants = id, s.Grants
+		}
+		id, owner := e.ID, e.Owner
+		sub.CurrentExpiry = func(ctx context.Context) (time.Time, bool, error) {
+			entries, _, err := s.catalog(ctx)
+			if err != nil {
+				return time.Time{}, false, err
+			}
+			for _, current := range entries {
+				if current.Owner == owner && current.ID == id {
+					return current.Expires, true, nil
+				}
+			}
+			return time.Time{}, false, nil
 		}
 		sub.StateKey = store.MCPEventsPositionKey(e.ID)
 		out = append(out, sub)
@@ -447,3 +496,26 @@ func (s *Service) liveGrant(owner string) bool {
 }
 
 func isGrantOwner(owner string) bool { _, ok := agentgrant.OwnerID(owner); return ok }
+
+// Verification is process-local soft state for owner callback URLs.
+func (s *Service) callbackVerified(url string) bool {
+	s.verifiedMu.Lock()
+	defer s.verifiedMu.Unlock()
+	return s.now().Before(s.verified[url])
+}
+func (s *Service) rememberCallback(url string, ttl time.Duration) {
+	s.verifiedMu.Lock()
+	defer s.verifiedMu.Unlock()
+	now := s.now()
+	if s.verified == nil {
+		s.verified = make(map[string]time.Time)
+	}
+	for key, expires := range s.verified {
+		if !now.Before(expires) {
+			delete(s.verified, key)
+		}
+	}
+	if len(s.verified) < 32 {
+		s.verified[url] = now.Add(min(ttl, time.Hour))
+	}
+}

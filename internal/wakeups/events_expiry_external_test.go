@@ -13,7 +13,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/changefeed"
 	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/store"
@@ -34,7 +33,7 @@ func TestOwnerEventExpiresBehindConfiguredCallback(t *testing.T) {
 	service := mcpevents.Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: clock}
 	in, err := mcpevents.DecodeSubscribe(fmt.Appendf(nil, `{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/native","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"},"ttlMs":60000}`, source.ID))
 	require.NoError(err)
-	created, err := service.Subscribe(ctx, in, "owner", func(context.Context, string, string, []byte) error { return nil }, nil)
+	created, err := service.Subscribe(ctx, in, func(context.Context, string, string, []byte) error { return nil })
 	require.NoError(err)
 	start := clock().Add(-time.Hour)
 	key := store.MCPEventsPositionKey(created.ID)
@@ -91,23 +90,20 @@ func TestOwnerEventExpiresBehindConfiguredCallback(t *testing.T) {
 	assert.Equal([]string{"/configured"}, requests)
 }
 
-func TestDelegatedEventExpiresBehindConfiguredCallback(t *testing.T) {
+func TestOwnerEventRefreshShortensLeaseBehindConfiguredCallback(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "events@example.test")
 	require.NoError(err)
-	registry := agentgrant.NewRegistry()
-	grant, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	require.NoError(err)
 	var mu sync.Mutex
 	now := time.Now().UTC()
 	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
-	service := mcpevents.Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry, Now: clock}
-	in, err := mcpevents.DecodeSubscribe(fmt.Appendf(nil, `{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/native","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"},"ttlMs":60000}`, source.ID))
+	service := mcpevents.Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: clock}
+	in, err := mcpevents.DecodeSubscribe(fmt.Appendf(nil, `{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/native","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"},"ttlMs":3600000}`, source.ID))
 	require.NoError(err)
-	created, err := service.Subscribe(ctx, in, agentgrant.Owner(grant), func(context.Context, string, string, []byte) error { return nil }, nil)
+	created, err := service.Subscribe(ctx, in, func(context.Context, string, string, []byte) error { return nil })
 	require.NoError(err)
 	start := clock().Add(-time.Hour)
 	key := store.MCPEventsPositionKey(created.ID)
@@ -133,13 +129,21 @@ func TestDelegatedEventExpiresBehindConfiguredCallback(t *testing.T) {
 	require.NoError(err)
 	var requests []string
 	var nativeCount int
+	var refreshErr error
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		requests = append(requests, r.URL.Path)
-		if r.URL.Path == "/configured" {
-			now = created.RefreshBefore
-		}
 		mu.Unlock()
+		if r.URL.Path == "/configured" {
+			short, err := mcpevents.DecodeSubscribe(fmt.Appendf(nil, `{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/native","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"},"ttlMs":60000}`, source.ID))
+			if err == nil {
+				_, err = service.Subscribe(r.Context(), short, func(context.Context, string, string, []byte) error { return nil })
+			}
+			refreshErr = err
+			mu.Lock()
+			now = now.Add(61 * time.Second)
+			mu.Unlock()
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
@@ -155,6 +159,7 @@ func TestDelegatedEventExpiresBehindConfiguredCallback(t *testing.T) {
 		return subs, err
 	}}
 	require.NoError(engine.RunPass(ctx))
+	require.NoError(refreshErr)
 	assert.Equal(1, nativeCount)
 	_, after, err := st.LoadWakeupStateKey(ctx, key)
 	require.NoError(err)
@@ -162,6 +167,4 @@ func TestDelegatedEventExpiresBehindConfiguredCallback(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Equal([]string{"/configured"}, requests)
-	_, live := registry.LookupID(grant, agentgrant.PermissionSearchRead)
-	assert.True(live)
 }

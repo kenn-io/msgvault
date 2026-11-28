@@ -53,6 +53,8 @@ import type {
   CardDAVGoogleAuthorizeRequest,
   CardDAVGoogleAuthorizeResponse,
   CardDAVGoogleCallbackRequest,
+  CardDAVParticipantBindingOptions,
+  CardDAVParticipantBindingResult,
   CardDAVPublicationApprovalRequest,
   CardDAVPublicationPreviewResponse,
   CardDAVPublicationResponse,
@@ -119,6 +121,7 @@ import type {
   DocbankAttachmentBackfillResponse,
   DocbankAttachmentStatus,
   DomainSummary,
+  EmailFamily,
   EmbeddingStatus,
   Employment,
   EmploymentBody,
@@ -126,6 +129,8 @@ import type {
   EndEmploymentBody,
   EndEmploymentPathParameters,
   ExplainPersonTierPathParameters,
+  ExportCLIMessagesParams,
+  FactSummary,
   FastSearchParams,
   FileMetadataResponse,
   FilterMessagesParams,
@@ -155,6 +160,7 @@ import type {
   GetConversationPathParameters,
   GetDeletionPathParameters,
   GetDomainPathParameters,
+  GetEmailFamilyPathParameters,
   GetEmbeddingStatusParams,
   GetEmploymentPathParameters,
   GetFileContentPathParameters,
@@ -180,6 +186,7 @@ import type {
   GetPersonBriefPathParameters,
   GetPersonByUIDParams,
   GetPersonContactStatePathParameters,
+  GetPersonFactSummaryPathParameters,
   GetPersonMergePathParameters,
   GetPersonMergeSnapshotPathParameters,
   GetPersonMessagingRoutesParams,
@@ -235,6 +242,7 @@ import type {
   ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
   ListMessagesParams,
+  ListOpenKataIssuesParams,
   ListOperationRunsParams,
   ListOrganizationAttributesParams,
   ListOrganizationAttributesPathParameters,
@@ -352,6 +360,7 @@ import type {
   PersonBriefEnrollment,
   PersonBriefRun,
   PersonBriefVersionsResponse,
+  PersonCreateInput,
   PersonDayPage,
   PersonDaysPage,
   PersonEnrichmentProviderUpdate,
@@ -408,6 +417,7 @@ import type {
   RelationshipTypesResponse,
   RemoteImageRequest,
   ReopenLoopPathParameters,
+  RepairAccountAttributionPathParameters,
   ResolveCardDAVConflictPathParameters,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
@@ -925,6 +935,23 @@ export const completeGoogleCardDAVAuthorization = (
   );
 };
 /**
+ * @summary Preview, reconcile, or undo automatic CardDAV participant memberships
+ */
+export const reconcileCardDAVParticipantBindings = (
+  cardDAVParticipantBindingOptions: CardDAVParticipantBindingOptions,
+  options?: SecondParameter<typeof orvalFetch<CardDAVParticipantBindingResult>>,
+) => {
+  return orvalFetch<CardDAVParticipantBindingResult>(
+    {
+      url: `/api/v1/carddav/participant-bindings`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVParticipantBindingOptions,
+    },
+    options,
+  );
+};
+/**
  * @summary Unpublish a person from CardDAV
  */
 export const unpublishCardDAVPerson = (
@@ -1265,6 +1292,23 @@ export const getCLIMessageThread = (
 ) => {
   return orvalFetch<ThreadPage>(
     { url: `/api/v1/cli/message/thread`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Stream messages in a time window as msgvault-message-export/1 JSON Lines
+ */
+export const exportCLIMessages = (
+  params: ExportCLIMessagesParams,
+  options?: SecondParameter<typeof orvalFetch<Blob>>,
+) => {
+  return orvalFetch<Blob>(
+    {
+      url: `/api/v1/cli/messages/export`,
+      method: "GET",
+      params,
+      responseType: "blob",
+    },
     options,
   );
 };
@@ -1775,6 +1819,17 @@ export const getHealth = (
   );
 };
 /**
+ * @summary Refresh identity datasets
+ */
+export const refreshIdentityCache = (
+  options?: SecondParameter<typeof orvalFetch<IdentityLinkResponse>>,
+) => {
+  return orvalFetch<IdentityLinkResponse>(
+    { url: `/api/v1/identity/cache-refresh`, method: "POST" },
+    options,
+  );
+};
+/**
  * @summary Assert two participants are the same person
  */
 export const linkIdentityParticipants = (
@@ -2166,6 +2221,18 @@ export const linkKataEvidence = (
   );
 };
 /**
+ * @summary List or search Kata issues in the configured project
+ */
+export const listOpenKataIssues = (
+  params?: ListOpenKataIssuesParams,
+  options?: SecondParameter<typeof orvalFetch<KataIssueListResponse>>,
+) => {
+  return orvalFetch<KataIssueListResponse>(
+    { url: `/api/v1/integrations/kata/open-issues`, method: "GET", params },
+    options,
+  );
+};
+/**
  * @summary Get Kata person agenda availability
  */
 export const getKataIntegrationStatus = (
@@ -2180,7 +2247,7 @@ export const getKataIntegrationStatus = (
  * @summary Search tasks in the configured project
  */
 export const searchIntegrationTasks = (
-  params: SearchIntegrationTasksParams,
+  params?: SearchIntegrationTasksParams,
   options?: SecondParameter<typeof orvalFetch<TaskSearchResponse>>,
 ) => {
   return orvalFetch<TaskSearchResponse>(
@@ -2411,6 +2478,21 @@ export const getMessage = (
   return orvalFetch<MessageDetail>(
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Read the other archived copies, replies and forwards of an email
+ */
+export const getEmailFamily = (
+  { id }: GetEmailFamilyPathParameters,
+  options?: SecondParameter<typeof orvalFetch<EmailFamily>>,
+) => {
+  return orvalFetch<EmailFamily>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/family`,
       method: "GET",
     },
     options,
@@ -2947,6 +3029,24 @@ export const findContactCandidates = (
   );
 };
 /**
+ * Creates a durable profile with a new vCard UID and user-curated contact data. With if_exists=return, returns a single matching person without updating it; otherwise refuses existing contacts. A title requires an organization. Does not publish to CardDAV.
+ * @summary Create a person without message participants
+ */
+export const createStandalonePerson = (
+  personCreateInput: PersonCreateInput,
+  options?: SecondParameter<typeof orvalFetch<Person>>,
+) => {
+  return orvalFetch<Person>(
+    {
+      url: `/api/v1/people/create`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: personCreateInput,
+    },
+    options,
+  );
+};
+/**
  * Returns one stable, non-sensitive page of promoted durable people.
  * @summary Query durable people for the Directory
  */
@@ -3447,6 +3547,21 @@ export const setPersonFactPin = (
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       data: setPersonFactPinRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Get person fact summary
+ */
+export const getPersonFactSummary = (
+  { id }: GetPersonFactSummaryPathParameters,
+  options?: SecondParameter<typeof orvalFetch<FactSummary>>,
+) => {
+  return orvalFetch<FactSummary>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-summary`,
+      method: "GET",
     },
     options,
   );
@@ -4439,6 +4554,21 @@ export const listSourceStatus = (
   );
 };
 /**
+ * @summary Retry account matching for one source
+ */
+export const repairAccountAttribution = (
+  { sourceId }: RepairAccountAttributionPathParameters,
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/sources/${encodeURIComponent(String(sourceId))}/account-attribution/repair`,
+      method: "POST",
+    },
+    options,
+  );
+};
+/**
  * @summary List confirmed identities for one source
  */
 export const listSourceIdentities = (
@@ -4494,7 +4624,7 @@ export const triggerSync = (
   );
 };
 /**
- * @summary Report a web, terminal UI, or interactive CLI usage event
+ * @summary Record an interface event
  */
 export const captureTelemetryEvent = (
   telemetryEventRequest: TelemetryEventRequest,

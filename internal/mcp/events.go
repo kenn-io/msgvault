@@ -37,6 +37,9 @@ func (p *nativeEventParams) clean() ([]byte, error) {
 	if p == nil || len(p.raw) > 64<<10 {
 		return nil, rpcEventError(&mcpevents.Error{Code: mcpevents.InvalidParams, Reason: "invalid_params"})
 	}
+	if len(p.raw) == 0 {
+		return []byte(`{}`), nil
+	}
 	var fields map[string]jsontext.Value
 	if json.Unmarshal(p.raw, &fields) != nil || fields == nil {
 		return nil, rpcEventError(&mcpevents.Error{Code: mcpevents.InvalidParams, Reason: "invalid_params"})
@@ -86,7 +89,7 @@ func (r *nativeEventResult) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(wire)
 }
-func rpcEventError(err error) error {
+func rpcEventError(err error, mode ...string) error {
 	var e *mcpevents.Error
 	if !errors.As(err, &e) {
 		e = &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "daemon_unavailable"}
@@ -110,12 +113,28 @@ func rpcEventError(err error) error {
 		e.Code = mcpevents.Unavailable
 		e.Reason = "daemon_unavailable"
 	}
-	data, _ := json.Marshal(map[string]any{"reason": e.Reason})
+	payload := map[string]any{"reason": e.Reason}
+	switch e.Code {
+	case mcpevents.NotFound:
+		payload = map[string]any{"kind": e.Reason}
+	case mcpevents.ResourceExhausted:
+		payload = map[string]any{"limit": e.Reason}
+	case mcpevents.Unsupported:
+		payload = map[string]any{"feature": "deliveryMode"}
+		if len(mode) != 0 {
+			payload["value"] = mode[0]
+		}
+	}
+	data, _ := json.Marshal(payload)
 	return &jsonrpc.Error{Code: int64(e.Code), Message: name, Data: data}
 }
 func registerNativeEvents(server *sdkmcp.Server, backend EventsBackend, allowWrites bool) {
 	_ = sdkmcp.AddReceivingCustomMethod(server, "events/list", func(ctx context.Context, _ *sdkmcp.ServerSession, p *nativeEventParams) (*nativeEventResult, error) {
-		b, err := p.clean()
+		b := []byte(`{}`)
+		var err error
+		if p != nil {
+			b, err = p.clean()
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -127,7 +146,7 @@ func registerNativeEvents(server *sdkmcp.Server, backend EventsBackend, allowWri
 		if err != nil {
 			return nil, rpcEventError(err)
 		}
-		return &nativeEventResult{value: map[string]any{"events": out.Events}, complete: true}, nil
+		return &nativeEventResult{value: map[string]any{"events": out.Events}, complete: p.modern()}, nil
 	})
 	if allowWrites {
 		_ = sdkmcp.AddReceivingCustomMethod(server, "events/subscribe", func(ctx context.Context, _ *sdkmcp.ServerSession, p *nativeEventParams) (*nativeEventResult, error) {
@@ -137,13 +156,20 @@ func registerNativeEvents(server *sdkmcp.Server, backend EventsBackend, allowWri
 			}
 			in, err := mcpevents.DecodeSubscribe(b)
 			if err != nil {
-				return nil, rpcEventError(err)
+				return nil, rpcEventError(err, in.Delivery.Mode)
 			}
 			out, err := backend.MCPEventsSubscribe(ctx, in)
 			if err != nil {
-				return nil, rpcEventError(err)
+				return nil, rpcEventError(err, in.Delivery.Mode)
 			}
-			return &nativeEventResult{value: out, complete: true}, nil
+			switch out.DeliveryStatus.LastError {
+			case "connection_refused", "timeout", "tls_error", "http_4xx", "http_5xx", "challenge_failed":
+			case "dns_error":
+				out.DeliveryStatus.LastError = "connection_refused"
+			default:
+				out.DeliveryStatus.LastError = ""
+			}
+			return &nativeEventResult{value: out, complete: p.modern()}, nil
 		})
 		_ = sdkmcp.AddReceivingCustomMethod(server, "events/unsubscribe", func(ctx context.Context, _ *sdkmcp.ServerSession, p *nativeEventParams) (*nativeEventResult, error) {
 			b, err := p.clean()
@@ -152,47 +178,19 @@ func registerNativeEvents(server *sdkmcp.Server, backend EventsBackend, allowWri
 			}
 			in, err := mcpevents.DecodeUnsubscribe(b)
 			if err != nil {
-				return nil, rpcEventError(err)
+				return nil, rpcEventError(err, in.Delivery.Mode)
 			}
 			if err = backend.MCPEventsUnsubscribe(ctx, in); err != nil {
-				return nil, rpcEventError(err)
+				return nil, rpcEventError(err, in.Delivery.Mode)
 			}
-			return &nativeEventResult{value: struct{}{}, complete: true}, nil
+			return &nativeEventResult{value: struct{}{}, complete: p.modern()}, nil
 		})
 	}
-	server.AddReceivingMiddleware(nativeEventsCapabilities)
 }
-func nativeEventsCapabilities(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
-	return func(ctx context.Context, method string, request sdkmcp.Request) (sdkmcp.Result, error) {
-		result, err := next(ctx, method, request)
-		if err != nil || (method != "initialize" && method != "server/discover") {
-			return result, err
-		}
-		data, err := json.Marshal(result)
-		if err != nil {
-			return nil, err
-		}
-		var wire map[string]any
-		if err = json.Unmarshal(data, &wire); err != nil {
-			return nil, err
-		}
-		caps, ok := wire["capabilities"].(map[string]any)
-		if !ok {
-			caps = map[string]any{}
-			wire["capabilities"] = caps
-		}
-		caps["events"] = map[string]any{}
-		ext, _ := caps["extensions"].(map[string]any)
-		if ext == nil {
-			ext = map[string]any{}
-			caps["extensions"] = ext
-		}
-		ext["io.modelcontextprotocol/events"] = map[string]any{}
-		complete := false
-		if p := request.GetParams(); p != nil {
-			version, _ := p.GetMeta()[sdkmcp.MetaKeyProtocolVersion].(string)
-			complete = version >= "2026-07-28"
-		}
-		return &nativeEventResult{value: wire, complete: complete}, nil
+func (p *nativeEventParams) modern() bool {
+	if p == nil {
+		return false
 	}
+	version, _ := p.Meta[sdkmcp.MetaKeyProtocolVersion].(string)
+	return version >= "2026-07-28"
 }

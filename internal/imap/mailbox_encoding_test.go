@@ -175,3 +175,39 @@ func TestRev2EncodingNegotiationRejectsUnconfirmedMode(t *testing.T) {
 		})
 	}
 }
+
+// After ENABLE IMAP4rev2, servers send mailbox names as raw UTF-8, where '&'
+// is an ordinary character rather than a modified UTF-7 shift. Sync must
+// parse those LIST replies and address the mailbox with the same raw name.
+func TestRev2MailboxNameWithAmpersandSyncs(t *testing.T) {
+	assert := assert.New(t)
+	const mailbox = "you & i"
+	count := uint32(1)
+	addr, server := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities: []string{"IMAP4rev1 IMAP4rev2 ENABLE"},
+		mailboxes:    []string{mailbox},
+		uidValidity:  77, uidNext: 2,
+		numMessages: &count, searchUIDs: []imapv2.UID{1},
+		commandHook: func(conn net.Conn, _ int, line string) bool {
+			tag, command, _ := strings.Cut(line, " ")
+			switch {
+			case command == "ENABLE IMAP4rev2":
+				_, _ = fmt.Fprintf(conn, "* ENABLED IMAP4rev2\r\n%s OK enabled\r\n", tag)
+				return true
+			case strings.HasPrefix(command, "LIST "):
+				_, _ = fmt.Fprintf(conn, "* LIST () \"/\" %q\r\n%s OK listed\r\n", mailbox, tag)
+				return true
+			case (strings.HasPrefix(command, "STATUS ") || strings.HasPrefix(command, "SELECT ")) &&
+				!strings.Contains(command, fmt.Sprintf("%q", mailbox)):
+				_, _ = fmt.Fprintf(conn, "%s NO Mailbox does not exist\r\n", tag)
+				return true
+			}
+			return false
+		},
+	})
+
+	client := newTestClient(t, addr)
+	assert.Equal([]string{mailbox + "|1"}, listAllMessages(t, client))
+	assert.True(client.LabelsSnapshotComplete())
+	assert.NotContains(joinedCommands(server.commandsFor(1)), "&-")
+}

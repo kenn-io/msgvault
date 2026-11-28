@@ -59,6 +59,7 @@ type Backend interface {
 var (
 	ErrProviderBatchTooLarge = errors.New("visual provider batch is too large")
 	ErrProviderUnauthorized  = errors.New("visual provider authorization failed")
+	ErrProviderConfiguration = errors.New("visual provider configuration is invalid")
 	ErrProviderRejected      = errors.New("visual provider rejected the input")
 	ErrProviderRetryable     = errors.New("visual provider request is retryable")
 	ErrProviderMalformed     = errors.New("visual provider returned a malformed response")

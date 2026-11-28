@@ -4,7 +4,7 @@
 import type { TelemetryEventResponseStatus } from "./telemetryEventResponseStatus";
 
 export interface TelemetryEventResponse {
-  /** queued when accepted, including suppressed daily screen_viewed and message_opened duplicates or invalid screen names; disabled when telemetry is off */
+  /** queued when accepted; disabled otherwise */
   status: TelemetryEventResponseStatus;
   [key: string]: unknown;
 }

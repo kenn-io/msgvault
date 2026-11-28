@@ -50,7 +50,8 @@ test('Settings panel stays in place when a long category makes it scroll', async
   const tall = page.getByRole('heading', { name: 'Sources', exact: true });
   await expect(tall).toBeVisible();
   expect(await scroller.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
-  expect(await scroller.evaluate((element) => (element as HTMLElement).offsetWidth - element.clientWidth)).toBeGreaterThan(0);
+  expect(await scroller.evaluate((element) => (element as HTMLElement).offsetWidth - element.clientWidth)).toBe(0);
+  await expect(page.locator('.kit-settings__content > .kit-scrollbar--y')).toHaveCount(1);
   const tallBox = await tall.boundingBox();
 
   expect(tallBox?.x).toBe(shortBox?.x);
@@ -117,6 +118,7 @@ test('first PDF page stays in place when a later page makes the preview scroll',
   expect(beforeScrolling?.scrolls).toBe(false);
   expect(afterScrolling?.pages).toBe(3);
   expect(afterScrolling?.scrolls).toBe(true);
-  expect(await page.locator('.preview').evaluate((element) => (element as HTMLElement).offsetWidth - element.clientWidth)).toBeGreaterThan(0);
+  expect(await page.locator('.preview').evaluate((element) => (element as HTMLElement).offsetWidth - element.clientWidth)).toBe(0);
+  await expect(page.locator('.file-viewer > .kit-scrollbar--y')).toHaveCount(1);
   expect(afterScrolling?.x).toBe(beforeScrolling?.x);
 });

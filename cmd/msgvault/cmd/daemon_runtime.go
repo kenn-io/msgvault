@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/shirou/gopsutil/v4/process"
 	"go.kenn.io/kit/agenthook"
@@ -44,7 +48,6 @@ const (
 	runtimePersistent               = "persistent"
 	runtimeIdleTimeout              = "idle_timeout"
 	runtimeBackgroundValue          = "true"
-	minimumDaemonAPISchemaVersion   = "3.0.0"
 	runtimeStartupCacheBuildOutcome = "startup_cache_build_outcome"
 	daemonProbeTick                 = 250 * time.Millisecond
 )
@@ -410,10 +413,13 @@ func apiSchemaCompatibilityError(peerVersion string) error {
 			peerVersion, api.APISchemaVersion,
 		)
 	}
-	if !daemonclient.APISchemaVersionAtLeast(peerVersion, minimumDaemonAPISchemaVersion) {
+	// The CLI and its daemon run the same release. A newer daemon of the
+	// same major version only adds to the contract, but an older one may lack
+	// routes and fields this CLI relies on without checking for them.
+	if !daemonclient.APISchemaVersionAtLeast(peerVersion, api.APISchemaVersion) {
 		return fmt.Errorf(
-			"daemon API schema version %q is incompatible: this CLI requires API schema %s or newer",
-			peerVersion, minimumDaemonAPISchemaVersion,
+			"daemon API schema version %q is older than this CLI's API schema %s; upgrade the daemon",
+			peerVersion, api.APISchemaVersion,
 		)
 	}
 	return nil
@@ -690,20 +696,73 @@ func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRun
 func daemonRestartCommand(ctx context.Context) string {
 	options := optionsFromContext(ctx)
 	args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
+	restart, _ := formatNativeCommand(append(args, "daemon", "restart"))
+	return restart
+}
+
+func formatNativeCommand(args []string) (string, error) {
+	return formatCommand(nativeCommandExecutable(), args, runtime.GOOS)
+}
+
+func formatCommand(executable string, args []string, goos string) (string, error) {
+	if executable == "" {
+		return "", errors.New("executable is empty")
+	}
+	values := append([]string{executable}, args...)
+
+	var parts, assignments []string
+	for i, value := range values {
+		if !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0 || (goos == "windows" && strings.ContainsAny(value, "\u2018\u2019\u201c\u201d")) {
+			if goos == "windows" {
+				var chars []string
+				for _, char := range utf16.Encode([]rune(value)) {
+					chars = append(chars, fmt.Sprintf("0x%04x", char))
+				}
+				parts = append(parts, "([string]::new([char[]]@("+strings.Join(chars, ",")+")))")
+			} else {
+				var encoded strings.Builder
+				for _, b := range []byte(value) {
+					fmt.Fprintf(&encoded, "\\0%03o", b)
+				}
+				name := fmt.Sprintf("_msgvault_arg_%d", i)
+				// The suffix keeps command substitution from dropping trailing newlines.
+				assignments = append(assignments, fmt.Sprintf("%s=$(printf '%%b_' '%s')", name, encoded.String()))
+				parts = append(parts, "\"${"+name+"%_}\"")
+			}
+			continue
+		}
+		quoted, _ := agenthook.BuildCommand("x", value)
+		if goos == "windows" {
+			parts = append(parts, strings.TrimPrefix(quoted.PowerShell, "& 'x' "))
+		} else {
+			parts = append(parts, strings.TrimPrefix(quoted.POSIX, "x "))
+		}
+	}
+	line := strings.Join(parts, " ")
+	if goos == "windows" {
+		return "& " + line, nil
+	}
+	if len(assignments) != 0 {
+		return "( " + strings.Join(assignments, "; ") + "; " + line + " )", nil
+	}
+	return line, nil
+}
+
+func nativeCommandExecutable() string {
 	executable, err := daemonCLIExecutableResolver()
 	if err != nil {
 		executable = os.Args[0]
 	}
-	commands, _ := agenthook.BuildCommand(executable, append(args, "daemon", "restart")...)
-	restart := commands.POSIX
-	if runtime.GOOS == "windows" {
-		restart = commands.PowerShell
-	}
-	return restart
+	return executable
 }
 
+// shouldUpgradeIncompatibleDaemonRuntimeWithPolicy reports whether to replace
+// a local daemon this CLI cannot use. Unless restarts are turned off, a daemon
+// with an older API schema is always replaced, even when binary versions
+// cannot be ordered (two source builds of one release), so a CLI in the
+// default mode never stops on a daemon it could restart.
 func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, currentVersion string, policy string) bool {
-	if !shouldUpgradeDaemonRuntimeWithPolicy(rt, currentVersion, policy) {
+	if rt == nil || rt.API > daemonAPIVersion {
 		return false
 	}
 	if rt.APISchemaVersion != "" {
@@ -713,7 +772,11 @@ func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, current
 			return false
 		}
 	}
-	return rt.API <= daemonAPIVersion
+	if policy != config.DaemonAutoRestartNever &&
+		!daemonclient.APISchemaVersionAtLeast(rt.APISchemaVersion, api.APISchemaVersion) {
+		return true
+	}
+	return shouldUpgradeDaemonRuntimeWithPolicy(rt, currentVersion, policy)
 }
 
 func localDaemonAPIClient(baseURL, apiKey string) (*apiclient.Client, error) {

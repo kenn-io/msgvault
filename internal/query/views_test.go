@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/duckdbutil"
 )
 
 func TestDuckDBEngine_QuerySQL(t *testing.T) {
@@ -378,4 +382,172 @@ func TestVMessagesKeepUnnamedDirectSenderNamesEmpty(t *testing.T) {
 		require.NoError(t, engine.db.QueryRowContext(t.Context(), "SELECT from_name FROM v_messages WHERE id = ?", id).Scan(&fromName))
 		assert.Empty(t, fromName, "other readers keep an empty name for unnamed direct senders")
 	}
+}
+
+// TestVMessagesFilteredWideColumnsUnderSpill guards against DuckDB's
+// dict-surviving hash join bug (fixed in DuckDB v2.0.1 / duckdb-go v2.20001.0)
+// where filtering v_messages to a small message_type subset while selecting
+// wide columns (subject, sent_at) failed when the intermediate direct-sender
+// join spilled its probe side under a bounded memory limit.
+func TestVMessagesFilteredWideColumnsUnderSpill(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping multi-million-row spill regression in short mode")
+	}
+	dir := t.TempDir()
+	for _, sub := range []string{
+		"messages/year=2025", "messages/year=2026",
+		"participants", "message_recipients", "labels", "message_labels",
+		"attachments", "conversations", "conversation_participants",
+		"participant_identifiers", "sources",
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, sub), 0o755))
+	}
+
+	// Build a Parquet archive large enough that v_messages' unaggregated
+	// direct-sender join spills under a 128MB memory limit while the filtered
+	// meeting_transcript subset stays small enough for dictionary emission.
+	setupDB, err := sql.Open("duckdb", "")
+	require.NoError(t, err)
+	defer func() { _ = setupDB.Close() }()
+
+	const totalEmails = 1_200_000
+	const halfEmails = totalEmails / 2
+	exec := func(stmt string) {
+		t.Helper()
+		_, execErr := setupDB.ExecContext(t.Context(), stmt)
+		require.NoError(t, execErr)
+	}
+	parquetPath := func(rel string) string {
+		return escapePath(filepath.Join(dir, rel))
+	}
+
+	exec(fmt.Sprintf(`COPY (
+		SELECT 1::BIGINT AS id, 'gmail'::VARCHAR AS source_type, 'owner@example.com'::VARCHAR AS account_email
+		UNION ALL SELECT 2::BIGINT, 'granola'::VARCHAR, 'notes@example.com'::VARCHAR
+	) TO '%s' (FORMAT PARQUET)`, parquetPath("sources/data.parquet")))
+	exec(fmt.Sprintf(`COPY (
+		SELECT i::BIGINT AS id,
+			'user' || i || '@example.com' AS email_address,
+			'example.com' AS domain,
+			'User ' || i AS display_name,
+			'' AS phone_number
+		FROM range(1, 2001) t(i)
+	) TO '%s' (FORMAT PARQUET)`, parquetPath("participants/data.parquet")))
+	exec(fmt.Sprintf(`COPY (
+		SELECT i::BIGINT AS id, 'LABEL_' || i AS name FROM range(1, 11) t(i)
+	) TO '%s' (FORMAT PARQUET)`, parquetPath("labels/data.parquet")))
+	exec(fmt.Sprintf(`COPY (
+		SELECT i::BIGINT AS id, 1::BIGINT AS source_id, 'm-' || i AS source_message_id,
+			i::BIGINT AS conversation_id, 'Subject ' || (i %% 10000) AS subject,
+			'Snippet' AS snippet, TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i %% 86400) SECOND AS sent_at,
+			1024::BIGINT AS size_estimate, false AS has_attachments, 0::INTEGER AS attachment_count,
+			'email'::VARCHAR AS message_type, 1::INTEGER AS month,
+			((i %% 2000) + 1)::BIGINT AS sender_id, NULL::BIGINT AS owner_participant_id,
+			NULL::VARCHAR AS list_id, NULL::TIMESTAMP AS deleted_at, NULL::TIMESTAMP AS deleted_from_source_at,
+			false AS is_from_me, false AS archive_only, NULL::VARCHAR AS account_address, NULL::VARCHAR AS account_path
+		FROM range(1, %d) t(i)
+	) TO '%s' (FORMAT PARQUET)`, halfEmails+1, parquetPath("messages/year=2025/data.parquet")))
+	exec(fmt.Sprintf(`COPY (
+		SELECT i::BIGINT AS id, 1::BIGINT AS source_id, 'm-' || i AS source_message_id,
+			i::BIGINT AS conversation_id, 'Subject ' || (i %% 10000) AS subject,
+			'Snippet' AS snippet, TIMESTAMP '2026-01-01 00:00:00' + INTERVAL (i %% 86400) SECOND AS sent_at,
+			1024::BIGINT AS size_estimate, false AS has_attachments, 0::INTEGER AS attachment_count,
+			'email'::VARCHAR AS message_type, 1::INTEGER AS month,
+			((i %% 2000) + 1)::BIGINT AS sender_id, NULL::BIGINT AS owner_participant_id,
+			NULL::VARCHAR AS list_id, NULL::TIMESTAMP AS deleted_at, NULL::TIMESTAMP AS deleted_from_source_at,
+			false AS is_from_me, false AS archive_only, NULL::VARCHAR AS account_address, NULL::VARCHAR AS account_path
+		FROM range(%d, %d) t(i)
+		UNION ALL
+		SELECT (%d + i)::BIGINT AS id, 2::BIGINT AS source_id, 'mt-' || i AS source_message_id,
+			(%d + i)::BIGINT AS conversation_id, 'Meeting ' || i AS subject,
+			'Notes ' || i AS snippet, TIMESTAMP '2026-02-01 00:00:00' + INTERVAL (i) HOUR AS sent_at,
+			512::BIGINT AS size_estimate, false AS has_attachments, 0::INTEGER AS attachment_count,
+			'meeting_transcript'::VARCHAR AS message_type, 2::INTEGER AS month,
+			CASE WHEN i < 3 THEN NULL::BIGINT ELSE ((i %% 50) + 1)::BIGINT END AS sender_id,
+			NULL::BIGINT AS owner_participant_id, NULL::VARCHAR AS list_id,
+			NULL::TIMESTAMP AS deleted_at, NULL::TIMESTAMP AS deleted_from_source_at,
+			false AS is_from_me, false AS archive_only, NULL::VARCHAR AS account_address, NULL::VARCHAR AS account_path
+		FROM range(754) t(i)
+	) TO '%s' (FORMAT PARQUET)`, halfEmails+1, totalEmails+1, totalEmails+1, totalEmails+1, parquetPath("messages/year=2026/data.parquet")))
+	exec(fmt.Sprintf(`COPY (
+		SELECT i::BIGINT AS message_id, ((i %% 2000) + 1)::BIGINT AS participant_id,
+			'from'::VARCHAR AS recipient_type, 'User' AS display_name,
+			'user' || ((i %% 2000) + 1) || '@example.com' AS email_address,
+			NULL::VARCHAR AS envelope_address, false AS is_relayed
+		FROM range(1, %d) t(i)
+	) TO '%s' (FORMAT PARQUET)`, totalEmails+50, parquetPath("message_recipients/data.parquet")))
+	exec(fmt.Sprintf(`COPY (
+		SELECT i::BIGINT AS message_id, ((i %% 10) + 1)::BIGINT AS label_id
+		FROM range(1, %d) t(i)
+	) TO '%s' (FORMAT PARQUET)`, totalEmails+100, parquetPath("message_labels/data.parquet")))
+	exec(fmt.Sprintf(`COPY (SELECT 1::BIGINT AS message_id, 0::BIGINT AS size, ''::VARCHAR AS filename, ''::VARCHAR AS mime_type, NULL::VARCHAR AS attachment_metadata WHERE false) TO '%s' (FORMAT PARQUET)`, parquetPath("attachments/data.parquet")))
+	exec(fmt.Sprintf(`COPY (SELECT 1::BIGINT AS id, ''::VARCHAR AS source_conversation_id, ''::VARCHAR AS title, 'email'::VARCHAR AS conversation_type WHERE false) TO '%s' (FORMAT PARQUET)`, parquetPath("conversations/data.parquet")))
+	exec(fmt.Sprintf(`COPY (SELECT 1::BIGINT AS conversation_id, 1::BIGINT AS participant_id WHERE false) TO '%s' (FORMAT PARQUET)`, parquetPath("conversation_participants/data.parquet")))
+	exec(fmt.Sprintf(`COPY (SELECT 1::BIGINT AS participant_id, ''::VARCHAR AS identifier_type, ''::VARCHAR AS identifier_value, ''::VARCHAR AS display_value, false AS is_primary WHERE false) TO '%s' (FORMAT PARQUET)`, parquetPath("participant_identifiers/data.parquet")))
+
+	policy := duckdbutil.InteractivePolicyWithOverrides(t.TempDir(), duckdbutil.InteractiveOverrides{
+		MemoryLimit: "128MB",
+		Threads:     4,
+	})
+	db, err := duckdbutil.Open(t.Context(), policy)
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	require.NoError(t, RegisterViews(t.Context(), db, dir))
+
+	t.Run("subject", func(t *testing.T) {
+		rows, err := db.QueryContext(t.Context(),
+			"SELECT id, subject FROM v_messages WHERE message_type = 'meeting_transcript' LIMIT 2")
+		require.NoError(t, err)
+		defer func() { _ = rows.Close() }()
+		count := 0
+		for rows.Next() {
+			var id int64
+			var subject string
+			require.NoError(t, rows.Scan(&id, &subject))
+			assert.Greater(t, id, int64(totalEmails))
+			assert.True(t, strings.HasPrefix(subject, "Meeting "), "unexpected subject %q", subject)
+			count++
+		}
+		require.NoError(t, rows.Err())
+		assert.Equal(t, 2, count)
+	})
+
+	t.Run("sent_at", func(t *testing.T) {
+		rows, err := db.QueryContext(t.Context(),
+			"SELECT id, sent_at FROM v_messages WHERE message_type = 'meeting_transcript' LIMIT 2")
+		require.NoError(t, err)
+		defer func() { _ = rows.Close() }()
+		count := 0
+		for rows.Next() {
+			var id int64
+			var sentAt time.Time
+			require.NoError(t, rows.Scan(&id, &sentAt))
+			assert.Greater(t, id, int64(totalEmails))
+			assert.Equal(t, 2026, sentAt.Year())
+			assert.Equal(t, time.February, sentAt.Month())
+			count++
+		}
+		require.NoError(t, rows.Err())
+		assert.Equal(t, 2, count)
+	})
+
+	t.Run("like_sent_at_and_subject", func(t *testing.T) {
+		rows, err := db.QueryContext(t.Context(),
+			"SELECT id, sent_at, subject FROM v_messages WHERE message_type LIKE 'meeting_transcript' LIMIT 2")
+		require.NoError(t, err)
+		defer func() { _ = rows.Close() }()
+		count := 0
+		for rows.Next() {
+			var id int64
+			var sentAt time.Time
+			var subject string
+			require.NoError(t, rows.Scan(&id, &sentAt, &subject))
+			assert.Greater(t, id, int64(totalEmails))
+			assert.Equal(t, 2026, sentAt.Year())
+			assert.True(t, strings.HasPrefix(subject, "Meeting "), "unexpected subject %q", subject)
+			count++
+		}
+		require.NoError(t, rows.Err())
+		assert.Equal(t, 2, count)
+	})
 }

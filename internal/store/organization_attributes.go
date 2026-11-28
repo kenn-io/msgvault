@@ -93,7 +93,7 @@ func (s *Store) ListOrganizationAttributeValuesContext(
 	ctx context.Context, organizationID int64, query OrganizationAttributeQuery,
 ) ([]OrganizationAttributeValue, error) {
 	rows, err := s.listAttributeValuesContext(ctx, s.db, organizationAttributeOwner,
-		organizationID, query.DefinitionSlug, query.IncludeHistory)
+		organizationID, query.DefinitionSlug, nil, query.IncludeHistory)
 	if err != nil {
 		return nil, err
 	}

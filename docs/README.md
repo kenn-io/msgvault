@@ -19,7 +19,7 @@ public site has three levels; keep their responsibilities distinct.
 - Start with the reader's outcome. Explain the smallest amount of context needed
   to take the next step, then put detailed contracts below it or link to them.
 - Separate what works today, its limitations, and future work. A merged change
-  is not necessarily in the latest release. The [changelog](changelog.md) owns
+  is not necessarily in the latest release. The [changelog](https://msgvault.io/docs/changelog/) owns
   release changes and upgrade notes; keep unreleased work separate from dated
   releases. Task guides own current usage, not a second release catalog.
 - Update the owning section. Do not append a running implementation diary or
@@ -39,6 +39,36 @@ immediately before the command and put `# Not in the latest release yet` before
 the output in the source. See the
 [release-commands guide](https://github.com/kenn-io/actions/tree/main/release-commands#mark-unreleased-commands)
 for details.
+
+## Add a release note
+
+Add each note as its own file, `docs/changelog.d/<topic>.md`, instead of
+editing `## Unreleased` in `docs/changelog.md`. Choose a `<topic>` that no
+other note uses. Start with one section heading, then the bullets:
+
+```markdown
+### New features
+
+- Describe the change for the reader.
+```
+
+The section must be `### Upgrade notes`, `### New features`,
+`### Improvements`, or `### Bug fixes`. The published changelog lists the notes
+under **Unreleased**, sorted by filename. Dot-prefixed files such as
+`.draft.md` stay out of the published changelog.
+
+If an open PR still edits `docs/changelog.md`, move its note into a fragment
+when you rebase it.
+
+To cut a release, a maintainer runs
+`make changelog-release RELEASE_VERSION=0.27.0 RELEASE_DATE=2026-11-22`. Use
+`X.Y.Z` for `RELEASE_VERSION` and `YYYY-MM-DD` for `RELEASE_DATE`. It needs
+full Git history. It moves the notes under the version heading, keeping
+the section headings, and deletes the files. Within each section, notes follow
+the order each filename was added to `main`.
+
+After `make changelog-release`, add the release summary and links, and update
+`last_edited` as usual.
 
 ## Living architecture and historical records
 
@@ -102,15 +132,19 @@ Follow the [diagram guide](diagrams/README.md) and the scripts in
 has a narrow provenance and privacy-review exception in [AGENTS.md](../AGENTS.md);
 it does not authorize reuse in ordinary tests.
 
-Refresh the Web UI images with `make docs-web-screenshots`. The script imports
-the pinned fixture into a temporary archive, builds and starts its own daemon,
-and captures Messages and Relationships at 1920 × 1080. It keeps the normal
-build toolchain and caches. Set `MSGVAULT_DOCS_SCREENSHOT_OUTPUT_DIR` to retain
-captures outside the hydrated asset directory while reviewing them.
+`docs-assets` holds curated images: the favicon, social card, and hand-drawn
+diagrams. `docs-generated-assets` holds everything a script produces: the TUI
+and CLI SVGs, the concept images, and the Web UI captures under `web/`.
 
-The Web UI PNGs belong on `docs-assets`; the TUI SVGs and concept images belong
-on `docs-generated-assets`. Inspect every changed image before updating its
-branch. Capture `*-linux.png` with a Linux browser and `*-darwin.png` with a
-macOS browser. `MSGVAULT_DOCS_SCREENSHOT_PLATFORM` chooses the filenames only;
-it does not change the browser platform. Keep the fixture's provenance and
-review record on `docs-fixtures` unchanged unless the fixture itself changes.
+`make docs-screenshots DOCS_SCREENSHOTS_OUTPUT=DIR` builds the complete
+`docs-generated-assets` tree with only Bash, Git, and Docker on the host; the
+automated screenshot runner uses this entry point. Its Web UI step imports the
+pinned fixture into a temporary archive, builds and starts its own daemon, and
+captures Messages and People at 1920 × 1080 with Playwright's Linux Chromium.
+`make docs-web-screenshots` runs that step alone with the host toolchain; set
+`MSGVAULT_DOCS_SCREENSHOT_OUTPUT_DIR` to keep captures outside the hydrated
+asset directory while reviewing them.
+
+Inspect every changed image before updating its branch. Keep the fixture's
+provenance and review record on `docs-fixtures` unchanged unless the fixture
+itself changes.

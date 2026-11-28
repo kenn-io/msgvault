@@ -3,7 +3,6 @@ package daemonclient_test
 import (
 	"database/sql"
 	"log/slog"
-	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -66,23 +65,4 @@ func TestChatDiscoveryClientReadsRealDaemon(t *testing.T) {
 	_, err = client.SearchChats(t.Context(), store.ChatDiscoveryQuery{Query: "Lee Chen", SourceID: -1})
 	requirements.Error(err)
 	assertions.Contains(err.Error(), "source_id must be positive")
-}
-
-func TestChatDiscoveryClientRejectsOlderDaemon(t *testing.T) {
-	searchRequests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/v1/health" {
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.24.0"}`))
-			return
-		}
-		searchRequests++
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "fixture-key", AllowInsecure: true})
-	require.NoError(t, err)
-	_, err = client.SearchChats(t.Context(), store.ChatDiscoveryQuery{Query: "Lee Chen"})
-	require.ErrorContains(t, err, "requires daemon API schema 3.25.0 or newer")
-	assert.Zero(t, searchRequests)
 }

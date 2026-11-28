@@ -439,9 +439,12 @@ func swapPreservedCanonicalHashOwnersTx(ctx context.Context, tx *loggedTx, blobH
 	}
 
 	for _, swap := range swaps {
+		// Park the owner's hash under a value unique to its row rather than
+		// NULL: a stored row must keep a content hash at every statement.
+		parked := fmt.Sprintf("swap:%d", swap.ownerID)
 		if _, err := tx.ExecContext(ctx, `
-			UPDATE attachments SET content_hash = NULL
-			WHERE id = ? AND content_hash = ?`, swap.ownerID, blobHash); err != nil {
+			UPDATE attachments SET content_hash = ?
+			WHERE id = ? AND content_hash = ?`, parked, swap.ownerID, blobHash); err != nil {
 			return fmt.Errorf("temporarily release canonical attachment hash %s: %w", blobHash, err)
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -451,7 +454,7 @@ func swapPreservedCanonicalHashOwnersTx(ctx context.Context, tx *loggedTx, blobH
 		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE attachments SET content_hash = ?
-			WHERE id = ? AND content_hash IS NULL`, swap.localHash, swap.ownerID); err != nil {
+			WHERE id = ? AND content_hash = ?`, swap.localHash, swap.ownerID, parked); err != nil {
 			return fmt.Errorf("preserve nonlocal attachment hash alias for %s: %w", blobHash, err)
 		}
 	}

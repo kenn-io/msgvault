@@ -15,35 +15,32 @@ import (
 // requests per 10 minutes per mailbox; 15 per second stays under it.
 const msmailQPS = 15
 
-func newGraphMailManager(state *invocation) *microsoft.GraphManager {
-	cfg := state.cfg
-	return microsoft.NewGraphMailManager(
-		cfg.Microsoft.ClientID,
-		cfg.Microsoft.EffectiveTenantID(),
-		cfg.Microsoft.EffectiveRedirectURI(),
-		cfg.TokensDir(),
-		state.logger,
-	)
+func newGraphMailManager(state *invocation, src *store.Source) (*microsoft.GraphManager, error) {
+	app, dir, err := microsoftMailApp(state.cfg, sourceOAuthApp(src))
+	if err != nil {
+		return nil, err
+	}
+	return microsoft.NewGraphMailManager(app.ClientID, app.EffectiveTenantID(), app.EffectiveRedirectURI(), dir, state.logger), nil
 }
 
-// newGraphMailWriteManager requests Mail.ReadWrite on top of the sync scopes.
-// Tag editing and delete-staged use it.
-func newGraphMailWriteManager(state *invocation) *microsoft.GraphManager {
-	cfg := state.cfg
-	return microsoft.NewGraphMailWriteManager(
-		cfg.Microsoft.ClientID,
-		cfg.Microsoft.EffectiveTenantID(),
-		cfg.Microsoft.EffectiveRedirectURI(),
-		cfg.TokensDir(),
-		state.logger,
-	)
+func newGraphMailWriteManager(state *invocation, src *store.Source) (*microsoft.GraphManager, error) {
+	app, dir, err := microsoftMailApp(state.cfg, sourceOAuthApp(src))
+	if err != nil {
+		return nil, err
+	}
+	return microsoft.NewGraphMailWriteManager(app.ClientID, app.EffectiveTenantID(), app.EffectiveRedirectURI(), dir, state.logger), nil
 }
 
 // runMSMailSync syncs one Graph mail account. The first run downloads every
 // folder; later runs fetch only the changes.
-func runMSMailSync(ctx context.Context, s *store.Store, email string, progress func(string), state *invocation) (*msmail.Summary, error) {
+func runMSMailSync(ctx context.Context, s *store.Store, src *store.Source, progress func(string), state *invocation) (*msmail.Summary, error) {
 	cfg := state.cfg
-	tokenFn, err := newGraphMailManager(state).TokenSource(ctx, email)
+	mgr, err := newGraphMailManager(state, src)
+	if err != nil {
+		return nil, err
+	}
+	email := src.Identifier
+	tokenFn, err := mgr.TokenSource(ctx, email)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +60,7 @@ func runScheduledMSMailSync(ctx context.Context, src *store.Source, s *store.Sto
 	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
-	_, err := runMSMailSync(ctx, s, src.Identifier, nil, state)
+	_, err := runMSMailSync(ctx, s, src, nil, state)
 	return err
 }
 

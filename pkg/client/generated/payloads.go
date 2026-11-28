@@ -34,6 +34,8 @@ type BeginGoogleCardDAVAuthorizationBody = CardDAVGoogleAuthorizeRequest
 
 type CompleteGoogleCardDAVAuthorizationBody = CardDAVGoogleCallbackRequest
 
+type ReconcileCardDAVParticipantBindingsBody = CardDAVParticipantBindingOptions
+
 type ApproveCardDAVPublicationBody = CardDAVPublicationApprovalRequest
 
 type SyncCardDAVBody = CardDAVSyncRequest
@@ -148,6 +150,8 @@ type ListMeetingActionItemsBody = MeetingActionsRequest
 
 type GetMeetingContextBody = MeetingContextRequest
 
+type DecideMeetingLinkBody = MeetingDecisionRequest
+
 type GetMeetingMetricsBody = MeetingMetricsRequest
 
 type UpdateMessageTagsBody = MessageTagChange
@@ -177,6 +181,8 @@ type GetParticipantContextSummaryBody = ExploreHTTPRequest
 type GetParticipantTimelineBody = ExploreHTTPRequest
 
 type CreatePersonBody = CreatePersonRequest
+
+type CreateStandalonePersonBody = PersonCreateInput
 
 type SearchPeopleBody = PersonSearchRequest
 

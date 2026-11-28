@@ -643,6 +643,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 		body string
 	}{
 		{"export-messages", `{"args":["export-messages","--start","2026-07-20T00:00:00Z","--end","2026-07-21T00:00:00Z"]}`},
+		{"diagnose-gmail-inventory", `{"args":["diagnose-gmail-inventory","--source-id","1","--json"]}`},
 		{"export-discord", `{"args":["export-discord"]}`},
 		{"list-folders", `{"args":["list-folders"]}`},
 		{"policy list", `{"args":["policy","list"]}`},
@@ -862,7 +863,7 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	meetingContextPath := "/api/v1/meetings/context"
 	meetingMetricsPath := "/api/v1/meetings/metrics"
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath, meetingActionsPath, meetingContextPath, meetingMetricsPath}
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath, meetingActionsPath, meetingContextPath, meetingMetricsPath, "/api/v1/sources/{source_id}/account-attribution/repair"}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)

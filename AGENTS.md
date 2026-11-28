@@ -123,6 +123,8 @@ release, from a breaking change to `feat` to `fix`.
 - Release notes state what changed for the reader. Put any required action in
   the entry for that change. Do not add precautionary warnings, upgrade
   checklists, or internals such as schema versions.
+- Add unreleased notes to `docs/changelog.d/` using the format in
+  [docs/README.md](docs/README.md#add-a-release-note).
 - Keep the website, its Markdown companions, README, and documentation on
   message. Distinguish the latest release from newer `main` functionality.
   Follow [docs/README.md](docs/README.md) for the publishing layout and checks.
@@ -157,6 +159,7 @@ Use these as reasoning checkpoints, not a requirement to create a design doc.
   which omits native-driver tags and disables CGO.
 - After Go changes, run `go fmt ./...` and `go vet ./...` before committing.
   Include resulting formatting changes. Use `make lint-ci` for lint checks.
+- For property tests, write them with rapid, use synthetic inputs and production entry points, and follow the [property test guidance](docs/development.md#property-tests-rapid).
 - All new or modified Go assertions must use testify: `require.X` for setup or
   fatal preconditions, `assert.X` for independent checks. Never add `t.Errorf`,
   `t.Fatalf`, `t.Fatal`, or `t.Error`. Equality is `(want, got)`.

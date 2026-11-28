@@ -62,12 +62,12 @@ Examples:
 					runErrors = append(runErrors, fmt.Errorf("%s: malformed slack identifier", src.Identifier))
 					continue
 				}
-				token, terr := slack.LoadToken(cfg.TokensDir(), teamID, userID)
+				client, terr := slack.LoadClient("", cfg.TokensDir(), teamID, userID)
 				if terr != nil {
 					runErrors = append(runErrors, fmt.Errorf("%s: %w", teamID, terr))
 					continue
 				}
-				imp := slack.NewImporter(s, slack.NewClient("", token), teamID)
+				imp := slack.NewImporter(s, client, teamID)
 				sum, berr := imp.BackfillMedia(ctx, slackImportOptions(teamID, userID, state.cfg))
 				if ctx.Err() != nil {
 					break

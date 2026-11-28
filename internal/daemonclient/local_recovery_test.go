@@ -52,11 +52,14 @@ func TestLocalDaemonRecoveryFollowsSuccessiveRestarts(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(resp.Body.Close())
 	assertions.Equal(1, resolutions)
-	target.Close()
-	target = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	// Bind the restarted daemon before closing the first one, so it cannot reuse
+	// the first daemon's port and be reached without discovery.
+	restarted := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"status":"restarted"}`)
 	}))
-	t.Cleanup(target.Close)
+	t.Cleanup(restarted.Close)
+	target.Close()
+	target = restarted
 	health, err = client.GetHealth(t.Context())
 	requirements.NoError(err)
 	assertions.Equal("restarted", health.Status)
@@ -125,6 +128,11 @@ func TestLocalDaemonRecoveryFailureIsBoundedAndLaterCallsCanRecover(t *testing.T
 		t.Run(strconv.FormatBool(resolverFailure), func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
+			// Bind the replacement before releasing the dead port. Otherwise the OS
+			// can give the replacement that port, and the client reaches it without
+			// discovery.
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"status":"ok"}`) }))
+			t.Cleanup(server.Close)
 			dead := closedLocalDaemonURL(t)
 			target := dead
 			var resolutions int
@@ -141,8 +149,6 @@ func TestLocalDaemonRecoveryFailureIsBoundedAndLaterCallsCanRecover(t *testing.T
 			var unavailable *LocalDaemonUnavailableError
 			requirements.ErrorAs(err, &unavailable)
 			assertions.Equal(1, resolutions, "no retry loop when recovery fails")
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"status":"ok"}`) }))
-			t.Cleanup(server.Close)
 			target = server.URL
 			health, err := client.GetHealth(t.Context())
 			requirements.NoError(err)
@@ -225,6 +231,9 @@ func TestLocalDaemonRecoveryConcurrentCallsShareResolution(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	const callers = 8
+	// Bind the replacement before releasing the dead port, so it cannot reuse it.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"status":"ok"}`) }))
+	t.Cleanup(server.Close)
 	dead := closedLocalDaemonURL(t)
 	dialing := make(chan struct{}, callers)
 	release := make(chan struct{})
@@ -243,8 +252,6 @@ func TestLocalDaemonRecoveryConcurrentCallsShareResolution(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}
 	t.Cleanup(transport.CloseIdleConnections)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"status":"ok"}`) }))
-	t.Cleanup(server.Close)
 	client, err := New(Config{URL: dead, AllowInsecure: true, HTTPClient: &http.Client{Transport: transport}})
 	requirements.NoError(err)
 	var resolutions atomic.Int32

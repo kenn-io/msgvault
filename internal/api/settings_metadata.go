@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/feeds"
 )
 
 // settingMetadata is the user-facing copy for one setting. The label names
@@ -66,12 +67,13 @@ var settingsGroups = []SettingGroup{
 	},
 	{
 		ID: settingsGroupSources, Label: "Sources",
-		Description: "Sync schedules and filters for chat and contact sources.",
+		Description: "Sync schedules and filters for chat, feed and contact sources.",
 		Sections: []SettingSection{
 			{ID: "shared", Label: "All sources"},
 			{ID: sourceTypeBeeper, Label: "Beeper"},
 			{ID: sourceTypeSlack, Label: "Slack"},
 			{ID: sourceTypeInline, Label: "Inline"},
+			{ID: feeds.SourceType, Label: "Feeds", Description: "Follow feeds with msgvault source feeds add."},
 			{ID: "carddav", Label: "CardDAV", Description: "Change these in the CardDAV account category."},
 		},
 	},
@@ -159,16 +161,16 @@ var settingsMetadata = map[string]settingMetadata{
 	"vector.people.training_posture":  {"Provider training statement", "Your statement of whether the provider trains on person data.", "people"},
 
 	"vector.multimodal.enabled":                 {"Visual attachment search", "Index images and videos with a hosted visual model. Semantic search must also be on.", sectionVisual},
-	"vector.multimodal.provider":                {"Visual embedding provider", "Hosted provider for visual embeddings.", sectionVisual},
+	"vector.multimodal.provider":                {"Visual embedding provider", "Vertex uses Google application default credentials.", sectionVisual},
 	"vector.multimodal.endpoint":                {"Visual embedding endpoint", "Base URL of the visual embedding API.", sectionVisual},
 	"vector.multimodal.api_key_env":             {"Visual embedding key variable", "Environment variable the daemon reads when no stored credential exists.", sectionVisual},
-	"vector.multimodal.api_key":                 {"Visual embedding API key", "Stored Voyage key. It overrides the environment variable.", sectionVisual},
-	"vector.multimodal.capabilities_file":       {"Capability manifest", "Path to the provider capability file probed on this host.", sectionVisual},
+	"vector.multimodal.api_key":                 {"Visual embedding API key", "Stored Voyage or Kit key. It overrides the environment variable.", sectionVisual},
+	"vector.multimodal.capabilities_file":       {"Capability manifest", "Path to the Voyage capability file probed on this host.", sectionVisual},
 	"vector.multimodal.model":                   {"Visual embedding model", "Visual model identifier. Changing it starts a new index generation.", sectionVisual},
 	"vector.multimodal.dimension":               {"Visual embedding dimension", "Vector size the visual model returns.", sectionVisual},
-	"vector.multimodal.max_context_chars":       {"Maximum context characters", "Longest excerpt of the owning message sent with each attachment.", sectionVisual},
+	"vector.multimodal.max_context_chars":       {"Maximum context characters", "Longest message excerpt sent with each attachment to Voyage.", sectionVisual},
 	"vector.multimodal.include_images":          {"Index still images", "Send still images to the provider.", sectionVisual},
-	"vector.multimodal.include_animated_gifs":   {"Index animated GIFs", "Send animated GIFs when the capability manifest allows them.", sectionVisual},
+	"vector.multimodal.include_animated_gifs":   {"Index animated GIFs", "Voyage only, when the capability manifest allows them.", sectionVisual},
 	"vector.multimodal.include_video":           {"Index videos", "Send videos within the size limit to the provider.", sectionVisual},
 	"vector.multimodal.allow_image_queries":     {"Allow image queries", "Let searches send a query image to the provider.", sectionVisual},
 	"vector.multimodal.scope.message_types":     {"Visual message types", "Only index attachments from these message types. Empty means all.", sectionVisual},
@@ -199,6 +201,8 @@ var settingsMetadata = map[string]settingMetadata{
 	"beeper.rate_limit_qps":         {"Beeper requests per second", "Request rate limit for Beeper.", sourceTypeBeeper},
 	"inline.enabled":                {"Scheduled Inline sync", "Sync configured Inline accounts on the schedule below.", sourceTypeInline},
 	"inline.schedule":               {"Inline schedule", "When Inline sync runs.", sourceTypeInline},
+	"feeds.enabled":                 {"Scheduled feed sync", "Fetch followed RSS, Atom and JSON feeds on the schedule below.", feeds.SourceType},
+	"feeds.schedule":                {"Feed schedule", "When followed feeds are fetched.", feeds.SourceType},
 	"inline.media":                  {"Download Inline attachments", "Download attachments from future Inline syncs.", sourceTypeInline},
 	"inline.media_scope":            {"Inline conversations", "Which Inline conversations to download attachments from.", sourceTypeInline},
 	"inline.media_max_participants": {"Inline participant limit", "Skip Inline conversations with more people than this or an unknown roster. Zero allows unknown rosters.", sourceTypeInline},
@@ -280,10 +284,10 @@ var settingsValidation = map[string]SettingValidation{
 	"vector.embed.schedule.cron":        cronValidation(false),
 	"vector.embed.backstop_interval":    {Hint: "Duration. 0 uses the default. A negative value disables the backstop.", Required: true},
 	"vector.multimodal.endpoint": {
-		Hint: "Only https://api.voyageai.com/v1 is accepted.", Required: true,
+		Hint: "Voyage requires https://api.voyageai.com/v1; Kit and Vertex require their service endpoint.", Required: true,
 	},
 	"vector.multimodal.model":             {Required: true},
-	"vector.multimodal.dimension":         withHint(numberRange(1024, 1024), "Voyage visual models require 1024."),
+	"vector.multimodal.dimension":         withHint(numberRange(1024, 1024), "Visual models require 1024."),
 	"vector.multimodal.max_context_chars": atLeast(1),
 	"vector.multimodal.schedule.cron":     cronValidation(false),
 	"vector.search.rrf_k":                 atLeast(1),
@@ -297,6 +301,7 @@ var settingsValidation = map[string]SettingValidation{
 	"beeper.schedule": cronValidation(false),
 	"slack.schedule":  cronValidation(false),
 	"inline.schedule": cronValidation(false),
+	"feeds.schedule":  cronValidation(false),
 	// A float has no "greater than zero" bound a number control can carry,
 	// so the on range starts at 0.1 requests per second. A smaller positive
 	// rate is raised to 0.1 on save rather than rejected; zero stays off.
