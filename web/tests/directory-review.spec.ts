@@ -21,14 +21,16 @@ test('Person Details aligns desktop and phone content and uses shared phone edit
     const style = getComputedStyle(pane);
     const content = box(pane.firstElementChild);
     return {
-      gutter: style.scrollbarGutter, left: content.left - box(pane).left, right: box(pane).right - content.right,
+      overlay: pane.hasAttribute('data-kit-overlay-scroll-viewport'),
+      gutter: pane.offsetWidth - pane.clientWidth, left: content.left - box(pane).left, right: box(pane).right - content.right,
       padding: [style.paddingTop, style.paddingBottom],
     };
   });
-  expect(geometry.gutter, 'the Details pane reserves its bar').toBe('stable');
+  expect(geometry.overlay, 'the Details pane uses overlay scrollbars').toBe(true);
+  expect(geometry.gutter, 'the Details pane takes no scrollbar gutter').toBe(0);
   expect(geometry.padding, 'Details has 16 above its sections and 32 after them').toEqual(['16px', '32px']);
   expect(geometry.left, 'content is inset 16 at the left').toBe(16);
-  expect(geometry.right, 'and 16 at the right, counting the reserved bar').toBe(16);
+  expect(geometry.right, 'and 16 at the right').toBe(16);
 
   await page.setViewportSize({ width: 390, height: 844 });
   // The shell switches to its phone layout a frame after the resize, so wait for the pane to fit before measuring.

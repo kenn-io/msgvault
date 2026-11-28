@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getFile as generatedGetFile, getFileContent as generatedGetFileContent } from '../../api/generated/api/api';
-  import { Button, EmptyState, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Table, TableHeaderCell, appShortcuts } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Modal, overlayScrollbars, Table, TableHeaderCell, appShortcuts } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { FileMetadata, FileViewerTarget } from '../../explore/models';
@@ -80,6 +80,7 @@
   let audioURL = $state('');
   let activeObjectURL: string | undefined;
   let pdfHost = $state<HTMLElement>();
+  let viewerHost = $state<HTMLDivElement>();
   let controller: AbortController | undefined;
   let renderHandle: PDFRenderHandle | undefined;
   let generation = 0;
@@ -328,7 +329,7 @@
     if (target instanceof HTMLElement) {
       if (target.closest('audio, input, textarea, select, [role="menu"], [contenteditable]:not([contenteditable="false"])')) return;
       const preview = target.closest<HTMLElement>('.preview');
-      if (preview?.querySelector('pre, table, .pdf-preview') && [...preview.querySelectorAll<HTMLElement>('.kit-table-wrapper'), preview].some((element) => element.scrollWidth > element.clientWidth)) return;
+      if (preview?.querySelector('pre, table, .pdf-preview') && [...preview.querySelectorAll<HTMLElement>('.kit-table-viewport'), preview].some((element) => element.scrollWidth > element.clientWidth)) return;
     }
     const delta = event.key === 'ArrowLeft' ? -1 : 1;
     if (delta === 1 && !canStepForward || position.index + delta < 0 || position.index + delta >= position.total) return;
@@ -360,7 +361,7 @@
     void close();
   }}
 >
-  <div class="file-viewer">
+  <div class="file-viewer" bind:this={viewerHost}>
     {#if context || position || notice}
       <div class="context-group">
         <div class="context-bar">
@@ -386,7 +387,7 @@
     {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable preview regions need keyboard access.) -->
     <div class="preview" onscroll={updatePDFPage} class:tabular={!!delimited} class:pdf={metadata && isPDF(metadata)}
-      class:centered={metadata && (error || metadata.content_state !== 'local_content' || ['image', 'audio', 'none'].includes(previewKind(metadata)))} role="region" aria-label={`File preview ${displayFilename}`} tabindex="0">
+      class:centered={metadata && (error || metadata.content_state !== 'local_content' || ['image', 'audio', 'none'].includes(previewKind(metadata)))} role="region" aria-label={`File preview ${displayFilename}`} tabindex="0" {@attach overlayScrollbars({ host: viewerHost })}>
       {#if loading}
         <p role="status">Loading file…</p>
       {:else if metadata}
@@ -489,9 +490,6 @@
     min-height: 0;
     flex: 1;
     overflow: auto;
-    /* Reserve the scrollbar's width up front so centered PDF pages do not
-       shift left when a later page makes the preview scroll. */
-    scrollbar-gutter: stable both-edges;
     padding: var(--pane-pad-y) var(--pane-pad-x);
     background: var(--bg-inset);
   }

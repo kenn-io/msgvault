@@ -4,6 +4,7 @@
     Card,
     Checkbox,
     Chip,
+    ScrollBox,
     SettingsSection,
     Spinner,
     StatusDot,
@@ -274,8 +275,7 @@
       {#if controller.runs.some((run) => (run.binding_conflicts ?? 0) > 0)}
         <p class="helper">Review archive-wide binding conflicts with <code>msgvault carddav bind-participants --dry-run</code>.</p>
       {/if}
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex (the overflow region must accept keyboard focus) -->
-      <div class="history-scroll" role="region" aria-label="Scrollable CardDAV sync history" tabindex="0">
+      <ScrollBox class="history-scroll" axis="x" label="Scrollable CardDAV sync history">
         <Table ariaLabel="CardDAV sync history" zebra={false} class="history-table" unsorted>
           {#snippet header()}
             <TableHeaderCell label="Connection" />
@@ -309,7 +309,7 @@
             </tr>
           {/each}
         </Table>
-      </div>
+      </ScrollBox>
     {/if}
     {#if controller.runsPageError}<p class="notice notice--error" role="alert">{controller.runsPageError}</p>{/if}
     {#if controller.nextBeforeID !== undefined || controller.runsPageError}
@@ -407,16 +407,16 @@
     display: block;
     font-size: var(--font-size-sm);
   }
-  .history-scroll {
-    overflow: auto;
+  :global(.kit-scrollbox.history-scroll) {
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
   }
-  .history-scroll:focus-visible {
+  :global(.history-scroll .kit-scrollbox__viewport:focus-visible) {
     outline: var(--focus-ring);
-    outline-offset: var(--focus-ring-offset, 2px);
+    outline-offset: -2px;
   }
-  .history-scroll :global(.history-table) {
+  :global(.history-scroll .history-table),
+  :global(.history-scroll .history-table .kit-table-viewport) {
     overflow: visible;
     flex: none;
   }

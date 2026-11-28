@@ -435,7 +435,15 @@ test.describe('designed archived mail', () => {
     expect(framePolicy.brandURL).toBeTruthy();
     expect(framePolicy.styleSource?.split(/\s+/)).toContain(framePolicy.brandURL);
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(236, 236, 241)');
-    let appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
+    const resolvedAppThumb = () => page.evaluate(() => {
+      const probe = document.createElement('div');
+      probe.style.backgroundColor = 'var(--scrollbar-thumb)';
+      document.body.append(probe);
+      const color = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return color;
+    });
+    let appThumb = await resolvedAppThumb();
     await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     await expect(content.locator('table')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     await expect(content.locator('a').filter({ hasText: 'Read more' })).toHaveCSS('color', 'rgb(96, 165, 250)');
@@ -459,7 +467,7 @@ test.describe('designed archived mail', () => {
     // Change the actual shell theme while the same email remains open.
     await setKitTheme(page, 'light');
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(17, 17, 17)');
-    appThumb = await page.locator('.conversation-view').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor);
+    appThumb = await resolvedAppThumb();
     await expect.poll(() => content.locator('html').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor)).toBe(appThumb);
     await setKitTheme(page, 'dark');
     await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(236, 236, 241)');

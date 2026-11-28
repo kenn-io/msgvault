@@ -18,6 +18,7 @@
     FilterDropdown,
     EmptyState,
     IconButton,
+    overlayScrollbars,
     SegmentedControl,
     SelectDropdown,
     Tooltip,
@@ -105,6 +106,7 @@
     onMerge,
   }: Props = $props();
 
+  let listHost = $state<HTMLElement>();
   let gridElement = $state<HTMLDivElement>();
   let focusKey = $state<string | null>(null);
   let pointerFocus = $state(false);
@@ -157,7 +159,7 @@
   }
 </script>
 
-<aside class="people-list" aria-label="People">
+<aside class="people-list" aria-label="People" bind:this={listHost}>
   <div class="toolbar touch-controls">
     <div class="toolbar-row">
       <SegmentedControl
@@ -225,6 +227,7 @@
       bind:this={gridElement}
       onkeydown={handleKeydown}
       onscroll={handleScroll}
+      {@attach overlayScrollbars({ host: listHost })}
     >
       {#if loading && rows.length === 0}
         <p class="list-status" role="status">Loading…</p>

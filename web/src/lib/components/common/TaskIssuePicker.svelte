@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { debounce, RadioGroup, SearchInput } from '@kenn-io/kit-ui';
+  import { debounce, overlayScrollbars, RadioGroup, SearchInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
 
   let { load, noun, empty, disabled = false, moreNote = '', hint = '', project = '', selected = $bindable('') }: {
@@ -43,7 +43,7 @@
 
 <div class="picker">
   <SearchInput block value={query} ariaLabel={`Filter ${noun}`} placeholder={`Filter ${noun}`} {disabled} oninput={(value) => { selected = ''; query = value; schedule(); }} />
-  <div class="results">
+  <div class="results" {@attach overlayScrollbars()}>
     {#if loading || query.trim() !== listedQuery}<p role="status">Loading…</p>
     {:else}
       {#if error}<p role="alert">{error}</p>{/if}

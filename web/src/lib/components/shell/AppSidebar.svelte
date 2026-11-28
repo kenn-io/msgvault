@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Chip, IconButton, KbdBadge, Tooltip } from '@kenn-io/kit-ui';
+  import { Chip, IconButton, KbdBadge, overlayScrollbars, Tooltip } from '@kenn-io/kit-ui';
   import CircleHelp from '@lucide/svelte/icons/circle-help';
   import PanelLeftClose from '@lucide/svelte/icons/panel-left-close';
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
@@ -78,7 +78,7 @@
   }
 </script>
 
-<aside class="sidebar" class:sidebar--rail={collapsed} aria-label="Sidebar">
+<aside class="sidebar" class:sidebar--rail={collapsed} aria-label="Sidebar" {@attach overlayScrollbars({ axis: 'y' })}>
   <div class="sidebar__brand">msgvault{#if onCloseNavigation}<IconButton ariaLabel="Close navigation" onclick={onCloseNavigation}><X size={18} /></IconButton>{/if}</div>
   <nav aria-label="Primary">
     <ul>

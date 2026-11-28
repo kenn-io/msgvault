@@ -16,7 +16,7 @@
     "test:e2e": "playwright test --project=e2e"
   },
   "dependencies": {
-    "@kenn-io/kit-ui": "https://github.com/kenn-io/kit-ui/archive/f354f5f0540500a1ae09a8245dd7bcb75e64305d.tar.gz",
+    "@kenn-io/kit-ui": "https://github.com/kenn-io/kit-ui/archive/e5a51a63a7242865603dea9931d11a3d1c6af790.tar.gz",
     "@lucide/svelte": "1.26.0",
     "@tanstack/svelte-virtual": "3.13.32",
     "@videojs/html": "10.1.0",

@@ -33,7 +33,7 @@
   import { groupedByLabel } from '../../explore/labels';
   import { messageTitle } from '../../archive/message-title';
   import { parseRecordingSelection } from '../../archive/recording-selection';
-  import { Button, EmptyState, IconButton } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, IconButton, overlayScrollbars } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import { onDestroy, untrack } from 'svelte';
@@ -104,6 +104,7 @@
   let totalFiles = $state(0);
   let filesLoading = $state(false);
   let filesError = $state('');
+  let bodyHost = $state<HTMLDivElement>();
   let requestGeneration = 0;
   let requestController: AbortController | undefined;
   const title = $derived(selection
@@ -222,7 +223,7 @@
     </div>
   </header>
 
-  <div class="pane-body">
+  <div class="pane-body" bind:this={bodyHost}>
     {#if conversationID !== undefined && threadAnchorId !== undefined}
       <ConversationView
         {onOpenPerson}
@@ -260,7 +261,7 @@
         <p class="preview">{(selection.kind === 'entry' ? selection.row.preview : selection.message.snippet) || 'No preview is available.'}</p>
       </section>
     {:else}
-      <div class="group-scroll" aria-label="Group details">
+      <div class="group-scroll" aria-label="Group details" {@attach overlayScrollbars({ host: bodyHost })}>
         {#if selection.overview}<GroupOverview {selection} />{/if}
         {#if showFiles}
           {#if selection.meetingScope}
