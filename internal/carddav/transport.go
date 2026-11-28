@@ -253,74 +253,19 @@ func (c *Client) validateTarget(ctx context.Context, target *url.URL) ([]netip.A
 	if !validHTTPURL(target) || !sameOrigin(c.origin, target) {
 		return nil, fmt.Errorf("DAV URL: %w", ErrUnsafeTarget)
 	}
-	port, err := netguard.TargetPort(target)
-	if err != nil {
-		return nil, fmt.Errorf("DAV URL port: %w", ErrUnsafeTarget)
+	pinned, err := netguard.PinnedAddresses(ctx, c.resolver, target, c.trustedOrigin, c.trustedAddresses, c.allowPrivateOrigin)
+	if errors.Is(err, netguard.ErrUnsafeTarget) {
+		return nil, fmt.Errorf("DAV URL: %w", ErrUnsafeTarget)
 	}
-	if c.trustedOrigin != nil && sameOrigin(c.trustedOrigin, target) {
-		pinned := make([]netip.AddrPort, 0, len(c.trustedAddresses))
-		for _, addr := range c.trustedAddresses {
-			pinned = append(pinned, netip.AddrPortFrom(addr, port))
-		}
-		return pinned, nil
-	}
-	host := target.Hostname()
-	if literal, parseErr := netip.ParseAddr(host); parseErr == nil {
-		if netguard.ProhibitedIP(literal) && !c.allowPrivateOrigin {
-			return nil, fmt.Errorf("DAV literal destination: %w", ErrUnsafeTarget)
-		}
-		return []netip.AddrPort{netip.AddrPortFrom(literal.Unmap(), port)}, nil
-	}
-	if netguard.ProhibitedHostname(host) {
-		return nil, fmt.Errorf("DAV hostname: %w", ErrUnsafeTarget)
-	}
-	addrs, err := c.resolver.LookupNetIP(ctx, "ip", host)
-	if err != nil || len(addrs) == 0 {
-		return nil, fmt.Errorf("resolving DAV host %q: %w", host, err)
-	}
-	pinned := make([]netip.AddrPort, 0, len(addrs))
-	seen := make(map[netip.AddrPort]bool, len(addrs))
-	for _, addr := range addrs {
-		if netguard.ProhibitedIP(addr) && !c.allowPrivateOrigin {
-			return nil, fmt.Errorf("DAV resolved destination: %w", ErrUnsafeTarget)
-		}
-		candidate := netip.AddrPortFrom(addr.Unmap(), port)
-		if !seen[candidate] {
-			seen[candidate] = true
-			pinned = append(pinned, candidate)
-		}
-	}
-	return pinned, nil
+	return pinned, err
 }
 
 func (c *Client) doPinned(ctx context.Context, target *url.URL, pinned []netip.AddrPort, davRequest Request, authorization string, operationBytes *int64) (*Response, int, error) {
 	requestCtx, cancelRequest := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancelRequest()
 	transport := &http.Transport{
-		TLSClientConfig: c.tlsConfig,
-		DialContext: func(dialCtx context.Context, network, _ string) (net.Conn, error) {
-			var failures []error
-			for index, address := range pinned {
-				attemptCtx := dialCtx
-				cancelAttempt := func() {}
-				if deadline, ok := dialCtx.Deadline(); ok && index < len(pinned)-1 {
-					remaining := time.Until(deadline)
-					if remaining <= 0 {
-						return nil, dialCtx.Err()
-					}
-					attemptCtx, cancelAttempt = context.WithTimeout(
-						dialCtx, remaining/time.Duration(len(pinned)-index),
-					)
-				}
-				connection, err := c.dialContext(attemptCtx, network, address.String())
-				cancelAttempt()
-				if err == nil {
-					return connection, nil
-				}
-				failures = append(failures, err)
-			}
-			return nil, errors.Join(failures...)
-		},
+		TLSClientConfig:     c.tlsConfig,
+		DialContext:         netguard.PinnedDialer(pinned, c.dialContext),
 		TLSHandshakeTimeout: c.requestTimeout,
 		DisableKeepAlives:   true,
 	}

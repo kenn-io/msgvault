@@ -58,7 +58,7 @@ Takes a snapshot. Flags:
 |------|--------|
 | `--repo DIR` | Repository path (overrides `[backup] repo`) |
 | `--include-config` | Capture `config.toml` verbatim (may contain API keys) |
-| `--include-tokens` | Capture OAuth token files |
+| `--include-tokens` | Capture OAuth tokens, provider credentials, and the server key |
 | `--allow-plaintext-secrets` | Permit config/tokens in an unencrypted repository |
 | `--tag STR` | Free-form label shown by `backup list` |
 | `--force-unlock` | Override a fresh repository lock (see Locking) |

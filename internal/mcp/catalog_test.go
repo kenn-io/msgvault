@@ -71,6 +71,9 @@ func rawModernCall(
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Mcp-Protocol-Version", modernProtocolVersion)
 	req.Header.Set("Mcp-Method", method)
+	if httpOpts.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+httpOpts.APIKey)
+	}
 	if name, _ := params["name"].(string); name != "" {
 		req.Header.Set("Mcp-Name", name)
 	}

@@ -44,6 +44,7 @@ func delegatedReads(identifier string, id, note, attachmentID int64, hash string
 		"getSubAggregates":        {"/api/v1/aggregates/sub?view_type=senders", identifier, agentgrant.PermissionSearchRead},
 		"filterMessages":          {"/api/v1/messages/filter", identifier, agentgrant.PermissionSearchRead},
 		"listMessages":            {"/api/v1/messages", identifier, agentgrant.PermissionSearchRead},
+		"listChangedMessages":     {"/api/v1/messages/changes", "glacier", agentgrant.PermissionSearchRead},
 		"searchMessagesByDomains": {"/api/v1/search/domains?domains=example.test", identifier, agentgrant.PermissionSearchRead},
 		"getStats":                {"/api/v1/stats", `"total_messages":2`, agentgrant.PermissionStatsRead},
 		"getCLIStats":             {"/api/v1/cli/stats", `"total_messages":2`, agentgrant.PermissionStatsRead},
@@ -312,7 +313,10 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead, agentgrant.PermissionCalendarEventRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 	requirements.NoError(err)
 	reads := delegatedReads(src.Identifier, id, note, attachmentID, hash)
-	allowed := make(map[string]bool, len(allowedDelegatedOps))
+	allowed := make(map[string]bool, len(allowedDelegatedOps)+3)
+	for _, op := range []string{"mcpEventsList", "mcpEventsSubscribe", "mcpEventsUnsubscribe"} {
+		allowed[op] = true
+	}
 	for _, op := range allowedDelegatedOps {
 		allowed[op] = true
 	}
@@ -372,7 +376,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	for op := range allowed {
 		assertions.True(seen[op], "missing preexisting delegated operation: "+op)
 	}
-	assertions.Len(reads, 22)
+	assertions.Len(reads, 23)
 	assertions.Equal(len(reads), testedReads)
 	assertions.Greater(denied, 10)
 }

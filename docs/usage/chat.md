@@ -42,6 +42,47 @@ instructions or authorization to make a change. See
 Saved View management changes only reusable definitions. Deleting a Saved View
 never deletes archive messages.
 
+## MCP Events
+
+On unreleased `main`, owner clients can subscribe to
+`msgvault.messages.changed` over stdio or protocol `2026-07-28` HTTP. Enable
+`[mcp_events]` in the daemon first. The daemon's `/mcp` provides discovery and
+reads; subscribe and unsubscribe require `/mcp/writes` with `--mcp-allow-writes`.
+Standalone `msgvault mcp --http` requires `--http-allow-writes` for those
+mutations. Stdio Events methods are protocol methods and do not use tool
+elicitation. Delegated agents with `search.read` can subscribe over stdio within
+their grant. A source must be granted; a person must be visible in at least one
+granted source at subscription time. Each grant may hold up to four active
+subscriptions, within the shared limit of 32 configured wake-ups and
+subscriptions. Subscriptions end when the grant expires, is revoked, or the
+daemon restarts. Later reads stay within granted sources. HTTP clients send
+`Mcp-Method` and, for subscribe and unsubscribe, `Mcp-Name` equal to the event
+name.
+
+Call `events/subscribe` with exactly one positive `person_id` or `source_id` in
+`arguments`. `incoming_only` defaults to true. Set `delivery` to webhook mode,
+a public HTTPS URL on port 443 or 8443, and a Standard Webhooks `whsec_` secret
+containing 24–64 bytes. The subscription lasts 24 hours by default; `ttlMs`
+is clamped to one minute through 30 days, and null selects 30 days. Refreshing
+with the same event, arguments and URL replaces the secret and lease while
+keeping the saved position. After a default restore, refresh the secret to resume; a backup with `--include-tokens` restores it. After any refresh, read `list_changes` from your own cursor to catch up. `events/unsubscribe` uses the same identity.
+
+An unverified callback receives a signed HTTP POST with JSON body `{"type":"verification","challenge":"..."}`. The receiver must verify its Standard Webhooks signature using the subscription secret and return a successful 2xx JSON response containing the same `challenge` value, for example `{"challenge":"..."}`. The response body must be at most 4096 bytes. A callback that cannot confirm the challenge returns `-32027`. Verification is reused for the same owner or grant and URL for up to one hour; after a restart, the next subscribe verifies again.
+
+Subscribe accepts but ignores `cursor` and `maxAgeMs`; then read `list_changes` once from your own cursor to catch up.
+Each signed ping names the subscription in its data and has a null cursor. Verify
+the Standard Webhooks signature and deduplicate by `webhook-id`, then read
+`list_changes` through its cursor. Pings may coalesce and are not replayed;
+five failed attempts or HTTP 410 or 413 drop the ping. Messages older than 72
+hours and deleted messages are excluded from matches. A lost ping costs latency,
+so retain your own feed cursor.
+
+Callback URLs and signing secrets are kept in the permissions-protected
+`tokens/mcp-events-credentials.json` file. The archive retains the callback
+origin and a deterministic subscription ID; someone with the archive can test
+guesses for a low-entropy URL offline. Token-inclusive backups contain the
+private file.
+
 ## Calendar control
 
 With daemon API schema 3.1.0 or newer, you get seven calendar tools:
@@ -380,7 +421,7 @@ msgvault serve --mcp-allow-writes
 
 Point that client at `/mcp/writes` using the same owner bearer key. This
 catalog allows attachment exports, deletion manifests, Saved View management,
-native email tag edits, and managed draft writes. Other write families require
+native email tag edits, managed draft writes, and Events subscriptions. Other write families require
 their own `--mcp-allow-*` flags listed in the
 [CLI reference](../cli-reference.md#serve). Those flags have no effect without
 `--mcp-allow-writes` and never change `/mcp`. Existing client confirmation
@@ -1202,11 +1243,15 @@ keep their spelling, except values SQLite or PostgreSQL stored before this chang
 and newer rejects numbers outside the float64 range, such as `1e400`. Listings and previews over
 1 MiB are refused; pass `slug` and `ordinal` to read one value, or use `history: false` to omit history.
 
-Enable only the write categories your assistant session needs:
+Enable only the write categories your assistant session needs. The HTTP
+write flag controls tools. Native Events subscription management is available to owners and delegated
+stdio clients with `search.read` and persists callback registrations and credentials; subscribing also
+requires the daemon Events opt-in.
 
 | Writes | Stdio | HTTP |
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
+| Native Events subscribe and unsubscribe | Owner access or delegated `search.read`; subscribe requires daemon opt-in | Owner access and `--http-allow-writes`; subscribe requires daemon opt-in |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Structured person profile patches | `--allow-curated-writes` | `--http-allow-writes --allow-curated-writes` |
 | Person attributes and attribute definitions | `--allow-attribute-writes` | `--http-allow-writes --allow-attribute-writes` |

@@ -21,6 +21,8 @@ func TestExpiredGrantsRemainManageable(t *testing.T) {
 		time.Sleep(2 * time.Hour)
 		_, allowed := registry.Lookup(secret)
 		assertions.False(allowed)
+		_, allowed = registry.LookupID(id, PermissionSearchRead)
+		assertions.False(allowed)
 		listed := registry.List()
 		requirements.Len(listed, 1, "expired grants must remain visible to the owner")
 		assertions.Equal(id, listed[0].ID)
@@ -285,4 +287,21 @@ func TestGrantWithNoSenderKeysHasNoSenderAuthority(t *testing.T) {
 		Sources:     []SourceRef{{Type: "imap", Identifier: "imap://alice@example.com"}},
 	}
 	assert.False(t, g.AllowsSender(PermissionDraftCreate, SourceRef{Type: "imap", Identifier: "imap://alice@example.com"}, "alice@example.com"))
+}
+
+func TestLookupIDReturnsIndependentLiveGrant(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := NewRegistry()
+	id, _, _, err := r.Issue("reader", []Permission{PermissionSearchRead}, []SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
+	require.NoError(err)
+	g, ok := r.LookupID(id, PermissionSearchRead)
+	require.True(ok)
+	g.Sources[0].Identifier = "changed"
+	again, ok := r.LookupID(id, PermissionSearchRead)
+	require.True(ok)
+	assert.Equal("reader@example.test", again.Sources[0].Identifier)
+	require.True(r.Revoke(id))
+	_, ok = r.LookupID(id, PermissionSearchRead)
+	assert.False(ok)
 }

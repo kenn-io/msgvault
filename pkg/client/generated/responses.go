@@ -1963,6 +1963,98 @@ type SnoozeLoopErrorResponseJSON503 = ErrorResponse
 
 type SnoozeLoopErrorResponseJSONDefault = ErrorResponse
 
+type McpEventsListResponse = MCPEventsListResult
+
+type McpEventsListErrorResponse = ErrorResponse
+
+type McpEventsSubscribeResponse = MCPEventsSubscribeResult
+
+type McpEventsSubscribeErrorResponse struct {
+	McpEventsSubscribe_ErrorResponse_AnyOf *McpEventsSubscribe_ErrorResponse_AnyOf `json:"-"`
+}
+
+func (r McpEventsSubscribeErrorResponse) Error() string {
+	return "unmapped client error"
+}
+
+func (m McpEventsSubscribeErrorResponse) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(m.McpEventsSubscribe_ErrorResponse_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("McpEventsSubscribe_ErrorResponse_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (m *McpEventsSubscribeErrorResponse) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if m.McpEventsSubscribe_ErrorResponse_AnyOf == nil {
+		m.McpEventsSubscribe_ErrorResponse_AnyOf = &McpEventsSubscribe_ErrorResponse_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, m.McpEventsSubscribe_ErrorResponse_AnyOf); err != nil {
+		return fmt.Errorf("McpEventsSubscribe_ErrorResponse_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type McpEventsUnsubscribeResponse = MCPEventsUnsubscribeResult
+
+type McpEventsUnsubscribeErrorResponse struct {
+	McpEventsUnsubscribe_ErrorResponse_AnyOf *McpEventsUnsubscribe_ErrorResponse_AnyOf `json:"-"`
+}
+
+func (r McpEventsUnsubscribeErrorResponse) Error() string {
+	return "unmapped client error"
+}
+
+func (m McpEventsUnsubscribeErrorResponse) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(m.McpEventsUnsubscribe_ErrorResponse_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("McpEventsUnsubscribe_ErrorResponse_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (m *McpEventsUnsubscribeErrorResponse) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if m.McpEventsUnsubscribe_ErrorResponse_AnyOf == nil {
+		m.McpEventsUnsubscribe_ErrorResponse_AnyOf = &McpEventsUnsubscribe_ErrorResponse_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, m.McpEventsUnsubscribe_ErrorResponse_AnyOf); err != nil {
+		return fmt.Errorf("McpEventsUnsubscribe_ErrorResponse_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
 type GetMCPCapabilitiesResponse = MCPCapabilities
 
 type GetMCPCapabilitiesErrorResponse = ErrorResponse
@@ -2112,6 +2204,8 @@ type ListChangedMessagesResponse = ChangesResponse
 type ListChangedMessagesErrorResponse = ErrorResponse
 
 type ListChangedMessagesErrorResponseJSON = ErrorResponse
+
+type ListChangedMessagesErrorResponseJSON403 = ErrorResponse
 
 type ListChangedMessagesErrorResponseJSON404 = ErrorResponse
 
@@ -6024,6 +6118,30 @@ type SnoozeLoopResp struct {
 	JSONDefault  *SnoozeLoopErrorResponseJSONDefault
 }
 
+type McpEventsListResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *McpEventsListResponse
+	JSONDefault  *McpEventsListErrorResponse
+}
+
+type McpEventsSubscribeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *McpEventsSubscribeResponse
+	JSONDefault  *McpEventsSubscribeErrorResponse
+}
+
+type McpEventsUnsubscribeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *McpEventsUnsubscribeResponse
+	JSONDefault  *McpEventsUnsubscribeErrorResponse
+}
+
 type GetMCPCapabilitiesResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -6163,6 +6281,7 @@ type ListChangedMessagesResp struct {
 	JSON200      *ListChangedMessagesResponse
 	JSON400      *ListChangedMessagesErrorResponse
 	JSON401      *ListChangedMessagesErrorResponseJSON
+	JSON403      *ListChangedMessagesErrorResponseJSON403
 	JSON404      *ListChangedMessagesErrorResponseJSON404
 	JSON409      *ListChangedMessagesErrorResponseJSON409
 	JSON422      *ListChangedMessagesErrorResponseJSON422

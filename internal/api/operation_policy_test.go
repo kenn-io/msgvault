@@ -1,13 +1,13 @@
 package api
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/agentgrant"
 )
 
 func apiV1PolicyOperations(t *testing.T) map[string]*huma.Operation {
@@ -72,10 +72,13 @@ func TestLegacyOperationAdmissionIsPreserved(t *testing.T) {
 	operations := apiV1PolicyOperations(t)
 	operations["unknown"] = nil
 	for id := range operations {
-		read, isRead := wantReads[id]
-		assert.Equal(isRead || slices.Contains(allowedDelegatedOps, id), delegatedOperationAllowed(id), "%s", id)
+		read := wantReads[id]
+		if id == "mcpEventsList" || id == "mcpEventsSubscribe" || id == "mcpEventsUnsubscribe" {
+			assert.Equal(agentgrant.PermissionSearchRead, operationPolicies[id].AgentReadPermission, "%s", id)
+		} else {
+			assert.Equal(read.permission, operationPolicies[id].AgentReadPermission, "%s", id)
+		}
 		assert.Equal(wantRemoteRead[id], remoteClientOperationAllowed(id, false), "%s", id)
 		assert.Equal(wantRemoteRead[id] || wantRemoteWrite[id], remoteClientOperationAllowed(id, true), "%s", id)
-		assert.Equal(read.permission, operationPolicies[id].AgentReadPermission, "%s", id)
 	}
 }

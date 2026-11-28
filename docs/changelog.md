@@ -10,6 +10,13 @@ All notable changes to msgvault, grouped by release.
 
 ### New features
 
+- Let owner MCP clients subscribe to signed message-change Events for a person or source over stdio or modern HTTP. Agent grants with `search.read` can subscribe within their sources over stdio. An unverified callback receives a signed challenge; failures return `-32027`. Enable `[mcp_events]` and read `list_changes` after each ping. Restored subscriptions resume when clients refresh their secrets; `--include-tokens` backups include those credentials. Callback URLs and secrets are stored separately in `tokens/mcp-events-credentials.json`.
+
+- Configure signed HTTPS wake-up notifications for matching recent messages,
+  so agents can read the change feed without frequent polling.
+
+- Let delegated MCP agents with `search.read` use `list_changes` for their granted sources.
+
 - Read the order, delivery, invoice and reservation details an email carries as schema.org markup with the MCP tool `get_message_records`, without sending the message anywhere.
 - Let owner MCP clients read person attributes and definitions, and enable attribute edits with `--allow-attribute-writes`. The owner approves the previewed value, and the write refuses if that value or empty slot changes before saving. The tools require an updated daemon. Existing archives migrate attribute JSON on writable open; upgrade applications using embedded archive readers alongside the daemon. Numbers stored before this change may have already lost their original spelling.
 
