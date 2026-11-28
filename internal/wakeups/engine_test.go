@@ -242,12 +242,24 @@ func TestNativeInterruptedFinalAttempt(t *testing.T) {
 			start := now.Add(-time.Hour)
 			seedWakeup(t, st, "exhausted@example.com", 0, 1, now)
 			key := store.MCPEventsPositionKey("exhausted")
-			ok, err := st.AdvanceWakeupStateKey(t.Context(), key, nil, store.WakeupState{At: start, Failures: tc.failures})
+			reservation := &store.NativeDelivery{
+				WebhookID: "msg_interrupted", EventID: "evt_interrupted",
+				Timestamp: now.Add(-time.Minute), EndAt: now.Add(-time.Minute),
+			}
+			deadline := now.Add(time.Minute)
+			ok, err := st.AdvanceWakeupStateKey(t.Context(), key, nil, store.WakeupState{
+				At: start, Failures: tc.failures, NextAttemptAt: deadline, NativeDelivery: reservation,
+			})
 			require.NoError(err)
 			require.True(ok)
-			hits := 0
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				hits++
+			var ids []string
+			var bodies []map[string]any
+			var decodeErr error
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				decodeErr = json.NewDecoder(r.Body).Decode(&body)
+				bodies = append(bodies, body)
+				ids = append(ids, r.Header.Get("Webhook-Id"))
 				w.WriteHeader(http.StatusInternalServerError)
 			}))
 			defer server.Close()
@@ -255,11 +267,22 @@ func TestNativeInterruptedFinalAttempt(t *testing.T) {
 			sub.StateKey, sub.Native = key, true
 			engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
 			require.NoError(engine.RunPass(t.Context()))
-			assert.Equal(1, hits)
+			assert.Empty(ids)
+			now = deadline
+			// A fresh engine must resume the reservation stored before interruption.
+			engine = Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
+			require.NoError(engine.RunPass(t.Context()))
+			require.NoError(decodeErr)
+			require.Len(ids, 1)
+			require.Len(bodies, 1)
+			assert.Equal(reservation.WebhookID, ids[0])
+			assert.Equal(reservation.EventID, bodies[0]["eventId"])
+			assert.Equal(reservation.Timestamp.Format(time.RFC3339Nano), bodies[0]["timestamp"])
 			state, _, err := st.LoadWakeupStateKey(t.Context(), key)
 			require.NoError(err)
-			assert.True(state.At.After(start))
+			assert.Equal(reservation.EndAt, state.At)
 			assert.Zero(state.Failures)
+			assert.Nil(state.NativeDelivery)
 		})
 	}
 }
