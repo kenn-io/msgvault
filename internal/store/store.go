@@ -1031,7 +1031,9 @@ func (s *Store) withTxLockedContext(
 			return err
 		}
 	}
-	if s.syncGeneration != nil && (opts == nil || !opts.ReadOnly) {
+	// A joined transaction that already passed the fence keeps the run's row
+	// locked until it commits, so the run cannot have stopped since.
+	if s.syncGeneration != nil && (opts == nil || !opts.ReadOnly) && (!joined || !tx.syncGenerationFenced) {
 		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
 			if !joined {
 				_ = tx.Rollback()
@@ -1296,6 +1298,10 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
 		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
 		{"idx_message_recipients_normalized_email", messageRecipientsNormalizedEmailIndexDefinition},
+		{"idx_source_merge_archive_only_original", "ON source_merge_archive_only_messages(original_source_message_id)"},
+		{"idx_calendar_events_series_id", "ON calendar_events(series_provider_id, message_id)"},
+		{"idx_calendar_events_ical_uid", "ON calendar_events(ical_uid)"},
+		{"idx_meeting_details_link_key", "ON meeting_details(link_key) WHERE link_key IS NOT NULL"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -1819,12 +1825,16 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
+	if err := s.runOnceMigration(ctx, migrationPersonFactOutcomes, 1, false, s.backfillPersonFactOutcomes); err != nil {
+		return fmt.Errorf("backfill person fact outcomes: %w", err)
+	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
 	// the legacy migrations above. PostgreSQL builds them concurrently in
 	// buildLargeIndexesConcurrently.
 	if !s.IsPostgreSQL() {
 		for _, index := range []struct{ name, definition string }{
+			{"idx_meeting_details_link_key", "ON meeting_details(link_key) WHERE link_key IS NOT NULL"},
 			{"idx_messages_account", messagesAccountIndexDefinition},
 			{"idx_messages_account_pending", messagesAccountPendingIndexDefinition},
 			{"idx_messages_email_linkage_pending", messagesEmailLinkagePendingIndexDefinition},
@@ -1834,6 +1844,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 				return fmt.Errorf("create message index %s: %w", index.name, err)
 			}
 		}
+	}
+	if err := s.runOnceMigration(ctx, "attribute_value_json", 1, false, s.migrateAttributeValueJSON); err != nil {
+		return err
 	}
 	if err := s.runOnceMigration(ctx, migrationCardDAVMultipleAccounts, 1, false, s.ensureCardDAVMultiAccountSchema); err != nil {
 		return fmt.Errorf("migrate CardDAV connections: %w", err)
@@ -2207,6 +2220,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	// 30s statement_timeout (finding S1). IF NOT EXISTS is idempotent per start.
 	if !s.IsPostgreSQL() {
 		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_calendar_events_ical_uid ON calendar_events(ical_uid)`); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, id)`); err != nil {
 				return err
 			}
@@ -2548,6 +2564,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	if err := s.runOnceMigration(ctx, migrationChatMembers, 1, false, s.rebuildChatMembersContext); err != nil {
 		return fmt.Errorf("initialize chat members projection: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationSourceMessageCounts, 1, false, s.initSourceMessageCountsContext); err != nil {
+		return fmt.Errorf("initialize source message counts: %w", err)
+	}
 	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV1, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
 		return fmt.Errorf("initialize calendar event projections: %w", err)
 	}
@@ -2580,6 +2599,28 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 		s.backfillCardDAVInferenceExportState,
 	); err != nil {
 		return fmt.Errorf("backfill CardDAV inference export state: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationCardDAVInferenceExportStateV2, 1, false,
+		s.backfillCardDAVInferenceExportStateV2,
+	); err != nil {
+		return fmt.Errorf("backfill CardDAV inference export state for names and contacts: %w", err)
+	}
+
+	if err := s.runOnceMigration(ctx, migrationCardDAVInferenceExportStateV3, 1, false, s.backfillCardDAVInferenceExportStateV3); err != nil {
+		return fmt.Errorf("backfill CardDAV inference export state for bound cards: %w", err)
+	}
+
+	// Archived attachment bytes are named by their hash. Run after the legacy
+	// attachment columns and triggers exist so repaired rows reach the change
+	// journal.
+	if err := s.runOnceMigration(
+		ctx, migrationAttachmentBytesHash, 1, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, s.enforceAttachmentBytesHash)
+		},
+	); err != nil {
+		return fmt.Errorf("enforce attachment bytes hash: %w", err)
 	}
 
 	// Reconcile the system relationship type catalog on every open: insert
@@ -2980,8 +3021,8 @@ func (s *Store) NeedsFTSBackfillQuickContext(ctx context.Context) bool {
 
 // Stats holds database statistics.
 //
-// MessageCount is the count of active messages: those still present in the
-// source account (deleted_at IS NULL AND deleted_from_source_at IS NULL).
+// MessageCount counts messages not deleted from the archive or source
+// (deleted_at IS NULL AND deleted_from_source_at IS NULL).
 // SourceDeletedCount is the count of archived messages that were deleted from
 // the source account but are retained in the archive (deleted_at IS NULL AND
 // deleted_from_source_at IS NOT NULL). The archive is the system of record,

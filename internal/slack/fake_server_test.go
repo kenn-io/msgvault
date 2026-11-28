@@ -146,6 +146,9 @@ type fakeSlack struct {
 	failHistory map[string]bool
 	failReplies map[string]bool
 	failMembers map[string]bool
+	// unreadableReplies makes conversations.replies answer
+	// channel_not_found for the named channel while history still reads.
+	unreadableReplies map[string]bool
 	// failSearch makes search.messages answer a method error.
 	failSearch bool
 	// searchMissingScope makes search.messages answer missing_scope (a
@@ -431,7 +434,7 @@ func (f *fakeSlack) handleReplies(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	c := f.conv(r.FormValue("channel"))
-	if c == nil {
+	if c == nil || f.unreadableReplies[r.FormValue("channel")] {
 		f.replyErr(w, "channel_not_found")
 		return
 	}

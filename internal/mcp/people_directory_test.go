@@ -2,15 +2,11 @@ package mcp
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
@@ -138,36 +134,6 @@ func TestMCPListDirectoryPeopleMapsKnownErrors(t *testing.T) {
 	}
 }
 
-func TestMCPListDirectoryPeopleAddressCapability(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var lookups atomic.Int32
-	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/v1/health" {
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.28.0"}`))
-			return
-		}
-		lookups.Add(1)
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(daemon.Close)
-	engine, err := daemonclient.NewEngine(daemonclient.Config{URL: daemon.URL, AllowInsecure: true})
-	require.NoError(err)
-	t.Cleanup(func() { assert.NoError(engine.Close()) })
-	browser := daemonclient.NewPeopleBrowser(engine)
-	response, raw := task4RawRequest(t,
-		newMCPHTTPServer(directoryToolOptions(browser), HTTPOptions{}).Handler,
-		"tools/call", map[string]any{
-			"name": ToolListDirectoryPeople, "arguments": map[string]any{"address": "alex@example.test"},
-		}, nil)
-	assert.Equal(int32(0), lookups.Load())
-	require.Empty(response.Error, "response: %s", raw)
-	assert.Equal(true, response.Result["isError"])
-	assert.Contains(toolErrorTextFromResult(t, response.Result),
-		"requires daemon API schema 3.29.0 or newer; upgrade the daemon")
-}
-
 func TestMCPListDirectoryPeopleSanitizesUnavailableAndNilPages(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -253,3 +219,14 @@ var _ peoplebrowser.Backend = (*directoryCapabilityOnlyBackend)(nil)
 var _ peoplebrowser.Backend = (*profileOnlyPeopleBackend)(nil)
 var _ peoplebrowser.ProfileLister = (*profileOnlyPeopleBackend)(nil)
 var _ peoplebrowser.ProfileReader = (*profileOnlyPeopleBackend)(nil)
+
+func TestMCPDirectoryCadence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	backend := &directoryPeopleBackend{page: &store.DirectoryPeoplePage{People: []store.DirectoryPersonSummary{}}}
+	result := rawCallTool(t, directoryToolOptions(backend), ToolListDirectoryPeople, map[string]any{"cadence": "due", "due_within_days": 7, "sort": "most_overdue"})
+	require.NotEqual(true, result["isError"], "result: %#v", result)
+	assert.Equal("due", backend.query.Cadence)
+	require.NotNil(backend.query.DueWithinDays)
+	assert.Equal(7, *backend.query.DueWithinDays)
+}

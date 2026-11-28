@@ -15,6 +15,7 @@ export interface FileMetadataResponse {
   filename: string;
   id: number;
   message_id: number;
+  message_type: string;
   mime_type: string;
   size_bytes: number;
   url?: string;

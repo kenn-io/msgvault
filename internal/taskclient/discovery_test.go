@@ -1,6 +1,7 @@
 package taskclient
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -182,12 +183,17 @@ func TestClientTransportBounds(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		client := newLoopbackClient(t, server.URL, "timeout-test-key", func(options *ClientOptions) {
-			options.Timeout = 20 * time.Millisecond //nolint:kennlint // deadlinetest: the blocked capabilities request must expire and report ErrUnreachable
+			options.Timeout = 20 * time.Millisecond //nolint:kennlint // deadlinetest: the blocked task search request must expire and report ErrUnreachable
 		})
 
-		_, err := client.Capabilities(t.Context())
+		_, err := client.SearchTasks(t.Context(), "test-project", "sensitive-search-term", 10)
 
-		assert.ErrorIs(t, err, ErrUnreachable)
+		require.ErrorIs(t, err, ErrUnreachable)
+		require.NotErrorIs(t, err, context.DeadlineExceeded)
+		require.ErrorContains(t, err, "deadline exceeded")
+		assert.NotContains(t, err.Error(), server.URL)
+		assert.NotContains(t, err.Error(), "sensitive-search-term")
+		assert.NotContains(t, err.Error(), "timeout-test-key")
 	})
 
 	t.Run("oversized body", func(t *testing.T) {

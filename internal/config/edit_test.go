@@ -2230,6 +2230,7 @@ func TestEditConfigRejectsInvalidMuesliSchedule(t *testing.T) {
 func TestEditConfigRejectsInvalidSourceSchedule(t *testing.T) {
 	for _, tc := range []struct{ name, before, key, errorKey, invalid string }{
 		{"plaud", "[[plaud]]\nidentifier = \"work\"\naccount_email = \"owner@example.com\"\nschedule = \"15 */6 * * *\"\nenabled = true\n", "plaud.schedule", "plaud[0].schedule", "not a cron"},
+		{"bland", "[[bland]]\naccount_email='user@example.com'\napi_key='synthetic'\nschedule='15 */6 * * *'\n", "bland.schedule", "bland[0].schedule", "not a cron"},
 		{"twilio", "[[twilio]]\naccount_email='user@example.com'\naccount_sid='AC00000000000000000000000000000001'\nauth_token='synthetic'\nschedule='15 */6 * * *'\n", "twilio.schedule", "twilio[0].schedule", "not a cron"},
 		{"imessage", "[imessage]\nschedule = '0 * * * *'\n", "imessage.schedule", "imessage.schedule", "invalid cron"},
 		{"whatsapp", "[[whatsapp_apple]]\nname = 'personal'\nphone = '+15550100'\nschedule = '0 * * * *'\n", "whatsapp_apple.schedule", "whatsapp_apple[0].schedule", "invalid cron"},

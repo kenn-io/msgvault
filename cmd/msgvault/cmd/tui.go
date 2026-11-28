@@ -100,7 +100,7 @@ HTTP Mode:
 		// The shipped daemon engine provides Texts directly. People uses the
 		// focused wrapper because Engine.Search has a different query contract.
 		var textEngine query.TextEngine = backend.engine
-		peopleBackend := tuiPeopleBackend(cmd.Context(), backend.client, backend.engine)
+		peopleBackend := tuiPeopleBackend(backend.client, backend.engine)
 
 		notice := analyticsCacheNotice(cmd.Context(), backend.client)
 		if notice != "" {
@@ -109,7 +109,7 @@ HTTP Mode:
 
 		// Create and run TUI
 		semanticSearch := tuiSemanticSearcher(cmd.Context(), backend.client, backend.engine)
-		collectionScopes := tuiCollectionScopes(cmd.Context(), backend.client, backend.engine)
+		collectionScopes := tuiCollectionScopes(backend.client, backend.engine)
 		gate := newTUITelemetryGate(currentCfg.Data.DataDir, backend.client.BaseURL())
 		localTimezone, _ := resolveLocalTimezone()
 		model := tui.New(backend.engine, tui.Options{
@@ -126,8 +126,8 @@ HTTP Mode:
 			AnalyticsNotice:       notice,
 			SettingsBackend:       backend.settings,
 			CollectionScopeLister: collectionScopes,
-			ReportScreen:          tuiScreenReporter(gate, backend.client, currentCfg),
-			ReportAction:          tuiActionReporter(gate, backend.client, currentCfg),
+			ReportScreen:          tuiScreenReporter(gate, backend.client),
+			ReportAction:          tuiActionReporter(gate, backend.client),
 		})
 		p := tea.NewProgram(model)
 		noticeCtx, stopNoticeRefresh := context.WithCancel(cmd.Context())
@@ -166,7 +166,7 @@ HTTP Mode:
 }
 
 func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInfo, duration time.Duration, gate *tuiTelemetryGate) {
-	if !clientTelemetryEnabled(cfg) {
+	if !clientTelemetryEnabled() {
 		return
 	}
 	inv := invocationFromContext(ctx)
@@ -189,9 +189,9 @@ func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInf
 	})
 }
 
-func tuiScreenReporter(gate *tuiTelemetryGate, client *daemonclient.Client, cfg *config.Config) func(context.Context, string) error {
+func tuiScreenReporter(gate *tuiTelemetryGate, client *daemonclient.Client) func(context.Context, string) error {
 	return func(ctx context.Context, screen string) error {
-		if !clientTelemetryEnabled(cfg) {
+		if !clientTelemetryEnabled() {
 			return nil
 		}
 		return gate.report(ctx, client, telemetry.EventScreenViewed, "screen", screen)
@@ -215,10 +215,6 @@ func tuiSemanticSearcher(
 	if client == nil || engine == nil {
 		return nil
 	}
-	compatible, err := client.SupportsAPISchemaVersion(ctx, semanticSearchMinAPISchemaVersion)
-	if err != nil || !compatible {
-		return nil
-	}
 	available, err := client.VectorSearchAvailableForMessageType(ctx, tuiSemanticMessageType)
 	if err != nil || !available {
 		return nil
@@ -227,50 +223,24 @@ func tuiSemanticSearcher(
 	return searcher
 }
 
-// tuiPeopleBackend returns the People backend for the selected daemon, or nil
-// when the daemon is too old to serve People at all. The brief routes arrived
-// later than People itself, so a daemon between the two schema versions gets a
-// backend without the brief surfaces: the People browser then hides the brief
-// rather than reporting a failed read on every contact.
+// tuiPeopleBackend returns the People backend for the selected daemon.
 func tuiPeopleBackend(
-	ctx context.Context,
 	client *daemonclient.Client,
 	engine *daemonclient.Engine,
 ) peoplebrowser.Backend {
 	if client == nil || engine == nil {
 		return nil
 	}
-	compatible, err := client.SupportsAPISchemaVersion(ctx, peopleMinAPISchemaVersion)
-	if err != nil || !compatible {
-		return nil
-	}
-	browser := daemonclient.NewPeopleBrowser(engine)
-	briefs, err := client.SupportsAPISchemaVersion(ctx, briefMinAPISchemaVersion)
-	if err != nil || !briefs {
-		return daemonclient.NewPeopleBrowserWithoutBriefs(browser)
-	}
-	return browser
+	return daemonclient.NewPeopleBrowser(engine)
 }
 
-const (
-	semanticSearchMinAPISchemaVersion   = "2.7.0"
-	peopleMinAPISchemaVersion           = "2.10.0"
-	directoryPeopleMinAPISchemaVersion  = "2.13.0"
-	collectionScopesMinAPISchemaVersion = "2.17.0"
-	briefMinAPISchemaVersion            = "2.20.0"
-	tuiSemanticMessageType              = "email"
-)
+const tuiSemanticMessageType = "email"
 
 func tuiCollectionScopes(
-	ctx context.Context,
 	client *daemonclient.Client,
 	engine query.Engine,
 ) query.CollectionScopeLister {
 	if client == nil || engine == nil {
-		return nil
-	}
-	compatible, err := client.SupportsAPISchemaVersion(ctx, collectionScopesMinAPISchemaVersion)
-	if err != nil || !compatible {
 		return nil
 	}
 	lister, _ := engine.(query.CollectionScopeLister)
@@ -372,6 +342,9 @@ func openTUIBackendWithLocal(ctx context.Context, forceLocal bool) (*tuiBackend,
 		if inv == nil {
 			return nil, errors.New("configuration is unavailable")
 		}
+		if inv.options.remoteName != "" {
+			return nil, errors.New("--local and --remote are incompatible")
+		}
 		local := *inv
 		local.options.useLocal = true
 		ctx = withInvocation(ctx, &local)
@@ -405,9 +378,9 @@ func init() {
 	_ = tuiCmd.Flags().MarkHidden("no-sqlite-scanner")
 }
 
-func tuiActionReporter(gate *tuiTelemetryGate, client *daemonclient.Client, cfg *config.Config) func(context.Context, string, string, string) error {
+func tuiActionReporter(gate *tuiTelemetryGate, client *daemonclient.Client) func(context.Context, string, string, string) error {
 	return func(ctx context.Context, event, property, value string) error {
-		if !clientTelemetryEnabled(cfg) {
+		if !clientTelemetryEnabled() {
 			return nil
 		}
 		return gate.report(ctx, client, event, property, value)

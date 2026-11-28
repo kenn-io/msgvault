@@ -14,23 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
-// Every admitted read has either a source filter or an object-source check.
-// SQL, export, administrative reads, and unsupported analytics remain owner-only.
-var agentReadPermissions = map[string]agentgrant.Permission{
-	"searchCLI": agentgrant.PermissionSearchRead, "searchMessages": agentgrant.PermissionSearchRead,
-	"fastSearch": agentgrant.PermissionSearchRead, "deepSearch": agentgrant.PermissionSearchRead,
-	"getAggregates": agentgrant.PermissionSearchRead, "getSubAggregates": agentgrant.PermissionSearchRead,
-	"filterMessages": agentgrant.PermissionSearchRead, "listMessages": agentgrant.PermissionSearchRead,
-	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
-	"listChangedMessages":     agentgrant.PermissionSearchRead,
-	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
-	"getCLIMessageThread": agentgrant.PermissionMessageRead,
-	"getMessage":          agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
-	"getAttachment": agentgrant.PermissionAttachmentRead, "getAttachmentContent": agentgrant.PermissionAttachmentRead,
-	"getCLIAttachment": agentgrant.PermissionAttachmentRead,
-	"listCLIAccounts":  agentgrant.PermissionSearchRead, "listCLICollections": agentgrant.PermissionSearchRead,
-}
-
 func agentReadDenied(permission agentgrant.Permission) *apiHTTPError {
 	return newAPIHTTPError(http.StatusForbidden, "permission_denied", "Agent grant requires "+string(permission)+" on the requested sources")
 }
@@ -42,11 +25,36 @@ func (s *Server) agentObjectSourceAllowed(r *http.Request, sourceID int64) bool 
 	return s.requestAuthentication(r).Grant == nil || slices.Contains(agentReadSourceIDs(r), sourceID)
 }
 
+// hostScopedCLIReads are the CLI reads a host may serve under a source scope.
+// They take the agent-read path with no grant: the host's scope is the set of
+// granted sources, and every query is limited to it inside msgvault.
+var hostScopedCLIReads = map[string]agentgrant.Permission{
+	"getCLIStats": agentgrant.PermissionStatsRead, "searchCLI": agentgrant.PermissionSearchRead,
+	"getCLIMessage": agentgrant.PermissionMessageRead, "getCLIMessageThread": agentgrant.PermissionMessageRead,
+	"exportCLIMessages": agentgrant.PermissionMessageRead,
+}
+
+// agentReadScoped reports whether authorizeAgentRead limited r to sources,
+// under an agent grant or a host's source scope.
+func agentReadScoped(r *http.Request) bool {
+	_, ok := r.Context().Value(agentReadScopeKey{}).(agentReadScope)
+	return ok
+}
+
+// agentReadScopeLabel names the population a scoped CLI read covers.
+func (s *Server) agentReadScopeLabel(r *http.Request) string {
+	if s.requestAuthentication(r).Grant != nil {
+		return "agent grant"
+	}
+	return "authorized sources"
+}
+
 func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.Permission, *apiHTTPError) {
-	permission, read := agentReadPermissions[operation]
-	if !read {
+	permission := operationPolicies[operation].AgentReadPermission
+	if permission == "" {
+		// Other delegated operations use their own handler checks.
 		return "", nil
-	} // runCLI has its own command authorization; health discloses no archive data.
+	}
 	if operation == "listCLIAccounts" || operation == "listCLICollections" {
 		permission = agentDiscoveryPermission(grant)
 		if permission == "" {
@@ -160,14 +168,14 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	account := r.URL.Query().Get("account")
 	accountGranted := false
 	for _, src := range sources {
-		if grant.MatchesSource(agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}) {
+		if grant == nil || grant.MatchesSource(agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}) {
 			allowed = append(allowed, src.ID)
 			accountGranted = accountGranted || src.Identifier == account
 		}
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
-	case "listChangedMessages":
+	case "listChangedMessages", "getMeetingRecord", "suggestMeetingLinks":
 		*r = *r.WithContext(sourcescope.WithSourceIDs(r.Context(), allowed))
 		return nil
 	case "getCLIMessageThread":
@@ -309,7 +317,7 @@ func (s *Server) agentScopedStats(w http.ResponseWriter, r *http.Request, cli bo
 	resp := statsResponseFromStore(stats)
 	resp.DatabaseSize = nil
 	if cli {
-		label := "agent grant"
+		label := s.agentReadScopeLabel(r)
 		if scope.scope.Account.Input != "" {
 			label = scope.scope.displayName()
 		}

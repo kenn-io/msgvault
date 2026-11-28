@@ -190,7 +190,12 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 				}
 				imapTargets = append(imapTargets, src)
 			case sourceTypeMSMail:
-				if !newGraphMailManager(state).HasToken(src.Identifier) {
+				mgr, err := newGraphMailManager(state, src)
+				if err != nil {
+					syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
+					continue
+				}
+				if !mgr.HasToken(src.Identifier) {
 					fmt.Printf("Skipping %s (no Microsoft Graph token - run 'add-o365 %s --graph' first)\n", src.Identifier, src.Identifier)
 					continue
 				}
@@ -214,7 +219,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 			break
 		}
 		fmt.Printf("Note: IMAP account %s uses folder-based sync. Unchanged folders are skipped when high water marks are available.\n\n", src.Identifier)
-		if err := runFullSync(ctx, s, getOAuthMgr, src, state); err != nil {
+		if err := runFullSync(ctx, s, getOAuthMgr, src, state, true); err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 		}
 	}
@@ -225,7 +230,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 			break
 		}
 		fmt.Printf("Syncing Microsoft Graph mail for %s\n", src.Identifier)
-		sum, err := runMSMailSync(ctx, s, src.Identifier, func(line string) { fmt.Println(line) }, state)
+		sum, err := runMSMailSync(ctx, s, src, func(line string) { fmt.Println(line) }, state)
 		if err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 			continue
@@ -316,6 +321,11 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(ct
 
 	// Set up sync options
 	opts := sync.DefaultOptions()
+	skipSpamTrash, err := gmailSkipsSpamTrash(ctx, cfg, s, source)
+	if err != nil {
+		return err
+	}
+	opts.GmailSkipSpamTrash = skipSpamTrash
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 
 	// Create syncer with progress reporter

@@ -1,5 +1,6 @@
-// Package credentialprovider exchanges scoped message MCP credentials with a
-// trusted local executable. It does not grant access or implement a login flow.
+// Package credentialprovider exchanges scoped message MCP and HTTP read
+// credentials, and the inbound credentials msgvault sends to external source
+// endpoints, with a trusted local executable. It does not grant access or implement a login flow.
 // The caller retains operation identities, keeps secrets in memory, and owns
 // retries. See docs/guides/credential-providers.md for the wire contract.
 package credentialprovider
@@ -38,16 +39,18 @@ const (
 
 var (
 	// ErrInvalidRequest reports malformed input without exposing its contents.
-	ErrInvalidRequest = errors.New("invalid message credential provider request")
+	ErrInvalidRequest = errors.New("invalid credential provider request")
 	// ErrInvalidResponse reports a result that cannot authorize this request.
-	ErrInvalidResponse = errors.New("invalid message credential provider response")
+	ErrInvalidResponse = errors.New("invalid credential provider response")
 	// ErrProviderFailed reports a failed process exchange, not a domain denial.
-	ErrProviderFailed = errors.New("message credential provider failed")
+	ErrProviderFailed = errors.New("credential provider failed")
 )
 
 // Scope identifies the exact approved selection. SourceIDs are ascending decimal
 // strings so clients cannot round native int64 IDs. ArchiveID is the native opaque
-// archive UID, not a newly allocated identity. Tools is an explicit read subset.
+// archive UID, not a newly allocated identity. A scope names exactly one profile:
+// Tools is an explicit MCP read subset, and Operations is an explicit subset of
+// ReadOperations for the HTTP API.
 type Scope struct {
 	Endpoint     string    `json:"endpoint,omitempty"`
 	ArchiveID    string    `json:"archive_id,omitempty"`
@@ -55,6 +58,7 @@ type Scope struct {
 	DelegationID uuid.UUID `json:"delegation_id,omitzero"`
 	SourceIDs    []string  `json:"source_ids,omitempty"`
 	Tools        []string  `json:"tools,omitempty"`
+	Operations   []string  `json:"operations,omitempty"`
 }
 
 // Request is saved before starting its helper. Renew/replace select the exact

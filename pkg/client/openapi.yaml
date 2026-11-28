@@ -1345,6 +1345,8 @@ components:
         message_id:
           format: int64
           type: integer
+        ref:
+          type: string
         series_message_id:
           format: int64
           type: integer
@@ -2086,6 +2088,62 @@ components:
         - state
         - code
       type: object
+    CardDAVParticipantBindingConflict:
+      properties:
+        participant_id:
+          format: int64
+          type: integer
+        person_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        reason:
+          enum:
+            - shared_address
+            - existing_person
+          type: string
+      required:
+        - participant_id
+        - person_ids
+        - reason
+      type: object
+    CardDAVParticipantBindingOptions:
+      additionalProperties: false
+      properties:
+        dry_run:
+          type: boolean
+        undo:
+          type: boolean
+      required:
+        - dry_run
+        - undo
+      type: object
+    CardDAVParticipantBindingResult:
+      properties:
+        cards_scanned:
+          format: int64
+          type: integer
+        conflict_details:
+          items:
+            $ref: "#/components/schemas/CardDAVParticipantBindingConflict"
+          type: array
+        conflicts:
+          format: int64
+          type: integer
+        participants_bound:
+          format: int64
+          type: integer
+        participants_unbound:
+          format: int64
+          type: integer
+      required:
+        - cards_scanned
+        - participants_bound
+        - participants_unbound
+        - conflicts
+        - conflict_details
+      type: object
     CardDAVPublicationApprovalRequest:
       additionalProperties: false
       properties:
@@ -2188,6 +2246,10 @@ components:
     CardDAVRunResponse:
       properties:
         account_id:
+          format: int64
+          type: integer
+        binding_conflicts:
+          description: CardDAV binding conflicts archive-wide at this run.
           format: int64
           type: integer
         books:
@@ -2520,6 +2582,8 @@ components:
         alias:
           nullable: true
           type: string
+        auth_method:
+          type: string
         display_name:
           type: string
         email:
@@ -2574,13 +2638,6 @@ components:
           items:
             $ref: "#/components/schemas/CliAccountResponse"
           type: array
-        as_of:
-          format: date-time
-          type: string
-        counts_pending:
-          type: boolean
-        stale:
-          type: boolean
         virtual_accounts_unavailable:
           type: boolean
       required:
@@ -3192,13 +3249,22 @@ components:
         first_contact_at:
           format: date-time
           type: string
+        first_contact_kind:
+          type: string
         first_contact_ref:
+          type: string
+        first_seen_at:
+          format: date-time
+          type: string
+        first_seen_ref:
           type: string
         inferred_channel:
           type: string
         interaction_count:
           format: int64
           type: integer
+        introducer:
+          $ref: "#/components/schemas/FirstContactIntroducer"
         last_contact_at:
           format: date-time
           type: string
@@ -3757,8 +3823,56 @@ components:
         - source_identifier
         - source_message_id
       type: object
+    DirectoryCadence:
+      properties:
+        days_overdue:
+          format: int64
+          type: integer
+        due_at:
+          format: date-time
+          type: string
+        frequency_days:
+          format: int64
+          type: integer
+        list:
+          type: string
+        stale:
+          type: boolean
+        status:
+          type: string
+      required:
+        - status
+        - stale
+      type: object
+    DirectoryCadenceCoverage:
+      properties:
+        no_list:
+          format: int64
+          type: integer
+        scheduled:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+        unknown:
+          format: int64
+          type: integer
+      required:
+        - total
+        - no_list
+        - unknown
+        - scheduled
+      type: object
     DirectoryPeopleResponse:
       properties:
+        cadence_coverage:
+          $ref: "#/components/schemas/DirectoryCadenceCoverage"
+          description: People matching the other filters, counted by cadence before the cadence filter. Present only when the request uses a cadence filter or sort.
+        cadence_presets:
+          items:
+            $ref: "#/components/schemas/Preset"
+          type: array
         next_cursor:
           type: string
         people:
@@ -3770,6 +3884,8 @@ components:
       type: object
     DirectoryPersonSummary:
       properties:
+        cadence:
+          $ref: "#/components/schemas/DirectoryCadence"
         carddav_bindings:
           items:
             $ref: "#/components/schemas/CardDAVBinding"
@@ -3788,12 +3904,16 @@ components:
         last_contact_at:
           format: date-time
           type: string
+        last_contact_channel:
+          type: string
         organizations:
           items:
             type: string
           type: array
         primary_channel:
           type: string
+        reach_out_context:
+          $ref: "#/components/schemas/DirectoryReachOutContext"
         revision:
           format: int64
           type: integer
@@ -3807,6 +3927,21 @@ components:
         - contact_state
         - categories
         - organizations
+      type: object
+    DirectoryReachOutContext:
+      properties:
+        awaiting_reply_count:
+          format: int64
+          type: integer
+        needs_reply_count:
+          format: int64
+          type: integer
+        open_loops_stale:
+          type: boolean
+        signals_stale:
+          type: boolean
+        suggested_list:
+          type: string
       type: object
     Disclosure:
       properties:
@@ -4215,6 +4350,67 @@ components:
         - unknown_duration_count
         - total_known_seconds
         - average_known_seconds
+      type: object
+    EmailFamily:
+      properties:
+        anchor_message_id:
+          format: int64
+          type: integer
+        members:
+          items:
+            $ref: "#/components/schemas/EmailFamilyMember"
+          type: array
+        pending_linkage:
+          type: boolean
+        truncated:
+          type: boolean
+        truncated_reason:
+          type: string
+      required:
+        - anchor_message_id
+        - members
+        - truncated
+        - pending_linkage
+      type: object
+    EmailFamilyMember:
+      properties:
+        account_address:
+          type: string
+        account_path:
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        draft:
+          type: boolean
+        evidence:
+          type: string
+        linkage_outcome:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        sent_at:
+          format: date-time
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_type:
+          type: string
+        subject:
+          type: string
+      required:
+        - message_id
+        - source_id
+        - source_type
+        - source_identifier
+        - draft
+        - conversation_id
+        - linkage_outcome
+        - evidence
       type: object
     EmbeddingBatch:
       properties:
@@ -5464,6 +5660,30 @@ components:
         - action
         - reason
       type: object
+    FactSummary:
+      properties:
+        claimed_fields:
+          format: int64
+          type: integer
+        has_fact_history:
+          description: Whether claims, evidence, or pin events are stored
+          type: boolean
+        has_values:
+          description: Whether attribute values or employments are stored
+          type: boolean
+        latest_claim_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+      required:
+        - claimed_fields
+        - latest_claim_at
+        - has_values
+        - has_fact_history
+      type: object
     FieldDescriptor:
       properties:
         cardinality:
@@ -5570,6 +5790,8 @@ components:
         message_id:
           format: int64
           type: integer
+        message_type:
+          type: string
         mime_type:
           nullable: true
           type: string
@@ -5581,6 +5803,7 @@ components:
       required:
         - id
         - message_id
+        - message_type
         - conversation_id
         - entry_key
         - filename
@@ -5979,6 +6202,20 @@ components:
           items:
             type: string
           type: array
+      type: object
+    FirstContactIntroducer:
+      properties:
+        display_name:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - display_name
       type: object
     FormatCoverage:
       properties:
@@ -7130,7 +7367,7 @@ components:
             $ref: "#/components/schemas/KataIssueReceipt"
           type: array
         truncated:
-          description: "The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked"
+          description: "The list may omit matching issues: more matched than were returned, or some citations could not be checked"
           type: boolean
       required:
         - issues
@@ -7665,6 +7902,9 @@ components:
       type: object
     MediaSearchResponse:
       properties:
+        actual_mode:
+          description: "Recording mode Docbank ran: lexical, semantic, hybrid, or unavailable when no recording search ran"
+          type: string
         attachments:
           $ref: "#/components/schemas/MediaAttachmentSearch"
         attribution_unavailable:
@@ -7673,6 +7913,11 @@ components:
           type: integer
         coverage:
           $ref: "#/components/schemas/SearchCoverage"
+        degradations:
+          description: Why recording search ran below the requested mode, such as semantic_unconfigured or semantic_unavailable
+          items:
+            type: string
+          type: array
         partial:
           description: Coverage or occurrence attribution is incomplete, even with no matching excerpts
           type: boolean
@@ -7691,6 +7936,8 @@ components:
           format: int64
           type: integer
       required:
+        - actual_mode
+        - degradations
         - coverage
         - pending_occurrences
         - unavailable_occurrences
@@ -7892,6 +8139,24 @@ components:
         selection:
           $ref: "#/components/schemas/ExploreSelection"
       type: object
+    MeetingDecisionRequest:
+      additionalProperties: false
+      properties:
+        decision:
+          enum:
+            - link
+            - unlink
+            - clear
+          type: string
+        left:
+          type: string
+        right:
+          type: string
+      required:
+        - left
+        - right
+        - decision
+      type: object
     MeetingExploreScope:
       additionalProperties: false
       properties:
@@ -7943,6 +8208,44 @@ components:
         - message_id
         - source_message_id
       type: object
+    MeetingLink:
+      properties:
+        deleted_from_source:
+          type: boolean
+        end:
+          format: date-time
+          nullable: true
+          type: string
+        ref:
+          type: string
+        start:
+          format: date-time
+          nullable: true
+          type: string
+        status:
+          type: string
+        subject:
+          type: string
+      required:
+        - ref
+        - start
+        - end
+        - status
+        - deleted_from_source
+      type: object
+    MeetingLinkDecisionResult:
+      properties:
+        left:
+          type: string
+        right:
+          type: string
+        state:
+          type: string
+      required:
+        - left
+        - right
+        - state
+      type: object
     MeetingMetricsRequest:
       additionalProperties: false
       not:
@@ -7977,6 +8280,26 @@ components:
           description: International phone number starting with + or 00; normalized to E.164
           maxLength: 64
           type: string
+      type: object
+    MeetingRecord:
+      properties:
+        links:
+          items:
+            $ref: "#/components/schemas/MeetingLink"
+          type: array
+        message_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        unexpandable:
+          items:
+            $ref: "#/components/schemas/CalendarUnexpandable"
+          type: array
+      required:
+        - links
+        - message_ids
+        - unexpandable
       type: object
     MeetingRef:
       properties:
@@ -8090,6 +8413,54 @@ components:
           maxItems: 100
           minItems: 1
           type: array
+      type: object
+    MeetingSuggestion:
+      properties:
+        member_message_id:
+          description: Meeting note ID; the suggestion when the seed is an event
+          format: int64
+          type: integer
+        overlap_minutes:
+          format: int64
+          type: integer
+        ref:
+          description: Calendar event reference; the suggestion when the seed is a note
+          type: string
+        shared_attendees:
+          format: int64
+          type: integer
+        start:
+          description: Start of the suggested event or note
+          format: date-time
+          type: string
+        title:
+          description: Title of the suggested event or note
+          type: string
+        title_tokens:
+          format: int64
+          type: integer
+      required:
+        - ref
+        - member_message_id
+        - title
+        - start
+        - overlap_minutes
+        - shared_attendees
+        - title_tokens
+      type: object
+    MeetingSuggestionPage:
+      properties:
+        suggestions:
+          items:
+            $ref: "#/components/schemas/MeetingSuggestion"
+          type: array
+        unexpandable:
+          items:
+            $ref: "#/components/schemas/CalendarUnexpandable"
+          type: array
+      required:
+        - suggestions
+        - unexpandable
       type: object
     MergeOrganizationBody:
       additionalProperties: false
@@ -8211,6 +8582,12 @@ components:
           type: string
         subject:
           type: string
+        tab_title:
+          description: Title suitable for a browser tab; empty when unavailable.
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         to:
           items:
             type: string
@@ -8221,6 +8598,7 @@ components:
             $ref: "#/components/schemas/ConversationParticipant"
           type: array
       required:
+        - tab_title
         - body
         - attachments
         - id
@@ -10850,6 +11228,8 @@ components:
           type: string
         display_name:
           type: string
+        ensure:
+          $ref: "#/components/schemas/PersonEnsureInfo"
         id:
           format: int64
           type: integer
@@ -11544,6 +11924,74 @@ components:
             type: integer
           type: array
       type: object
+    PersonCreateContact:
+      additionalProperties: false
+      properties:
+        type:
+          pattern: ^[A-Za-z0-9-]{1,64}$
+          type: string
+        value:
+          type: string
+      required:
+        - value
+      type: object
+    PersonCreateErrorResponse:
+      properties:
+        details:
+          x-go-type: jsontext.Value
+          x-go-type-import:
+            path: encoding/json/jsontext
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+      type: object
+    PersonCreateInput:
+      additionalProperties: false
+      properties:
+        address:
+          maxLength: 1000
+          type: string
+        emails:
+          items:
+            $ref: "#/components/schemas/PersonCreateContact"
+          maxItems: 200
+          type: array
+        if_exists:
+          enum:
+            - error
+            - return
+          type: string
+        name:
+          maxLength: 256
+          minLength: 1
+          type: string
+        note:
+          maxLength: 10000
+          type: string
+        org:
+          maxLength: 256
+          type: string
+        phones:
+          items:
+            $ref: "#/components/schemas/PersonCreateContact"
+          maxItems: 200
+          type: array
+        source:
+          description: Provenance of every created value; defaults to user
+          enum:
+            - user
+            - enrichment
+          type: string
+        title:
+          description: Job title at org; requires org
+          maxLength: 280
+          type: string
+      required:
+        - name
+      type: object
     PersonDate:
       properties:
         calendar_scale:
@@ -11812,6 +12260,26 @@ components:
         - max_requests_per_run
         - max_requests_per_day
       type: object
+    PersonEnsureInfo:
+      properties:
+        match_basis:
+          items:
+            $ref: "#/components/schemas/PersonMatchBasis"
+          type: array
+        status:
+          enum:
+            - created
+            - matched_existing
+          type: string
+        unapplied_contacts:
+          items:
+            $ref: "#/components/schemas/PersonUnappliedContact"
+          type: array
+      required:
+        - status
+        - match_basis
+        - unapplied_contacts
+      type: object
     PersonFactClaim:
       properties:
         claim_key:
@@ -11890,6 +12358,9 @@ components:
           type: string
         claim_key:
           type: string
+        claim_value:
+          description: Submitted JSON value of the claim this decision describes
+          type: string
         competing_claim_key:
           type: string
         created_at:
@@ -11900,6 +12371,16 @@ components:
         id:
           format: int64
           type: integer
+        outcome:
+          enum:
+            - saved
+            - value-retired
+            - current-value-kept
+            - pinned-value-kept
+            - too-close-to-choose
+            - not-used
+          nullable: true
+          type: string
         projection:
           $ref: "#/components/schemas/ProjectionRef"
         reason:
@@ -11907,13 +12388,23 @@ components:
         resolution_id:
           format: int64
           type: integer
+        resolver_version:
+          type: string
         score:
           $ref: "#/components/schemas/PersonFactScoreBreakdown"
+        score_maxima:
+          $ref: "#/components/schemas/PersonFactScoreBreakdown"
+        target:
+          $ref: "#/components/schemas/TargetRef"
       required:
         - id
         - resolution_id
         - decision_key
         - claim_key
+        - claim_value
+        - outcome
+        - target
+        - resolver_version
         - action
         - reason
         - score
@@ -12614,6 +13105,32 @@ components:
         - received_count
         - sent_count
         - latest_at
+      type: object
+    PersonMatchBasis:
+      properties:
+        kind:
+          type: string
+        matched:
+          enum:
+            - contact_point
+            - participant
+            - identifier
+            - observation
+          type: string
+        participant_id:
+          format: int64
+          nullable: true
+          type: integer
+        person_id:
+          format: int64
+          nullable: true
+          type: integer
+        value:
+          type: string
+      required:
+        - kind
+        - value
+        - matched
       type: object
     PersonMatchBatchError:
       properties:
@@ -13907,6 +14424,18 @@ components:
         - tracked
         - tracked_at
       type: object
+    PersonUnappliedContact:
+      properties:
+        kind:
+          type: string
+        type:
+          type: string
+        value:
+          type: string
+      required:
+        - kind
+        - value
+      type: object
     PinState:
       properties:
         actor:
@@ -13935,6 +14464,17 @@ components:
           type: string
       required:
         - ok
+      type: object
+    Preset:
+      properties:
+        days:
+          format: int64
+          type: integer
+        list:
+          type: string
+      required:
+        - list
+        - days
       type: object
     Progress:
       properties:
@@ -15275,6 +15815,7 @@ components:
           format: double
           type: number
         expected_value_id:
+          description: Positive ID compares the current value; zero requires no current value
           format: int64
           type: integer
         ordinal:
@@ -16071,6 +16612,10 @@ components:
       type: object
     SyncResult:
       properties:
+        binding_conflicts:
+          description: CardDAV binding conflicts archive-wide at this run.
+          format: int64
+          type: integer
         books:
           format: int64
           type: integer
@@ -16361,7 +16906,11 @@ components:
           items:
             $ref: "#/components/schemas/TaskSummary"
           type: array
+        truncated:
+          description: More tasks matched than were returned
+          type: boolean
       required:
+        - truncated
         - tasks
       type: object
     TaskSummary:
@@ -16380,12 +16929,12 @@ components:
       additionalProperties: false
       properties:
         event:
-          description: Allowlisted event name, app_opened, screen_viewed, session_ended, search_run, message_opened, sync_finished, search_empty, or error_shown
+          description: Allowlisted interface event name
           type: string
         properties:
           additionalProperties:
             x-go-type: any
-          description: "Fixed properties: surface (web, tui, cli), screen for screen_viewed, duration_bucket for session_ended, search_type (text, semantic, hybrid) for search_run. Searches report after successful current first-page results load, including retries and reloads; message opens report when readable. Core actions require surface; search_run also requires search_type. The daemon counts successful manual browser sync completions even after the person leaves Sources; the CLI posts its successful sync_finished events. search_empty counts submitted empty searches once per UTC day, surface, and search type, excluding previews and reloads. Everything sends no search_empty while recording search is unknown or set up. error_shown requires surface and kind (search, message, sync, other) for displayed search, archive load, message, or Sync now requests on Sources that fail to start, without daily deduplication; retries can send repeats. sync_failed fires when a scheduled sync or Sync now on Sources finds a source starting to fail; it is daemon-only and rejected here. Manual CLI syncs and Settings → CardDAV Sync now neither record nor clear outages; the next successful scheduled pass clears them. Unlisted outcome values become other. Invalid core actions are dropped; unknown properties are stripped"
+          description: Allowlisted event properties; unknown properties are stripped
           type: object
       required:
         - event
@@ -16393,7 +16942,7 @@ components:
     TelemetryEventResponse:
       properties:
         status:
-          description: queued when accepted, including suppressed daily screen_viewed and message_opened duplicates or invalid screen names; disabled when telemetry is off
+          description: queued when accepted; disabled otherwise
           enum:
             - queued
             - disabled
@@ -17089,7 +17638,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.4.0
+  version: 5.31.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -18778,6 +19327,58 @@ paths:
       security:
         - apiKey: []
       summary: Complete Google Contacts authorization
+      tags:
+        - API
+  /api/v1/carddav/participant-bindings:
+    post:
+      operationId: reconcileCardDAVParticipantBindings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardDAVParticipantBindingOptions"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVParticipantBindingResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preview, reconcile, or undo automatic CardDAV participant memberships
       tags:
         - API
   /api/v1/carddav/publications/{person_id}:
@@ -20613,6 +21214,98 @@ paths:
       security:
         - apiKey: []
       summary: List one conversation in chronological order for export. SQLite compares instants to the millisecond, with ties in message-ID order.
+      tags:
+        - API
+  /api/v1/cli/messages/export:
+    get:
+      operationId: exportCLIMessages
+      parameters:
+        - description: Inclusive RFC3339 lower bound
+          in: query
+          name: start
+          required: true
+          schema:
+            type: string
+        - description: Exclusive RFC3339 upper bound
+          in: query
+          name: end
+          required: true
+          schema:
+            type: string
+        - description: Exact message type to include (repeatable)
+          in: query
+          name: message_type
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Source selector type:identifier from list-accounts (repeatable)
+          in: query
+          name: source
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Export messages for the durable person's bound participants
+          in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Stream messages in a time window as msgvault-message-export/1 JSON Lines
       tags:
         - API
   /api/v1/cli/rebuild-fts:
@@ -22893,6 +23586,33 @@ paths:
       summary: Get authenticated health details
       tags:
         - API
+  /api/v1/identity/cache-refresh:
+    post:
+      operationId: refreshIdentityCache
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityLinkResponse"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Refresh identity datasets
+      tags:
+        - API
   /api/v1/identity/links:
     post:
       operationId: linkIdentityParticipants
@@ -24092,6 +24812,63 @@ paths:
       summary: Add exact archive evidence to an existing Kata issue
       tags:
         - API
+  /api/v1/integrations/kata/open-issues:
+    get:
+      operationId: listOpenKataIssues
+      parameters:
+        - description: Search open issue text by whole word or enter an exact qualified ref, including closed issues, up to 256 bytes
+          in: query
+          name: q
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssueListResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List or search Kata issues in the configured project
+      tags:
+        - API
   /api/v1/integrations/kata/status:
     get:
       operationId: getKataIntegrationStatus
@@ -24117,10 +24894,9 @@ paths:
     get:
       operationId: searchIntegrationTasks
       parameters:
-        - description: Task title search within the configured project
+        - description: Task title search within the configured project; omit to list tasks
           in: query
           name: q
-          required: true
           schema:
             type: string
       responses:
@@ -24631,7 +25407,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: "Attachment mode: lexical (default), semantic, or hybrid; recordings support lexical only"
+        - description: "Search mode for recordings and attachments: lexical (default), semantic, or hybrid"
           in: query
           name: mode
           schema:
@@ -24898,6 +25674,81 @@ paths:
       summary: Render bounded archived meeting context
       tags:
         - Meetings
+  /api/v1/meetings/links/decisions:
+    post:
+      operationId: decideMeetingLink
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingDecisionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingLinkDecisionResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Link or split archived meeting copies
+      tags:
+        - Meetings
   /api/v1/meetings/metrics:
     post:
       operationId: getMeetingMetrics
@@ -24971,6 +25822,140 @@ paths:
       security:
         - apiKey: []
       summary: Get archived meeting duration metrics
+      tags:
+        - Meetings
+  /api/v1/meetings/record:
+    get:
+      operationId: getMeetingRecord
+      parameters:
+        - in: query
+          name: ref
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingRecord"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read an archived meeting from a note or event
+      tags:
+        - Meetings
+  /api/v1/meetings/suggestions:
+    get:
+      operationId: suggestMeetingLinks
+      parameters:
+        - in: query
+          name: ref
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            default: 10
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingSuggestionPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Suggest links between meeting notes and calendar events
       tags:
         - Meetings
   /api/v1/messages:
@@ -25462,6 +26447,65 @@ paths:
       security:
         - apiKey: []
       summary: Get one message
+      tags:
+        - API
+  /api/v1/messages/{id}/family:
+    get:
+      operationId: getEmailFamily
+      parameters:
+        - description: Live archived email message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailFamily"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read the other archived copies, replies and forwards of an email
       tags:
         - API
   /api/v1/messages/{id}/inline:
@@ -27511,6 +28555,68 @@ paths:
       summary: Find durable people by saved or observed names without selecting a duplicate
       tags:
         - API
+  /api/v1/people/create:
+    post:
+      description: Creates a durable profile with a new vCard UID and user-curated contact data. With if_exists=return, returns a single matching person without updating it; otherwise refuses existing contacts. A title requires an organization. Does not publish to CardDAV.
+      operationId: createStandalonePerson
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonCreateInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: Created
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonCreateErrorResponse"
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a person without message participants
+      tags:
+        - API
   /api/v1/people/directory:
     get:
       description: Returns one stable, non-sensitive page of promoted durable people.
@@ -27569,7 +28675,18 @@ paths:
           schema:
             format: date-time
             type: string
-        - description: "Directory order: name, last_contact_desc, or last_contact_asc"
+        - description: "Cadence filter: overdue, due (includes overdue), no_list, or unknown"
+          in: query
+          name: cadence
+          schema:
+            type: string
+        - description: UTC days ahead for cadence=due, 0..3660 (default 0)
+          in: query
+          name: due_within_days
+          schema:
+            format: int64
+            type: integer
+        - description: "Directory order: name, last_contact_desc, last_contact_asc, most_overdue, or next_due"
           in: query
           name: sort
           schema:
@@ -27577,6 +28694,8 @@ paths:
               - name
               - last_contact_desc
               - last_contact_asc
+              - most_overdue
+              - next_due
             type: string
       responses:
         "200":
@@ -28340,6 +29459,13 @@ paths:
           name: slug
           schema:
             type: string
+        - description: Restrict values to one ordinal within a definition
+          in: query
+          name: ordinal
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
         - description: Restrict the response to one portable definition identifier
           in: query
           name: universal_id
@@ -29255,6 +30381,11 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Restrict to one claim key
+          in: query
+          name: claim_key
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -29316,6 +30447,12 @@ paths:
         - description: Zero-based row offset
           in: query
           name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Restrict to one evidence row
+          in: query
+          name: evidence_id
           schema:
             format: int64
             type: integer
@@ -29543,6 +30680,53 @@ paths:
       security:
         - apiKey: []
       summary: Replace an effective person fact pin
+      tags:
+        - API
+  /api/v1/people/{id}/fact-summary:
+    get:
+      operationId: getPersonFactSummary
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FactSummary"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get person fact summary
       tags:
         - API
   /api/v1/people/{id}/files/search:
@@ -34038,6 +35222,27 @@ paths:
       summary: List source sync status
       tags:
         - API
+  /api/v1/sources/{source_id}/account-attribution/repair:
+    post:
+      operationId: repairAccountAttribution
+      parameters:
+        - description: Source ID
+          in: path
+          name: source_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "202":
+          description: Accepted
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Retry account matching for one source
+      tags:
+        - API
   /api/v1/sources/{source_id}/identities:
     get:
       operationId: listSourceIdentities
@@ -34278,7 +35483,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Report a web, terminal UI, or interactive CLI usage event
+      summary: Record an interface event
       tags:
         - API
   /api/v1/text/aggregates:

@@ -2,6 +2,7 @@ package beeper
 
 import (
 	"database/sql"
+	"strconv"
 	"testing"
 	"time"
 
@@ -525,4 +526,130 @@ func TestRichUpgradeDoesNotAbsorbContactOwner(t *testing.T) {
 	again, err := r.resolveID(t.Context(), "@lea:beeper.local", "Lea")
 	require.NoError(err)
 	assert.Equal(pid, again, "the identifier now points at the new resolution")
+}
+
+func TestPhoneUpgradeKeepsEmailResolutionOnAliasConflict(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	r := newParticipantResolver(st)
+
+	emailPID, err := r.resolveUser(t.Context(), &User{ID: "@user:beeper.local", Email: "user@example.com"})
+	require.NoError(err)
+	third, err := st.EnsureParticipant("other@example.com", "Other", "example.com")
+	require.NoError(err)
+	require.NoError(st.SetParticipantIdentifier(third, "email", "user@example.com"))
+	phonePID, err := st.EnsureParticipantByPhone(t.Context(), "+15550100021", "Phone", "imessage")
+	require.NoError(err)
+	phoneEmail, err := st.EnsureParticipant("phone@example.com", "Phone", "example.com")
+	require.NoError(err)
+	require.NoError(st.MergeParticipantsContext(t.Context(), phoneEmail, phonePID))
+
+	resolved, err := r.resolveUser(t.Context(), &User{ID: "@user:beeper.local", PhoneNumber: "+15550100021"})
+	require.NoError(err)
+	assert.Equal(emailPID, resolved)
+	again, err := newParticipantResolver(st).resolveID(t.Context(), "@user:beeper.local", "User")
+	require.NoError(err)
+	assert.Equal(emailPID, again)
+}
+
+// Two Beeper IDs that share an email resolve to one participant. When one
+// gains a phone and that participant merges into the phone participant, the
+// other ID's cached owner must follow the merge in either member order.
+func TestSharedEmailMergeKeepsResolverCacheCurrent(t *testing.T) {
+	for _, tc := range []struct{ name, upgraded, other string }{
+		{"upgraded member first", "@signal_a1:beeper.local", "@signal_a2:beeper.local"},
+		{"other member cached first", "@signal_b2:beeper.local", "@signal_b1:beeper.local"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			r := newParticipantResolver(st, "signal")
+			ids := []string{tc.upgraded, tc.other}
+			if tc.other < tc.upgraded {
+				ids[0], ids[1] = ids[1], ids[0]
+			}
+			for _, id := range ids {
+				_, err := r.resolveUser(t.Context(), &User{ID: id, Email: "shared@example.test"})
+				require.NoError(err)
+			}
+			phone, err := r.resolveUser(t.Context(), &User{ID: tc.upgraded, Email: "shared@example.test", PhoneNumber: "+12025550177"})
+			require.NoError(err)
+			for _, id := range []string{tc.upgraded, tc.other} {
+				owner, err := r.resolveID(t.Context(), id, "")
+				require.NoError(err)
+				require.Equal(phone, owner)
+			}
+		})
+	}
+}
+
+func TestSharedEmailMergeKeepsSenderCacheCurrent(t *testing.T) {
+	t.Parallel()
+	const upgraded, other = "@signal_c1:beeper.local", "@signal_c2:beeper.local"
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat("!shared-email:example.test", 1, time.Now().Add(-48*time.Hour))
+	chat.Type = "group"
+	chat.Participants = append(chat.Participants,
+		map[string]any{"id": upgraded, "fullName": "Alex Upgraded", "email": "shared@example.test"},
+		map[string]any{"id": other, "fullName": "Alex Other", "email": "shared@example.test"})
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	require.Equal(participantForBeeperUser(t, st, upgraded), participantForBeeperUser(t, st, other),
+		"both IDs share the email participant")
+
+	f.mu.Lock()
+	for _, member := range chat.Participants {
+		if member["id"] == upgraded {
+			member["phoneNumber"] = "+12025550177"
+		}
+	}
+	f.mu.Unlock()
+	f.appendMsg(chat.ID, fakeMsg{
+		ID: chat.ID + "-other", SortKey: 1, Timestamp: time.Now(), Text: "after merge",
+		SenderID: other, SenderName: "Alex Other",
+	})
+	f.mu.Lock()
+	chat.DetailTruncated = true
+	f.mu.Unlock()
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err, "the other ID's message must not use the merged-away participant")
+
+	phone := participantForBeeperUser(t, st, upgraded)
+
+	var sender int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT sender_id FROM messages WHERE source_message_id = ?`), chat.ID+"-other").Scan(&sender))
+	assert.Equal(phone, sender, "the other ID's new message belongs to the merged participant")
+	source, err := st.GetOrCreateSource("beeper", "signal")
+	require.NoError(err)
+	receipts, err := st.BeeperRosterReceiptsContext(t.Context(), source.ID, rosterProvider(chat.ID))
+	require.NoError(err)
+	assert.Equal(strconv.FormatInt(phone, 10), receipts[imp.res.identifierForUser(other)].Name)
+	f.mu.Lock()
+	chat.DetailTruncated = false
+	f.mu.Unlock()
+	imp = NewImporter(st, imp.client)
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	require.True(latestBeeperState(t, imp).Chats[chat.ID].RosterWork.Verified)
+	receipts, err = st.BeeperRosterReceiptsContext(t.Context(), source.ID, rosterProvider(chat.ID))
+	require.NoError(err)
+	assert.Equal(strconv.FormatInt(phone, 10), receipts[imp.res.identifierForUser(other)].Name)
+	f.mu.Lock()
+	chat.ParticipantsTruncated = true
+	f.mu.Unlock()
+	f.setChatGetFailure(chat.ID, true)
+	f.appendMsg(chat.ID, fakeMsg{ID: chat.ID + "-after-restart", SortKey: 100, Timestamp: time.Now().Add(time.Second), Text: "after restart", SenderID: other})
+	imp = NewImporter(st, imp.client)
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true})
+	var partial *PartialSyncError
+	require.ErrorAs(err, &partial)
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, chat.ID+"-after-restart").Scan(&sender))
+	assert.Equal(phone, sender)
 }

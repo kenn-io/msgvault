@@ -40,6 +40,9 @@ var mcpAllowCalendarWrites bool
 var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
 var mcpAllowSourceWrites bool
 var mcpAllowLoopWrites bool
+var mcpAllowImportWrites bool
+var mcpAllowAttributeWrites bool
+var mcpAllowCuratedWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -167,27 +170,13 @@ func prepareMCPHTTP(cmd *cobra.Command, cfg *config.Config) (string, string, err
 	return address, key, err
 }
 
-// savedViewsMinAPISchemaVersion is the first daemon API schema that runs Saved
-// Views through POST /api/v1/saved-views/{id}/run.
-const savedViewsMinAPISchemaVersion = "2.21.0"
-const personCardDAVMinAPISchemaVersion = "2.32.0"
-const identityReviewMinAPISchemaVersion = "3.0.0"
-const identityScoringMinAPISchemaVersion = "3.0.0"
-const draftsMinAPISchemaVersion = "3.0.0"
-
 // delegatedMCPServeOptions offers only the tools an agent grant can use.
 // Source inventory is required to select tools within the grant.
 func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpserver.ServeOptions, error) {
-	health, err := st.Health(ctx)
-	if err != nil {
-		return mcpserver.ServeOptions{}, fmt.Errorf("check daemon compatibility: %w", err)
-	}
+	health, healthErr := st.Health(ctx)
 	var schemaVersion string
-	if health != nil && health.APISchemaVersion != nil {
+	if healthErr == nil && health != nil && health.APISchemaVersion != nil {
 		schemaVersion = *health.APISchemaVersion
-	}
-	if !daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentReadMinAPISchemaVersion) {
-		return mcpserver.ServeOptions{}, fmt.Errorf("delegated MCP requires daemon API schema %s or newer (daemon reports %q); upgrade the daemon", daemonclient.AgentReadMinAPISchemaVersion, schemaVersion)
 	}
 	grant, err := st.AgentTokenSelf(ctx)
 	if err != nil {
@@ -201,6 +190,7 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
 		Engine: daemonclient.NewEngineAdapter(st), AttachmentReader: st,
 		Calendar: st, GrantPermissions: grant.Permissions, Families: families,
+		Meetings: st, MeetingRecords: true, MeetingSuggestions: true,
 	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentChangeFeedMinAPISchemaVersion) {
 		opts.OperationCapabilities = []string{mcpserver.ToolListChanges}
@@ -209,39 +199,8 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	return opts, nil
 }
 
-// messageTagsMinAPISchemaVersion adds native email tag reads and edits.
-const messageTagsMinAPISchemaVersion = "3.15.0"
-
 // ownerEventsMinAPISchemaVersion adds owner MCP Events subscriptions.
-const ownerEventsMinAPISchemaVersion = "5.4.0"
-
-// personAgendaMinAPISchemaVersion adds live task-backed person agendas.
-const personAgendaMinAPISchemaVersion = "2.30.0"
-
-// personTierMinAPISchemaVersion adds read-only person tier previews.
-const personTierMinAPISchemaVersion = "3.33.0"
-
-const contactRoutesMinAPISchemaVersion = "3.20.0"
-
-// archiveSQLMinAPISchemaVersion adds SQL confined to archive analytics files.
-const archiveSQLMinAPISchemaVersion = "2.31.0"
-
-// calendarControlMinAPISchemaVersion adds delegated Calendar tools.
-const calendarControlMinAPISchemaVersion = "3.1.0"
-
-// kataIssuesMinAPISchemaVersion adds Kata issues that quote archive evidence.
-const kataIssuesMinAPISchemaVersion = "3.4.0"
-
-// kataLookupMinAPISchemaVersion adds issue lookup and context reads.
-const kataLookupMinAPISchemaVersion = "3.12.0"
-const kataDocbankMinAPISchemaVersion = "3.13.0"
-
-// Schema 2.28.0 adds independent configured-lane facts to authenticated
-// health. Older health responses cannot distinguish text from visual search.
-const vectorLaneHealthMinAPISchemaVersion = "2.28.0"
-
-// Schema 2.4.0 added the visual attachment search route.
-const visualSearchMinAPISchemaVersion = "2.4.0"
+const ownerEventsMinAPISchemaVersion = "5.31.0"
 
 func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *invocation) mcpserver.ServeOptions {
 	if state == nil {
@@ -277,93 +236,57 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.Operations = backend
 		opts.OperationCapabilities = backend.capabilities()
 	}
-	health, capabilityErr := st.Health(ctx)
-	var schemaVersion string
-	if health != nil && health.APISchemaVersion != nil {
-		schemaVersion = *health.APISchemaVersion
-	}
+	health, healthErr := st.Health(ctx)
 	// Turn on can enable text search after this server starts.
 	activatable := mcpRequestPropertiesPresent(capabilities, "enableLocalEmbeddings")
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, ownerEventsMinAPISchemaVersion) {
+	if healthErr == nil && health != nil && health.APISchemaVersion != nil && daemonclient.APISchemaVersionAtLeast(*health.APISchemaVersion, ownerEventsMinAPISchemaVersion) {
 		opts.Events = st
 	}
-	lanes := capabilityErr == nil && health != nil && health.Vector != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion)
+	lanes := healthErr == nil && health != nil && health.Vector != nil
 	if activatable || lanes && health.Vector.TextEnabled != nil && *health.Vector.TextEnabled {
 		opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
 		opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
 	}
-	if lanes && health.Vector.VisualEnabled != nil && *health.Vector.VisualEnabled && daemonclient.APISchemaVersionAtLeast(schemaVersion, visualSearchMinAPISchemaVersion) {
+	if lanes && health.Vector.VisualEnabled != nil && *health.Vector.VisualEnabled {
 		opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
 	}
-	if activatable || capabilityErr == nil && health != nil && health.Vector != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, embeddingsStatusMinAPISchemaVersion) {
+	if activatable || lanes {
 		opts.EmbeddingStatus = st
 	}
-	if capabilityErr != nil {
-		log.Warn("people tools disabled because the daemon capability probe failed", "error", capabilityErr)
-	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, peopleMinAPISchemaVersion) {
-		people := daemonclient.NewPeopleBrowser(engine)
-		if daemonclient.APISchemaVersionAtLeast(schemaVersion, directoryPeopleMinAPISchemaVersion) {
-			opts.DirectoryBackend = people
-		}
-		opts.PeopleBackend = people
-		if supportsNamedPromotion(capabilities) {
-			opts.PeopleBackend = daemonMCPNamedPeopleBrowser{PeopleBrowser: people, client: st}
-		}
+	if healthErr != nil {
+		log.Warn("daemon-backed MCP tools disabled because the daemon health check failed", "error", healthErr)
+		return opts
 	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.ChatDiscoveryMinAPISchemaVersion) {
-		opts.ChatDiscoveryBackend = st
+	people := daemonclient.NewPeopleBrowser(engine)
+	opts.DirectoryBackend = people
+	opts.PeopleBackend = people
+	if supportsNamedPromotion(capabilities) {
+		opts.PeopleBackend = daemonMCPNamedPeopleBrowser{PeopleBrowser: people, client: st}
 	}
-	// The daemon executes Saved Views itself, so the tools need a daemon that
-	// serves the run endpoint; an older daemon simply omits them.
-	if capabilityErr != nil {
-		log.Warn("Saved View tools disabled because the daemon capability probe failed", "error", capabilityErr)
-	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, savedViewsMinAPISchemaVersion) {
-		opts.SavedViews = st
-	}
-	if capabilityErr != nil {
-		log.Warn("meeting tools disabled because the daemon capability probe failed", "error", capabilityErr)
-	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
-		opts.Meetings = st
-	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
-		opts.Calendar = st
-	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, contactRoutesMinAPISchemaVersion) {
-		opts.ContactRoutesBackend = st
-	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
-		opts.PersonAgendaBackend = st
-	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personTierMinAPISchemaVersion) {
-		opts.PersonTierBackend = st
-	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, kataIssuesMinAPISchemaVersion) {
-		opts.Kata = st
-		opts.KataLookup = daemonclient.APISchemaVersionAtLeast(schemaVersion, kataLookupMinAPISchemaVersion)
-		if daemonclient.APISchemaVersionAtLeast(schemaVersion, kataDocbankMinAPISchemaVersion) {
-			opts.KataDocbank = probeKataDocbank(ctx, st, log)
-		}
-	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, archiveSQLMinAPISchemaVersion) &&
-		(health.AnalyticsEngine == nil || *health.AnalyticsEngine != api.AnalyticsModePostgres) {
+	opts.PersonCreator = people
+	opts.PersonCreateIfExists = true
+	opts.ChatDiscoveryBackend = st
+	opts.SavedViews = st
+	opts.Meetings = st
+	opts.MeetingRecords = true
+	opts.MeetingSuggestions = true
+	opts.MeetingDecisions = true
+	opts.Calendar = st
+	opts.ContactRoutesBackend = st
+	opts.EmailFamilyBackend = st
+	opts.PersonAgendaBackend = st
+	opts.PersonTierBackend = st
+	opts.Kata = st
+	opts.KataLookup = true
+	opts.KataDocbank = probeKataDocbank(ctx, st, log)
+	if health.AnalyticsEngine == nil || *health.AnalyticsEngine != api.AnalyticsModePostgres {
 		opts.ArchiveSQLQuerier = engine
 	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityReviewMinAPISchemaVersion) {
-		opts.IdentityReview = st
-	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personCardDAVMinAPISchemaVersion) {
-		opts.PersonCardDAV = st
-	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, messageTagsMinAPISchemaVersion) {
-		opts.MessageTags = st
-	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityScoringMinAPISchemaVersion) {
-		opts.IdentityScoring = st
-	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
-		opts.DraftCommands = mcpDraftCommands(false)
-	}
-
+	opts.IdentityReview = st
+	opts.PersonCardDAV = st
+	opts.MessageTags = st
+	opts.IdentityScoring = st
+	opts.DraftCommands = mcpDraftCommands(false)
 	return opts
 }
 
@@ -647,8 +570,14 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	flags.BoolVar(bind(&mcpAllowCalendarWrites), prefix+"allow-calendar-writes", false,
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
+	flags.BoolVar(bind(&mcpAllowAttributeWrites), prefix+"allow-attribute-writes", false,
+		"Expose person attribute and definition writes. Each call requires client confirmation; HTTP also requires the general write opt-in.")
 	flags.BoolVar(bind(&mcpAllowLoopWrites), prefix+"allow-loop-writes", false,
 		"Allow approved open-loop done, snooze, and reopen decisions")
+	flags.BoolVar(bind(&mcpAllowImportWrites), prefix+"allow-import-writes", false,
+		"Expose bounded historical import jobs. Each call requires confirmation; HTTP also requires the general write opt-in.")
+	flags.BoolVar(bind(&mcpAllowCuratedWrites), prefix+"allow-curated-writes", false,
+		"Expose approved structured person profile writes")
 	flags.BoolVar(bind(&mcpAllowSourceWrites), prefix+"allow-source-writes", false,
 		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires the general write opt-in.")
 }
@@ -665,8 +594,17 @@ func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.Serve
 	if opts.AllowProfileWrites {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
 	}
+	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-attribute-writes"); enabled {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyAttributes)
+	}
 	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-loop-writes"); enabled {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyLoops)
+	}
+	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-import-writes"); enabled {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyImports)
+	}
+	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-curated-writes"); enabled {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyCurated)
 	}
 	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-source-writes"); enabled {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySources)

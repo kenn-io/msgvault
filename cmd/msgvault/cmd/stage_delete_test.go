@@ -397,101 +397,9 @@ func TestStageDeleteCommand(t *testing.T) {
 		assert.Zero(t, exploreRequests, "an incomplete search index must block staging before Explore")
 	})
 
-	t.Run("query_staging_rejects_old_daemon_before_explore", func(t *testing.T) {
-		for _, tt := range []struct {
-			name  string
-			query string
-		}{
-			{name: "ordinary", query: "subject:receipt"},
-			{name: "list", query: "list:announce.example.org"},
-			{name: "list_id", query: "list-id:announce.example.org"},
-		} {
-			t.Run(tt.name, func(t *testing.T) {
-				exploreRequests := 0
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					switch r.URL.Path {
-					case "/api/v1/health":
-						writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{
-							"status":             "ok",
-							"api_schema_version": "2.17.0",
-						})
-					case "/api/v1/explore":
-						exploreRequests++
-						http.Error(w, "unexpected Explore request", http.StatusInternalServerError)
-					default:
-						http.NotFound(w, r)
-					}
-				}))
-				defer server.Close()
-				testCtx := withStoreResolverConfig(t, &config.Config{
-					Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
-				})
-
-				root := newRegisteredStageDeleteTestRoot(t, testCtx)
-				root.SetArgs([]string{"stage-delete", tt.query})
-				err := root.Execute()
-
-				require.ErrorContains(t, err, "query staging requires daemon API schema 2.18.0 or newer")
-				assert.Zero(t, exploreRequests, "an older daemon must reject query staging before Explore")
-			})
-		}
-	})
-
-	t.Run("query_staging_capability_probe_failures_before_explore", func(t *testing.T) {
-		for _, tt := range []struct {
-			name          string
-			status        int
-			body          string
-			closeBefore   bool
-			wantHealthReq int
-		}{
-			{name: "http_error", status: http.StatusInternalServerError, body: "health failed", wantHealthReq: 1},
-			{name: "malformed_response", status: http.StatusOK, body: "{", wantHealthReq: 1},
-			{name: "connection_failure", closeBefore: true},
-		} {
-			t.Run(tt.name, func(t *testing.T) {
-				exploreRequests := 0
-				healthRequests := 0
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path == "/api/v1/health" {
-						healthRequests++
-						if tt.status == http.StatusOK {
-							w.WriteHeader(tt.status)
-							_, err := w.Write([]byte(tt.body))
-							assert.NoError(t, err)
-							return
-						}
-						http.Error(w, tt.body, tt.status)
-						return
-					}
-					if r.URL.Path == "/api/v1/explore" {
-						exploreRequests++
-					}
-					http.NotFound(w, r)
-				}))
-				if tt.closeBefore {
-					server.Close()
-				} else {
-					defer server.Close()
-				}
-				testCtx := withStoreResolverConfig(t, &config.Config{
-					Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
-				})
-
-				root := newRegisteredStageDeleteTestRoot(t, testCtx)
-				root.SetArgs([]string{"stage-delete", "list:announce.example.org"})
-				err := root.Execute()
-
-				require.ErrorContains(t, err, "check daemon query staging capability")
-				assert.Equal(t, tt.wantHealthReq, healthRequests)
-				assert.Zero(t, exploreRequests, "a failed capability probe must happen before Explore")
-			})
-		}
-	})
-
-	t.Run("newer_daemon_and_ordinary_query", func(t *testing.T) {
-		t.Run("newer_daemon", func(t *testing.T) {
-			server, routes, healthRequests := newStageDeleteTestServerWithSchema(t, "list:announce.example.org", false, http.StatusCreated, "2.18.0")
+	t.Run("list_and_ordinary_query", func(t *testing.T) {
+		t.Run("list_query", func(t *testing.T) {
+			server, routes := newStageDeleteTestServer(t, "list:announce.example.org", false, http.StatusCreated)
 			testCtx := withStoreResolverConfig(t, &config.Config{
 				Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 			})
@@ -500,12 +408,10 @@ func TestStageDeleteCommand(t *testing.T) {
 			root.SetArgs([]string{"stage-delete", "list:announce.example.org"})
 			require.NoError(t, root.Execute())
 			assert.Equal(t, []string{"/api/v1/cli/search", "/api/v1/explore", "/api/v1/explore/preflight", "/api/v1/deletions"}, *routes)
-			assert.Equal(t, 2, *healthRequests,
-				"the stage-delete gate and the search-index probe each verify List-ID capability")
 		})
 
-		t.Run("ordinary_query_checks_contract", func(t *testing.T) {
-			server, routes, healthRequests := newStageDeleteTestServerWithSchema(t, "subject:test", false, http.StatusCreated, "2.18.0")
+		t.Run("ordinary_query", func(t *testing.T) {
+			server, routes := newStageDeleteTestServer(t, "subject:test", false, http.StatusCreated)
 			testCtx := withStoreResolverConfig(t, &config.Config{
 				Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 			})
@@ -514,7 +420,6 @@ func TestStageDeleteCommand(t *testing.T) {
 			root.SetArgs([]string{"stage-delete", "subject:test"})
 			require.NoError(t, root.Execute())
 			assert.Equal(t, []string{"/api/v1/cli/search", "/api/v1/explore", "/api/v1/explore/preflight", "/api/v1/deletions"}, *routes)
-			assert.Equal(t, 1, *healthRequests)
 		})
 	})
 }
@@ -528,27 +433,12 @@ func boolFlag(enabled bool, flag string) []string {
 
 func newStageDeleteTestServer(t *testing.T, wantQuery string, dryRun bool, stageStatus int, wantSourceID ...int64) (*httptest.Server, *[]string) {
 	t.Helper()
-	server, routes, _ := newStageDeleteTestServerWithSchema(t, wantQuery, dryRun, stageStatus, "2.18.0", wantSourceID...)
-	return server, routes
-}
-
-func newStageDeleteTestServerWithSchema(t *testing.T, wantQuery string, dryRun bool, stageStatus int, schemaVersion string, wantSourceID ...int64) (*httptest.Server, *[]string, *int) {
-	t.Helper()
 	routes := make([]string, 0, 3)
-	healthRequests := 0
 	var expectedSourceID *int64
 	if len(wantSourceID) > 0 {
 		expectedSourceID = &wantSourceID[0]
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodGet, r.Method)
-		healthRequests++
-		writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{
-			"status":             "ok",
-			"api_schema_version": schemaVersion,
-		})
-	})
 	mux.HandleFunc("/api/v1/cli/search", func(w http.ResponseWriter, r *http.Request) {
 		routes = append(routes, r.URL.Path)
 		assert.Equal(t, http.MethodGet, r.Method)
@@ -646,7 +536,7 @@ func newStageDeleteTestServerWithSchema(t *testing.T, wantQuery string, dryRun b
 		assert.Fail(t, "unexpected stage-delete route", r.URL.Path)
 		http.NotFound(w, r)
 	})
-	return httptest.NewServer(mux), &routes, &healthRequests
+	return httptest.NewServer(mux), &routes
 }
 
 func assertStageDeleteFilters(t *testing.T, filters []generated.ExploreFilter, wantSourceID *int64) {

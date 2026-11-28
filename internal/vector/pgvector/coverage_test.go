@@ -272,3 +272,35 @@ func TestActivateGeneration_RefusesEmptySourceScope(t *testing.T) {
 
 	require.NoError(b.ActivateGeneration(ctx, empty, true), "force overrides the guard")
 }
+
+func TestEmbeddingCoverageDuringReplacement(t *testing.T) {
+	b, ctx, db := newBackendForTest(t)
+	_, err := db.ExecContext(ctx, `INSERT INTO messages (id) VALUES (2), (3), (4), (5)`)
+	require.NoError(t, err)
+	active, err := b.CreateGeneration(ctx, "active", 4, "active")
+	require.NoError(t, err)
+	require.NoError(t, b.Upsert(ctx, active, []vector.Chunk{
+		{MessageID: 1, Vector: unitVec(4, 0)},
+		{MessageID: 2, Vector: unitVec(4, 1)},
+		{MessageID: 4, Vector: unitVec(4, 2)},
+	}))
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = $1 WHERE id IN (1, 2, 3)`, int64(active))
+	require.NoError(t, err)
+	require.NoError(t, b.ActivateGeneration(ctx, active, true))
+	building, err := b.CreateGeneration(ctx, "building", 4, "building")
+	require.NoError(t, err)
+	require.NoError(t, b.Upsert(ctx, building, []vector.Chunk{{MessageID: 1, Vector: unitVec(4, 0)}}))
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = $1 WHERE id IN (1, 3)`, int64(building))
+	require.NoError(t, err)
+
+	coverage, err := b.EmbeddingCoverage(ctx, active, vector.BuildScope{})
+	require.NoError(t, err)
+	assert.Equal(t, vector.EmbeddingCoverage{Live: 5, Stamped: 2, Embedded: 2}, coverage)
+	coverage, err = b.EmbeddingCoverage(ctx, building, vector.BuildScope{})
+	require.NoError(t, err)
+	assert.Equal(t, vector.EmbeddingCoverage{Live: 5, Stamped: 2, Embedded: 1}, coverage)
+	require.NoError(t, b.RetireGeneration(ctx, building, false))
+	coverage, err = b.EmbeddingCoverage(ctx, active, vector.BuildScope{})
+	require.NoError(t, err)
+	assert.Equal(t, vector.EmbeddingCoverage{Live: 5, Stamped: 2, Embedded: 2}, coverage)
+}

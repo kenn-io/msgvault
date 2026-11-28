@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/telemetry"
 )
 
 func TestLoadThreadMessagesBeyondRateLimitBurst(t *testing.T) {
@@ -75,8 +74,8 @@ func TestShowThreadPaginationAndIdentity(t *testing.T) {
 	}
 	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDECODE", "")
-	t.Setenv(telemetry.EnabledEnv, "1")
-	t.Setenv(posthog.GenericEnabledEnv, "")
+	t.Setenv(posthog.PrefixedEnabledEnv("MSGVAULT"), "")
+	t.Setenv(posthog.GenericEnabledEnv, "1")
 	clearTelemetryVetoEnvironment(t)
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }

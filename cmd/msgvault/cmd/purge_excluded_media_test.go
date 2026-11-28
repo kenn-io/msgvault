@@ -183,6 +183,11 @@ func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
 	policy, ok = mediaPolicyForAttachment(current, store.AttachmentPolicyCandidate{SourceType: "twilio", SourceIdentifier: "work"})
 	require.True(ok)
 	assert.Equal(int64(1)<<20, policy.MaxBytes)
+
+	current.Bland = []config.BlandSource{{Identifier: "work", MaxMediaMB: 2}}
+	policy, ok = mediaPolicyForAttachment(current, store.AttachmentPolicyCandidate{SourceType: "bland", SourceIdentifier: "work"})
+	require.True(ok)
+	assert.Equal(int64(2)<<20, policy.MaxBytes)
 }
 
 func TestMediaPolicyForMatrixUsesAccountConfig(t *testing.T) {
@@ -229,7 +234,7 @@ func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {
 	f := newPurgeMediaFixture(t, sourceTypeBeeper)
 	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		UPDATE attachments
-		SET content_hash = NULL, storage_path = ?, thumbnail_hash = ?, thumbnail_path = ?
+		SET content_hash = NULL, attachment_state = NULL, storage_path = ?, thumbnail_hash = ?, thumbnail_path = ?
 		WHERE id = ?
 		RETURNING id
 	`), "thumbnail-only", f.contentHash, f.contentPath, f.retainedID).Scan(&f.retainedID))

@@ -66,6 +66,37 @@ func TestExtractionProgramSchemaRunsIntegerConfidence(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAssemblerAppliesConfiguredOutputCap(t *testing.T) {
+	packet := packetTestPacket()
+	packet.Seeds = packet.Seeds[:1]
+	evidenceID := packetEvidenceID(packet.Seeds[0])
+	valid := fmt.Sprintf(`{"claims":[{"target_key":%q,"relation":"support","value":"ramen","evidence_ids":[%q],"valid_from":null,"valid_until":null,"confidence_basis_points":875}]}`,
+		packet.Catalog.Targets[0].Key, evidenceID)
+	profile := ProviderProfile{AllowSensitive: true, Fingerprint: "provider-policy"}
+
+	defaults, err := Assembler{MaxBytes: 16_384, MaxItems: 10}.partition(packet)
+	require.NoError(t, err)
+	require.NotEmpty(t, defaults)
+	require.Equal(t, extractionMaxOutputTokens, defaults[0].Request.MaxOutputTokens)
+
+	batches, err := Assembler{MaxBytes: 16_384, MaxItems: 10, MaxOutputTokens: 16_384}.partition(packet)
+	require.NoError(t, err)
+	require.NotEmpty(t, batches)
+	for _, batch := range batches {
+		require.Equal(t, 16_384, batch.Request.MaxOutputTokens)
+	}
+	claims, err := ParseExtraction(json.RawMessage(valid), batches[0], profile)
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+
+	for _, cap := range []int{0, -1, extractionMaxOutputTokensLimit + 1} {
+		batch := batches[0]
+		batch.Request.MaxOutputTokens = cap
+		_, err := ParseExtraction(json.RawMessage(valid), batch, profile)
+		require.ErrorContains(t, err, "invalid output cap", "cap %d", cap)
+	}
+}
+
 func TestParseExtractionRequiresCitedAlignedEvidence(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)

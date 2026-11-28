@@ -34,7 +34,7 @@ func (h *countingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func newTelemetryTestServer(t *testing.T, apiKey string) (*Server, *countingHandler) {
 	t.Helper()
 	// Test builds have no PostHog key: allowlisted events answer "disabled" and nothing is sent.
-	reporter := telemetry.NewReporterOrDisabled(telemetry.Options{DataDir: t.TempDir()}, testLogger())
+	reporter := telemetry.NewReporterOrDisabled(telemetry.Options{DataDir: t.TempDir()})
 	capture := &countingHandler{next: telemetry.CaptureHandler(reporter, t.TempDir())}
 	srv := NewServerWithOptions(ServerOptions{
 		Config:           &config.Config{Server: config.ServerConfig{APIKey: apiKey}},
@@ -112,7 +112,7 @@ func TestTelemetryEventRouteBypassesHeldOperationGate(t *testing.T) { //nolint:p
 	require.True(ok, "occupy gate")
 	defer release()
 
-	reporter := telemetry.NewReporterOrDisabled(telemetry.Options{DataDir: t.TempDir()}, testLogger())
+	reporter := telemetry.NewReporterOrDisabled(telemetry.Options{DataDir: t.TempDir()})
 	srv := NewServerWithOptions(ServerOptions{
 		Config:           &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Store:            &gateFilesStore{mockStore: &mockStore{}},

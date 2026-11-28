@@ -61,7 +61,7 @@ func UnmarshalResourceMetadata(data []byte) (ResourceEnvelope, error) {
 	}
 	if metadata.FormatVersion != ResourceMetadataFormatVersion {
 		return ResourceEnvelope{}, fmt.Errorf(
-			"unsupported vCard resource metadata format %d", metadata.FormatVersion,
+			"unsupported vCard resource metadata format %d. Use a msgvault version that supports this metadata format", metadata.FormatVersion,
 		)
 	}
 	envelope := ResourceEnvelope{

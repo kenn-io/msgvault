@@ -285,7 +285,7 @@
   /* On a phone ViewMenu replaces the view group except in a scoped view, where the sort picker fills the rest of the Filter line. */
   @media (max-width: 640px) {
     .view-group {
-      flex: 1 1 auto;
+      flex: 1 1 0;
     }
 
     .view-group > :global(*) {

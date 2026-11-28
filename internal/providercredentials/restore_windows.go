@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"slices"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -20,143 +21,130 @@ func SecureRestored(dir string, restored []string) error {
 	if len(restored) == 0 {
 		return nil
 	}
-	selected := make(map[string]struct{}, len(restored))
-	ancestors := make(map[string]struct{})
+	var ancestors []string
 	for _, name := range restored {
-		selected[name] = struct{}{}
 		for parent := filepath.Dir(name); parent != "."; parent = filepath.Dir(parent) {
-			ancestors[parent] = struct{}{}
+			ancestors = append(ancestors, parent)
 		}
 	}
+	slices.SortFunc(ancestors, func(a, b string) int { return len(a) - len(b) })
 	return withDirectoryMutex(dir, func(directory windows.Handle) error {
 		if err := verifyHandleOwner(directory); err != nil {
 			return fmt.Errorf("inspect restored token directory: %w", err)
 		}
-		rootAffected := verifyOwnerOnlyHandle(directory, false) != nil
-		directories, err := restorePreflight(dir, selected, ancestors, rootAffected)
-		if err != nil {
-			return err
+		var changed []string
+		for _, name := range ancestors {
+			h, err := openSecurityHandle(filepath.Join(dir, name), true, windows.READ_CONTROL)
+			if err != nil {
+				return fmt.Errorf("inspect restored token directory %q: %w", name, err)
+			}
+			err = verifyOwnerOnlyHandle(h, false)
+			if closeErr := windows.CloseHandle(h); closeErr != nil {
+				return fmt.Errorf("close restored token directory %q: %w", name, closeErr)
+			}
+			if err != nil && !containsPath(changed, name) {
+				changed = append(changed, name)
+			}
 		}
 		for _, name := range restored {
-			if err := secureRestoredFile(filepath.Join(dir, name)); err != nil {
+			if err := secureFileACL(filepath.Join(dir, name)); err != nil {
 				return fmt.Errorf("secure restored token %q: %w", name, err)
 			}
 		}
-		for _, name := range slices.Backward(directories) {
-			if err := secureRestoredDirectory(filepath.Join(dir, name)); err != nil {
-				return fmt.Errorf("secure restored token directory %q: %w", name, err)
+		rootChanged := verifyOwnerOnlyHandle(directory, false) != nil
+		if rootChanged {
+			changed = append(changed, ".")
+		}
+		slices.SortStableFunc(changed, func(a, b string) int { return len(b) - len(a) })
+		for _, name := range changed {
+			if err := restorePreflight(dir, name, restored, ancestors, changed); err != nil {
+				return err
 			}
 		}
-		if rootAffected {
-			return secureOwnerOnlyHandle(directory)
+		for _, name := range changed {
+			if err := (nativePermissions{}).secureDirectory(filepath.Join(dir, name)); err != nil {
+				return fmt.Errorf("secure restored token directory %q: %w", name, err)
+			}
 		}
 		return nil
 	})
 }
 
-func restorePreflight(dir string, selected, ancestors map[string]struct{}, rootAffected bool) ([]string, error) {
-	var directories []string
-	affected := map[string]bool{".": rootAffected}
-	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
+func restorePreflight(dir, changedDir string, selected, ancestors, changed []string) error {
+	root := filepath.Join(dir, changedDir)
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return fmt.Errorf("%w: inspect tokens: %w", ErrRestorePermissionsConflict, walkErr)
+			return fmt.Errorf("inspect tokens: %w", walkErr)
 		}
-		if path == dir {
+		if path == root {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
-			return fmt.Errorf("%w: inspect tokens: %w", ErrRestorePermissionsConflict, err)
+			return fmt.Errorf("inspect tokens: %w", err)
 		}
-		parentAffected := affected[filepath.Dir(rel)]
-		_, selectedFile := selected[rel]
-		_, selectedAncestor := ancestors[rel]
-		if !parentAffected && !selectedFile && !selectedAncestor {
-			if entry.IsDir() {
+		if containsPath(selected, rel) {
+			return nil
+		}
+		h, err := openSecurityHandle(path, entry.IsDir(), windows.READ_CONTROL)
+		if err != nil {
+			return fmt.Errorf("inspect tokens/%s: %w", rel, err)
+		}
+		defer windows.CloseHandle(h) //nolint:errcheck // inspection result is authoritative
+		sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+		if err != nil {
+			return fmt.Errorf("inspect tokens/%s: %w", rel, err)
+		}
+		control, _, err := sd.Control()
+		if err != nil {
+			return fmt.Errorf("inspect tokens/%s: %w", rel, err)
+		}
+		if containsPath(ancestors, rel) {
+			if control&windows.SE_DACL_PROTECTED != 0 && !containsPath(changed, rel) {
 				return fs.SkipDir
 			}
 			return nil
 		}
-		if entry.Type()&fs.ModeSymlink != 0 || (!entry.IsDir() && !entry.Type().IsRegular()) {
-			return fmt.Errorf("%w: ambiguous tokens/%s", ErrRestorePermissionsConflict, rel)
+		if entry.IsDir() && control&windows.SE_DACL_PROTECTED != 0 {
+			return fs.SkipDir
 		}
-		h, err := openSecurityHandle(path, entry.IsDir(), windows.READ_CONTROL)
+		inherited, err := inheritedAccess(sd)
 		if err != nil {
-			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
-		}
-		defer windows.CloseHandle(h) //nolint:errcheck // inspection result is authoritative
-		if entry.IsDir() {
-			protected, err := protectedDACL(h)
-			if err != nil {
-				return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
-			}
-			if protected {
-				affected[rel] = false
-				if !selectedAncestor {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			if selectedAncestor && parentAffected {
-				directories = append(directories, rel)
-				affected[rel] = true
-				return nil
-			}
-			affected[rel] = parentAffected
-		} else if selectedFile {
-			return nil
-		}
-		if !parentAffected {
-			return nil
-		}
-		inherited, err := inheritedAccess(h)
-		if err != nil {
-			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
+			return fmt.Errorf("inspect tokens/%s: %w", rel, err)
 		}
 		if inherited {
 			return fmt.Errorf("%w: tokens/%s", ErrRestorePermissionsConflict, rel)
 		}
+		if entry.IsDir() {
+			return fs.SkipDir
+		}
 		return nil
 	})
-	return directories, err
 }
 
-func protectedDACL(h windows.Handle) (bool, error) {
-	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+// containsPath matches snapshot paths without regard to case.
+func containsPath(names []string, name string) bool {
+	name16, err := windows.UTF16PtrFromString(name)
 	if err != nil {
-		return false, fmt.Errorf("read token permissions: %w", err)
+		return false
 	}
-	control, _, err := sd.Control()
-	if err != nil {
-		return false, fmt.Errorf("read token protection: %w", err)
+	for _, candidate := range names {
+		candidate16, err := windows.UTF16PtrFromString(candidate)
+		if err != nil {
+			continue
+		}
+		// #nosec G103 -- CompareStringOrdinal reads these null-terminated UTF-16 strings synchronously.
+		result, _, _ := compareStringOrdinal.Call(uintptr(unsafe.Pointer(candidate16)), ^uintptr(0), uintptr(unsafe.Pointer(name16)), ^uintptr(0), 1)
+		if result == 2 {
+			return true
+		}
 	}
-	return control&windows.SE_DACL_PROTECTED != 0, nil
+	return false
 }
 
-func secureRestoredDirectory(path string) error {
-	h, err := openSecurityHandle(path, true, windows.READ_CONTROL|windows.WRITE_DAC)
-	if err != nil {
-		return err
-	}
-	defer windows.CloseHandle(h) //nolint:errcheck // security result is authoritative
-	if err := verifyHandleOwner(h); err != nil {
-		return err
-	}
-	return secureOwnerOnlyHandle(h)
-}
+var compareStringOrdinal = windows.NewLazySystemDLL("kernel32.dll").NewProc("CompareStringOrdinal")
 
-func inheritedAccess(h windows.Handle) (bool, error) {
-	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		return false, fmt.Errorf("read omitted token permissions: %w", err)
-	}
-	control, _, err := sd.Control()
-	if err != nil {
-		return false, fmt.Errorf("read omitted token protection: %w", err)
-	}
-	if control&windows.SE_DACL_PROTECTED != 0 {
-		return false, nil
-	}
+func inheritedAccess(sd *windows.SECURITY_DESCRIPTOR) (bool, error) {
 	acl, _, err := sd.DACL()
 	if err != nil {
 		return false, fmt.Errorf("read omitted token access: %w", err)
@@ -174,13 +162,4 @@ func inheritedAccess(h windows.Handle) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-func secureRestoredFile(path string) error {
-	h, err := openSecurityHandle(path, false, windows.READ_CONTROL|windows.WRITE_DAC)
-	if err != nil {
-		return err
-	}
-	defer windows.CloseHandle(h) //nolint:errcheck // security result is authoritative
-	return secureOwnerOnlyHandle(h)
 }

@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRo
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	require.NoError(t, err)
 	defer release()
-	return calendarEventRowsInWindow(ctx, st.db, st.dialect, start, end)
+	return calendarEventRowsInWindow(ctx, st.meetingSQLReader(ctx), st.dialect, start, end)
 }
 func bulkCalendarCandidates(t *testing.T, st *Store, sourceID, conversationID int64, kind string, count int) {
 	t.Helper()
@@ -99,6 +100,30 @@ func TestCalendarEventRowsHardSeriesCap(t *testing.T) {
 	requirements.NoError(err)
 	_, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
 	requirements.NoError(err)
+	// A cancelled series whose archived exception overlaps the window does not
+	// count either, even when the live series already fill the cap.
+	_, err = st.db.Exec(`UPDATE calendar_events SET status = 'confirmed' WHERE kind = 'series' AND message_id <> 100000`)
+	requirements.NoError(err)
+	override := ""
+	if st.IsPostgreSQL() {
+		override = " OVERRIDING SYSTEM VALUE"
+	}
+	_, err = st.db.Exec(`INSERT INTO messages (id,source_id,conversation_id,source_message_id,message_type)`+override+` VALUES (?, ?, ?, ?, ?)`, 200000, data.Message.SourceID, data.Message.ConversationID, "cap-moved", "calendar_event")
+	requirements.NoError(err)
+	moved := time.Date(2027, 3, 14, 0, 30, 0, 0, time.UTC)
+	_, err = st.db.Exec(`INSERT INTO calendar_events (message_id,projection_version,content_hash,provider_event_id,series_provider_id,kind,original_start_at,status,all_day,start_at,end_at,calendar_time_zone,recurrence_json) VALUES (?, 1, 'fixture', ?, ?, 'exception', ?, 'confirmed', false, ?, ?, 'UTC', '[]')`,
+		200000, "cap-moved", "bulk-series-100000", from, moved, moved.Add(15*time.Minute))
+	requirements.NoError(err)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
+	requirements.NoError(err)
+	exception := slices.IndexFunc(page.Occurrences, func(o CalendarOccurrence) bool { return o.MessageID == 200000 })
+	requirements.GreaterOrEqual(exception, 0)
+	assertions.Equal("cancelled", page.Occurrences[exception].Status)
+	assertions.Equal(moved, page.Occurrences[exception].Start.UTC())
+	_, err = st.db.Exec(`UPDATE calendar_events SET status = 'confirmed' WHERE message_id = 100000`)
+	requirements.NoError(err)
+	_, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
+	requirements.ErrorIs(err, ErrQueryTooBroad)
 }
 
 func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
@@ -110,7 +135,7 @@ func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	require.NoError(t, err)
 	defer release()
-	_, err = queryCalendarEventRowsWithinBudget(ctx, st.db, "1 = 1", nil, 1)
+	_, err = queryCalendarEventRowsWithinBudget(ctx, st.meetingSQLReader(ctx), "1 = 1", nil, 1)
 	assert.ErrorIs(t, err, ErrQueryTooBroad)
 }
 func TestCalendarEventSourceZoneRebuild(t *testing.T) {
@@ -209,21 +234,6 @@ func TestCalendarExceptionsShortenedSeriesDuration(t *testing.T) {
 			assert.Equal(wide.Occurrences, narrow.Occurrences)
 		})
 	}
-}
-
-func TestCalendarEventRowsEndedSeriesOutsideWindow(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	data, event := calendarFixture(t, st, "current", `{"id":"current","start":{"dateTime":"2027-03-12T09:00:00Z"},"end":{"dateTime":"2027-03-12T10:00:00Z"}}`)
-	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", 2001)
-	_, err := st.db.Exec(`UPDATE calendar_events SET start_at = '2027-03-01 00:00:00+00:00', end_at = '2027-03-02 00:00:00+00:00', start_date = '2027-03-01', end_date = '2027-03-02', recurrence_end_at = '2027-03-02 00:00:00+00:00', recurrence_json = '["RRULE:FREQ=DAILY;COUNT=1"]' WHERE kind = 'series'`)
-	require.NoError(err)
-	from := time.Date(2027, 3, 12, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	require.NoError(err)
-	assert.Empty(page.Unexpandable)
-	require.Len(page.Occurrences, 1)
-	assert.Equal(event, page.Occurrences[0].MessageID)
 }
 
 func TestCalendarExceptionsClearedRecurrence(t *testing.T) {

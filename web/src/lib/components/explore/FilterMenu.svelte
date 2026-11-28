@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { autoReposition, Button, Checkbox, escapeCloses } from '@kenn-io/kit-ui';
+  import { autoReposition, Button, Checkbox, dismissable, overlayScrollbars } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack, type Snippet } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -80,6 +80,15 @@
 
   $effect(() => {
     if (!open) return;
+    return dismissable({
+      owners: () => [panelElement, triggerElement],
+      dismiss: () => (open = false),
+      escapeFocus: () => triggerElement?.querySelector('button'),
+    });
+  });
+
+  $effect(() => {
+    if (!open) return;
     return autoReposition(() => [panelElement, triggerElement], position);
   });
 
@@ -126,14 +135,6 @@
   }
 </script>
 
-<svelte:document onmousedown={(event) => {
-  if (open && ![panelElement, triggerElement].some((element) => element?.contains(event.target as Node))) open = false;
-}} onkeydown={(event) => {
-  // kit-ui-check-ignore: observes the nested Kit picker's open state.
-  if (!open || document.querySelector('[aria-modal="true"]') || panelElement?.querySelector('[role="combobox"][aria-expanded="true"]')) return;
-  escapeCloses(() => { open = false; triggerElement?.querySelector('button')?.focus(); })(event);
-}} />
-
 <span class="filter-trigger" bind:this={triggerElement}>
   <Button
     surface={open || filterCount > 0 ? 'soft' : 'outline'}
@@ -147,7 +148,7 @@
 {#if extraActive}<span id={visualStatusId} class="kit-sr-only">Visual search active</span>{/if}
 
 {#if open}
-  <div class="filter-panel kit-popover-card" role="dialog" aria-label="Filter" data-form bind:this={panelElement} style={panelStyle}>
+  <div class="filter-panel kit-popover-card" role="dialog" aria-label="Filter" data-form bind:this={panelElement} style={panelStyle} {@attach overlayScrollbars({ axis: 'y' })}>
     {#if kinds.length > 0}
       <fieldset class="field">
         <legend>Kind</legend>

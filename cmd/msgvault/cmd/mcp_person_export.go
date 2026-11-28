@@ -1,0 +1,89 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
+	"strconv"
+	"strings"
+
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/msgvault/internal/daemonclient"
+	mcpserver "go.kenn.io/msgvault/internal/mcp"
+)
+
+const mcpPersonExportLimit = 512 << 10
+
+// Reserve space for server metadata and the JSON-RPC envelope around the encoded tool result.
+const mcpPersonExportResponseMargin = 8 << 10
+
+type mcpPersonExportArgs struct {
+	PersonID     int64    `json:"person_id"`
+	Start        string   `json:"start"`
+	End          string   `json:"end"`
+	Sources      []string `json:"sources,omitempty"`
+	MessageTypes []string `json:"message_types,omitempty"`
+}
+
+func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map[string]any) (*mcpserver.OperationResult, error) {
+	input, err := decodeMCPOperationArguments[mcpPersonExportArgs](args)
+	if err != nil {
+		return operationFailure("invalid_arguments", false), nil //nolint:nilerr // Invalid arguments are fixed refusals.
+	}
+	argv := []string{
+		"export-messages",
+		"--person-id=" + strconv.FormatInt(input.PersonID, 10),
+		"--start=" + input.Start,
+		"--end=" + input.End,
+	}
+	for _, source := range input.Sources {
+		argv = append(argv, "--source="+source)
+	}
+	for _, messageType := range input.MessageTypes {
+		argv = append(argv, "--message-type="+messageType)
+	}
+	var output strings.Builder
+	overflow := false
+	err = b.client.RunCLICommand(ctx, daemonclient.CLIRunRequest{Args: argv}, func(stream, data string) error {
+		if stream != cliStreamStdout {
+			return nil
+		}
+		if len(data) > mcpPersonExportLimit-output.Len() {
+			overflow = true
+			return errors.New("export limit exceeded")
+		}
+		output.WriteString(data)
+		return nil
+	})
+	if overflow {
+		return operationFailure("export_limit_exceeded", false), nil
+	}
+	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
+		return operationFailure(local.APIErrorCode(), false), nil
+	}
+	if err != nil {
+		return operationFailure("export_failed", false), nil //nolint:nilerr // CLI failures are fixed refusals.
+	}
+	personExport := mcpserver.PersonExport{JSONL: output.String()}
+	structured, err := json.Marshal(
+		personExport,
+		json.Deterministic(true),
+		jsontext.EscapeForHTML(true),
+		jsontext.EscapeForJS(true),
+	)
+	if err != nil {
+		return operationFailure("export_failed", false), nil //nolint:nilerr // Encoding failures are fixed refusals.
+	}
+	encoded, err := (&sdkmcp.CallToolResult{
+		Content:           []sdkmcp.Content{&sdkmcp.TextContent{Text: string(structured)}},
+		StructuredContent: jsontext.Value(structured),
+	}).MarshalJSON()
+	if err != nil {
+		return operationFailure("export_failed", false), nil //nolint:nilerr // Encoding failures are fixed refusals.
+	}
+	if len(encoded) > mcpPersonExportLimit-mcpPersonExportResponseMargin {
+		return operationFailure("export_limit_exceeded", false), nil
+	}
+	return &mcpserver.OperationResult{Output: personExport}, nil
+}

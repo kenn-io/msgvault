@@ -81,8 +81,9 @@ func runSyncDiscord(cmd *cobra.Command, deps discordCommandDeps, selector string
 		// A re-derivation pass runs before sync creation and can commit archive
 		// changes before cancellation or a fatal repair error. Either that pass
 		// or a sync run requires cache maintenance.
-		// Core message persistence can precede later participant, media, or
-		// reply failures, so MessagesProcessed is not a safe write indicator.
+		// Participants, earlier pages, and attachment downloads can commit
+		// before a later failure, so MessagesProcessed is not a safe write
+		// indicator.
 		if discordSummaryNeedsCacheRefresh(summary) {
 			anyWrites = true
 		}

@@ -38,8 +38,11 @@ type fakeMsg struct {
 }
 
 type fakeChat struct {
-	ID        string
-	AccountID string
+	Merge            *ChatMerge
+	MergedIntoChatID string
+	DetailTruncated  bool
+	ID               string
+	AccountID        string
 	// SearchAccountID controls which requested account returns this chat while
 	// AccountID remains the payload value. It lets importer tests model a
 	// response whose account field is empty or inconsistent.
@@ -458,7 +461,7 @@ func (f *fakeBeeper) writeChat(w http.ResponseWriter, chatID string) {
 func (f *fakeBeeper) chatJSON(ch *fakeChat, listing bool) map[string]any {
 	parts := ch.Participants
 	hasMore := false
-	if listing && ch.ParticipantsTruncated {
+	if (listing && ch.ParticipantsTruncated) || (!listing && ch.DetailTruncated) {
 		limit := ch.ParticipantListingLimit
 		if limit <= 0 || limit > len(parts) {
 			limit = 1
@@ -474,14 +477,16 @@ func (f *fakeBeeper) chatJSON(ch *fakeChat, listing bool) map[string]any {
 		participants["total"] = len(ch.Participants)
 	}
 	return map[string]any{
-		"id":           ch.ID,
-		"accountID":    ch.AccountID,
-		"network":      ch.Network,
-		"title":        ch.Title,
-		"type":         ch.Type,
-		"participants": participants,
-		"lastActivity": ch.LastActivity.UTC().Format(time.RFC3339Nano),
-		"unreadCount":  0,
+		"merge":            ch.Merge,
+		"mergedIntoChatID": ch.MergedIntoChatID,
+		"id":               ch.ID,
+		"accountID":        ch.AccountID,
+		"network":          ch.Network,
+		"title":            ch.Title,
+		"type":             ch.Type,
+		"participants":     participants,
+		"lastActivity":     ch.LastActivity.UTC().Format(time.RFC3339Nano),
+		"unreadCount":      0,
 	}
 }
 

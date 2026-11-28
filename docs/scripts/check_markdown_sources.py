@@ -5,6 +5,8 @@ import pathlib
 import re
 import sys
 
+import changelog
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FRONTMATTER_LIMIT = 80
 EXCLUDED_DIRS = {
@@ -56,6 +58,7 @@ PUBLIC_MARKDOWN = {
     "usage/imap.md",
     "usage/importing.md",
     "usage/inline.md",
+    "usage/linkedin.md",
     "usage/meetings.md",
     "usage/multi-account.md",
     "usage/people-automation.md",
@@ -182,6 +185,11 @@ def main() -> None:
         lines = text.splitlines()
         check_frontmatter(path, lines, errors)
         check_admonitions(path, lines, errors)
+        check_forbidden_markers(path, text, errors)
+
+    for path in changelog.fragment_paths():
+        text = path.read_text(encoding="utf-8")
+        check_admonitions(path, text.splitlines(), errors)
         check_forbidden_markers(path, text, errors)
 
     if errors:

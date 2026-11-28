@@ -24,7 +24,6 @@ import (
 	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -160,94 +159,6 @@ func TestRunCLISyncSendsExactSourceID(t *testing.T) {
 	require.NoError(t, st.RunCLISync(t.Context(), CLISyncRequest{
 		SourceID: 42, SourceIDSet: true,
 	}, func(string, string) error { return nil }))
-}
-
-func TestRunCLISyncRejectsOldDaemonBeforeStartingSourceScopedSync(t *testing.T) {
-	syncCalls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.3.0"}`))
-			return
-		}
-		syncCalls++
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
-	}))
-	t.Cleanup(srv.Close)
-
-	st, err := New(Config{URL: srv.URL, AllowInsecure: true, HTTPClient: srv.Client()})
-	require.NoError(t, err)
-	err = st.RunCLISync(t.Context(), CLISyncRequest{
-		SourceID: 42, SourceIDSet: true,
-	}, func(string, string) error { return nil })
-	require.ErrorContains(t, err, "requires daemon API schema 2.4.0")
-	assert.Zero(t, syncCalls, "source-scoped sync must not start on an older daemon")
-}
-
-func TestRunCLISyncCacheFlagsRequireCompatibleDaemon(t *testing.T) {
-	for _, mode := range []struct {
-		name string
-		full bool
-	}{
-		{name: "sync"},
-		{name: "sync-full", full: true},
-	} {
-		for _, test := range []struct {
-			name        string
-			version     string
-			build       bool
-			skip        bool
-			healthError bool
-			wantError   string
-		}{
-			{name: "default on older daemon", version: "2.30.0"},
-			{name: "build on older daemon", version: "2.30.0", build: true, wantError: "upgrade the daemon"},
-			{name: "skip on older daemon", version: "2.30.0", skip: true, wantError: "upgrade the daemon"},
-			{name: "build on supported daemon", version: "2.31.0", build: true},
-			{name: "skip on supported daemon", version: "2.31.0", skip: true},
-			{name: "health unavailable", build: true, healthError: true, wantError: "check daemon sync cache flags capability"},
-		} {
-			t.Run(mode.name+"/"+test.name, func(t *testing.T) {
-				assertions := assert.New(t)
-				requirements := require.New(t)
-				var syncCalls, healthCalls atomic.Int32
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path == "/api/v1/health" {
-						healthCalls.Add(1)
-						if test.healthError {
-							http.Error(w, "health unavailable", http.StatusBadGateway)
-							return
-						}
-						writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": test.version})
-						return
-					}
-					syncCalls.Add(1)
-					assertions.Equal("/api/v1/cli/"+mode.name, r.URL.Path)
-					assertions.Equal(http.MethodPost, r.Method)
-					assertions.Equal(test.build, r.URL.Query().Get("build-cache") == "true")
-					assertions.Equal(test.skip, r.URL.Query().Get("no-build-cache") == "true")
-					w.Header().Set("Content-Type", "application/x-ndjson")
-					_, _ = w.Write([]byte("{\"type\":\"complete\"}\n"))
-				}))
-				t.Cleanup(srv.Close)
-				st := newTestStore(srv, "")
-				err := st.RunCLISync(t.Context(), CLISyncRequest{
-					Full: mode.full, BuildCache: test.build, NoBuildCache: test.skip,
-				}, nil)
-				if test.wantError != "" {
-					requirements.ErrorContains(err, test.wantError)
-					assertions.Zero(syncCalls.Load(), "unsupported flags must fail before sync starts")
-				} else {
-					requirements.NoError(err)
-					assertions.Equal(int32(1), syncCalls.Load())
-				}
-				if !test.build && !test.skip {
-					assertions.Zero(healthCalls.Load(), "default sync needs no cache flag capability check")
-				}
-			})
-		}
-	}
 }
 
 func TestRunCLICommandStreamsOutput(t *testing.T) {
@@ -576,25 +487,6 @@ func TestCreateCLIDeletionManifestUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal(2, got.MessageCount, "message count")
 }
 
-func TestCreateCLIDeletionManifestRejectsOldDaemonBeforeSubmittingVersionTwo(t *testing.T) {
-	manifestPosts := 0
-	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.3.0"})
-			return
-		}
-		manifestPosts++
-		writeJSONResponse(t, w, map[string]any{"id": "unexpected", "message_count": 1})
-	})
-	manifest := deletion.NewManifestForSource("tui selection", []string{"gid1"}, deletion.SourceReference{
-		ID: 42, Type: "gmail", Identifier: "account@example.invalid",
-	})
-
-	_, err := s.CreateCLIDeletionManifest(t.Context(), manifest)
-	require.ErrorContains(t, err, "version-2 deletion manifests require daemon API schema 2.4.0")
-	assert.Zero(t, manifestPosts, "version-2 manifest must not be submitted to an older daemon")
-}
-
 func TestPlanCLIDeduplicateUsesGeneratedClientAdapter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -672,25 +564,6 @@ func TestPlanCLIDeduplicateUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal(int64(3), got.Items[0].PendingBackfillCount, "pending backfill count")
 	assert.Equal("fp-client", got.Items[0].PlanFingerprint, "fingerprint")
 	assert.True(got.Items[0].NeedsConfirmation, "needs confirmation")
-}
-
-func TestPlanCLIDeduplicateRejectsOldDaemonBeforeSubmittingPlan(t *testing.T) {
-	planPosts := 0
-	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			writeJSONResponse(t, w, map[string]any{
-				"status": "ok", "api_schema_version": "2.12.0",
-			})
-			return
-		}
-		planPosts++
-		writeJSONResponse(t, w, map[string]any{"items": []any{}})
-	})
-
-	_, err := s.PlanCLIDeduplicate(t.Context(), CLIDeduplicatePlanRequest{})
-
-	require.ErrorContains(t, err, "deduplicate planning requires daemon API schema 2.13.0")
-	assert.Zero(t, planPosts, "plan must not be submitted to an older daemon")
 }
 
 // newTestStore creates a Client pointing at the given httptest server.
@@ -1040,72 +913,6 @@ func TestGetCLISearch_Success(t *testing.T) {
 	assert.Equal(1, resp.ScopeSourceCount, "ScopeSourceCount")
 }
 
-func TestGetCLISearch_DeletionScopeRequiresCompatibleDaemon(t *testing.T) {
-	tests := []struct {
-		name          string
-		schemaVersion string
-		deletionScope string
-		wantErr       bool
-		wantSearches  int
-	}{
-		{name: "older daemon rejects active", schemaVersion: "2.11.0", deletionScope: "active", wantErr: true},
-		{name: "older daemon rejects deleted", schemaVersion: "2.11.0", deletionScope: "deleted", wantErr: true},
-		{name: "compatible daemon accepts active", schemaVersion: "2.12.0", deletionScope: "active", wantSearches: 1},
-		{name: "compatible daemon accepts deleted", schemaVersion: "2.12.0", deletionScope: "deleted", wantSearches: 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			searches := 0
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if r.URL.Path == "/api/v1/health" {
-					_, _ = fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, tt.schemaVersion)
-					return
-				}
-				searches++
-				assert.Equal(t, "/api/v1/cli/search", r.URL.Path)
-				assert.Equal(t, tt.deletionScope, r.URL.Query().Get("deletion_scope"))
-				_, _ = w.Write([]byte(`{"results":[]}`))
-			}))
-			t.Cleanup(srv.Close)
-
-			client := newTestStore(srv, "")
-			_, err := client.GetCLISearch(t.Context(), CLISearchRequest{
-				Query: "scope", DeletionScope: tt.deletionScope,
-			})
-			if tt.wantErr {
-				require.ErrorContains(t, err, "requires daemon API schema 2.12.0")
-			} else {
-				require.NoError(t, err)
-			}
-			assert.Equal(t, tt.wantSearches, searches,
-				"an incompatible daemon must not receive the scoped search")
-		})
-	}
-}
-
-func TestGetCLISearchRejectsListIDAgainstOlderDaemonBeforeRequest(t *testing.T) {
-	var searchRequests int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			writeJSONResponse(t, w, map[string]any{
-				"status":             "ok",
-				"api_schema_version": "2.13.0",
-			})
-			return
-		}
-		searchRequests++
-		http.Error(w, "unexpected search request", http.StatusInternalServerError)
-	}))
-	t.Cleanup(srv.Close)
-
-	_, err := newTestStore(srv, "").GetCLISearch(t.Context(), CLISearchRequest{
-		Query: "needle list:dev@example.test",
-	})
-	require.ErrorContains(t, err, "List-ID filter requires daemon API schema 2.14.0 or newer")
-	assert.Zero(t, searchRequests, "List-ID CLI search must not reach an older daemon")
-}
-
 func TestGetCLIHybridSearch_Success(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1301,29 +1108,6 @@ func TestGetCLIHybridSearchUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("alice@example.com", resp.Results[0].FromEmail, "result FromEmail")
 }
 
-func TestGetCLIHybridSearchRejectsListIDAgainstOlderDaemonBeforeRequest(t *testing.T) {
-	var searchRequests int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			writeJSONResponse(t, w, map[string]any{
-				"status":             "ok",
-				"api_schema_version": "2.13.0",
-			})
-			return
-		}
-		searchRequests++
-		http.Error(w, "unexpected search request", http.StatusInternalServerError)
-	}))
-	t.Cleanup(srv.Close)
-
-	_, err := newTestStore(srv, "").GetCLIHybridSearch(t.Context(), CLIHybridSearchRequest{
-		Query: "needle list:dev@example.test",
-		Mode:  "hybrid",
-	})
-	require.ErrorContains(t, err, "List-ID filter requires daemon API schema 2.14.0 or newer")
-	assert.Zero(t, searchRequests, "List-ID hybrid search must not reach an older daemon")
-}
-
 func TestGetCLIAccounts_Success(t *testing.T) {
 	require :=
 		require.
@@ -1335,12 +1119,11 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 		assert.Equal("true", r.Header.Get(apiprotocol.AllowPendingCountsHeader))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"stale": true,
-			"as_of": "2024-02-03T04:05:06Z",
 			"accounts": [{
 				"id": 7,
 				"email": "alice@example.com",
-				"type": "gmail",
+				"type": "imap",
+				"auth_method": "xoauth2",
 				"display_name": "Alice",
 				"alias": "archive",
 				"message_count": 1234,
@@ -1351,20 +1134,18 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 	defer srv.Close()
 
 	s := newTestStore(srv, "key")
-	accounts, _, err := s.GetCLIAccounts(t.Context())
+	accounts, err := s.GetCLIAccounts(t.Context())
 	require.NoError(
 		err, "GetCLIAccounts")
 
 	require.Len(accounts, 1, "accounts")
 	assert.Equal(int64(7), accounts[0].ID, "ID")
 	assert.Equal("alice@example.com", accounts[0].Email, "Email")
-	assert.Equal("gmail", accounts[0].Type, "Type")
+	assert.Equal("imap", accounts[0].Type, "Type")
+	assert.Equal("xoauth2", accounts[0].AuthMethod)
 	assert.Equal("Alice", accounts[0].DisplayName, "DisplayName")
 	assert.Equal("archive", accounts[0].Alias, "Alias")
 	assert.Equal(int64(1234), accounts[0].MessageCount, "MessageCount")
-	assert.True(accounts[0].Stale)
-	require.NotNil(accounts[0].AsOf)
-	assert.Equal("2024-02-03T04:05:06Z", accounts[0].AsOf.UTC().Format(time.RFC3339))
 	require.NotNil(accounts[0].LastSync, "LastSync")
 	assert.Equal("2024-01-02T03:04:05Z", accounts[0].LastSync.UTC().Format(time.RFC3339), "LastSync")
 }
@@ -1539,10 +1320,6 @@ func TestRunCLIRepairMessageUsesGeneratedRequestAndStreamsOutput(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		switch r.URL.Path {
-		case "/api/v1/health":
-			writeJSONResponse(t, w, map[string]any{
-				"status": "ok", "api_schema_version": "2.15.0",
-			})
 		case "/api/v1/cli/repair-message":
 			assertions.Equal(http.MethodPost, r.Method)
 			assertions.Empty(r.URL.RawQuery, "repair request is encoded in the generated JSON body")
@@ -1583,22 +1360,16 @@ func TestRunCLIRepairMessageUsesGeneratedRequestAndStreamsOutput(t *testing.T) {
 	})
 
 	requirements.NoError(err)
-	assertions.Equal([]string{"/api/v1/health", "/api/v1/cli/repair-message"}, paths)
+	assertions.Equal([]string{"/api/v1/cli/repair-message"}, paths)
 	assertions.Equal([]string{"stdout:repaired\n", "stderr:repair warning\n"}, output)
 }
 
-func TestRunCLIRepairMessageWithPreflightChecksCapabilityBeforePreflightAndRequest(t *testing.T) {
+func TestRunCLIRepairMessageWithPreflightRunsPreflightBeforeRequest(t *testing.T) {
 	assert := assert.New(t)
 	var sequence atomic.Int32
-	var capabilityStep atomic.Int32
 	var repairStep atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/health":
-			capabilityStep.Store(sequence.Add(1))
-			writeJSONResponse(t, w, map[string]any{
-				"status": "ok", "api_schema_version": "2.15.0",
-			})
 		case "/api/v1/cli/repair-message":
 			repairStep.Store(sequence.Add(1))
 			w.Header().Set("Content-Type", "application/x-ndjson")
@@ -1623,47 +1394,8 @@ func TestRunCLIRepairMessageWithPreflightChecksCapabilityBeforePreflightAndReque
 	)
 
 	require.NoError(t, err)
-	assert.Equal(int32(1), capabilityStep.Load())
-	assert.Equal(int32(2), preflightStep.Load())
-	assert.Equal(int32(3), repairStep.Load())
-}
-
-func TestRunCLIRepairMessageFailsClosedWithoutCompatibleSchema(t *testing.T) {
-	tests := []struct {
-		name          string
-		healthPayload string
-		wantVersion   string
-	}{
-		{name: "missing version", healthPayload: `{"status":"ok"}`, wantVersion: `daemon reports ""`},
-		{name: "malformed version", healthPayload: `{"status":"ok","api_schema_version":"2.13"}`, wantVersion: `daemon reports "2.13"`},
-		{name: "older version", healthPayload: `{"status":"ok","api_schema_version":"2.13.0"}`, wantVersion: `daemon reports "2.13.0"`},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			var nonHealthRequests atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/health" {
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(test.healthPayload))
-					return
-				}
-				nonHealthRequests.Add(1)
-				w.Header().Set("Content-Type", "application/x-ndjson")
-				_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
-			}))
-			t.Cleanup(srv.Close)
-
-			s := newTestStore(srv, "")
-			reference := "gmail-42"
-			err := s.RunCLIRepairMessage(t.Context(), generated.CLIRepairMessageRequest{
-				Reference: &reference,
-			}, nil)
-
-			require.ErrorContains(t, err, "requires daemon API schema 2.15.0")
-			require.ErrorContains(t, err, test.wantVersion)
-			assert.Zero(t, nonHealthRequests.Load(), "incompatible daemon must receive neither repair nor sync requests")
-		})
-	}
+	assert.Equal(int32(1), preflightStep.Load())
+	assert.Equal(int32(2), repairStep.Load())
 }
 
 func TestRunCLIRepairMessagePropagatesCancellation(t *testing.T) {
@@ -2428,44 +2160,6 @@ type readCloserImpl struct {
 
 func (rc *readCloserImpl) Close() error {
 	return nil
-}
-
-func TestGetCLISearchRejectsFilenameOnOlderDaemon(t *testing.T) {
-	for _, version := range []string{"3.3.0", "3.4.0", "3.5.0", "3.7.0", "3.8.0", "3.9.0", "3.10.0", "3.11.0", "3.12.0", "3.13.0", "3.14.0"} {
-		t.Run(version, func(t *testing.T) {
-			require := require.New(t)
-			var searches atomic.Int64
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/health" {
-					writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": version})
-					return
-				}
-				searches.Add(1)
-				writeJSONResponse(t, w, map[string]any{"results": []any{}, "messages": []any{}})
-			}))
-			t.Cleanup(srv.Close)
-			client := newTestStore(srv, "")
-			check := func(err error) {
-				t.Helper()
-				if version == "3.14.0" {
-					require.NoError(err)
-				} else {
-					require.ErrorContains(err, "filename filter requires daemon API schema 3.14.0")
-				}
-			}
-			_, err := client.GetCLISearch(t.Context(), CLISearchRequest{Query: "filename:plan.pdf"})
-			check(err)
-			_, err = client.GetCLIHybridSearch(t.Context(), CLIHybridSearchRequest{Query: "intent filename:plan.pdf", Mode: "hybrid"})
-			check(err)
-			_, err = NewEngineAdapter(client).Search(t.Context(), search.Parse("filename:plan.pdf"), 1, 0)
-			check(err)
-			if version == "3.14.0" {
-				assert.Equal(t, int64(3), searches.Load())
-			} else {
-				assert.Zero(t, searches.Load())
-			}
-		})
-	}
 }
 
 func TestGetCLIHybridSearchAttachmentMetadataAvailability(t *testing.T) {

@@ -160,15 +160,58 @@ it('shows the restart cue before saving only while a restart-required draft is p
   render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced' });
   await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
   const footer = screen.getByText('1 unsaved change').parentElement!;
-  expect(within(footer).queryByText('Restart msgvault to apply these changes.')).toBeNull();
+  expect(within(footer).queryByText('Restart required after saving.')).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
   await fireEvent.click(await screen.findByRole('switch', { name: 'Keep logs' }));
-  expect(within(footer).getByText('Restart msgvault to apply these changes.')).toBeDefined();
+  expect(within(footer).getByText('Restart required after saving.')).toBeDefined();
   expect(within(footer).getByText('2 unsaved changes.')).toBeDefined();
   expect(seen.some(request => request.method === 'PATCH')).toBe(false);
   await fireEvent.click(screen.getByRole('switch', { name: 'Keep logs' }));
-  expect(within(footer).queryByText('Restart msgvault to apply these changes.')).toBeNull();
+  expect(within(footer).queryByText('Restart required after saving.')).toBeNull();
   expect(within(footer).getByText('1 unsaved change')).toBeDefined();
+});
+
+it('shows restart guidance after saving a restart-required setting', async () => {
+  const doc = settingsDoc();
+  doc.settings.push(setting('log.enabled', 'server', 'boolean', false, { restart_required: true }));
+  const { client, operationsController, onStatusChange } = fixture(doc);
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'server' });
+  await fireEvent.click(await screen.findByRole('switch', { name: 'Keep logs' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findByText(/Restart pending/);
+});
+
+it.each([
+  [true, false, 'server'],
+  [false, true, 'server'],
+  [true, true, 'enrichment'],
+  [false, false, 'enrichment']
+])('renders restart guidance for settings %s and inference %s in %s', async (settingsPending, inferencePending, category) => {
+  const { client, operationsController, onStatusChange, seen } = fixture(settingsDoc({ pending_restart: settingsPending }), request => {
+    if (new URL(request.url).pathname.includes('/settings/people-inference')) {
+      return Response.json({ profiles: [], configured_enabled: true, running_enabled: true, running_name: 'previous', pending_restart: inferencePending }, { headers: { ETag: '"p1"' } });
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category });
+  await waitFor(() => expect(seen.some(request => request.path.includes('/settings/people-inference'))).toBe(true));
+  if (inferencePending && category === 'enrichment') await screen.findByText(/running daemon still uses/);
+  if (!settingsPending && !inferencePending) {
+    await screen.findByText('Add a profile');
+    expect(screen.queryByText('msgvault daemon restart')).toBeNull();
+    return;
+  }
+  const command = await screen.findByText('msgvault daemon restart');
+  const notice = command.closest('[role="status"]')!;
+  expect(screen.getAllByText('msgvault daemon restart')).toHaveLength(1);
+  expect(notice.getAttribute('data-tone')).toBe('warning');
+  if (settingsPending && !inferencePending) {
+    expect(notice.textContent).toContain('Restart pending.');
+    expect(notice.textContent).toContain('computer running msgvault');
+    expect(notice.textContent).toContain('--home');
+    expect(notice.textContent).toContain('--config');
+    expect(notice.textContent).toContain('restart its service');
+    expect(notice.textContent).toContain('stop and rerun your foreground msgvault serve with the same flags.');
+  }
 });
 
 it('warns before leaving with drafts, keeps them on Stay, and discards before continuing', async () => {
@@ -413,10 +456,33 @@ it('keeps a failed Overview action error on Overview', async () => {
 });
 
 describe('SettingsWorkspace', () => {
-  it('lists the categories in order, Overview first, and opens the one it is given', async () => {
+  it('shows the Settings title while loading and after a failed request', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    let reads = 0;
+    const { client, operationsController, onStatusChange } = fixture(settingsDoc(), async request => {
+      if (new URL(request.url).pathname === '/api/v1/settings' && request.method === 'GET' && ++reads === 1) {
+        await pending;
+        return Response.json({ message: 'Temporary settings read failure' }, { status: 503 });
+      }
+    });
+    render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced' });
+    expect(screen.getByRole('heading', { name: 'Settings', level: 2 })).toBeDefined();
+    release();
+    await screen.findByText("Can't load settings");
+    expect(screen.getByRole('heading', { name: 'Settings', level: 2 })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const sidebar = (await screen.findByRole('navigation', { name: 'Settings' })).closest('.kit-settings__sidebar') as HTMLElement;
+    expect(within(sidebar).getByRole('heading', { name: 'Settings', level: 2 })).toBeDefined();
+  });
+
+  it('titles Settings and lists the categories in order, opening the one it is given', async () => {
     const { client, operationsController, onStatusChange } = fixture();
     render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced' });
     await screen.findByRole('heading', { name: 'Advanced', level: 2 });
+    expect(screen.getByRole('heading', { name: 'Settings', level: 1 })).toBeDefined();
+    const sidebar = window.document.querySelector<HTMLElement>('.kit-settings__sidebar')!;
+    expect(within(sidebar).getByRole('heading', { name: 'Settings', level: 2 })).toBeDefined();
     const names = [...window.document.querySelectorAll('.kit-settings__nav-item')].map((item) => item.textContent?.trim());
     expect(names).toEqual([
       'Overview', 'Server', 'Search & AI', 'People lookups', 'People', 'Tasks', 'Contacts', 'Sources', 'Advanced'
@@ -963,8 +1029,11 @@ it.each(['http', 'network'] as const)('turns on local search once and keeps unre
   let phase = 'idle';
   let enabled = false;
   let failed = false;
+  let retrying = false;
   let releaseActivation!: () => void;
+  let releaseRetry!: () => void;
   const activation = new Promise<void>(resolve => { releaseActivation = resolve; });
+  const retry = new Promise<void>(resolve => { releaseRetry = resolve; });
   const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
     if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
     if (request.method === 'POST') {
@@ -975,6 +1044,9 @@ it.each(['http', 'network'] as const)('turns on local search once and keeps unre
       failed = true;
       if (failure === 'network') throw new TypeError('Network interrupted');
       return new Response('', { status: 503 });
+    } else if (phase !== 'idle' && !retrying) {
+      retrying = true;
+      await retry;
     }
     return Response.json(localStatus({ enabled, provider: enabled ? 'builtin' : '', phase, running: phase !== 'idle' }));
   });
@@ -986,12 +1058,14 @@ it.each(['http', 'network'] as const)('turns on local search once and keeps unre
   await fireEvent.click(turnOn);
   expect(localPosts(seen).map(request => request.body)).toEqual([undefined]);
   releaseActivation();
-  await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
+  await screen.findByRole('status', { name: 'Search by meaning setup' });
   expect(screen.queryByRole('dialog')).toBeNull();
   await waitFor(() => expect(failed).toBe(true));
-  await screen.findByText(/^Indexing /, {}, { timeout: 3000 });
+  await waitFor(() => expect(retrying).toBe(true), { timeout: 3000 });
+  expect(screen.getByText('Keyword search works meanwhile')).toBeDefined();
   phase = 'idle'; enabled = true;
+  releaseRetry();
   await screen.findByText('On', {}, { timeout: 3000 });
-  expect(screen.queryByRole('progressbar', { name: 'Search by meaning setup' })).toBeNull();
+  expect(screen.queryByRole('status', { name: 'Search by meaning setup' })).toBeNull();
   expect(screen.getByText('1 unsaved change')).toBeDefined();
 });

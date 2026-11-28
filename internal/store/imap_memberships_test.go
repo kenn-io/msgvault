@@ -310,6 +310,45 @@ func TestApplyIMAPMailboxDeltas_ReappearanceClearsTombstone(t *testing.T) {
 	assert.Equal([]string{"Recovered"}, messageLabels(t, f.store, messageID))
 }
 
+func TestApplyIMAPMailboxDeltas_TrashPreservesDeletionMark(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		inbox bool
+	}{
+		{name: "marked in trash"},
+		{name: "marked in trash and inbox", inbox: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newIMAPMembershipFixture(t)
+			id := f.createMessage(t, "message", "<trash@example.com>")
+			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "message"))
+			deltas := []store.IMAPMailboxDelta{{Mailbox: "Trash", Trash: true, State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}}}
+			if tc.inbox {
+				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 2, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
+			}
+			require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, deltas))
+			assert.True(t, messageTombstoned(t, f.store, id))
+		})
+	}
+}
+
+func TestApplyIMAPMailboxDeltas_TrashRoleChangeWithUnchangedMembership(t *testing.T) {
+	f := newIMAPMembershipFixture(t)
+	id := f.createMessage(t, "message", "<role-change@example.test>")
+	delta := store.IMAPMailboxDelta{
+		Mailbox: "Folder", Trash: true, Reset: true,
+		State:       store.IMAPFolderState{Mailbox: "Folder", UIDValidity: 1, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}},
+	}
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
+	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "message"))
+	delta.Trash = false
+	delta.Reset = false
+	delta.Memberships = nil
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
+	assert.False(t, messageTombstoned(t, f.store, id))
+}
+
 func TestApplyIMAPMailboxDeltas_UIDValidityResetDeletesOldEpoch(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

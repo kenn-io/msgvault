@@ -28,8 +28,8 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-// ErrHistoryExpired indicates that the Gmail history ID is too old and a full sync is required.
-var ErrHistoryExpired = errors.New("history expired - run full sync")
+// ErrHistoryExpired indicates that the Gmail history ID is too old and requires History recovery.
+var ErrHistoryExpired = errors.New("gmail history expired; retry sync")
 
 const (
 	labelTypeSystem               = "system"
@@ -49,6 +49,9 @@ type Options struct {
 
 	// Query is an optional Gmail search query (e.g., "before:2020/01/01")
 	Query string
+
+	// GmailSkipSpamTrash excludes new acquisitions from Spam and Trash.
+	GmailSkipSpamTrash bool
 
 	// NoResume forces a fresh sync even if a checkpoint exists
 	NoResume bool
@@ -475,9 +478,18 @@ func (s *Syncer) fullCheckpointMatchesRequest(
 const gmailHistoryRecoveryPresenceFingerprint = store.GmailHistoryRecoveryRequestFingerprint + ":spam-trash:v1"
 const gmailHistoryRecoveryLabelFingerprint = gmailHistoryRecoveryPresenceFingerprint + ":labels:v1"
 const gmailHistoryRecoveryCoverageFingerprint = gmailHistoryRecoveryLabelFingerprint + ":files:v1"
+const gmailFilteredRecoveryFingerprint = gmailHistoryRecoveryCoverageFingerprint + ":exclude-spam-trash"
+
+func (s *Syncer) historyRecoveryFingerprint() string {
+	if s.opts.GmailSkipSpamTrash {
+		return gmailFilteredRecoveryFingerprint
+	}
+	return gmailHistoryRecoveryCoverageFingerprint
+}
 
 func isPinnedHistoryRecovery(run *store.SyncRun) bool {
-	return (checkpointMatchesRequest(run, gmailHistoryRecoveryCoverageFingerprint) ||
+	return (checkpointMatchesRequest(run, gmailFilteredRecoveryFingerprint) ||
+		checkpointMatchesRequest(run, gmailHistoryRecoveryCoverageFingerprint) ||
 		checkpointMatchesRequest(run, gmailHistoryRecoveryLabelFingerprint) ||
 		checkpointMatchesRequest(run, gmailHistoryRecoveryPresenceFingerprint) ||
 		checkpointMatchesRequest(run, store.GmailHistoryRecoveryRequestFingerprint)) &&
@@ -489,6 +501,9 @@ func (s *Syncer) fullSyncRequestFingerprint() string {
 		"full:v1\x00%s\x00%s\x00%d\x00%t",
 		s.opts.SourceType, s.opts.Query, s.opts.Limit, s.opts.NoResume,
 	)
+	if s.opts.GmailSkipSpamTrash {
+		request += "\x00exclude-spam-trash"
+	}
 	version := "full:v1"
 	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
 		// Checkpoints from before the History boundary was saved must restart.
@@ -567,12 +582,12 @@ func (s *Syncer) initHistoryRecoveryState(
 		if !s.opts.NoResume {
 			state.handoffCursor = prior.CursorAfter.String
 			state.wasResumed = true
-			if err := restoreRecoveryCheckpoint(state, prior); err != nil {
+			if err := restoreRecoveryCheckpoint(state, prior, s.historyRecoveryFingerprint()); err != nil {
 				return nil, err
 			}
 		}
 	}
-	state.syncID, err = s.startSync(ctx, execution, "full", gmailHistoryRecoveryCoverageFingerprint)
+	state.syncID, err = s.startSync(ctx, execution, "full", s.historyRecoveryFingerprint())
 	if err != nil {
 		return nil, fmt.Errorf("start history recovery: %w", err)
 	}
@@ -598,6 +613,17 @@ type inconclusiveLabelRefresh struct {
 
 // processBatch processes a single batch of messages from a list response.
 func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listResp *gmail.MessageListResponse, labelMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (*batchResult, error) {
+	return s.processBatchWithArchivedRows(ctx, syncID, sourceID, listResp, labelMap, checkpoint, summary, nil)
+}
+
+// The excluded-folder recovery pass supplies the archived rows it already
+// selected, including rows with no raw MIME. Ordinary scans use raw MIME
+// availability to decide which messages need downloading or repair.
+func (s *Syncer) processBatchWithArchivedRows(
+	ctx context.Context, syncID, sourceID int64, listResp *gmail.MessageListResponse,
+	labelMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary,
+	archivedRows map[string]store.MessageWithRawMetadata,
+) (*batchResult, error) {
 	result := &batchResult{}
 
 	if len(listResp.Messages) == 0 {
@@ -705,14 +731,24 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			}
 		}
 	}
-	existingMap, err := s.store.MessageMetadataWithRawBatch(
-		ctx, sourceID, lookupMessageIDs)
-	if err != nil {
-		return nil, fmt.Errorf("check existing: %w", err)
+	var err error
+	existingMap := archivedRows
+	if existingMap == nil {
+		existingMap, err = s.store.MessageMetadataWithRawBatch(ctx, sourceID, lookupMessageIDs)
+		if err != nil {
+			return nil, fmt.Errorf("check existing: %w", err)
+		}
 	}
 	for sourceMessageID, canonicalSourceMessageID := range aliases {
 		if canonical, exists := existingMap[canonicalSourceMessageID]; exists {
 			existingMap[sourceMessageID] = canonical
+		}
+	}
+	markedGmailMessageIDs := map[string]struct{}{}
+	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
+		markedGmailMessageIDs, err = s.store.MarkedSourceMessageIDsBatchContext(ctx, sourceID, messageIDs)
+		if err != nil {
+			return nil, fmt.Errorf("check marked Gmail messages: %w", err)
 		}
 	}
 
@@ -721,11 +757,13 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	// labels) and incomplete snapshots (merge labels). Keep the old fallback
 	// for clients that cannot fetch labels separately.
 	snapshotComplete := s.labelsSnapshotComplete()
-	labelReader, canReadLabels := s.client.(messageLabelBatchReader)
+	labelReader, hasLabelReader := s.client.(messageLabelBatchReader)
+	refreshAllExistingLabels := hasLabelReader
 	// Ordinary Gmail full scans keep the existing-RAW shortcut. Recovery
-	// instead establishes a fresh membership snapshot after lost History.
+	// instead establishes a fresh membership snapshot after lost History. A
+	// marked Gmail message always gets a current label snapshot on either path.
 	if s.opts.SourceType != sourceTypeIMAP && !s.requireLabelRefresh {
-		canReadLabels = false
+		refreshAllExistingLabels = false
 	}
 	var fetchIDs []string
 	var labelRefreshIDs []string
@@ -750,7 +788,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			continue
 		}
 		existingCount++
-		if _, pending := s.pendingAcquisitions[id]; pending &&
+		if _, pending := s.pendingAcquisitions[id]; pending && archivedRows == nil &&
 			(s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail) && s.pendingAttachmentRepairs[id] == 0 {
 			if err := s.repairPendingAttachments(ctx, sourceID, id); err != nil {
 				if ctx.Err() != nil || errors.Is(err, store.ErrSyncRunSuperseded) {
@@ -765,7 +803,8 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				}
 			}
 		}
-		if canReadLabels {
+		_, markedGmail := markedGmailMessageIDs[id]
+		if refreshAllExistingLabels || (markedGmail && hasLabelReader) {
 			labelRefreshIDs = append(labelRefreshIDs, id)
 			continue
 		}
@@ -792,11 +831,12 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 		}
 
 		for i, sourceMessageID := range labelRefreshIDs {
+			_, markedGmail := markedGmailMessageIDs[sourceMessageID]
 			if i >= len(labelResults) {
 				err := errors.New("label metadata missing from batch response")
-				if s.requireLabelRefresh {
+				if s.requireLabelRefresh || markedGmail {
 					checkpoint.MessagesUpdated += result.updated
-					return nil, fmt.Errorf("fetch recovery labels for %s: %w", sourceMessageID, err)
+					return nil, fmt.Errorf("fetch labels for %s: %w", sourceMessageID, err)
 				}
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", err)
@@ -815,9 +855,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				continue
 			}
 			if labelResult.Err != nil {
-				if s.requireLabelRefresh {
+				if s.requireLabelRefresh || markedGmail {
 					checkpoint.MessagesUpdated += result.updated
-					return nil, fmt.Errorf("fetch recovery labels for %s: %w", sourceMessageID, labelResult.Err)
+					return nil, fmt.Errorf("fetch labels for %s: %w", sourceMessageID, labelResult.Err)
 				}
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", labelResult.Err)
@@ -919,15 +959,26 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				snapshotComplete,
 			)
 			if err != nil {
-				if s.requireLabelRefresh {
+				if s.requireLabelRefresh || markedGmail {
 					checkpoint.MessagesUpdated += result.updated
-					return nil, fmt.Errorf("replace recovery labels for %s: %w", sourceMessageID, err)
+					return nil, fmt.Errorf("replace labels for %s: %w", sourceMessageID, err)
 				}
 				s.logger.Warn("failed to refresh existing message labels",
 					"id", sourceMessageID, "error", err)
 				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
 				continue
+			}
+			if markedGmail {
+				cleared, err := s.clearRestoredGmailMessage(ctx, sourceID, sourceMessageID, labelResult.LabelIDs)
+				if err != nil {
+					checkpoint.MessagesUpdated += result.updated
+					return nil, fmt.Errorf(
+						"clear Gmail deletion mark for restored message %s: %w",
+						sourceMessageID, err,
+					)
+				}
+				changed = changed || cleared
 			}
 			if changed {
 				result.updated++
@@ -977,6 +1028,10 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
 				}
 				checkpoint.ErrorsCount++
+				continue
+			}
+			if !alreadyExists && s.skipGmailAcquisition(syncID, sourceMessageID, raw.LabelIDs) {
+				result.skipped++
 				continue
 			}
 			if needsRawComparison && raw.Raw == nil {
@@ -1132,6 +1187,14 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			threadID := threadIDs[sourceMessageID]
 			updated, err := s.ingestMessage(
 				ctx, sourceID, raw, threadID, labelMap)
+			_, committed := errors.AsType[*committedMessageError](err)
+			if err == nil || committed {
+				if _, marked := markedGmailMessageIDs[sourceMessageID]; marked {
+					if _, clearErr := s.clearRestoredGmailMessage(ctx, sourceID, sourceMessageID, raw.LabelIDs); clearErr != nil {
+						return nil, fmt.Errorf("clear Gmail deletion mark for restored message %s: %w", sourceMessageID, clearErr)
+					}
+				}
+			}
 			if err != nil {
 				if errors.Is(err, errDeferredIMAPIdentity) {
 					if updated {
@@ -1151,14 +1214,13 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					continue
 				}
 				s.logger.Warn("failed to ingest message", "id", raw.ID, "error", err)
-				if recErr := s.recordAcquisitionFailure(syncID, sourceMessageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
-					return nil, recErr
-				}
-				checkpoint.ErrorsCount++
-				_, committed := errors.AsType[*committedMessageError](err)
-				if !committed || (s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail) {
-					continue
-				}
+			}
+			_, acquired, recErr := s.recordIngestOutcome(syncID, sourceMessageID, err, checkpoint)
+			if recErr != nil {
+				return nil, recErr
+			}
+			if !acquired || (err != nil && s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail) {
+				continue
 			}
 
 			result.added++
@@ -1504,7 +1566,7 @@ func (s *Syncer) full(
 
 	for !reconcilePresence || state.recoveryPhase == recoveryEnumerate {
 		// List messages
-		listResp, err := s.client.ListMessages(ctx, s.opts.Query, pageToken)
+		listResp, err := s.listAcquisitionMessages(ctx, pageToken)
 		if err != nil {
 			s.failStoppedSync(state.syncID, err)
 			return nil, fmt.Errorf("list messages: %w", err)
@@ -1608,6 +1670,12 @@ func (s *Syncer) full(
 		}
 	}
 	if reconcilePresence && state.recoveryPhase == recoveryReconcile {
+		if s.opts.GmailSkipSpamTrash {
+			if err := s.refreshArchivedSpamTrashLabels(ctx, state, source.ID, labelMap, summary); err != nil {
+				s.failStoppedSync(state.syncID, err)
+				return nil, err
+			}
+		}
 		present, err := s.listCompleteMessageSnapshot(ctx)
 		if err != nil {
 			s.failStoppedSync(state.syncID, err)
@@ -1640,17 +1708,18 @@ func (s *Syncer) full(
 		s.drainIdentityDiscoveryBacklog(ctx, source.ID)
 	}
 
-	// Ordinary full sync publishes its starting History cursor even with item
-	// errors, preserving a newer cursor from an intervening incremental on resume.
-	// Recovery retains H until catch-up succeeds; it cannot publish here.
+	// A full backfill does not consume History or refresh every archived row.
+	// Preserve the saved cursor so the next incremental still sees pending
+	// label changes and deletions, including those before this scan started.
+	// A first full sync seeds its starting cursor. Recovery publishes after catch-up.
 	completionHistoryID := handoffHistoryID
-	if state.wasResumed && !reconcilePresence && isUnrestrictedGmailFull {
+	if !reconcilePresence && isUnrestrictedGmailFull {
 		current, err := s.store.GetSourceByIDContext(ctx, source.ID)
 		if err != nil {
 			s.failStoppedSync(state.syncID, err)
 			return nil, fmt.Errorf("read saved sync progress: %w", err)
 		}
-		if currentHistoryID, err := strconv.ParseUint(current.SyncCursor.String, 10, 64); err == nil && currentHistoryID > completionHistoryID {
+		if currentHistoryID, err := strconv.ParseUint(current.SyncCursor.String, 10, 64); err == nil && currentHistoryID > 0 {
 			completionHistoryID = currentHistoryID
 		}
 	}

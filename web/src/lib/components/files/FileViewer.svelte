@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getFile as generatedGetFile, getFileContent as generatedGetFileContent } from '../../api/generated/api/api';
-  import { Button, EmptyState, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Table, TableHeaderCell, appShortcuts } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Modal, overlayScrollbars, Table, TableHeaderCell, appShortcuts } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { FileMetadata, FileViewerTarget } from '../../explore/models';
@@ -16,6 +16,10 @@
   import FileVolume from '@lucide/svelte/icons/file-volume';
   import { decodeText, parseDelimited } from './text-preview';
   import { fileTypeLabel } from '../../explore/labels';
+  import { isEmailMessageType } from '../../explore/models';
+  import { kataReadiness } from '../../kata/kata-ready.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
+  import AddToTaskDialog from '../tasks/AddToTaskDialog.svelte';
   import { formatShortDate, formatBytes } from '../../util/format';
   interface Props {
     client: APIClient;
@@ -26,6 +30,7 @@
     notice?: string;
     canStepForward?: boolean;
     onClose?: () => void;
+    onOpenTaskSettings?: () => void;
     onOpenItem?: (entryKey: string) => void;
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
   }
@@ -38,6 +43,7 @@
     notice = '',
     canStepForward = true,
     onClose = undefined,
+    onOpenTaskSettings = undefined,
     onOpenItem = undefined,
     onOpenConversation = undefined,
   }: Props = $props();
@@ -64,13 +70,17 @@
     const index = pages.findIndex((page) => page.getBoundingClientRect().bottom > top);
     if (pages.length) pdfPage = index < 0 ? pages.length : index + 1;
   }
+  let addingToTask = $state(false);
   let metadata = $state<FileMetadata>();
+  const kata = kataReadiness();
+  const email = $derived(metadata ? isEmailMessageType(metadata.message_type) : false);
   let loading = $state(true);
   let error = $state('');
   let imageURL = $state('');
   let audioURL = $state('');
   let activeObjectURL: string | undefined;
   let pdfHost = $state<HTMLElement>();
+  let viewerHost = $state<HTMLDivElement>();
   let controller: AbortController | undefined;
   let renderHandle: PDFRenderHandle | undefined;
   let generation = 0;
@@ -319,7 +329,7 @@
     if (target instanceof HTMLElement) {
       if (target.closest('audio, input, textarea, select, [role="menu"], [contenteditable]:not([contenteditable="false"])')) return;
       const preview = target.closest<HTMLElement>('.preview');
-      if (preview?.querySelector('pre, table, .pdf-preview') && [...preview.querySelectorAll<HTMLElement>('.kit-table-wrapper'), preview].some((element) => element.scrollWidth > element.clientWidth)) return;
+      if (preview?.querySelector('pre, table, .pdf-preview') && [...preview.querySelectorAll<HTMLElement>('.kit-table-viewport'), preview].some((element) => element.scrollWidth > element.clientWidth)) return;
     }
     const delta = event.key === 'ArrowLeft' ? -1 : 1;
     if (delta === 1 && !canStepForward || position.index + delta < 0 || position.index + delta >= position.total) return;
@@ -327,7 +337,7 @@
     onStep(delta);
   }
   const context = $derived([file.occurred_at ? formatShortDate(file.occurred_at) : '', file.containing_title, file.participant_labels?.join(', ')].filter(Boolean).join(' · '));
-  const typeLabel = $derived(fileTypeLabel(metadata?.mime_type ?? file.mime_type ?? '', file.mime_family ?? 'other'));
+  const typeLabel = $derived(fileTypeLabel(metadata?.mime_type ?? file.mime_type ?? '', file.mime_family ?? 'other', metadata?.filename ?? file.filename));
   const footerMeta = $derived([typeLabel, formatBytes(metadata?.size_bytes ?? file.size_bytes ?? 0), imageSize].filter(Boolean).join(' · '));
   function namedFilename(value: string | undefined): string | undefined {
     return value?.trim() ? value : undefined;
@@ -351,7 +361,7 @@
     void close();
   }}
 >
-  <div class="file-viewer">
+  <div class="file-viewer" bind:this={viewerHost}>
     {#if context || position || notice}
       <div class="context-group">
         <div class="context-bar">
@@ -364,7 +374,7 @@
             </div>
           {/if}
         </div>
-        {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
+        {#if notice}<InlineNotice message={notice} />{/if}
       </div>
     {/if}
     {#if pdfPages}
@@ -377,7 +387,7 @@
     {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable preview regions need keyboard access.) -->
     <div class="preview" onscroll={updatePDFPage} class:tabular={!!delimited} class:pdf={metadata && isPDF(metadata)}
-      class:centered={metadata && (error || metadata.content_state !== 'local_content' || ['image', 'audio', 'none'].includes(previewKind(metadata)))} role="region" aria-label={`File preview ${displayFilename}`} tabindex="0">
+      class:centered={metadata && (error || metadata.content_state !== 'local_content' || ['image', 'audio', 'none'].includes(previewKind(metadata)))} role="region" aria-label={`File preview ${displayFilename}`} tabindex="0" {@attach overlayScrollbars({ host: viewerHost })}>
       {#if loading}
         <p role="status">Loading file…</p>
       {:else if metadata}
@@ -440,6 +450,7 @@
             {/snippet}
           </MenuTrigger>
           <MenuContent ariaLabel="File actions">
+            {#if metadata && (email || kata?.ready)}<MenuItem onselect={() => { addingToTask = true; }}>Add to task…</MenuItem>{/if}
             <MenuItem disabled={!metadata && !file.entry_key} onselect={openConversation}>Open conversation</MenuItem>
           </MenuContent>
         </Menu>
@@ -458,6 +469,10 @@
   {/snippet}
 </Modal>
 
+{#if addingToTask && metadata}
+  <AddToTaskDialog {client} messageId={metadata.message_id} title={file.containing_title || displayFilename} {email} onsettings={onOpenTaskSettings} onclose={() => { addingToTask = false; }} />
+{/if}
+
 <style>
   .file-viewer {
     display: flex;
@@ -475,9 +490,6 @@
     min-height: 0;
     flex: 1;
     overflow: auto;
-    /* Reserve the scrollbar's width up front so centered PDF pages do not
-       shift left when a later page makes the preview scroll. */
-    scrollbar-gutter: stable both-edges;
     padding: var(--pane-pad-y) var(--pane-pad-x);
     background: var(--bg-inset);
   }
@@ -635,11 +647,6 @@
   }
   .tabular :global(tbody tr:nth-child(odd)) {
     background: var(--bg-surface);
-  }
-  .notice {
-    margin-top: var(--space-1);
-    color: var(--accent-red);
-    font-size: var(--font-size-sm);
   }
   .pdf-controls {
     display: flex;

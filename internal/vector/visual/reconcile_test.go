@@ -2,6 +2,7 @@ package visual
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"strconv"
@@ -52,6 +53,22 @@ func TestFullReconcileClaimsExactRevisionAndCompletesBaseline(t *testing.T) {
 	require.NoError(err)
 	assert.True(consumer.ReconciliationComplete)
 	assert.Equal(consumer.BaselineSequence, sourceFence)
+}
+
+func TestFullReconcileMediaOnlyDoesNotReadMessageBody(t *testing.T) {
+	f := storetest.New(t)
+	generation := testVisualGeneration(t, f)
+	messageID := testVisualCandidate(t, f, "media-only", strings.Repeat("a1", 32))
+	require.NoError(t, f.Store.UpsertMessageBodyContext(t.Context(), messageID, sql.NullString{String: "synthetic body", Valid: true}, sql.NullString{}))
+	reconciler := testReconciler(t, f, generation.ID, memoryOpener{data: encodedPNG(t, 2, 2)}, "visual-test/media-only")
+	reconciler.config.ContextPolicy.ExcludeContext = true
+
+	result, err := reconciler.FullReconcile(t.Context())
+	require.NoError(t, err)
+	require.Len(t, result.Work, 1)
+	require.Len(t, result.Work[0].Document.Parts, 1)
+	assert.NotNil(t, result.Work[0].Document.Parts[0].Media)
+	assert.Empty(t, result.Work[0].Document.Parts[0].Text)
 }
 
 func TestReplayReclaimsMessageTextRevisionThenTombstonesRoleChange(t *testing.T) {

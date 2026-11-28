@@ -26,6 +26,7 @@ type inlineMCPFixture struct {
 	endpoint   string
 	owner      atomic.Int64
 	missing    atomic.Int32
+	limited    atomic.Int32
 	inits      atomic.Int32
 	expired    atomic.Int32
 	mu         sync.Mutex
@@ -34,6 +35,10 @@ type inlineMCPFixture struct {
 	catalog    func(map[string]any) string
 	structured bool
 	reject     string
+	// limitedTool restricts rate limiting to one tool; retryAfter overrides
+	// the default Retry-After of 7 seconds.
+	limitedTool string
+	retryAfter  string
 }
 
 func newInlineMCPFixture(t *testing.T, payloads map[string]string, structured bool) *inlineMCPFixture {
@@ -87,6 +92,9 @@ func newInlineMCPFixture(t *testing.T, payloads map[string]string, structured bo
 			r.Body = io.NopCloser(strings.NewReader(string(body)))
 			var request struct {
 				Method string `json:"method"`
+				Params struct {
+					Name string `json:"name"`
+				} `json:"params"`
 			}
 			if err := json.Unmarshal(body, &request); err != nil {
 				http.Error(w, "decode MCP request", http.StatusBadRequest)
@@ -96,6 +104,20 @@ func newInlineMCPFixture(t *testing.T, payloads map[string]string, structured bo
 			// actual handshake request so the test measures reconnects.
 			if request.Method == "initialize" {
 				f.inits.Add(1)
+			}
+			f.mu.Lock()
+			limitedTool, retryAfter := f.limitedTool, f.retryAfter
+			f.mu.Unlock()
+			if retryAfter == "" {
+				retryAfter = "7"
+			}
+			if request.Method == "tools/call" && (limitedTool == "" || limitedTool == request.Params.Name) && f.limited.Load() > 0 {
+				f.limited.Add(-1)
+				w.Header().Set("Retry-After", retryAfter)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":"rate_limited"}`))
+				return
 			}
 		}
 		if r.Method == http.MethodPost && r.Header.Get("Mcp-Session-Id") != "" && f.missing.Load() > 0 {
@@ -287,6 +309,107 @@ func TestMCPReadReconnectIsBounded(t *testing.T) {
 	assertions.Empty(f.historyCalls(), "expired sessions must not execute history reads")
 }
 
+func TestMCPRateLimitedReadWaitsForRetryAfter(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+
+	f := newInlineMCPFixture(t, map[string]string{"messages.list": `{"chat":{"chatId":"7"},"nextOffsetId":null,"messages":[]}`}, true)
+	c := connectInlineFixture(t, f)
+	var waits []time.Duration
+	c.wait = func(_ context.Context, delay time.Duration) error {
+		waits = append(waits, delay)
+		return nil
+	}
+	f.limited.Store(2)
+	_, err := c.Messages(t.Context(), 7, 0)
+	requires.NoError(err)
+	assertions.Equal([]time.Duration{7 * time.Second, 7 * time.Second}, waits)
+	assertions.Len(f.historyCalls(), 1)
+
+	// A server that keeps limiting fails the read after bounded waits.
+	waits = nil
+	f.limited.Store(50)
+	_, err = c.Messages(t.Context(), 7, 0)
+	requires.Error(err)
+	assertions.Len(waits, mcpRateLimitRetries)
+	assertions.Equal(int32(50-mcpRateLimitRetries-1), f.limited.Load())
+
+	// The session survives rate limiting, and later reads need no wait.
+	f.limited.Store(0)
+	waits = nil
+	_, err = c.Messages(t.Context(), 7, 0)
+	requires.NoError(err)
+	assertions.Empty(waits)
+}
+
+func TestMCPRateLimitedReadRetriesImmediatelyAfterZeroDelay(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+
+	f := newInlineMCPFixture(t, map[string]string{"messages.list": `{"chat":{"chatId":"7"},"nextOffsetId":null,"messages":[]}`}, true)
+	c := connectInlineFixture(t, f)
+	var waits []time.Duration
+	c.wait = func(_ context.Context, delay time.Duration) error {
+		waits = append(waits, delay)
+		return nil
+	}
+	f.mu.Lock()
+	f.retryAfter = "0"
+	f.mu.Unlock()
+	f.limited.Store(1)
+	_, err := c.Messages(t.Context(), 7, 0)
+	requires.NoError(err)
+	assertions.Equal([]time.Duration{0}, waits)
+	assertions.Len(f.historyCalls(), 1)
+}
+
+func TestMCPRateLimitedReconnectVerificationRetriesBeforeReads(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+
+	f := newInlineMCPFixture(t, map[string]string{"messages.list": `{"chat":{"chatId":"7"},"nextOffsetId":null,"messages":[]}`}, true)
+	c := connectInlineFixture(t, f)
+	var waits []time.Duration
+	c.wait = func(_ context.Context, delay time.Duration) error {
+		waits = append(waits, delay)
+		return nil
+	}
+	f.mu.Lock()
+	f.limitedTool = "account.me"
+	f.mu.Unlock()
+	initial := f.inits.Load()
+	f.missing.Store(1)
+	f.limited.Store(1)
+	_, err := c.Messages(t.Context(), 7, 0)
+	requires.NoError(err)
+	assertions.Equal([]time.Duration{7 * time.Second}, waits)
+	assertions.Equal(initial+2, f.inits.Load(), "each verification attempt uses a fresh session")
+	assertions.Len(f.historyCalls(), 1)
+
+	// Verification that stays rate-limited fails the read without reading
+	// history, and a later read verifies before it touches the archive.
+	waits = nil
+	f.missing.Store(1)
+	f.limited.Store(50)
+	_, err = c.Messages(t.Context(), 7, 0)
+	requires.Error(err)
+	assertions.Len(waits, mcpRateLimitRetries)
+	assertions.Len(f.historyCalls(), 1, "an unverified session must not read history")
+	f.limited.Store(0)
+	_, err = c.Messages(t.Context(), 7, 0)
+	requires.NoError(err)
+	assertions.Len(f.historyCalls(), 2)
+
+	// Owner checks still apply once verification is no longer rate-limited.
+	f.owner.Store(2)
+	f.missing.Store(1)
+	_, err = c.Messages(t.Context(), 7, 0)
+	requires.ErrorIs(err, ErrContract)
+	_, err = c.Messages(t.Context(), 7, 0)
+	requires.ErrorIs(err, ErrContract)
+	assertions.Len(f.historyCalls(), 2, "a different principal must never read history")
+}
+
 func TestMCPToolErrorDoesNotExposePayload(t *testing.T) {
 	f := newInlineMCPFixture(t, nil, true)
 	c := connectInlineFixture(t, f)
@@ -412,6 +535,8 @@ func TestMCPDiscoverRequiresValidPagesAndAdvancingCursor(t *testing.T) {
 		`{"sort":"id","nextAfterChatId":"5","items":[]}`,
 		`{"sort":"id","nextAfterChatId":"6","items":[{"chatId":"5","kind":"dm"}]}`,
 		`{"sort":"id","nextAfterChatId":null,"items":[{"chatId":"5","kind":"dm"},{"chatId":"5","kind":"dm"}]}`,
+		`{"sort":"id","nextAfterChatId":null,"items":[{"chatId":"5","kind":"dm","lastMessageId":9}]}`,
+		`{"sort":"id","nextAfterChatId":null,"items":[{"chatId":"5","kind":"dm","lastMessageId":"0"}]}`,
 	} {
 		t.Run(payload, func(t *testing.T) {
 			f := newInlineMCPFixture(t, map[string]string{"conversations.list": payload}, true)

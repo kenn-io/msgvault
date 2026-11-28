@@ -52,13 +52,21 @@ it('disables dismissal and Back during a write, then restores both', async () =>
     button.click();
   }
   await fireEvent.keyDown(document, { key: 'Escape' });
-  await fireEvent.click(view.container.querySelector('.kit-modal-overlay')!);
+  const overlay = view.container.querySelector('.kit-modal-overlay')!;
+  await fireEvent.pointerDown(overlay, { pointerId: 1 });
+  await fireEvent.pointerUp(overlay, { pointerId: 1 });
+  await fireEvent.click(overlay);
   expect(onclose).not.toHaveBeenCalled();
   expect(onback).not.toHaveBeenCalled();
   await view.rerender({ busy: false });
   await fireEvent.click(screen.getByRole('button', { name: 'Back' }));
   expect(onback).toHaveBeenCalledOnce();
   await fireEvent.keyDown(document, { key: 'Escape' });
+  expect(onclose).toHaveBeenCalledOnce();
+  onclose.mockClear();
+  await fireEvent.pointerDown(overlay, { pointerId: 1 });
+  await fireEvent.pointerUp(overlay, { pointerId: 1 });
+  await fireEvent.click(overlay);
   expect(onclose).toHaveBeenCalledOnce();
   view.unmount();
 });

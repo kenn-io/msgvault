@@ -6,7 +6,6 @@
   --control-h: 28px;
   --field-h: 32px;
   --control-h-lg: var(--field-h);
-  --nav-item-h: 36px;
   --font-reading: Charter, 'Bitstream Charter', Georgia, serif;
   --bg-canvas: var(--bg-surface);
   --bg-subtle: var(--bg-inset);
@@ -16,10 +15,9 @@
   --control-bg: var(--bg-surface);
   --control-border: var(--border-default);
   --text-danger: var(--accent-red);
-  --active-ink: var(--accent-blue);
+  --active-ink: color-mix(in srgb, var(--accent-blue) 80%, var(--text-primary));
   --link-ink: var(--accent-blue);
   --focus-color: var(--accent-blue);
-  --selected-bg: color-mix(in srgb, var(--accent-blue) 14%, var(--bg-surface));
   --artifact-ink: var(--accent-purple);
   --status-success-bg: color-mix(in srgb, var(--accent-green) 10%, var(--bg-surface));
   --status-success-ink: color-mix(in srgb, var(--accent-green) 72%, var(--text-primary));
@@ -53,8 +51,6 @@
   --toolbar-pad-x: var(--space-group);
   /* Text in a field or select starts 8 in from its border. */
   --field-pad-x: var(--space-group);
-
-  --scrollbar-ink: var(--text-muted);
 
   /* The Layout scale. These are the only spacing values between things:
    * 4 label → field, field → hint, icon → its label;
@@ -96,23 +92,11 @@
    * row takes the box's 12 inset; a boxed parent sets --row-pad-x. */
   --row-pad-y: var(--space-group);
   --row-pad-x: 0px;
-
-  /* The kit's one 8px bar (public/scrollbar.css). A pane that reserves it
-   * pads its right side by this much less than its left. */
-  --scrollbar-gutter-size: var(--scrollbar-size, 8px);
 }
 
 @media (max-width: 760px) {
   :root {
     --page-gutter: var(--space-4);
-  }
-}
-
-/* Touch screens draw the bar over the content and reserve nothing, so a pane
- * keeps its full right padding there. */
-@media (hover: none) and (pointer: coarse) {
-  :root {
-    --scrollbar-gutter-size: 0px;
   }
 }
 
@@ -201,13 +185,11 @@ body .kit-modal-header .kit-modal-title.kit-modal-title {
   margin-right: calc(var(--space-group) - var(--pane-pad-x));
 }
 
-/* Only the body scrolls. It pads 12 on every side; on the right that is 4
- * plus the bar's reserved 8. Long words wrap instead of widening it. */
+/* Only the body scrolls. It pads 12 on every side. Long words wrap instead of widening it. */
 :root:root .kit-modal-body {
   min-height: 0;
-  padding: var(--pane-pad-x) calc(var(--pane-pad-x) - var(--scrollbar-gutter-size)) var(--pane-pad-x) var(--pane-pad-x);
+  padding: var(--pane-pad-x);
   overflow-x: hidden;
-  scrollbar-gutter: stable;
   overflow-wrap: anywhere;
 }
 
@@ -243,6 +225,11 @@ body :is(.kit-button.kit-button, .kit-menu__trigger.kit-menu__trigger) {
 :root:root .kit-icon-button--sm:not(.kit-chip__trailing *) {
   width: var(--control-h);
   height: var(--control-h);
+}
+
+:root:root .saved-view__menu .kit-icon-button--sm {
+  width: var(--nav-subitem-height);
+  height: var(--nav-subitem-height);
 }
 
 /* Kit trims button labels to the x-height, which centers lowercase letters
@@ -323,6 +310,11 @@ body .kit-disclosure.kit-disclosure--plain.fold > .kit-disclosure__content {
  * labels below AA contrast. The dot and check mark already show the state. */
 :root .kit-filter-dropdown__panel .kit-filter-dropdown__item:not(.active) {
   opacity: 1;
+}
+
+/* Active filter labels need contrast against the inset fill in both themes. */
+:root .kit-filter-dropdown__btn.kit-filter-dropdown__btn--active {
+  color: var(--active-ink);
 }
 
 /* Kit centers a short segment inside a taller track, so the active pill floats
@@ -493,14 +485,6 @@ body :is(.kit-menu__item.kit-menu__item, .kit-select-dropdown__option.kit-select
   margin: var(--space-tight) 0;
 }
 
-/* A picker's list sits 4 from both of the panel's sides, as a menu's does: it
- * reserves no bar and pads nothing extra on the right, and a list long
- * enough to scroll draws its bar there. */
-:root:root .kit-typeahead__body {
-  padding-right: 0;
-  scrollbar-gutter: auto;
-}
-
 /* "No matches" and "Loading…" read as the app's other empty lines: Meta,
  * muted, upright. An error keeps its own color. */
 body :is(.kit-typeahead__empty.kit-typeahead__empty, .kit-typeahead__status.kit-typeahead__status) {
@@ -519,18 +503,15 @@ body :is(.kit-typeahead__empty.kit-typeahead__empty, .kit-typeahead__status.kit-
   margin-bottom: var(--space-tight);
 }
 
-/* Every vertical scroll pane in scope reserves the 8px bar on one edge, so
- * its content never shifts when the bar appears, and pads its right side by
- * the bar's width less than its left, so the inset reads the same on both
- * sides. Long words and URLs wrap, so nothing is wider than its pane. It
+/* Every vertical scroll pane in scope uses zero-gutter overlay scrollbars so
+ * its content keeps the same inset on both sides and never shifts when the bar
+ * appears. Long words and URLs wrap, so nothing is wider than its pane. It
  * scrolls on its own layer from the start: scrolled in place, the edge
  * pixels of text at its inset stayed behind as stray marks. */
 :where([data-scroll-pane]) {
   overflow-y: auto;
   will-change: scroll-position;
-  scrollbar-gutter: stable;
-  padding-left: var(--space-pane);
-  padding-right: calc(var(--space-pane) - var(--scrollbar-gutter-size));
+  padding-inline: var(--space-pane);
   overflow-wrap: anywhere;
 }
 

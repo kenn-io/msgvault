@@ -2,6 +2,10 @@ package api
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"mime/multipart"
@@ -12,6 +16,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
@@ -53,4 +60,60 @@ func TestVisualSearchRequestMediaTypes(t *testing.T) {
 			assert.Contains(t, response.Body.String(), `"error":"`+tc.code+`"`)
 		})
 	}
+}
+
+type imageQueryTestBackend struct{}
+
+func (imageQueryTestBackend) PutUnpublished(context.Context, visual.VectorToken, []float32) error {
+	return nil
+}
+func (imageQueryTestBackend) DeleteTokens(context.Context, []visual.VectorToken) error { return nil }
+func (imageQueryTestBackend) Search(context.Context, visual.SearchRequest) ([]visual.Hit, error) {
+	return nil, nil
+}
+func (imageQueryTestBackend) LoadOwnerVector(context.Context, visual.GenerationID, visual.Owner) ([]float32, error) {
+	return nil, nil
+}
+
+func TestLargeVisualQueryUsesActiveProviderPolicy(t *testing.T) {
+	var imageBytes bytes.Buffer
+	require.NoError(t, png.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 4001, 4000))))
+	provider, err := visual.NewKitProvider("kit", "https://embed.example.com/v1", "model", 2, "", nil, "generation")
+	require.NoError(t, err)
+	kit, err := visual.NewSearchService(&store.Store{}, provider, imageQueryTestBackend{}, true)
+	require.NoError(t, err)
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: &mockStore{}, Engine: &fileSearchEngine{MockEngine: &querytest.MockEngine{}}, Logger: testLogger()})
+	reached := 0
+	kit.SetScopeCheck(func(context.Context) error { reached++; return errors.New("test scope reached") })
+	server.SetVisualSearch(kit)
+	var upload bytes.Buffer
+	form := multipart.NewWriter(&upload)
+	file, err := form.CreateFormFile("image", "query.png")
+	require.NoError(t, err)
+	_, err = file.Write(imageBytes.Bytes())
+	require.NoError(t, err)
+	require.NoError(t, form.WriteField("limit", "10"))
+	require.NoError(t, form.Close())
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/attachments/visual", &upload)
+	request.Header.Set("Content-Type", form.FormDataContentType())
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	assert.Equal(t, 1, reached, response.Body.String())
+	body := fmt.Sprintf(`{"predicate":{},"visual_image_base64":%q,"limit":10}`, base64.StdEncoding.EncodeToString(imageBytes.Bytes()))
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	assert.Equal(t, 2, reached, response.Body.String())
+}
+
+func TestFileSearchInvalidImageWithoutVisualService(t *testing.T) {
+	server, _ := newTestServerWithMockStore(t)
+	body := fmt.Sprintf(`{"predicate":{},"visual_image_base64":%q}`, base64.StdEncoding.EncodeToString([]byte("not an image")))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	assert.Equal(t, http.StatusUnsupportedMediaType, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "unsupported_image_query")
 }

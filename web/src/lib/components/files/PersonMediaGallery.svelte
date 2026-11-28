@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button } from '@kenn-io/kit-ui';
+  import { Button, overlayScrollbars } from '@kenn-io/kit-ui';
 
   import type { APIClient } from '../../api/client';
   import type { PersonFileSearchRow } from '../../explore/models';
@@ -25,7 +25,7 @@
   }: Props = $props();
 </script>
 
-<section class="media-gallery" aria-label="Person media gallery" aria-busy={loading || loadingMore}>
+<section class="media-gallery" aria-label="Person media gallery" aria-busy={loading || loadingMore} {@attach overlayScrollbars()}>
   {#if loading && rows.length === 0}
     <p class="notice" role="status">Loading media…</p>
   {:else if error && rows.length === 0}

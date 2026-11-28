@@ -241,3 +241,45 @@ func TestReviewRound1NotionCheckedMustBeBoolean(t *testing.T) {
 		})
 	}
 }
+
+func TestNotionNestedMeetingPages(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		want      []string
+	}{
+		{name: "nested meeting does not consume sibling pages", raw: `{
+		"schema_version":1,
+		"discovery":{"meeting_notes":{"children":{"summary_block_id":"root"}}},
+		"canonical":{"summary":"Summary"},
+		"summary":{"root":{"id":"root","type":"paragraph","has_children":true},"pages":[
+			{"results":[
+				{"id":"nested-meeting","type":"meeting_notes","has_children":true},
+				{"id":"branch","type":"paragraph","has_children":true}
+			],"has_more":false},
+			{"results":[{"id":"action","type":"to_do","has_children":false,"parent":{"type":"block_id","block_id":"branch"},"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}
+		]}
+	}`, want: []string{"action"}},
+
+		{name: "empty last page", raw: `{
+		"schema_version":1,
+		"discovery":{"meeting_notes":{"children":{"summary_block_id":"root"}}},
+		"canonical":{"summary":"Summary"},
+		"summary":{"root":{"id":"root","type":"paragraph","has_children":true},"pages":[
+			{"results":[
+				{"id":"nested","type":"meeting_notes","has_children":true},
+				{"id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Action"}],"checked":false}}
+			],"has_more":true,"next_cursor":"next"},
+			{"results":[],"has_more":false}
+		]}
+	}`, want: []string{"action"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content := Decode("notion_meeting_json", []byte(tc.raw), nil)
+			assert.Equal(t, CoverageAvailable, content.ActionCoverage)
+			require.Len(t, content.Actions, len(tc.want))
+			for i, id := range tc.want {
+				assert.Equal(t, id, content.Actions[i].SourceID)
+			}
+		})
+	}
+}

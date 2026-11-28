@@ -98,22 +98,25 @@ func (s *ProviderSelection) MarshalTOML() ([]byte, error) {
 //
 //nolint:recvcheck // ApplyDefaults mutates while validation and profile construction do not.
 type Config struct {
-	Enabled              bool                      `toml:"enabled"`
-	Schedule             string                    `toml:"schedule"`
-	WorkBatchSize        int                       `toml:"work_batch_size"`
-	ChangeBatchSize      int                       `toml:"change_batch_size"`
-	HistoricalMessageCap int                       `toml:"historical_message_cap"`
-	ContextPerTarget     int                       `toml:"context_per_target"`
-	EvidenceMaxBytes     int                       `toml:"evidence_max_bytes"`
-	EvidenceMaxItems     int                       `toml:"evidence_max_items"`
-	LeaseDuration        time.Duration             `toml:"lease_duration"`
-	BackstopInterval     time.Duration             `toml:"backstop_interval"`
-	RetryBase            time.Duration             `toml:"retry_base"`
-	RetryMax             time.Duration             `toml:"retry_max"`
-	Budgets              BudgetConfig              `toml:"budgets"`
-	Brief                BriefConfig               `toml:"brief"`
-	Provider             ProviderSelection         `toml:"provider"`
-	Providers            map[string]ProviderConfig `toml:"providers"`
+	Enabled              bool   `toml:"enabled"`
+	Schedule             string `toml:"schedule"`
+	WorkBatchSize        int    `toml:"work_batch_size"`
+	ChangeBatchSize      int    `toml:"change_batch_size"`
+	HistoricalMessageCap int    `toml:"historical_message_cap"`
+	ContextPerTarget     int    `toml:"context_per_target"`
+	// ExtractionMaxOutputTokens caps the output of one extraction request.
+	// Reasoning models spend part of it on thinking before they answer.
+	ExtractionMaxOutputTokens int                       `toml:"extraction_max_output_tokens"`
+	EvidenceMaxBytes          int                       `toml:"evidence_max_bytes"`
+	EvidenceMaxItems          int                       `toml:"evidence_max_items"`
+	LeaseDuration             time.Duration             `toml:"lease_duration"`
+	BackstopInterval          time.Duration             `toml:"backstop_interval"`
+	RetryBase                 time.Duration             `toml:"retry_base"`
+	RetryMax                  time.Duration             `toml:"retry_max"`
+	Budgets                   BudgetConfig              `toml:"budgets"`
+	Brief                     BriefConfig               `toml:"brief"`
+	Provider                  ProviderSelection         `toml:"provider"`
+	Providers                 map[string]ProviderConfig `toml:"providers"`
 }
 
 // BriefConfig bounds the "last time we talked" person brief. Enrollment is the
@@ -244,6 +247,7 @@ func (c *Config) ApplyDefaults() {
 	setDefaultInt(&c.ChangeBatchSize, 256)
 	setDefaultInt(&c.HistoricalMessageCap, 2_000)
 	setDefaultInt(&c.ContextPerTarget, 8)
+	setDefaultInt(&c.ExtractionMaxOutputTokens, extractionMaxOutputTokens)
 	setDefaultInt(&c.EvidenceMaxBytes, 131_072)
 	setDefaultInt(&c.EvidenceMaxItems, 200)
 	setDefaultDuration(&c.LeaseDuration, 15*time.Minute)
@@ -456,8 +460,11 @@ func (c Config) validateOperationalConfig() error {
 	if c.LeaseDuration <= 0 || c.BackstopInterval <= 0 || c.RetryBase <= 0 || c.RetryMax <= 0 {
 		return errors.New("invalid [people.sweep] lease, backstop, and retry durations must be positive")
 	}
-	if c.Budgets.MaxOutputTokensPerPerson < extractionMaxOutputTokens {
-		return fmt.Errorf("invalid [people.sweep.budgets] max_output_tokens_per_person: must be at least %d", extractionMaxOutputTokens)
+	if c.ExtractionMaxOutputTokens <= 0 || c.ExtractionMaxOutputTokens > extractionMaxOutputTokensLimit {
+		return fmt.Errorf("invalid [people.sweep] extraction_max_output_tokens: must be between 1 and %d", extractionMaxOutputTokensLimit)
+	}
+	if c.Budgets.MaxOutputTokensPerPerson < int64(c.ExtractionMaxOutputTokens) {
+		return fmt.Errorf("invalid [people.sweep.budgets] max_output_tokens_per_person: must be at least %d, the extraction_max_output_tokens value", c.ExtractionMaxOutputTokens)
 	}
 	if err := c.Brief.validate(c.Budgets); err != nil {
 		return err

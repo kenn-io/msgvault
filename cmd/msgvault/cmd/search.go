@@ -83,7 +83,6 @@ Bare words and "quoted phrases" perform full-text search in the default mode.
 Use | between alternatives, for example invoice from:alice | receipt from:bob.
 filename: values use case-insensitive literal substring matching, including
 %, _, and backslashes. Repeat filename: to require every value to match.
-The filename operator requires daemon API schema 3.14.0 or newer.
 
 Examples:
   msgvault search from:alice@example.com has:attachment
@@ -191,7 +190,7 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 		return errors.New("invocation state is unavailable")
 	}
 	logger := state.logger
-	s, info, err := OpenHTTPStore(cmd.Context(), daemonclient.AgentReadMinAPISchemaVersion)
+	s, info, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -221,9 +220,7 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 	started := time.Now()
 
 	// Only send an explicitly requested scope: the daemon's default is
-	// already active-only, and a scoped request makes the client require
-	// API schema 2.12.0, which would break default searches against older
-	// daemons.
+	// already active-only.
 	deletionScope := ""
 	if cmd.Flags().Changed("deletion-scope") {
 		deletionScope = searchDeletionScope

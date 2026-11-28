@@ -4,31 +4,33 @@ title: SQL Queries
 description: Run read-only DuckDB queries against the analytics cache.
 ---
 
-Use `msgvault query` for ad-hoc analysis across email, chat, calendar, and
-meeting data in the Parquet analytics cache. The daemon runs one read-only
-DuckDB statement. It rejects writes, session changes, and multiple statements.
+Run `msgvault query` for ad-hoc analysis across the email, chat, calendar, and
+meeting data in your Parquet analytics cache. The daemon executes one read-only
+DuckDB statement and rejects writes, session changes, and multiple statements.
 
-## Basic Usage
+## Basic usage
 
 ```bash
 msgvault query "SELECT count(*) AS total FROM messages"
 ```
 
-The command takes a single argument: the SQL string. A usable stale cache stays
-queryable. The JSON result reports the committed publication time and, when
-known, why the cache is stale and how many additions are pending. CSV and table
-output print that cache information to stderr.
+The command takes one argument, the SQL string. A usable stale cache remains
+queryable. In JSON output, the result reports the committed publication time
+and, when known, why the cache is stale and how many additions are pending. CSV
+and table output print the publication time, cache generation, and any stale
+reason to stderr.
 
-`msgvault query --fresh "SELECT 1"` waits for a freshness check and any required
-rebuild, then returns rows. This includes archive writes committed before the
-request. If a build is already running, the daemon queues a follow-up check.
-With automatic builds enabled, a missing or incompatible cache also starts
-recovery. In either case the command reports the job ID on stderr and waits;
-a failed build or interrupted wait exits with an error.
+Running `msgvault query --fresh "SELECT 1"` waits for a freshness check and any
+required rebuild before returning rows, including archive writes committed
+before your request. If a build is already running, the daemon queues a
+follow-up check. When automatic builds are enabled, a missing or incompatible
+cache also starts recovery. In either case, the command reports the job ID on
+stderr and waits. If the build fails or the wait is interrupted, the command
+exits with an error.
 
-## Output Formats
+## Output formats
 
-Control output format with the `--format` flag:
+Use the `--format` flag to pick an output format:
 
 ```bash
 # JSON (default)
@@ -47,11 +49,11 @@ msgvault query --format table "SELECT from_email, message_count FROM v_senders L
 | `csv` | Standard CSV with a header row |
 | `table` | Aligned text table with separator line and `(N rows)` footer |
 
-## Available Views
+## Available views
 
 ### Base views
 
-These map directly to the Parquet files in `~/.msgvault/analytics/`.
+These views map directly to the Parquet files in `~/.msgvault/analytics/`.
 
 | View | Key Columns |
 |---|---|
@@ -65,28 +67,28 @@ These map directly to the Parquet files in `~/.msgvault/analytics/`.
 | `sources` | id, source_type |
 
 `messages.rfc822_message_id` is NULL when the stored identifier contains invalid
-UTF-8. The archive retains the original bytes; `repair-encoding` reports these
+UTF-8. The archive keeps the original bytes, and `repair-encoding` reports these
 IDs without rewriting them. See the [encoding repair limits](../cli-reference.md#repair-encoding).
 
-`message_recipients.email_address` is the recipient's address: the address
-written in the message header when one was recorded, otherwise the
-participant's current address. It is NULL for participants without an
-email address, such as phone-number contacts, and for addresses whose
-stored bytes are invalid UTF-8. `envelope_address` is the header
-address exactly as written, NULL when none was recorded (chat and
-calendar rows, mail imported before v0.19.0), and NULL when its stored
-bytes are invalid UTF-8. A recorded envelope is authoritative even when
-damaged: the participant's current address is never substituted for it,
-so `email_address` stays NULL instead. Damaged addresses export as
-unknown rather than as a repaired value, so a broken byte sequence
-cannot be mistaken for a different real address. `msgvault repair-encoding`
-does not repair recorded envelope addresses. They need separate recovery
-from verified original values before `msgvault build-cache --full-rebuild`
-can include them. See the [encoding repair limits](../cli-reference.md#repair-encoding).
+`message_recipients.email_address` holds the recipient's address: the address
+written in the message header when one was recorded, or the participant's
+current address otherwise. It is NULL for participants without an email address,
+such as phone-number contacts, and for addresses whose stored bytes are invalid
+UTF-8. `envelope_address` is the header address written verbatim; it is NULL
+when none was recorded, such as in chat and calendar rows or mail imported
+before v0.19.0, or when its stored bytes are invalid UTF-8. A recorded envelope
+is authoritative even when damaged, so the participant's current address is
+never substituted for it and `email_address` stays NULL instead. Damaged
+addresses export as unknown rather than as a repaired value, so a broken byte
+sequence cannot be mistaken for a different real address.
+`msgvault repair-encoding` does not repair recorded envelope addresses. You need
+to recover them separately from verified original values before
+`msgvault build-cache --full-rebuild` can include them. See the
+[encoding repair limits](../cli-reference.md#repair-encoding).
 
 ### Convenience views
 
-Pre-joined and aggregated views for common queries.
+These pre-joined and aggregated views cover common queries.
 
 | View | Description |
 |---|---|
@@ -96,7 +98,7 @@ Pre-joined and aggregated views for common queries.
 | `v_labels` | Per-label: name, message_count, total_size |
 | `v_threads` | Per-conversation: conversation_id, source_conversation_id, conversation_title, conversation_type, message_count, first_message_at, last_message_at, participant_emails (JSON array) |
 
-## Example Queries
+## Example queries
 
 ### Top senders by message count
 
@@ -136,8 +138,8 @@ msgvault query "
 ### Filter by message type
 
 Mixed archives store email, calendar events, Teams and Discord messages, and
-text-message imports in the same `messages` table. Use the `message_type`
-column to keep SQL reports scoped:
+text-message imports in the same `messages` table. Filter on the `message_type`
+column to scope your SQL reports:
 
 ```bash
 # Teams activity by month
@@ -171,10 +173,13 @@ msgvault query --format table "
 "
 ```
 
-Known values are `email`, `google_chat`, `calendar_event`,
-`meeting_transcript`, `beeper`, `chatwoot`, `teams`, `discord`, `slack`, `sms`, `mms`,
-`rcs`, `whatsapp`, `imessage`, `fbmessenger`, `telegram`, `synctech_sms_call`,
-`google_voice_text`, `google_voice_call`, and `google_voice_voicemail`.
+Known values are `email`, `google_chat`, `calendar_event`, `meeting_transcript`,
+`sms`, `mms`, `rcs`, `whatsapp`, `imessage`, `teams`, `discord`, `fbmessenger`,
+`facebook_comments`, `instagram_comments`, `instagram_mentions`,
+`facebook_messages`, `instagram_messages`, `synctech_sms_call`,
+`google_voice_text`, `google_voice_call`, `google_voice_voicemail`, `beeper`,
+`chatwoot`, `slack`, `inline`, `matrix`, `telegram`, `x_dm`, `tiktok_export`,
+`linkedin`, and `feed_item`.
 
 ### Label statistics
 
@@ -213,7 +218,8 @@ msgvault query "
 
 ### Filter by label
 
-The `labels` column in `v_messages` is a JSON array string. Use DuckDB's `list_contains` to filter:
+The `labels` column in `v_messages` is a JSON array string. Use DuckDB's
+`list_contains` function to filter it:
 
 ```bash
 msgvault query "
@@ -225,7 +231,7 @@ msgvault query "
 "
 ```
 
-Or join through the base tables for more control:
+If you want more control, join through the base tables instead:
 
 ```bash
 msgvault query "
@@ -241,20 +247,29 @@ msgvault query "
 
 ## Tips
 
-**Partition pruning.** The `messages` view is hive-partitioned by year. Adding `WHERE year = 2024` to queries on `messages` lets DuckDB skip irrelevant Parquet files, which speeds up queries on large archives.
+**Partition pruning.** The `messages` view is hive-partitioned by year. Adding
+`WHERE year = 2024` to queries on `messages` lets DuckDB skip unrelated Parquet
+files, which speeds up queries on large archives.
 
-**Cache freshness.** A usable stale publication serves queries during
-`min_rebuild_interval`. Once that interval expires, a query can schedule a
-background freshness check and refresh. Set `auto_build_cache = false` to
-disable automatic builds; `--fresh` still requests one explicitly. A query
-waits for the build when `--fresh` is set or no usable cache exists. Deleted
-messages can remain in the published cache until it refreshes; see the
+**Cache freshness.** A usable stale publication continues to serve queries
+during `min_rebuild_interval`. After that interval expires, a query can schedule
+a background freshness check and refresh. Set `auto_build_cache = false` to turn
+off automatic builds; `--fresh` still requests one explicitly. A query waits for
+the build when `--fresh` is set or when no usable cache exists. Deleted messages
+can remain in the published cache until it refreshes; see the
 [cache freshness policy](../configuration.md#analytics).
 
-**Pipe-friendly.** JSON and CSV output modes are designed for piping into other tools (`jq`, `csvkit`, `xsv`, etc.). Use `--format csv` for spreadsheet workflows or `--format json` for programmatic consumption.
+**Pipe-friendly output.** JSON and CSV output modes work well when piped into
+other tools such as `jq`, `csvkit`, and `xsv`. Use `--format csv` for
+spreadsheet workflows or `--format json` for scripts and programs.
 
-**Full DuckDB SQL.** You have access to DuckDB's full SQL dialect, including window functions, CTEs, `UNNEST`, `list_contains`, and all built-in functions. See the [DuckDB documentation](https://duckdb.org/docs/sql/introduction) for the full SQL reference.
+**Full DuckDB SQL.** You can use DuckDB's full SQL dialect, including window
+functions, CTEs, `UNNEST`, `list_contains`, and all built-in functions. See the
+[DuckDB documentation](https://duckdb.org/docs/sql/introduction) for the full
+SQL reference.
 
-## See Also
+## See also
 
-For pre-built analytics commands (top senders, domains, labels, overall stats), see [Analytics & Stats](/docs/usage/analytics/). The `query` command is for when you need more flexibility than those commands provide.
+For pre-built analytics commands covering top senders, domains, labels, and
+overall stats, see [Analytics & Stats](/docs/usage/analytics/). Use `query` when
+you need more flexibility than those commands offer.

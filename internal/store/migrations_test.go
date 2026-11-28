@@ -109,8 +109,7 @@ func TestMigrationLedgerVersionWithDerivedDataRevision(t *testing.T) {
 		`SELECT version FROM applied_migrations WHERE name = ?`), name).Scan(&version))
 	assertions.Equal(1, version)
 
-	// Force the ledger write to fail after the revision bump has run. The
-	// transaction must roll back both changes together.
+	// A failed ledger write must leave the revision unchanged.
 	_, err = f.Store.DB().ExecContext(t.Context(), `DROP TABLE applied_migrations`)
 	requirements.NoError(err)
 	err = f.Store.MarkMigrationAppliedWithDerivedDataRevision("atomic_failure")

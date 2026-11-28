@@ -3,11 +3,17 @@
  */
 import type {
   ActionsPage,
+  GetMeetingRecordParams,
   MeetingActionsRequest,
   MeetingContextRequest,
+  MeetingDecisionRequest,
+  MeetingLinkDecisionResult,
   MeetingMetricsRequest,
+  MeetingRecord,
+  MeetingSuggestionPage,
   Metrics,
   PacketResult,
+  SuggestMeetingLinksParams,
 } from "../models";
 
 import { orvalFetch } from "../../runtime";
@@ -49,6 +55,23 @@ export const getMeetingContext = (
   );
 };
 /**
+ * @summary Link or split archived meeting copies
+ */
+export const decideMeetingLink = (
+  meetingDecisionRequest: MeetingDecisionRequest,
+  options?: SecondParameter<typeof orvalFetch<MeetingLinkDecisionResult>>,
+) => {
+  return orvalFetch<MeetingLinkDecisionResult>(
+    {
+      url: `/api/v1/meetings/links/decisions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: meetingDecisionRequest,
+    },
+    options,
+  );
+};
+/**
  * @summary Get archived meeting duration metrics
  */
 export const getMeetingMetrics = (
@@ -62,6 +85,30 @@ export const getMeetingMetrics = (
       headers: { "Content-Type": "application/json" },
       data: meetingMetricsRequest,
     },
+    options,
+  );
+};
+/**
+ * @summary Read an archived meeting from a note or event
+ */
+export const getMeetingRecord = (
+  params: GetMeetingRecordParams,
+  options?: SecondParameter<typeof orvalFetch<MeetingRecord>>,
+) => {
+  return orvalFetch<MeetingRecord>(
+    { url: `/api/v1/meetings/record`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Suggest links between meeting notes and calendar events
+ */
+export const suggestMeetingLinks = (
+  params: SuggestMeetingLinksParams,
+  options?: SecondParameter<typeof orvalFetch<MeetingSuggestionPage>>,
+) => {
+  return orvalFetch<MeetingSuggestionPage>(
+    { url: `/api/v1/meetings/suggestions`, method: "GET", params },
     options,
   );
 };

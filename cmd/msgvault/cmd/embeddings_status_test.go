@@ -5,69 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/vector"
 )
-
-func TestEmbeddingStatusRequiresDaemonSchema(t *testing.T) {
-	oldJSON, oldWatch, oldSource, oldInterval := embeddingsStatusJSON, embeddingsStatusWatch, embeddingsStatusSource, embeddingsStatusInterval
-	t.Cleanup(func() {
-		embeddingsStatusJSON, embeddingsStatusWatch, embeddingsStatusSource, embeddingsStatusInterval = oldJSON, oldWatch, oldSource, oldInterval
-	})
-	embeddingsStatusJSON, embeddingsStatusWatch, embeddingsStatusSource, embeddingsStatusInterval = true, false, 0, 500*time.Millisecond
-	for _, version := range []string{"3.20.0", "3.21.0"} {
-		t.Run(version, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			var statusRequests atomic.Int64
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/v1/health":
-					_, _ = fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, version)
-				case "/api/v1/embeddings/status":
-					statusRequests.Add(1)
-					if version != "3.21.0" {
-						http.NotFound(w, r)
-						return
-					}
-					_, _ = w.Write([]byte(`{"generation":{"id":1,"state":"building"},"pending":4}`))
-				default:
-					http.NotFound(w, r)
-				}
-			}))
-			defer server.Close()
-			command := &cobra.Command{}
-			command.SetContext(withStoreResolverConfig(t, &config.Config{
-				Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
-			}))
-			var output bytes.Buffer
-			command.SetOut(&output)
-			err := embeddingsStatusCmd.RunE(command, nil)
-			if version != "3.21.0" {
-				require.Error(err)
-				require.ErrorContains(err, "requires daemon API schema 3.21.0")
-				require.ErrorContains(err, fmt.Sprintf("daemon reports %q", version))
-				require.ErrorContains(err, "upgrade")
-				assert.Zero(statusRequests.Load(), "reject incompatible daemons before requesting the new route")
-				assert.Empty(output.String())
-			} else {
-				require.NoError(err)
-				assert.Equal(int64(1), statusRequests.Load())
-				assert.Contains(output.String(), `"pending":4`)
-			}
-		})
-	}
-}
 
 func TestEmbeddingStatusRendering(t *testing.T) {
 	now := time.Now().UTC()
@@ -146,22 +92,12 @@ func TestEmbeddingStatusValidatesFlags(t *testing.T) {
 	}
 }
 
-// scriptedEmbeddingStatus fails its first version check and first status
-// read, as a restarting daemon would, then cancels the watch on success.
+// scriptedEmbeddingStatus fails its first status read, as a restarting
+// daemon would, then cancels the watch on success.
 type scriptedEmbeddingStatus struct {
-	version      string
-	versionCalls int
-	sourceID     int64
-	calls        int
-	cancel       context.CancelFunc
-}
-
-func (s *scriptedEmbeddingStatus) APISchemaVersion(context.Context) (string, error) {
-	s.versionCalls++
-	if s.versionCalls == 1 {
-		return "", errors.New("daemon is restarting")
-	}
-	return s.version, nil
+	sourceID int64
+	calls    int
+	cancel   context.CancelFunc
 }
 
 func (s *scriptedEmbeddingStatus) EmbeddingStatus(_ context.Context, sourceID int64) (*vector.EmbeddingStatus, error) {
@@ -182,10 +118,6 @@ type unreachableEmbeddingStatus struct {
 	cancel context.CancelFunc
 }
 
-func (u *unreachableEmbeddingStatus) APISchemaVersion(context.Context) (string, error) {
-	return embeddingsStatusMinAPISchemaVersion, nil
-}
-
 func (u *unreachableEmbeddingStatus) EmbeddingStatus(context.Context, int64) (*vector.EmbeddingStatus, error) {
 	u.calls++
 	if u.calls >= 10 {
@@ -203,12 +135,12 @@ func TestEmbeddingStatusPollLoop(t *testing.T) {
 	for _, tc := range []struct {
 		name                           string
 		watch, reconnect, incompatible bool
-		versionCalls, calls            int
+		calls                          int
 	}{
-		{name: "single read", versionCalls: 1},
+		{name: "single read"},
 		{name: "failed polls", watch: true},
-		{name: "daemon moves", watch: true, reconnect: true, versionCalls: 1, calls: 1},
-		{name: "incompatible daemon", watch: true, reconnect: true, incompatible: true, versionCalls: 1, calls: 1},
+		{name: "daemon moves", watch: true, reconnect: true, calls: 1},
+		{name: "incompatible daemon", watch: true, reconnect: true, incompatible: true, calls: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -221,7 +153,7 @@ func TestEmbeddingStatusPollLoop(t *testing.T) {
 			cmd.SetContext(ctx)
 			cmd.SetOut(&stdout)
 			cmd.SetErr(&stderr)
-			reader := &scriptedEmbeddingStatus{version: embeddingsStatusMinAPISchemaVersion, versionCalls: tc.versionCalls, calls: tc.calls, cancel: cancel}
+			reader := &scriptedEmbeddingStatus{calls: tc.calls, cancel: cancel}
 			var client embeddingStatusReader = reader
 			var stale *unreachableEmbeddingStatus
 			var reconnect func(context.Context) (embeddingStatusReader, error)
@@ -260,9 +192,7 @@ func TestEmbeddingStatusPollLoop(t *testing.T) {
 					assert.Equal(3, reconnects)
 					assert.Contains(stderr.String(), "reconnect: local daemon is not running")
 				} else {
-					assert.Equal(3, reader.versionCalls, "the version is checked again after each failed poll")
 					assert.Equal(2, reader.calls)
-					assert.Contains(stderr.String(), "daemon is restarting")
 					assert.Contains(stderr.String(), "daemon returned 503")
 				}
 			}

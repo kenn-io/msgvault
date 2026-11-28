@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-23"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -7,10 +7,10 @@ description: Daemon-served analytical Web UI and REST API for your msgvault arch
 
 ## Overview
 
-`msgvault serve` starts an HTTP server that exposes your archive through the
-first-party Web UI at `/` and a REST API under `/api`. It optionally runs a
-background sync scheduler to keep accounts up to date on a cron-based schedule.
-The complete UI is embedded in the release binary; see [Web UI](/docs/web-ui/) for
+Running `msgvault serve` starts an HTTP server that exposes your archive through
+the first-party Web UI at `/` and a REST API under `/api`. You can also enable
+its background sync scheduler to keep accounts up to date on a cron schedule.
+The release binary embeds the complete UI; see [Web UI](/docs/web-ui/) for
 browser login, secure remote deployment, search states, and keyboard controls.
 
 ### Choose an integration path
@@ -29,7 +29,7 @@ Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-da
 
 ### Owner MCP Events
 
-API schema 5.3 adds owner-only `GET /api/v1/mcp-events/list`,
+API schema 5.31 adds owner-only `GET /api/v1/mcp-events/list`,
 `POST /api/v1/mcp-events/subscribe` and `POST /api/v1/mcp-events/unsubscribe`.
 The list reports whether Events are enabled. The POST routes use the MCP
 Events subscription shape; they accept one person or source and a public HTTPS
@@ -40,20 +40,25 @@ provides discovery and reads; Events mutations require `/mcp/writes` with
 `--mcp-allow-writes`, or `--http-allow-writes` on standalone MCP HTTP.
 See [MCP Events](usage/chat.md#mcp-events) for leases and delivery semantics.
 
+### Person fact decisions
+
+Call `GET /api/v1/people/{id}/fact-decisions` to list decisions in newest-first order. Pass `claim_key` to narrow the list to one claim before applying `limit` and `offset`. Each decision includes its target, resolver version, score, and the score maxima for that version, though an unknown resolver version omits score maxima. The outcome is `saved`, `value-retired`, `current-value-kept`, `pinned-value-kept`, `too-close-to-choose`, or `not-used`, and `reason` explains the decision. Older decisions return a `null` outcome when their history cannot establish the result.
+
+Call `GET /api/v1/people/{id}/fact-summary` to retrieve `claimed_fields`, `latest_claim_at`, `has_values`, and `has_fact_history`. The claim count groups claims by target kind and key, and `latest_claim_at` is `null` when no claims exist. Values cover attribute values and employments, while fact history covers claims, evidence, and pin events. To retrieve a single evidence row, filter `GET /api/v1/people/{id}/fact-evidence` by `evidence_id`.
+
 ### Filename suggestions
 
-Newer than the latest release, API schema 3.15 adds
-`POST /api/v1/files/suggest` and `POST /api/v1/people/{id}/files/suggest`.
-They suggest attachment filenames without changing existing file or message
-search. Both are read-only operations under existing owner authentication;
-delegated agent tokens and remote-client credentials gain no new access.
-They use archive metadata directly and need no analytical cache or embedding
-provider.
+API schema 3.15 adds `POST /api/v1/files/suggest` and
+`POST /api/v1/people/{id}/files/suggest` for suggesting attachment filenames
+without changing existing file or message search. Both endpoints are read-only
+under existing owner authentication; delegated agent tokens and remote-client
+credentials gain no new access. They query archive metadata directly and need no
+analytical cache or embedding provider.
 
-Send one JSON object of at most 64 KiB. Unknown fields, invalid field casing
-and trailing objects are rejected. Duplicate field names use the last value.
-There is no query-language field, cursor, caller-selected sort or
-semantic-search input.
+Send one JSON object of at most 64 KiB. The endpoint rejects unknown fields,
+invalid field casing, duplicate field names, and trailing objects. It does not
+accept a query-language field, cursor, caller-selected sort, or semantic-search
+input.
 
 | Field | Contract |
 |---|---|
@@ -65,39 +70,41 @@ semantic-search input.
 | `limit` | Optional integer 1–100, default 20; explicit `null` is invalid |
 | `directions` | Person endpoint only: `from_person`, `to_person`, `group`; omitted means all three |
 
-Every filter intersects. Each account scope has optional `source_id`,
-`addresses`, `unattributed`, and `inbound` fields. Addresses and unattributed
-rows are alternatives within one scope; separate scopes intersect. Addresses
-must be canonical lowercase bare mailboxes. `inbound` selects received mail;
-without it, sent copies and calendar events can also match. Source-specific
-and unattributed selections retain ordinary account-filter semantics.
-Input array limits count supplied values before deduplication.
+All filters intersect, and input array limits count supplied values before
+deduplication. Each account scope accepts optional `source_id`, `addresses`,
+`unattributed`, and `inbound` fields. Within one scope, `addresses` and
+`unattributed` act as alternatives, while separate scopes intersect. Supply
+addresses as canonical lowercase bare mailboxes. Set `inbound` to select
+received mail; without it, sent copies and calendar events can also match.
+Source-specific and unattributed selections keep ordinary account-filter
+semantics.
 
-The response contains `suggestions`, `candidate_limit_reached`, and
-`index_revision`. Rows contain `id`, `message_id`, `conversation_id`, `source_id`,
-`occurred_at` (always present, possibly `null`), the current `filename`,
-`mime_type` (possibly empty), `mime_family`, `filename_match`
+The response returns `suggestions`, `candidate_limit_reached`, and
+`index_revision`. Each row includes `id`, `message_id`, `conversation_id`,
+`source_id`, `occurred_at` (always present, possibly `null`), the current
+`filename`, `mime_type` (possibly empty), `mime_family`, `filename_match`
 (`exact`, `prefix`, `typo`), `size_bytes`, `content_state`, and
-`content_available`. File search and suggestion rows derive their content
-states from metadata: `metadata_only`, `url_only`, or `unverified`. An
-`unverified` row records a hash without checking storage and has a null
-`content_available`; the other two states have a false value. File details
-check whether storage can be opened and can return `local_content`,
-`missing_blob`, or an error. Opening storage does not verify the bytes; a read
-or integrity check can still fail. Rows contain no storage paths, download
-URLs or content hashes. Person rows also contain `person_provenance` with the
-matching participant IDs, roles and directions.
+`content_available`. File search and suggestion rows derive `content_state`
+from metadata as `metadata_only`, `url_only`, or `unverified`. An `unverified`
+row records a hash without checking storage and sets `content_available` to
+`null`; the other two states set it to `false`. File details check whether
+storage opens and can return `local_content`, `missing_blob`, or an error,
+though opening storage does not verify the bytes and a read or integrity check
+can still fail. Suggestion rows never include storage paths, download URLs, or
+content hashes. On the person endpoint, rows also include `person_provenance`
+with the matching participant IDs, roles, and directions.
 
-There is no total count or pagination cursor. A false
-`candidate_limit_reached` proves candidate-stream exhaustion for that index
-snapshot, subject to the requested output limit and index freshness. A true
-value means suggestions may be incomplete, even when empty. A person can have
-at most 64 resolved participants; provenance is bounded to 4,096 unique
-message/participant/role edges per request. Overflow fails the whole request
-with HTTP 422 `filename_scope_too_large`; identities are never changed.
+Responses include no total count or pagination cursor. A `false`
+`candidate_limit_reached` proves that the candidate stream was exhausted for
+that index snapshot, subject to your requested limit and index freshness. A
+`true` value means suggestions may be incomplete, even when the list is empty.
+A person can have at most 64 resolved participants, and provenance is bounded
+to 4,096 unique message/participant/role edges per request. Overflow fails the
+whole request with HTTP 422 `filename_scope_too_large` and never changes
+identities.
 
-Invalid input returns HTTP 400. An absent person retains ordinary HTTP 404
-behavior. Missing index support, unfinished bootstrap or a mismatched index
+Invalid input returns HTTP 400, and an absent person keeps ordinary HTTP 404
+behavior. Missing index support, unfinished bootstrap, or a mismatched index
 consumer returns retryable HTTP 503 `filename_index_unavailable`; requests
 never scan or rebuild the archive. See
 [ranking and maintenance](architecture/search-ranking.md#filename-suggestions)
@@ -105,11 +112,12 @@ and [CLI usage](cli-reference.md#typo-tolerant-filenames).
 
 ### Calendar control
 
-`POST /api/v1/calendar/control` accepts one strict JSON object with `action` and
-`account`. Event mutations also require `calendar_id`; availability requires
-either `calendar_id` or `calendar_ids`. It uses owner authentication or a
-delegated agent token. Unknown fields, duplicate keys, noncanonical field
-casing, null fields, and multiple objects are rejected. The body limit is 1 MiB.
+Call `POST /api/v1/calendar/control` with one strict JSON object containing
+`action` and `account`. Event mutations also require `calendar_id`, while
+availability queries require either `calendar_id` or `calendar_ids`. Use owner
+authentication or a delegated agent token. The endpoint rejects
+unknown fields, duplicate keys, noncanonical field casing, null fields, and
+multiple JSON objects, and caps the request body at 1 MiB.
 
 | Field | Contract |
 |---|---|
@@ -127,65 +135,131 @@ casing, null fields, and multiple objects are rejected. The body limit is 1 MiB.
 | `dry_run`, `read_only` | Verify and plan without writes; reject all event mutations |
 | `expected_plan_fingerprint` | Optional precondition from a prior dry run; return 409 `calendar_plan_changed` before writing if the current write plan, normalized OAuth account, or normalized notification mode differs |
 
-`start` and `end` use Google's `dateTime` (RFC3339) or `date` (all-day
-`YYYY-MM-DD`), and optional `timeZone`. All-day end is exclusive. Guests use
-`email` and optional `displayName`, `optional`, and `resource`; caller-supplied
-RSVP state, organizer, and self flags are rejected. Reminders use `useDefault`
-and `overrides` containing `method` (`popup`/`email`) and `minutes` (0–40320).
+Format `start` and `end` with Google's `dateTime` (RFC3339) or `date`
+(all-day `YYYY-MM-DD`) and an optional `timeZone`; all-day `end` is exclusive.
+Each guest uses `email` plus optional `displayName`, `optional`, and `resource`,
+and the endpoint rejects caller-supplied RSVP state, organizer, and self flags.
+Reminders take `useDefault` and `overrides`, where each override specifies a
+`method` (`popup` or `email`) and `minutes` from `0` to `40320`.
 
-The daemon requires an enabled source, explicit `write_calendars`, event-write
-OAuth consent, and a live `owner` or `writer` accessRole. Guest changes also need
-`invite_calendars`. Delegated grants match the exact `gcal` source identifier
-`account-email/calendar-id`: `calendar.read` for availability,
-`calendar.event.read` for provider-derived event details in delegated plans and
-write receipts, `calendar.write` for changes, and additional `calendar.invite`
-for guest changes. The authenticated account is never substituted for a requested
-non-primary calendar. Availability with `calendar_ids` authorizes each listed
-calendar and ignores `calendar_id`.
+The daemon requires an enabled source, explicit `write_calendars`,
+event-write OAuth consent, and a live `owner` or `writer`
+`accessRole`. Guest changes also require `invite_calendars`. Delegated grants
+must match the exact `gcal` source identifier `account-email/calendar-id`:
+`calendar.read` for availability, `calendar.event.read` for provider-derived
+event details in delegated plans and write receipts, `calendar.write` for
+changes, and `calendar.invite` in addition for guest changes. The daemon never
+substitutes the authenticated account for a requested non-primary calendar.
+When an availability request supplies `calendar_ids`, the daemon authorizes each
+listed calendar and ignores `calendar_id`.
 
-The response contains `plan`, `writes`, resolved calendar/account IDs, and the
-notification mode. Existing-event plan entries include `target.summary` and
-`target.start` for owners and grants with `calendar.event.read`.
-This preview metadata is covered by the plan fingerprint and is never sent as
-part of a provider mutation. Partial provider writes include `outcome_code`
-(`calendar_partial` or `calendar_outcome_unknown`); uncertain results also set
-`outcome_unknown: true`. For availability with `calendar_ids`, `calendar_id` names
-the first resolved selection and `freebusy.calendars` contains every selection.
-Each completed write includes its returned event,
-`message_id`, `archived`, and optional `archive_error`. A later remote failure
-returns completed writes plus `error`. If a later provider write has an unknown
-outcome, the HTTP 200 result also sets `outcome_unknown: true` and retains
-receipts for completed writes. An archive failure retains the receipt of the
-successful Google change. Reconcile these results before deciding whether
-another mutation is safe; do not replay an uncertain mutation based only on its
-response. Provider mutations are sent once. Invalid requests return 400;
-source/consent/grant/role denials return 403; missing events return 404. Local
-daemon setup failures return 500 to owners and a generic 403 to delegated callers.
-Provider failures without a partial result
-return 502. An unknown outcome with no completed writes returns
+The response includes `plan`, `writes`, resolved calendar and account IDs, and
+the notification mode. For owners and grants with `calendar.event.read`,
+existing-event plan entries include `target.summary` and `target.start`. The
+plan fingerprint covers this preview metadata, and the daemon never sends it in
+a provider mutation. For availability requests with `calendar_ids`,
+`calendar_id` names the first resolved selection and `freebusy.calendars` lists
+every selection.
+
+Each completed write includes its returned event, `message_id`, `archived`, and
+an optional `archive_error`. The daemon sends provider mutations once. If a
+later provider write fails, the response returns the completed writes alongside
+`error` and sets `outcome_code` to `calendar_partial` or
+`calendar_outcome_unknown`; uncertain outcomes also set `outcome_unknown: true`
+on the HTTP 200 result while keeping receipts for completed writes. An archive
+failure also keeps the receipt of the successful Google change. Reconcile these
+results before deciding whether another mutation is safe, and do not replay an
+uncertain mutation based only on its response.
+
+Invalid requests return HTTP 400, source, consent, grant, or role denials
+return 403, and missing events return 404. Local daemon setup failures return
+500 to owners and a generic 403 to delegated callers. Provider failures with no
+partial result return 502; an unknown outcome with no completed writes returns
 `calendar_outcome_unknown`. Reconcile the current calendar state before taking
-further action; do not replay the uncertain operation based only on this response.
-The serialized operation gate protects provider mutations and their archive
-writes, including delegated calls. Body decoding, authorization, availability,
-and dry runs do not hold the gate or wait for a sync to release it.
+further action, and do not replay the uncertain operation based only on this
+response. The serialized operation gate protects provider mutations and their
+archive writes, including delegated calls, while body decoding, authorization,
+availability queries, and dry runs neither hold the gate nor wait for a sync to
+release it.
 
-[Calendar usage](usage/calendar.md#control-events) owns setup,
-recurrence limits, notification behavior, and reconciliation instructions.
+See [Calendar usage](usage/calendar.md#control-events) for setup, recurrence
+limits, notification behavior, and reconciliation instructions.
 `POST /api/v1/cli/add-calendar/plan` also accepts `write=true` to plan opt-in
-`calendar.events` consent while preserving existing Google scopes.
+`calendar.events` consent while keeping existing Google scopes.
 
 ## API compatibility
 
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.4.0**.
+it is separate from the binary release version. The current schema is **5.31.0**.
 
-Schema 5.4.0 adds owner MCP Events subscription routes.
+Schema 5.31.0 adds delegated message change feed reads and owner MCP Events subscription routes.
 
-Schema 5.3.0 adds delegated message change feed reads.
+Schema 5.27.0 accepts `mode=vector` and `mode=hybrid` searches from callers limited to some sources;
+they return hits from those sources only.
 
-Schema 5.2.0 adds optional filters to the message change feed.
+Schema 5.26.0 adds `if_exists: "return"` to `POST /api/v1/people/create`.
+It returns a single matching saved person unchanged with HTTP 200 and
+`ensure.status: matched_existing`, or creates a new person with HTTP 201 and
+`ensure.status: created`. Return-mode HTTP 409 conflicts include `details` with all
+ambiguous candidates or explicit participant-promotion guidance. The MCP
+`create_person` argument requires this schema version or newer.
+
+Schema 5.25.0 allows `diagnose-gmail-inventory` through the daemon command interface.
+
+Schema 5.20.0 adds `message_type` to file details.
+
+Schema 5.19.0 adds `GET /api/v1/cli/messages/export`, which streams
+`export-messages` output as `application/x-ndjson`. It takes `start`, `end`,
+repeatable `message_type` and `source`, and `person_id`, with the same
+validation as the CLI flags. Bad filters return `400` and an unknown source
+returns `404` before any output; a failure while streaming ends the stream
+without its completion record. Read-only remote client keys may call it.
+
+Schema 5.18.0 adds Directory cadence to `GET /api/v1/people/directory`: the `cadence` filter (`overdue`, `due`, `no_list`, `unknown`), `due_within_days`, the `most_overdue` and `next_due` sorts, a `cadence` object and `last_contact_channel` on each person, and page-level `cadence_presets` and `cadence_coverage`. `expected_value_id` 0 on attribute writes requires that no current value exists. CLI and MCP cadence lookups require a daemon supporting this schema.
+
+Schema 5.17.0 adds person, source, conversation and incoming filters to the
+[message change feed](#get-apiv1messageschanges).
+
+Schema 5.16.0 adds `POST /api/v1/people/create` for standalone curated
+profiles. The MCP `create_person` tool requires this schema version or newer.
+
+Schema 5.15.0 applies the `mode` of [media search](#media-transcript-search)
+to recordings as well as attachments, and adds `actual_mode` and
+`degradations` to recording results.
+
+Schema 5.14.0 adds each fact decision's submitted claim value.
+
+Schema 5.13.0 adds fact decision outcomes, evidence filtering, and a person fact summary.
+
+Schema 5.12.0 adds owner-only [related copies](#get-apiv1messagesidfamily).
+
+Schema 5.11.0 adds meeting link suggestions.
+
+Schema 5.10.0 adds owner meeting link decisions.
+
+Schema 5.9.0 adds meeting records.
+
+Schema 5.8.0 advertises the existing structured person profile routes to MCP:
+`GET` and `PATCH /api/v1/people/{id}/profile`,
+`GET /api/v1/people/{id}/profile/history`, and
+`GET /api/v1/people/{id}/profile/media/{media_id}/content`.
+
+Schema 5.7.0 adds first-appearance evidence to person contact state.
+
+Schema 5.6.0 adds `POST /api/v1/identity/cache-refresh` to rebuild
+identity-derived datasets without changing links or profiles.
+
+Schema 5.5.0 adds `POST /api/v1/sources/{source_id}/account-attribution/repair`
+to retry account matching for one source.
+
+Schema 5.4.0 allows native tag reads for messages from deleted sources.
+
+Schema 5.3.0 adds `auth_method` to IMAP accounts in `GET /api/v1/cli/accounts`:
+`password` or `xoauth2`, present when the source's settings are readable.
+
+Schema 5.2.0 adds open Kata issue search and optional task search queries.
 
 Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 
@@ -242,10 +316,6 @@ Schema 3.11.0 adds `GET /media/search/status` to report whether Docbank transcri
 Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
 See [scoped archive reads](cli-reference.md#scoped-archive-reads).
 
-Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web, terminal UI, and interactive CLI use to
-report anonymous usage events through the daemon. See
-[Telemetry](configuration.md#telemetry).
-
 Schema 3.22.0 adds account aliases and lifecycle fields, account merging, and
 owner source-maintenance requests. Existing source identifiers and account
 requests remain valid.
@@ -253,7 +323,7 @@ requests remain valid.
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
 
-Schema 3.26.0 adds `max_results` to `GET /messages/gmail-ids` for bounded query staging and `matched_count` to its bounded responses. See [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for supported sources, skipped matches, and the staging limit.
+Schema 3.26.0 adds `max_results` to `GET /messages/gmail-ids` for bounded query staging and `matched_count` to its bounded responses. See [staged deletion through MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for supported sources, skipped matches, and the staging limit.
 
 Schema 3.44.0 adds the [open-loop](#open-loops) routes, including
 `POST /api/v1/loops/{message_id}/reopen` to clear a done or snooze decision on
@@ -314,8 +384,9 @@ filter, and the virtual account catalog on `/cli/accounts`.
 Schema 3.1.0 adds [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
 
-Schema 3.2.0 adds `counts_pending` to `GET /api/v1/cli/accounts`. See
-[archive statistics](#get-apiv1stats) for when it appears.
+Schema 3.2.0 added `counts_pending` to `GET /api/v1/cli/accounts`. Schema
+5.28.0 removes it, along with that endpoint's `stale` and `as_of`: account
+counts come from stored per-source totals and are always current.
 
 Schema 3.6.0 adds `GET /api/v1/messages/{id}/recordings`, which lists a
 message's recordings with their Docbank transcript state. Existing routes are
@@ -431,161 +502,193 @@ Schema 3.37.0 returns HTTP 200 from `GET /api/v1/participants/{id}` for a partic
 
 ### Person UIDs and CardDAV bindings
 
-Person responses, including `GET /api/v1/people/{id}`, `GET /api/v1/people`,
-person updates, and semantic person search, return `vcard_uid` for each person
-and `carddav_bindings` when the person has mapped CardDAV cards. Directory rows
-always include both fields; `carddav_bindings` is an empty array when no card
-is mapped. A binding names the CardDAV `connection` and `book` and
-includes the resource `href`, its `remote_uid`, and `mapping_status`.
+Person responses (`GET /api/v1/people/{id}`, `GET /api/v1/people`, person
+updates, and semantic person search) return `vcard_uid` for each person and
+include `carddav_bindings` when the person has mapped CardDAV cards. Directory
+rows always include both fields, with `carddav_bindings` as an empty array when
+no card is mapped. Each binding names the CardDAV `connection` and `book` along
+with the resource `href`, `remote_uid`, and `mapping_status`.
 
-Use `GET /api/v1/people/by-uid?uid={uid}` to resolve an exact current person UID, a
-retired UID that still aliases a person, or the UID of a CardDAV card mapped to
-that person. If the same CardDAV UID is mapped to different people, the API
-returns `409 person_uid_ambiguous`.
+Call `GET /api/v1/people/by-uid?uid={uid}` to resolve an exact current person
+UID, a retired UID that still aliases a person, or the UID of a CardDAV card
+mapped to that person. If the same CardDAV UID maps to different people, the
+API returns `409 person_uid_ambiguous`.
 
 ### Native email tags
 
-Read or update one archived message's live Gmail labels, IMAP keywords, or
-Microsoft Graph categories through the same routes.
-Requires API schema 3.15.0 and owner authorization. Delegated agent tokens cannot
-use these routes. The daemon owns provider credentials. Reads and previews work
-while the source syncs. A write waits up to 10 seconds for the daemon work gate,
-then returns 503 `operation_in_progress` if the gate remains unavailable.
-After acquiring the gate, it returns 409 `sync_active` if the source still
-syncs. If the sync ends while the write waits, the write can proceed.
+You can read or update an archived message's live Gmail labels, IMAP keywords,
+or Microsoft Graph categories through one pair of routes. These routes require
+API schema 3.15.0 and owner authorization; delegated agent tokens cannot call
+them, and the daemon owns provider credentials. Reads and previews work while
+the source syncs. A write waits up to 10 seconds for the daemon work gate and
+returns 503 `operation_in_progress` if the gate stays busy. After acquiring the
+gate, the write returns 409 `sync_active` if the source is still syncing; if
+the sync finishes while the write waits, the write proceeds.
 
 | Method and path | Contract |
 |---|---|
 | `GET /api/v1/messages/{id}/tags` | Read current native tags; optional `mailbox` query selects an exact recorded IMAP copy |
 | `POST /api/v1/messages/{id}/tags` | Apply `add` and `remove` arrays, optional `mailbox`, and optional `dry_run` |
 
-`id` is the positive archived message ID. Without `mailbox`, IMAP selects the
-current original copy, then the sole current membership. Multiple surviving
-copies require an explicit mailbox when the original copy is absent.
+On API schema 5.4.0 or newer, `GET` can read tags for a message marked deleted
+from its source, such as a message still in Trash, as long as the provider can
+still resolve the stored identity. The read returns what the provider observes
+and leaves the archive unchanged. `POST`, including `dry_run`, still rejects
+source-deleted messages, and both methods reject locally hidden messages.
 
-Each array allows at most 100 nonblank UTF-8 strings.
-The daemon validates names, deduplicates tags, and rejects overlapping add and
-remove sets before waiting for other work or checking provider credentials.
-IMAP accepts ASCII keyword atoms up to 255 bytes and
-compares them without case. Gmail requires existing user label IDs. Microsoft
-Graph accepts category names up to 255 Unicode characters, excludes commas,
-and compares names without case while preserving provider spelling. Writes
-require `Mail.ReadWrite`. A Graph 429 returns `provider_write_failed`; retry
-after the limit clears. Transport failures and 5xx remain `remote_unknown`. See
-[`message-tags`](cli-reference.md#message-tags) for provider requirements.
+Pass the positive archived message ID as `id`. If you omit `mailbox` on an IMAP
+message, the daemon selects the current original copy first and then the sole
+current membership. When the original copy is absent and multiple copies
+survive, you must pass an explicit `mailbox`.
+
+Each of `add` and `remove` accepts at most 100 nonblank UTF-8 strings. Before
+waiting for other work or checking provider credentials, the daemon validates
+tag names, removes duplicates, and rejects overlapping `add` and `remove` sets.
+Provider rules vary:
+
+- **IMAP.** Accepts ASCII keyword atoms up to 255 bytes and compares them
+  without case.
+- **Gmail.** Requires existing user label IDs.
+- **Microsoft Graph.** Accepts category names up to 255 Unicode characters,
+  excludes commas, and compares names without case while preserving provider
+  spelling. Writes require `Mail.ReadWrite`. A Graph 429 returns
+  `provider_write_failed` (retry after the limit clears), while transport
+  failures and 5xx responses stay `remote_unknown`.
+
+See [`message-tags`](cli-reference.md#message-tags) for provider requirements.
 
 ```json
 {"add":["Label_123"],"remove":["Label_456"],"dry_run":true}
 ```
 
-The result contains `message_id`, `source_id`, `provider`, `tags`, `before`,
-`available_tags` (`id` and `name`), `dry_run`, and `verified`. IMAP also returns
-`mailbox`, `uidvalidity`, `uid`, the observed `flags`, and
-`can_create_keywords` when new persistent keywords are supported. Gmail
+The response includes `message_id`, `source_id`, `provider`, `tags`, `before`,
+`available_tags` (`id` and `name`), `dry_run`, and `verified`. For IMAP, it
+also returns `mailbox`, `uidvalidity`, `uid`, the observed `flags`, and
+`can_create_keywords` when the server supports new persistent keywords. Gmail
 returns all current label IDs, including system labels, while `available_tags`
-contains only editable user labels. IMAP returns custom keywords in `tags`.
-Microsoft Graph returns `provider: "msmail"` and category names in `tags`;
-`available_tags` describes the observed categories, without a master-category
-catalog or a `MailboxSettings.Read` requirement.
+lists only editable user labels. IMAP returns custom keywords in `tags`.
+Microsoft Graph returns `provider: "msmail"` and category names in `tags`, with
+`available_tags` listing the observed categories (no master-category catalog or
+`MailboxSettings.Read` permission is required).
 
-Reads return verified observed state. Previews return the projected tags with
-`verified: false` and never update the archive. Successful writes require
-provider readback, then persist the observed Gmail labels, IMAP membership
-flags, or Microsoft categories. Microsoft categories use separate
-`Category: <name>` archive labels and survive later folder syncs. IMAP folder
-labels and local read state are unchanged. Gmail and Microsoft category changes
-mark derived data stale and request a cache refresh.
+Reads return verified observed state, whereas previews return projected tags
+with `verified: false` and never update the archive. A successful write reads
+the tags back from the provider and then persists the observed Gmail labels,
+IMAP membership flags, or Microsoft categories. Microsoft categories are stored
+as separate `Category: <name>` archive labels and survive later folder syncs.
+IMAP folder labels and local read state do not change. Gmail and Microsoft
+category changes mark derived data stale and request a cache refresh.
 
-Errors contain `error`, `message`, and, when available, `result` with the last
-observed state. A matching successful mutation response can supply newer tags
-when verification GET fails. `before` keeps the original snapshot; `verified`
-stays false and the archive stays unchanged until readback succeeds.
-Error snapshots omit `available_tags`. The daemon client accepts tag error
-responses up to 1 MiB to preserve the observed tags, flags, and recovery message.
-`remote_unknown` and `verification_failed` return HTTP 502;
-read tags before retrying because a write may have applied. HTTP 500
-`remote_accepted_local_failed` preserves verified provider evidence and asks
-for a sync. Invalid tags return 400, insufficient provider scope returns 403,
-a missing archived message returns 404, and stale provider identity returns 409.
-A source sync still active after gate acquisition returns 409 `sync_active`.
-Unsupported providers or persistent keyword support return
-501. See the generated OpenAPI contract for response schemas.
+Error responses include `error`, `message`, and, when available, `result` with
+the last observed state. If a verification `GET` fails after a matching
+mutation succeeds, the mutation response can supply newer tags. `before` keeps
+the original snapshot, `verified` stays `false`, and the archive stays
+unchanged until readback succeeds. Error snapshots omit `available_tags`. The
+daemon client accepts tag error responses up to 1 MiB so observed tags, flags,
+and recovery messages are not truncated.
+
+Status codes map as follows:
+
+- `400`: invalid tags.
+- `403`: insufficient provider scope.
+- `404`: missing archived message.
+- `409`: stale provider identity, or `sync_active` if a source sync is still
+  active after gate acquisition.
+- `500` (`remote_accepted_local_failed`): preserves verified provider evidence
+  and asks for a sync.
+- `501`: unsupported provider or missing persistent keyword support.
+- `502` (`remote_unknown` or `verification_failed`): read tags before retrying
+  because the write may have applied.
+
+See the generated OpenAPI contract for full response schemas.
 
 ### Identity match review and scoring
 
-Review identity suggestions through `GET /api/v1/identity/match-candidates`
-and `GET /api/v1/identity/match-candidates/{id}`. Responses include the
-evidence, blockers, and a `review_token` for that exact snapshot. Accept or
-reject with `POST /api/v1/identity/match-candidates/{id}/review/accept` or
-`.../review/reject`, passing the token in the request body. If the evidence or
-endpoints changed, the API returns `409 identity_match_review_stale`; fetch the
-candidate again and make a fresh decision. Other conflicts retain their own
-error codes, including `person_merge_required` when separate profiles need a
-merge review. The former `.../{id}/accept` and `.../{id}/reject` routes are
-removed; clients must use the reviewed routes and supply a token.
+Call `POST /api/v1/identity/cache-refresh` to rebuild identity-derived datasets
+without changing links or profiles. It requires API authentication and the
+mutation gate, and returns `identity_revision` and `cache_state: "ready"` on
+success. If a SQLite cache is absent, it returns HTTP 503 with
+`identity_cache_build_required`; run `msgvault build-cache` before retrying.
+PostgreSQL returns HTTP 503 with `identity_cache_unsupported` because it has
+no Parquet cache. Other build failures return HTTP 500, and a missing refresh
+capability returns HTTP 503.
 
-Identity scoring runs only on request. `GET /api/v1/identity/scoring/status`
-returns `ready`, `blocker`, credential and consent status, the exact provider
-`disclosure`, its `disclosure_fingerprint`, and a `data_fields` description of
-the raw identity fields sent. `POST /api/v1/identity/scoring/consent` accepts
-`{"disclosure_fingerprint":"<fingerprint>"}` for the current disclosure.
-`POST /api/v1/identity/scoring/revoke` accepts the same body to withdraw that
-fingerprint's consent without changing configuration.
+To review identity suggestions, call `GET /api/v1/identity/match-candidates`
+and `GET /api/v1/identity/match-candidates/{id}`. Each response includes the
+evidence, blockers, and a `review_token` tied to that exact snapshot. Accept or
+reject a candidate by posting that token to
+`POST /api/v1/identity/match-candidates/{id}/review/accept` or
+`.../review/reject`. If the evidence or endpoints changed since you fetched the
+candidate, the API returns `409 identity_match_review_stale`; fetch the
+candidate again and make a fresh decision. Other conflicts keep their own error
+codes, including `person_merge_required` when separate profiles need a merge
+review. The older `.../{id}/accept` and `.../{id}/reject` routes are gone, so
+clients must use the reviewed routes with a token.
 
-`POST /api/v1/identity/scoring/run` accepts `{}` or `{"limit":20}`. The limit
-defaults to the configured batch size and cannot exceed it. The daemon creates
-review suggestions and checks local blockers before sending eligible pairs to
-the provider. It journals the results and never accepts matches.
+Identity scoring runs only when you request it. Call
+`GET /api/v1/identity/scoring/status` to check `ready`, `blocker`, credential
+and consent status, the exact provider `disclosure`, its
+`disclosure_fingerprint`, and a `data_fields` description of the raw identity
+fields sent. Post `{"disclosure_fingerprint":"<fingerprint>"}` to
+`POST /api/v1/identity/scoring/consent` to grant consent for the current
+disclosure, or send the same body to `POST /api/v1/identity/scoring/revoke` to
+withdraw consent for that fingerprint without changing configuration.
+
+Start a scoring batch with `POST /api/v1/identity/scoring/run`, passing `{}` or
+`{"limit":20}`. The limit defaults to your configured batch size and cannot
+exceed it. The daemon generates review suggestions, checks local blockers,
+sends eligible pairs to the provider, and journals the results without ever
+accepting matches automatically.
 
 A completed or partially completed run returns HTTP 200 with `results` and
-`processed`. Each result has a candidate ID, review token, proposed action,
-status, and blockers. If the batch stops early, the response also has an
-`error` object with `code` and `message`; clients must inspect it even after
-HTTP 200. Completed results remain available. Error codes include
+`processed`. Each result includes a candidate ID, review token, proposed
+action, status, and blockers. If the batch stops early, the response also
+includes an `error` object with `code` and `message`, so always inspect `error`
+even on HTTP 200. Completed results stay available. Error codes include
 `consent_required`, `scoring_scan_incomplete`, and `scoring_run_failed`.
-Preflight failures use the normal non-200 error response.
+Preflight failures return standard non-200 error responses.
 
-`GET /api/v1/identity/scoring/history` returns redacted judgments. It accepts
-`candidate_id` (zero or omitted means all), `limit` (default 100, range 1–100),
-and `before_id` for older entries. Pass a returned `next_before_id` as the next
-request's `before_id`. The complete contracts are in `/openapi.json` from the
-daemon or printed by `msgvault openapi`. See
+Call `GET /api/v1/identity/scoring/history` to read redacted judgments. You can
+filter by `candidate_id` (zero or omitted returns all), set `limit` (default
+100, range 1–100), and pass `before_id` for older entries using the
+`next_before_id` returned by the previous page. Find the complete contracts in
+`/openapi.json` from the daemon or `msgvault openapi`, and see
 [configuration](configuration.md#people-identity-scoring) and the
 [people guide](usage/people.md#optional-identity-scoring) for setup and consent.
 
 ### Archive and processing boundaries
 
-The API uses the same archive database and attachment store as other clients.
-SQLite is the default; PostgreSQL has [documented feature limits](architecture/postgresql.md).
-Keyword search and ordinary reads use stored data. Semantic and hybrid search
-also call the configured embedding endpoint. Profile and enrichment operations
-have their own provider and consent contracts. Docbank owns attachment text
+The API reads and writes the same archive database and attachment store as
+other clients. SQLite is the default, while PostgreSQL has
+[documented feature limits](architecture/postgresql.md). Keyword search and
+ordinary reads run against stored data, whereas semantic and hybrid search also
+call the configured embedding endpoint. Profile and enrichment operations have
+their own provider and consent contracts, and Docbank owns attachment text
 processing and its consent.
 
-Operation history includes durable worker runs, date filters, filter-bound
-pagination, error codes, and supported actions. The OpenAPI document defines
+Operation history records durable worker runs, date filters, filter-bound
+pagination, error codes, and supported actions. Check the OpenAPI document for
 exact request and response fields.
 
-Go integrations can use the generated client in `pkg/client`. The wrapper
-handles msgvault-specific response details such as deletion staging dry-runs
-returning `200` while created manifests return `201`.
+If you are integrating from Go, use the generated client in `pkg/client`. Its
+wrapper handles msgvault-specific response details, such as deletion staging
+dry-runs returning `200` while created manifests return `201`.
 
 ### Startup and readiness
 
-The HTTP listener, health endpoint, and API routing start before analytics cache
-maintenance. With `engine = "auto"`, aggregate requests initially use live SQL
-while the cache is built or opened, then switch to DuckDB after success. If no
-usable cache can be opened, the daemon stays on live SQL. A failed automatic
-refresh keeps the last usable publication. With
-`engine = "duckdb"`, analytics remain unavailable until the required cache is
-ready, so analytics routes return `503` during initialization; the daemon does
-not fall back to SQL. Cache-dependent routes also return a structured `503`
-while automatic cache maintenance is active. Its `readiness` field lets clients
-distinguish transient `building` state from an unavailable cache and retry
-without requiring user action. Set `auto_build_cache = false` to skip automatic
-startup maintenance.
+The HTTP listener, health endpoint, and API routing come up before analytics
+cache maintenance finishes. With `engine = "auto"`, aggregate requests use live
+SQL while the cache builds or opens, then switch to DuckDB once it succeeds. If
+no usable cache opens, the daemon stays on live SQL, and a failed automatic
+refresh keeps the last usable publication. With `engine = "duckdb"`, analytics
+stay unavailable until the required cache is ready, so analytics routes return
+`503` during startup and never fall back to SQL. Cache-dependent routes also
+return a structured `503` during automatic cache maintenance; inspect its
+`readiness` field to tell a transient `building` state from an unavailable
+cache and retry without user action. To skip automatic startup maintenance, set
+`auto_build_cache = false`.
 
-## Quick Start
+## Quick start
 
 Add a `[server]` section to your `config.toml`:
 
@@ -616,10 +719,10 @@ curl http://localhost:8080/openapi.json
 
 ## Authentication
 
-Archive API endpoints require authentication when `api_key` is set in your
-config. The public application shell, `/health`, and the browser-session
-bootstrap/login routes remain reachable so the UI can determine whether login
-is required. Three API-key authentication methods are supported:
+When `api_key` is set in your config, archive API endpoints require
+authentication. The public application shell, `/health`, and the
+browser-session bootstrap and login routes stay open so the UI can check
+whether login is required. You can pass the API key in three ways:
 
 | Method | Header | Example |
 |---|---|---|
@@ -627,24 +730,32 @@ is required. Three API-key authentication methods are supported:
 | API key header | `X-API-Key: <key>` | `X-API-Key: my-secret` |
 | Plain auth header | `Authorization: <key>` | `Authorization: my-secret` |
 
-If no effective API key is configured, authentication is not required. Secure startup requires a key for non-loopback addresses. `serve` creates and persists one when no credential source is configured. See [server credentials](configuration.md#server) for file and environment sources, persistence, and explicit insecure mode.
+If no effective API key is configured, requests need no authentication. Secure
+startup requires a key when binding to non-loopback addresses, and
+`msgvault serve` creates and persists one if no credential source is
+configured. See [server credentials](configuration.md#server) for file and
+environment sources, persistence, and explicit insecure mode.
 
-Keys listed under `[[server.remote_clients]]` authenticate the same way but reach only a fixed set of read operations; every other route returns 403. See [read-only remote clients](guides/remote-deployment.md#read-only-remote-clients).
+Keys listed under `[[server.remote_clients]]` authenticate the same way, but
+they only reach a fixed set of read operations; every other route returns 403.
+See [read-only remote clients](guides/remote-deployment.md#read-only-remote-clients).
 
 ## Historical import jobs {#historical-import-jobs}
 
-Start a Gmail or IMAP history backfill and poll its progress without keeping an
-HTTP request open. These endpoints use the daemon's existing account
-credentials and full-sync path. They do not accept uploaded archive files.
-See [the importing guide](/docs/usage/importing/#historical-import-jobs) for a
-step-by-step example.
+You can start a Gmail or IMAP history backfill and poll its progress without
+holding an HTTP request open. These endpoints reuse the daemon's existing
+account credentials and full-sync path, and they do not accept uploaded archive
+files. See [the importing guide](/docs/usage/importing/#historical-import-jobs)
+for a step-by-step example, or
+[MCP source status and sync](/docs/usage/chat/#source-status-and-sync) for the
+assistant workflow.
 
 ### Start an import {#post-apiv1imports}
 
 **Endpoint:** `POST /api/v1/imports`
 
-Send one JSON object with `Content-Type: application/json`. The request body is
-limited to 16 KiB; unknown fields and additional JSON values are rejected.
+Send one JSON object with `Content-Type: application/json`. The request body
+limit is 16 KiB, and the endpoint rejects unknown fields and extra JSON values.
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -656,8 +767,9 @@ limited to 16 KiB; unknown fields and additional JSON values are rejected.
 | `noresume` | No | Set `true` to start fresh instead of using a resumable checkpoint; defaults to `false` |
 
 A successful request returns **`202 Accepted`** with a durable `job_id` and the
-status record described below. It starts background work immediately; it does
-not create a persistent queue that will automatically resume after a restart.
+status record described below. The daemon starts the background work
+immediately and does not create a persistent queue that resumes automatically
+after a restart.
 
 | Error | Meaning |
 |---|---|
@@ -671,14 +783,14 @@ not create a persistent queue that will automatically resume after a restart.
 | `503 service_unavailable` | The daemon cannot start historical imports, including during shutdown |
 
 Malformed JSON and unknown fields return `400 bad_request`. Normal API
-authentication and archive-operation locking also apply.
+authentication and archive-operation locking apply here too.
 
 ### Read progress {#get-apiv1importsjobid}
 
 **Endpoint:** `GET /api/v1/imports/{job_id}`
 
 Returns **`200 OK`** for an existing job or **`404 not_found`** for an unknown
-ID. The start and progress responses have the same shape:
+ID. The start and progress responses share the same shape:
 
 | Field | Meaning |
 |---|---|
@@ -693,80 +805,115 @@ ID. The start and progress responses have the same shape:
 | `error` | Present for `failed`; currently the generic message `import failed` |
 
 `skipped` is the non-negative remainder of processed messages after additions
-and updates. Check `summary.errors` as well as the terminal status when
-assessing coverage. Detailed failure information belongs to daemon logs and
-sync-run diagnostics; it is not returned in the job's generic `error` field.
+and updates. Check `summary.errors` alongside the terminal status when you
+assess coverage. Detailed failure information lives in daemon logs and sync-run
+diagnostics rather than the job's generic `error` field.
 
 ### Disconnects, failures, and restarts
 
-Closing the client connection does not cancel a submitted job. Daemon shutdown
-cancels running import work. On the next start, the daemon marks jobs abandoned
-in `pending` or `running` state as `failed`; it preserves their IDs and progress
-for later inspection.
+Closing your HTTP connection does not cancel a submitted job, though daemon
+shutdown cancels running import work. On the next start, the daemon marks jobs
+left in `pending` or `running` state as `failed` while keeping their IDs and
+progress for inspection.
 
-Messages already committed remain archived after a failure. Submit a new job
-with the same account and bounds to continue through the normal resumable
-importer. Leave `noresume` false when you want to reuse available progress.
-There is no dedicated cancellation endpoint for these jobs.
+Messages already committed stay in the archive after a failure. To continue
+through the normal resumable importer, submit a new job with the same account
+and bounds, and leave `noresume` set to `false` if you want to reuse saved
+progress. There is no dedicated cancellation endpoint for these jobs.
 
-## API Endpoints
+## API endpoints
 
 ### Query the analytics cache {#post-apiv1query}
 
 **Endpoint:** `POST /api/v1/query`
 
-Send one read-only SQL statement as `{"sql":"SELECT 1"}`. Set `fresh` to
-`true` in the JSON body or as `?fresh=true` to request a background cache
-refresh. Conflicting body and query values are rejected.
-For SQLite archives, this endpoint queries published Parquet through DuckDB.
-The `[analytics].engine` setting selects the engine for aggregate views; it
-does not change this raw SQL endpoint.
+Send one read-only SQL statement as `{"sql":"SELECT 1"}`. To request a
+background cache refresh, set `fresh` to `true` in the JSON body or pass
+`?fresh=true`; conflicting body and query values are rejected. For SQLite
+archives, this endpoint queries published Parquet through DuckDB. The
+`[analytics].engine` setting picks the engine for aggregate views and does not
+change this raw SQL endpoint.
 
-A `200` response contains `columns`, `rows`, and `row_count`. When the result
-uses a committed Parquet publication, `cache` includes `generation` and
+A `200` response returns `columns`, `rows`, and `row_count`. When the query
+runs against a committed Parquet publication, `cache` adds `generation` and
 `published_at`, plus `stale_reason`, `pending_additions`, or `building` when
-applicable. A usable stale publication remains queryable during
-`min_rebuild_interval` and while a refresh runs. This includes messages deleted
+applicable. A usable stale publication stays queryable during
+`min_rebuild_interval` and while a refresh runs, including messages deleted
 since publication; see the [cache freshness policy](configuration.md#analytics).
 
-With `fresh=true`, the endpoint accepts a refresh with `202`, `job_id`, and
-`status` instead of holding the request open. Automatic recovery of a missing
-or incompatible cache also returns `202` when enabled. A fresh request checks
-archive writes committed before the request. If a build is already running,
-its response identifies a queued follow-up check. Poll
+When you pass `fresh=true`, the endpoint accepts the refresh with `202`,
+`job_id`, and `status` instead of holding the request open. Automatic recovery
+of a missing or incompatible cache also returns `202` when enabled. A fresh
+request checks archive writes committed before the request, and if a build is
+already running, the response identifies a queued follow-up check. Poll
 `GET /api/v1/cache-builds/{job_id}` for `queued`, `running`, `published`, or
-`failed`. After `published`, repeat the SQL query with `fresh=false` to get rows.
-`published` means the check completed successfully and the cache is usable; a
-check that finds no changes preserves the existing generation. A `failed` job
-includes an `error` message.
+`failed`. Once the job reaches `published`, repeat your SQL query with
+`fresh=false` to fetch rows. A `published` status means the check completed
+successfully and the cache is usable; if no changes were found, the existing
+generation stays in place. A `failed` job includes an `error` message.
 
-The daemon retains the last 100 completed jobs plus running and queued jobs.
-Job status is held in memory: an evicted job or a job from before a daemon
-restart returns `404`.
+The daemon keeps the last 100 completed jobs plus running and queued jobs in
+memory, so an evicted job or one from before a daemon restart returns `404`.
 
-`POST /api/v1/query/archive` accepts the same request and response shapes. MCP
-uses this endpoint to run SQL in a separate DuckDB instance restricted to the
-analytics directory. Outside-file access, network access, and extension loading
-are disabled. Both endpoints require daemon owner authentication; the original
-`/query` endpoint retains privileged file access. An unavailable restricted
-engine returns `503` without falling back to the privileged engine.
+`POST /api/v1/query/archive` uses the same request and response shapes. MCP
+calls this endpoint to run SQL in a separate DuckDB instance restricted to the
+analytics directory, with outside-file access, network access, and extension
+loading disabled. Both endpoints require daemon owner authentication; the
+original `/query` endpoint keeps privileged file access. If the restricted
+engine is unavailable, `/query/archive` returns `503` without falling back to
+the privileged engine.
 
 ---
+
+### Person creation conflicts {#person-creation-conflicts}
+
+`ensure` belongs to the shared `Person` response schema, but is emitted only
+by person creation with `if_exists: "return"`. Other `Person` responses omit it.
+
+With `if_exists: "return"`, `POST /api/v1/people/create` returns HTTP 409
+when contacts identify multiple targets or a single unbound participant cluster.
+The response has `error`, `message`, and `details` fields:
+
+| `error` | `details` fields |
+| --- | --- |
+| `person_ambiguous` | `candidates`: array of `{person_id, participant_id, name}`; `match_basis`: array of matching evidence. Each candidate identifies a saved person or an unbound cluster; its other ID is null. |
+| `person_matches_participant` | `participant_id`: the unbound cluster's representative ID; `match_basis`: array of matching evidence; `next`: explicit promotion guidance. |
+
+Each `match_basis` entry contains `kind` (`email` or `phone`), normalized
+`value`, `matched` (`contact_point`, `participant`, `identifier`, or
+`observation`), and nullable `person_id` and `participant_id` fields.
+
+`details.next.cli` is an argv array, and `details.next.mcp` identifies a tool
+and its arguments. For example, promotion guidance for participant 9 is:
+
+```json
+{
+  "cli": ["msgvault", "person", "promote", "9", "--json"],
+  "mcp": {
+    "tool": "promote_person",
+    "arguments": {"participant_id": 9}
+  }
+}
+```
+
+Resolve ambiguity or promote the participant explicitly before retrying.
+Omitting `if_exists` or using `"error"` retains the original
+`person_contact_exists` conflict without `details`.
 
 ### Curated person network {#get-apiv1peopleidnetwork}
 
 **Endpoint:** `GET /api/v1/people/{id}/network`
 
-Returns a read-only, person-centred projection built only from durable typed
+Returns a read-only, person-centered projection built only from durable typed
 relationships and employments. It never derives nodes or edges from messages,
 conversations, participant co-occurrence, or the analytical cache.
 
-`depth` defaults to `1` and accepts `1`, `2`, or `3`. `include_ended` defaults
-to `false`; set it to `true` to admit ended relationships and employment
-records. The deterministic breadth-first response contains at most 250 nodes
-and 500 edges. `truncated: true` means the response is a bounded prefix and can
-contain fewer than either maximum. The root durable person is returned even
-when it has no qualifying connections.
+`depth` accepts `1`, `2`, or `3` and defaults to `1`. `include_ended` defaults
+to `false`; set it to `true` to include ended relationships and employment
+records. The deterministic breadth-first response holds at most 250 nodes and
+500 edges. When `truncated` is `true`, the response is a bounded prefix and can
+contain fewer than either maximum. The root durable person is always returned,
+even with no qualifying connections.
 
 ```json
 {
@@ -792,12 +939,11 @@ projection has no ETag because it is not a mutation resource.
 
 **Endpoint:** `GET /api/v1/people/tiers`
 
-List saved people in tier 1 or 2, tier 1 first and the most recent contact
-first within a tier. The rules, windows, and thresholds are
-[`[people.tiers]`](/docs/configuration/#people-tiers), read from the config
-file at request time, so this answers the same as `msgvault person tiers
-preview --json`. The route only reads; track the people you choose with
-`PUT /api/v1/people/{id}/tracking`.
+Lists saved people in tier 1 or tier 2, ordered with tier 1 first and the most
+recent contact first within each tier. The daemon reads the rules, windows, and
+thresholds from [`[people.tiers]`](/docs/configuration/#people-tiers) in the
+config file at request time, so this matches `msgvault person tiers preview --json`.
+This route is read-only; to track a person, call `PUT /api/v1/people/{id}/tracking`.
 
 ```json
 {
@@ -810,9 +956,9 @@ preview --json`. The route only reads; track the people you choose with
 }
 ```
 
-`readiness.ready` is `false` while the activity projection is behind or was
-built under other `[activity]` settings; counts can then be too low. While the
-projection rebuilds after a change to `[activity] timezone` or
+`readiness.ready` is `false` while the activity projection lags behind or was
+built under different `[activity]` settings, in which case counts can be too
+low. While the projection rebuilds after a change to `[activity] timezone` or
 `max_direct_counterparts`, the route returns `409` /
 `activity_projection_rebuilding`. Invalid `[people.tiers]` settings return
 `503` / `person_tiers_config_invalid`.
@@ -823,12 +969,13 @@ projection rebuilds after a change to `[activity] timezone` or
 
 **Endpoint:** `GET /api/v1/people/{id}/tier`
 
-Show every count behind one saved person's tier against its threshold,
-including people in tier 3. The body has the preview row's fields plus
+Shows every count behind one saved person's tier alongside its threshold,
+including people in tier 3. The response includes the preview row's fields plus
 `exclusion` (`owner`, `automated_address`, `calendar_room`, or `null`),
 `signals` (the windowed counts), and `thresholds` (each check with `observed`,
 `required`, `enabled`, and `met`). An unknown person returns `404` /
-`person_profile_not_found`; rebuild and config errors match the preview.
+`person_profile_not_found`, and rebuild and config errors match the preview
+route.
 
 ---
 
@@ -836,16 +983,16 @@ including people in tier 3. The body has the preview row's fields plus
 
 **Endpoint:** `GET /api/v1/people/{id}/brief-enrollment`
 
-Read whether a durable person is enrolled in the "last time we talked" brief.
-Enrollment enables brief generation for that person when eligible messages
-and provider budget are available.
+Checks whether a durable person is enrolled in the "last time we talked" brief.
+Enrolling a person enables brief generation when eligible messages and provider
+budget are available.
 
 ```json
 {"person_id": 7, "enrolled": true, "enabled_at": "2026-08-14T09:12:03Z", "actor": "api"}
 ```
 
-`enrolled` is `false` with a `null` `enabled_at` and an empty `actor` when the
-person has no enrollment row. An unknown durable person returns `404` /
+When a person has no enrollment row, `enrolled` is `false`, `enabled_at` is
+`null`, and `actor` is empty. An unknown durable person returns `404` /
 `person_profile_not_found`.
 
 ---
@@ -860,10 +1007,11 @@ person has no enrollment row. An unknown durable person returns `404` /
 {"enrolled": true, "track": true}
 ```
 
-`enrolled` is required. Enrollment requires a tracking row: `track: true` adds
-one in the same transaction, and without it an untracked person is refused with
-`409` / `person_brief_not_tracked`. `track` is ignored when `enrolled` is
-`false`. The response is the same shape as the read above.
+`enrolled` is required. Enrollment requires a tracking row: pass `track: true`
+to create one in the same transaction, and otherwise an untracked person is
+rejected with `409` / `person_brief_not_tracked`. When `enrolled` is `false`,
+the endpoint ignores `track`. The response uses the same shape as the read
+endpoint above.
 
 ---
 
@@ -871,8 +1019,8 @@ one in the same transaction, and without it an untracked person is refused with
 
 **Endpoint:** `GET /api/v1/people/{id}/brief`
 
-Return the person's current brief version. A person with no stored version
-returns `404` / `person_brief_not_found`.
+Returns the person's current brief version, or `404` / `person_brief_not_found`
+when no version is stored.
 
 ```json
 {
@@ -930,19 +1078,19 @@ returns `404` / `person_brief_not_found`.
 }
 ```
 
-`structured` is the validated record; `rendered_text` is derived from it.
-`sentences` maps each rendered sentence back to the structured item it came
-from; it is rebuilt on read and is empty for a version stored under a renderer
-policy this build does not know, which `renderer_policy` names. Each sentence's
-`evidence_ordinals` are the `ordinal` values in this response's `evidence` array
-that the sentence itself cites, so a client can expand one sentence to its own
-citations. The list is empty when the citation order behind the version cannot
-be accounted for exactly, and a client falls back to the whole `evidence` array
-rather than attributing a citation it is not sure of. `evidence` cites the
-archive items the brief as a whole used, with `evidence_supported: false` once a
-later status event invalidated an item's source. `dropped_item_count` counts
-structured items msgvault refused. Responses are `Cache-Control: no-store`. The
-brief never contains an excerpt of the archive text it was derived from.
+`structured` holds the validated record, and `rendered_text` is derived from it.
+`sentences` maps each rendered sentence back to its structured item; the server
+rebuilds it on read and returns an empty array when a version was stored under
+a renderer policy this build does not recognize (named by `renderer_policy`).
+Each sentence's `evidence_ordinals` lists the `ordinal` values in this
+response's `evidence` array that the sentence cites, so you can expand a single
+sentence to its own citations. When the version's citation order cannot be
+accounted for exactly, `evidence_ordinals` is empty and a client falls back to
+the whole `evidence` array rather than guessing a citation. `evidence` lists the
+archive items the brief used as a whole, with `evidence_supported: false` once a
+later status event invalidates an item's source. `dropped_item_count` counts the
+structured items msgvault refused. Responses set `Cache-Control: no-store`, and
+a brief never contains an excerpt of the archive text it came from.
 
 ---
 
@@ -954,9 +1102,9 @@ brief never contains an excerpt of the archive text it was derived from.
 |---|---|---|---|
 | `limit` | integer | `20` | Versions to return, 1 to 200. Out-of-range values return `400` / `invalid_limit` |
 
-Newest-first history under a `versions` array, each entry shaped exactly like
-the current-brief response. Versions are immutable: a regeneration inserts the
-next version as `current` and marks the previous one `superseded`.
+Returns newest-first history in a `versions` array, with each entry shaped like
+the current-brief response. Versions are immutable: regenerating a brief inserts
+the new version as `current` and marks the previous one `superseded`.
 
 ---
 
@@ -972,11 +1120,11 @@ next version as `current` and marks the previous one `superseded`.
 
 Marks the current version `rejected` and returns it in the same shape as the
 current-brief response, with `rejected_at` and `rejected_reason` set. `reason`
-is optional. The version stays readable in history, and the next eligible run
-produces a replacement without waiting out `min_interval`. A person with no
-current version returns `404` / `person_brief_not_found`, and so does
-`GET /api/v1/people/{id}/brief` after a rejection, until a replacement version
-is generated.
+is optional. The rejected version stays readable in history, and the next
+eligible run creates a replacement without waiting out `min_interval`. If the
+person has no current version, this endpoint returns `404` /
+`person_brief_not_found`, and `GET /api/v1/people/{id}/brief` does the same
+after a rejection until a replacement version is generated.
 
 ---
 
@@ -984,25 +1132,24 @@ is generated.
 
 **Endpoint:** `POST /api/v1/people/{id}/brief/generate`
 
-Runs one forced sweep attempt for that person and waits for it. The request has
-no body.
+Runs one forced sweep attempt for that person and waits for it to finish. Send
+no request body.
 
 ```json
 {"run_id": "9d1c...", "attempt_id": "5f20...", "brief_version": 3, "brief_failure_class": ""}
 ```
 
-`brief_version` is the version the attempt stored, or `0` when it stored none;
-`brief_failure_class` identifies a brief-generation failure when the overall
-attempt succeeded. It can also be empty with version `0`: no eligible evidence
-is a successful attempt that produces no brief. For example, an email-only
-person has no supported brief evidence.
-The forced run bypasses the minimum interval and the new-activity check but
-still requires enrollment, a consented provider profile with
-`allow_sensitive = true`, and available budget. It spends provider budget for
-every call it makes, and on a person whose cursors are already caught up it may
+`brief_version` is the version the attempt stored, or `0` when it stored none.
+`brief_failure_class` names a brief-generation failure when the overall attempt
+succeeded, and it can also be empty with version `0`: having no eligible
+evidence is a successful attempt that produces no brief, as with an email-only
+person. The forced run bypasses the minimum interval and the new-activity check,
+but still requires enrollment, a consented provider profile with
+`allow_sensitive = true`, and available budget. It spends provider budget on
+every call it makes, and when a person's cursors are already caught up, it may
 also run one bounded extraction page.
 
-Generation reports these conditions before running:
+Before running, generation checks for these conditions:
 
 | Status | Code | Meaning |
 |---|---|---|
@@ -1015,11 +1162,11 @@ Generation reports these conditions before running:
 
 Briefs use only supported chat and text-message sources within
 `conversation_text`; email, meeting transcripts, documents, and owner-authored
-messages are excluded. A scheduled sweep skips brief generation when the
-profile does not permit its sources or sensitive content.
+messages are excluded. A scheduled sweep skips brief generation if the profile
+does not permit its sources or sensitive content.
 
-Restart the daemon after enabling sweeps or changing the selected provider.
-Manual brief generation uses the configuration loaded at daemon startup.
+After enabling sweeps or changing the selected provider, restart the daemon.
+Manual brief generation uses the configuration loaded at startup.
 
 ---
 
@@ -1027,7 +1174,7 @@ Manual brief generation uses the configuration loaded at daemon startup.
 
 **Endpoint:** `GET /health`
 
-Health check endpoint. Does not require authentication.
+Checks whether the server is reachable. Requires no authentication.
 
 **Response:**
 
@@ -1035,17 +1182,18 @@ Health check endpoint. Does not require authentication.
 {"status": "ok", "analytics_engine": "sql-fallback"}
 ```
 
-`analytics_engine` reports the active mode: `sql-fallback` while `engine =
-"auto"` is waiting for or cannot use a cache, `duckdb` after a successful cache
-build/open, `sql` for deliberate live SQL, `postgres` for PostgreSQL, and
-`initializing` while required DuckDB analytics are being prepared. Health stays
-available during initialization; analytics routes return `503` until the
-required engine is ready.
+`analytics_engine` reports the active mode: `sql-fallback` while
+`engine = "auto"` waits for or cannot use a cache, `duckdb` after a cache opens
+or builds, `sql` for deliberate live SQL, `postgres` for PostgreSQL, and
+`initializing` while required DuckDB analytics prepare. `/health` stays
+available during startup, while analytics routes return `503` until the required
+engine is ready.
 
-Authenticated `GET /api/v1/health` also includes `api_schema_version`. Starting
-with schema 2.28.0, its `vector` object can include `text_enabled` and
-`visual_enabled`. These fields reflect configured lanes and remain true while a
-lane initializes or fails. Public and delegated health responses omit them.
+Authenticated `GET /api/v1/health` adds `api_schema_version`. Starting in schema
+2.28.0, its `vector` object can also include `text_enabled` and `visual_enabled`.
+Each flag reflects whether its own lane is configured, reporting `false` for an
+unconfigured lane and `true` for a configured lane, even while that lane
+initializes or fails. Public and delegated health responses omit them.
 
 ---
 
@@ -1053,34 +1201,27 @@ lane initializes or fails. Public and delegated health responses omit them.
 
 **Endpoint:** `GET /api/v1/stats`
 
-Archive statistics. When vector search is configured on the server,
-the response also includes a `vector_search` sub-object describing
-the state of the index.
+Returns archive statistics. When vector search is configured on the server, the
+response adds a `vector_search` object describing the index state.
 
-Stats answer within about 2 seconds while a sync or cache build loads the
-archive:
+While a sync or cache build loads the archive, `/api/v1/stats` responds within
+about 2 seconds:
 
-- If fresh counts are not ready by then, the response reuses the previous
-  counts and sets `"stale": true`, with `as_of` giving when they were
-  computed. The fresh counts replace them when they finish.
-- Vector statistics get 3 seconds. After that, the response sets
+- If fresh counts are not ready in time, the response reuses the previous counts
+  and sets `"stale": true`, with `as_of` showing when they were computed. Fresh
+  counts replace them once they finish.
+- Vector statistics have a 3-second budget. If they miss it, the response sets
   `"vector_stats_unavailable": true` instead of failing.
 
-`GET /api/v1/cli/accounts` bounds its message counts the same way, reporting
-`stale` and `as_of` at the top level. Before the first counts finish there is
-no earlier snapshot to serve, so the request fails with `503 query_timeout`.
-Send the header `X-Msgvault-Allow-Pending-Counts: true` to get the accounts
-anyway: the response sets `"counts_pending": true`, and every account's
-`message_count` and `source_deleted_count` is a placeholder `0`.
+`GET /api/v1/cli/accounts` reads each account's `message_count` and
+`source_deleted_count` from totals the archive updates with every message
+write, so they are always current and never wait on a count of the archive.
 
-Once a count snapshot exists, fresh counts get 500 ms. If they don't finish,
-the response carries the previous counts with `"stale": true` and their
-original `as_of`, while the refresh continues. The CLI shows such counts with
-their age, such as `1,234 (counted 3 minutes ago)`.
-
-Virtual-account counts retain their two-second cold wait. Once a matching catalog
-exists, callers with the pending-counts header reuse it immediately after
-expiry while it refreshes. Strict callers retain the two-second refresh wait.
+The virtual-account catalog on that endpoint has a two-second cold wait. Once a
+matching catalog exists, callers that send the
+`X-Msgvault-Allow-Pending-Counts: true` header reuse it immediately after
+expiry while it refreshes, whereas strict callers keep the two-second refresh
+wait.
 
 **Response (vector search disabled):**
 
@@ -1128,14 +1269,13 @@ expiry while it refreshes. Strict callers retain the two-second refresh wait.
 }
 ```
 
-`active_generation` is always present in the object (null until the
-first build completes). `building_generation` is omitted when no
-rebuild is in flight. `missing_embeddings_total` reports live messages
-still needing embedding for the generation the worker will target next:
-the building generation while a rebuild is in flight, otherwise the active
-generation. During a rebuild the old active generation keeps serving vector
-and hybrid search, but active-generation top-ups are frozen until the
-building generation activates. See
+`active_generation` is always present in the object and is `null` until the
+first build completes. `building_generation` appears only while a rebuild is in
+flight. `missing_embeddings_total` counts live messages that still need
+embedding for the generation the worker targets next: the building generation
+during a rebuild, or the active generation otherwise. While a rebuild runs, the
+old active generation keeps serving vector and hybrid search, and
+active-generation top-ups pause until the building generation activates. See
 [Vector Search](/docs/usage/vector-search/) for the end-to-end workflow.
 
 ---
@@ -1236,9 +1376,9 @@ The companion `GET /api/v1/messages/gmail-ids` endpoint returns source message I
 | `search_mode` | Required with `q`: `fast` searches metadata, `deep` includes bodies, and `aggregate` selects an aggregate row using `view_type` and `aggregate_key`. |
 | `max_results` | Integer from 1 through 100001. Requires `q` and `search_mode=fast` or `deep`. Caps search matches before resolving deletion targets. Empty or invalid values return `invalid_max_results`. |
 
-Bounded responses include `matched_count` before target lookup, so request one extra match to detect overflow; see [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for supported sources and skipped matches.
+Bounded responses include `matched_count` before target lookup, so request one extra match to detect overflow; see [staged deletion through MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for supported sources and skipped matches.
 
-The endpoint also accepts `sender` / `sender_name`, `recipient` / `recipient_name`, `domain`, `label`, `message_type`, `conversation_id`, `attachments_only`, `source_id`, `source_ids`, and `after` / `before`, and applies them as `/messages/filter` does. Structured selections honor `limit`. Search selections use `max_results` for their bound. Results always exclude deleted messages and are ordered newest-first, so `hide_deleted`, `offset`, `sort`, and `direction` have no effect.
+The endpoint also accepts `sender` / `sender_name`, `recipient` / `recipient_name`, `domain`, `label`, `message_type`, `conversation_id`, `attachments_only`, `source_id`, `source_ids`, and `after` / `before`, applying them the same way `/messages/filter` does. Structured selections honor `limit`, while search selections use `max_results` as their bound. Results always exclude deleted messages and sort newest-first, so `hide_deleted`, `offset`, `sort`, and `direction` have no effect.
 
 ---
 
@@ -1248,9 +1388,9 @@ The endpoint also accepts `sender` / `sender_name`, `recipient` / `recipient_nam
 
 Lists messages whose content changed at or after a cursor, oldest change first.
 Poll it, re-read the rows it returns, and store the cursor it hands back. Unlike
-`/messages/filter` it is ordered by when a message *changed*, not by when it was
-sent, so a mailbox imported today with ten-year-old mail shows up in the very
-next page.
+`/messages/filter`, this feed orders rows by when a message *changed*, not by
+when it was sent, so ten-year-old mail imported today shows up in the very next
+page.
 
 Use `person_id` to select messages sent by the person's currently linked
 identities, repeated `source_id` or `conversation_id` values to select those
@@ -1292,127 +1432,122 @@ When a message has no sender ID, the person filter uses its first From recipient
 changes to recipients alone do not move the watermark.
 
 **What it is.** An invalidation feed over one projection of a message: the
-columns this endpoint returns, plus a body edit and two columns it does not
-return. It tells you *that* a message changed and hands you the current value of
+columns this endpoint returns, plus body edits and two columns it does not
+return. It tells you *that* a message changed and gives you the current value of
 those columns. It does not tell you how many times it changed, what it held in
-between, or that anything outside that projection changed.
+between, or whether anything outside that projection changed.
 
-**What it is not.** It is not a way to keep a general copy of the archive
-current. Labels, recipients, attachment metadata and content, raw MIME, body
-deletions, participant edits, and conversation metadata are all outside it — and
-several of those, label re-sync above all, are the most frequent changes a mail
-archive sees. Hard deletions are outside it too: a row removed from the database
-leaves nothing behind to report.
+**What it is not.** It is not a general archive mirror. Labels, recipients,
+attachment metadata and content, raw MIME, body deletions, participant edits,
+and conversation metadata are all outside the feed, and several of those,
+especially label re-syncs, are the most frequent changes in a mail archive. Hard
+deletions are outside it too, because a row removed from the database leaves
+nothing behind to report.
 
-So build on it a consumer that keeps a projection of the tracked columns fresh,
-or one that reacts to messages changing. Do not build on it a mirror that has to
-match the archive, unless you also refresh the untracked surfaces on your own
-schedule and reconcile deletions independently. The exact boundaries are
+Use this feed to keep a projection of the tracked columns fresh or to react when
+messages change. Do not build a full archive mirror on it unless you refresh the
+untracked data on your own schedule and reconcile deletions independently. See
 [What this feed does not report](#what-this-feed-does-not-report) and the
-[delivery contract](#delivery-contract).
+[delivery contract](#delivery-contract) for the exact boundaries.
 
-Messages hidden by deduplication and messages deleted at the source are
-included, with their `deleted_at` and `deleted_from_source_at` timestamps set.
-A consumer keeping a copy of the tracked columns needs both to learn that a
-message it already holds has been hidden or deleted.
+The feed includes messages hidden by deduplication and messages deleted at the
+source, with their `deleted_at` and `deleted_from_source_at` timestamps set. A
+consumer caching the tracked columns needs both to learn when a message it holds
+has been hidden or deleted.
 
-The dedup-hidden ones are what this feed is alone in returning: every other
-message listing filters them out with `deleted_at IS NULL`, and no parameter
-turns that off. Source-deleted messages are not unique to it —
-`/messages/filter` returns those by default too, and `hide_deleted=true` is what
-suppresses them there — but this feed returns them unconditionally, with no
-parameter that hides them.
+This is the only message listing that returns dedup-hidden rows; every other
+listing filters them out with `deleted_at IS NULL` and has no parameter to turn
+that off. Source-deleted messages also appear in `/messages/filter` by default
+(where `hide_deleted=true` suppresses them), but this feed returns them
+unconditionally with no parameter to hide them.
 
 The watermark moves for every mutable field the feed returns, for message-body
-edits, and for two columns the feed does not return: the sender pointer
+edits, and for two columns the feed omits: the sender pointer
 (`messages.sender_id`) and the platform metadata payload. It never moves for
-anything else — see
+anything else; see
 [What this feed does not report](#what-this-feed-does-not-report).
 
-Part of what moves it is readable only from `/api/v1/messages/{id}`, so the feed
-*does* invalidate some of that response. When a message reaches you through the
-feed, re-fetch its detail response if you cache either of these:
+Part of what moves the watermark is readable only from `/api/v1/messages/{id}`,
+so the feed *does* invalidate some fields of that response. When a message
+arrives in the feed, re-fetch its detail response if you cache either of these:
 
-* `body` and `body_html`. An added or edited body moves the watermark. A body
-  *deletion* does not, so a body you already hold can still go stale — that one
-  is in the exception list below.
-  Beeper repair can update `body_html` and advance `content_changed_at`, making the message reappear in this feed.
-* `from`. It is derived from the sender pointer, and a change of pointer moves
-  the watermark. Renaming or correcting the participant the pointer names does
-  not, so the address or display name can still change under you.
+* `body` and `body_html`. Adding or editing a body moves the watermark, whereas
+  deleting a body does not, so a cached body can still go stale (listed in the
+  exceptions below). Beeper repair can also update `body_html` and advance
+  `content_changed_at`, causing the message to reappear in this feed.
+* `from`. It is derived from the sender pointer, and changing that pointer moves
+  the watermark. Renaming or correcting the participant it points to does not,
+  so the address or display name can still change underneath you.
 
-The rest of the detail response the feed genuinely never invalidates: `to`,
-`cc`, `bcc`, `labels`, and the `attachments` array — filenames, hashes, sizes
-and all — can all change without the message ever reappearing in the feed.
-Refresh those on your own schedule.
+The feed never invalidates the rest of the detail response: `to`, `cc`, `bcc`,
+`labels`, and the `attachments` array (filenames, hashes, sizes, and all) can
+change without the message reappearing. Refresh those on your own schedule.
 
-> **Existing archives are modified the first time they are opened, and the index
-> build inside that stops writes.** Support for this feed adds a
-> `content_changed_at`
-> column to `messages`, runs a one-time full-table backfill of it, builds an
-> index on it, and installs the watermark triggers. Trigger installation is a
-> versioned migration, so it runs once for each trigger definition instead of
-> taking trigger locks on every open. On PostgreSQL the backfill bumps
-> `last_modified` on every row once, at upgrade.
+> **Existing archives are modified on first open, and the index build stops
+> writes.** Adding feed support adds a `content_changed_at` column to
+> `messages`, runs a one-time full-table backfill, builds an index on it, and
+> installs watermark triggers. Trigger installation is a versioned migration, so
+> it runs once per trigger definition rather than taking trigger locks on every
+> open. On PostgreSQL, the backfill bumps `last_modified` on every row once at
+> upgrade.
 >
-> The backfill commits in batches and the watermark triggers are installed before
-> it starts, so a concurrent write is safe throughout and, on PostgreSQL,
-> unrelated rows can be written between batches. The index is the part that
-> stops writes: it is built with a plain `CREATE INDEX`, which on PostgreSQL
-> blocks every write to `messages` for as long as the build takes, and on SQLite
-> holds the database's single writer slot for the same stretch. The two
-> directions both bite: an import already writing holds the startup waiting, and
-> an import that starts during the build waits for it. On a large archive treat
-> the first open as a planned write outage rather than a restart — for the length
-> of the index build, not of the whole upgrade — and note that the daemon does
-> not serve requests until all of it finishes.
+> The backfill commits in batches and installs the watermark triggers first, so
+> concurrent writes stay safe throughout and, on PostgreSQL, unrelated rows can
+> still be written between batches. The index build is the part that stops
+> writes: it runs a plain `CREATE INDEX`, which blocks every write to `messages`
+> on PostgreSQL for the length of the build and holds SQLite's single writer
+> slot for the same stretch. Both directions block: an import already writing
+> holds up startup, and an import that starts during the build waits for it. On
+> a large archive, treat the first open as a planned write outage for the length
+> of the index build (not the whole upgrade), and remember that the daemon does
+> not serve requests until all steps finish.
 >
-> The upgrade is deliberately **not atomic**. The column addition, each committed
-> batch of the backfill, the ledger entry that records the backfill as done, and
-> the index are four separate durable steps. If one fails — or an operator
-> interrupts it — startup aborts, everything already committed stays, and the
-> next open resumes from where it stopped instead of starting over.
+> The upgrade is deliberately **not atomic**. The column addition, each
+> committed backfill batch, the ledger entry recording the backfill as done, and
+> the index are four separate durable steps. If one fails or you interrupt it,
+> startup aborts, everything already committed stays, and the next open resumes
+> where it left off instead of starting over.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `cursor` | string | — | The `next_cursor` of the previous response, sent back verbatim. Omit — or send it empty — to start from the beginning of the archive |
 | `limit` | int | `100` | Maximum rows to return; capped at 500. Values below 1 fall back to the default |
 
-> **Polling cost — the feed takes the SQLite write lock.** On the SQLite backend
-> each request briefly acquires the database's single write lock to establish how
-> far writes have committed, so unlike an ordinary read it competes with an
-> in-progress import. Measured on one machine against three concurrent writers:
-> eight clients paging the feed in a tight loop cut writer throughput to **15%**
-> of the unloaded rate, where eight clients running an equivalent plain `SELECT`
-> left **49%**. One consumer polling once a second is free. The endpoint limits
-> each client IP to two requests per second with a burst of four; honor a `429`
-> response's `Retry-After` header. Poll on an interval, and drain a backlog with
-> `has_more` or a larger `limit` rather than a tighter poll. PostgreSQL
-> establishes the same bound without taking a lock.
+> **Polling cost: the feed takes the SQLite write lock.** On SQLite, each
+> request briefly acquires the single write lock to establish how far writes
+> have committed, so unlike an ordinary read it competes with an active import.
+> Measured on one machine against three concurrent writers, eight clients paging
+> the feed in a tight loop cut writer throughput to **15%** of the unloaded
+> rate, whereas eight clients running an equivalent plain `SELECT` left **49%**.
+> One consumer polling once a second is free. The endpoint limits each client IP
+> to two requests per second with a burst of four; honor a `429` response's
+> `Retry-After` header. Poll on an interval, and drain a backlog with `has_more`
+> or a larger `limit` instead of polling faster. PostgreSQL establishes the same
+> bound without taking a lock.
 
-**The cursor is opaque.** Store the `next_cursor` a response hands you and send
-it back unchanged; do not parse it, construct one, compare two of them, or order
-them. What it encodes is the server's business and may change without notice.
-Omit it, or send it empty, to start from the beginning of the archive.
+**The cursor is opaque.** Store the `next_cursor` returned by a response and
+send it back unchanged; do not parse, construct, compare, or order cursors. What
+it encodes belongs to the server and may change without notice. Omit it, or send
+it empty, to start from the beginning of the archive.
 
 The token is not authenticated. The server holds no secret and does not sign it,
-so it cannot tell a cursor it issued from a well-formed one you built yourself —
-and it does not try. A fabricated cursor that names this archive is accepted; all
-it does is move your own position in your own feed, and it reaches no message you
-could not already ask for. What the server *does* refuse, with a
-`400 invalid_cursor` rather than a silent restart from the beginning of the
-archive, is a token it cannot read at all, one carrying a cursor format this
-build does not speak, and one issued against a **different archive**.
+so it cannot distinguish a cursor it issued from a well-formed one you built
+yourself, and it does not try. A fabricated cursor naming this archive is
+accepted; it only moves your own position in your own feed and reaches no
+message you could not already ask for. What the server *does* reject with
+`400 invalid_cursor`, rather than silently restarting from the beginning, is a
+token it cannot parse, a cursor format this build does not understand, or a
+cursor issued against a **different archive**.
 
-That last one is worth planning for. A cursor is a position in one specific
-archive — the archive it names, and no other — so a stored cursor keeps working
-across a restart, an upgrade, or a file-level restore of the same archive, but is
-rejected if you point the daemon at a different `--db` or at an archive rebuilt
-from scratch. Surviving a restore is not the same as being correct across one: a
-restore that rolls the archive *back* past your cursor loses what it undid, which
-the [delivery contract](#delivery-contract) sets out. The rejection is the point: honouring it would resume the walk at
-an unrelated position and silently never deliver the records before it. Restart
-the sync from the beginning of the archive instead.
+Plan for that last case. A cursor marks a position in one specific archive and
+no other, so a stored cursor keeps working across a restart, an upgrade, or a
+file-level restore of the same archive, but fails if you point the daemon at a
+different `--db` or an archive rebuilt from scratch. Surviving a restore is not
+the same as staying correct across one: a restore that rolls the archive *back*
+past your cursor loses what it undid, as the
+[delivery contract](#delivery-contract) explains. Rejection is the point: honoring
+a cursor from another archive would resume at an unrelated position and silently
+skip earlier records. Restart the sync from the beginning of the archive instead.
 
 **Response:**
 
@@ -1454,51 +1589,51 @@ not the client's and not the daemon process's. `has_more` reports whether more
 rows are already waiting; when it is `true`, request the next page immediately
 instead of waiting for the next poll.
 
-`next_cursor` is where the next request resumes. It is always present and never
-empty, so you always have something to send back — on an empty page and at the
-very beginning of the archive alike.
+`next_cursor` marks where the next request resumes. It is always present and
+never empty, so you always have a value to send back on an empty page or at the
+very beginning of the archive.
 
-`complete_through` is how far the feed is caught up, which is a different
-question from what time it is. Every change committed strictly before it, at or
-after the cursor you sent, is now *reachable* — in this page, or in a page you
-can fetch right now — barring the exceptions the
-[delivery contract](#delivery-contract) sets out. It is **not a cursor**: the
-only cursor is `next_cursor`, and a consumer that resumes from
-`complete_through` while `has_more` is `true` skips every row in between.
+`complete_through` reports how far the feed is caught up, which differs from the
+current clock time. Every change committed strictly before it, at or after the
+cursor you sent, is now *reachable* in this page or in a page you can fetch
+right away, barring the exceptions in the
+[delivery contract](#delivery-contract). It is **not a cursor**: `next_cursor`
+is the only cursor, and resuming from `complete_through` while `has_more` is
+`true` skips every row in between.
 
-`complete_through` is never after `server_time`, and on a healthy server trails
-it by microseconds; see [Delivery contract](#delivery-contract) for when it stops
-tracking and what that means. A page never reaches it — rows stamped in that same
-instant are held back — so the very newest changes arrive on the following poll.
+`complete_through` is never after `server_time`, and on a healthy server it
+trails `server_time` by microseconds; see [Delivery contract](#delivery-contract)
+for when it stops tracking and what that means. A page never reaches
+`complete_through` because rows stamped at that exact instant are held back, so
+the newest changes arrive on the next poll.
 
-On a server that has only just started, `complete_through` can be `null`. No
-bound has been established yet, so the feed is complete through nothing. It
-happens when every attempt to read the bound so far has been beaten by a writer,
-and it resolves by itself on the first quiet moment.
-Such a page carries no rows and echoes your cursor back unchanged, so it is safe
-to keep polling; the whole archive from your cursor onward is delivered once the
-bound is established.
+On a freshly started server, `complete_through` can be `null` because no bound
+has been established yet. That happens when a writer beats every attempt to read
+the bound, and it resolves on the first quiet moment. The page carries no rows
+and echoes your cursor unchanged, so it is safe to keep polling; once the bound
+is established, the feed delivers the archive from your cursor onward.
 
-On an empty page the response normally echoes the cursor you sent. The exception
-is a cursor standing *above* the database clock: it matches nothing, and echoing
-it would leave you polling a feed that answers "caught up" forever while the
-archive changes, so the response moves it down to the start of
-`complete_through` instead — the start, so that a row stamped at that very
-instant is still ahead of the cursor whatever its message id. It
-lands on the commit bound rather than on the clock because a change that is
-stamped but not yet committed sits between the two, and a cursor at the clock
-would step over it. A server that has not yet established a bound has no
-proven-safe point to move to, so there the cursor is echoed unchanged.
+On an empty page, the response normally echoes your cursor. The exception is a
+cursor standing *above* the database clock: it matches nothing, and echoing it
+would leave you polling a feed that reports "caught up" forever while the
+archive changes, so the response moves the cursor down to the start of
+`complete_through` instead. Using the start guarantees that a row stamped at that
+exact instant stays ahead of the cursor regardless of its message ID. It lands
+on the commit bound rather than on the clock because a change that is stamped
+but not yet committed sits between the two, and a cursor at the clock would step
+over it. If the server has not yet established a bound, it has no proven-safe
+point to move to and echoes your cursor unchanged.
 
-You can reach that state through no fault of your own — an NTP correction, a
-resumed VM, a restore onto slower hardware. Being moved gets you going again; it
-does not undo whatever put you above the clock. If that was a clock stepped
-backwards, the changes already stamped below the new position are gone from your
-walk — see the [delivery contract](#delivery-contract).
+You can hit this state without doing anything wrong, such as after an NTP
+correction, a resumed VM, or a restore onto slower hardware. Moving the cursor
+gets you going again, though it does not undo whatever put you ahead of the
+clock. If the clock stepped backward, changes already stamped below the new
+position are gone from your walk; see the
+[delivery contract](#delivery-contract).
 
 #### Walking the feed
 
-First request — no cursor, so the feed starts at the beginning of the archive:
+First request (no cursor, so the feed starts at the beginning of the archive):
 
 ```bash
 curl -H "X-API-Key: $MSGVAULT_API_KEY" \
@@ -1521,7 +1656,7 @@ one-row lookahead: the server asked for one row more than your `limit` and got
 it, so a further row was already there to be read. Expect the next page to carry
 rows.
 
-Second request — the cursor from the first response, verbatim:
+Second request (using the cursor from the first response, verbatim):
 
 ```bash
 curl -H "X-API-Key: $MSGVAULT_API_KEY" \
@@ -1539,9 +1674,8 @@ curl -H "X-API-Key: $MSGVAULT_API_KEY" \
 }
 ```
 
-Third request — `has_more` was `false`, so this one waits for your poll interval.
-Nothing changed in between, so the page is empty and the cursor comes back
-unchanged:
+Third request (`has_more` was `false`, so wait for your poll interval). Nothing
+changed in between, so the page is empty and the cursor comes back unchanged:
 
 ```bash
 curl -H "X-API-Key: $MSGVAULT_API_KEY" \
@@ -1559,253 +1693,240 @@ curl -H "X-API-Key: $MSGVAULT_API_KEY" \
 }
 ```
 
-The loop is: re-read the rows, take `next_cursor` from the response, send it as
-the next request, and repeat — immediately while `has_more` is `true`, on your
-poll interval when it is not. An empty page echoes the cursor you sent, so a
-caught-up consumer can send the response straight back forever without
+The loop is straightforward: re-read the rows, save `next_cursor`, send it on
+the next request, and repeat immediately while `has_more` is `true` or on your
+poll interval when it is `false`. An empty page echoes the cursor you sent, so a
+caught-up consumer can send the returned cursor back indefinitely without
 re-reading the archive.
 
-A page that reports `has_more: true` and is then followed by an empty one is not
-the ordinary case: the lookahead row existed when the first page was read, so
-something has to have happened to it since. Either it was hard-deleted, or its
-watermark moved — forward to at or above the next page's
-[commit bound](#delivery-contract), which holds it back until the bound catches
-up, or backward below the cursor you are holding, which is the clock-step case
-in the delivery contract. Only the backward step loses a change you would
-otherwise have been handed — a hard deletion was never reportable at all — and
-none of the three is a reason to stop polling.
+A page with `has_more: true` followed by an empty page is unusual: the lookahead
+row existed when the first page ran, so something happened to it afterward. It
+was either hard-deleted, or its watermark moved forward to or above the next
+page's [commit bound](#delivery-contract) (holding it back until the bound
+catches up), or moved backward below your cursor (the clock-step case in the
+delivery contract). Only the backward step loses a change you would otherwise
+have received, since a hard deletion was never reportable, and none of the three
+is a reason to stop polling.
 
 #### Delivery contract {#delivery-contract}
 
-**What the feed guarantees.** After a change to a tracked column, written the
-ordinary way — through the application, with the watermark left to the database
-triggers — the message is delivered by following `next_cursor`, in as many
-further pages as `has_more` calls for, however long its writing transaction took.
-The row you get carries the message's current values as of the moment the page
-was read.
+**What the feed guarantees.** After a change to a tracked column written through
+the application with the watermark left to the database triggers, following
+`next_cursor` delivers the message across as many pages as `has_more` calls for,
+regardless of how long its writing transaction took. Each row carries the
+message's current values at the moment the page was read.
 
-**What kind of feed that makes it.** Latest-state invalidation, not an event
-stream. The archive holds one mutable watermark per message and keeps no change
-history, so what a page delivers is "this message is stale, re-read it" — never
-how many times it changed or what it held in between. Two consequences follow,
-and neither is a defect to be worked around:
+**What kind of feed that makes it.** This is a latest-state invalidation feed,
+not an event stream. The archive stores one mutable watermark per message and
+keeps no change history, so a page tells you "this message is stale, re-read it"
+rather than how many times it changed or what it held in between. Two
+consequences follow, and neither is a defect to work around:
 
-* Several changes to one message between two of your polls arrive as **one** row,
-  carrying the last of them. The intermediate states are gone from the archive,
-  so no cursor and no re-read can recover them.
-* The same change can arrive **more than once** — resuming from an earlier cursor
-  re-delivers rather than erroring or skipping — and nothing distinguishes a
+* Multiple changes to one message between two polls arrive as **one** row
+  carrying the latest state. Intermediate states are gone from the archive, so
+  no cursor or re-read can recover them.
+* The same change can arrive **more than once**. Resuming from an earlier cursor
+  re-delivers rows rather than erroring or skipping, and nothing distinguishes a
   re-delivery from a fresh change.
 
-So a consumer must be able to re-read a message it already holds, and must not
-count feed rows as changes or drive anything off their number.
+Build your consumer to re-read messages it already holds, and do not count feed
+rows as distinct changes or drive logic from their count.
 
 **Every exception to that guarantee is in "What is still best-effort" below.**
-That list is the complete one and the only place that enumerates them; every
-other passage in this document and in the source points here instead of
-restating it.
+That list is complete and is the only place that enumerates them; every other
+passage in this document and in the source points there instead of restating it.
 
-`complete_through` is what makes the guarantee hold: the page stops below the
-oldest write that could still commit, not below the clock, so — for every write
-the bound can see — the cursor cannot come to rest above a change that has been
-stamped but not yet published. The guarantee is about the cursor, not about any
-single response: keep following `next_cursor` and nothing outside the exception
-list is lost; substitute `complete_through` for it and the rows between it and
-`next_cursor` are lost as well.
+`complete_through` makes the guarantee hold: each page stops below the oldest
+write that could still commit rather than below the clock, so for every write
+the bound can see, the cursor cannot come to rest above a stamped but
+uncommitted change. The guarantee applies to `next_cursor`, not to any single
+response. Keep following `next_cursor` and nothing outside the exception list is
+lost; substituting `complete_through` skips the rows between it and
+`next_cursor`.
 
-**What it costs.** The feed cannot advance past the start of any open transaction
-that holds — or is queued for — a write lock on the message table. A batch
-import, a source-deletion run, or a client that wrote a message and then sat on
-its `BEGIN` freezes `complete_through` for as long as that lasts. Only
-transactions bearing on the message table count, and only for as long as they
-last: a long read, an idle connection, a batch writing some other table, and
-autovacuum's routine work do not hold the feed back, whichever database role
-they belong to.
+**What it costs.** The feed cannot advance past the start of any open
+transaction that holds or is queued for a write lock on the message table. A
+batch import, a source-deletion run, or a client that writes a message and sits
+on its `BEGIN` freezes `complete_through` until it ends. Only transactions
+touching the message table count, and only while they are open: long reads, idle
+connections, writes to other tables, and routine autovacuum work never hold the
+feed back, regardless of database role.
 
-On PostgreSQL the test is the lock, not the write, and that is deliberate. A
-transaction still *waiting* to acquire a write lock on `messages` — behind
-someone else's `ALTER TABLE`, say — counts from the moment it queues, before it
-has written anything, and it holds the bound back to its own transaction start
-rather than to the moment it began waiting. Waiting to write is the state that
-immediately precedes writing, and the bound has to be below a write before it
-happens rather than after; counting a transaction that turns out never to write
-costs a visible gap, while missing one that does costs a silently skipped row.
+On PostgreSQL, the check tests the lock rather than the write, by design. A
+transaction still *waiting* for a write lock on `messages`, such as behind an
+`ALTER TABLE`, counts from the moment it queues and holds the bound back to its
+own transaction start rather than when it began waiting. Waiting to write
+immediately precedes writing, and the bound must sit below a write before it
+happens rather than after; counting a transaction that never writes creates a
+visible gap, while missing one that does write silently skips a row.
 
-On SQLite, where there is no way to ask which transaction is open, any write
+On SQLite, where you cannot inspect which transaction is open, any write
 transaction held longer than a moment has the same effect.
 
-During the freeze the feed keeps serving: a consumer with a backlog goes on
-draining every row committed below the frozen bound, page after page, exactly as
-it would otherwise. What the freeze costs is the far end of the walk — once your
-cursor reaches the bound, the feed returns no rows and `has_more: false`, which
-reads exactly like being caught up. The difference is that `complete_through` has
-stopped tracking `server_time` while `server_time` keeps moving. **That gap is
-the signal.** If it grows past a few seconds, something is holding a write
-transaction open. Once it passes a minute the server logs a warning
-(`message change feed is not advancing`, with the lag and a cause), repeated at
-most once a minute while the condition lasts. A normal batch write causes a gap
-for as long as the batch runs and then closes it; that is the mechanism working,
-not a fault.
+During a freeze, the feed keeps serving: a consumer with a backlog keeps
+draining every row committed below the frozen bound, page after page, as
+usual. The freeze affects the far end of the walk. Once your cursor reaches the
+bound, the feed returns no rows and `has_more: false`, which looks like being
+caught up. The difference is that `complete_through` stops tracking
+`server_time` while `server_time` keeps moving. **That gap is the signal.** If
+it grows past a few seconds, something is holding a write transaction open. Past
+a minute, the server logs a warning (`message change feed is not advancing`,
+with the lag and a cause) at most once a minute while the condition lasts. A
+normal batch write opens a gap while the batch runs and closes it afterward;
+that is normal operation, not a fault.
 
-There is one case with no gap to measure and no minute to wait for: a server
-that has never established a bound at all, because a write transaction was open
-on every attempt since it started. `complete_through` is `null` then, so there
-is no lag to report, and the same warning is logged on the very first request,
-under the same once-a-minute throttle — carrying `lag: "unknown"`,
-`complete_through: "none"`, and its own cause. Read it as "this server has never
-seen the message table quiescent", which on a freshly started daemon usually
-means an import was already running when it came up.
+One case has no gap to measure and no minute to wait: a server that has never
+established a bound because a write transaction was open on every attempt since
+startup. `complete_through` is `null` then, so there is no lag to report, and
+the server logs the same warning on the first request under the same
+once-a-minute throttle, with `lag: "unknown"`, `complete_through: "none"`, and
+its own cause. Read it as "this server has never seen the message table quiet",
+which on a freshly started daemon usually means an import was already running at
+startup.
 
-Read the gap as "how stale the bound is", not as "how long that transaction has
-been open" — the two are the same number only on PostgreSQL, where the bound is
-the open transaction's own start time. SQLite has no way to ask when another
-connection's transaction began; its bound is the last moment the server caught
-the database with the write lock free, so the gap measures the age of that
-observation instead. A writer is genuinely in flight whenever the gap is open,
-but on SQLite it may have started seconds ago and still show a gap of hours,
-because time in which nothing polled the endpoint is time in which no reading was
-taken. On SQLite the gap is an upper bound on the writer's age; on PostgreSQL it
-is a measurement of it.
+Read the gap as "how stale the bound is", not "how long that transaction has
+been open". Those two numbers match only on PostgreSQL, where the bound is the
+open transaction's start time. SQLite cannot ask when another connection's
+transaction began; its bound is the last moment the server saw the write lock
+free, so the gap measures the age of that observation instead. A writer is in
+flight whenever the gap is open, but on SQLite it may have started seconds ago
+and still show a gap of hours because no poll took a reading in between. On
+SQLite the gap is an upper bound on the writer's age; on PostgreSQL it measures
+that age directly.
 
-**What is still best-effort.** This list is the canonical one: every exception to
-the guarantee above is here, and no other passage in this document or in the
-source enumerates them. The feed does not promise that a change reaches a
-consumer once and only once, it does not promise that a change reaches one
-promptly, and there are surfaces it cannot see at all:
+**What is still best-effort.** This is the canonical list of exceptions to the
+guarantee above; no other passage in this document or in the source enumerates
+them. The feed does not promise once-and-only-once delivery or prompt delivery,
+and some changes are outside what it can observe:
 
 * Rows may be delivered more than once. Resuming from an earlier cursor
   re-delivers rather than erroring or skipping.
-* Changes to one message coalesce. Several changes between two of your polls
-  arrive as a single row carrying the last of them, because the archive holds one
-  mutable watermark per message and no change history. Nothing on the wire says
-  how many changes a row stands for, and the intermediate states are not stored,
-  so no cursor recovers them. A consumer that must observe every individual
-  change cannot get that here.
+* Changes to one message coalesce. Multiple changes between two polls arrive as
+  a single row carrying the latest state, because the archive holds one mutable
+  watermark per message and no change history. Nothing on the wire says how many
+  changes a row represents, and intermediate states are not stored, so no cursor
+  recovers them. If you need every individual change, this feed cannot provide
+  them.
 * Hard deletions are never reported. A row removed from the database outright
-  leaves nothing behind for the feed to report.
-* Changes to anything outside the tracked columns are not reported — see
+  leaves nothing behind to report.
+* Changes outside the tracked columns are not reported; see
   [What this feed does not report](#what-this-feed-does-not-report).
 * **PostgreSQL only:** PostgreSQL hides other roles' connections from a role that
   is neither a superuser nor a member of `pg_read_all_stats`, and a writer the
-  server cannot see cannot hold the bound back. Rather than quietly resume losing
-  rows, the feed stops advancing while a hidden connection is *writing to the
-  message table*: `complete_through` freezes at the last reading taken while every
-  such writer was visible. So this shows up as a stalled feed, not as missing
-  changes. A hidden connection that is idle, reading, or writing something else
-  changes nothing. msgvault uses one role, so this arises only if something else
+  server cannot see cannot hold the bound back. Rather than quietly losing rows,
+  the feed stops advancing while a hidden connection is *writing to the message
+  table*: `complete_through` freezes at the last reading taken while every such
+  writer was visible, so this shows up as a stalled feed rather than missing
+  changes. A hidden connection that is idle, reading, or writing another table
+  changes nothing. msgvault uses one role, so this happens only if something else
   writes the same message table; if it does and the feed stalls, grant the
-  msgvault role `pg_read_all_stats`. Where there is nothing to fall back to — a
-  server that started while a hidden writer was already inside its transaction —
-  the endpoint returns `500` rather than a page and the server log names the
-  grant. It clears by itself when that transaction ends.
-* **PostgreSQL only:** a *prepared* transaction (two-phase commit) holds its locks
-  without an owning session, so the feed cannot see when it began, and one that
-  wrote to the message table and then committed could publish its change behind a
-  cursor that had already moved past it. It needs `max_prepared_transactions > 0`,
-  which is off by default, and msgvault never uses two-phase commit. If another
-  application runs prepared transactions against the same database, reconcile
-  independently rather than relying on the feed.
+  msgvault role `pg_read_all_stats`. When there is nothing to fall back to, such
+  as a server that started while a hidden writer was already inside its
+  transaction, the endpoint returns `500` instead of a page and the server log
+  names the grant. It clears on its own when that transaction ends.
+* **PostgreSQL only:** A *prepared* transaction (two-phase commit) holds its
+  locks without an owning session, so the feed cannot see when it began. One
+  that wrote to the message table and then committed could publish its change
+  behind a cursor that already moved past it. Prepared transactions require
+  `max_prepared_transactions > 0`, which is off by default, and msgvault never
+  uses two-phase commit. If another application runs prepared transactions
+  against the same database, reconcile independently rather than relying on the
+  feed.
 * **A stamp at or above the current bound waits for the bound to reach it.** The
-  feed orders by the watermark stored on the row, not by the instant the write
-  committed, and a page stops strictly below `complete_through`. So a row stamped
-  at or above the bound is not returned, and while it is the only thing
-  outstanding the feed reports `has_more: false` — which reads exactly like being
-  caught up. **That is a delay, not a loss:** no cursor this page hands you gets
+  feed orders by the watermark stored on the row rather than when the write
+  committed, and each page stops strictly below `complete_through`. A row
+  stamped at or above the bound is held back, and when it is the only row
+  outstanding, the feed reports `has_more: false`, which looks like being caught
+  up. **That is a delay, not a loss:** no cursor returned by this page moves
   past the waiting stamp, so the row arrives on the first page read after the
-  bound clears it. (The moved cursor an empty page can hand you stands exactly
-  *on* the bound; that is still safe, because it names the *start* of that
-  instant rather than a position after some row in it, so every row stamped
-  there is still ahead of it whatever its message id.) A watermark
-  written by hand for a future instant waits until that instant genuinely arrives;
-  a server with no bound yet is this case at its limit, selecting nothing until
-  the first bound reading. A clock stepped backwards leaves you holding a cursor
-  above the clock too and looks identical, but what it strands is stamped *below*
-  your cursor, where no bound will ever bring it back — that is the next bullet,
-  and it is a loss rather than a wait. On SQLite the column can also hold a value
-  no bound will ever reach, and there the wait never ends and the change really is
-  lost; that is case 2 below.
-* **A database clock that steps backwards loses the changes committed below your
-  cursor while it climbs back.** The feed orders by the wall-clock watermark
-  stored on the row and your cursor only ever moves forward, so both rely on the
-  database's clock being monotonic. When it is not — an NTP step, a resumed or
-  migrated VM, a restore onto a host whose clock is behind — the writes that
-  follow the step are stamped in clock time your walk has already passed, and
-  every one of them stamped below the cursor you hold fails the keyset comparison
-  on that poll and on every poll after it. Both backends stamp from the database
-  server's own wall clock, so both are affected. **This is a loss, not a delay** —
-  the row is not waiting for anything, and nothing on the wire distinguishes it
-  from a healthy feed. It is bounded by the size of the step: what is lost is the
-  changes committed during the stretch of clock time the step re-runs, and normal
-  delivery resumes once the clock passes your cursor again. Moving a cursor that
-  stands above the clock narrows the window but cannot close it, and does not
-  happen at all for a consumer that polls late enough for the clock to have
-  climbed back above its cursor. The cursor being opaque changes none of this. No
-  cursor the server can hand you reaches back below itself; a full re-read from an
-  empty cursor does, because these rows are perfectly selectable — see the
-  reconciliation note at the end of this list.
+  bound clears it. A moved cursor returned by an empty page stands exactly *on*
+  the bound, which is still safe because it names the *start* of that instant
+  rather than a position after a row in it, so every row stamped there remains
+  ahead of it regardless of message ID. A watermark written by hand for a future
+  instant waits until that instant arrives; a server with no bound yet is this
+  case at its limit, selecting nothing until the first bound reading. A clock
+  stepped backward also leaves your cursor above the clock and looks identical,
+  but what it strands is stamped *below* your cursor, where no bound ever brings
+  it back; that is the next bullet, and it is a loss rather than a wait. On
+  SQLite, the column can also hold a value no bound ever reaches, where the wait
+  never ends and the change is lost (case 2 below).
+* **A database clock that steps backward loses changes committed below your
+  cursor while it climbs back.** The feed orders by the wall-clock watermark on
+  the row and your cursor only moves forward, so both rely on a monotonic
+  database clock. When the clock steps backward, such as from an NTP step, a
+  resumed or migrated VM, or a restore onto a host whose clock is behind, writes
+  after the step get stamped in clock time your walk already passed. Every row
+  stamped below your cursor fails the keyset comparison on that poll and every
+  poll after it. Both backends stamp from the database server's wall clock, so
+  both are affected. **This is a loss, not a delay.** The row is not waiting for
+  anything, and nothing on the wire distinguishes it from a healthy feed. The
+  loss is bounded by the size of the step: you lose changes committed during the
+  window of clock time the step replays, and normal delivery resumes once the
+  clock passes your cursor again. Moving a cursor that stands above the clock
+  narrows the window but cannot close it, and it does not occur if your consumer
+  polls late enough for the clock to climb back above the cursor. Making the
+  cursor opaque changes none of this. No server-issued cursor reaches back below
+  itself; a full re-read from an empty cursor does because these rows stay
+  selectable (see the reconciliation note at the end of this list).
 * **Restoring the archive from an older snapshot loses everything the rollback
-  undid.** A cursor names the archive that issued it, and a file-level restore of
-  the same archive keeps that name — deliberately, because a restore of the same
-  archive is exactly the case a stored cursor is meant to survive. But a cursor
-  issued *after* the snapshot was taken still validates against the restored
-  database, and everything the rollback undid now sits below it: a row reverted to
-  an older watermark fails the keyset comparison on that poll and on every poll
-  after it, and a row the rollback removed produces no event at all. Your mirror
-  goes on holding content the archive no longer has. **This is a loss, not a
-  delay**, and nothing on the wire distinguishes it from a healthy feed — the same
-  shape as the backward clock step above, and the same underlying cause: the walk
-  is ordered by a wall-clock watermark with no monotonic sequence behind it.
-  Copying the archive **file** — `cp`, a filesystem snapshot, a backup restored
-  under a different path — forks it the same way and keeps the original's
-  identity, so a cursor from either copy is accepted by the other even as the two
-  drift apart. A subset built with `msgvault create-subset` does not: it is a new
-  database with an identity of its own, so a cursor issued against the original
-  is rejected there with `400 invalid_cursor`, and a consumer of the subset
-  starts from an empty cursor. The repair is a full
-  re-read from an empty cursor: it restores the tracked fields of every row the
-  restored archive still has, though a row the rollback removed is
-  indistinguishable from a hard deletion — see the reconciliation note at the end
-  of this list. **After restoring an archive from a snapshot, restart your
-  consumers from an empty cursor.**
-* **A `NULL` watermark is invisible to the feed, on either backend.** The page
-  compares `content_changed_at` against both of its bounds and a `NULL` satisfies
-  neither, so the row is not returned from any cursor. No write path produces one
-  — every writer stamps the column and the first-run backfill fills in a database
-  that predates it — so this takes direct SQL, and whatever content change the
-  same statement made goes unreported with it. The next ordinary change to one of
-  the row's tracked columns stamps a fresh watermark and the row rejoins the feed
-  carrying its current content. If no such change ever comes, it stays invisible.
-* **SQLite only:** direct SQL can store a `NULL` or malformed
-  `content_changed_at`; normal write paths do not. The feed returns an error for
-  a `NULL` watermark or a malformed value selected by the page instead of
-  inventing a timestamp and moving the cursor. SQLite orders non-date values by
-  their raw type and text, so a corrupt value outside the requested range can
-  still be unreachable. Repair the stored watermark directly before resuming.
-* A consumer that must not diverge from the archive should still reconcile
-  periodically — for example, a scheduled full re-read from an empty cursor. It
-  re-delivers every row the feed can select, so it restores the tracked fields of a
-  malformed row that remains selectable and a row stranded by a backward clock
-  step. What it does not do: it cannot reach a malformed watermark that sorts
-  outside the feed range, and it recovers nothing outside the tracked columns.
-  Nor does it identify a hard
-  deletion: a row your mirror has and the walk never returns is simply a row no
-  cursor can reach, which is what a hard deletion and an out-of-range corrupt
-  watermark both look like from outside. Separating them takes the same direct read
-  — a row absent from a direct `SELECT` over `messages` was hard-deleted, and one
-  still there has a watermark the feed cannot reach.
+  undid.** A cursor names the archive that issued it, and a file-level restore
+  of the same archive keeps that identity on purpose so stored cursors survive
+  ordinary restores. However, a cursor issued *after* the snapshot was taken
+  still validates against the restored database, and everything the rollback
+  undid now sits below it: a row reverted to an older watermark fails the keyset
+  comparison on every poll, and a row removed by the rollback produces no event
+  at all. Your mirror keeps holding content the archive no longer has. **This is
+  a loss, not a delay**, and nothing on the wire distinguishes it from a healthy
+  feed. It has the same shape and cause as the backward clock step above: the
+  walk orders by a wall-clock watermark with no monotonic sequence behind it.
+  Copying the archive **file** (with `cp`, a filesystem snapshot, or a backup
+  restored under another path) forks it the same way and keeps the original's
+  identity, so a cursor from either copy is accepted by the other even as they
+  drift apart. A subset built with `msgvault create-subset` does not share that
+  identity: it is a new database with its own identity, so a cursor from the
+  original returns `400 invalid_cursor` and a consumer of the subset starts from
+  an empty cursor. To recover after a snapshot restore, run a full re-read from
+  an empty cursor to restore the tracked fields of every surviving row, though a
+  row removed by the rollback looks the same as a hard deletion (see the
+  reconciliation note below). **After restoring an archive from a snapshot,
+  restart your consumers from an empty cursor.**
+* **A `NULL` watermark is invisible to the feed on either backend.** Each page
+  compares `content_changed_at` against both bounds and `NULL` satisfies
+  neither, so no cursor returns the row. Normal write paths never produce a
+  `NULL` watermark because every writer stamps the column and the first-run
+  backfill populates older databases, so this takes direct SQL, and any content
+  change in the same statement goes unreported. The next ordinary change to a
+  tracked column stamps a fresh watermark and brings the row back into the feed
+  with its current content; without one, it stays invisible.
+* **SQLite only:** Direct SQL can store a `NULL` or malformed
+  `content_changed_at`; normal write paths do not. Rather than inventing a
+  timestamp and moving the cursor, the feed returns an error for a `NULL` or
+  malformed watermark selected by a page. Because SQLite orders non-date values
+  by raw type and text, a corrupt value outside the requested range can stay
+  unreachable. Repair the stored watermark directly before resuming.
+* **Reconcile periodically if your consumer must not diverge.** Run a scheduled
+  full re-read from an empty cursor to re-deliver every row the feed can select.
+  That restores tracked fields for any selectable malformed row and any row
+  stranded by a backward clock step, though it cannot reach a malformed
+  watermark that sorts outside the feed range and recovers nothing outside the
+  tracked columns. It also cannot distinguish a hard deletion from an
+  out-of-range corrupt watermark: both look like a row your mirror holds that
+  the walk never returns. To tell them apart, run a direct `SELECT` over
+  `messages`: an absent row was hard-deleted, while a present row has a
+  watermark the feed cannot reach.
 
-Re-reading an overlapping window is safe, so a consumer that wants extra margin
-can keep an older `next_cursor` of its own and resume from that instead, trading
-duplicates for margin. Build that margin out of a cursor the feed handed you,
-never out of `complete_through`.
+Re-reading an overlapping window is safe, so if you want extra margin, keep an
+older `next_cursor` of your own and resume from it, trading duplicates for
+margin. Always build that margin from a cursor the feed returned, never from
+`complete_through`.
 
 #### What this feed does not report {#what-this-feed-does-not-report}
 
-The watermark is maintained by triggers on the `messages` table and on message
-bodies. The trigger on `messages` covers every column the feed returns, plus the
-sender pointer and the platform metadata payload, which it does not return.
-Everything else a message has — including the remaining columns of `messages` —
-is outside it:
+Triggers on the `messages` table and on `message_bodies` maintain the watermark.
+The `messages` trigger covers every column the feed returns plus the sender
+pointer and the platform metadata payload, which the feed omits. Everything else
+on a message, including the remaining columns of `messages`, stays outside the
+feed:
 
 | Surface | Where it lives | Does changing it move the message into the feed? |
 |---|---|---|
@@ -1821,8 +1942,8 @@ is outside it:
 | Sender *pointer* (`messages.sender_id`) | `messages` | Yes — but the feed does not return it, and only the pointer is tracked. Renaming or correcting the participant it points at changes `participants`, not `sender_id`, so it does **not** move the watermark |
 | Platform metadata payload (`metadata`) | `messages` | Yes — but no endpoint returns it, so the wake-up is all you get. It is tracked so that a metadata change still invalidates your cached copy of the fields that *are* returned |
 
-A consumer that caches any of the untracked surfaces has to refresh them on its
-own schedule; nothing in this feed will invalidate them.
+If you cache any untracked fields, refresh them on your own schedule; nothing in
+this feed invalidates them.
 
 #### Errors
 
@@ -1874,11 +1995,83 @@ Full message details including body and attachment metadata.
 }
 ```
 
-The `cc`, `bcc`, and `body_html` fields are included only when present. `body` is the stored plain-text body when one exists; otherwise, it falls back to the HTML body so callers still receive message content.
+The response includes `cc`, `bcc`, and `body_html` only when present. `body`
+returns the stored plain-text body if one exists, and falls back to the HTML
+body otherwise so you still get message content.
 
-API schema 3.41.0 adds `body_text` for a single message's stored plain-text body, which can be generated from the HTML part and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit `body_text`, and `body` keeps its HTML fallback.
+API schema 3.41.0 adds `body_text` for a single message's stored plain-text
+body, which can be generated from the HTML part and is empty when no plain text
+is stored; conversation windows leave it unset. Older servers omit `body_text`,
+while `body` keeps its HTML fallback.
 
-Schema 3.42.0 adds an optional `sender_auth` object to message details and `GET /api/v1/cli/message` for email sources with [receiver pins](configuration.md#sender-authentication). It carries `verified`, `domain`, `authserv_id`, `spf`, `dkim`, and `dmarc`. Only `verified` is always present. Empty results carry `verified: false`. Verification covers the From domain, as reported by the pinned receiving server. List and search responses omit this field.
+Schema 3.42.0 adds an optional `sender_auth` object to message details and
+`GET /api/v1/cli/message` for email sources with
+[receiver pins](configuration.md#sender-authentication). It carries `verified`,
+`domain`, `authserv_id`, `spf`, `dkim`, and `dmarc`, with only `verified`
+always present and empty results setting `verified: false`. Verification covers
+the `From` domain as reported by the pinned receiving server. List and search
+responses omit this field.
+
+---
+
+### Related copies {#get-apiv1messagesidfamily}
+
+**Endpoint:** `GET /api/v1/messages/{id}/family`
+
+Returns the other archived copies of an email along with the replies and
+forwards that reference it, across accounts and conversations. Only owner
+credentials can call this route; delegated agent tokens are rejected, and
+responses are never cached.
+
+**Response:**
+
+```json
+{
+  "anchor_message_id": 12345,
+  "truncated": false,
+  "pending_linkage": false,
+  "members": [
+    {
+      "message_id": 12345,
+      "source_id": 1,
+      "source_type": "imap",
+      "source_identifier": "work@example.com",
+      "account_address": "work@example.com",
+      "account_path": "inbound",
+      "draft": false,
+      "conversation_id": 77,
+      "subject": "Q4 Planning",
+      "sent_at": "2024-10-15T09:30:00Z",
+      "linkage_outcome": "complete",
+      "evidence": "anchor"
+    }
+  ]
+}
+```
+
+`members` includes the opened email itself, ordered by ascending `message_id`.
+`evidence` states how each member relates to it: `anchor`, `copy` (same
+Message-ID), `reply`, `replied_to`, `forward`, `forwarded_original`,
+`references`, `indirect` (found through another member), or `thread` (in the
+provider's thread for the opened email or one of its exact copies, with no
+header link). `account_path` is `inbound` or `sent`, and `draft` is `true`
+while the copy is a draft. `linkage_outcome` is `complete`, `pending` before
+the copy's identifiers are derived, `missing_message_id` when the copy was
+indexed without a stored Message-ID for replies to match, or the reason its
+identifiers could not be read; anything other than `complete` may hide
+relations.
+
+The lookup follows `Message-ID`, `In-Reply-To`, `References`, and
+attached-original identifiers, plus for Gmail and Google Groups the provider
+threads of the email and its exact copies. It stops at 500 copies or 5,000
+identifiers and sets `truncated` alongside `truncated_reason` (`members` or
+`identifiers`), though the identifier limit can trigger with far fewer than 500
+copies. When more than 500 copies match, exact Message-ID copies stay first,
+followed by direct replies and forwards, then shared references.
+`pending_linkage` is `true` while any email in the archive still lacks derived
+identifiers; because it could be a related copy the lookup cannot see, an empty
+or short list is not complete. Deleted and non-email messages are omitted, and
+a missing message returns 404.
 
 ---
 
@@ -1886,8 +2079,8 @@ Schema 3.42.0 adds an optional `sender_auth` object to message details and `GET 
 
 **Endpoint:** `GET /api/v1/attachments/{id}`
 
-Returns metadata for the numeric attachment ID exposed by message details.
-The response includes the SHA-256 `content_hash` used by the content endpoint:
+Returns metadata for the numeric attachment ID exposed by message details,
+including the SHA-256 `content_hash` you pass to the content endpoint:
 
 ```json
 {
@@ -1903,13 +2096,49 @@ The response includes the SHA-256 `content_hash` used by the content endpoint:
 
 ### Docbank attachment mirror
 
-`GET /api/v1/integrations/docbank/attachments` returns `state`, `upload_consent`, `folder`, and `counts` with `delivered`, `sending`, `remaining`, `failed`, and `reasons`. Delivered, sending and failed counts are unique files per destination. `remaining` counts all distinct eligible files with no delivery record for this destination. These files have stored local bytes, including files retained after source deletion and deduplication. Files whose only messages were deleted in msgvault are excluded. `state` is `running`, `docbank_disabled`, `consent_off`, or `worker_unavailable`. Off and unavailable workers omit counts. An unavailable mirror reader returns 503. File search and list rows omit receipts. `GET /api/v1/files/{id}` includes `docbank` receipts for the file's content hash, including recovered local alias hashes.
+Call `GET /api/v1/integrations/docbank/attachments` to inspect mirror status.
+It returns `state`, `upload_consent`, `folder`, and `counts` (`delivered`,
+`sending`, `remaining`, `failed`, and `reasons`). The `delivered`, `sending`,
+and `failed` counts measure unique files per destination, while `remaining`
+counts distinct eligible files that have no delivery record for that
+destination. Eligible files have stored local bytes, including files kept after
+source deletion and deduplication, and exclude files whose only messages were
+deleted in msgvault. `state` is `running`, `docbank_disabled`, `consent_off`,
+or `worker_unavailable`; off and unavailable workers omit `counts`, and an
+unavailable mirror reader returns 503. File search and list rows omit receipts,
+whereas `GET /api/v1/files/{id}` includes `docbank` receipts for the file's
+content hash, including recovered local alias hashes.
 
-With a configured `document_profile` and a running worker, status also includes `processing` with `profile`, `waiting`, `requested`, `extracted`, and `outcomes` counts keyed by Docbank failure or refusal code. Counts use the profile fingerprint last read by the worker. `waiting` counts files attachment search covers. For a running worker, `last_error` reports its latest blocking error including missing consent or a missing profile. Status reads saved job outcomes from the archive, so it makes no live Docbank request.
+When `document_profile` is configured and the worker is running, the status
+response adds `processing` with `profile`, `waiting`, `requested`, `extracted`,
+and `outcomes` counts keyed by Docbank failure or refusal code. Counts reflect
+the profile fingerprint last read by the worker, and `waiting` counts files
+covered by attachment search. For a running worker, `last_error` shows its most
+recent blocking error, including missing consent or a missing profile. Because
+status reads saved job outcomes from the archive, it makes no live Docbank
+request.
 
-`POST /api/v1/integrations/docbank/attachments/backfill` resets discovery and requeues failed deliveries as sending intents with attempts reset in one transaction. Backfill requests processing again for files that failed for missing consent, stale authority, a missing PDF password, an unreadable password file, a quarantined job, or a malformed Docbank answer. Backfill clears only settled recoverable failures. A job that fails after backfill needs another backfill. Other outcomes wait for a profile change. It returns 202 with `{"status":"scheduled"}`, including when the job is already running. It requires attachment upload consent and a scheduled mirror job. Missing consent returns 409; an unavailable store or scheduler returns 503. Both routes require the API key.
+Call `POST /api/v1/integrations/docbank/attachments/backfill` to reset
+discovery and requeue failed deliveries as sending intents with attempts reset
+in a single transaction. Backfill requests processing again for files that
+failed due to missing consent, stale authority, a missing PDF password, an
+unreadable password file, a quarantined job, or a malformed Docbank answer. It
+clears only settled recoverable failures; a job that fails after backfill needs
+another backfill, and other outcomes wait for a profile change. The endpoint
+returns 202 with `{"status":"scheduled"}` even when the job is already running.
+It requires attachment upload consent (returning 409 without it) and a
+scheduled mirror job (returning 503 if the store or scheduler is unavailable).
+Both routes require the API key.
 
-Attachment metadata and message details include an optional `docbank` array of receipts with `endpoint`, `folder`, `node_id`, `version_id`, `blob_hash`. Duplicate stored content hashes share receipts. For hashless Slack or Discord rows, discovery and details recover the hash from a local storage path in the `<hash[:2]>/<hash>` format with lowercase SHA-256 hex and a matching prefix. The mirror uploads these aliases from loose files or retained pack entries, verifies their SHA-256, and uploads under `<first 12 hex of hash>-<sanitized basename>`. See [configuration](configuration.md#mirror-stored-attachments-to-docbank) for consent and failure recovery.
+Attachment metadata and message details include an optional `docbank` array of
+receipts with `endpoint`, `folder`, `node_id`, `version_id`, and `blob_hash`,
+shared across duplicate stored content hashes. For hashless Slack or Discord
+rows, discovery and details recover the hash from a local storage path in
+`<hash[:2]>/<hash>` format with lowercase SHA-256 hex and a matching prefix.
+The mirror uploads these aliases from loose files or retained pack entries,
+verifies their SHA-256, and names them `<first 12 hex of hash>-<sanitized basename>`.
+See [configuration](configuration.md#mirror-stored-attachments-to-docbank) for
+consent and failure recovery.
 
 ---
 
@@ -2007,36 +2236,110 @@ Successful responses set:
 
 ### Media transcript search
 
-`GET /api/v1/media/search/status` returns a boolean `configured` field. It reports `false` when the recording reader or its Docbank client is absent. It checks configuration without contacting Docbank.
+Call `GET /api/v1/media/search/status` to check whether Docbank transcript
+search is configured. It returns a boolean `configured` field without
+contacting Docbank, reporting `false` when the recording reader or its Docbank
+client is absent.
 
-`GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, optional `filename`, `containing_title` and `occurred_at`, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` selects durable person bindings; `participant_id` selects the current identity cluster used by Explore's Person filter. They can't be combined. Repeated `direction` values select `from_person`, `to_person` or `group` relations and require either ID.
+Call `GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` to
+search spoken words and get every matching live message occurrence. Each result
+includes message, conversation, and attachment IDs, optional `filename`,
+`containing_title`, and `occurred_at`, a supplied or generated origin, an
+excerpt, and timing when Docbank recorded it. Pass `person_id` to scope to
+durable person bindings or `participant_id` to match the identity cluster used
+by Explore's **Person** filter; you cannot combine both. Repeated `direction`
+values filter by `from_person`, `to_person`, or `group` and require one of
+those IDs.
 
-The recording search covers the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` or `participant_id` to narrow the scope. A recording with more than 64 distinct current supplied transcript input IDs is left out of the search. Its message occurrences count in `unavailable_occurrences`, and `partial=true`. Repeated occurrences of the same input count once. Recordings support lexical mode only; semantic and hybrid return `recordings_error=media_search_mode_unavailable` when attachment search succeeds. An unconfigured or unreachable integration returns `media_search_unavailable`.
+Recording search covers the full allowed population up to 4,096 distinct
+versions and source selectors. If your scope exceeds that ceiling, the endpoint
+returns `media_search_scope_limit` before contacting Docbank; narrow it with
+`person_id` or `participant_id`. A recording with more than 64 distinct current
+supplied transcript input IDs is omitted from search, with its message
+occurrences counted in `unavailable_occurrences` and `partial=true` (repeated
+occurrences of the same input count once). An unconfigured or unreachable
+integration returns `media_search_unavailable`.
 
-The response has Docbank `coverage`, local `pending_occurrences` and `unavailable_occurrences`, `attribution_unavailable`, `partial`, and `truncated`. Pending counts require durable worker work; unmapped audio counts as unavailable. Coverage state `unknown` stays unknown. `partial` also reports local gaps and withheld excerpts. An empty result with complete coverage and `partial=false` means the query found no transcript match. The output limit applies after shared recordings expand into messages; `truncated` reports remaining occurrences or Docbank's retrieval limit.
+The response includes the recording `actual_mode` and `degradations`, Docbank
+`coverage`, local `pending_occurrences` and `unavailable_occurrences`,
+`attribution_unavailable`, `partial`, and `truncated`. Pending counts require
+durable worker work, while unmapped audio counts as unavailable. A coverage
+state of `unknown` stays `unknown`, and `partial` also reflects local gaps and
+withheld excerpts. An empty result with complete coverage and `partial=false`
+means the query found no transcript match. The output limit applies after
+shared recordings expand into messages, and `truncated` indicates remaining
+occurrences or Docbank's retrieval limit.
 
-Selected transcript completeness must be `complete`, `partial`, or `degraded_provenance`. The latter two set `partial=true`; unsupported values report `media_search_unavailable` for recordings.
+Selected transcript completeness must be `complete`, `partial`, or
+`degraded_provenance`. The latter two set `partial=true`, while unsupported
+values report `media_search_unavailable` for recordings.
 
-Recording search requires Docbank's source-selected search contract: `media_sources` selectors, a `media_source_selection` report marker and query-independent `media_selections`, including empty results. The daemon sends each source's current supplied-input set; generated transcripts stay eligible while supplied work is queued. Docbank selects each source's current transcript before ranking and returns build and exact source associations with each plain excerpt; source selections carry origin and supplied-input identity. Pending or missing transcripts leave coverage partial while ready matches remain searchable. Older servers and remote lookup failures report `media_search_unavailable` for recordings. Supplied text requires `supplied_input_id` to match the occurrence's saved delivery; mismatches count as unavailable attribution even when the query has no hits. The daemon validates supplied transcript revisions before search and rechecks visibility, recording identity, supplied text and person scope afterward.
+Recording search requires Docbank's source-selected search contract:
+`media_sources` selectors, a `media_source_selection` report marker, and
+query-independent `media_selections` (including empty results). The daemon
+sends each source's current supplied-input set, while generated transcripts
+stay eligible when supplied work is queued. Docbank picks each source's current
+transcript before ranking and returns build and exact source associations with
+each plain excerpt; source selections carry origin and supplied-input identity.
+Pending or missing transcripts leave coverage partial while ready matches stay
+searchable. Older servers and remote lookup failures report
+`media_search_unavailable` for recordings. Supplied text requires
+`supplied_input_id` to match the occurrence's saved delivery; mismatches count
+as unavailable attribution even when the query has no hits. The daemon
+validates supplied transcript revisions before search and rechecks visibility,
+recording identity, supplied text, and person scope afterward.
 
-Schema 3.27.0 adds optional `attachments` with `results`, `truncated`, and optional `error` containing `error` and `message`. Each result has `message_id`, `conversation_id`, `attachment_id`, `filename`, `containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches delivered mirror versions using text Docbank has extracted. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. A Docbank result limit or occurrence limit sets `truncated`, meaning more may match. Docbank may include filename-only candidates in its limit even when all extracted-text matches fit. Visibility and Person scope apply to both lists. The limit applies independently to each list. An empty attachment list without an error means no match in extracted text and says nothing about files whose text Docbank hasn't extracted.
+Schema 3.27.0 adds an optional `attachments` object with `results`,
+`truncated`, and an optional `error` (`error` and `message`). Each result
+contains `message_id`, `conversation_id`, `attachment_id`, `filename`,
+`containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches
+delivered mirror versions using text extracted by Docbank, batching more than
+4,096 files in groups of 4,096 and interleaving results by position within each
+batch so ordering across batches is approximate. A Docbank result limit or
+occurrence limit sets `truncated`, meaning more matches may exist, and Docbank
+may include filename-only candidates in its limit even when all extracted-text
+matches fit. Visibility and **Person** scope apply to both lists, while `limit`
+applies independently to each list. An empty attachment list with no error
+means no match in extracted text and says nothing about files whose text
+Docbank has not extracted.
 
-Schema 4.2.0 (newer `main`, after v0.23.0) accepts `mode=semantic` and
-`mode=hybrid` for attachment text. `attachments` adds `requested_mode`,
-`actual_mode`, `coverage`, `partial`, and `degradations`. `actual_mode` is
-`unavailable` when no search ran or remote retrieval failed. Coverage describes
-mirrored versions delivered to Docbank and is present even without hits.
-The configured `attachment_search_profile` names an existing Docbank processing
-profile for semantic/hybrid; lexical keeps the built-in `supplied-transcript` profile. Retrieval never schedules processing. Without it, hybrid uses lexical
-with `semantic_unconfigured` degradation, and semantic fails with
+Schema 4.2.0 accepts `mode=semantic` and `mode=hybrid` for attachment text and
+adds `requested_mode`, `actual_mode`, `coverage`, `partial`, and `degradations`
+to `attachments`. `actual_mode` is `unavailable` when no search ran or remote
+retrieval failed. `coverage` describes mirrored versions delivered to Docbank
+and appears even without hits. The configured `attachment_search_profile` names
+an existing Docbank processing profile for semantic and hybrid search, while
+lexical search keeps the built-in `supplied-transcript` profile; retrieval
+never schedules processing. Without `attachment_search_profile`, hybrid falls
+back to lexical with `semantic_unconfigured` and semantic fails with
 `media_search_mode_unavailable`. Fenced searches submit configured profiles and
-report configuration, consent and runtime failures. Empty scopes contact no service.
-Docbank-reported hybrid downgrade is preserved. Downgrade, degradations,
-or nonlexical coverage other than `complete` set attachment `partial=true`.
-Lexical `unknown` coverage alone does not. Each list reports its own partial
-status; `truncated` remains separate. Nonlexical requests skip recording retrieval. Files are searched in batches of 4,096.
+report configuration, consent, and runtime failures, while empty scopes contact
+no service. Docbank-reported hybrid downgrades are preserved, and downgrades,
+degradations, or nonlexical coverage other than `complete` set attachment
+`partial=true` (lexical `unknown` coverage alone does not). Each list reports
+its own `partial` status, separate from `truncated`, and files are searched in
+batches of 4,096.
 
-The attachment field is omitted when attachment mirroring is off. Attachment failures leave recording results intact and set `attachments.error`. Docbank-rejected recording queries return HTTP 400 with `invalid_media_search`. Other recording failures, including oversized scopes and remote timeouts, leave attachment results intact and set `recordings_error` with `error` and `message`. The request fails when both searches fail or its context ends. Recording-only responses retain their existing error behavior.
+Schema 5.15.0 applies `mode` to recordings as well. Semantic and hybrid
+recording search use `integrations.docbank.recording_search_profile`, naming
+the Docbank profile that embedded the transcripts. Docbank keys embeddings by
+processing profile, and transcripts run under `supplied-transcript` or the ASR
+profile rather than the attachment profile. Without a recording profile, hybrid
+uses lexical with `semantic_unconfigured` and semantic sets
+`recordings_error=media_search_mode_unavailable`. When the selected transcripts
+have no embeddings, Docbank answers with lexical matches and
+`semantic_unavailable`. Recording `actual_mode` is `unavailable` when no
+recording search ran, such as with an empty scope. Downgrades and degradations
+set `partial=true`. An empty recording scope still validates the query
+lexically, so the query text reaches no encoder.
+
+When attachment mirroring is off, `attachments` is omitted. Attachment failures
+leave recording results intact and set `attachments.error`. Docbank-rejected
+recording queries return HTTP 400 with `invalid_media_search`, while other
+recording failures (including oversized scopes and remote timeouts) leave
+attachment results intact and set `recordings_error` with `error` and
+`message`. The request fails if both searches fail or its context ends.
+Recording-only responses keep their existing error behavior.
 
 ### Message recordings {#get-apiv1messagesidrecordings}
 
@@ -2190,16 +2493,15 @@ changes.
 
 **Endpoint:** `GET /api/v1/search`
 
-Search messages. The default mode is full-text search (FTS5 with
-LIKE fallback). When the server is configured for vector search,
-`mode=vector` runs semantic-only search and `mode=hybrid` fuses BM25
-and vector ranking via Reciprocal Rank Fusion.
+Searches messages. The default mode is full-text search (FTS5 with LIKE
+fallback). When vector search is configured on the server, `mode=vector` runs
+semantic-only search and `mode=hybrid` fuses BM25 and vector ranking with
+Reciprocal Rank Fusion.
 
-`mode=vector` and `mode=hybrid` both require at least one free-text
-term in `q` — the free text is what gets embedded as the query
-vector. Operator-only queries such as `q=from:alice` have nothing to
-embed and return `400 missing_free_text`; route filter-only requests
-to `mode=fts` instead.
+Both `mode=vector` and `mode=hybrid` require at least one free-text term in
+`q`, because the free text is what gets embedded as the query vector.
+Operator-only queries such as `q=from:alice` have nothing to embed and return
+`400 missing_free_text`; send filter-only requests to `mode=fts` instead.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
@@ -2313,44 +2615,43 @@ object exposing the fused-score components:
 
 `bm25` and `vector` are omitted when the message did not appear in
 that signal (BM25 missed it or the ANN pool did not include it).
-`rrf` is omitted in `mode=vector` (only one signal — there is
-nothing to fuse). `subject_boosted` is true when the subject-line
-boost was applied.
+`rrf` is omitted in `mode=vector` because only one signal exists and there is
+nothing to fuse. `subject_boosted` is `true` when the subject-line boost was
+applied.
 
-See [Searching](/docs/usage/searching/) for the full query syntax
-reference and [Vector Search](/docs/usage/vector-search/) for vector /
-hybrid setup.
+See [Searching](/docs/usage/searching/) for the full query syntax reference and
+[Vector Search](/docs/usage/vector-search/) for vector and hybrid setup.
 
 ---
 
 ### Contact route discovery {#contact-route-discovery}
 
-Find a saved person by name, then read the selected person's archived messaging
-routes. These owner-only GET routes are available in API schema 3.20.0 and later.
-Delegated agent tokens cannot use them. Discovery reads one archive
-snapshot per request and makes no provider calls or identity changes.
+Find a saved person by name and then read that person's archived messaging
+routes. These owner-only `GET` routes require API schema 3.20.0 or newer;
+delegated agent tokens cannot call them. Each request reads one archive
+snapshot without making provider calls or changing identities.
 
-`GET /api/v1/people/contact-candidates?query=Avery%20Example` searches saved names,
-current structured names, and the display names of explicitly bound
-participants. Names that appear only in message headers are not searched.
-Every whitespace token must match a literal substring. `%`, `_`, and
-backslash are literal; SQLite folds ASCII case only. Queries must contain
-1–256 UTF-8 bytes after trimming and at most 16 tokens. The response includes
-canonical `person_uid`, `person_id`, revision, and `match_kinds` for each
-candidate. `ambiguous` describes the whole query, even when `limit=1`. The client
-must choose a person explicitly.
+`GET /api/v1/people/contact-candidates?query=Avery%20Example` searches saved
+names, current structured names, and display names of explicitly bound
+participants, excluding names that appear only in message headers. Every
+whitespace token must match a literal substring (`%`, `_`, and backslash are
+literal, and SQLite folds ASCII case only). Queries must be 1–256 UTF-8 bytes
+after trimming and at most 16 tokens. Each candidate returns canonical
+`person_uid`, `person_id`, revision, and `match_kinds`. `ambiguous` reflects
+the whole query even when `limit=1`, and your client must choose a person
+explicitly.
 
-`GET /api/v1/people/messaging-routes?person_uid=<selected-uid>` resolves canonical
-and retired UIDs through current merge and split bindings. It returns the
-requested and canonical UID, alias reason, person and identity revisions,
+`GET /api/v1/people/messaging-routes?person_uid=<selected-uid>` resolves
+canonical and retired UIDs through current merge and split bindings. It returns
+the requested and canonical UID, alias reason, person and identity revisions,
 curated `contact_points`, bound `observations`, `unreviewed_suggestions`, and
-`routes`. Suggestions summarize candidate or conflicted matches and
-accepted matches awaiting application. Discovery never follows or accepts them.
+`routes`. Suggestions summarize candidate or conflicted matches and accepted
+matches awaiting application. Discovery never follows or accepts them.
 
 Each route preserves `source_id`, `source_type`, exact `account_id`, network,
 archive `conversation_id`, exact `provider_chat_id`, conversation type, bound
-participant IDs, evidence and sync times, and reasons. Its status explains the
-available proof:
+participant IDs, evidence and sync times, and reasons. Its status summarizes
+the available proof:
 
 | Status | Meaning |
 | --- | --- |
@@ -2360,40 +2661,42 @@ available proof:
 | `merged_container` | A Beeper container. Its member chat IDs require independent route evidence; `missing_member_chat_ids` identifies missing or ambiguous archived members. |
 
 For Beeper, normal sync captures authoritative `Account.bridge.type` and the
-exact roster. Bridge types that name a service with a native importer use that
-importer's source type as `network`: `discordgo` becomes `discord` and `slackgo`
-becomes `slack`. Other bridge types, such as `whatsapp` or `telegram`, are used
-as reported. Display labels, names, phone shapes, Matrix IDs, and curated
-contact points never establish WhatsApp. Older archives remain unresolved until
-normal sync captures this metadata. `network_label` is a display value.
-`freshness=archive_only` and `checked_at` describe the lookup; archive verification
-does not establish live reachability or authorize sending.
+exact roster. Bridge types that correspond to a native importer use that
+importer's source type as `network` (`discordgo` becomes `discord`, and
+`slackgo` becomes `slack`), while other bridge types such as `whatsapp` or
+`telegram` stay as reported. Display labels, names, phone shapes, Matrix IDs,
+and curated contact points never establish WhatsApp, and older archives stay
+unresolved until normal sync captures this metadata. `network_label` is a
+display value. `freshness=archive_only` and `checked_at` describe the lookup;
+archive verification does not prove live reachability or authorize sending.
 
 Both endpoints accept `limit` (default 20, range 1–100). Candidate pages use
-`after_id`. Route sections each have `items`, `has_more`, and `next_after_id`:
-pass these IDs as `after_conversation_id`, `after_contact_point_id`,
-`after_observation_id`, and `after_suggestion_id`, respectively. The route cursor
-advances over inspected conversations, so a network-filtered page can be empty
-with `has_more=true`. Follow it until exhausted. Optional `network` accepts a
-lowercase service name such as `whatsapp` or `discord`. Native sources of other
-networks are skipped without using the page. Beeper routes are filtered after
-their route metadata is read, and unknown-network routes remain visible as
-unresolved. Optional `source_id` restricts route sources. These filters do
-not restrict the contact or suggestion sections.
+`after_id`, while each route section returns `items`, `has_more`, and
+`next_after_id`, which you pass back as `after_conversation_id`,
+`after_contact_point_id`, `after_observation_id`, and `after_suggestion_id`.
+Because the route cursor advances over inspected conversations, a
+network-filtered page can be empty with `has_more=true`; keep following it
+until exhausted. Optional `network` accepts a lowercase service name such as
+`whatsapp` or `discord`. Native sources from other networks are skipped without
+consuming page items, whereas Beeper routes are filtered after reading their
+route metadata and unknown-network routes stay visible as unresolved. Optional
+`source_id` narrows route sources; neither filter narrows the contact or
+suggestion sections.
 
-Paging is live between requests. Restart after a changed person or identity
-revision and reconcile the first page when observations or rosters change;
-those changes do not all advance the identity revision. Each response uses
+Paging is live across requests, so restart after a person or identity revision
+changes and reconcile the first page when observations or rosters change, since
+not all of those changes advance the identity revision. Every response sets
 `Cache-Control: no-store`. Invalid input returns `400 invalid_contact_lookup`,
-unknown UIDs `404 person_not_found`, retired tombstones `410 person_uid_gone`,
-and unavailable storage or backends `503 contact_lookup_unavailable`. Failures
-never return successful empty matches.
+unknown UIDs return `404 person_not_found`, retired tombstones return
+`410 person_uid_gone`, and unavailable storage or backends return
+`503 contact_lookup_unavailable`. Failures never return successful empty
+matches.
 
 ### Accounts summary {#get-apiv1accounts}
 
 **Endpoint:** `GET /api/v1/accounts`
 
-List configured accounts with sync status.
+Lists configured accounts with their sync status.
 
 **Response:**
 
@@ -2490,10 +2793,11 @@ with a run-level error.
 
 ### Meeting intelligence {#meeting-intelligence}
 
-These authenticated read operations require daemon API schema 2.27.0 or newer.
-They read archived provider evidence without an AI call or upstream mutation.
-See the [meeting guide](usage/meetings.md#export-context-and-read-follow-ups)
-for the user workflow and coverage meanings.
+These authenticated read operations require daemon API schema 2.27.0 or newer
+and read archived provider evidence without making an AI call or upstream
+mutation. See the
+[meeting guide](usage/meetings.md#export-context-and-read-follow-ups) for the
+user workflow and coverage meanings.
 
 | Endpoint | Request and result |
 |---|---|
@@ -2501,21 +2805,38 @@ for the user workflow and coverage meanings.
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
 
-Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
-`include_transcript` (default false), and `max_bytes` (default 131072, range
-4096–1048576). The budget applies to the UTF-8 bytes of `content`, not the HTTP
-envelope. Save `content` directly; `content_bytes`, `truncated`, and
-`omitted_message_ids` describe that exact download. Mixed selections fail with
-`selection_not_all_meetings`.
+Call `GET /api/v1/meetings/suggestions?ref=...` (API schema 5.11.0) to rank
+overlapping meeting notes and calendar events, and post to
+`POST /api/v1/meetings/links/decisions` to link a suggested pair. Without
+`verification.read`, withheld titles contribute no title words and withheld
+partner titles are masked.
+
+Call `GET /api/v1/meetings/record?ref=...` (API schema 5.9.0) to fetch the
+notes and calendar copies for a `msg:<id>` or `evt:<id>[@occurrence key]`
+reference. A `message.read` grant returns notes and calendar copies from its
+authorized sources.
+
+Post owner requests to `POST /api/v1/meetings/links/decisions` (API schema
+5.10.0) with `left`, `right`, and `decision` (`link`, `unlink`, or `clear`).
+It returns the canonical refs and `state` (`link`, `split`, or `automatic`).
+`link` and `unlink` replace the saved choice, while `clear` restores automatic
+matching; a conflicting choice returns 409.
+
+`POST /api/v1/meetings/context` accepts 1–100 meetings, `format: "json"` or
+`"markdown"`, `include_transcript` (default `false`), and `max_bytes` (default
+131072, range 4096–1048576). The byte budget applies to the UTF-8 bytes of
+`content`, not the HTTP envelope. Save `content` directly; `content_bytes`,
+`truncated`, and `omitted_message_ids` describe that exact payload. Mixed
+selections fail with `selection_not_all_meetings`.
 
 A direct `scope` supports `message_ids`, `source_ids`, `participant_id` or
 `participant_ids`, `person_id`, `domains`, `after`, `before`, and `deletion`.
-Person and participant scopes are mutually exclusive. Different filter groups
-intersect; values within one group are alternatives. An explicit
-`message_ids: []` matches nothing. Omitted scope means all archived meetings.
-Dates use RFC3339 timestamps: `after` is inclusive and `before` exclusive.
-Deletion defaults to `any`; `active` and `deleted` refer to source deletion.
-Locally deleted records never participate.
+You cannot combine person and participant scopes. Different filter groups
+intersect, while values inside one group act as alternatives. An explicit
+`message_ids: []` matches nothing, and omitting `scope` selects all archived
+meetings. Pass RFC3339 timestamps for dates (`after` is inclusive, `before` is
+exclusive). `deletion` defaults to `any`; `active` and `deleted` refer to
+source deletion, and locally deleted records never participate.
 
 ```json
 {
@@ -2741,7 +3062,7 @@ This endpoint is used by `msgvault export-token` during remote/headless deployme
 
 **Endpoint:** `POST /api/v1/accounts`
 
-Register or ensure an account is scheduled for sync on the remote server.
+Registers an account for scheduled sync on the remote server.
 
 `msgvault export-token` posts to this endpoint automatically after uploading a token. With `--upload-only`, it skips this request and does not create a Gmail sync schedule.
 
@@ -2851,9 +3172,17 @@ the job holding the gate, such as `activity-projection` or `attachment-pack`.
 
 ### Messages during cache rebuilds
 
-In auto mode on SQLite, `POST /api/v1/explore` serves live archive rows while the analytical cache rebuilds and after a failed build. Date, source, account, identity, domain, mailing-list, kind, and full-text filters remain available. Responses include a warning about operations that need the cache, with recovery instructions after a failed build.
+In auto mode on SQLite, `POST /api/v1/explore` serves live archive rows while
+the analytical cache rebuilds and after a failed build. Date, source, account,
+identity, domain, mailing-list, kind, and full-text filters stay available, and
+responses include a warning about operations that need the cache along with
+recovery instructions after a failed build.
 
-Grouping, person filters, semantic and hybrid search, per-row exact-match counts, bulk actions, Files, People, and the reader’s Open person action still require the cache. A live cursor expires when the archive changes or the replacement cache publishes; restart pagination after `409 archive_revision_changed`.
+Grouping, person filters, semantic and hybrid search, per-row exact-match
+counts, bulk actions, **Files**, **People**, and the reader's **Open person**
+action still require the cache. A live cursor expires when the archive changes
+or the replacement cache publishes; restart pagination after
+`409 archive_revision_changed`.
 
 ### Participant and domain timelines
 
@@ -2880,12 +3209,12 @@ Month and year rows include `total_items`, the number of entries across all matc
 **Endpoint:** `POST /api/v1/explore/preflight`
 
 Validates a revision-pinned selection of canonical archive entries and issues
-the single-use `operation_token` required to stage that selection for
-deletion. Selections are built from the analytical explore endpoints
-(`POST /api/v1/explore` and `POST /api/v1/explore/groups`), whose responses
-carry the `cache_revision`, `search_provenance`, and — for semantic/hybrid
-search — `candidate_snapshot_id` values a selection must echo back. The full
-explore contract is in the generated OpenAPI document (`/openapi.json`).
+the single-use `operation_token` required to stage that selection for deletion.
+Build selections from the analytical explore endpoints (`POST /api/v1/explore`
+and `POST /api/v1/explore/groups`), whose responses return the `cache_revision`,
+`search_provenance`, and (for semantic or hybrid search)
+`candidate_snapshot_id` values you must echo back. See `/openapi.json` for the
+full explore contract.
 
 **Request:**
 
@@ -2937,29 +3266,28 @@ explore contract is in the generated OpenAPI document (`/openapi.json`).
 ```
 
 `count` includes all selected items after exclusions. `deletable_count` is the
-Gmail and Microsoft Graph mail subset that can be staged; the difference is
-the number of items staging will skip. A chat conversation counts as one item.
+Gmail and Microsoft Graph mail subset that can be staged, and the difference is
+the number of items staging skips. A chat conversation counts as one item.
 
 `unavailable_actions` lists actions this selection does not support. A
 `stage_deletion` entry means nothing in the selection can be deleted from its
-source; staging it would fail with `409 selection_not_deletable`. A selection
-that mixes deletable and non-deletable items carries no entry: staging takes
-the deletable subset and reports the rest as skipped.
+source, so staging fails with `409 selection_not_deletable`. A selection that
+mixes deletable and non-deletable items omits that entry: staging takes the
+deletable subset and reports the rest as skipped.
 
-The `operation_token` is bound to this exact selection, its match count, and
-the current cache revision. It expires at `expires_at` (five minutes after
-issue) and is single-use: staging a manifest consumes it, while a staging
-attempt that fails before the manifest persists leaves it valid for retry. A
-reused or expired token is rejected with `409 operation_token_invalid`.
+The `operation_token` binds to this exact selection, its match count, and the
+current cache revision. It expires at `expires_at` (five minutes after issue)
+and is single-use: staging a manifest consumes it, while a staging attempt that
+fails before the manifest persists leaves it valid for retry. Reusing or
+sending an expired token returns `409 operation_token_invalid`.
 
 Malformed selections return `400` with `invalid_selection` (bad `mode`,
 missing `cache_revision`, or `mode: "explicit"` without `row_keys`) or
-`invalid_selection_predicate`. Malformed search operators return `400 invalid_query`.
-If the analytical cache or search index changes
-after the explore response was produced, preflight fails with
-`409 archive_revision_changed` or `409 search_revision_changed` — re-run
-explore and preflight against the new revision. Staging repeats all of these
-checks.
+`invalid_selection_predicate`, and malformed search operators return
+`400 invalid_query`. If the analytical cache or search index changes after the
+explore response was produced, preflight fails with
+`409 archive_revision_changed` or `409 search_revision_changed`; re-run explore
+and preflight against the new revision. Staging repeats all of these checks.
 
 ---
 
@@ -3108,30 +3436,30 @@ never fall back to full-text search.
 **Endpoint:** `POST /api/v1/deletions`
 
 Stages messages for deletion by writing a pending deletion manifest. Staging
-never touches Gmail — execution remains exclusively the `delete-staged`
-command. The endpoint accepts three request shapes:
+never touches Gmail; execution stays exclusively in the `delete-staged`
+command. You can send one of three request shapes:
 
-- **Dry run** — `"dry_run": true` with a `filter` and/or `message_ids`
-  resolves and counts without staging anything.
-- **Explicit message IDs** — `message_ids` alone (internal IDs as returned by
+- **Dry run.** `"dry_run": true` with a `filter`, `message_ids`, or both
+  resolves and counts matches without staging anything.
+- **Explicit message IDs.** `message_ids` alone (internal IDs returned by
   `/messages` and `/search`) stages directly.
-- **Preflighted selection** — a `selection` plus the `operation_token` issued
-  by [`/api/v1/explore/preflight`](#post-apiv1explorepreflight). This is the
-  only way to stage a filter-based deletion: a non-dry-run request with a
-  `filter` is rejected with `428 preflight_required`.
+- **Preflighted selection.** A `selection` plus the `operation_token` issued by
+  [`/api/v1/explore/preflight`](#post-apiv1explorepreflight). This is the only
+  way to stage a filter-based deletion; a non-dry-run request with a `filter`
+  returns `428 preflight_required`.
 
-In every shape, resolution is restricted to live Gmail-source messages, and a
-staged manifest executes against a single mailbox: the selection must resolve
-to exactly one Gmail source. The durable source tuple (`type` and `identifier`,
-plus the local numeric `id`) is stamped on the manifest and reported as
+In every shape, resolution is limited to live Gmail-source messages, and a
+staged manifest executes against a single mailbox, so your selection must
+resolve to exactly one Gmail source. The daemon stamps the durable source tuple (`type`,
+`identifier`, and local numeric `id`) on the manifest and returns it as
 `source` in dry-run and created responses; `delete-staged` resolves that tuple
-again before it claims the manifest. The account identifier is also reported;
-selections spanning multiple accounts are rejected with
-`400 multi_account_selection` — scope the request (for example with
+again before claiming the manifest. The response also reports the account
+identifier. Selections spanning multiple accounts fail with
+`400 multi_account_selection`; narrow the request (for example with
 `filter.source_id` or a `source` filter dimension) or stage per account.
-Unknown JSON fields are rejected with `400 invalid_request` so a typo'd filter
-key cannot silently widen the selection, and requests with no criteria at all
-are rejected with `400 empty_filter`, so the entire archive cannot be staged.
+Unknown JSON fields return `400 invalid_request` so a misspelled filter key
+cannot widen the selection silently, and requests with no criteria return
+`400 empty_filter` so the entire archive cannot be staged.
 
 #### Dry run
 
@@ -3147,9 +3475,9 @@ are rejected with `400 empty_filter`, so the entire archive cannot be staged.
 }
 ```
 
-Supported `filter` fields: `sender`, `sender_name`, `recipient`,
+Supported `filter` fields are `sender`, `sender_name`, `recipient`,
 `recipient_name`, `domain`, `label` (strings), `source_id` (integer), and
-`after` / `before` (RFC3339 or `YYYY-MM-DD` dates). The filter can be combined
+`after` / `before` (RFC3339 or `YYYY-MM-DD` dates). You can combine `filter`
 with `message_ids`; matches are unioned and deduplicated. The server resolves
 the request and returns `200` without writing anything:
 
@@ -3165,8 +3493,8 @@ the request and returns `200` without writing anything:
 
 #### Staging explicit message IDs
 
-A non-dry-run request whose only criterion is `message_ids` stages directly —
-the IDs are already an explicit, reviewed list:
+A non-dry-run request whose only criterion is `message_ids` stages directly,
+because the IDs are already an explicit, reviewed list:
 
 ```json
 {
@@ -3175,11 +3503,11 @@ the IDs are already an explicit, reviewed list:
 }
 ```
 
-IDs that do not resolve to live deletable Gmail or Microsoft Graph mail messages
-with provider message IDs are omitted, and the
-response `message_count` reports the number of targets resolved by the daemon.
+IDs that do not resolve to live deletable Gmail or Microsoft Graph mail
+messages with provider message IDs are omitted, and `message_count` reports the
+number of targets the daemon resolved.
 
-A pending manifest is written and `201` returned:
+The server writes a pending manifest and returns `201`:
 
 ```json
 {
@@ -3194,15 +3522,15 @@ A pending manifest is written and `201` returned:
 
 #### Staging a preflighted selection
 
-Filter-based staging goes through preflight so the reviewed selection — not a
-re-evaluated filter — is what gets staged:
+Filter-based staging goes through preflight so the reviewed selection, not a
+re-evaluated filter, is what gets staged:
 
-1. `POST /api/v1/explore` with the predicate; review the rows and note
+1. Call `POST /api/v1/explore` with your predicate, review the rows, and note
    `cache_revision` (plus `search_provenance` and `candidate_snapshot_id` for
    search-backed predicates).
-2. `POST /api/v1/explore/preflight` with the `selection`; review `count`, `deletable_count`, and
-   `estimated_bytes`, and keep the `operation_token`.
-3. `POST /api/v1/deletions` with the same `selection` and the token:
+2. Call `POST /api/v1/explore/preflight` with the `selection`, review `count`,
+   `deletable_count`, and `estimated_bytes`, and save the `operation_token`.
+3. Call `POST /api/v1/deletions` with the same `selection` and the token:
 
 ```json
 {
@@ -3318,13 +3646,21 @@ already completed, failed, or cancelled.
 
 ## Rate Limiting
 
-The API enforces rate limiting of 10 requests per second per client IP, with a burst allowance of 20 requests. When the limit is exceeded, the server responds with HTTP 429 and includes a `Retry-After` header indicating how long to wait before retrying.
+The API enforces a rate limit of 10 requests per second per client IP, with a
+burst of 20 requests. If you exceed the limit, the server responds with HTTP 429
+and a `Retry-After` header telling you how long to wait before retrying.
 
-Loopback requests skip this limit when they're trusted: no API key is configured, or the request carries a valid API key, remote client key, or browser session cookie. Credential-free loopback `GET /api/ping` and `GET /api/daemon/identity` requests also skip it, so local clients can find a busy daemon. Loopback requests with a wrong or missing credential, and session login, stay limited.
+Trusted loopback requests skip this limit when no API key is configured, or
+when the request carries a valid API key, remote client key, or browser session
+cookie. Credential-free loopback `GET /api/ping` and `GET /api/daemon/identity`
+requests also skip it so local clients can find a busy daemon. Loopback
+requests with a wrong or missing credential, along with session login requests,
+stay rate-limited.
 
 ## CORS
 
-Cross-Origin Resource Sharing is disabled by default. To allow browser-based clients, configure allowed origins in your `config.toml`:
+Cross-Origin Resource Sharing is disabled by default. To allow browser-based
+clients, list allowed origins in your `config.toml`:
 
 ```toml
 [server]
@@ -3333,11 +3669,11 @@ cors_credentials = true
 cors_max_age = 3600
 ```
 
-## Scheduled Sync
+## Scheduled sync
 
-The server can automatically sync Gmail, IMAP, Microsoft Teams, and registered
-Discord guild sources on a cron-based schedule. Add `[[accounts]]` sections to
-your config:
+The server can sync Gmail, IMAP, Microsoft Teams, and registered Discord guild
+sources automatically on a cron schedule. Add `[[accounts]]` sections to your
+config:
 
 ```toml
 [[accounts]]
@@ -3356,30 +3692,40 @@ schedule = "*/30 * * * *"
 enabled = true
 ```
 
-The scheduler starts automatically with `msgvault serve` when account schedules
-are configured. Discord schedules require the exact guild ID because display
-names are mutable and can be duplicated. Use `/api/v1/scheduler/status` to
-monitor schedule state and `/api/v1/sync/{account}` to trigger supported
-account syncs outside the schedule. Discord's dedicated manual command is
-`msgvault sync-discord`.
+When account schedules are configured, `msgvault serve` starts the scheduler
+automatically. Discord schedules require the exact guild ID because display
+names can change and collide. Poll `/api/v1/scheduler/status` to monitor
+schedule state and call `/api/v1/sync/{account}` to trigger supported account
+syncs off-schedule. For manual Discord syncs, run `msgvault sync-discord`.
 
-The same HTTP server backs configured remote CLI access and the local background daemon used by archive-access CLI commands. In API schema 2.4.0, the CLI sync transport accepts `source_id`, allowing `sync` and `sync-full` to select one source exactly even when several source types share an identifier.
+The same HTTP server backs configured remote CLI access and the local
+background daemon used by archive-access CLI commands. Starting in API schema
+2.4.0, the CLI sync transport accepts `source_id`, letting `sync` and
+`sync-full` target one exact source even when several source types share an
+identifier.
 
 !!! note
     Gmail accounts must have completed an initial `msgvault sync-full` before
     scheduled incremental sync. IMAP schedules scan the mailbox and skip known
-    messages. Teams and Discord importers detect and checkpoint their own
+    messages, while Teams and Discord importers detect and checkpoint their own
     first-run history backfills.
 
-`msgvault serve` also runs scheduled SyncTech SMS Backup & Restore Drive sources configured under `[[synctech_sms.sources]]`; see [Configuration](/docs/configuration/#synctech-sms-sources).
+`msgvault serve` also runs scheduled SyncTech SMS Backup & Restore Drive
+sources configured under `[[synctech_sms.sources]]`; see
+[Configuration](/docs/configuration/#synctech-sms-sources).
 
-## Security Model
+## Security model
 
-The server is designed for local use:
+The server is built for local use by default:
 
-- **Loopback-only by default.** The default bind address is `127.0.0.1`, restricting access to the local machine.
-- **API key required for non-loopback.** Binding to a non-loopback address requires an effective key. `serve` creates a persisted key when no credential source is configured; a selected invalid source fails startup. See [server credentials](configuration.md#server).
-- **Opt-in for insecure binding.** To bind to a non-loopback address without an API key (not recommended), set `allow_insecure = true`.
+- **Loopback-only by default.** The default bind address is `127.0.0.1`,
+  limiting access to the local machine.
+- **API key required for non-loopback.** Binding to a non-loopback address
+  requires an effective key. `msgvault serve` creates a persisted key when no
+  credential source is configured, and fails startup if a selected source is
+  invalid. See [server credentials](configuration.md#server).
+- **Opt-in for insecure binding.** To bind to a non-loopback address without an
+  API key (not recommended), set `allow_insecure = true`.
 
 !!! warning
     Exposing the server on a network without authentication gives anyone on that network access to your entire email archive. Keep authentication enabled when binding to non-loopback addresses.
@@ -3403,9 +3749,10 @@ Delegated reads use the daemon's ordinary request deadline, normally 60 seconds.
 See [agent-token](cli-reference.md#agent-token) for grant lifetime, expiry,
 revocation, issuance, remote CLI and MCP usage, and supported read capabilities.
 
-## Configuration Reference
+## Configuration reference
 
-All server settings go in the `[server]` section of `config.toml`. Account schedules use `[[accounts]]` sections.
+Server settings go in the `[server]` section of `config.toml`, and account
+schedules go in `[[accounts]]` sections.
 
 ### `[server]`
 
@@ -3421,12 +3768,12 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 | `cors_max_age` | `0` | CORS preflight cache duration in seconds (defaults to `86400` when `cors_origins` is set) |
 | `trusted_proxies` | `[]` | IP addresses or CIDRs allowed to supply forwarded HTTPS and host headers |
 | `daemon_idle_timeout` | `20m` | Idle timeout for automatically started daemons; set to `"0s"` to disable |
-| `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
+| `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version or an older API schema: `newer`, `never`, or `always` |
 | `daemon_auto_start` | `true` | Let CLI, TUI, and MCP commands start a local background daemon when none is running; set `false` when a supervisor runs `msgvault serve` |
 
 `daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
 
-`daemon_auto_restart` only affects local lifecycle-managed daemons. The default `newer` replaces older compatible daemons with the current CLI binary. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. `never` leaves restarts to an external supervisor, and `always` restarts on any safe version mismatch. Remote servers are never restarted by CLI clients. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
+`daemon_auto_restart` only affects local lifecycle-managed daemons. The default `newer` replaces older compatible daemons with the current CLI binary. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. `never` leaves restarts to an external supervisor, and `always` restarts on any safe version mismatch. Remote servers are never restarted by CLI clients. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr. A local daemon with an older API schema than the CLI follows a separate rule; see the [restart policy](configuration.md#server).
 
 ### `[analytics]`
 
@@ -3463,55 +3810,115 @@ policy and deletion visibility. Changes under
 |---|---|---|
 | `email` | (required) | Gmail/IMAP/Teams identifier or display name, or exact Discord guild ID |
 | `schedule` | — | Cron expression for sync schedule |
-| `enabled` | `true` | Whether scheduled sync is active |
+| `enabled` | `false` | Whether scheduled sync is active |
 
 See the [Configuration](/docs/configuration/) page for the full config file reference.
 
 ## Local embedding setup
 
-`GET /api/v1/embeddings/local` reports the selected provider, download size, and setup progress. `host` names the daemon host for remote browsers and is empty for loopback addresses. `running` identifies an active setup; `phase` is `idle`, `downloading`, or `indexing`. `done_bytes` and `total_bytes` describe download progress, and `error` shows a failed setup's explanation for the current daemon session.
+Call `GET /api/v1/embeddings/local` to inspect the selected provider, download
+size, and setup progress. `host` names the daemon host for remote browsers and
+is empty on loopback addresses. `running` indicates an active setup, `phase` is
+`idle`, `downloading`, or `indexing`, `done_bytes` and `total_bytes` track
+download progress, and `error` reports a failed setup's explanation for the
+current daemon session.
 
-`POST /api/v1/embeddings/local` takes no body and turns on local message search, reusing Ollama when it already serves `nomic-embed-text`. Otherwise, setup downloads the local model when needed, saves the message-search configuration, publishes it to the running daemon, and builds the message index. Poll `GET` for completion; setup continues after its HTTP connection closes. Existing configured providers require a configuration change before activation. Document and people consent remain separate from message activation.
+Call `POST /api/v1/embeddings/local` with no body to turn on local message
+search. If Ollama already serves `nomic-embed-text`, setup reuses it;
+otherwise, setup downloads the local model when needed, saves the
+message-search configuration, publishes it to the running daemon, and builds
+the message index. Poll `GET` for completion; setup continues after the HTTP
+connection closes. Existing configured providers require a
+configuration change before activation, and document and people consent stay
+separate from message activation.
 
-Both routes require owner access. `POST` returns `202` for a new or already-running setup, or `503 unavailable` when setup cannot be admitted. `GET` returns `503 unavailable` when inspection fails or local setup is unavailable. Failures after admission appear in the polled `error` field. Use the separate [message embedding status](#message-embedding-status) for index coverage and throughput.
+Both routes require owner access. `POST` returns `202` for a new or
+already-running setup, or `503 unavailable` when setup cannot be admitted.
+`GET` returns `503 unavailable` when inspection fails or local setup is
+unavailable. Failures after admission appear in the polled `error` field. For
+index coverage and throughput, use
+[message embedding status](#message-embedding-status).
 
 ## Message embedding status
 
-`GET /api/v1/embeddings/status` returns the same generation and coverage shape
-used by `msgvault embeddings status --json`, plus live job and scheduler state,
-recent throughput, nullable ETA, and a bounded per-batch timing sample.
-`source_id` is an optional positive integer that filters `eligible`, `current`,
-and `pending`. Diagnostics, throughput, job state, and failures describe the
-whole run across sources; filtered responses have null ETA. Owner access is
-required because run diagnostics and scheduler state span sources outside a
-scoped agent grant.
-The endpoint is read-only and bypasses the scheduler slot. It returns `400`
-for invalid, repeated, unknown, or out-of-scope source IDs and `503` with `embeddings_status_unavailable` when vector search is disabled,
-required archive state cannot be read, or the read takes longer than five seconds.
-A diagnostics-only read or decode failure returns coverage and job state with
-`diagnostics=null`. `coverage_sampled_at` gives the count time; stale counts
-suppress ETA. `diagnostics_stale` marks an unfinished snapshot older than a
-minute, and an active run with that snapshot has phase `diagnostics_stale`.
-It never sends message content to a provider.
+Call `GET /api/v1/embeddings/status` to get the same generation and coverage
+shape returned by `msgvault embeddings status --json`, along with live job and
+scheduler state, recent throughput, nullable ETA, and a bounded per-batch
+timing sample. Pass an optional positive integer `source_id` to filter
+`eligible`, `current`, and `pending`. Diagnostics, throughput, job state, and
+failures still describe the full run across sources, and filtered responses set
+ETA to `null`. Because run diagnostics and scheduler state span sources outside
+a scoped agent grant, this route requires owner access.
+
+The endpoint is read-only and bypasses the scheduler slot. It returns `400` for
+invalid, repeated, unknown, or out-of-scope source IDs, and `503` with
+`embeddings_status_unavailable` when vector search is disabled, required
+archive state cannot be read, or the read takes longer than five seconds. If
+only diagnostics fail to read or decode, the response still returns coverage
+and job state with `diagnostics=null`. `coverage_sampled_at` records when
+counts were taken, and stale counts suppress ETA. `diagnostics_stale` flags an
+unfinished snapshot older than a minute, setting the phase of an active run to
+`diagnostics_stale`. This endpoint never sends message content to a provider.
 See the [CLI field semantics](cli-reference.md#embeddings-status) and the
 [published OpenAPI schema](https://github.com/kenn-io/msgvault/blob/main/api/openapi.yaml).
-MCP exposes the same response through `get_embeddings_status` on API 3.21.0 or newer when vector search is enabled.
+MCP exposes the same response through `get_embeddings_status` on API 3.21.0 or
+newer when vector search is enabled.
 
 ## Verification content
 
-Delegated HTTP, CLI, and MCP message reads without `verification.read` replace detected verification messages' subjects, snippets, excerpts, bodies, conversation titles, and attachment filenames with `[verification content masked]`, and clear their HTML. Sender, date, labels, and IDs remain available. The modifier requires the operation's existing read permission and source grant. Owner reads and stored messages stay unchanged.
+When a delegated HTTP, CLI, or MCP message read lacks `verification.read`,
+msgvault replaces detected verification messages' subjects, snippets, excerpts,
+bodies, conversation titles, and attachment filenames with
+`[verification content masked]` and clears their HTML. Sender, date, labels,
+and IDs stay available. The modifier requires the operation's existing read
+permission and source grant, and owner reads and stored messages never change.
 
-Detection considers subject, snippet, conversation title, attachment filenames, and both body formats together. It folds fullwidth digits to ASCII and looks for 4–10 digits, including spaced digits, or 6–10-character codes containing at least three digits tied to a code cue. Codes of 5–10 characters mixing ASCII letters and digits, or 6–10 uppercase letters only except `INVALID` and `DISABLED`, also count directly after a verification, security, login, sign-in, authentication, or one-time code, PIN, or password cue, or an OTP, passcode, or 2FA cue. Confirmation cues keep the three-digit rule. A cue in one field can describe a value in another. Years from 1900 through 2099 count only after a cue in the same field. Sign-in links need an opaque token or UUID and a sign-in cue or credential query key, such as `token` or `oobCode`. Unsubscribe and preferences paths are excluded. A sign-in cue anywhere in the message applies to every link with an opaque token, including click-tracked links, so newsletters that mention signing in and carry tracked links are withheld. Fields of 1 MiB or more are withheld.
+Detection evaluates subject, snippet, conversation title, attachment filenames,
+and both body formats together. It folds fullwidth digits to ASCII and looks
+for 4–10 digits (including spaced digits) or 6–10-character codes with at least
+three digits tied to a code cue. Codes of 5–10 characters mixing ASCII letters
+and digits, or 6–10 uppercase letters only (except `INVALID` and `DISABLED`),
+also match directly after a verification, security, login, sign-in,
+authentication, or one-time code, PIN, or password cue, or an OTP, passcode, or
+2FA cue. Confirmation cues keep the three-digit rule. A cue in one field can
+describe a value in another, whereas years from 1900 through 2099 count only
+after a cue in the same field. Sign-in links require an opaque token or UUID
+plus a sign-in cue or credential query key such as `token` or `oobCode`,
+excluding unsubscribe and preferences paths. A sign-in cue anywhere in the
+message applies to every link with an opaque token, including click-tracked
+links, so newsletters that mention signing in and carry tracked links are
+withheld. Fields of 1 MiB or more are also withheld.
 
-Without `verification.read`, downloads declared `message/*` or named `.eml` on any authorized record of the hash return 403 `verification_masked`. Other text-class downloads, declared `text/*` or sniffed as text, check their bytes and every authorized parent message of the hash. They return 403 if any parent is withheld, the bytes contain a NUL, invalid UTF-8, or a `Content-Transfer-Encoding:` header line in any letter case, or the detector withholds the text or filenames. Text of 1 MiB or more is withheld. Allowed text and binary files download unchanged. Withheld parents mask filenames in metadata and download headers. Parent bodies and attachment metadata are loaded in batches, so a shared hash can be checked across more than 32,766 messages.
+Without `verification.read`, downloads declared `message/*` or named `.eml` on
+any authorized record of the hash return `403 verification_masked`. Other
+text-class downloads, declared `text/*` or sniffed as text, inspect their bytes
+and every authorized parent message of the hash. They return `403` if any
+parent is withheld, the bytes contain a NUL, invalid UTF-8, or a
+`Content-Transfer-Encoding:` header line in any letter case, or the detector
+withholds the text or filenames. Text of 1 MiB or more is withheld, while
+allowed text and binary files download unchanged. Withheld parents mask
+filenames in metadata and download headers. Parent bodies and attachment
+metadata load in batches, so a shared hash can be checked across more than
+32,766 messages.
 
-Agent grants are held in daemon memory, so tokens issued before an upgrade stop working when the daemon restarts. Replacement tokens with the same permissions see masked verification messages and the attachment refusals above unless the grant includes `verification.read`.
+Because agent grants live in daemon memory, tokens issued before an upgrade
+stop working when the daemon restarts. Replacement tokens with the same
+permissions see masked verification messages and the attachment refusals above
+unless you include `verification.read` in the grant.
 
-A cue can precede its value by up to 60 runes, including blank lines. A period may end the cue line or separate the cue from a code ending the same line. Up to six words, with one short parenthetical, can separate a cue from its value when the value follows `is`, `:` or `=`; ordinary phrases such as `Error code from the processor: 50213` are withheld as a result.
+A cue can precede its value by up to 60 runes, including blank lines, and a
+period can end the cue line or separate the cue from a code ending the same
+line. Up to six words, with one short parenthetical, can sit between a cue and
+its value when the value follows `is`, `:`, or `=`, so ordinary phrases such as
+`Error code from the processor: 50213` are withheld too.
 
-These heuristics can miss unfamiliar wording and layouts, lowercase letter-only codes, short link tokens, credentials inside binary files, or text stored under a binary type that sniffing misses. Non-English text such as `Tu código es 482913` is not detected. Lists and threads classify a message whose body exists only in its original MIME by subject, snippet, title, and filenames.
+These heuristics can miss unfamiliar wording and layouts, lowercase letter-only
+codes, short link tokens, credentials inside binary files, or text stored under
+a binary type that sniffing misses, and they do not detect non-English text
+such as `Tu código es 482913`. Lists and threads classify a message whose body
+exists only in its original MIME using subject, snippet, title, and filenames.
 
-Search rows are masked in place, with membership and counts unchanged.
+Search rows are masked in place without changing membership or counts.
 
 Search can confirm a withheld value through exact or prefix queries, and draft output can include verification content. These known limits are covered by later slices for search confirmation and draft quotes. Add `verification.read` only when the delegated reader should receive verification content.
 

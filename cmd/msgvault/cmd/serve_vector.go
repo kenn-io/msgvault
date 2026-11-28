@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document/voyage"
+	"go.kenn.io/kit/embedclient"
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/providercredentials"
@@ -217,19 +218,6 @@ func convergenceStateMessage(gen vector.GenerationID, state scheduler.Convergenc
 		state.LatestJournalSequence, state.ReconciliationComplete)
 }
 
-func embeddingPreprocessConfig(cfg vector.Config) embed.PreprocessConfig {
-	chunkPolicy := embed.EmbeddingChunkPolicy(cfg.Embeddings.MaxInputChars)
-	return embed.PreprocessConfig{
-		StripQuotes:        cfg.Preprocess.StripQuotesEnabled(),
-		StripSignatures:    cfg.Preprocess.StripSignaturesEnabled(),
-		StripHTML:          cfg.Preprocess.StripHTMLEnabled(),
-		StripBase64:        cfg.Preprocess.StripBase64Enabled(),
-		StripURLTracking:   cfg.Preprocess.StripURLTrackingEnabled(),
-		CollapseWhitespace: cfg.Preprocess.CollapseWhitespaceEnabled(),
-		MaxBodyRunes:       chunkPolicy.MaxBodyRunes,
-	}
-}
-
 func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*embeddingRuntime, error) {
 	personBackend, ok := deps.Backend.(vector.PersonBackend)
 	if !ok {
@@ -252,7 +240,7 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 		personClient := embed.NewClient(clientConfig)
 		messageWorker := embed.NewWorker(embed.WorkerDeps{
 			Backend: deps.Backend, VectorsDB: deps.VectorsDB, MainDB: deps.MainDB,
-			Store: deps.Store, Client: messageClient, Preprocess: embeddingPreprocessConfig(vectorCfg),
+			Store: deps.Store, Client: messageClient, Preprocess: embed.PreprocessConfigFor(vectorCfg),
 			MaxInputChars: vectorCfg.Embeddings.MaxInputChars,
 			BatchSize:     vectorCfg.Embeddings.BatchSize, BuildScope: vectorCfg.Embed.Scope.BuildScope(),
 			Rebind: deps.Rebind, LastModifiedExpr: deps.LastModifiedExpr,
@@ -288,7 +276,7 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 			MaxChunkRunes:           vectorCfg.Embeddings.MaxInputChars,
 			MaxDocumentUTF8Bytes:    contextualDocumentUTF8Limit,
 			DocumentPrefixUTF8Bytes: len(vectorCfg.Embeddings.DocumentPrefix),
-			Preprocess:              embeddingPreprocessConfig(vectorCfg),
+			Preprocess:              embed.PreprocessConfigFor(vectorCfg),
 		}
 		assembler := embed.CompositeAssembler{Policy: policy, Chat: embed.ChatWindowAssembler{Policy: policy}}
 		messageWorker := embed.NewContextWorker(embed.ContextWorkerDeps{
@@ -501,7 +489,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		return nil, fmt.Errorf("load provider credentials: %w", err)
 	}
 	var multimodalAPIKey string
-	if vecCfg.Multimodal.Enabled {
+	if vecCfg.Multimodal.Enabled && vecCfg.Multimodal.Provider == "voyage" {
 		multimodalAPIKey, err = resolveProviderCredentialFromSnapshot(
 			credentialSnapshot, providercredentials.VectorMultimodalID,
 			vecCfg.Multimodal.Endpoint, vecCfg.Multimodal.APIKeyEnv,
@@ -664,8 +652,15 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			_ = closeFn()
 			return nil, errors.New("configure multimodal runtime: attachment content store is unavailable")
 		}
-		visualRuntime, err := newVisualRuntime(ctx, vecCfg, mainStore, backend, openers[0],
-			visualRuntimeCredential{APIKey: multimodalAPIKey})
+		var visualRuntime *visualFeatures
+		var err error
+		if vecCfg.Multimodal.Provider == "kit" {
+			multimodalAPIKey, err = resolveProviderCredentialFromSnapshot(credentialSnapshot, providercredentials.VectorMultimodalID, vecCfg.Multimodal.Endpoint, vecCfg.Multimodal.APIKeyEnv)
+		}
+		if err == nil {
+			visualRuntime, err = newVisualRuntime(ctx, vecCfg, mainStore, backend, openers[0],
+				visualRuntimeCredential{APIKey: multimodalAPIKey})
+		}
 		switch {
 		case err != nil && !vecCfg.Enabled:
 			// Multimodal is the only configured lane: swallowing its
@@ -772,31 +767,51 @@ func newVisualRuntime(
 	if err != nil {
 		return nil, err
 	}
-	providerConfig, err := visualVoyageConfig(vecCfg)
-	if err != nil {
-		return nil, err
+	var mediaPolicy visual.MediaPolicy
+	var provider interface {
+		visual.Provider
+		AuthorizedCapabilities() []string
+		PolicyFingerprint() string
 	}
-	mediaPolicy := visual.MediaPolicy{MaxBytes: 20 << 20, MaxPixels: 16_000_000,
-		IncludeImages: vecCfg.Multimodal.ImagesEnabled(), IncludeVideo: vecCfg.Multimodal.VideoEnabled(),
-		AllowAnimatedGIF: vecCfg.Multimodal.AnimatedGIFsEnabled()}
-	// The provider validates EVERYTHING that leaves the machine, including
-	// consented still-image QUERIES: with include_images=false and
-	// allow_image_queries=true the document policy alone would reject query
-	// input the search layer permits. Document eligibility (the reconciler's
-	// mediaPolicy) stays unchanged. Configs with images already enabled are
-	// identical, so no existing consent fingerprint moves.
-	providerConfig.APIKey = apiKey
-	providerConfig.HTTPClient = providerHTTPClientWithoutRedirects(httpClient)
-	provider, err := visual.NewVoyageProvider(providerConfig)
-	if err != nil {
-		return nil, err
+	if vecCfg.Multimodal.UsesKit() {
+		if vecCfg.Multimodal.Provider == "vertex" && credential.HTTPClient == nil {
+			if httpClient, err = embedclient.GoogleHTTPClient(); err != nil {
+				return nil, fmt.Errorf("create Google embedding client: %w", err)
+			}
+		}
+		kitProvider, err := visual.NewKitProvider(vecCfg.Multimodal.Provider, vecCfg.Multimodal.Endpoint, vecCfg.Multimodal.Model, vecCfg.Multimodal.Dimension, apiKey, providerHTTPClientWithoutRedirects(httpClient), fingerprint)
+		if err != nil {
+			return nil, err
+		}
+		kitPolicy := kitProvider.VisualPolicy()
+		kitPolicy.IncludeImages, kitPolicy.IncludeVideo = vecCfg.Multimodal.ImagesEnabled(), vecCfg.Multimodal.VideoEnabled()
+		provider, mediaPolicy = kitProvider, kitPolicy
+	} else {
+		mediaPolicy = visual.MediaPolicy{MaxBytes: 20 << 20, MaxPixels: 16_000_000,
+			IncludeImages: vecCfg.Multimodal.ImagesEnabled(), IncludeVideo: vecCfg.Multimodal.VideoEnabled(),
+			AllowAnimatedGIF: vecCfg.Multimodal.AnimatedGIFsEnabled()}
+		providerConfig, err := visualVoyageConfig(vecCfg)
+		if err != nil {
+			return nil, err
+		}
+		// The provider validates EVERYTHING that leaves the machine, including
+		// consented still-image QUERIES: with include_images=false and
+		// allow_image_queries=true the document policy alone would reject query
+		// input the search layer permits. Document eligibility (the reconciler's
+		// mediaPolicy) stays unchanged. Configs with images already enabled are
+		// identical, so no existing consent fingerprint moves.
+		providerConfig.APIKey = apiKey
+		providerConfig.HTTPClient = providerHTTPClientWithoutRedirects(httpClient)
+		if provider, err = visual.NewVoyageProvider(providerConfig); err != nil {
+			return nil, err
+		}
 	}
 	// A format is only eligible when the probe authorized the exact request
 	// shapes this archive sends: the document capability always, and its
 	// interleaved twin because owning-message context accompanies media
 	// whenever the message has any.
 	mediaPolicy.AuthorizedCapabilities = eligibleVisualCapabilities(
-		provider.AuthorizedCapabilities(), vecCfg.Multimodal.MaxContextChars > 0)
+		provider.AuthorizedCapabilities(), !vecCfg.Multimodal.UsesKit() && vecCfg.Multimodal.MaxContextChars > 0)
 	consumerKey := "visual/" + fingerprint
 	if provider.PolicyFingerprint() != "" {
 		// A changed capability manifest re-opens reconciliation so every
@@ -818,7 +833,7 @@ func newVisualRuntime(
 		// when one message carries many standalone attachments.
 		PageSize: 2, LeaseOwner: consumerKey, LeaseDuration: 2 * time.Minute,
 		MediaPolicy: mediaPolicy,
-		ContextPolicy: visual.ContextPolicy{MaxChars: vecCfg.Multimodal.MaxContextChars,
+		ContextPolicy: visual.ContextPolicy{ExcludeContext: vecCfg.Multimodal.UsesKit(), MaxChars: vecCfg.Multimodal.MaxContextChars,
 			InputVersion: fingerprint, EligibilityVersion: fingerprint},
 	})
 	if err != nil {

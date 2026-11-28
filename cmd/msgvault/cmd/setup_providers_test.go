@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/voyage"
 	"go.kenn.io/docbank/document/voyage/voyagetest"
+	"go.kenn.io/kit/agentsetup"
 	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -55,6 +56,7 @@ type setupProvidersFixture struct {
 	input   io.Reader
 	tty     bool
 	confirm bool
+	google  func() error
 }
 
 func newSetupProvidersFixture(t *testing.T, content string) *setupProvidersFixture {
@@ -340,6 +342,7 @@ func (f *setupProvidersFixture) deps(t *testing.T) setupProvidersDeps {
 		readConfigFile: func() (config.ConfigFile, error) {
 			return config.ReadConfigFile(f.path)
 		},
+		googleCredentials: f.google,
 		editConfigTables: func(etag string, edits []config.TableEdit) (config.ConfigFile, error) {
 			return config.EditConfigTables(f.path, etag, edits)
 		},
@@ -602,6 +605,7 @@ func TestSetupReportsCheckStoredPeopleCredential(t *testing.T) {
 			}
 			consent := &setupConsentState{PersonInference: true}
 			deps := defaultSetupStatusDeps()
+			deps.agents = nil
 			deps.config = func() *config.Config { return loaded }
 			readEnvironment := deps.environment
 			deps.environment = func(command *cobra.Command, c *config.Config) setupEnvironment {
@@ -1446,6 +1450,118 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 			detectSetupProviders(t.Context(), fixture.load(t), deps, setupProvidersOptions{})
 			assert.Equal(t, 1, probes)
 			assert.Equal(t, 1, discoveries)
+		})
+	}
+}
+
+func TestSetupStatusAgents(t *testing.T) {
+	for _, name := range []string{"text", "json", "error", "interrupted", "no_agents"} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+			row := agentsetup.Row{Agent: "claude", AgentName: "Claude Code", Piece: "skills", State: agentsetup.StateOK}
+			if name == "text" {
+				row.Status = agentsetup.Status{State: agentsetup.StateMissing, NextStep: "msgvault agent setup"}
+			}
+			var output, errOutput bytes.Buffer
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			command := newSetupStatusCommand(setupStatusDeps{
+				config: func() *config.Config { return fixture.load(t) },
+				environment: func(*cobra.Command, *config.Config) setupEnvironment {
+					return setupEnvironment{lookupEnv: fixture.lookupEnv, fileExists: defaultFileExists}
+				},
+				agents: func(context.Context) (agentsetup.Report, error) {
+					switch name {
+					case "no_agents":
+						return agentsetup.Report{}, nil
+					case "error":
+						return agentsetup.Report{}, errors.New("agent check failed")
+					case "interrupted":
+						cancel()
+						return agentsetup.Report{}, context.Canceled
+					default:
+						return agentsetup.Report{Rows: []agentsetup.Row{row}}, nil
+					}
+				},
+			})
+			command.SilenceUsage = true
+			command.SetOut(&output)
+			command.SetErr(&errOutput)
+			if name == "json" || name == "error" || name == "interrupted" {
+				command.SetArgs([]string{"--json"})
+			} else {
+				command.SetArgs([]string{})
+			}
+			err := command.ExecuteContext(ctx)
+			if name == "interrupted" {
+				require.ErrorIs(t, err, context.Canceled)
+				assert.Empty(t, output.String())
+				return
+			}
+			require.NoError(t, err)
+			switch name {
+			case "text":
+				text := output.String()
+				assert.Contains(t, text, "Claude Code")
+				assert.Contains(t, text, "msgvault agent setup")
+				assert.NotContains(t, text, "afterwards")
+				assert.Less(t, strings.Index(text, "MCP tools live"), strings.Index(text, "Agents:"))
+				assert.Less(t, strings.Index(text, "Agents:"), strings.Index(text, "Config:"))
+			case "json":
+				var report laneReport
+				require.NoError(t, json.Unmarshal(output.Bytes(), &report))
+				assert.Equal(t, []agentsetup.Row{row}, report.Agents)
+			case "error":
+				assert.Contains(t, errOutput.String(), "check agents: agent check failed\n")
+				assert.NotContains(t, output.String(), `"agents"`)
+			case "no_agents":
+				assert.Empty(t, errOutput.String())
+				assert.NotContains(t, output.String(), "Agents:")
+			}
+		})
+	}
+}
+
+func TestSetupProvidersConfiguredVisualCredentials(t *testing.T) {
+	for _, tt := range []struct {
+		name, provider, keyEnv, keyValue string
+		googleErr                        error
+		enabled                          bool
+		alreadyEnabled                   bool
+	}{
+		{name: "anonymous kit", provider: "kit", enabled: true},
+		{name: "keyed kit", provider: "kit", keyEnv: "EMBED_KEY", keyValue: "key", enabled: true},
+		{name: "missing kit key", provider: "kit", keyEnv: "EMBED_KEY"},
+		{name: "vertex credentials", provider: "vertex", enabled: true},
+		{name: "missing vertex credentials", provider: "vertex", googleErr: errors.New("missing credentials")},
+		{name: "already enabled", provider: "kit", enabled: true, alreadyEnabled: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			endpoint, model := "https://embed.example.com/v1", "model"
+			if tt.provider == "vertex" {
+				endpoint = "https://us-central1-aiplatform.googleapis.com/v1/projects/project-a/locations/us-central1/publishers/google/models"
+				model = "gemini-embedding-2"
+			}
+			content := fmt.Sprintf("[vector.multimodal]\nprovider = %q\nendpoint = %q\nmodel = %q\ndimension = 1024\napi_key_env = %q\n", tt.provider, endpoint, model, tt.keyEnv)
+			if tt.alreadyEnabled {
+				content += "enabled = true\n"
+			}
+			fixture := newSetupProvidersFixture(t, content)
+			fixture.google = func() error { return tt.googleErr }
+			if tt.keyValue != "" {
+				fixture.env[tt.keyEnv] = tt.keyValue
+			}
+			output, err := fixture.run(t, "providers", "--yes")
+			require.NoError(t, err)
+			cfg := fixture.load(t)
+			assert.Equal(t, tt.enabled, cfg.Vector.Multimodal.Enabled)
+			assert.Equal(t, tt.provider, cfg.Vector.Multimodal.Provider)
+			if tt.enabled && !tt.alreadyEnabled {
+				assert.Contains(t, output, "msgvault multimodal build --yes")
+			}
+			if tt.alreadyEnabled {
+				assert.Contains(t, output, "already enabled")
+			}
 		})
 	}
 }

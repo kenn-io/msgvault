@@ -215,7 +215,18 @@ func CopySubsetWithOptions(
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 
-	result, err := copyData(ctx, tx, rowCount, options)
+	// Older sources can hold attachment rows the hash guard rejects. Copy
+	// them as they are; the post-copy upgrade below repairs them and
+	// reinstalls the guard.
+	for _, name := range attachmentBytesHashTriggers {
+		if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS `+name); err != nil {
+			_ = tx.Rollback()
+			_, _ = db.ExecContext(ctx, "DETACH DATABASE src")
+			closeAndCleanup()
+			return nil, fmt.Errorf("drop attachment hash guard for copy: %w", err)
+		}
+	}
+	result, err := copyData(ctx, db, tx, rowCount, options)
 	if err != nil {
 		_ = tx.Rollback()
 		_, _ = db.ExecContext(ctx, "DETACH DATABASE src")
@@ -230,6 +241,12 @@ func CopySubsetWithOptions(
 		_ = tx.Rollback()
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied derived data migrations: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = ?`, migrationAttachmentBytesHash); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset attachment hash migration: %w", err)
 	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV1); err != nil {
@@ -365,7 +382,7 @@ func verifyForeignKeys(ctx context.Context, db *sql.DB) error {
 }
 
 // copyData executes INSERT INTO ... SELECT in dependency order.
-func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult, error) {
+func copyData(ctx context.Context, db *sql.DB, tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult, error) {
 	result := &CopyResult{}
 
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
@@ -620,6 +637,9 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 		if err := copyEmploymentData(ctx, tx, result); err != nil {
 			return nil, err
 		}
+	}
+	if err := copyPersonDisplayNameOwners(ctx, tx); err != nil {
+		return nil, err
 	}
 
 	if options.IncludeAttributes {
@@ -1027,6 +1047,13 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 	} else if present {
 		if _, err := copyByName(ctx, tx, "loop_decisions", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
 			return nil, fmt.Errorf("copy loop decisions: %w", err)
+		}
+	}
+	if present, err := sourceTableExists(ctx, tx, "meeting_link_decisions"); err != nil {
+		return nil, err
+	} else if present {
+		if err := copySubsetMeetingDecisions(ctx, db, tx); err != nil {
+			return nil, fmt.Errorf("copy meeting decisions: %w", err)
 		}
 	}
 
@@ -2317,6 +2344,43 @@ func copySubsetInferenceRevisions(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
+// copyPersonDisplayNameOwners restores the inferred name row that owns each
+// copied display name. Retiring that row clears the display name it mirrors,
+// so the link must survive the copy. When the owning row is not copied, the
+// display name is an inferred profile value outside the subset; keeping it
+// would publish it as a declared name, so it is dropped. Archives older than
+// the link have no owned display names.
+func copyPersonDisplayNameOwners(ctx context.Context, tx *sql.Tx) error {
+	hasOwner, err := sourceColumnExists(ctx, tx, "persons", "display_name_source_name_id")
+	if err != nil {
+		return fmt.Errorf("check person display-name owner schema: %w", err)
+	}
+	if !hasOwner {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE persons SET display_name_source_name_id = (
+			SELECT p.display_name_source_name_id FROM src.persons p WHERE p.id = persons.id
+		)
+		WHERE EXISTS (
+			SELECT 1 FROM src.persons p
+			JOIN person_names n ON n.id = p.display_name_source_name_id AND n.person_id = p.id
+			WHERE p.id = persons.id
+		)`); err != nil {
+		return fmt.Errorf("copy person display-name owners: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE persons SET display_name = NULL
+		WHERE display_name_source_name_id IS NULL
+		  AND EXISTS (
+			SELECT 1 FROM src.persons p
+			WHERE p.id = persons.id AND p.display_name_source_name_id IS NOT NULL
+		)`); err != nil {
+		return fmt.Errorf("drop uncopied inferred display names: %w", err)
+	}
+	return nil
+}
+
 func copyStructuredProfiles(ctx context.Context, tx *sql.Tx) (int64, error) {
 	hasProfiles, err := sourceTableExists(ctx, tx, "person_names")
 	if err != nil {
@@ -3145,4 +3209,64 @@ func preserveSubsetDraftEvidence(ctx context.Context, tx *sql.Tx) (int64, error)
 		}
 	}
 	return int64(len(sourceIDs)), nil
+}
+
+func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) error {
+	// The attached source and selected destination share this transaction's snapshot.
+	rewrite := strings.NewReplacer(
+		"FROM messages", "FROM src.messages", "JOIN messages", "JOIN src.messages",
+		"FROM calendar_events", "FROM src.calendar_events", "JOIN calendar_events", "JOIN src.calendar_events",
+		"FROM meeting_copy_survivors", "FROM src.meeting_copy_survivors",
+		"FROM source_merge_messages", "FROM src.source_merge_messages",
+		"FROM source_merge_archive_only_messages", "FROM src.source_merge_archive_only_messages",
+	)
+	s := &Store{db: newLoggedDB(db, nil), dialect: &SQLiteDialect{}}
+	reader := reboundSQLReader{SQLReader: tx, rebind: rewrite.Replace}
+	ctx = context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: db, reader: reader})
+	rows, err := tx.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision FROM src.meeting_link_decisions ORDER BY id DESC`)
+	if err != nil {
+		return err
+	}
+	var edges []meetingDecisionEdge
+	for rows.Next() {
+		var edge meetingDecisionEdge
+		if err := rows.Scan(&edge.id, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.decision); err != nil {
+			return errors.Join(err, rows.Close()) //nolint:sqlclosecheck // Close before returning the scan error.
+		}
+		edges = append(edges, edge)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	resolve := func(id int64) (int64, bool, error) {
+		id, ok, err := s.resolveMeetingMessage(ctx, id)
+		if err != nil || !ok {
+			return 0, false, err
+		}
+		var selected bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM selected_messages WHERE id=?)`, id).Scan(&selected); err != nil {
+			return 0, false, err
+		}
+		return id, selected, nil
+	}
+	for _, edge := range edges {
+		left, ok, err := resolve(edge.a.ID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		right, ok, err := resolve(edge.b.ID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO meeting_link_decisions(id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES(?,?,?,?,?,?,?,?)`, edge.id, left, edge.a.Kind, edge.a.Key, right, edge.b.Kind, edge.b.Key, edge.decision); err != nil {
+			return err
+		}
+	}
+	return nil
 }

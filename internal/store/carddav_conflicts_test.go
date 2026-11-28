@@ -3,6 +3,7 @@ package store_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -307,6 +308,117 @@ func TestCardDAVKeepLocalUsesCapableSubscribedSourceBook(t *testing.T) {
 	assert.Equal(book.ID, prepared.AddressBookID)
 	assert.Equal(mapping.Href, prepared.Href)
 	assert.Equal(store.CardDAVMutationUpdate, prepared.PendingOperation)
+}
+
+func prepareCardDAVKeepLocalCreate(t *testing.T) (
+	*store.Store, store.CardDAVAccount, store.CardDAVAddressBook,
+	*store.CardDAVResource, *store.CardDAVConflict, *store.CardDAVPublication,
+) {
+	t.Helper()
+	require := require.New(t)
+	st, account, book, mapping := seededCardDAVConflictMapping(t)
+	personID := *mapping.PersonID
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+	require.NoError(err)
+	_, err = st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
+		PersonID: personID, Desired: true, AddressBookID: book.ID, Href: mapping.Href,
+		OutgoingBody: mapping.RemoteBody, OutgoingSemanticHash: mapping.RemoteSemanticHash,
+		LocalHash: snapshot.Fingerprint,
+	})
+	require.NoError(err)
+
+	mapping, err = st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
+	require.NoError(err)
+	capture := conflictCapture(mapping)
+	capture.LocalHash = snapshot.Fingerprint
+	capture.LocalBody = mapping.RemoteBody
+	capture.RemoteETag, capture.RemoteBody, capture.RemoteTombstone = "", nil, true
+	conflict, err := st.RecordCardDAVConflictContext(t.Context(), capture)
+	require.NoError(err)
+	pending, err := st.PrepareCardDAVConflictLocalContext(t.Context(), store.CardDAVConflictLocalPlan{
+		ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision,
+		RemoteTombstone: true, OutgoingSemanticHash: "keep-local-recreation",
+	})
+	require.NoError(err)
+	return st, account, book, mapping, conflict, pending
+}
+
+func TestCardDAVKeepLocalCreateRollbackRestoresMappingFence(t *testing.T) {
+	for _, mode := range []string{"rejected", "oversized", "repeated oversized after recovery", "rollback after recovery"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, _, book, mapping, conflict, pending := prepareCardDAVKeepLocalCreate(t)
+			personID := *mapping.PersonID
+			require.Equal(store.CardDAVMutationCreate, pending.PendingOperation)
+			require.Positive(pending.PreviousMappingRevision)
+			assert.Equal(pending.PreviousMappingRevision+1, pending.MappingRevision)
+
+			switch mode {
+			case "rejected":
+				require.NoError(st.RollbackCardDAVPublicationContext(t.Context(), pending))
+			default:
+				recordOversized := func(pending *store.CardDAVPublication, retaining bool, etag string) {
+					t.Helper()
+					current, err := st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
+					require.NoError(err)
+					capture := conflictCapture(current)
+					capture.LocalHash = pending.LocalHash
+					capture.RemoteETag = etag
+					capture.RemoteBody = bytes.Repeat([]byte("x"), store.MaxCardDAVConflictSnapshotBytes+1)
+					if retaining {
+						_, err = st.RecordCardDAVPublicationConflictRetainingIntentContext(t.Context(), *pending, capture)
+					} else {
+						_, err = st.RecordCardDAVPublicationConflictContext(t.Context(), *pending, capture)
+					}
+					require.ErrorIs(err, store.ErrCardDAVConflictTooLarge)
+				}
+				retaining := mode != "oversized"
+				recordOversized(pending, retaining, `"oversized-one"`)
+				if retaining {
+					recovered, err := st.PrepareCardDAVConflictLocalContext(t.Context(), store.CardDAVConflictLocalPlan{
+						ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision,
+						RemoteTombstone: true, OutgoingSemanticHash: "keep-local-recreation",
+					})
+					require.NoError(err)
+					require.True(recovered.RecoveryOnly)
+					require.Equal(conflict.ID, recovered.ResolutionConflictID)
+					if mode == "rollback after recovery" {
+						require.NoError(st.RollbackCardDAVPublicationContext(t.Context(), recovered))
+					} else {
+						recordOversized(recovered, true, `"oversized-two"`)
+					}
+				}
+			}
+
+			after, err := st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
+			require.NoError(err)
+			assert.Equal(pending.PreviousMappingRevision, after.MappingRevision)
+			assert.Equal(store.CardDAVMappingMapped, after.MappingStatus)
+			require.NotNil(after.PersonID)
+			assert.Equal(personID, *after.PersonID)
+			publication, err := st.GetCardDAVPublicationContext(t.Context(), personID)
+			require.NoError(err)
+			assert.True(publication.Desired)
+			if mode == "repeated oversized after recovery" {
+				assert.Equal(store.CardDAVMutationCreate, publication.PendingOperation)
+				assert.Equal(pending.PreviousMappingRevision, publication.MappingRevision)
+				assert.Equal(pending.PreviousMappingRevision, publication.PreviousMappingRevision)
+			} else {
+				assert.Empty(publication.PendingOperation)
+			}
+			remaining, err := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
+			require.NoError(err)
+			assert.Equal(store.CardDAVConflictUnresolved, remaining.Status)
+			assert.Equal(after.MappingRevision, remaining.MappingRevision)
+			if mode == "repeated oversized after recovery" || mode == "rollback after recovery" {
+				var envelopes int
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM vcard_resource_envelopes
+					WHERE source_ref = ? AND source_resource_uid = ?`), fmt.Sprintf("carddav:%d", book.ID), mapping.Href).Scan(&envelopes))
+				assert.Equal(1, envelopes)
+			}
+		})
+	}
 }
 
 func TestCardDAVKeepRemoteRevalidatesAfterUnlockedConflictIdentityRead(t *testing.T) {

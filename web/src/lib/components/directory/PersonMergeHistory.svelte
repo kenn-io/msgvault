@@ -1,6 +1,6 @@
 <script lang="ts">
   import { formatDateTime, formatShortDate } from '../../util/format';
-  import { Button, Disclosure, Spinner } from '@kenn-io/kit-ui';
+  import { Button, Disclosure, overlayScrollbars, Spinner } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
 
   import { addressText, absorbedCardTitle, mergeAddresses, mergeSentence, type AddressIdentity, type MergedInAddress } from '../../directory/merge-labels';
@@ -218,7 +218,7 @@
             <p title={`SHA-256 ${controller.snapshot.sha256}`}>SHA-256 {controller.snapshot.sha256.slice(0, 8)}…</p>
           </div>
           <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-          <div class="snapshot" role="region" aria-label="Raw values at merge time" tabindex="0"><pre>{snapshotText(controller.snapshot.snapshot)}</pre></div>
+          <div class="snapshot" role="region" aria-label="Raw values at merge time" tabindex="0" {@attach overlayScrollbars()}><pre>{snapshotText(controller.snapshot.snapshot)}</pre></div>
         {:else if controller.snapshotLoading}<p role="status">Loading…</p>{/if}
         {#if controller.snapshotError}<InlineNotice message="Couldn't load the profile at merge time." actionLabel="Retry" onaction={() => void controller.revealSnapshot()} details={controller.snapshotError} />{/if}
       </Disclosure>
@@ -240,8 +240,8 @@
   .link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
   .link:hover { text-decoration: underline; }
   .link:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
-  /* The raw record scrolls in its own 22rem pane: 12 inside, its right side 8 less to keep the bar's gutter. */
-  .snapshot { max-width: 100%; max-height: 22rem; overflow: auto; scrollbar-gutter: stable; padding: var(--space-box) calc(var(--space-box) - var(--scrollbar-gutter-size)) var(--space-box) var(--space-box); border: var(--border-width) solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
+  /* The raw record scrolls in its own 22rem pane with 12 inside and zero-gutter overlay scrollbars. */
+  .snapshot { max-width: 100%; max-height: 22rem; overflow: auto; padding: var(--space-box); border: var(--border-width) solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
   .snapshot:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
   .snapshot pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--type-small-size); line-height: var(--type-small-line); }
 </style>

@@ -187,6 +187,7 @@ type settingsState struct {
 	saving                bool
 	confirmDiscard        bool
 	narrowFields          bool
+	scrollOffset          int
 
 	groups             []SettingsGroup
 	fields             []SettingField
@@ -319,6 +320,9 @@ func (m Model) handleSettingsLoaded(msg settingsLoadedMsg) (tea.Model, tea.Cmd) 
 		return m, nil
 	}
 	m.settings.loading = false
+	if !m.settings.codex.active && !m.settings.peopleControls.active {
+		m.settings.scrollOffset = 0
+	}
 	if msg.err != nil {
 		m.settings.status = "Could not load settings: " + msg.err.Error()
 		m.settings.statusIsError = true
@@ -435,7 +439,7 @@ func (m *Model) clampSettingsRow() {
 func (m Model) saveSettings() (tea.Model, tea.Cmd) {
 	if m.settings.saving || !m.settings.dirty() {
 		if !m.settings.dirty() {
-			m.settings.status = "No unsaved changes."
+			m.settings.status, m.settings.scrollOffset = "No unsaved changes.", 0
 			m.settings.statusIsError = false
 		}
 		return m, nil
@@ -445,7 +449,7 @@ func (m Model) saveSettings() (tea.Model, tea.Cmd) {
 	credentials := m.orderedCredentialUpdates()
 	backend := m.settingsBackend
 	if backend == nil {
-		m.settings.status = "Settings are unavailable."
+		m.settings.status, m.settings.scrollOffset = "Settings are unavailable.", 0
 		m.settings.statusIsError = true
 		return m, nil
 	}
@@ -552,7 +556,7 @@ func (m Model) handleSettingsSaved(msg settingsSavedMsg) (tea.Model, tea.Cmd) {
 	if !m.settings.active || msg.requestID != m.settings.requestID {
 		return m, nil
 	}
-	m.settings.saving = false
+	m.settings.saving, m.settings.scrollOffset = false, 0
 	if msg.partial {
 		m.dropSavedSettingsDrafts(msg.savedKeys)
 		if msg.reloadErr == nil {

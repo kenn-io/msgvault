@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -15,12 +16,10 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const calendarEventsMinAPISchemaVersion = "3.35.0"
 const calendarEventDeletedStatus = "deleted"
 
 type calendarEventsClient interface {
 	ListCalendarOccurrencesContext(ctx context.Context, from, to time.Time) (store.CalendarOccurrencePage, error)
-	APISchemaVersion(ctx context.Context) (string, error)
 }
 type calendarEventsOpen func(context.Context) (calendarEventsClient, func(), error)
 
@@ -72,13 +71,6 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 			return err
 		}
 		defer cleanup()
-		version, err := client.APISchemaVersion(cmd.Context())
-		if err != nil {
-			return err
-		}
-		if !daemonclient.APISchemaVersionAtLeast(version, calendarEventsMinAPISchemaVersion) {
-			return fmt.Errorf("calendar events require daemon API schema %s or newer", calendarEventsMinAPISchemaVersion)
-		}
 		page, err := client.ListCalendarOccurrencesContext(cmd.Context(), bounds[0], bounds[1])
 		if err != nil {
 			var apiError *daemonclient.APIError
@@ -104,7 +96,7 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 			}
 		} else {
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			if _, err := fmt.Fprintln(writer, "START\tEND (EXCL)\tSTATUS\tID\tTITLE"); err != nil {
+			if _, err := fmt.Fprintln(writer, "START\tEND (EXCL)\tSTATUS\tID\tREF\tTITLE"); err != nil {
 				return fmt.Errorf("write calendar events: %w", err)
 			}
 			for _, o := range page.Occurrences {
@@ -112,7 +104,7 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 				if o.AllDay {
 					start, end = o.StartDate, o.EndDate
 				}
-				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\n", start, end, calendarOccurrenceStatus(o), o.MessageID, normalizeSearchTableText(o.Subject)); err != nil {
+				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%s\n", start, end, calendarOccurrenceStatus(o), o.MessageID, o.Ref, normalizeSearchTableText(o.Subject)); err != nil {
 					return fmt.Errorf("write calendar events: %w", err)
 				}
 			}
@@ -120,31 +112,36 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 				return fmt.Errorf("write calendar events: %w", err)
 			}
 		}
-		if len(page.Unexpandable) > 0 {
-			noun := "events"
-			if len(page.Unexpandable) == 1 {
-				noun = "event"
-			}
-			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%d %s could not be expanded: ", len(page.Unexpandable), noun); err != nil {
-				return fmt.Errorf("write calendar events: %w", err)
-			}
-			for i, event := range page.Unexpandable {
-				if i > 0 {
-					if _, err := fmt.Fprint(cmd.ErrOrStderr(), ", "); err != nil {
-						return fmt.Errorf("write calendar events: %w", err)
-					}
-				}
-				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "message %d (%s)", event.MessageID, event.Reason); err != nil {
-					return fmt.Errorf("write calendar events: %w", err)
-				}
-			}
-			if _, err := fmt.Fprintln(cmd.ErrOrStderr()); err != nil {
+		return writeCalendarExpansionWarnings(cmd.ErrOrStderr(), page.Unexpandable)
+	}
+	return command
+}
+
+func writeCalendarExpansionWarnings(out io.Writer, events []store.CalendarUnexpandable) error {
+	if len(events) == 0 {
+		return nil
+	}
+	noun := "events"
+	if len(events) == 1 {
+		noun = "event"
+	}
+	if _, err := fmt.Fprintf(out, "%d %s could not be expanded: ", len(events), noun); err != nil {
+		return fmt.Errorf("write calendar events: %w", err)
+	}
+	for i, event := range events {
+		if i > 0 {
+			if _, err := fmt.Fprint(out, ", "); err != nil {
 				return fmt.Errorf("write calendar events: %w", err)
 			}
 		}
-		return nil
+		if _, err := fmt.Fprintf(out, "message %d (%s)", event.MessageID, event.Reason); err != nil {
+			return fmt.Errorf("write calendar events: %w", err)
+		}
 	}
-	return command
+	if _, err := fmt.Fprintln(out); err != nil {
+		return fmt.Errorf("write calendar events: %w", err)
+	}
+	return nil
 }
 
 func parseCalendarEventsBound(value string) (time.Time, error) {

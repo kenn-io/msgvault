@@ -17,8 +17,6 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-const loopsMinAPISchemaVersion = "3.44.0"
-
 func init() {
 	rootCmd.AddCommand(newLoopsCommand())
 }
@@ -196,21 +194,13 @@ func loopActionError(id int64, err error) error {
 	return err
 }
 
-// withLoopsClient opens the daemon and refuses one that predates the loop routes.
+// withLoopsClient opens the daemon for one loops command.
 func withLoopsClient(cmd *cobra.Command, run func(*daemonclient.Client) error) error {
 	client, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = client.Close() }()
-	version, err := client.APISchemaVersion(cmd.Context())
-	if err != nil {
-		return fmt.Errorf("check daemon open loops capability: %w", err)
-	}
-	if !daemonclient.APISchemaVersionAtLeast(version, loopsMinAPISchemaVersion) {
-		return fmt.Errorf("open loops require daemon API schema %s or newer (daemon reports %q); upgrade and restart the daemon",
-			loopsMinAPISchemaVersion, version)
-	}
 	return run(client)
 }
 

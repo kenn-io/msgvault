@@ -7,11 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -32,7 +30,7 @@ func newKataCmd() *cobra.Command {
 			if err != nil {
 				return usageErr(cmd, err)
 			}
-			client, closeClient, err := openKataClient(cmd, kataEvidenceMinVersion(request.Selectors, func(s generated.Selector) bool { return s.Kind == generated.SelectorKindDocbankRendition }))
+			client, closeClient, err := openPersonAgendaClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -62,7 +60,7 @@ func newKataCmd() *cobra.Command {
 			if key == "" {
 				return usageErr(cmd, errors.New("--idempotency-key is required; choose a key that names this issue, and reuse it to retry"))
 			}
-			client, closeClient, err := openKataClient(cmd, kataEvidenceMinVersion(request.Evidence, citesDocbank))
+			client, closeClient, err := openPersonAgendaClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -87,7 +85,7 @@ func newKataCmd() *cobra.Command {
 			if err != nil {
 				return usageErr(cmd, err)
 			}
-			client, closeClient, err := openKataClient(cmd, kataEvidenceMinVersion(request.Evidence, citesDocbank))
+			client, closeClient, err := openPersonAgendaClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -111,7 +109,7 @@ func newKataCmd() *cobra.Command {
 			if cmd.Flags().Changed("attachment") {
 				query.AttachmentID = &attachmentID
 			}
-			client, closeClient, err := openKataClient(cmd, kataLookupMinAPISchemaVersion)
+			client, closeClient, err := openPersonAgendaClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -147,7 +145,7 @@ func newKataCmd() *cobra.Command {
 		Short: "Show each passage a Kata issue cites, with its state in the archive and the text around it",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, closeClient, err := openKataClient(cmd, kataLookupMinAPISchemaVersion)
+			client, closeClient, err := openPersonAgendaClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -166,36 +164,6 @@ func newKataCmd() *cobra.Command {
 
 	root.AddCommand(evidence, create, link, issues, issueContext)
 	return root
-}
-
-// kataEvidenceMinVersion needs a daemon that reads Docbank transcripts only
-// when the input cites one.
-func kataEvidenceMinVersion[T any](items []T, docbank func(T) bool) string {
-	if slices.ContainsFunc(items, docbank) {
-		return kataDocbankMinAPISchemaVersion
-	}
-	return kataIssuesMinAPISchemaVersion
-}
-
-func citesDocbank(ref generated.Reference) bool { return ref.Kind == generated.DocbankRendition }
-
-// openKataClient refuses daemons older than the Kata route a command needs,
-// which would otherwise answer with a bare 404.
-func openKataClient(cmd *cobra.Command, minVersion string) (*daemonclient.Client, func(), error) {
-	client, closeClient, err := openPersonAgendaClient(cmd)
-	if err != nil {
-		return nil, nil, err
-	}
-	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), minVersion)
-	if err != nil {
-		closeClient()
-		return nil, nil, fmt.Errorf("check daemon Kata issue support: %w", err)
-	}
-	if !supported {
-		closeClient()
-		return nil, nil, fmt.Errorf("this daemon is too old for Kata issues; upgrade it to API schema %s or newer", minVersion)
-	}
-	return client, closeClient, nil
 }
 
 func readKataInput[T any](cmd *cobra.Command, path string) (T, error) {

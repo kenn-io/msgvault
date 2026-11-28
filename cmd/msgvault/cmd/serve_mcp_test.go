@@ -43,7 +43,7 @@ func TestNativeMCPBridge(t *testing.T) {
 			switch r.Method + " " + r.URL.Path {
 			case "GET /api/v1/cli/accounts":
 				assert.Equal("true", r.Header.Get(apiprotocol.AllowPendingCountsHeader))
-				_, err := io.WriteString(w, `{"accounts":[],"counts_pending":true}`)
+				_, err := io.WriteString(w, `{"accounts":[]}`)
 				assert.NoError(err)
 			case "DELETE /api/v1/saved-views/42":
 				assert.NotEmpty(r.Header.Get("If-Match"))
@@ -58,9 +58,8 @@ func TestNativeMCPBridge(t *testing.T) {
 		client, err := newDaemonCLIClient(ctx, daemonclient.Config{URL: nativeMCPOrigin, APIKey: "owner", AllowInsecure: true, HTTPClient: &http.Client{Transport: transport}})
 		require.NoError(err)
 		defer func() { require.NoError(client.Close()) }()
-		_, pending, err := client.GetCLIAccounts(ctx)
+		_, err = client.GetCLIAccounts(ctx)
 		require.NoError(err)
-		assert.True(pending)
 		require.NoError(client.DeleteSavedView(ctx, 42, 1))
 		_, err = client.GetKataIssueContext(ctx, "project#abcd", generated.GetKataIssueContextQuery{})
 		require.NoError(err)

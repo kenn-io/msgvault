@@ -49,6 +49,7 @@ export class CardDAVController {
   syncError = $state<string | null>(null);
   syncStatus = $state<string | null>(null);
   syncUnknown = $state(false);
+  bindingConflicts = $state<number>();
   bookError = $state<string | null>(null);
   bookStatus = $state<string | null>(null);
   booksUnknown = $state(false);
@@ -248,6 +249,7 @@ export class CardDAVController {
     this.syncPending = true;
     this.syncError = null;
     this.syncStatus = null;
+    this.bindingConflicts = undefined;
     this.pollDelay = MIN_POLL_MS;
     this.schedulePoll(MIN_POLL_MS);
     let succeeded = false;
@@ -266,6 +268,7 @@ export class CardDAVController {
         succeeded = data.status === undefined || data.status === 'succeeded';
         refreshBooks = succeeded || data.status === 'partial';
         reconcile = true;
+        this.bindingConflicts = data.binding_conflicts;
         if (!succeeded) {
           const names = (data.connections ?? [])
             .filter((outcome) => outcome.status !== 'succeeded')

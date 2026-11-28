@@ -38,14 +38,22 @@ else
     exit 1
   fi
   locked_commit="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["commit"])' "$lock_path")"
+  # A source copy without Git metadata, such as the Web UI capture's, fetches
+  # into a scratch repository instead of the checkout.
+  fixture_git="$repo_root"
+  if ! git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1; then
+    fixture_git="$(mktemp -d)"
+    trap 'rm -rf "$fixture_git"' EXIT
+    git -C "$fixture_git" init -q
+  fi
   fixture_ref="refs/msgvault-fixtures/docs-fixtures"
-  git -C "$repo_root" fetch --no-tags https://github.com/kenn-io/msgvault.git "+refs/heads/docs-fixtures:$fixture_ref" >/dev/null
-  git -C "$repo_root" cat-file -e "$locked_commit^{commit}"
-  if ! git -C "$repo_root" merge-base --is-ancestor "$locked_commit" "$fixture_ref"; then
+  git -C "$fixture_git" fetch -q --no-tags https://github.com/kenn-io/msgvault.git "+refs/heads/docs-fixtures:$fixture_ref"
+  git -C "$fixture_git" cat-file -e "$locked_commit^{commit}"
+  if ! git -C "$fixture_git" merge-base --is-ancestor "$locked_commit" "$fixture_ref"; then
     printf 'locked fixture commit is not an ancestor of %s\n' "$fixture_ref" >&2
     exit 1
   fi
-  git -C "$repo_root" archive "$locked_commit" | tar -xf - -C "$output_dir"
+  git -C "$fixture_git" archive "$locked_commit" | tar -xf - -C "$output_dir"
 fi
 
 python3 "$script_dir/validate-fixture.py" --fixture-dir "$output_dir"

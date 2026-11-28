@@ -19,6 +19,12 @@ import (
 // Allow Kit's 51 five-second checkpoint busy waits plus retry backoff and cleanup.
 const backupFreezeWatchdogTimeout = 5 * time.Minute
 
+// backupFreezeQuiesceTimeout bounds how long Begin waits for daemon-owned
+// readers outside the operation gate, such as analytics cache builds, to stop.
+// Stopping is a context cancellation and a lock wait, so a reader still
+// running after this long is reported to the backup instead of waited for.
+const backupFreezeQuiesceTimeout = 30 * time.Second
+
 const (
 	backupFreezeBeginPath = "/api/v1/backup/freeze/begin"
 	backupFreezeEndPath   = "/api/v1/backup/freeze/end"
@@ -91,9 +97,12 @@ type backupFreezeEndResponse struct{}
 
 // handleBackupFreezeBegin opens a backup freeze window: it acquires the
 // daemon's operation gate itself (the gate middleware exempts this path; see
-// operationGateExemptPaths) and returns a token identifying the window. The
-// caller must present that token to End. A second Begin while a freeze is
-// already active is rejected without touching the gate.
+// operationGateExemptPaths), stops daemon readers that bypass the gate
+// through backupQuiesce, and returns a token identifying the window. If those
+// readers do not stop in time, Begin releases the gate and fails with
+// backup_readers_busy naming them, so the backup never starts a checkpoint
+// they would block. The caller must present the token to End. A second Begin
+// while a freeze is already active is rejected without touching the gate.
 func (s *Server) handleBackupFreezeBegin(w http.ResponseWriter, r *http.Request) {
 	if s.requestAuthentication(r).Mode != AuthModeCaller && (!isSameHostRequest(r) || !s.apiRequestAuthorized(r)) {
 		writeError(w, http.StatusNotFound, "not_found", "No route matches "+r.Method+" "+r.URL.Path)
@@ -125,10 +134,30 @@ func (s *Server) handleBackupFreezeBegin(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	release := done
+	if s.backupQuiesce != nil {
+		quiesceCtx, cancelQuiesce := context.WithTimeout(r.Context(), backupFreezeQuiesceTimeout)
+		resume, err := s.backupQuiesce(quiesceCtx)
+		cancelQuiesce()
+		if err != nil {
+			done()
+			state.mu.Lock()
+			state.active = false
+			state.mu.Unlock()
+			s.logger.Warn("backup freeze could not stop daemon archive readers", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "backup_readers_busy", err.Error())
+			return
+		}
+		release = func() {
+			resume()
+			done()
+		}
+	}
+
 	token := pack.NewPackID()
 	state.mu.Lock()
 	state.token = token
-	state.release = done
+	state.release = release
 	state.watchdog = time.AfterFunc(backupFreezeWatchdogTimeout, func() {
 		s.releaseBackupFreezeOnWatchdog(token)
 	})

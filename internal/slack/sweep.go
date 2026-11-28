@@ -216,17 +216,18 @@ func (imp *Importer) scheduleCanonicalThreadAudit(targets map[string]sweepTarget
 			cs.CatchUpCursor != "" || cs.CatchUpLatest != "" {
 			continue
 		}
-		if cs.AuditedThrough != "" && tsLess(cutoff, cs.AuditedThrough) {
+		stamp := cs.auditSettledAt()
+		if stamp != "" && tsLess(cutoff, stamp) {
 			continue
 		}
-		candidateOlder := cs.AuditedThrough == "" && selectedStamp != ""
-		sameMissingStamp := cs.AuditedThrough == "" && selectedStamp == ""
-		sameKnownStamp := cs.AuditedThrough != "" && cs.AuditedThrough == selectedStamp
+		candidateOlder := stamp == "" && selectedStamp != ""
+		sameMissingStamp := stamp == "" && selectedStamp == ""
+		sameKnownStamp := stamp != "" && stamp == selectedStamp
 		if selected == "" || candidateOlder ||
-			(cs.AuditedThrough != "" && selectedStamp != "" && tsLess(cs.AuditedThrough, selectedStamp)) ||
+			(stamp != "" && selectedStamp != "" && tsLess(stamp, selectedStamp)) ||
 			((sameMissingStamp || sameKnownStamp) && cid < selected) {
 			selected = cid
-			selectedStamp = cs.AuditedThrough
+			selectedStamp = stamp
 		}
 	}
 	if selected == "" {

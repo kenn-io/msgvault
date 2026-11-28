@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, EmptyState, formatShortcutKeys, KbdBadge, Modal, SearchInput } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, formatShortcutKeys, KbdBadge, Modal, overlayScrollbars, SearchInput } from '@kenn-io/kit-ui';
 
   import type { AppCommand } from '../../commands/registry';
 
@@ -33,7 +33,7 @@
       />
     </div>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable shortcut lists need keyboard access.) -->
-    <div class="keyboard-help-list" role="region" aria-label="Keyboard shortcut list" tabindex="0" aria-live="polite">
+    <div class="keyboard-help-list" role="region" aria-label="Keyboard shortcut list" tabindex="0" aria-live="polite" {@attach overlayScrollbars({ axis: 'y' })}>
       {#if filtered.length === 0}
         <EmptyState title={`No shortcuts match "${query.trim()}"`}>
           <Button label="Search commands instead" onclick={() => onOpenCommands(query)} />

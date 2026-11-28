@@ -25,7 +25,12 @@ func TestListMatrixRetryableAttachmentMessagesIncludesDeletedAndFailedAndClampsL
 		messageID, err := s.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: string(rune('a' + len(ids))), MessageType: "matrix"})
 		req.NoError(err)
 		ids = append(ids, messageID)
-		req.NoError(s.ReplaceMessageMatrixAttachments(t.Context(), messageID, []store.AttachmentRef{{SourceAttachmentID: "matrix:mxc://example.org/media", StoragePath: "mxc://example.org/media", State: state}}))
+		ref := store.AttachmentRef{SourceAttachmentID: "matrix:mxc://example.org/media", StoragePath: "mxc://example.org/media", State: state}
+		if state == attachmentpolicy.StateStored {
+			ref.ContentHash = strings.Repeat("ab", 32)
+			ref.StoragePath = ref.ContentHash[:2] + "/" + ref.ContentHash
+		}
+		req.NoError(s.ReplaceMessageMatrixAttachments(t.Context(), messageID, []store.AttachmentRef{ref}))
 	}
 	req.NoError(s.MarkMessageDeleted(source.ID, "c"))
 	items, err := s.ListMatrixRetryableAttachmentMessagesContext(t.Context(), source.ID, 0, 100, attachmentpolicy.Policy{})

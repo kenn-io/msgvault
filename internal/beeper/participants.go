@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/beeperidentity"
@@ -45,9 +46,12 @@ type participantResolver struct {
 	// accountID is the authoritative Beeper account selected by the import.
 	// Beeper user IDs are only unique inside that account, so every persisted
 	// fallback identifier and every run-local cache key must carry it.
-	accountID string
-	rich      map[string]richEntry // phone/email-based resolutions
-	fallback  map[string]int64     // bare-ID fallbacks; upgraded when metadata appears
+	accountID    string
+	rich         map[string]richEntry // phone/email-based resolutions
+	fallback     map[string]int64     // bare-ID fallbacks; upgraded when metadata appears
+	mergedAway   map[int64]bool       // participants merged away this run; made on first merge
+	messageUsers map[string]User
+	roomOwners   map[string]bool
 }
 
 func newParticipantResolver(s *store.Store, accountIDs ...string) *participantResolver {
@@ -98,15 +102,13 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 		// same Beeper user, so fold the email participant's history into the
 		// phone one (which dedupes with SMS/WhatsApp archives).
 		if e, ok := r.rich[identifier]; ok && e.pid != pid {
-			if err := r.store.MergeParticipantsContext(ctx, e.pid, pid); err != nil {
-				if !errors.Is(err, store.ErrPersonBindingConflict) {
-					return 0, err
-				}
-				slog.Warn("skipping Beeper participant merge across durable persons",
-					"loser_participant_id", e.pid, "winner_participant_id", pid, "error", err)
+			kept, err := r.mergeInto(ctx, e.pid, pid)
+			if err != nil {
+				return 0, err
 			}
+			pid = kept
 		}
-		return pid, r.recordRich(ctx, identifier, pid, true)
+		return r.recordRich(ctx, identifier, pid, true)
 	case strings.Contains(u.Email, "@"):
 		// Never downgrade: if a prior run already resolved this Beeper user
 		// by phone, an email-only sighting must keep pointing at that
@@ -124,7 +126,7 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 		if err != nil {
 			return 0, err
 		}
-		return pid, r.recordRich(ctx, identifier, pid, false)
+		return r.recordRich(ctx, identifier, pid, false)
 	default:
 		return r.resolveID(ctx, u.ID, u.FullName)
 	}
@@ -135,36 +137,95 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 // caches) resolve bare sender IDs to the same person. When a weak (bare-ID-only)
 // participant already owns the identifier, its history — messages, reactions,
 // membership — is merged into the rich participant rather than left split.
-func (r *participantResolver) recordRich(ctx context.Context, userID string, pid int64, byPhone bool) error {
+func (r *participantResolver) recordRich(ctx context.Context, userID string, pid int64, byPhone bool) (int64, error) {
 	prev, hasPhone, err := r.store.ParticipantByIdentifierContext(ctx, participantIdentifierType, userID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// A prior owner without a phone — a bare-ID fallback or an email-only
 	// resolution — is the same Beeper user seen with weaker metadata: fold
 	// its history into this resolution. A phone-bearing owner whose number
 	// differs is left un-merged (conservative: numbers can be recycled).
 	if prev != 0 && prev != pid && !hasPhone {
-		if err := r.store.MergeParticipantsContext(ctx, prev, pid); err != nil {
-			if !errors.Is(err, store.ErrPersonBindingConflict) {
-				return err
-			}
-			slog.Warn("skipping Beeper participant merge across durable persons",
-				"loser_participant_id", prev, "winner_participant_id", pid, "error", err)
+		if pid, err = r.mergeInto(ctx, prev, pid); err != nil {
+			return 0, err
 		}
 	}
 	if err := r.store.SetParticipantIdentifierContext(ctx, pid, participantIdentifierType, userID); err != nil {
-		return err
+		return 0, err
 	}
 	r.rich[userID] = richEntry{pid: pid, byPhone: byPhone}
 	delete(r.fallback, userID)
-	return nil
+	return pid, nil
+}
+
+// mergeInto folds loser into winner and returns the participant that keeps
+// the Beeper ID. Durable persons never combine, and the ID moves to the winner
+// anyway. An email address held by a third participant blocks the merge, so
+// the ID stays with the loser and CardDAV can still report the conflict.
+func (r *participantResolver) mergeInto(ctx context.Context, loser, winner int64) (int64, error) {
+	err := r.store.MergeParticipantsContext(ctx, loser, winner)
+	switch {
+	case err == nil:
+		r.forgetMerged(loser)
+		return winner, nil
+	case errors.Is(err, store.ErrIdentifierAddressConflict):
+		return loser, nil
+	case errors.Is(err, store.ErrPersonBindingConflict):
+		slog.Warn("skipping Beeper participant merge across durable persons",
+			"loser_participant_id", loser, "winner_participant_id", winner, "error", err)
+		return winner, nil
+	}
+	return 0, err
 }
 
 // resolveID resolves a bare Beeper user ID (message sender, mention, reactor)
 // with an optional display name. Cache misses fall through to rung 3 of the
 // ladder since no phone/email is available on bare IDs.
 func (r *participantResolver) resolveID(ctx context.Context, userID, displayName string) (int64, error) {
+	if user, ok := r.messageUsers[userID]; ok {
+		delete(r.messageUsers, userID)
+		r.forgetUser(userID)
+		return r.resolveUser(ctx, &user)
+	}
+	return r.resolveIDFallback(ctx, userID, displayName)
+}
+
+func (r *participantResolver) forgetUser(userID string) {
+	key := r.identifierForUser(userID)
+	delete(r.rich, key)
+	delete(r.fallback, key)
+}
+
+// rememberRosterOwner skips owners merged away during this run.
+func (r *participantResolver) rememberRosterOwner(userID string, owner int64) {
+	r.forgetUser(userID)
+	if !r.mergedAway[owner] {
+		r.fallback[r.identifierForUser(userID)] = owner
+	}
+}
+
+// forgetMerged drops cached entries for a deleted participant, so the next
+// lookup reads the identifier's current owner. The loser is never cached again
+// this run.
+func (r *participantResolver) forgetMerged(loser int64) {
+	if r.mergedAway == nil {
+		r.mergedAway = make(map[int64]bool)
+	}
+	r.mergedAway[loser] = true
+	for key, e := range r.rich {
+		if e.pid == loser {
+			delete(r.rich, key)
+		}
+	}
+	for key, pid := range r.fallback {
+		if pid == loser {
+			delete(r.fallback, key)
+		}
+	}
+}
+
+func (r *participantResolver) resolveIDFallback(ctx context.Context, userID, displayName string) (int64, error) {
 	if userID == "" {
 		return 0, nil
 	}
@@ -187,6 +248,50 @@ func (r *participantResolver) resolveID(ctx context.Context, userID, displayName
 	}
 	r.fallback[identifier] = pid
 	return pid, nil
+}
+
+func (r *participantResolver) useMessageRoster(ctx context.Context, sourceID int64, ch *Chat, enabled bool) error {
+	r.messageUsers = nil
+	for key := range r.roomOwners {
+		delete(r.fallback, key)
+	}
+	r.roomOwners = nil
+	if !enabled {
+		return nil
+	}
+	receipts, err := r.store.BeeperRosterReceiptsContext(ctx, sourceID, rosterProvider(ch.ID))
+	if err != nil {
+		return err
+	}
+	r.roomOwners = make(map[string]bool, len(receipts))
+	for key, receipt := range receipts {
+		delete(r.rich, key)
+		delete(r.fallback, key)
+		if !strings.HasPrefix(receipt.Checksum, store.BeeperRosterRichPrefix) {
+			continue
+		}
+		owner, err := strconv.ParseInt(receipt.Name, 10, 64)
+		if err == nil && owner > 0 && !r.mergedAway[owner] {
+			r.fallback[key] = owner
+			r.roomOwners[key] = true
+		}
+	}
+	bridgePrefix := participantBridgePrefix(ch.Participants.Items)
+	for _, item := range ch.Participants.Items {
+		if strings.HasPrefix(item.PhoneNumber, "+") || strings.Contains(item.Email, "@") {
+			key := r.identifierForUser(item.ID)
+			receipt := receipts[key]
+			owner := r.fallback[key]
+			if owner != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(rosterMemberInputs(&item, ch, r.accountID, bridgePrefix), owner) {
+				continue
+			}
+		}
+		if r.messageUsers == nil {
+			r.messageUsers = make(map[string]User)
+		}
+		r.messageUsers[item.ID] = item.User
+	}
+	return nil
 }
 
 // adoptLegacyIdentifier upgrades an existing unscoped Beeper identifier in

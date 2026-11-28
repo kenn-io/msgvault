@@ -15,6 +15,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"go.kenn.io/kit/agentsetup"
+	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -81,9 +83,10 @@ type laneStatus struct {
 
 // laneReport is the complete report printed by both setup subcommands.
 type laneReport struct {
-	ConfigPath string       `json:"config_path"`
-	Lanes      []laneStatus `json:"lanes"`
-	MCPTools   []string     `json:"mcp_tools_live"`
+	ConfigPath string           `json:"config_path"`
+	Lanes      []laneStatus     `json:"lanes"`
+	MCPTools   []string         `json:"mcp_tools_live"`
+	Agents     []agentsetup.Row `json:"agents,omitempty"`
 }
 
 // setupConsentState is a best-effort view of recorded consents. A nil
@@ -103,6 +106,7 @@ type setupEnvironment struct {
 	fileExists  func(string) bool
 	consent     *setupConsentState
 	credentials providercredentials.Snapshot
+	googleADC   func() error
 }
 
 func (e setupEnvironment) hasEnv(name string) bool {
@@ -111,6 +115,16 @@ func (e setupEnvironment) hasEnv(name string) bool {
 	}
 	value, ok := e.lookupEnv(name)
 	return ok && strings.TrimSpace(value) != ""
+}
+
+func (e setupEnvironment) googleCredentialError() error {
+	if e.googleADC != nil {
+		return e.googleADC()
+	}
+	if _, err := embedclient.GoogleHTTPClient(); err != nil {
+		return fmt.Errorf("create Google embedding client: %w", err)
+	}
+	return nil
 }
 
 func (e setupEnvironment) reportMissingCredential(lane *laneStatus, name string) {
@@ -246,17 +260,20 @@ func setupVisualConsent(ctx context.Context, cfg *config.Config, st *store.Store
 	if err != nil {
 		return false
 	}
-	providerConfig, err := visualVoyageConfig(vecCfg)
-	if err != nil {
-		return false
-	}
-	policy, err := providerConfig.Policy()
-	if err != nil {
-		return false
-	}
-	policyFingerprint, err := policy.Fingerprint(providerConfig.Manifest)
-	if err != nil {
-		return false
+	policyFingerprint := vecCfg.MultimodalGenerationFingerprint()
+	if vecCfg.Multimodal.Provider == "voyage" {
+		providerConfig, err := visualVoyageConfig(vecCfg)
+		if err != nil {
+			return false
+		}
+		policy, err := providerConfig.Policy()
+		if err != nil {
+			return false
+		}
+		policyFingerprint, err = policy.Fingerprint(providerConfig.Manifest)
+		if err != nil {
+			return false
+		}
 	}
 	fingerprint := vecCfg.MultimodalGenerationFingerprint()
 	for _, read := range []func(context.Context) (store.VisualGeneration, error){st.ActiveVisualGeneration, st.BuildingVisualGeneration} {
@@ -409,6 +426,20 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 			env.reportVectorCredential(&lane, providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv)
 			return lane
 		}
+		if multimodal.UsesKit() {
+			lane.Reason = "Endpoint: " + multimodal.Endpoint
+			if multimodal.Provider == "vertex" && env.googleCredentialError() != nil {
+				lane.State = laneStatePending
+				lane.Reason += "; Google Application Default Credentials are unavailable"
+			} else if multimodal.Provider == "kit" {
+				env.reportVectorCredential(&lane, providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv)
+			}
+			if lane.State != laneStatePending && lane.Consent != consentActive {
+				lane.State = laneStatePending
+				lane.Next = []string{"msgvault multimodal build --yes"}
+			}
+			return lane
+		}
 		if multimodal.CapabilitiesFile == "" {
 			lane.State = laneStatePending
 			lane.Reason = "capabilities_file is unset; setup providers can configure a validated default manifest"
@@ -432,6 +463,10 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		return lane
 	}
 	lane.State = laneStateOff
+	if multimodal.UsesKit() {
+		lane.Reason = "Endpoint: " + multimodal.Endpoint
+		return lane
+	}
 	if err := multimodal.Validate(); err != nil {
 		lane.State = laneStatePending
 		lane.Reason = "invalid visual configuration: " + err.Error()
@@ -605,6 +640,12 @@ func writeLaneReport(w io.Writer, report laneReport, jsonOutput bool) error {
 	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintf(w, "MCP tools live with this configuration: %s\n", strings.Join(report.MCPTools, ", "))
+	if len(report.Agents) > 0 {
+		_, _ = fmt.Fprintln(w, "\nAgents:")
+		if err := (agentsetup.Report{Rows: report.Agents}).WriteText(w, ""); err != nil {
+			return fmt.Errorf("write agent report: %w", err)
+		}
+	}
 	_, _ = fmt.Fprintf(w, "Config: %s\n", report.ConfigPath)
 	return nil
 }

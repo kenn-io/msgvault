@@ -31,7 +31,7 @@ func sourceOperationalDefinitions() []operationalDefinition {
 	return []operationalDefinition{
 		newOperationalDefinition(ToolListChanges, "Read a resumable page of message changes, optionally scoped to a person, sources, conversations or incoming messages. A page can be empty while has_more is true. A filtered cursor only works with the same filters.", OperationFamilySources, closedObject(map[string]*jsonschema.Schema{
 			"cursor":           stringSchema("Cursor returned by the previous page"),
-			"limit":            boundedIntegerSchema("Maximum matching messages", 1, 500),
+			toolArgLimit:       boundedIntegerSchema("Maximum matching messages", 1, 500),
 			"person_id":        safeIDSchema("Durable person ID"),
 			"source_ids":       {Type: schemaTypeArray, Items: safeIDSchema("Source ID")},
 			"conversation_ids": {Type: schemaTypeArray, Items: safeIDSchema("Conversation ID")},

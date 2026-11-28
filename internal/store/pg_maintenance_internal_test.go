@@ -571,3 +571,60 @@ func TestConversationPolicyMaintenanceLock(t *testing.T) {
  `).Scan(&locked))
 	assert.True(t, locked, "account removal must fence conversation policy writers")
 }
+
+// TestSourceWriteTxDoesNotDeadlockWithSerializedSourceRemoval holds a source
+// removal between its two lock steps: BeginExclusive takes the identity row,
+// then locks sync_runs and the other cascade tables. A page transaction that
+// starts in between must wait on the identity row without holding sync_runs,
+// or the removal's LOCK TABLE and the page deadlock. The removal's steps run
+// by hand because BeginExclusive offers no point to pause between them.
+func TestSourceWriteTxDoesNotDeadlockWithSerializedSourceRemoval(t *testing.T) {
+	require := require.New(t)
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
+	ctx := t.Context()
+	source, err := st.GetOrCreateSource("discord", "900000000000000001")
+	require.NoError(err)
+	removed, err := st.GetOrCreateSource("discord", "900000000000000002")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "900000000000000003", "channel", "general")
+	require.NoError(err)
+
+	removal, err := st.DB().Conn(ctx)
+	require.NoError(err)
+	defer func() { _ = removal.Close() }()
+	_, err = removal.ExecContext(ctx, "BEGIN")
+	require.NoError(err)
+	defer func() { _, _ = removal.ExecContext(context.WithoutCancel(ctx), "ROLLBACK") }()
+	_, err = removal.ExecContext(ctx, "UPDATE archive_metadata SET value = value WHERE key = $1", identityRevisionKey)
+	require.NoError(err)
+	var removalPID int
+	require.NoError(removal.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&removalPID))
+
+	pageDone := make(chan error, 1)
+	go func() {
+		pageDone <- st.WithSourceWriteTxContext(ctx, source.ID, func(ctx context.Context) error {
+			_, err := st.UpsertMessageContext(ctx, &Message{
+				SourceID: source.ID, ConversationID: conversationID,
+				SourceMessageID: "900000000000000004", MessageType: "discord",
+			})
+			return err
+		})
+	}()
+	require.Eventually(func() bool {
+		var waiting bool
+		err := st.DB().QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE datname = current_database() AND pid <> $1 AND wait_event_type = 'Lock')`,
+			removalPID).Scan(&waiting)
+		return err == nil && waiting
+	}, 10*time.Second, 10*time.Millisecond, "the page transaction must wait on the removal")
+
+	_, err = removal.ExecContext(ctx, "LOCK TABLE "+strings.Join(exclusiveLockTables, ", ")+" IN EXCLUSIVE MODE")
+	require.NoError(err, "the removal must take its table locks while the page waits")
+	_, err = removal.ExecContext(ctx, "DELETE FROM sources WHERE id = $1", removed.ID)
+	require.NoError(err)
+	_, err = removal.ExecContext(ctx, "COMMIT")
+	require.NoError(err)
+	require.NoError(<-pageDone)
+}

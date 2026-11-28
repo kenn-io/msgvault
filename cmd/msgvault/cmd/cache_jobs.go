@@ -28,6 +28,13 @@ type cacheBuildJobs struct {
 	jobs                map[string]api.CacheBuildStatus
 	completed           []string
 	wg                  sync.WaitGroup
+	// paused holds new builds while a backup freeze checkpoints the archive.
+	// runCancel and runDone belong to the current build, if any.
+	paused    bool
+	runCancel context.CancelFunc
+	runDone   chan struct{}
+	// followers maps a queued job to interrupted jobs that finish with it.
+	followers map[string][]string
 }
 
 // verifyWhenDue queues a full staleness check in the builder subprocess.
@@ -119,7 +126,7 @@ func (m *cacheBuildJobs) acceptWithFollowup(mode buildCacheMode, afterWrite bool
 		JobID: uuid.NewString(), Status: api.CacheBuildQueued, AcceptedAt: now.UTC(),
 	}
 	m.jobs[job.JobID] = job
-	if m.current != "" {
+	if m.current != "" || m.paused {
 		m.pending, m.pendingMode = job.JobID, mode
 		return job, nil
 	}
@@ -135,13 +142,15 @@ func (m *cacheBuildJobs) startLocked(id string, mode buildCacheMode) error {
 	if !ok {
 		return errors.New("daemon is shutting down")
 	}
+	runCtx, cancel := context.WithCancel(m.ctx)
 	m.current = id
+	m.runCancel, m.runDone = cancel, make(chan struct{})
 	m.wg.Add(1)
-	go m.execute(id, mode, done)
+	go m.execute(runCtx, id, mode, done)
 	return nil
 }
 
-func (m *cacheBuildJobs) execute(id string, mode buildCacheMode, done func()) {
+func (m *cacheBuildJobs) execute(runCtx context.Context, id string, mode buildCacheMode, done func()) {
 	defer m.wg.Done()
 	defer done()
 	m.mu.Lock()
@@ -149,8 +158,21 @@ func (m *cacheBuildJobs) execute(id string, mode buildCacheMode, done func()) {
 	job.Status = api.CacheBuildRunning
 	m.jobs[id] = job
 	m.mu.Unlock()
-	err := m.run(m.ctx, mode)
+	err := m.run(runCtx, mode)
 	m.mu.Lock()
+	interrupted := m.ctx.Err() == nil && runCtx.Err() != nil
+	m.runCancel()
+	close(m.runDone)
+	m.runCancel, m.runDone = nil, nil
+	if interrupted {
+		m.requeueInterruptedLocked(id, mode)
+		// A freeze that gave up waiting already resumed; run the job now.
+		if !m.paused {
+			m.dispatchPendingLocked()
+		}
+		m.mu.Unlock()
+		return
+	}
 	finishedAt := time.Now().UTC()
 	var failure string
 	if err != nil {
@@ -171,7 +193,7 @@ func (m *cacheBuildJobs) execute(id string, mode buildCacheMode, done func()) {
 	if m.current == id {
 		m.current = ""
 	}
-	if m.pending != "" {
+	if m.pending != "" && !m.paused {
 		pending, pendingMode := m.pending, m.pendingMode
 		m.pending = ""
 		m.pendingMode = buildCacheModeDefault
@@ -192,6 +214,76 @@ func (m *cacheBuildJobs) execute(id string, mode buildCacheMode, done func()) {
 	m.mu.Unlock()
 }
 
+// requeueInterruptedLocked handles a build a backup freeze stopped. The job
+// returns to the queue and runs again after resume, unless a later request is
+// already queued. That later build reads a newer snapshot and covers this one,
+// so this job stays queued and finishes with the later build's outcome.
+func (m *cacheBuildJobs) requeueInterruptedLocked(id string, mode buildCacheMode) {
+	m.current = ""
+	job := m.jobs[id]
+	job.Status = api.CacheBuildQueued
+	m.jobs[id] = job
+	if m.pending != "" {
+		if m.followers == nil {
+			m.followers = make(map[string][]string)
+		}
+		m.followers[m.pending] = append(m.followers[m.pending], id)
+		if mode != buildCacheModeScheduledAuto && m.pendingMode == buildCacheModeScheduledAuto {
+			m.pendingMode = mode
+		}
+		return
+	}
+	m.pending, m.pendingMode = id, mode
+}
+
+// pause cancels the current build, waits for it to return, and holds new
+// builds until the returned resume is called. The interrupted build stays
+// queued under its job ID. On error the jobs are already resumed.
+func (m *cacheBuildJobs) pause(ctx context.Context) (func(), error) {
+	if m == nil {
+		return func() {}, nil
+	}
+	m.mu.Lock()
+	m.paused = true
+	cancel, runDone := m.runCancel, m.runDone
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		select {
+		case <-runDone:
+		case <-ctx.Done():
+			m.resume()
+			return nil, ctx.Err()
+		}
+	}
+	var once sync.Once
+	return func() { once.Do(m.resume) }, nil
+}
+
+func (m *cacheBuildJobs) resume() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.paused = false
+	m.dispatchPendingLocked()
+}
+
+// dispatchPendingLocked starts the queued job when no build is running.
+func (m *cacheBuildJobs) dispatchPendingLocked() {
+	if m.current != "" || m.pending == "" {
+		return
+	}
+	pending, pendingMode := m.pending, m.pendingMode
+	m.pending = ""
+	m.pendingMode = buildCacheModeDefault
+	if m.ctx.Err() != nil {
+		m.finishLocked(pending, "daemon is shutting down", time.Now().UTC())
+		return
+	}
+	if err := m.startLocked(pending, pendingMode); err != nil {
+		m.finishLocked(pending, err.Error(), time.Now().UTC())
+	}
+}
+
 // Keep the last 100 completions. Running and queued jobs are never evicted.
 func (m *cacheBuildJobs) finishLocked(id, failure string, finishedAt time.Time) {
 	job := m.jobs[id]
@@ -206,6 +298,11 @@ func (m *cacheBuildJobs) finishLocked(id, failure string, finishedAt time.Time) 
 	if len(m.completed) > 100 {
 		delete(m.jobs, m.completed[0])
 		m.completed = m.completed[1:]
+	}
+	followers := m.followers[id]
+	delete(m.followers, id)
+	for _, follower := range followers {
+		m.finishLocked(follower, failure, finishedAt)
 	}
 }
 

@@ -1,14 +1,18 @@
 package slack
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -246,6 +250,53 @@ func TestDownloadFileRefusesOffHostAndFollowsRedirect(t *testing.T) {
 	require.NoError(err)
 	require.Len(rt.authHeaders, 2)
 	assert.Equal("Bearer xoxp-test", rt.authHeaders[1])
+}
+
+// TestDownloadFileRequestsIdentityEncoding runs the real HTTP transport
+// against a TLS server standing in for both Slack hosts. The transport adds
+// "Accept-Encoding: gzip" on its own unless the request names an encoding, and
+// Slack's delivery host drops gzip downloads of large text files partway.
+func TestDownloadFileRequestsIdentityEncoding(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	var mu sync.Mutex
+	encodings := map[string]string{}
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		encodings[r.Host] = r.Header.Get("Accept-Encoding")
+		mu.Unlock()
+		if r.Host == mediaHost {
+			http.Redirect(w, r, "https://slack-files.com/files-pri-safe/a.html?c=signed", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte("<html>saved page</html>"))
+	}))
+	t.Cleanup(srv.Close)
+
+	// Send both hostnames to the test server, whose certificate names
+	// example.com.
+	base, ok := srv.Client().Transport.(*http.Transport)
+	require.True(ok, "httptest client transport")
+	tr := base.Clone()
+	tr.TLSClientConfig.ServerName = "example.com"
+	tr.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}
+	c := NewClient("", "xoxp-test")
+	c.mediaTransport = tr
+
+	data, err := c.DownloadFile(t.Context(), "https://files.slack.com/files-pri/T01-F01/a.html", 100)
+	require.NoError(err)
+	assert.Equal("<html>saved page</html>", string(data))
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(map[string]string{
+		mediaHost:         "identity",
+		"slack-files.com": "identity",
+	}, encodings)
 }
 
 func TestDownloadFileRefusesCleartextRedirect(t *testing.T) {

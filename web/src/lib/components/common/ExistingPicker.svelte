@@ -24,12 +24,12 @@
 <style>
   /* List items at the body's full width, with no box of its own: 32 for a name, 54 for a name over its
    * Meta detail. The list pulls out by its items' padding, so a name starts on the body's line and the
-   * hover fill reaches 4 from the dialog's edge; on the right it stops short of the bar's gutter. */
+   * hover fill reaches 4 from the dialog's edges on both sides. */
   .results {
     --list-item-pad-x: var(--space-group);
     display: grid;
     min-width: 0;
-    margin: 0 calc(-1 * min(var(--list-item-pad-x), var(--pane-pad-x) - var(--scrollbar-gutter-size))) 0 calc(-1 * var(--list-item-pad-x));
+    margin: 0 calc(-1 * var(--list-item-pad-x));
     padding: 0;
     list-style: none;
   }

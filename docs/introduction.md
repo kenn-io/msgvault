@@ -4,14 +4,14 @@ title: Introduction
 description: Why msgvault was created and what problem it solves.
 ---
 
-msgvault is a local-first archive for communications and relationships. To
-start using it, follow [Setup](setup.md) or [Choose a Source](guides/sources.md).
-For the current product overview, visit [msgvault.io](https://msgvault.io/).
+msgvault is a local-first archive for your communications and relationships. To
+get started, follow [Setup](setup.md) or [Choose a source](guides/sources.md).
+For a current overview of the product, visit [msgvault.io](https://msgvault.io/).
 
 ## Why I built msgvault
 
-The story below explains the project's origin. Current capabilities and release
-status are maintained in the [documentation index](index.md) and
+The note below tells how the project started. For current capabilities and
+release status, check the [documentation index](index.md) and
 [changelog](changelog.md).
 
 I have been living in my e-mail inbox for more than 30 years since the
@@ -37,7 +37,7 @@ This means:
 I started with Gmail but I want all my life's messages in this system,
 including Google Calendar, Microsoft Teams, Discord guilds, Slack workspaces,
 Beeper Desktop chats, Omi, Granola, Plaud, Circleback, Notion, and Muesli meeting notes,
-Twilio and Twenty call recordings,
+Twilio, Bland, and Twenty call recordings,
 WhatsApp, iMessage, Google Voice, Facebook Messenger,
 SMS Backup & Restore archives, and old local email
 archives.

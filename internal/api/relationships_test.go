@@ -130,11 +130,13 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 	for i := range 3 {
 		addMessage(relOwnerID, relAliceID, true, "email", now.AddDate(0, 0, -(3-i)))
 	}
-	addMessage(relOwnerID, relAliceID, false, "calendar_event", now.AddDate(0, 0, -2))
+	addMessage(relOwnerID, relAliceID, false, "meeting_transcript", now.AddDate(0, 0, -2))
 	addMessage(relAlice2ID, relOwnerID, false, "imessage", now.AddDate(0, 0, -1))
 	for i := range 50 {
 		addMessage(relNewsletterID, relOwnerID, false, "email", now.AddDate(0, 0, -(10+i)))
 	}
+	sources := `(1::BIGINT, 'owner@example.com', 'gmail')`
+	owners := `(1::BIGINT, 1::BIGINT)`
 
 	tables := []struct {
 		dir, file, columns, values string
@@ -145,7 +147,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month",
 			values:  strings.Join(messageRows, ",\n"),
 		},
-		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: `(1::BIGINT, 'owner@example.com', 'gmail')`},
+		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: sources},
 		{
 			dir: "participants", file: "participants.parquet", columns: "id, email_address, domain, display_name, phone_number",
 			values: `(1::BIGINT, 'owner@example.com', 'example.com', 'Owner', ''),
@@ -160,7 +162,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 		{dir: "attachments", file: "attachments.parquet", columns: "attachment_id, message_id, size, filename", values: `(0::BIGINT, 0::BIGINT, 0::BIGINT, '')`, empty: true},
 		{dir: "conversations", file: "conversations.parquet", columns: "id, source_conversation_id, title, conversation_type", values: `(0::BIGINT, '', '', 'email')`, empty: true},
 		{dir: "conversation_participants", file: "conversation_participants.parquet", columns: "conversation_id, participant_id", values: `(0::BIGINT, 0::BIGINT)`, empty: true},
-		{dir: "owner_participants", file: "owner_participants.parquet", columns: "source_id, participant_id", values: `(1::BIGINT, 1::BIGINT)`},
+		{dir: "owner_participants", file: "owner_participants.parquet", columns: "source_id, participant_id", values: owners},
 		{
 			dir: "participant_clusters", file: "participant_clusters.parquet", columns: "participant_id, canonical_id",
 			values: `(2::BIGINT, 2::BIGINT), (3::BIGINT, 2::BIGINT)`,

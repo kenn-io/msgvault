@@ -76,6 +76,7 @@ type MergeResult struct {
 }
 
 // ContentHashCandidate holds message metadata for raw-MIME hash scans.
+// ICS payloads use UID identities; their bytes are not email delivery evidence.
 type ContentHashCandidate struct {
 	ID               int64
 	SourceID         int64
@@ -574,6 +575,9 @@ func (s *Store) MergeDuplicates(
 			if err := s.copyLoopDecisionTx(ctx, tx, dupID, survivorID); err != nil {
 				return err
 			}
+			if err := recordMeetingCopyTx(ctx, tx, dupID, survivorID); err != nil {
+				return err
+			}
 		}
 		if result.RawMIMEBackfilled > 0 {
 			if _, err := s.refreshEmailLinkageTx(ctx, tx, survivorID, emailLinkageInput{}); err != nil {
@@ -629,7 +633,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		FROM messages m
 		JOIN sources s ON s.id = m.source_id
 		JOIN message_raw mr ON mr.message_id = m.id
-		WHERE ` + LiveMessagesWhere("m", true)
+		WHERE ` + LiveMessagesWhere("m", true) + ` AND COALESCE(mr.raw_format, 'mime') <> 'ics'`
 	var args []any
 	if len(sourceIDs) > 0 {
 		placeholders := make([]string, len(sourceIDs))
@@ -787,6 +791,9 @@ func (s *Store) DeleteDedupedBatchesContext(
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		for _, batchID := range batchIDs {
+			if err := s.preservePurgedMeetingDecisions(ctx, tx, `delete_batch_id = ? AND deleted_at IS NOT NULL`, batchID); err != nil {
+				return err
+			}
 			result, err := tx.ExecContext(ctx, `
 				DELETE FROM messages
 				WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
@@ -894,6 +901,9 @@ func (s *Store) DeleteAllDedupedContext(
 			WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
 		`).Scan(&distinctBatches); err != nil {
 			return fmt.Errorf("delete all dedup-hidden: count batches: %w", err)
+		}
+		if err := s.preservePurgedMeetingDecisions(ctx, tx, `deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL`); err != nil {
+			return err
 		}
 
 		result, err := tx.ExecContext(ctx, `

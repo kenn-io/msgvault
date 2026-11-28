@@ -350,7 +350,7 @@ func TestSyncRecordsOneSucceededManualRunWithExactCounters(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 1}, result)
+	assert.Equal(SyncResult{Books: 1, Created: 1, BindingConflicts: new(0)}, result)
 
 	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
@@ -395,17 +395,22 @@ func TestSyncCancellationFinishesRunWithUncancelledCleanupContext(t *testing.T) 
 	t.Cleanup(server.Close)
 	service, st, _ := newPullService(t, server, true)
 	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
+	type outcome struct {
+		result SyncResult
+		err    error
+	}
+	done := make(chan outcome, 1)
 	go func() {
-		_, err := service.Sync(ctx, SyncOptions{})
-		done <- err
+		result, err := service.Sync(ctx, SyncOptions{})
+		done <- outcome{result, err}
 	}()
 	<-requestStarted
 	cancel()
 
-	err := <-done
+	completed := <-done
 	close(releaseRequest)
-	require.ErrorIs(err, context.Canceled)
+	require.ErrorIs(completed.err, context.Canceled)
+	assert.Nil(completed.result.BindingConflicts)
 	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(runs, 1)
@@ -445,7 +450,7 @@ func TestSyncTotalFailureRecordsSafeFailedTerminalState(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.Error(err)
-	assert.Equal(SyncResult{}, result)
+	assert.Equal(SyncResult{BindingConflicts: new(0)}, result)
 	assert.Equal("CardDAV server request failed.", err.Error())
 	runs, listErr := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(listErr)
@@ -506,7 +511,7 @@ func TestSyncJoinsExecutionAndFinishFailuresWithoutReplay(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.Error(err)
-	assert.Equal(SyncResult{}, result)
+	assert.Equal(SyncResult{BindingConflicts: new(0)}, result)
 	var statusErr *StatusError
 	require.ErrorAs(err, &statusErr, "execution error must remain inspectable")
 	require.ErrorContains(err, "injected finish failure")
@@ -1072,7 +1077,7 @@ func TestInitialSyncFallsBackToEnumeratedSnapshotWhenEmptyTokenIsRejected(t *tes
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
+	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
 	assert.Equal([]string{
 		"REPORT sync-collection ",
 		"PROPFIND 0",
@@ -1096,7 +1101,7 @@ func TestInitialSyncFallsBackToEnumeratedSnapshotWhenEmptyTokenIsRejected(t *tes
 	state.mu.Unlock()
 	result, err = service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Updated: 1}, result)
+	assert.Equal(SyncResult{Books: 1, Updated: 1, BindingConflicts: new(0)}, result)
 	assert.Equal([]string{
 		"REPORT sync-collection token-1",
 		"REPORT addressbook-multiget /books/personal/alice.vcf",
@@ -1118,7 +1123,7 @@ func TestGoogleInitialSyncSkipsEmptyTokenSyncCollection(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
+	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
 	assert.Equal([]string{
 		"PROPFIND 0",
 		"PROPFIND 1",
@@ -1138,7 +1143,7 @@ func TestGoogleInitialSyncSkipsEmptyTokenSyncCollection(t *testing.T) {
 	state.mu.Unlock()
 	result, err = service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1}, result)
+	assert.Equal(SyncResult{Books: 1, BindingConflicts: new(0)}, result)
 	assert.Equal([]string{"REPORT sync-collection token-1"}, state.requests)
 }
 
@@ -1165,7 +1170,7 @@ func TestGoogleInvalidTokenReconcileUsesEnumeratedSnapshot(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
+	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
 	assert.Equal([]string{
 		"PROPFIND 0",
 		"PROPFIND 1",
@@ -1263,7 +1268,7 @@ func TestGoogleSnapshotNeverUsesAddressbookQuery(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
+	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
 	assert.NotContains(state.requests, "REPORT addressbook-query",
 		"Google's empty addressbook-query must never become a replace-all plan")
 	assert.Equal([]string{
@@ -1290,7 +1295,7 @@ func TestEnumeratedSnapshotWarnsWhenCollectionOmitsSyncToken(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
+	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
 	assert.Contains(logged.String(), "level=WARN")
 	assert.Contains(logged.String(), "no sync token")
 	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
@@ -1304,7 +1309,7 @@ func TestEnumeratedSnapshotWarnsWhenCollectionOmitsSyncToken(t *testing.T) {
 	state.mu.Unlock()
 	result, err = service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1}, result)
+	assert.Equal(SyncResult{Books: 1, BindingConflicts: new(0)}, result)
 	assert.Equal([]string{
 		"PROPFIND 0",
 		"PROPFIND 1",
@@ -1363,4 +1368,34 @@ func (s *Service) dav() *davRemote {
 		panic("service does not use the CardDAV remote")
 	}
 	return remote
+}
+
+func TestCardDAVSyncPersistsBindingConflictCount(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	allowed := true
+	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+		BaseURL: "https://memory.test", Username: "alice", PrincipalURL: "https://memory.test/principal/", HomeURL: "https://memory.test/books/",
+		Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://memory.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}},
+	})
+	require.NoError(err)
+	_, err = st.EnsureParticipant("shared@example.test", "Shared", "example.test")
+	require.NoError(err)
+
+	remote := newMemoryRemote()
+	for _, uid := range []string{"first", "second"} {
+		body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + uid + "\r\nFN:Person\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n")
+		remote.set(books[0].CanonicalURL+uid+".vcf", body)
+	}
+	service := NewRemoteService(st, remote)
+	result, err := service.Sync(t.Context(), SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
+	require.NoError(err)
+	require.NotNil(result.BindingConflicts)
+	assert.Equal(1, *result.BindingConflicts)
+
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
+	require.NoError(err)
+	require.Len(runs, 1)
+	assert.Equal(new(int64(1)), runs[0].BindingConflicts)
 }

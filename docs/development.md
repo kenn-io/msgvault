@@ -192,6 +192,31 @@ automatically. Use `assert` and `require` from testify, with expected values
 first. See [AGENTS.md](https://github.com/kenn-io/msgvault/blob/main/AGENTS.md)
 for repository testing rules.
 
+### Property tests (rapid)
+
+Use properties for contracts over synthetic inputs, such as parsers and rollups.
+Write them with [rapid](https://pkg.go.dev/pgregory.net/rapid), the only
+property library in the repository: exercise production entry points and use
+testify directly with `*rapid.T`.
+
+`*rapid.T` is not a `*testing.T`. Fixture helpers that need `TempDir` or
+`Cleanup` take the enclosing test's `t`, so their cleanup runs when the whole
+test ends. Helpers that only assert and read a context can accept a small
+interface that both types satisfy.
+
+Each run uses a fresh random seed and 100 cases per property. rapid has no
+per-test case count, so keep each case cheap enough to run 100 times. Add
+`-rapid.checks=N` for a larger budget. When a property fails, rapid shrinks the
+input, prints the seed, and writes a fail file under the package's
+`testdata/rapid/` directory (ignored by Git). To replay it, rerun the same test
+with the printed `-rapid.failfile=...` or `-rapid.seed=...` flag. Turn useful
+shrunk inputs into ordinary regression cases.
+
+A weekly or manually dispatched property-discovery workflow runs
+`TestPropertyAnnualTemperatureRollups` and `TestPropertyMessageIDContract`
+with 10,000 cases each and keeps the seed, commit, test log, and fail files for 14 days
+when it fails.
+
 ### Timing waits
 
 Use `testing/synctest` bubbles for work owned by the test process, including
@@ -249,13 +274,14 @@ the first. Each test binary builds the schema once into a template — a
 SQLite file copied per test, or a PostgreSQL template database cloned per
 test with `CREATE DATABASE ... TEMPLATE` (`internal/testutil/sqlite_template.go`,
 `internal/testutil/pg_template.go`) — instead of replaying `InitSchema()` for
-every fixture. Nothing runs in the background, so no fixture ever issues a
-schema statement while a test body is running. Each database is still private
-to its test, still produced by the same `InitSchema()` path, and still dropped
-on cleanup. A PostgreSQL template is owned through a session advisory lock the
-server releases when the binary exits, so the next binary reclaims whatever an
-earlier one left behind; a role without `CREATEDB` falls back to a private
-schema in the configured database.
+every fixture. Template clones send no schema statements through a store
+connection, and a background worker drops PostgreSQL clones after cleanup.
+Each database is still private to its test and still produced by the same
+`InitSchema()` path. A PostgreSQL template is owned through a session advisory
+lock the server releases when the binary exits. After the owner exits, a later
+same-scope template build attempts to reclaim what it left behind, including
+clones whose drops were pending at exit, overflowed, or failed. A role without
+`CREATEDB` falls back to a private schema in the configured database.
 
 `dbtest.NewTestDB` copies an in-memory `schema.sql` template per test with
 SQLite's backup API.
@@ -317,7 +343,7 @@ reports its summed top-level test-seconds. Refresh
 main run's `test-postgres-sharded (store)` job with:
 
 ```bash
-gh run view -R kenn-io/msgvault --job <job-id> --log | cut -f3- | sed 's/^[^ ]* //' | grep -E '^--- (PASS|SKIP|FAIL): ' | sort
+gh run view -R kenn-io/msgvault --job <job-id> --log | cut -f3- | sed 's/^[^ ]* //' | grep -E '^--- (PASS|SKIP|FAIL): [^/ ]+ \(' | sort
 ```
 
 In CI, Vitest and Playwright retry a failed test twice and write JSON reports
@@ -586,8 +612,8 @@ Embedded readers require an exact version match. Once an archive is migrated to
 a higher version, applications using an older `pkg/archive` must upgrade too,
 even if the schema change only added an index.
 
-Filename suggestions require archive schema version 6 and API schema 3.15,
-newer than the latest release. Version 6 creates empty projection tables;
+Filename suggestions require archive schema version 6 and API schema 3.15.
+Version 6 creates empty projection tables;
 background maintenance establishes readiness separately. Schema migration does
 not scan attachments or populate the index, and suggestion requests never
 perform setup or backfill. Embedded readers require completed version-6 setup.
@@ -626,6 +652,26 @@ upgrade procedure.
 - **Cancellation**: Context-based cancellation for long operations
 - **Encoding**: Charset detection via `gogs/chardet`, conversion via `golang.org/x/text/encoding`
 
+### API operation authorization
+
+List every new `/api/v1/` operation in `internal/api/operation_policy.go`.
+`TestEveryAPIV1OperationIsClassified` walks the registered client OpenAPI
+document, including hidden CLI routes, and rejects missing or stale entries.
+
+An empty entry (`{}`) means owner-only. Set a flag only when the handler
+already enforces that credential's limits:
+
+- `AgentReadPermission` admits agent grants through the grant-aware read path,
+  which filters results to the grant's sources.
+- `Delegated` admits agent grants to handlers that check the selected
+  resources themselves.
+- `RemoteRead` and `RemoteCollectionsWrite` admit remote clients under the
+  remote CLI contract. Collection writes also need `collections_write` on the
+  client.
+
+Unlisted operations are owner-only. Keep operations that mix actions, targets
+or senders owner-only until their handlers check each of those.
+
 ## SQL Guidelines
 
 - **Never use `SELECT DISTINCT` with JOINs**: use `EXISTS` subqueries instead (semi-joins)
@@ -661,6 +707,7 @@ WHERE EXISTS (
 | `charmbracelet/lipgloss` | TUI styling |
 | `mattn/go-sqlite3` | SQLite with CGO (FTS5) |
 | `duckdb/duckdb-go/v2` | DuckDB driver for Parquet |
+| `pgregory.net/rapid` | Property generation and shrinking for Go tests |
 | `gogs/chardet` | Character set detection |
 | `golang.org/x/text` | Text encoding conversion |
 

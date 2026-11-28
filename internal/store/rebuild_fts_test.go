@@ -189,6 +189,9 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 		{"discord", "discordsnapshot"},
 		{"facebook_comments", "facebooksnapshot"},
 		{"instagram_comments", "instagramsnapshot"},
+		{"facebook_messages", "messengersnapshot"},
+		{"instagram_messages", "instagramdmsnapshot"},
+		{"instagram_mentions", "mentionsnapshot"},
 		{"fbmessenger", "messengertitle"},
 		{"imessage", "15550100777"},
 		{"beeper", "beepersnapshot"},
@@ -203,7 +206,7 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), tc.kind, id)
 			require.NoError(err)
 			switch tc.kind {
-			case "slack", "teams", "inline", "facebook_comments", "instagram_comments", "discord":
+			case "slack", "teams", "inline", "facebook_comments", "instagram_comments", "facebook_messages", "instagram_messages", "instagram_mentions", "discord":
 				pid := f.EnsureParticipant(tc.kind+"@example.test", "Participant", "example.test")
 				require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{pid}, []string{tc.term}))
 				if tc.kind == "discord" {

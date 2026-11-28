@@ -1671,6 +1671,7 @@ func (m Model) handleTextStatsLoaded(msg textStatsLoadedMsg) (tea.Model, tea.Cmd
 
 // handleWindowSize processes window resize events.
 func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
+	settingsFocusVisible := m.settingsFocusVisible()
 	m.transitionBuffer = "" // Clear frozen view on resize to re-render with new dimensions
 	m.width = msg.Width
 	m.height = msg.Height
@@ -1680,6 +1681,9 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.height < 0 {
 		m.height = 0
+	}
+	if settingsFocusVisible && !m.settingsFocusVisible() {
+		m.revealSettingsFocus()
 	}
 	m.pageSize = max(m.height-headerFooterLines, 1)
 	if m.messageDetail != nil {

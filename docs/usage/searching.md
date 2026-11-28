@@ -1,102 +1,56 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-20"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
 
-Use `msgvault search` to find archived email, chats, calendar events, and
-meeting transcripts. Keyword search works without an embedding provider.
-Combine words with filters to narrow the result, then use `msgvault show-message <id>`
-to read a message. On newer `main` builds, `show` is an alias; use
-`show <id> --body-only --strip-quoted` for a shorter reading view.
+Run `msgvault search` to find archived email, chats, calendar events, and meeting transcripts. Keyword search works without an embedding provider. Combine words with filters to narrow the list, then run `msgvault show-message <id>` to read a message. You can also use the `show` alias, and pass `show <id> --body-only --strip-quoted` for a shorter reading view.
 
 | What you want to find | Where to search |
 |---|---|
 | Words in a message or its subject | `msgvault search "quarterly report"` |
 | A topic, even with different wording | [Vector or hybrid message search](/docs/usage/vector-search/) |
-| Text Docbank extracted from a mirrored attachment | [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) |
+| Text Docbank extracted from a mirrored attachment | [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank) |
 | An image or video by its visual content | [Visual attachment search](/docs/usage/vector-search/#visual-attachment-search) |
 | A person by their curated profile | [Semantic person search](/docs/usage/people/#find-a-person-by-what-you-remember) |
 | An attachment with a misspelled filename | [Opt-in filename suggestions](#filename-suggestions) |
 
-Message search does not search extracted document text or attachment pixels.
-Those have separate indexes and setup steps.
+Message search does not look inside extracted document text or attachment pixels. Those use separate indexes and setup steps.
 
 ## Filename suggestions
 
-Newer than the latest release, person file lookup can suggest a filename when
-you remember its spelling approximately:
+When you only remember roughly how an attachment filename is spelled, person file lookup can suggest close matches:
 
 ```bash
 msgvault person files 42 --filename 'quaterly report' --fuzzy-filename --mime-family pdf
 ```
 
-Choose the existing person's ID first. The command keeps the person's identity
-bindings and applies the selected direction, dates and MIME families. It labels
-matches as `exact`, `prefix`, or `typo`. Suggestions do not bind or merge people.
+Start with the existing person's ID. The command keeps that person's identity bindings, applies any direction, date, and MIME-family filters you pass, and labels each match as `exact`, `prefix`, or `typo`. Suggestions do not bind or merge people.
 
-Use `--fuzzy-filename` explicitly. Without it, `--filename` remains a literal
-substring filter; message search and document or visual search keep their
-existing meaning. Suggestions work only in the metadata lane, default to 20
-results, and do not paginate.
+You must pass `--fuzzy-filename` explicitly. Without it, `--filename` acts as a literal substring filter, and message search, document search, and visual search keep their existing meaning. Suggestions run only in the metadata lane, default to 20 results, and do not paginate.
 
-A candidate-limit notice means the results may be incomplete, including an
-empty result. A warming-index error means background maintenance has not yet
-made suggestions ready. Newly added or renamed attachments can be absent until
-that maintenance catches up. See the [CLI reference](../cli-reference.md#typo-tolerant-filenames)
-for flags and output, and [search ranking](../architecture/search-ranking.md#filename-suggestions)
-for matching, freshness and bounds.
+A candidate-limit notice warns that results may be incomplete, including when the list comes back empty. A warming-index error means background maintenance has not finished preparing suggestions yet, and newly added or renamed attachments can be missing until that maintenance catches up. See the [CLI reference](../cli-reference.md#typo-tolerant-filenames) for flags and output, and [search ranking](../architecture/search-ranking.md#filename-suggestions) for matching, freshness, and bounds.
 
-## Basic Usage
+## Basic usage
 
 ```bash
 msgvault search <query>
 ```
 
 !!! note
-    The full-text search index (FTS5) is populated automatically during sync.
-    If an older archive needs an index backfill, msgvault fills missing entries
-    in the background and keeps completed work across restarts. Indexed messages
-    stay searchable. Automatic backfill doesn't refresh stale content in entries
-    it considers complete or repair malformed SQLite search tables. Run
-    `msgvault rebuild-fts` to repair these problems by discarding and rebuilding
-    the full index.
-    Search uses the current index and warns about
-    incomplete results only for a known gap or rebuild, including a queued
-    rebuild. A completeness check alone stays quiet. See the
-    [CLI reference](../cli-reference.md#search) for details.
+    Sync populates the full-text search index (FTS5) automatically. If an older archive needs an index backfill, msgvault fills missing entries in the background and preserves completed work across restarts while keeping indexed messages searchable. Automatic backfill does not refresh stale content in entries it considers complete or repair malformed SQLite search tables. To fix those problems, run `msgvault rebuild-fts`, which discards and rebuilds the full index. Search queries the current index and warns about incomplete results only for a known gap or rebuild, including a queued rebuild; a completeness check alone stays quiet. See the [CLI reference](../cli-reference.md#search) for details.
 
 ## Search metadata
 
-The TUI's Fast search, MCP `search_metadata`, and HTTP
-`/api/v1/search/fast` search subjects, snippets, participant addresses, names,
-phone numbers, and names captured on individual recipient occurrences. They
-exclude message bodies. Each free-text term is a literal substring; terms use
-AND semantics and may match different fields or participants. Case is ignored
-using Unicode lowercasing. Accents remain significant, and `%`, `_`, and `\`
-are literal characters.
+The TUI's Fast search, MCP `search_metadata`, and HTTP `/api/v1/search/fast` search subjects, snippets, participant addresses, names, phone numbers, and names captured on individual recipient occurrences. They exclude message bodies. Each free-text term is a literal substring, and multiple terms use AND semantics and may match different fields or participants. Matching ignores letter case using Unicode lowercasing, keeps accents significant, and treats `%`, `_`, and `\` as literal characters.
 
-SQLite uses separate FTS5 trigram indexes to find candidates for broad metadata
-searches, then checks the original substring predicates. This preserves infix,
-phrase, punctuation, and participant matches without adding body-only results.
-Date, address, and conversation scopes retain their existing scoped query
-paths, which avoid enumerating a global candidate set for common terms.
-Source-only scopes can still use the trigram indexes. Very common terms can
-still require substantial work.
+For broad metadata searches on SQLite, msgvault uses separate FTS5 trigram indexes to find candidates, then checks the original substring predicates. That preserves infix, phrase, punctuation, and participant matches without pulling in body-only results. Date, address, and conversation scopes keep their existing scoped query paths and avoid enumerating a global candidate set for common terms. Source-only scopes can still use the trigram indexes. Very common terms can still take substantial work.
 
-Archive initialization builds and backfills these indexes once, which can take
-time on large archives. They add disk space for trigram entries but store no
-copy of the indexed text. SQLite triggers keep them current as metadata changes. This adds work
-to imports and metadata updates. Initialization without FTS5 disables their
-maintenance; initialization with FTS5 rebuilds them before indexed search resumes.
+Archive initialization builds and backfills these indexes once, which can take time on large archives. They add disk space for trigram entries without storing a copy of the indexed text. SQLite triggers keep them current as metadata changes, adding work to imports and metadata updates. Initializing without FTS5 disables their maintenance, while initializing with FTS5 rebuilds them before indexed search resumes.
 
-Terms shorter than three Unicode characters, terms containing NUL or invalid
-UTF-8, and archives without usable indexes use the substring scan. When a
-caller cancels a combined request, it fails instead of returning results
-without their count or stats. PostgreSQL retains its existing metadata
-substring queries and statement timeout.
+Terms shorter than three Unicode characters, terms containing NUL or invalid UTF-8, and archives without usable indexes fall back to the substring scan. If a caller cancels a combined request, it fails rather than returning results without their count or stats. PostgreSQL keeps its existing metadata substring queries and statement timeout.
 
-## Search Operators
+## Search operators
 
 msgvault supports a local subset of Gmail-like search syntax.
 
@@ -112,7 +66,7 @@ msgvault supports a local subset of Gmail-like search syntax.
 | `received:` | Exact address that received inbound mail | `received:work@example.org` |
 | `account:` | Exact account of received mail, sent mail, or a calendar event | `account:work@example.org` |
 | `has:attachment` | Has attachments | `has:attachment` |
-| `filename:` (newer `main`) | Attachment filename literal substring | `filename:"budget plan.pdf"` |
+| `filename:` | Attachment filename literal substring | `filename:"budget plan.pdf"` |
 | `before:` | Before date | `before:2024-06-01` |
 | `after:` | After date | `after:2024-01-01` |
 | `older_than:` | Relative date | `older_than:7d`, `2w`, `1m`, `1y` |
@@ -122,75 +76,44 @@ msgvault supports a local subset of Gmail-like search syntax.
 | `message_type:` | Stored message type | `message_type:teams`, `message_type=calendar_event` |
 | `conversation_id:` | Local conversation ID | `conversation_id:123` |
 
-Bare words and `"quoted phrases"` perform full-text search across message subjects and bodies.
+Bare words and `"quoted phrases"` run a full-text search across message subjects and bodies.
 
-List-Id matching is case-insensitive and treats `%`, `_`, and `\` literally.
-Quote a value when it contains spaces, for example
-`list-id:"Example Announcements"`. Repeating `list:` or `list-id:` uses AND
-semantics: every supplied substring must occur in the stored List-Id.
+List-Id matching ignores case and treats `%`, `_`, and `\` literally. If a value contains spaces, quote it, for example `list-id:"Example Announcements"`. Repeating `list:` or `list-id:` uses AND semantics, requiring every supplied substring to appear in the stored List-Id.
 
 ### Find mail by the address that received it
 
-Several confirmed addresses can deliver into one archive source, for example
-work@ forwarding into a personal Gmail. `received:work@example.org` finds
-inbound mail that address received, including forwarded mail whose visible To
-shows a list or Bcc. `account:work@example.org` also finds sent mail from that
-address and calendar events of that calendar.
+Several confirmed addresses can deliver into one archive source, for example work@ forwarding into a personal Gmail. Use `received:work@example.org` to find inbound mail that address received, including forwarded mail whose visible To shows a list or Bcc. Use `account:work@example.org` to also include sent mail from that address and calendar events from that calendar.
 
-- Confirm the address for its source first (`msgvault identity add` or identity
-  discovery). Both operators take one exact address; case is ignored, dots and
-  plus suffixes are not.
-- msgvault picks one account per message from its delivery headers, then its
-  confirmed To/Cc recipients, then the source's own mailbox. When two confirmed
-  addresses tie, the message has no account and neither operator finds it.
-- `received:` excludes sent copies, drafts and calendar events. A message
-  counts as sent when the provider filed it under Sent or Drafts. In a source
-  without a Sent folder, such as an mbox or PST import, a message from a
-  confirmed address with no delivery headers or confirmed recipients also
-  counts as sent.
-- `--account` selects a whole archive source. `account:` matches only messages
-  attributed to the address, so mail forwarded into a personal source matches
-  `account:work@example.org` but not `--account work@example.org`.
-- Repeating one operator matches any of the values; using both requires both.
-- Mail archived by an older version fills in on the source's next sync or
-  import. For a file import you will not run again, use
-  [`msgvault repair-derived`](../cli-reference.md#repair-derived).
-- Confirming or removing an address updates the messages it affects before
-  the command returns. If that update is interrupted, the next sync finishes
-  it.
+- Confirm the address for its source first with `msgvault identity add` or identity discovery. Both operators take one exact address; letter case is ignored, while dots and plus suffixes are not.
+- msgvault picks one account per message from its delivery headers, then its confirmed To/Cc recipients, then the source's own mailbox. If two confirmed addresses tie, the message gets no account and neither operator matches it.
+- `received:` excludes sent copies, drafts, and calendar events. A message counts as sent when the provider filed it under Sent or Drafts. In a source without a Sent folder, such as an mbox or PST import, a message from a confirmed address with no delivery headers or confirmed recipients also counts as sent.
+- `--account` selects a whole archive source. `account:` matches only messages attributed to that address, so mail forwarded into a personal source matches `account:work@example.org` and does not match `--account work@example.org`.
+- Repeating one operator matches any of the values; combining both requires both to match.
+- Mail archived by an older version fills in on the source's next sync or import. For a file import you do not run again, run [`msgvault repair-derived`](../cli-reference.md#repair-derived).
+- Confirming or removing an address updates the messages it affects before the command returns. If that update is interrupted, the running daemon or the next sync finishes it, and Explore lists each source with waiting messages alongside a Retry option.
 - Both operators work in full-text, vector, and hybrid search.
 
-In the TUI account picker and the Web UI's Explore account filter, a source
-whose confirmed addresses split its mail lists each address under it, plus an
-Unattributed entry for mail no confirmed address claims. The Unattributed
-entry also appears while older mail still waits for repair. MCP tools take the
-same entries as their `account` argument: the keys that `get_stats` lists
-(`identity:...` or `unattributed:...`). A source's own address or display
-name, in any letter case, still selects that whole source; any other confirmed
-address selects the mail attributed to it on every source.
+In the TUI account picker and the Web UI's Explore account filter, a source whose confirmed addresses split its mail lists each address under it, plus an **Unattributed** entry for mail that no confirmed address claims. The **Unattributed** entry also appears while older mail is still waiting for repair. MCP tools accept the same entries as their `account` argument: the keys that `get_stats` lists (`identity:...` or `unattributed:...`). A source's own address or display name, in any letter case, still selects that whole source, while any other confirmed address selects the mail attributed to it on every source.
 
-Delivery headers are routing hints, not proof that you own an address, and
-attribution never lets msgvault send from it. The
-[design record](https://github.com/kenn-io/msgvault/blob/main/docs/internal/received-as-identity-design.md) lists the headers
-and the order msgvault trusts them in.
+Delivery headers are routing hints rather than proof that you own an address, and attribution never lets msgvault send from it. The [design record](https://github.com/kenn-io/msgvault/blob/main/docs/internal/received-as-identity-design.md) lists the headers and the order msgvault trusts them in.
 
-### Domain Search
+### Domain search
 
-`from:` matches full email addresses exactly, domains by suffix, and other values as literal substrings of the sender's name, address, or phone number. Each repeated `from:` value must match.
+`from:` matches full email addresses exactly, domains by suffix, and other values as literal substrings of the sender's name, address, or phone number. Every repeated `from:` value must match.
 
-The `from:`, `to:`, `cc:`, and `bcc:` operators recognize bare domain names with common TLDs. For example, `from:example.com` automatically matches all messages from the `example.com` domain. For uncommon TLDs, use the explicit `@` prefix: `from:@brand.pizza`.
+The `from:`, `to:`, `cc:`, and `bcc:` operators recognize bare domain names with common TLDs. For example, `from:example.com` matches all messages from the `example.com` domain. For uncommon TLDs, add an explicit `@` prefix, such as `from:@brand.pizza`.
 
 ## Match any of several searches
 
-Use `|` between complete searches, for example `alpha beta | gamma`. This matches messages containing both `alpha` and `beta`, or containing `gamma`. Full-text search includes body matches; MCP `search_metadata` matches metadata only. Spaces bind before `|`. An unspaced pipe such as `a|b` stays literal text.
+Put `|` between complete searches, for example `alpha beta | gamma`, to match messages containing both `alpha` and `beta`, or containing `gamma`. Full-text search includes body matches, while MCP `search_metadata` matches metadata only. Spaces bind before `|`, and an unspaced pipe such as `a|b` stays literal text.
 
-Quote a literal pipe as `"a | b"`, `'a | b'`, `subject:"a|b"` or `label:"a|b"`. Each branch must contain search criteria. A leading or trailing ` | `, such as `| foo` or `foo |`, is an error. A query can have up to 8 branches. OR results use date ordering. DuckDB search needs direct access to SQLite to run pipe OR; its scanner fallback can't run these queries.
+To search for a literal pipe, quote it as `"a | b"`, `'a | b'`, `subject:"a|b"`, or `label:"a|b"`. Every branch must contain search criteria, and a leading or trailing ` | `, such as `| foo` or `foo |`, returns an error. A query can have up to 8 branches, and OR results sort by date. DuckDB search needs direct access to SQLite to run pipe OR; its scanner fallback cannot run these queries.
 
-Pipe OR works with CLI `--mode=fts`, Web Explore full-text search, TUI fast and deep search, MCP `search_metadata`, HTTP message search and aggregates, and search-based deletion staging. Texts, including TUI Texts mode and the `/api/v1/text/*` endpoints, keep pipes as literal text. Vector, hybrid, semantic and exact body-only search read pipes as text.
+Pipe OR works in CLI `--mode=fts`, Web Explore full-text search, TUI fast and deep search, MCP `search_metadata`, HTTP message search and aggregates, and search-based deletion staging. Texts, including TUI Texts mode and the `/api/v1/text/*` endpoints, keep pipes as literal text. Vector, hybrid, semantic, and exact body-only search also read pipes as text.
 
-See [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for search modes, supported sources, skipped matches, and selection limits.
+See [staged deletion with MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for search modes, supported sources, skipped matches, and selection limits.
 
-Message aggregates and general statistics default each alternative to email unless that alternative sets `message_type:` or `account:`. For example, `invoice | message_type:sms subject:receipt` counts email invoices and SMS receipts. Explicit message-type or account scopes apply to every alternative; search-result statistics use the search's message-type scope.
+Message aggregates and general statistics default each alternative to email unless that alternative sets `message_type:` or `account:`. For example, `invoice | message_type:sms subject:receipt` counts email invoices and SMS receipts. Explicit message-type or account scopes apply to every alternative, and search-result statistics use the search's message-type scope.
 
 ## Examples
 
@@ -230,27 +153,48 @@ msgvault search "quarterly report"
 msgvault search "conversation_id:123 budget"
 ```
 
-`conversation_id:` takes the positive local conversation ID shown in message
-metadata, not the provider's thread or room ID. It works with keyword, vector,
-and hybrid search. Vector and hybrid queries still need free text.
+`conversation_id:` takes the positive local conversation ID shown in message metadata, not the provider's thread or room ID. It works with keyword, vector, and hybrid search; vector and hybrid queries still require free text.
 
-## Repairing Existing Archives
+### Search one copy of overlapping chats
 
-Fresh email ingest indexes `List-Id` automatically. For messages archived by
-an older msgvault version, preview the offline backfill first, then apply it:
+If you imported a Telegram Desktop export and also sync Telegram through Beeper, search returns both archived copies of most messages. msgvault does not merge the two copies.
+
+To search only one source, pass its identifier or display name from `msgvault list-accounts` to the [`--account` filter](#account-and-collection-filters).
+
+To pick one copy of specific chats:
+
+1. Find the candidate chats:
+
+   ```bash
+   msgvault find-chat "Example Group" --json
+   ```
+
+   Each result includes a `conversation_id`, along with `source_type` and `source_identifier` to show which source it came from. A matching title does not prove two results are the same chat, so check their messages if you are unsure. If `has_more` is true, raise `--limit` (up to 100), narrow the name, or pass `--source-id`.
+
+2. Search the copies you chose. Repeated `conversation_id:` filters match any of the listed conversations:
+
+   ```bash
+   msgvault search 'conversation_id:41 conversation_id:52 budget' --mode fts --json
+   ```
+
+   When using `|`, repeat the filters in each alternative, because an alternative without them searches the whole archive.
+
+Picking the export leaves out newer messages that only Beeper has, while picking Beeper leaves out older history that only the export has.
+
+## Repair existing archives
+
+Fresh email ingest indexes `List-Id` automatically. For messages archived by an older msgvault version, preview the offline backfill first and then apply it:
 
 ```bash
 msgvault repair-list-ids
 msgvault repair-list-ids --apply
 ```
 
-The default dry run reports what would change without modifying the archive.
-`--apply` writes the repaired values from stored raw MIME and marks derived
-analytics stale for the normal rebuild path; neither mode contacts the provider.
+The default dry run reports what would change without modifying the archive. Passing `--apply` writes the repaired values from stored raw MIME and marks derived analytics stale for the normal rebuild path. Neither mode contacts the provider.
 
-## Account and Collection Filters
+## Account and collection filters
 
-In multi-account archives, use `--account` to limit results to a specific account, or `--collection` to search every member account in a named collection:
+In multi-account archives, pass `--account` to limit results to one account, or `--collection` to search every member account in a named collection:
 
 ```bash
 msgvault search "quarterly report" --account work@company.com
@@ -261,18 +205,17 @@ msgvault search --account work@company.com
 msgvault search --collection Work
 ```
 
-The two flags are mutually exclusive. Collection filters work in full-text, vector, and hybrid local search modes.
+You cannot pass both flags together. Collection filters work in full-text, vector, and hybrid local search modes.
 
-PostgreSQL full-text search splits punctuation into ordered word pieces within a single field. For example, `both@exam` finds `both@example.com` in a subject, sender, recipient, or body, including late matches in long fields. The final piece can match a prefix. After an upgrade, the daemon starts a resumable rebuild of older PostgreSQL search entries. Searches for email addresses, hosts, versions, and phone numbers can miss results until it finishes. The rebuild retains importer-provided search terms stored in the archive.
+PostgreSQL full-text search splits punctuation into ordered word pieces within a single field. For example, `both@exam` finds `both@example.com` in a subject, sender, recipient, or body, including late matches in long fields, and the final piece can match a prefix. After an upgrade, the daemon starts a resumable rebuild of older PostgreSQL search entries; searches for email addresses, hosts, versions, and phone numbers can miss results until that finishes. The rebuild keeps importer-provided search terms stored in the archive.
 
 Body search keeps punctuation pieces in order within its bounded scan.
 
-SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior, so subject/body weighting should feel more consistent across local tools. The rankers are still different; see [Search Ranking Across Backends](/docs/architecture/search-ranking/).
+SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior, so subject and body weighting should feel more consistent across local tools. The rankers are still different; see [Search Ranking Across Backends](/docs/architecture/search-ranking/).
 
-## Source-Deleted Messages
+## Source-deleted messages
 
-Search excludes messages deleted from their source account by default. Full-text
-search can select that retained local history explicitly:
+By default, search excludes messages deleted from their source account. You can include that retained local history explicitly in full-text search:
 
 ```bash
 # Only messages deleted from their source account
@@ -282,30 +225,15 @@ msgvault search "quarterly report" --deletion-scope deleted
 msgvault search "quarterly report" --deletion-scope any
 ```
 
-The accepted values are `active` (the default), `deleted`, and `any`. This scope
-applies to source deletion (`deleted_from_source_at`); rows hidden internally by
-deduplication are never returned. It is available only with `--mode fts` because
-the vector index intentionally covers active messages only. Vector and hybrid
-search reject non-active deletion scopes instead of returning incomplete results.
+Accepted values are `active` (the default), `deleted`, and `any`. This scope applies to source deletion (`deleted_from_source_at`); rows hidden internally by deduplication are never returned. It works only with `--mode fts` because the vector index intentionally covers active messages only, and vector and hybrid search reject non-active deletion scopes instead of returning incomplete results.
 
-Gmail incremental sync records History API deletion events. When the saved
-history cursor has expired, msgvault reconciles deletion metadata only after an
-unfiltered, unlimited snapshot of the complete mailbox succeeds. A regular
-`sync-full` result, including one narrowed by a query, limit, or date range, is
-not treated as proof that omitted messages were deleted. In either path, the
-archive retains the message and raw MIME data; only its source-presence metadata
-changes.
+Gmail incremental sync records History API deletion events. When the saved history cursor expires, msgvault reconciles deletion metadata only after an unfiltered, unlimited snapshot of the complete mailbox succeeds. A regular `sync-full` result, including one narrowed by a query, limit, or date range, is not treated as proof that omitted messages were deleted. In either path, the archive keeps the message and raw MIME data and updates only its source-presence metadata.
 
-HTTP clients can pass the same values as `deletion_scope` on
-`GET /api/v1/cli/search`.
+HTTP clients can pass the same values as `deletion_scope` on `GET /api/v1/cli/search`.
 
-## Filtering by Message Type
+## Filter by message type
 
-Archives can hold more than email — Google Calendar events, Microsoft Teams
-and Discord messages, text messages, calls, voicemails, and Messenger imports
-all live in the same database. Restrict a search to one or more kinds with the
-`message_type:` operator or the repeatable/comma-separated `--message-type`
-flag:
+One archive can hold email alongside Google Calendar events, Microsoft Teams and Discord messages, text messages, calls, voicemails, and Messenger imports. To narrow a search to one or more kinds, use the `message_type:` operator or the repeatable, comma-separated `--message-type` flag:
 
 ```bash
 # Only Google Calendar events
@@ -321,23 +249,11 @@ msgvault search "release planning" --message-type discord
 msgvault search "dinner" --message-type sms --message-type mms
 ```
 
-Valid values are `email`, `google_chat`, `calendar_event`, `meeting_transcript`,
-`beeper`, `chatwoot`, `sms`, `mms`, `rcs`, `whatsapp`, `imessage`, `teams`, `discord`, `slack`, `fbmessenger`, `telegram`,
-`synctech_sms_call`, `google_voice_text`, `google_voice_call`, and
-`google_voice_voicemail`. `message_type:email` also includes legacy rows whose
-type is empty because older msgvault versions created them before the column
-existed.
-Messages from the [message import API](/docs/usage/message-import/) carry the
-type their sender chose, such as `feed_item`, so `--message-type` accepts any
-type of lowercase letters, digits, and underscores and rejects other values.
+Valid built-in values are `email`, `google_chat`, `calendar_event`, `meeting_transcript`, `sms`, `mms`, `rcs`, `whatsapp`, `imessage`, `teams`, `discord`, `fbmessenger`, `facebook_comments`, `instagram_comments`, `instagram_mentions`, `facebook_messages`, `instagram_messages`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail`, `beeper`, `chatwoot`, `slack`, `inline`, `matrix`, `telegram`, `x_dm`, `tiktok_export`, `linkedin`, and `feed_item`. `message_type:email` also matches legacy rows whose type is empty because older msgvault versions created them before that column existed. Messages from the [message import API](/docs/usage/message-import/) carry the type their sender chose, such as `bookmark`, so `--message-type` accepts any type made of lowercase letters, digits, and underscores and rejects other values.
 
-The same message-type scoping is available in HTTP search via the
-`message_type` query parameter. In MCP, include a `message_type:` operator in
-the `search_metadata`, `search_message_bodies`, or
-`semantic_search_messages` query; `find_similar_messages` accepts a
-`message_type` parameter.
+HTTP search supports the same scoping through the `message_type` query parameter. In MCP, add a `message_type:` operator to a `search_metadata`, `search_message_bodies`, or `semantic_search_messages` query; `find_similar_messages` takes a `message_type` parameter.
 
-## JSON Output
+## JSON output
 
 Add `--json` for machine-readable output:
 
@@ -347,33 +263,25 @@ msgvault search from:alice@example.com --json
 
 ## Search spoken words
 
-`msgvault media search "quarterly numbers"` finds matching recording transcripts as their visible messages. A shared recording returns each live message occurrence. Add `--person 7 --direction from_person` to search recordings from one person, or `--json` for IDs, origin, plain excerpts, timing, coverage and optional `filename`, `containing_title` and `occurred_at` fields.
+Run `msgvault media search "quarterly numbers"` to find matching recording transcripts as their visible messages. A shared recording returns each live message occurrence. Add `--person 7 --direction from_person` to limit results to recordings from one person, or add `--json` for IDs, origin, plain excerpts, timing, coverage, and optional `filename`, `containing_title`, and `occurred_at` fields.
 
-Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Recording retrieval supports lexical mode. On newer `main` builds, semantic and hybrid modes search attachments and return `recordings_error=media_search_mode_unavailable`. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Messages search](../web-ui.md#recording-matches).
+By default, media search uses lexical retrieval through your configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Pass `--mode semantic` to find transcripts that say the same thing in different words, or `--mode hybrid` to combine meaning and keywords. Set [`recording_search_profile`](../configuration.md#send-stored-audio-to-docbank) to the Docbank profile that embedded your transcripts; without it, hybrid falls back to keywords with `semantic_unconfigured`. If Docbank has no embeddings for the transcripts, the result reports `semantic_unavailable` alongside keyword matches.
+
+An empty recording result proves no match only when coverage is complete and `partial=false`. Recording search requires Docbank's source-selected search contract, and older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags, [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields, and [Messages search](../web-ui.md#recording-matches) for browser recording search and its Person filter. Run `msgvault show-message <message_id>` to read a result in context.
 
 ## Search mirrored attachment text
 
-Media search also returns a separate `attachments` list of matches in text Docbank has extracted from mirrored attachments. Docbank detects document formats from file contents, so PDFs with a generic or empty MIME type and text formats such as JSONL count toward the search scope. The scope includes mirrored files except those declared as audio or video. Docbank searches the text it can extract from those files, including image OCR and generated image-understanding renditions. Generated descriptions and possible meme meaning remain model interpretations; they do not establish the sender's beliefs, endorsement, or intent. Configure and consent to the appropriate image processing profile in Docbank first. Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text; files awaiting extraction may still contain the words. More than 4096 mirrored files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. Set `document_profile` in the [attachment mirror configuration](../configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Add a Person filter to narrow the scope. Attachment errors and truncation appear beside that list. Truncation means more may match, including when Docbank limits filename-only candidates. `--limit` applies to each list independently.
+Media search also returns a separate `attachments` list of matches in text that Docbank extracted from mirrored attachments. Docbank detects document formats from file contents, so PDFs with a generic or empty MIME type and text formats such as JSONL count toward the search scope. The scope covers mirrored files except those declared as audio or video. Docbank searches all text it can extract from those files, including image OCR and generated image-understanding renditions. Generated descriptions and possible meme meaning are model interpretations; they do not establish the sender's beliefs, endorsement, or intent. Configure and consent to the appropriate image processing profile in Docbank first.
 
-On newer `main` builds, use `msgvault media search "project approval" --mode semantic`
-for meaning or `--mode hybrid` for meaning and keywords. Set
-[`attachment_search_profile`](../configuration.md#mirror-stored-attachments-to-docbank)
-to an existing Docbank profile with processed and embedded files. Docbank owns
-conversion, embeddings, ranking, and query-provider consent. v0.23.0 supports only lexical retrieval.
-Matches found only by semantic retrieval can have an empty excerpt; their message and file IDs still identify the carrying attachment.
+Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text, though files awaiting extraction may still contain the words. When more than 4096 mirrored files are in scope, msgvault searches them in batches of 4,096 and interleaves results by their position within each batch, so ordering across batches is approximate. Set `document_profile` in the [attachment mirror configuration](../configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank, and add a Person filter to narrow the scope. Attachment errors and truncation appear beside that list, and truncation means more items may match, including when Docbank limits filename-only candidates. `--limit` applies to each list independently.
 
-See the [API contract](../api-server.md#media-transcript-search) for attachment mode, delivered-version coverage, fallback, errors and batching.
+Run `msgvault media search "project approval" --mode semantic` to search by meaning, or `--mode hybrid` for meaning and keywords. Set [`attachment_search_profile`](../configuration.md#mirror-stored-attachments-to-docbank) to an existing Docbank profile with processed and embedded files. Docbank owns conversion, embeddings, ranking, and query-provider consent. Matches found only through semantic retrieval can have an empty excerpt, while their message and file IDs still identify the carrying attachment.
 
-Use `media search` for text Docbank has extracted from mirrored attachments.
+See the [API contract](../api-server.md#media-transcript-search) for attachment mode, delivered-version coverage, fallback, errors, and batching. Use `media search` for text Docbank has extracted from mirrored attachments.
 
 ## Read matches and conversations
 
-On newer `main` builds, `--snippet` adds a context column without changing the
-default table. SQLite uses a full-text index excerpt where available; other
-backends and semantic searches use the stored message preview. Snippets are
-bounded on Unicode character boundaries. JSON keeps `snippet` as the stored
-preview and adds optional `match_snippet` for SQLite query-specific context. It
-also includes available attachment names and counts, and `conversation_id`.
+Pass `--snippet` to add a context column without changing the default table. SQLite uses a full-text index excerpt when one is available, while other backends and semantic searches use the stored message preview. Snippets break on Unicode character boundaries. JSON output keeps `snippet` as the stored preview, adds optional `match_snippet` for SQLite query-specific context, and includes available attachment names, attachment counts, and `conversation_id`.
 
 ```bash
 msgvault search 'project filename:budget' --snippet
@@ -382,31 +290,15 @@ msgvault show 42 --body-only --strip-quoted
 msgvault show-thread 7
 ```
 
-`filename:` matches case-insensitive literal substrings, including `%` and `_`.
-Repeating it requires every value to match an attachment of the message.
-It searches filenames, not document contents.
-Filename filters require daemon API schema 3.14.0 or newer.
+`filename:` matches case-insensitive literal substrings, including `%` and `_`, and searches filenames rather than document contents. Repeating it requires every value to match an attachment on the message. Filename filters require daemon API schema 3.14.0 or newer.
 
-`show-thread` takes a message ID as the conversation anchor. It shows up to
-100 archived messages in chronological order, strips quoted history, and
-reports truncation on stderr. Raise `--limit` up to 500, use `--offset` for later
-pages, or use `--json` for structured output. See the [CLI reference](../cli-reference.md#show-thread)
-for the exact contract.
-The shorter reading view preserves complete URLs and uncertain wrapped headers.
+`show-thread` takes a message ID as the conversation anchor, shows up to 100 archived messages in chronological order, strips quoted history, and reports truncation on stderr. Raise `--limit` up to 500, use `--offset` for later pages, or add `--json` for structured output; see the [CLI reference](../cli-reference.md#show-thread) for the exact contract. The shorter reading view preserves complete URLs and uncertain wrapped headers.
 
-## Semantic / Hybrid Search
+## Semantic and hybrid search
 
-The same `msgvault search` command supports semantic search when the
-selected local daemon or remote server has `[vector]` configured with
-an embedding endpoint. Pass
-`--mode vector` for pure semantic search, or `--mode hybrid` to fuse
-BM25 and vector ranking. See [Vector Search](/docs/usage/vector-search/)
-for setup, initial embedding, and incremental update workflows.
+The same `msgvault search` command supports semantic search when the selected local daemon or remote server has `[vector]` configured with an embedding endpoint. Pass `--mode vector` for pure semantic search, or `--mode hybrid` to fuse BM25 and vector ranking. See [Vector Search](/docs/usage/vector-search/) for setup, initial embedding, and incremental update workflows.
 
-Choose `fts` (the default) when you know the words or an exact phrase. Choose
-`vector` when you remember the meaning but not the wording. Choose `hybrid`
-when both clues matter. Vector and hybrid need a usable active embedding
-generation on the selected daemon. Filter-only queries use FTS.
+Choose `fts` (the default) when you know the words or an exact phrase, `vector` when you remember the meaning but not the wording, and `hybrid` when both clues matter. Vector and hybrid search require a usable active embedding generation on the selected daemon. Filter-only queries use FTS.
 
 ```bash
 msgvault search 'how did we decide the project budget after:2026-01-01' --mode hybrid --snippet
@@ -414,10 +306,6 @@ msgvault search 'project approval from:sender@example.com newer_than:90d' --mode
 msgvault search 'planning the next release after:2026-01-01' --mode vector --sort date
 ```
 
-`after:` and `newer_than:` narrow candidates before semantic ranking. On newer
-`main` builds, `--sort date` displays the retrieved vector/hybrid page newest
-first; it does not select the newest messages from the entire archive. Increase
-`--limit` to consider more ranked hits. Leaving `--sort` unset preserves ranking.
+`after:` and `newer_than:` narrow candidates before semantic ranking. Passing `--sort date` displays the retrieved vector or hybrid page newest first; it does not select the newest messages from the entire archive. Increase `--limit` to consider more ranked hits. Leave `--sort` unset to preserve ranking.
 
-When a first-page FTS query with free text finds nothing and hybrid is usable,
-newer `main` builds suggest `--mode hybrid` on stderr. JSON stdout stays parseable.
+When a first-page FTS query with free text finds nothing and hybrid is usable, search suggests `--mode hybrid` on stderr while keeping JSON stdout parseable.

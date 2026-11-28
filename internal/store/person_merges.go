@@ -361,6 +361,11 @@ func (s *Store) mergePersonsOnce(
 		if err != nil {
 			return err
 		}
+		for _, person := range []*Person{survivor, absorbed} {
+			if err := confirmCardDAVParticipantBindingsTx(ctx, tx, person.ID, person.ParticipantIDs); err != nil {
+				return err
+			}
+		}
 		snapshot, err := s.capturePersonMergeSnapshotTx(ctx, tx, survivor.ID, absorbed.ID)
 		if err != nil {
 			return err
@@ -902,7 +907,7 @@ func (s *Store) moveCorePersonProfileTx(
 	survivorUID string,
 ) error {
 	for _, table := range []string{
-		"person_names", personContactPointsTableName, "person_addresses", "person_dates", "person_media",
+		personNamesTableName, personContactPointsTableName, personAddressesTableName, "person_dates", "person_media",
 	} {
 		if err := s.moveStructuredPersonRowsTx(ctx, tx, mergeID, table, survivorID, absorbedID); err != nil {
 			return err
@@ -1040,7 +1045,7 @@ func (s *Store) moveStructuredPersonRowsTx(
 	ctx context.Context, tx *loggedTx, mergeID int64, table string, survivorID, absorbedID int64,
 ) error {
 	if _, ok := map[string]struct{}{
-		"person_names": {}, personContactPointsTableName: {}, "person_addresses": {},
+		personNamesTableName: {}, personContactPointsTableName: {}, personAddressesTableName: {},
 		"person_dates": {}, "person_media": {},
 	}[table]; !ok {
 		return fmt.Errorf("%w: unregistered structured table %q", ErrPersonMergeInvalid, table)

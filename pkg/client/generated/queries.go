@@ -303,6 +303,27 @@ type GetCLIMessageThreadQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ExportCLIMessagesQuery struct {
+	// Start Inclusive RFC3339 lower bound
+	Start string `json:"start" validate:"required"`
+
+	// End Exclusive RFC3339 upper bound
+	End string `json:"end" validate:"required"`
+
+	// MessageType Exact message type to include (repeatable)
+	MessageType []string `json:"message_type,omitempty"`
+
+	// Source Source selector type:identifier from list-accounts (repeatable)
+	Source []string `json:"source,omitempty"`
+
+	// PersonID Export messages for the durable person's bound participants
+	PersonID *int64 `json:"person_id,omitempty"`
+}
+
+func (e ExportCLIMessagesQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
 type SearchCLIQuery struct {
 	// IncludeSnippet Include attachment names and bounded FTS match context
 	IncludeSnippet *bool `json:"include_snippet,omitempty"`
@@ -546,13 +567,14 @@ type GetKataIssueContextQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
-type SearchIntegrationTasksQuery struct {
-	// Q Task title search within the configured project
-	Q string `json:"q" validate:"required"`
+type ListOpenKataIssuesQuery struct {
+	// Q Search open issue text by whole word or enter an exact qualified ref, including closed issues, up to 256 bytes
+	Q *string `json:"q,omitempty"`
 }
 
-func (s SearchIntegrationTasksQuery) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+type SearchIntegrationTasksQuery struct {
+	// Q Task title search within the configured project; omit to list tasks
+	Q *string `json:"q,omitempty"`
 }
 
 type ListLoopsQuery struct {
@@ -581,7 +603,7 @@ type SearchMediaQuery struct {
 	// Q Words to find in recordings and attachments
 	Q string `json:"q" validate:"required"`
 
-	// Mode Attachment mode: lexical (default), semantic, or hybrid; recordings support lexical only
+	// Mode Search mode for recordings and attachments: lexical (default), semantic, or hybrid
 	Mode *string `json:"mode,omitempty"`
 
 	// PersonID Durable person ID
@@ -598,6 +620,23 @@ type SearchMediaQuery struct {
 }
 
 func (s SearchMediaQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type GetMeetingRecordQuery struct {
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (g GetMeetingRecordQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type SuggestMeetingLinksQuery struct {
+	Ref   string `json:"ref" validate:"required"`
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+}
+
+func (s SuggestMeetingLinksQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
@@ -952,7 +991,13 @@ type ListDirectoryPeopleQuery struct {
 	// LastContactBefore Return people contacted at or before this RFC3339 timestamp
 	LastContactBefore *time.Time `json:"last_contact_before,omitempty"`
 
-	// Sort Directory order: name, last_contact_desc, or last_contact_asc
+	// Cadence Cadence filter: overdue, due (includes overdue), no_list, or unknown
+	Cadence *string `json:"cadence,omitempty"`
+
+	// DueWithinDays UTC days ahead for cadence=due, 0..3660 (default 0)
+	DueWithinDays *int64 `json:"due_within_days,omitempty"`
+
+	// Sort Directory order: name, last_contact_desc, last_contact_asc, most_overdue, or next_due
 	Sort *ListDirectoryPeopleQuerySort `json:"sort,omitempty"`
 }
 
@@ -996,8 +1041,15 @@ type ListPersonAttributesQuery struct {
 	// Slug Restrict the response to one definition slug
 	Slug *string `json:"slug,omitempty"`
 
+	// Ordinal Restrict values to one ordinal within a definition
+	Ordinal *int64 `json:"ordinal,omitempty" validate:"omitempty,gte=0"`
+
 	// UniversalID Restrict the response to one portable definition identifier
 	UniversalID *string `json:"universal_id,omitempty"`
+}
+
+func (l ListPersonAttributesQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
 type ClearPersonAttributeQuery struct {
@@ -1108,6 +1160,9 @@ type ListPersonFactDecisionsQuery struct {
 
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
+
+	// ClaimKey Restrict to one claim key
+	ClaimKey *string `json:"claim_key,omitempty"`
 }
 
 type ListPersonFactEvidenceQuery struct {
@@ -1119,6 +1174,9 @@ type ListPersonFactEvidenceQuery struct {
 
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
+
+	// EvidenceID Restrict to one evidence row
+	EvidenceID *int64 `json:"evidence_id,omitempty"`
 }
 
 type ListPersonFactEvidenceStatusEventsQuery struct {

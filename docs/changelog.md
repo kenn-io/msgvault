@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-19"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,89 +8,554 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
+### New features
+
 - Let owner MCP clients subscribe to signed message-change Events for a person or source over stdio or modern HTTP. Subscribe and refresh verify the callback with a signed challenge; failures return `-32027`. Enable `[mcp_events]` and read `list_changes` after each ping. Restored subscriptions resume when clients refresh their secrets; `--include-tokens` backups include those credentials. Callback URLs and secrets are stored separately in `tokens/mcp-events-credentials.json`.
 
 - Configure signed HTTPS wake-up notifications for matching recent messages,
   so agents can read the change feed without frequent polling.
 
-- Filter the message change feed by person, source, conversation, or incoming direction, and read it from an MCP agent with `list_changes`. Delegated agents with `search.read` see only their granted sources.
+- Let delegated MCP agents with `search.read` use `list_changes` for their granted sources.
 
-- New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
+- Read the order, delivery, invoice and reservation details an email carries as schema.org markup with the MCP tool `get_message_records`, without sending the message anywhere.
+- Let owner MCP clients read person attributes and definitions, and enable attribute edits with `--allow-attribute-writes`. The owner approves the previewed value, and the write refuses if that value or empty slot changes before saving. The tools require an updated daemon. Existing archives migrate attribute JSON on writable open; upgrade applications using embedded archive readers alongside the daemon. Numbers stored before this change may have already lost their original spelling.
 
-- `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
-- [Instagram comment sync](usage/instagram-comments.md) archives linked professional
-  account media comments and replies for search and existing person linking.
-  Sending and ad-only discovery are not included.
-- [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
-  nested replies on organic, visitor, and ad posts returned for a selected Page.
-  Search the archive and link commenters through existing people tools. This
-  does not send messages or include Instagram or ad-creative discovery.
+### Improvements
 
-- Matrix sync archives images, stickers, video, audio and files under the shared chat media policy, including encrypted attachments. Syncs after upgrading also find media in messages archived earlier. `sync-matrix --no-media` leaves media for a later sync, and failed downloads retry on later syncs.
-- People sweeps record employment again when the model names the organization as plain text or writes dates such as `2023-05`. Such claims were rejected as malformed, so no sweep ever set an employer.
+- In a 14,000-message Telegram import benchmark on SQLite, saving up to 50 messages at once reduced import time from 326 seconds to 119 seconds, about 2.7 times faster.
 
-- A source build replaces a local daemon from its release or an earlier one, and prints the restart command when another source build of that release is running.
+## 0.26.0
+<small>2026-11-19</small>
 
-- Messages can show live archive rows while auto mode rebuilds its analytical cache after an upgrade, and keeps them available if the rebuild fails.
-- Archive messages from sources msgvault has no connector for, such as the
-  items of the feeds you follow, with `POST /api/v1/import/message`. Each
-  message keeps the type its sender chose, such as `feed_item`, for search
-  and export filters, and a retry updates it instead of adding a copy. See
-  [Messages from any source](usage/message-import.md). It needs HTTP API
-  schema 3.50.0.
-- `msgvault search --message-type` accepts any type of lowercase letters,
-  digits, and underscores, so it can filter imported types.
-- The CLI can suggest partial addresses with Google Places and fetch address
-  details for a selected candidate. See [address lookup](cli-reference.md#address)
-  for the key, session token, and optional location hints.
-- Plaud syncs wait longer and slow down when Plaud reports too many requests,
-  so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
-  how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).
-- CLI search and sender, domain, and label lists now report when more results match, with a hint to fetch more. Full-text and list JSON stay arrays; semantic JSON includes one actionable `hints` entry at a time. Semantic hints name the server's page cap and any measured hybrid candidate cap that must increase before raising `--limit`. Raise the named settings and restart the daemon first. Complete combined candidate sets stay quiet.
-- `from:` now finds messages by sender name, address, or phone number across CLI, MCP, and web search, replacing address retry hints. Full addresses match exactly, and domains match by suffix. Repeated `from:` values must all match, including in CLI searches that previously matched any value.
+File messages to Tasks and Kata from the reader and the Files viewer, find an
+email's related copies across accounts, and import LinkedIn and TikTok exports.
+Facebook Page and Instagram inboxes archive as searchable chats, Bland calls
+and emailed calendar invitations join your meetings, and one config can reach
+several servers with `--remote <name>`.
 
-- See who is waiting on a reply from you, and whose reply you are waiting on,
-  with [open loops](usage/open-loops.md). `msgvault loops list` shows them, and
-  `done`, `snooze`, and `reopen` clear them; the HTTP API has matching routes.
-  A large archive is checked over several requests, up to 1,000 new messages
-  each. Needs HTTP API schema 3.44.0.
-- Keep Apple WhatsApp and iMessage archives current with daemon schedules,
-  run history, and **Sync now** on Sources. See [configuration](https://msgvault.io/docs/configuration/#apple-whatsapp-sources).
-- Resumed Gmail full syncs preserve their starting History point so the next
-  incremental sync catches mail that arrived meanwhile. A full sync interrupted
-  under an earlier release starts from the first page once; previously archived
-  messages aren't downloaded again.
-- Recovering from an expired Gmail History cursor now refreshes the labels of
-  messages already in the archive, so a message moved from Inbox to Trash in
-  Gmail no longer stays in the archive's Inbox.
-- A Gmail incremental sync that cannot save a label change or deletion now
-  fails and keeps its History position, so the next sync retries the change
-  instead of skipping it.
-- [`import-imessage`](usage/text-messages.md#import-imessage) keeps the full text of messages of 256 bytes or more that macOS stores only in `attributedBody`. Before, it archived just part of that text. Rerun the import to repair messages still in `chat.db`. The import summary counts messages whose text can't be decoded under `Unreadable text`; their archived text is kept.
-- Operators can require client approval before sensitive draft content reaches a provider with `msgvault mcp --confirm-sensitive-drafts` or `msgvault serve --mcp-allow-writes --mcp-confirm-sensitive-drafts`. The option is off by default and grants no tools.
-- MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Findings in recognized quoted or forwarded history carry `quoted: true`. Drafts are still written unchanged.
-- See a saved person's open loops on their **Details** tab in People. When
-  more history remains, **Check more** continues the scan.
-- Let an MCP assistant list open loops. With `--allow-loop-writes`, it can
-  also mark loops done, snooze them, or reopen them, with your approval for
-  each call. Over HTTP, decisions also need `--http-allow-writes` and protocol
-  `2026-07-28` or newer.
+[GitHub release](https://github.com/kenn-io/msgvault/releases/tag/v0.26.0) ·
+[All changes since 0.25.0](https://github.com/kenn-io/msgvault/compare/v0.25.0...v0.26.0)
 
-- Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
-- Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`.
+### Upgrade notes
 
-- Document text search now uses the Docbank mirror and Docbank processing. Search with `media search`, `GET /api/v1/media/search`, MCP `search_media`, or Web Everything. Use `media search --person <id> --direction from_person` in place of `person files --lane documents`.
+- **The archive upgrades to schema 49 on first start.** 0.25.0 archives are at
+  schema 42. The upgrade also fills in the outcome of earlier fact decisions
+  where their history shows it; decisions it can't settle show
+  **Result unavailable** in Facts.
+- **Review some CardDAV cards again.** People whose names, contact points, or
+  postal addresses came from extraction or enrichment, including earlier MCP
+  profile writes, are not republished until you
+  [review their cards](usage/people-carddav.md#review-inferred-changes-before-they-are-exported).
+- **Upgrade servers before clients.** `export-messages` against a remote needs
+  server API schema 5.19.0. An older server makes the CLI stop and ask you to
+  upgrade the server.
+- **`[telemetry] enabled = false` is now ignored.** Usage reporting is off
+  unless you opt in through Kenn or set `TELEMETRY_ENABLED=1`. To keep it off
+  after opting in, set `MSGVAULT_TELEMETRY_ENABLED=0`; see
+  [Usage reporting](configuration.md#usage-reporting). Consent changes take
+  effect at the next start.
 
-  The `documents` commands, `/api/v1/documents/*`, MCP `search_document_attachments`, document operation lanes, Mistral probe and consent (use `docbank processing probe`, Docbank v0.17.0 or later), and file-based Kata issue actions are removed. Remove `[attachments.documents]` and drop `document_text` from `allowed_sources`; the loader warns and ignores these retired settings. A people sweep configured only for `document_text` is disabled.
+### New features
 
-  A people inference provider profile that listed `document_text` gets a new fingerprint when that source is removed. Checks and consent are bound to the exact fingerprint. Run `msgvault person provider check <name>`, review the updated policy, then run `msgvault person provider consent <name> --yes` before inference resumes.
+- File a message in Tasks or quote it in a Kata issue with
+  [**Add to task…**](web-ui.md#read-messages) in the reader or the
+  [Files viewer](web-ui.md#files-and-containing-context). Linked work appears
+  under **Tasks** on each message. When you add a message to an existing task,
+  **What's sent** shows the details that leave msgvault, including the full
+  sent timestamp.
+- Open [**Related copies**](web-ui.md#related-copies) beside an email to find
+  archived copies, replies, and forwards across accounts and conversations.
+  Each result shows its account and why it matches. Archive owners can also use
+  `msgvault family show <id>`, the MCP `get_email_family` tool, or the
+  [family read endpoint](api-server.md#get-apiv1messagesidfamily).
+- Import a LinkedIn member data export with
+  [`import-linkedin`](usage/linkedin.md): DMs, your posts, and your own
+  comments. Import a TikTok **Download your data** export with
+  [`import-tiktok`](usage/tiktok-export.md): DMs and the comments you wrote.
+  Both accept a ZIP or an extracted folder and update existing entries when you
+  import again.
+- Archive a Page's Messenger inbox or a linked Instagram account's direct
+  messages as searchable chats with
+  [Facebook and Instagram messages](usage/meta-messages.md). Inbox polling
+  imports the 20 most recent messages of each conversation.
+- Capture new Meta activity as it arrives with the
+  [Meta webhook receiver](usage/meta-webhooks.md): inbox messages, Facebook
+  Page comment changes and mentions, and Instagram comments, live comments, and
+  mentions. Polling sync stays available for backfill.
+- Archive media in which other accounts tag a linked Instagram professional
+  account with
+  [Instagram mentions sync](usage/instagram-comments.md#archive-media-that-tags-the-account),
+  and archive comments on the account's
+  [ads](usage/instagram-comments.md#include-ad-media).
+- [Hide, unhide, or delete](usage/facebook-comments.md#hide-or-delete-comments)
+  an archived Facebook Page or Instagram comment with `msgvault comment moderate`,
+  or [reply publicly](usage/facebook-comments.md#reply-to-comments) with
+  `msgvault comment reply`. Each profile opts in with `actions`; delete needs
+  `--yes`, and msgvault refuses to send the same reply to a comment twice.
+- Archive [Bland calls](usage/meetings.md#bland) with `add-bland` and
+  `sync-bland`. Summaries, transcripts, and recordings are saved locally, so
+  they stay available after Bland's links expire.
+- See emailed meeting invitations, updates, and cancellations in
+  `calendar events`. Import `.ics` files with
+  [`import-ics`](cli-reference.md#import-ics), and run
+  `msgvault repair-derived` to extract invitations from email already in your
+  archive. Only invitations sent by the meeting's organizer count.
+- Open linked meeting notes and calendar events as one record, including a
+  single occurrence of a recurring meeting, with `msgvault meetings links` or
+  the MCP `get_meeting_record` tool. `meetings suggest` finds likely matches,
+  `meetings link` and `meetings unlink` correct them, and your choices survive
+  sync and rebuilds. See
+  [Link calendar events and notes](usage/meetings.md#link-calendar-events-and-notes).
+- Find Beeper voice memos by their spoken words in ordinary message search.
+  Set `voice_transcript_search = true` under `[integrations.docbank]` and
+  restart the daemon; see
+  [Send audio to Docbank](usage/beeper.md#send-audio-to-docbank).
+- Search recording transcripts by meaning with
+  [`media search --mode semantic`](usage/searching.md#search-spoken-words), or
+  combine meaning and keywords with `--mode hybrid`. This needs a Docbank server
+  with semantic transcript search and `recording_search_profile` set under
+  `[integrations.docbank]`.
+- [Save someone you have never messaged](usage/people.md#create-a-person) with
+  `msgvault person create`, then add contact details, employment, an address,
+  and a note. `--publish` requests CardDAV publication. Creation refuses an
+  email or phone msgvault already knows and names the match.
+- Find people due for a check-in with
+  [contact lists](usage/people.md#keep-in-touch-with-contact-lists). Assign a
+  21-, 60-, 180-, or 365-day list or a custom interval, then run
+  `msgvault person directory --cadence due` or sort by `most_overdue`. The same
+  filters work over the API and MCP.
+- Choose a server per command with `--remote <name>`, defining each archive
+  under [`[remotes.<name>]`](configuration.md#remotesname) in one config.
+  `[remote]` stays the default. A remote can get short-lived bearers from a
+  local [credential helper](configuration.md#credential-helper) for read
+  commands limited to approved sources.
+- Run [`export-messages`](cli-reference.md#export-messages) against a remote,
+  including with a
+  [read-only client key](guides/remote-deployment.md#read-only-remote-clients).
+  The server streams the same JSONL as a local export, and the CLI exits with
+  an error if the stream ends before its completion record.
+- Apps that embed msgvault's archive server and limit callers with
+  `archive.WithSourceScope` can serve the CLI read commands to those callers,
+  each covering only its authorized sources. See
+  [Restrict reads to authorized sources](guides/embedding.md#restrict-reads-to-authorized-sources).
+- Filter the owner [message change feed](api-server.md#get-apiv1messageschanges)
+  by person, source, conversation, or incoming direction, over HTTP or with the
+  MCP `list_changes` tool. A filtered page can be empty while more changes
+  remain, so keep paging while `has_more` is true.
+- Start and follow a bounded Gmail or IMAP historical import over MCP with
+  `create_import_job`. Owners set a message limit and can narrow the import by
+  date or Gmail query. Starting a job needs `--allow-import-writes` and
+  confirmation.
+- Read structured person profiles, their history, and stored photos over MCP
+  with `get_person_record` and related tools. With `--allow-curated-writes` and
+  explicit confirmation, an assistant can apply profile patches; the client is
+  responsible for obtaining your approval.
+- Find the right command by describing a task with
+  [`msgvault cli search`](cli-reference.md#cli-search), for example
+  `msgvault cli search "find email by sender"`. MCP clients can read the
+  quickstart and every bundled [agent skill](guides/agent-skills.md#skills-and-the-mcp-server)
+  through `msgvault.skills`.
+- See which Gmail downloads, processing steps, and file saves sync still
+  retries with
+  [`msgvault diagnose-acquisition --source-id N`](cli-reference.md#diagnose-acquisition).
+  `--all` adds failures that were resolved, retired, or could not be
+  classified. An empty list doesn't prove the archive is complete.
 
-  Set `[integrations.docbank] document_profile`, review `docbank processing plan`, and grant consent with `docbank processing build --consent`. The upgrade drops the local document text, chunk, and consent tables. Backups made before the upgrade keep them, still restore, and stay marked by `backup list`. Docbank processes the mirrored files again, and Mistral users pay for OCR again. Stored Kata document citations retain their saved quote and resolve as unavailable.
+### Improvements
 
-- Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate.
+- Search [Files](web-ui.md#files-and-containing-context) by filename beside the
+  file type filters. The viewer shows the source message's title, date, and
+  participants.
+- [Facts](web-ui.md#saved-profiles-and-possible-duplicates) shows each field's
+  saved value above its competing claims, where each claim came from, and why
+  msgvault kept or changed the value. `person get --json` reports
+  [when and how a saved person first appeared](usage/people.md#see-a-persons-first-archived-appearance).
+- People and Relationships count each attended meeting once, even when linked
+  notes and transcripts come from different sources or only one copy matches a
+  filter. Meeting counts include occurrences with a transcript.
+- Incomplete lists of unresolved follow-ups keep scanning history in the
+  background, so later requests return more of them.
+- An interrupted `sync-full` prints a command that resumes it with the same
+  account, filters, configuration, and logging flags. It exits with status 130;
+  on Windows, run the command in PowerShell 7.3 or later.
+- MCP `get_message` segments recognize Thunderbird reply headers and quoted or
+  forwarded history in Spanish, Italian, and Portuguese plain-text mail.
+  `segments_version` is now `seg-v2`; refresh any cached `seg-v1` ranges.
+- Email imports and repairs index explicit header links for related-copy
+  lookups. Existing emails are indexed on their next sync or with
+  `msgvault repair-derived`.
 
-- Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`.
+### Bug fixes
+
+- A message you restore from Trash in Gmail or IMAP returns to search after
+  the next sync confirms the restore. If a Gmail message you restored earlier
+  is still hidden, run `msgvault sync-full you@example.com`.
+- An unfiltered Gmail `sync-full` keeps label changes and deletions waiting in
+  Gmail's history, so the next incremental sync applies them.
+- `msgvault message-tags` reads a source-deleted message's current tags when
+  the provider still has the message. Editing its tags is still refused.
+- An IMAP sync no longer crashes when the server drops the connection and
+  reconnecting fails, as DavMail does when it restarts. The mailbox is skipped
+  or the run ends with an error.
+- Circleback syncs wait and retry for up to about two minutes when Circleback
+  answers `429 Too Many Requests`, instead of failing every remaining meeting.
+- Scheduled Beeper imports stop between members of a large group chat when
+  their time runs out, so other sources get a turn. Imported messages are kept
+  and later runs finish the roster.
+- Explore shows which sources are waiting for account matching and lets you
+  retry each one. When an identity change saves but its cache refresh fails,
+  **Retry** in People refreshes the related views without repeating the change.
+- Clicking a Messages row near the bottom of a person page opens it without
+  scrolling the row out from under the pointer.
+- Scheduled person enrichment defers work to the next budget day when a
+  request or cost budget runs out around midnight UTC.
+- MCP operation tools report `operation_receipt_unavailable` when they cannot
+  confirm a write's outcome, replacing `operation_response_limit_exceeded`,
+  `operation_response_failed`, and `invalid_operation_response`. Read current
+  state before retrying.
+
+### Acknowledgements
+
+Thanks to everyone who contributed to this release:
+
+- [@AndrewWiggins](https://github.com/AndrewWiggins) for `msgvault diagnose-acquisition`.
+- [@cpcloud](https://github.com/cpcloud) for opening Messages rows at the bottom of a person page, deferring enrichment at the budget boundary, and making the test suite and package installs more reliable.
+- [@franklintra](https://github.com/franklintra) for clean IMAP failures when the connection is gone.
+- [@mariusvniekerk](https://github.com/mariusvniekerk) for Facebook and Instagram inboxes, Meta webhooks, comment moderation and replies, Bland calls, a quieter Explore account catalog, and the release notes and telemetry documentation.
+- [@rodboev](https://github.com/rodboev) for filing messages to Tasks and Kata from the reader and Files viewer, linked meeting records, suggestions, links, and splits, counting each meeting once, Facts sources and outcomes, first archived appearances, background follow-up scans, resuming `sync-full`, restoring Trash messages to search, account matching and identity refresh retries, uncertain MCP receipts, and opt-in usage reporting.
+- [@salmonumbrella](https://github.com/salmonumbrella) for LinkedIn and TikTok imports, calendar invitations and `import-ics`, contact-list cadence, `person create`, semantic recording search, voice memo search, change feed filters, MCP historical imports, person records, and bundled guides, `msgvault cli search`, Thunderbird markers in three more languages, fairer Beeper scheduling, and property tests with rapid.
+- [@sweenzor](https://github.com/sweenzor) for retrying Circleback rate limits.
+- [@turian](https://github.com/turian) for keeping pending Gmail history through full backfills and reading tags of source-deleted messages.
+- [@wesm](https://github.com/wesm) for named remotes, credential helpers, source-scoped CLI reads, remote `export-messages`, related email copies, and a faster person calendar.
+
+---
+
+## 0.25.0
+<small>2026-11-14</small>
+
+Connect Claude Code and Codex to your archive with one command, sync Microsoft
+365 mailboxes from several organizations, and let assistants find the right
+tool for a task, export one person's messages, and review staged deletions.
+This release also replaces 0.24.0, which was withdrawn because its Linux
+binaries did not start on most distributions.
+
+[GitHub release](https://github.com/kenn-io/msgvault/releases/tag/v0.25.0) ·
+[All changes since 0.24.0](https://github.com/kenn-io/msgvault/compare/v0.24.0...v0.25.0)
+
+### Upgrade notes
+
+- **0.25.0 includes everything in 0.24.0.** If you are upgrading from 0.23.0,
+  follow the [0.24.0 upgrade notes](#0240) first. They cover document search
+  moving to Docbank and upgrading clients together with the daemon.
+- **On Linux, reinstall if 0.24.0 left msgvault unable to start.** The 0.24.0
+  Linux binaries required glibc 2.43, so they failed with
+  ``version `GLIBC_2.43' not found`` on Ubuntu 24.04, Debian 12, and other
+  releases older than Ubuntu 26.04. `msgvault update` from 0.23.0 installed
+  them anyway, which left a binary that could not run or update itself.
+  Reinstall with `curl -fsSL https://msgvault.io/install.sh | bash`. The
+  archive was not changed, because 0.24.0 exited before it opened anything.
+
+### New features
+
+- Connect Claude Code and Codex to your archive with
+  [`msgvault agent setup`](cli-reference.md#agent-setup). The command installs
+  skills and configures MCP access, the connection assistants use to work with
+  msgvault. [`msgvault setup status`](cli-reference.md#setup-status) reports
+  each installed agent's connection status and any repair command.
+- Sync Microsoft 365 mailboxes from
+  [multiple organizations](guides/oauth-setup.md#mailboxes-in-multiple-organizations)
+  without switching configuration between runs. Define named apps under
+  `[microsoft.apps.NAME]` and select one with
+  `msgvault add-o365 ADDRESS --oauth-app NAME`. Teams, contacts, and the web
+  add-source form continue to use `[microsoft]`.
+- Find MCP tools by describing a task with
+  [`search_tools`](usage/chat.md#find-tools-for-a-task). Search runs locally
+  and returns relevant tools with their descriptions and inputs, limited to
+  those available to the connection.
+- Export one person's messages as JSONL through an MCP-connected assistant
+  with [`export_person_messages`](usage/chat.md#available-tools). Archive
+  owners receive the export, manifest, and completion receipt without running
+  `msgvault export-messages` separately. Exports must fit within the 512 KiB
+  response limit.
+- [Review staged deletions through MCP](usage/chat.md#staged-deletion-via-mcp)
+  without enabling writes. Archive owners can list deletion batches with
+  `list_deletions` and read a batch's receipt with `get_deletion`. These tools
+  are unavailable to delegated sessions.
+
+### Improvements
+
+- Remove leftover Microsoft tokens when removing a Graph mail or IMAP source.
+  msgvault attempts cleanup across the default and named apps, keeps tokens
+  another active source still uses, and warns when unreadable IMAP settings
+  prevent cleanup.
+- Identify an IMAP account's authentication method through the optional
+  `auth_method` field on `GET /api/v1/cli/accounts`, when its settings are
+  readable. See [API compatibility](api-server.md#api-compatibility).
+
+### Bug fixes
+
+- Run the Linux release binaries on distributions back to Ubuntu 22.04 again.
+- Keep your working installation when an update cannot run.
+  [`msgvault update`](cli-reference.md#update) checks that the new binary
+  starts before replacing the installed one. A failed, timed-out, or canceled
+  check leaves the existing binary in place and reports why.
+- Restore provider credentials, CardDAV logins, and the server API key on
+  Windows with the required access permissions. Restore preserves files
+  omitted from the backup and reports permission conflicts. To repair a
+  conflict, move the conflicting file aside, stop the daemon, and rerun
+  [`msgvault backup restore`](cli-reference.md#backup-restore)
+  `SNAPSHOT --repo REPO --target DIR --permissions-only`.
+
+### Acknowledgements
+
+Thanks to everyone who contributed to this release:
+
+- [@AndrewWiggins](https://github.com/AndrewWiggins) for documenting how full-text indexing works and simplifying how sync records partial imports.
+- [@rodboev](https://github.com/rodboev) for `msgvault agent setup`, Microsoft 365 mailboxes in multiple organizations, Microsoft token cleanup when removing a source, and the IMAP authentication method in the accounts API.
+- [@salmonumbrella](https://github.com/salmonumbrella) for task-based tool search, JSONL export of one person's messages, staged deletion review through MCP, and Windows credential restores.
+- [@wesm](https://github.com/wesm) for keeping the installed binary when an update cannot run.
+
+---
+
+## 0.24.0
+<small>2026-11-13</small>
+
+Bring in RSS feeds, X and Discord message archives, Facebook Page and Instagram
+comments, and any custom source through a single import endpoint. See which
+questions are still waiting on a reply. Assistants get safer drafting: warnings
+for sensitive content and unfamiliar recipients, and sign-in codes withheld
+from delegated reads. Turn on search by meaning from Settings, search attached
+documents through Docbank, and use the Web UI comfortably on a phone.
+
+Withdrawn: its Linux binaries did not start on most distributions. Install
+[0.25.0](#0250), which includes these changes.
+
+[All changes since 0.23.0](https://github.com/kenn-io/msgvault/compare/v0.23.0...v0.24.0)
+
+### Upgrade notes
+
+- **Document search moved to Docbank.** msgvault no longer extracts document
+  text itself. `msgvault documents`, `/api/v1/documents/*`, and MCP
+  `search_document_attachments` are gone, and the upgrade drops the local
+  document text tables. Set `document_profile` under `[integrations.docbank]`,
+  grant consent in Docbank, then search with `msgvault media search`. Backups
+  made before the upgrade keep the old tables and still restore. See
+  [Search document text through Docbank](configuration.md#search-document-text-through-docbank).
+- Remove `[attachments.documents]` and drop `document_text` from
+  `allowed_sources`. The loader warns and ignores both. A people inference
+  provider that listed `document_text` needs a fresh
+  `msgvault person provider check <name>` and
+  `msgvault person provider consent <name> --yes` before inference resumes.
+- Use `media search --person <id> --direction from_person` in place of
+  `person files --lane documents`. The replacement has no date filters or
+  cursor. Mistral processing needs Docbank 0.17.0 or later, and Docbank
+  reprocesses mirrored files, so Mistral users pay for OCR again.
+- Upgrade the CLI and other clients together with the daemon. File-list and
+  suggestion responses now return `content_available: null` for files that
+  haven't been checked. Apps that embed msgvault's archive reader need this
+  release too.
+
+### New features
+
+- Follow RSS, Atom, and JSON [feeds](usage/feeds.md) with
+  `msgvault source feeds`. Import subscriptions with `--opml`, schedule
+  updates, and keep archived items after publishers remove them.
+- Archive [Facebook Page comments](usage/facebook-comments.md) and comments on
+  linked professional [Instagram accounts](usage/instagram-comments.md),
+  including nested replies. Unfinished syncs resume on the next run.
+- Import direct and group messages from extracted X archives with
+  [`msgvault import-x`](usage/text-messages.md#import-x), including local DM
+  media. Newer encrypted chats are not supported.
+- Import your own sent Discord messages, including DMs, with
+  [`msgvault import-discord-package`](usage/discord.md#import-a-personal-data-package).
+  These packages don't contain incoming messages or attachment files. Support
+  for the current JSON package format is experimental.
+- Keep [Matrix](usage/matrix.md#media-behavior-and-limits) photos, stickers,
+  audio, video, and files, including encrypted attachments. Sync also finds
+  media in messages archived earlier. By default it skips rooms over 20
+  members and files over 250 MiB.
+- Schedule WhatsApp for Mac and iMessage imports in the daemon. Configure
+  [`[[whatsapp_apple]]`](configuration.md#apple-whatsapp-sources) and
+  [`[imessage]`](configuration.md#imessage), then use Sources to check runs or
+  sync now.
+- [Turn on search by meaning](usage/vector-search.md#turn-on-search-by-meaning)
+  from web Settings without restarting. Setup reuses a compatible Ollama or
+  downloads the built-in server, then builds the index.
+- See [open loops](usage/open-loops.md): questions waiting on a reply from you
+  or from someone else. `msgvault loops` lists, completes, snoozes, and
+  reopens them. People Details shows a read-only list, and MCP assistants can
+  record decisions you approve.
+- Import messages from custom sources with
+  [`POST /api/v1/import/message`](usage/message-import.md). Sending the same
+  message again updates it instead of adding a copy, and it is
+  keyword-searchable as soon as the request returns.
+- Search mirrored documents and images by meaning with `msgvault media search`
+  and MCP `search_media`. Set `attachment_search_profile` under
+  `[integrations.docbank]` to a profile whose files Docbank has already
+  embedded. See [attachment search](usage/searching.md#search-mirrored-attachment-text).
+- See [sensitive-content warnings](usage/chat.md#draft-tools) in MCP draft
+  receipts, including findings in quoted history. Run
+  `msgvault mcp --confirm-sensitive-drafts` to require your approval before a
+  flagged draft reaches the provider. The client must support confirmation
+  prompts.
+- Check email draft recipients against [past contact in the archive](usage/chat.md#recipient-evidence-on-new-drafts).
+  MCP and JSON results flag unfamiliar addresses. The check is advisory and
+  does not authorize sending.
+- Keep sign-in codes, password-reset links, and magic links out of delegated
+  reads unless the token includes `verification.read`. Detection is
+  heuristic, and search-based confirmation is not covered. See
+  [verification content](api-server.md#verification-content).
+- Read [sender-authentication results](configuration.md#sender-authentication)
+  on individual emails after you name trusted receivers for a source. JSON and
+  MCP report whether a trusted receiver confirmed the From domain you see.
+- Tell newly written text apart from quoted history, forwards, and signatures
+  in MCP message reads with `include_segments: true`.
+- Look up partial street addresses with
+  [`msgvault address autocomplete`](cli-reference.md#address) and fetch a
+  chosen suggestion with `msgvault address select`. This needs
+  `MSGVAULT_GOOGLE_PLACES_API_KEY`, uses separately billed Google Places
+  services, and doesn't change the archive.
+- Mark older email attachments as inline or standalone with
+  [`msgvault repair-attachment-roles`](cli-reference.md#repair-attachment-roles),
+  without turning on document indexing.
+- Track feedback decisions and follow-through with the
+  [`msgvault-feedback` skill](guides/agent-skills.md#follow-through-on-feedback),
+  installed by `msgvault skills install`. Accepting feedback, making the
+  change, and reporting back stay separate steps.
+
+### Improvements
+
+- Preview CSV, TSV, text, and audio in [Files](web-ui.md#files-and-containing-context).
+  See the message a file came from, step through results, and use PDF page
+  counts and zoom. Missing archived content gets an explanation instead of a
+  download button.
+- Browse Messages, Files, and grouped results on a phone without scrolling
+  sideways. Toolbars fit on one row, messages open in a full-width reader, and
+  Back returns to the row you opened.
+- Inspect grouped messages with counts, sizes, activity, and frequent
+  participants. Month and Year groups list newest first in your time zone.
+- Curate people with readable merge history and split choices based on
+  addresses. When someone else saved a job edit first, see the saved record
+  and choose between your edits and the saved version.
+- Find built-in and custom people fields together in Settings. Person tasks
+  show their lists and use one add field with a searchable list picker.
+- File a message to a new or existing task or Kata issue from one dialog.
+  Existing destinations load right away, and new task descriptions link back
+  to the message.
+- Find commands through a reorganized command palette with recent commands
+  and archive search as a fallback. Keyboard help shows every shortcut at once
+  on wide screens.
+- Find messages by sender name, address, or phone number with `from:` in the
+  CLI, MCP, and web search. Full addresses match exactly and domains match by
+  suffix. Repeated `from:` values must all match, including in CLI searches
+  that used to match any of them.
+- Searches and sender, domain, and label lists say when more results exist
+  past the limit, with a hint for fetching more.
+- See GitHub notification email, including bot notifications, under the
+  GitHub author in People. The original From address is kept. Configure other
+  [relay senders](configuration.md#relayed-email-senders).
+- Read Messages while SQLite auto mode rebuilds its analytics cache. Exports,
+  folder listings, and policy reads also run alongside imports and syncs.
+- Search and browse large archives faster. SQLite keyword search, JSON
+  snippets, selective address and label filters, large-chat paging, and
+  People search load less unrelated data.
+- Finish daemon imports, syncs, and message repairs without waiting for
+  attachment packing. Packing runs as scheduled work, up to six hours later.
+  Loose files stay readable, and packing errors appear in job status.
+- Keep [daemons you start explicitly](cli-reference.md#daemon) running until
+  you stop them. Automatically started daemons still stop when idle, and
+  status says which applies. `msgvault serve` prints the running daemon's web
+  URL when one already owns the archive.
+- [Install](setup.md) puts `msgvault` on your PATH in new Bash, Zsh, and Fish
+  terminals. Set `MSGVAULT_NO_MODIFY_PATH=1` to leave shell profiles alone.
+- Stop more queries, requests, and helper processes with Ctrl-C or daemon
+  shutdown. Work that must follow a committed write, such as a cache refresh,
+  still finishes.
+- Connect Docbank and Kata over plain HTTP on a trusted private network with
+  `trust_private_network = true`. API keys travel unencrypted when this is on.
+- See account lists sooner when fresh counts are slow. Older counts show
+  their age, and JSON marks them stale.
+- [MCP](usage/chat.md#tools-available-for-your-archive) loads only the tool
+  families that match the archive's sources and integrations. Reconnect stdio
+  clients after adding a source to see new tools.
+
+### Bug fixes
+
+- Keep Gmail archives complete after an interrupted full sync. Resuming keeps
+  the original History position, so the next incremental sync collects mail
+  that arrived during the pause. A full sync interrupted under an older
+  release rescans once without downloading archived messages again.
+- Retry failed Gmail label changes and deletions instead of skipping them.
+  Recovering from an expired History cursor also refreshes labels on messages
+  already in the archive.
+- Restore missing Gmail attachments and remote images after a failed or
+  interrupted save, using the retained original instead of fetching the
+  message again. For older messages without a retry record, run
+  `repair-derived --attachment-message <message-id> --source-id <source-id>`.
+- Keep [IMAP](usage/imap.md) flags current on servers without CONDSTORE,
+  including Proton Mail Bridge and DavMail. Incremental sync refreshes the
+  newest 5,000 archived messages in each mailbox. Run `sync-full --noresume`
+  to refresh older ones.
+- Sync IMAP folders with non-ASCII names without rescanning the whole account
+  on servers that advertise both IMAP4rev1 and IMAP4rev2.
+- Finish scheduled Inline and Beeper passes on busy daemons instead of
+  restarting work already done. Beeper also skips unchanged recent messages
+  and reports new messages separately from updates.
+- Recover from Plaud rate limits with longer waits and a slower request rate.
+  Set `limit` in [`[[plaud]]`](configuration.md#plaud-sources) to check a large
+  library over several scheduled runs.
+- Keep the full text of long iMessage messages, including non-Latin text and
+  emoji. Rerun [`import-imessage`](usage/text-messages.md#import-imessage) to
+  repair messages still in `chat.db`.
+- Archive Slack files served through signed redirects instead of retrying
+  downloads that always fail.
+- Connect [iCloud Contacts](usage/people-carddav.md#icloud-contacts) with
+  `add-carddav --icloud <apple-id>` and an Apple app-specific password. If
+  Apple moves the account to another server, sync asks you to reconnect.
+- Find email addresses, host names, version numbers, and phone numbers in
+  PostgreSQL searches. Older entries are reindexed in the background after the
+  upgrade, so results stay incomplete until that finishes.
+- Keep existing message text when repair finds an empty stored original.
+  Interrupted automatic repairs resume where they stopped, and
+  `repair-message --audit` reports comparisons it couldn't settle.
+- Export each message once, without duplicates at page boundaries. Large
+  exports also finish faster.
+- Keep message lists filled while scrolling person and domain pages. Direct
+  message links open inside the normal app with the message selected.
+- Warn before leaving Settings or reloading would discard edits in forms that
+  save on their own. Restart notices name the machine and the commands to
+  run, and terminal settings scroll on short screens.
+- Keep encrypted Matrix edits attached to their original message when an
+  older edit is recovered.
+- Leave inactive members out of new WhatsApp for Mac group imports. Members
+  imported earlier stay as they are.
+- Expand recurring calendar events correctly across the end of a leap year,
+  and keep Google meeting rooms out of People unless linked to a real person.
+- Keep Unicode intact in streamed daemon output and shortened CLI text. Windows
+  daemon helpers no longer flash console windows.
+- Record employment from people sweeps again when the model names the
+  organization as plain text or writes dates such as `2023-05`.
+- Keep activity calculations moving across identity changes, without
+  restarting the scan or queuing endless follow-up work.
+
+### Acknowledgements
+
+Thanks to everyone who contributed to this release:
+
+- [@AndrewWiggins](https://github.com/AndrewWiggins) for keeping Gmail labels and deletions in sync, restoring missing Gmail attachments from retained originals, protecting message text during repairs, and documenting Gmail durability.
+- [@cpcloud](https://github.com/cpcloud) for cancelling database, HTTP, and helper work with the caller, the Conventional Commits policy, and faster CI.
+- [@eserie](https://github.com/eserie) for archiving Matrix media and reporting Apple imports that can't open their database.
+- [@franklintra](https://github.com/franklintra) for IMAP flag refresh without CONDSTORE, Slack signed-redirect downloads, `repair-attachment-roles`, people-sweep employment records, and active-only WhatsApp group members.
+- [@jasonkuhrt](https://github.com/jasonkuhrt) for RSS, Atom, and JSON feeds and the custom-source message import endpoint.
+- [@maciej](https://github.com/maciej) for non-ASCII IMAP folder names.
+- [@mariusvniekerk](https://github.com/mariusvniekerk) for resuming Gmail full syncs at the right History position, Plaud rate-limit recovery, finishing busy Inline and Beeper passes, and leaner CI.
+- [@nzoschke](https://github.com/nzoschke) for labels in DuckDB message lists and local source credential helpers.
+- [@pavelzak](https://github.com/pavelzak) for recovering CSV attachments behind a stray delimiter.
+- [@rodboev](https://github.com/rodboev) for the phone-friendly Web UI, Files previews, grouped messages, the command palette, scheduled Apple imports, search by meaning from Settings, sensitive-draft warnings, sender authentication, withholding verification content, message segments, Docbank document processing, and many speed improvements across search and browsing.
+- [@salmonumbrella](https://github.com/salmonumbrella) for Facebook Page and Instagram comments, X and Discord imports, attachment search by meaning, recipient checks on drafts, address lookup, iCloud Contacts, the feedback skill, deferred attachment packing, and trusted private-network connections.
+- [@wesm](https://github.com/wesm) for open loops, full text for long iMessage imports, archived link indexing, and unsaved-edit warnings in Settings.
+
+---
 
 ## 0.23.0
 <small>2026-11-04</small>

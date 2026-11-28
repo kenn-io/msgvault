@@ -69,6 +69,11 @@ func sourceOperationFixture(t *testing.T, fixture *api.Server) *daemonMCPOperati
 	t.Helper()
 	server := httptest.NewServer(fixture.Router())
 	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
+		defer cancel()
+		require.NoError(t, fixture.Shutdown(ctx))
+	})
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	require.NoError(t, err)
 	capabilities, err := client.MCPCapabilities(t.Context())
@@ -208,6 +213,20 @@ func TestMCPSlackPolicySDKUsesRealDaemonAndApproval(t *testing.T) {
 	reloaded, err := config.Load(path, "")
 	requirements.NoError(err)
 	assertions.False(reloaded.Slack.DMsEnabled())
+}
+
+const validSlackSettingsReceipt = `{"pending_restart":false,"settings":[{"key":"slack.dms","group":"sources","label":"Direct messages","description":"Include one-to-one direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.group_dms","group":"sources","label":"Group direct messages","description":"Include group direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.channels","group":"sources","label":"Channels","description":"Included channel selectors","kind":"string_array","value":{"strings":["C_EXAMPLE"]}},{"key":"slack.exclude_channels","group":"sources","label":"Excluded channels","description":"Excluded channel selectors","kind":"string_array","value":{"strings":[]}}]}`
+
+func TestMCPSlackPolicyWriteMissingETagRemainsUncertain(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	var settings slackSettingsResponse
+	requirements.NoError(json.Unmarshal([]byte(validSlackSettingsReceipt), &settings))
+	result := &mcpserver.OperationResult{Output: settings}
+	result = slackPolicyProjection(result, true)
+	requirements.True(result.IsError)
+	data, err := json.Marshal(result.Output)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
 }
 
 func TestMCPSlackPolicyCommittedBeforeCredentialCleanupFailure(t *testing.T) {
@@ -362,11 +381,7 @@ func TestMCPPersonCommittedRenameWithMissingETagRemainsUncertain(t *testing.T) {
 	requirements.True(result.IsError)
 	data, err := json.Marshal(result.Output)
 	requirements.NoError(err)
-	var receipt struct {
-		Uncertain bool `json:"operation_may_have_completed"`
-	}
-	requirements.NoError(json.Unmarshal(data, &receipt))
-	assertions.True(receipt.Uncertain)
+	assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
 	current, err := st.GetPerson(person.ID)
 	requirements.NoError(err)
 	assertions.Equal(new("Committed Example"), current.DisplayName)

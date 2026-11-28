@@ -224,9 +224,14 @@ func TestLibrarySourceScopeEmptyAndUnclassified(t *testing.T) {
 		assertions.Equal(http.StatusNotFound, w.Code, w.Body.String())
 	}
 	ctx := archive.WithSourceScope(t.Context(), []int64{sources[0].source.ID})
-	for _, path := range []string{"/api/v1/stats", "/api/v1/search?q=telescope&mode=vector", "/api/v1/search?q=telescope&mode=hybrid", "/api/v1/attachments/abcdef/content"} {
+	for _, path := range []string{"/api/v1/stats", "/api/v1/attachments/abcdef/content"} {
 		w := sourceScopeRequest(ctx, t, handler, path)
 		assertions.Equal(http.StatusForbidden, w.Code, w.Body.String())
+	}
+	for _, mode := range []string{"vector", "hybrid"} {
+		w := sourceScopeRequest(ctx, t, handler, "/api/v1/search?q=telescope&mode="+mode)
+		assertions.Equal(http.StatusServiceUnavailable, w.Code, w.Body.String())
+		assertions.Contains(w.Body.String(), "vector_not_enabled")
 	}
 	w := sourceScopeRequest(t.Context(), t, handler, "/api/v1/messages")
 	requirements.Equal(http.StatusOK, w.Code, w.Body.String())

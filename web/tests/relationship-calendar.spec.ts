@@ -21,6 +21,7 @@ async function openCalendar(page: Page, firstAt: string | Promise<string> = pers
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'loopback', https: false, plain_http_warning: false }
   }));
+  await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/v1/relationships', (route) => route.fulfill({ json: {
     rows: [{ canonical_id: 1, display_label: person.display_label, member_ids: [1], score: 1,
       last_at: person.last_at, signals: { last_interaction_at: person.last_at, meeting_count: 0,
@@ -68,6 +69,7 @@ test('calendar heading clears the graph and uses the touch type scale', async ({
 });
 
 test('calendar fills its card at medium and narrow widths without clipping edge tooltips', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await openCalendar(page);
   const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
 

@@ -8,7 +8,7 @@
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
     patchSettings as generatedPatchSettings,
   } from '../../api/generated/api/api';
-  import { Disclosure, PageHeader, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
+  import { Disclosure, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
   import { getContext, onMount, onDestroy, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -510,7 +510,7 @@
   {:else}
     <span class="unsaved" role="status">
       {`${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : draftNeedsRestart ? '.' : ''}`}
-      {#if draftNeedsRestart}<span>Restart msgvault to apply these changes.</span>{/if}
+      {#if draftNeedsRestart}<span>Restart required after saving.</span>{/if}
     </span>
     <Button label="Discard" disabled={saving} onclick={discard} />
     <Button
@@ -616,15 +616,8 @@
 {/snippet}
 
 <main class="settings" bind:this={root} aria-label="Settings" data-form>
-  <div class="settings-header">
-    <PageHeader title="Settings">
-      {#snippet actions()}
-        {#if activeCategory === 'overview'}
-          <span class="feature-refresh"><IconButton ariaLabel="Refresh feature status" onclick={refreshFeatureStatus}><RefreshCwIcon size={16} /></IconButton></span>
-        {/if}
-      {/snippet}
-    </PageHeader>
-  </div>
+  <h1 class="kit-sr-only">Settings</h1>
+  {#if loading || !loaded}<h2 class="settings-title">Settings</h2>{/if}
   {#if loading}
     <p class="state" role="status">Loading…</p>
   {:else if !loaded}
@@ -633,7 +626,6 @@
     <SettingsLayout
       {categories}
       bind:active={() => activeCategory, selectCategory}
-      title=""
       footer={pendingLeave || dirtyCount > 0 ? settingsFooter : undefined}
     >
       {#snippet panel(activeId)}
@@ -643,12 +635,17 @@
           {/if}
           {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
           {#if buildError && activeId === 'overview'}<p class="notice notice--error" role="alert">{buildError}</p>{/if}
-          {#if pendingRestart}
-            <p class="notice notice--pending" role="status">Saved. Restart msgvault to apply these changes.</p>
+          {#if pendingRestart || inference.status?.pending_restart}
+            <div class="restart-notice"><InlineNotice tone="warning" message="Restart pending."><span>On the computer running msgvault, restart its service, or stop and rerun your foreground <code>msgvault serve</code> with the same flags. Otherwise, run <code>msgvault daemon restart</code> with the same custom <code>--home</code> and <code>--config</code> options.</span></InlineNotice></div>
           {/if}
         </div>
 
-        <h2 id="settings-category-heading" tabindex="-1">{label}</h2>
+        <div class="category-heading">
+          <h2 id="settings-category-heading" tabindex="-1">{label}</h2>
+          {#if activeId === 'overview'}
+            <IconButton class="feature-refresh" ariaLabel="Refresh feature status" onclick={refreshFeatureStatus}><RefreshCwIcon size={16} /></IconButton>
+          {/if}
+        </div>
 
         <fieldset class="settings-fields" disabled={saving}>
         {#if activeId === 'overview'}
@@ -763,37 +760,30 @@
     background: var(--bg-surface);
     line-height: 1.45;
   }
-  .settings-header {
-    --page-header-gap: 0px;
-    padding: var(--space-5) var(--page-gutter) var(--field-gap);
+  .settings-title {
+    padding: var(--space-6);
+    font-size: var(--font-size-lg);
+    font-weight: 650;
   }
   .settings :global(.kit-settings) {
     background: var(--bg-surface);
   }
-  /* Reserve the scrollbar's width up front so the centered panel does not
-     shift left when a long category makes it scroll. Positioning contains the
-     rows' absolutely positioned screen-reader labels, which otherwise stretch
-     the document past the viewport and add a second scrollbar. */
+  /* Positioning contains the rows' absolutely positioned screen-reader labels,
+     which otherwise stretch the document past the viewport and add a second
+     scrollbar. */
   .settings :global(.kit-settings__scroll) {
     position: relative;
-    scrollbar-gutter: stable;
   }
   .settings :global(.kit-settings__panel),
   .settings :global(.kit-settings__footer) {
     padding: var(--pane-pad-y) var(--pane-pad-x);
   }
-  /* The scroll pane reserves the 8px bar on its right edge (above), so the panel pads its right side by
-     the bar's width less than its left, and the content's inset reads the same on both sides. */
-  .settings :global(.kit-settings__scroll > .kit-settings__panel) {
-    padding-right: calc(var(--pane-pad-x) - var(--scrollbar-gutter-size));
-  }
   @media (max-width: 760px) {
-    /* Title, category tabs, and fields share one left edge. */
-    .settings-header {
-      padding-inline: var(--pane-pad-x);
-    }
     .settings :global(.kit-settings__sidebar) {
       padding-inline: calc(var(--pane-pad-x) - var(--space-4));
+    }
+    .settings :global(.kit-settings__title) {
+      padding-left: var(--space-4);
     }
   }
   .settings :global(.kit-settings__nav-item) {
@@ -824,6 +814,9 @@
     padding: var(--space-box);
     gap: var(--control-gap);
   }
+  .restart-notice :global(.kit-notice.kit-notice) {
+    border-color: var(--status-warning-ink);
+  }
   .notice {
     margin: 0;
     padding: var(--space-box);
@@ -840,6 +833,16 @@
     color: var(--status-error-ink);
   }
 
+  .category-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--control-gap);
+  }
+  .category-heading :global(.feature-refresh) {
+    --kit-control-height: 44px;
+    margin: -8px;
+  }
   h2 {
     margin: 0;
     line-height: var(--type-page-line);

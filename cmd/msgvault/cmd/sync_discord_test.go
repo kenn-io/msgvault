@@ -267,7 +267,13 @@ func TestSyncDiscordRebuildsCacheAfterPartialDurableImportFailure(t *testing.T) 
 		t.Context(),
 		st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID,
 	).Scan(&messageCount))
-	assert.Equal(1, messageCount, "core message persistence must precede the injected failure")
+	assert.Zero(messageCount, "the failed page keeps none of its messages")
+	var participantCount int
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
+		st.Rebind("SELECT COUNT(*) FROM participant_identifiers WHERE identifier_value = ?"), "500000000000000001",
+	).Scan(&participantCount))
+	assert.Equal(1, participantCount, "participants commit before the page, so the failed attempt still wrote")
 	assert.Equal(1, rebuilds, "a failed importer attempt with durable writes must refresh analytics")
 }
 

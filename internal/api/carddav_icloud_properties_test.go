@@ -12,22 +12,22 @@ import (
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
-	"hegel.dev/go/hegel"
+	"pgregory.net/rapid"
 )
 
 func TestICloudStartupRequiresExactStoredGenerationProperty(t *testing.T) {
 	f := savedICloudAccountFixture(t)
 	credential, err := carddav.LoadCredential(f.controller.cfg.TokensDir())
 	require.NoError(t, err)
-	hegel.Test(t, func(ht *hegel.T) {
-		generation := hegel.Draw(ht, hegel.Integers(int64(1), int64(math.MaxInt64)))
+	rapid.Check(t, func(rt *rapid.T) {
+		generation := rapid.Int64Range(1, math.MaxInt64).Draw(rt, "generation")
 		changed := credential
 		changed.ConnectionGeneration = generation
-		require.NoError(ht, carddav.SaveCredential(f.controller.cfg.TokensDir(), changed))
+		require.NoError(rt, carddav.SaveCredential(f.controller.cfg.TokensDir(), changed))
 		controller, loadErr := NewCardDAVController(f.controller.cfg, f.controller.store, slog.New(slog.DiscardHandler))
-		require.NoError(ht, loadErr)
-		assert.Equal(ht, generation == credential.ConnectionGeneration, controller.Current() != nil)
-	}, hegel.WithTestCases(32), hegel.WithDatabase(""))
+		require.NoError(rt, loadErr)
+		assert.Equal(rt, generation == credential.ConnectionGeneration, controller.Current() != nil)
+	})
 }
 
 func TestICloudPublicBootstrapCannotImplicitlyReusePartitionPassword(t *testing.T) {

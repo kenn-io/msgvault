@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"hegel.dev/go/hegel"
+	"pgregory.net/rapid"
 )
 
 func TestEmailResumeSkipsCommittedPrefix(t *testing.T) {
@@ -151,21 +151,21 @@ func TestEmailMalformedProgressRestarts(t *testing.T) {
 }
 
 func TestEmailRetryIDsRoundTrip(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		require := require.New(ht)
-		assert := assert.New(ht)
-		id := hegel.Draw(ht, hegel.Integers(int64(1), int64(math.MaxInt64)))
+	rapid.Check(t, func(rt *rapid.T) {
+		require := require.New(rt)
+		assert := assert.New(rt)
+		id := rapid.Int64Range(1, math.MaxInt64).Draw(rt, "id")
 		got, ok := parseEmailRetryID(fmt.Sprintf("%016x", id))
 		require.True(ok)
 		assert.Equal(id, got)
-	}, hegel.WithTestCases(1000), hegel.WithDatabase(""))
+	})
 }
 
 func TestEmailRetryIDsRejectNoncanonicalText(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		require := require.New(ht)
-		assert := assert.New(ht)
-		text := hegel.Draw(ht, hegel.Text())
+	rapid.Check(t, func(rt *rapid.T) {
+		require := require.New(rt)
+		assert := assert.New(rt)
+		text := rapid.String().Draw(rt, "text")
 		id, ok := parseEmailRetryID(text)
 		raw, err := hex.DecodeString(text)
 		var want int64
@@ -176,18 +176,18 @@ func TestEmailRetryIDsRejectNoncanonicalText(t *testing.T) {
 		if want > 0 {
 			assert.Equal(want, id)
 		}
-	}, hegel.WithTestCases(1000), hegel.WithDatabase(""))
+	})
 }
 
 func TestEmailRetryRejectsMultipleOverflowRanges(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		require := require.New(ht)
-		count := 2 + hegel.Draw(ht, hegel.Integers(uint(0), uint(math.MaxUint)))%4
-		st, src, _ := archiveEmailSource(ht.T, "outlook", "stale")
+	rapid.Check(t, func(rt *rapid.T) {
+		require := require.New(rt)
+		count := rapid.UintRange(2, 5).Draw(rt, "count")
+		st, src, _ := archiveEmailSource(t, "outlook", "stale")
 		defer func() { require.NoError(st.Close()) }()
 		base := LedgerKey(src.SourceType, src.Identifier, emailVersion)
 		for i := uint(1); i < count; i++ {
-			archiveEmail(ht.T, st, src, strconv.FormatUint(uint64(i), 10), "stale")
+			archiveEmail(t, st, src, strconv.FormatUint(uint64(i), 10), "stale")
 		}
 		for i := int64(1); i <= int64(count); i++ {
 			require.NoError(st.MarkMigrationApplied(emailRetryRangeKey(base, i, i)))
@@ -198,7 +198,7 @@ func TestEmailRetryRejectsMultipleOverflowRanges(t *testing.T) {
 		sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 		require.NoError(err)
 		require.Equal(int64(count), sum.MessagesScanned)
-	}, hegel.WithTestCases(16), hegel.WithDatabase(""))
+	})
 }
 
 func TestEmailProcessLossReplaysOnlyUncheckpointedBatch(t *testing.T) {
@@ -466,19 +466,19 @@ func TestEmailRetryPhaseFailureKeepsRetainedFailuresPending(t *testing.T) {
 }
 
 func TestEmailInterruptedWalkMakesProgress(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
+	rapid.Check(t, func(rt *rapid.T) {
 		require :=
 			// Bound the materialized archive and number of interruption attempts.
-			require.New(ht)
-		assert := assert.New(ht)
+			require.New(rt)
+		assert := assert.New(rt)
 
-		count := 1 + hegel.Draw(ht, hegel.Integers(uint(0), uint(math.MaxUint)))%32
-		budget := 1 + hegel.Draw(ht, hegel.Integers(uint(0), uint(math.MaxUint)))%count
-		st, src, first := archiveEmailSource(ht.T, "outlook", "stale")
+		count := rapid.UintRange(1, 32).Draw(rt, "count")
+		budget := rapid.UintRange(1, count).Draw(rt, "budget")
+		st, src, first := archiveEmailSource(t, "outlook", "stale")
 		defer func() { require.NoError(st.Close()) }()
 		ids := []int64{first}
 		for i := uint(1); i < count; i++ {
-			ids = append(ids, archiveEmail(ht.T, st, src, strconv.FormatUint(uint64(i), 10), "stale"))
+			ids = append(ids, archiveEmail(t, st, src, strconv.FormatUint(uint64(i), 10), "stale"))
 		}
 		var scanned int64
 		for attempt := uint(0); attempt <= count; attempt++ {
@@ -509,5 +509,5 @@ func TestEmailInterruptedWalkMakesProgress(t *testing.T) {
 			require.ErrorIs(err, context.Canceled)
 		}
 		require.Fail("full walk made no durable progress")
-	}, hegel.WithTestCases(64), hegel.WithDatabase(""))
+	})
 }

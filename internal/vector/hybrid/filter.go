@@ -2,12 +2,12 @@ package hybrid
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -25,7 +25,7 @@ import (
 // PostgreSQL (so ? becomes $N — pgx rejects bare ?); pass nil (or
 // SQLiteDialect.Rebind, which is identity) on SQLite to leave the
 // queries unchanged.
-func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q *search.Query) (vector.Filter, error) {
+func BuildFilter(ctx context.Context, db store.SQLReader, rebind func(string) string, q *search.Query) (vector.Filter, error) {
 	var f vector.Filter
 	if q == nil {
 		return f, nil
@@ -116,7 +116,7 @@ func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q 
 // User-authored from:/label: operators keep their documented matching rules.
 func ApplyMessageFilter(
 	ctx context.Context,
-	db *sql.DB,
+	db store.SQLReader,
 	rebind func(string) string,
 	f *vector.Filter,
 	structured query.MessageFilter,
@@ -258,7 +258,7 @@ func intersectMessageTypes(existing, exact []string) []string {
 
 func resolveExactParticipantIDs(
 	ctx context.Context,
-	db *sql.DB,
+	db store.SQLReader,
 	rebind func(string) string,
 	where string,
 	args ...any,
@@ -282,7 +282,7 @@ func resolveExactParticipantIDs(
 	return ids, nil
 }
 
-func resolveExactLabelIDs(ctx context.Context, db *sql.DB, rebind func(string) string, label string) ([]int64, error) {
+func resolveExactLabelIDs(ctx context.Context, db store.SQLReader, rebind func(string) string, label string) ([]int64, error) {
 	rows, err := db.QueryContext(ctx, rebind("SELECT id FROM labels WHERE LOWER(name) = LOWER(?)"), label)
 	if err != nil {
 		return nil, fmt.Errorf("query exact labels: %w", err)
@@ -316,7 +316,7 @@ func noMatchGroup(ids []int64) []int64 {
 // group, which makes the per-group EXISTS check fail and returns zero
 // hits overall — preserving the SQLite path's "any unknown token
 // poisons the whole field" semantic.
-func resolveAddressGroups(ctx context.Context, db *sql.DB, rebind func(string) string, addrs []string) ([][]int64, error) {
+func resolveAddressGroups(ctx context.Context, db store.SQLReader, rebind func(string) string, addrs []string) ([][]int64, error) {
 	groups := make([][]int64, 0, len(addrs))
 	for _, a := range addrs {
 		ids, err := resolveParticipantIDs(ctx, db, rebind, []string{a})
@@ -333,7 +333,7 @@ func resolveAddressGroups(ctx context.Context, db *sql.DB, rebind func(string) s
 
 // resolveLabelGroups is the label-side counterpart of
 // resolveAddressGroups.
-func resolveLabelGroups(ctx context.Context, db *sql.DB, rebind func(string) string, labels []string) ([][]int64, error) {
+func resolveLabelGroups(ctx context.Context, db store.SQLReader, rebind func(string) string, labels []string) ([][]int64, error) {
 	groups := make([][]int64, 0, len(labels))
 	for _, l := range labels {
 		ids, err := resolveLabelIDs(ctx, db, rebind, []string{l})
@@ -352,7 +352,7 @@ func resolveLabelGroups(ctx context.Context, db *sql.DB, rebind func(string) str
 // contains any of the supplied tokens as a substring. Mirrors the
 // `from:` / `to:` behavior in internal/store/api.go so vector/hybrid
 // search agrees with the FTS path.
-func resolveParticipantIDs(ctx context.Context, db *sql.DB, rebind func(string) string, addrs []string) ([]int64, error) {
+func resolveParticipantIDs(ctx context.Context, db store.SQLReader, rebind func(string) string, addrs []string) ([]int64, error) {
 	if len(addrs) == 0 {
 		return nil, nil
 	}
@@ -387,7 +387,7 @@ func resolveParticipantIDs(ctx context.Context, db *sql.DB, rebind func(string) 
 // `label:` behavior in internal/store/api.go (LOWER(l.name) LIKE
 // '%token%' ESCAPE '\') so vector/hybrid search agrees with the FTS
 // path on which label matches a user-supplied token.
-func resolveLabelIDs(ctx context.Context, db *sql.DB, rebind func(string) string, labels []string) ([]int64, error) {
+func resolveLabelIDs(ctx context.Context, db store.SQLReader, rebind func(string) string, labels []string) ([]int64, error) {
 	if len(labels) == 0 {
 		return nil, nil
 	}

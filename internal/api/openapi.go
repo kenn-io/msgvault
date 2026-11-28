@@ -415,7 +415,38 @@ import (
 // 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
 // 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
 // 5.1.0 adds keyed group overviews, time-group item totals, saved view schema 3, and saved view run timezones.
-const APISchemaVersion = "5.4.0"
+// 5.2.0 adds open Kata issue search and optional task search queries.
+// 5.3.0 adds the IMAP authentication method to CLI accounts.
+// 5.4.0 allows native tag reads for source-deleted messages.
+// 5.5.0 adds source account matching repair.
+// 5.6.0 adds a refresh-only identity cache operation.
+// 5.7.0 adds first archived appearance to person contact state.
+// 5.8.0 advertises structured person-profile routes to MCP.
+// 5.9.0 adds meeting records.
+// 5.10.0 adds owner meeting link decisions.
+// 5.11.0 adds meeting link suggestions.
+// 5.12.0 adds owner-only email family lookup.
+// 5.13.0 adds fact decision outcomes, evidence filtering, and a person fact summary.
+// 5.14.0 adds each decision's submitted claim value to its history row.
+// 5.15.0 applies media search mode to recordings and reports their actual mode and degradations.
+// 5.16.0 adds standalone person creation at POST /api/v1/people/create.
+// 5.17.0 adds person, source, conversation and incoming filters to the message change feed.
+// 5.18.0 adds Directory cadence filters, ordering, presets and coverage.
+// 5.19.0 adds message export at GET /api/v1/cli/messages/export.
+// 5.20.0 adds message_type to file details.
+// 5.21.0 adds a browser tab title to message details.
+// 5.22.0 adds person attribute value selection by ordinal.
+// 5.23.0 rejects invalid person display names with a client error.
+// 5.24.0 adds CardDAV participant binding preview, reconciliation, undo, and sync conflict counts to run history.
+// 5.25.0 admits read-only Gmail inventory diagnostics through the generic CLI runner.
+// 5.26.0 adds if_exists=return and structured match details to person creation.
+// 5.27.0 supports vector and hybrid search under a source scope.
+// 5.28.0 serves CLI account counts from stored per-source totals, so account
+// listings no longer return stale, as_of, or counts_pending.
+// 5.29.0 fails backup freeze begin with backup_readers_busy when daemon archive readers do not stop.
+// 5.30.0 allows Kit and Vertex visual embedding settings.
+// 5.31.0 adds delegated change feed reads and owner MCP Events subscriptions.
+const APISchemaVersion = "5.31.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1072,6 +1103,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"MediaAttachmentResult", "filename"},
 		{"MediaAttachmentResult", "containing_title"},
 		{"MediaAttachmentResult", "excerpt"},
+		{"MessageDetail", "tab_title"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
 		{"MessagingRoute", "network_label"},
@@ -1207,6 +1239,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
+	nullableSchemaProperty(schemas["FactSummary"], "latest_claim_at")
 	for schemaName, property := range map[string]string{
 		"MeetingPerson":       emailProperty,
 		"Source":              "account_email",
@@ -1287,6 +1320,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 		for _, propertyName := range []string{"rejected_at", "superseded_at"} {
 			nullableSchemaProperty(brief, propertyName)
+		}
+	}
+	// Creation conflicts carry either ambiguity or participant-promotion data.
+	// Keep that JSON intact instead of generating an empty details struct.
+	if response := schemas["PersonCreateErrorResponse"]; response != nil {
+		if details := response.Properties["details"]; details != nil {
+			if details.Extensions == nil {
+				details.Extensions = map[string]any{}
+			}
+			details.Extensions["x-go-type"] = "jsontext.Value"
+			details.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json/jsontext"}
 		}
 	}
 	nullableSchemaProperty(schemas["PersonBriefEnrollment"], "enabled_at")

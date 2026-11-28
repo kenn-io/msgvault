@@ -1002,6 +1002,72 @@ func TestCapabilityNegotiationKeepsClassifiedFallback(t *testing.T) {
 	assertChecks.Contains(attempts[1].body, "max_tokens")
 }
 
+func TestOpenAISchemaRejectionIsRepresentationMissOnlyForNativeSchema(t *testing.T) {
+	const chatNullCode = `{"error":{"type":"invalid_request_error","code":null,"param":"response_format","message":"secret"}}`
+	for _, test := range []struct {
+		name     string
+		protocol Protocol
+		mode     OutputMode
+		body     string
+		want     ProviderCapabilityError
+	}{
+		{name: "chat null code", protocol: ProtocolOpenAIChat, mode: OutputModeNativeJSONSchema, body: chatNullCode, want: ProviderCapabilityUnsupportedRepresentation},
+		{name: "chat absent code", protocol: ProtocolOpenAIChat, mode: OutputModeNativeJSONSchema, body: `{"error":{"type":"invalid_request_error","param":"response_format.json_schema"}}`, want: ProviderCapabilityUnsupportedRepresentation},
+		{name: "chat invalid schema code", protocol: ProtocolOpenAIChat, mode: OutputModeNativeJSONSchema, body: `{"error":{"type":"invalid_request_error","code":"invalid_json_schema","param":"response_format"}}`, want: ProviderCapabilityUnsupportedRepresentation},
+		{name: "responses invalid schema code", protocol: ProtocolOpenAIResponses, mode: OutputModeNativeJSONSchema, body: `{"error":{"type":"invalid_request_error","code":"invalid_json_schema","param":"text.format.schema"}}`, want: ProviderCapabilityUnsupportedRepresentation},
+		{name: "responses null code", protocol: ProtocolOpenAIResponses, mode: OutputModeNativeJSONSchema, body: `{"error":{"type":"invalid_request_error","code":null,"param":"text.format"}}`, want: ProviderCapabilityUnsupportedRepresentation},
+		{name: "chat json object mode", protocol: ProtocolOpenAIChat, mode: OutputModeJSONObject, body: chatNullCode},
+		{name: "chat other code", protocol: ProtocolOpenAIChat, mode: OutputModeNativeJSONSchema, body: `{"error":{"type":"invalid_request_error","code":"context_length_exceeded","param":"response_format"}}`},
+		{name: "chat foreign field", protocol: ProtocolOpenAIChat, mode: OutputModeNativeJSONSchema, body: `{"error":{"type":"invalid_request_error","code":null,"param":"messages"}}`},
+		{name: "chat absent field", protocol: ProtocolOpenAIChat, mode: OutputModeNativeJSONSchema, body: `{"error":{"type":"invalid_request_error","code":"invalid_json_schema"}}`},
+		{name: "chat malformed code", protocol: ProtocolOpenAIChat, mode: OutputModeNativeJSONSchema, body: `{"error":{"type":"invalid_request_error","code":{"value":"invalid_json_schema"},"param":"response_format"}}`},
+		{name: "anthropic null code", protocol: ProtocolAnthropicMessages, mode: OutputModeNativeJSONSchema, body: `{"type":"error","error":{"type":"invalid_request_error","code":null,"param":"tools"}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tokenParameter := ""
+			if test.protocol == ProtocolOpenAIChat {
+				tokenParameter = "max_completion_tokens"
+			}
+			profile, err := capabilityProfile(capabilityTestCandidate(test.protocol, "https://example.test"), test.mode, tokenParameter, false)
+			require.NoError(t, err)
+			capability, _ := classifyProviderError(profile, []byte(test.body))
+			assert.Equal(t, test.want, capability)
+		})
+	}
+}
+
+func TestCapabilityNegotiationFallsBackWhenOpenAIRejectsStrictSchema(t *testing.T) {
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
+	var attempts []capabilityAttempt
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		assertChecks.NoError(json.NewDecoder(r.Body).Decode(&body))
+		attempts = append(attempts, capabilityAttempt{path: r.URL.Path, body: body})
+		if format, _ := body["response_format"].(map[string]any); format["type"] == "json_schema" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, err := w.Write([]byte(`{"error":{"message":"Invalid schema for response_format 'msgvault_person_fact_claims_v1': schema must have a 'type' key.","type":"invalid_request_error","param":"response_format","code":null}}`))
+			assertChecks.NoError(err)
+			return
+		}
+		_, err := w.Write([]byte(`{"model":"synthetic-model-version","choices":[{"message":{"content":"{\"claims\":[]}"}}]}`))
+		assertChecks.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	registry, err := NewDriverRegistry(server.Client(), nil, nil)
+	requireChecks.NoError(err)
+	got, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
+		capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
+		NewCredential(AuthBearer, capabilityCredentialValue))
+	requireChecks.NoError(negotiationErr)
+	assertChecks.Equal(OutputModeJSONObject, got.OutputMode)
+	assertChecks.Equal("max_completion_tokens", got.TokenLimitParameter)
+	requireChecks.Len(attempts, 3)
+	assertChecks.Equal("json_schema", responseFormatType(t, attempts[0].body))
+	assertChecks.Equal("json_schema", responseFormatType(t, attempts[1].body))
+	assertChecks.Equal("json_object", responseFormatType(t, attempts[2].body))
+}
+
 func TestCapabilityNegotiationDiagnosticsUseSafeUnknownClasses(t *testing.T) {
 	for _, test := range []struct {
 		name     string

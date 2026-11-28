@@ -365,6 +365,16 @@ func HeadlessAccountArgs(command, email, app string, readonly, write bool) []str
 	return args
 }
 
+// HeadlessSyncArgs builds the sync command printed after an account is added.
+// It puts "--" before the identifier only when the identifier starts with "-",
+// so the usual command still accepts flags appended after it.
+func HeadlessSyncArgs(command, identifier string) []string {
+	if strings.HasPrefix(identifier, "-") {
+		return []string{"msgvault", command, "--", identifier}
+	}
+	return []string{"msgvault", command, identifier}
+}
+
 func headlessArgumentSafe(arg string) bool {
 	if arg == "" || arg[0] == '@' {
 		return false
@@ -379,10 +389,17 @@ func headlessArgumentSafe(arg string) bool {
 
 // PrintHeadlessCommand preserves native arguments in the supported shells.
 func PrintHeadlessCommand(out io.Writer, args ...string) {
-	if slices.ContainsFunc(args, func(arg string) bool { return !headlessArgumentSafe(arg) }) {
+	// PowerShell parses a bare word starting with "-" as a parameter and
+	// splits it at ".", so a value after "--" that starts with "-" is quoted.
+	quote := make([]bool, len(args))
+	separator := slices.Index(args, "--")
+	for i, arg := range args {
+		quote[i] = !headlessArgumentSafe(arg) || (separator >= 0 && i > separator && strings.HasPrefix(arg, "-"))
+	}
+	if slices.Contains(quote, true) {
 		posix, powershell := slices.Clone(args), slices.Clone(args)
 		for i, arg := range args {
-			if !headlessArgumentSafe(arg) {
+			if quote[i] {
 				posix[i] = ShellQuote(arg)
 				powershell[i] = "'" + strings.ReplaceAll(arg, "'", "''") + "'"
 			}

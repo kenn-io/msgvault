@@ -3,7 +3,6 @@ package daemonclient
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,13 +11,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-const agentTokenSenderMinAPISchemaVersion = "2.32.0"
-
-// AgentReadMinAPISchemaVersion adds source-scoped reads and token expiry.
-const AgentReadMinAPISchemaVersion = "3.9.0"
-
 // AgentChangeFeedMinAPISchemaVersion admits delegated change feed reads.
-const AgentChangeFeedMinAPISchemaVersion = "5.3.0"
+const AgentChangeFeedMinAPISchemaVersion = "5.31.0"
 
 // IssueAgentToken creates a restricted agent grant and returns its one-time secret.
 func (c *Client) IssueAgentToken(
@@ -29,16 +23,6 @@ func (c *Client) IssueAgentToken(
 	senderSelections map[int64][]string,
 	expires time.Time,
 ) (*generated.AgentTokenIssueResponse, error) {
-	if senderSelections != nil {
-		compatible, err := c.SupportsAPISchemaVersion(ctx, agentTokenSenderMinAPISchemaVersion)
-		if err != nil {
-			return nil, fmt.Errorf("check agent-token sender capability: %w", err)
-		}
-		if !compatible {
-			version, _ := c.APISchemaVersion(ctx)
-			return nil, fmt.Errorf("agent-token sender selection requires daemon API schema %s or newer (daemon reports %q)", agentTokenSenderMinAPISchemaVersion, version)
-		}
-	}
 	encodedSelections := make(map[string][]string, len(senderSelections))
 	for sourceID, values := range senderSelections {
 		encodedSelections[strconv.FormatInt(sourceID, 10)] = append([]string(nil), values...)
@@ -46,13 +30,6 @@ func (c *Client) IssueAgentToken(
 	var expiresAt *time.Time
 	if !expires.IsZero() {
 		expiresAt = &expires
-		compatible, err := c.SupportsAPISchemaVersion(ctx, AgentReadMinAPISchemaVersion)
-		if err != nil {
-			return nil, fmt.Errorf("check agent-token expiry capability: %w", err)
-		}
-		if !compatible {
-			return nil, fmt.Errorf("agent-token expiry requires daemon API schema %s or newer", AgentReadMinAPISchemaVersion)
-		}
 	}
 	resp, err := APIResponseWithStatuses(c, []int{http.StatusCreated}, func(client *apiclient.Client) (*generated.IssueAgentTokenResp, error) {
 		return client.IssueAgentTokenWithResponse(ctx, &generated.IssueAgentTokenRequestOptions{

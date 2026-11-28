@@ -39,6 +39,7 @@ type MessageFixture struct {
 	SizeEstimate        int64
 	HasAttachments      bool
 	HiddenTextPresent   bool
+	ArchiveOnly         bool
 	AttachmentCount     int
 	DeletedAt           *time.Time // nil = NULL
 	InternalDeletedAt   *time.Time // nil = omitted from legacy fixtures / NULL in opted-in fixtures
@@ -184,6 +185,7 @@ type TestDataBuilder struct {
 	ownerParticipants        []OwnerParticipantFixture
 	participantClusters      []ParticipantClusterFixture
 	unsentMessages           string
+	meetingGroups            string
 
 	emptyAttachments bool // if true, write empty attachments file
 	// legacyRecipientSchema writes message_recipients without the
@@ -258,6 +260,7 @@ type MessageOpt struct {
 	SizeEstimate        int64
 	HasAttachments      bool
 	HiddenTextPresent   bool
+	ArchiveOnly         bool
 	DeletedAt           *time.Time
 	InternalDeletedAt   *time.Time
 	DeletedFromSourceAt *time.Time
@@ -310,6 +313,7 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 		SizeEstimate:           opt.SizeEstimate,
 		HasAttachments:         opt.HasAttachments,
 		HiddenTextPresent:      opt.HiddenTextPresent,
+		ArchiveOnly:            opt.ArchiveOnly,
 		DeletedAt:              opt.DeletedAt,
 		InternalDeletedAt:      opt.InternalDeletedAt,
 		DeletedFromSourceAt:    opt.DeletedFromSourceAt,
@@ -724,6 +728,7 @@ func (b *TestDataBuilder) Build() (string, func()) {
 
 	pb := newParquetBuilder(b.t)
 	pb.unsentMessages = b.unsentMessages
+	pb.meetingGroups = b.meetingGroups
 	pb.legacyRecipientSchema = b.legacyRecipientSchema
 	b.addMessageTables(pb)
 	b.addAuxiliaryTables(pb)
@@ -754,6 +759,13 @@ func (b *TestDataBuilder) addMessageTables(pb *parquetBuilder) {
 			columns = messagesColumnsWithDeletedAt
 			rowFormatter = func(message MessageFixture) string {
 				return formatMessageFixture(b.t, columns, message.sqlValuesWithInternalDeletion())
+			}
+		}
+		if slices.ContainsFunc(msgs, func(message MessageFixture) bool { return message.ArchiveOnly }) {
+			baseFormatter := rowFormatter
+			cols += ", archive_only"
+			rowFormatter = func(message MessageFixture) string {
+				return strings.TrimSuffix(baseFormatter(message), ")") + ", " + strconv.FormatBool(message.ArchiveOnly) + ")"
 			}
 		}
 		rows := joinRows(msgs, rowFormatter)
@@ -848,6 +860,7 @@ type parquetBuilder struct {
 	t                     testing.TB
 	tables                []parquetTable
 	unsentMessages        string
+	meetingGroups         string
 	legacyRecipientSchema bool
 }
 
@@ -874,6 +887,7 @@ func (b *parquetBuilder) contentKey() [sha256.Size]byte {
 		}
 	}
 	_, _ = fmt.Fprintf(h, "%d:%s:%t", len(b.unsentMessages), b.unsentMessages, b.legacyRecipientSchema)
+	_, _ = fmt.Fprintf(h, "%d:%s", len(b.meetingGroups), b.meetingGroups)
 	return [sha256.Size]byte(h.Sum(nil))
 }
 
@@ -977,6 +991,7 @@ func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResul
 		StagedBaseRoot: tmpDir,
 		OutputRoot:     tmpDir,
 		UnsentMessages: b.unsentMessages,
+		MeetingGroups:  b.meetingGroups,
 	})
 	require.NoError(b.t, err, "derive identity fixture datasets")
 	if b.legacyRecipientSchema {

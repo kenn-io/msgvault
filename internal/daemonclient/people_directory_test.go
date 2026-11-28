@@ -91,25 +91,6 @@ func TestPeopleBrowserListDirectoryMapsQueryAndResponse(t *testing.T) {
 	var _ peoplebrowser.DirectoryLister = engine
 }
 
-func TestPeopleBrowserDirectoryAddressRejectsUnsupportedDaemon(t *testing.T) {
-	for _, version := range []string{"3.28.0", "", "unknown"} {
-		t.Run(version, func(t *testing.T) {
-			var lookups int
-			engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/health" {
-					writePeopleBrowserJSON(t, w, http.StatusOK, `{"status":"ok","api_schema_version":"`+version+`"}`)
-					return
-				}
-				lookups++
-				http.NotFound(w, r)
-			}))
-			_, err := engine.ListDirectoryPeople(t.Context(), store.DirectoryPeopleQuery{Address: "alex@example.test"})
-			require.EqualError(t, err, "person directory address filtering requires daemon API schema 3.29.0 or newer; upgrade the daemon")
-			assert.Zero(t, lookups)
-		})
-	}
-}
-
 func TestPeopleBrowserListDirectoryReturnsDaemonError(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -124,4 +105,35 @@ func TestPeopleBrowserListDirectoryReturnsDaemonError(t *testing.T) {
 	var coded interface{ APIErrorCode() string }
 	require.ErrorAs(err, &coded)
 	assert.Equal("invalid_cursor", coded.APIErrorCode())
+}
+
+func TestPeopleBrowserDirectoryCadenceRoundTrip(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("due", r.URL.Query().Get("cadence"))
+		assert.Equal("7", r.URL.Query().Get("due_within_days"))
+		assert.Equal("next_due", r.URL.Query().Get("sort"))
+		writePeopleBrowserJSON(t, w, http.StatusOK, `{"cadence_presets":[{"list":"A","days":21}],"cadence_coverage":{"total":4,"no_list":1,"unknown":1,"scheduled":2},"people":[{"id":7,"vcard_uid":"person-7","revision":1,"contact_state":"active","last_contact_channel":"email","cadence":{"frequency_days":21,"list":"A","due_at":"2026-10-20T12:00:00Z","status":"ok","stale":false},"reach_out_context":{"awaiting_reply_count":2,"needs_reply_count":1,"open_loops_stale":true,"suggested_list":"B","signals_stale":false},"categories":[],"organizations":[]}]}`)
+	}))
+	days := 7
+	page, err := engine.ListDirectoryPeople(t.Context(), store.DirectoryPeopleQuery{Cadence: "due", DueWithinDays: &days, Sort: "next_due"})
+	require.NoError(err)
+	require.Len(page.People, 1)
+	require.Len(page.CadencePresets, 1)
+	assert.Equal(int64(21), page.CadencePresets[0].Days)
+	require.NotNil(page.CadenceCoverage)
+	assert.Equal(4, page.CadenceCoverage.Total)
+	p := page.People[0]
+	assert.Equal("email", p.LastContactChannel)
+	assert.Equal("A", p.Cadence.List)
+	require.NotNil(p.Cadence.FrequencyDays)
+	assert.Equal(int64(21), *p.Cadence.FrequencyDays)
+	require.NotNil(p.Cadence.DueAt)
+	require.NotNil(p.ReachOutContext)
+	assert.Equal(2, *p.ReachOutContext.AwaitingReplyCount)
+	assert.Equal(1, *p.ReachOutContext.NeedsReplyCount)
+	assert.True(*p.ReachOutContext.OpenLoopsStale)
+	assert.False(*p.ReachOutContext.SignalsStale)
+	assert.Equal("B", p.ReachOutContext.SuggestedList)
 }

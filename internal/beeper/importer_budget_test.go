@@ -3,6 +3,7 @@ package beeper
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -94,6 +96,51 @@ func TestImportStopsAtChatBoundaryAndHoldsWatermark(t *testing.T) {
 	finished, err := st.GetSourceByID(src.ID)
 	require.NoError(err)
 	assert.True(finished.LastSyncAt.Valid, "a complete pass advances source freshness")
+}
+
+func TestImportResumesAfterMixedMediaFailures(t *testing.T) {
+	t.Parallel()
+	f := newFakeBeeper(t)
+	chat := mediaChat()
+	chat.Msgs[0].Attachments = append(chat.Msgs[0].Attachments, map[string]any{
+		"id": "mxc://beeper.local/transient", "type": "img", "mimeType": "image/png", "fileName": "other.png",
+	})
+	f.addChat(chat)
+	f.addChat(budgetTestChat("!later:beeper.local", 1, chat.LastActivity.Add(time.Hour)))
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadGateway, `{"message":"Media no longer exists","code":"SERVE_ASSET_ERROR"}`)
+	f.setAssetError("mxc://beeper.local/transient", http.StatusBadGateway, `{"message":"temporary failure"}`)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	opts := mediaImportOptions(t)
+	opts.ShouldStop = stopAfterMessagePages(f, 1)
+
+	first, err := imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	require.True(t, first.Stopped)
+	assert.EqualValues(t, 1, first.AttachmentsUnavailable)
+	assert.EqualValues(t, 1, first.AttachmentsPending)
+	assert.EqualValues(t, 1, first.Errors)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "signal")
+	require.NoError(t, err)
+	assert.False(t, src.LastSyncAt.Valid)
+	assert.Equal(t, 1, countBeeperMessages(t, imp))
+
+	opts.ShouldStop = nil
+	second, err := imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	assert.False(t, second.Stopped)
+	assert.Equal(t, 2, countBeeperMessages(t, imp))
+	src, err = st.GetSourceByID(src.ID)
+	require.NoError(t, err)
+	assert.True(t, src.LastSyncAt.Valid)
+	var unavailable, pending int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments WHERE attachment_state = 'unavailable'`).Scan(&unavailable))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments WHERE attachment_state = 'failed'`).Scan(&pending))
+	assert.Equal(t, 1, unavailable)
+	assert.Equal(t, 1, pending)
+	var itemErrors int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sync_run_items WHERE error_kind = 'beeper_media_error'`).Scan(&itemErrors))
+	assert.Positive(t, itemErrors)
 }
 
 func TestStoppedImportUpdatesTouchedConversationStats(t *testing.T) {
@@ -538,9 +585,12 @@ func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
 	f := newFakeBeeper(t)
 	chat := budgetTestChat("!deadline:beeper.local", 2, base)
 	f.addChat(chat)
-	imp, _ := newHandlerTestImporter(t, f)
-	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	imp, st := newHandlerTestImporter(t, f)
+	first, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(t, err)
+	f.mu.Lock()
+	chat.Participants = append(chat.Participants, map[string]any{"id": "@signal_added:beeper.local"})
+	f.mu.Unlock()
 	f.appendMsg(chat.ID, fakeMsg{
 		ID: chat.ID + "-new", SortKey: 2, Timestamp: base.Add(2 * time.Minute),
 		Text: "new message", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
@@ -567,11 +617,94 @@ func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
 		require.FailNow("scheduled import did not enter the blocked provider request")
 	}
 	assert.Equal(2, countBeeperMessages(t, imp), "the interrupted page must not advance its cursor")
-
+	work := latestBeeperState(t, imp).Chats[chat.ID].RosterWork
+	require.NotNil(work, "finished roster work waits for the message turn")
+	assert.Equal("done", work.Phase)
+	added := participantForBeeperUser(t, st, "@signal_added:beeper.local")
+	assert.Contains(rosterMembers(t, st, first.SourceID, chat.ID), added)
+	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), first.SourceID)
+	require.NoError(err)
+	assert.NotContains(unresolved, chat.ID)
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.False(sum.Stopped)
 	assert.Equal(3, countBeeperMessages(t, imp), "the next run resumes the interrupted page")
+	assert.Equal("done", latestBeeperState(t, imp).Chats[chat.ID].RosterWork.Phase, "roster proof stays after messages advance")
+}
+
+func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	f := newFakeBeeper(t)
+	chat := mediaGroupChat(4)
+	chat.ParticipantsTotalUnknown = true
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	opts := mediaImportOptions(t)
+	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
+	opts.NoMedia = true
+	sum, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	run, err := st.GetLastSuccessfulSync(sum.SourceID)
+	require.NoError(err)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(err)
+	oldID := participantForBeeperUser(t, st, "@signal_member2:beeper.local")
+	f.mu.Lock()
+	chat.Participants[3] = map[string]any{"id": "@signal_replacement:beeper.local"}
+	f.mu.Unlock()
+	work := state.Chats[chat.ID].RosterWork
+	require.True(work.Verified)
+	work.MemberFirst = false
+	work.Phase = "matching"
+	work.Next = 1
+	blob, err := state.Marshal()
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
+	require.NoError(err)
+	f.appendMsg(chat.ID, fakeMsg{ID: "message-turn", SortKey: 10, Timestamp: time.Now(), SenderID: "@signal_member0:beeper.local", Text: "new"})
+	f.resetRequests()
+	f.blockChatGetFor(chat.ID)
+	imp = NewImporter(st, imp.client)
+	synctest.Test(t, func(t *testing.T) {
+		opts.StopAt = time.Now().Add(2 * time.Second)
+		sum, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+		assert.False(sum.Stopped)
+	})
+	for _, request := range f.requests() {
+		assert.NotContains(request, "/v1/chats/"+chat.ID+"?", "message turn fetched chat detail")
+	}
+	var messages int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_message_id = 'message-turn'`).Scan(&messages))
+	assert.Equal(1, messages)
+
+	f.mu.Lock()
+	f.blockChatGetID = ""
+	f.mu.Unlock()
+	imp = NewImporter(st, imp.client)
+	opts.StopAt = time.Time{}
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	work = latestBeeperState(t, imp).Chats[chat.ID].RosterWork
+	assert.True(work.Verified)
+	assert.Equal("done", work.Phase)
+	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	require.NoError(err)
+	assert.NotContains(unresolved, chat.ID)
+	var convID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&convID))
+	metadata, err := st.GetConversationMetadataContext(t.Context(), convID)
+	require.NoError(err)
+	var value struct {
+		Route struct {
+			MembershipComplete bool `json:"membership_complete"`
+		} `json:"messaging_route"`
+	}
+	require.NoError(json.Unmarshal([]byte(metadata.String), &value))
+	assert.True(value.Route.MembershipComplete)
+	assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), participantForBeeperUser(t, st, "@signal_replacement:beeper.local"))
+	assert.NotContains(rosterMembers(t, st, sum.SourceID, chat.ID), oldID)
 }
 
 func TestImportStopsAfterReconcilePage(t *testing.T) {

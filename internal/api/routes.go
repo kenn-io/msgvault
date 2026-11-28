@@ -365,6 +365,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerPersonProfileRoutes(apiV1)
 	s.registerPersonIdentityRoutes(apiV1)
 	s.registerContactRouteRoutes(apiV1)
+	s.registerEmailFamilyRoutes(apiV1)
 	s.registerPersonNetworkRoutes(apiV1)
 	s.registerPersonTrackingRoutes(apiV1)
 	s.registerPersonTierRoutes(apiV1)
@@ -494,6 +495,21 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,
 	)
+	registerAPIV1RawHumaBinaryRoute(
+		apiV1,
+		"exportCLIMessages",
+		http.MethodGet,
+		"/cli/messages/export",
+		"Stream messages in a time window as msgvault-message-export/1 JSON Lines",
+		"application/x-ndjson",
+		s.handleCLIMessageExport,
+		http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusForbidden,
+		http.StatusNotFound,
+		http.StatusInternalServerError,
+		http.StatusServiceUnavailable,
+	)
 	registerAPIV1RawHumaJSONRoute[cliCollectionsResponse](apiV1, "listCLICollections", http.MethodGet, "/cli/collections", "List collections for CLI output", s.handleCLICollections)
 	registerAPIV1RawHumaJSONRoute[cliCollectionEnvelope](apiV1, "getCLICollection", http.MethodGet, "/cli/collection", "Get one collection for CLI output", s.handleCLICollection)
 	s.registerCLIAccountHumaRoutes(apiV1)
@@ -510,6 +526,8 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerMessageImportRoute(apiV1)
 	s.registerMuesliImportRoute(apiV1)
 	s.registerMeetingRoutes(apiV1)
+	s.registerMeetingRecordRoute(apiV1)
+	s.registerMeetingSuggestionRoute(apiV1)
 	s.registerCalendarControlRoute(apiV1)
 	registerAPIV1RawHumaJSONRoute[store.ChatDiscoveryPage](apiV1, "searchChats", http.MethodGet, "/conversations/search", "Find archived chats by ranked name tokens", s.handleSearchChats)
 	s.registerCalendarEventsRoute(apiV1)
@@ -658,6 +676,9 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRouteWithRequest[AddAccountRequest, StatusMessageResponse](apiV1, "addAccount", http.MethodPost, "/accounts", "Add an account", s.handleAddAccount, http.StatusOK, http.StatusCreated)
 	registerAPIV1RawHumaJSONRoute[SourceStatusResponse](apiV1, "listSourceStatus", http.MethodGet, "/sources/status", "List source sync status", s.handleSourceStatus)
 	registerAPIV1RawHumaJSONRoute[SourceIdentitiesResponse](apiV1, "listSourceIdentities", http.MethodGet, "/sources/{source_id}/identities", "List confirmed identities for one source", s.handleSourceIdentities)
+	repairOp := rawAPIV1Operation("repairAccountAttribution", http.MethodPost, "/sources/{source_id}/account-attribution/repair", "Retry account matching for one source")
+	repairOp.Responses = rawHumaResponses(http.StatusAccepted)
+	registerRawHumaRoute(apiV1, repairOp, s.handleAccountAttributionRepair)
 	registerAPIV1RawHumaJSONRoute[TriggerSyncResponse](apiV1, "triggerSync", http.MethodPost, "/sync/{account}", "Trigger account sync", s.handleTriggerSync, http.StatusAccepted)
 	registerAPIV1RawHumaJSONRoute[SchedulerStatusResponse](apiV1, "getSchedulerStatus", http.MethodGet, "/scheduler/status", "Get scheduler status", s.handleSchedulerStatus)
 	registerAPIV1RawHumaJSONRouteWithRequest[TokenUploadRequest, StatusMessageResponse](apiV1, "uploadToken", http.MethodPost, "/auth/token/{email}", "Upload an OAuth token", s.handleUploadToken, http.StatusCreated)
@@ -897,7 +918,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "searchMedia":
 		return []*huma.Param{
 			queryStringParam("q", "Words to find in recordings and attachments", true),
-			queryStringParam("mode", "Attachment mode: lexical (default), semantic, or hybrid; recordings support lexical only", false),
+			queryStringParam("mode", "Search mode for recordings and attachments: lexical (default), semantic, or hybrid", false),
 			queryIntegerParam("person_id", "Durable person ID"),
 			queryIntegerParam("participant_id", "Observed participant ID; selects its current Explore identity cluster; mutually exclusive with person_id"),
 			queryRefArrayParam("direction", "Person relation: from_person, to_person, or group"),
@@ -924,6 +945,14 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}
 	case "getCLIAttachment":
 		return []*huma.Param{queryStringParam("content_hash", "Attachment SHA-256 content hash", true)}
+	case "exportCLIMessages":
+		return []*huma.Param{
+			queryStringParam("start", "Inclusive RFC3339 lower bound", true),
+			queryStringParam("end", "Exclusive RFC3339 upper bound", true),
+			queryRefArrayParam("message_type", "Exact message type to include (repeatable)"),
+			queryRefArrayParam("source", "Source selector type:identifier from list-accounts (repeatable)"),
+			queryIntegerParam("person_id", "Export messages for the durable person's bound participants"),
+		}
 	case "getCLICollection":
 		return []*huma.Param{queryStringParam("name", "Collection name", true)}
 	case "buildCLICache":
@@ -980,7 +1009,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		"reviewRejectIdentityMatchCandidate":
 		return []*huma.Param{pathIntegerParam("Identity match candidate ID")}
 	case "searchIntegrationTasks":
-		return []*huma.Param{queryStringParam("q", "Task title search within the configured project", true)}
+		return []*huma.Param{queryStringParam("q", "Task title search within the configured project; omit to list tasks", false)}
 	case "unlinkMessageTask":
 		return []*huma.Param{
 			pathIntegerParam("Archived email message ID"),
@@ -1140,7 +1169,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}
 	case "listSourceStatus":
 		return []*huma.Param{queryStringParam("source_type", "Restrict to one source type", false)}
-	case "listSourceIdentities":
+	case "listSourceIdentities", "repairAccountAttribution":
 		return []*huma.Param{pathNamedIntegerParam("source_id", "Source ID")}
 	case "triggerSync":
 		return []*huma.Param{

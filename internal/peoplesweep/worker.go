@@ -601,7 +601,7 @@ func (w *Worker) runPerson(
 	// cap can make an assembly unschedulable outright, and a brief that cannot
 	// be reserved defers to the next run instead of failing the attempt.
 	maxBatches := min(w.Config.Budgets.MaxRequestsPerPerson,
-		int(w.Config.Budgets.MaxOutputTokensPerPerson/extractionMaxOutputTokens))
+		int(w.Config.Budgets.MaxOutputTokensPerPerson/int64(w.Config.ExtractionMaxOutputTokens)))
 	assemblyRequest := AssemblyRequest{PersonID: lease.PersonID, Cursors: cursors, Catalog: catalog,
 		Profile: profile, Now: resolvedAt, BackstopInterval: w.Config.BackstopInterval,
 		ForceBackstop: mode == RunBackstop}
@@ -609,7 +609,8 @@ func (w *Worker) runPerson(
 		MaxBytes: w.Config.EvidenceMaxBytes,
 		MaxItems: w.Config.EvidenceMaxItems, WindowLimit: w.Config.ChangeBatchSize,
 		MaxBatches: maxBatches, ContextPerTarget: w.Config.ContextPerTarget,
-		HistoricalMessageCap: w.Config.HistoricalMessageCap}
+		HistoricalMessageCap: w.Config.HistoricalMessageCap,
+		MaxOutputTokens:      w.Config.ExtractionMaxOutputTokens}
 	discoverAssembly := func(selected []Cursor, maxProgressWindows int, forceBackstop bool) (AssemblyProgress, error) {
 		request := assemblyRequest
 		request.Cursors = selected

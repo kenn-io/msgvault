@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbars } from '@kenn-io/kit-ui';
   import { onDestroy, setContext, tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
 
@@ -10,6 +11,7 @@
   import type { MessageDetail as GeneratedMessageDetail } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail } from '../../archive/types';
+  import { ArchiveMessageLoader } from '../../archive/message-loader.svelte';
   import type { MessageViewMode } from '../../archive/types';
   import { isEmailMessageType } from '../../explore/models';
   import MessageCard from './MessageCard.svelte';
@@ -22,6 +24,8 @@
     client,
     conversationId,
     anchorId,
+    titleAnchorId,
+    anchorTitle = $bindable(''),
     onAnchorChange = undefined,
     start = undefined,
     end = undefined,
@@ -35,6 +39,10 @@
     onOpenMeeting?: (meeting: import('../../api/generated/models').MeetingRef) => void;
     conversationId: number;
     anchorId: number;
+    /** Stable message ID whose title names the selected thread. */
+    titleAnchorId: number;
+    /** Title of the selected message; empty until the window loads. */
+    anchorTitle?: string;
     onAnchorChange?: (anchorId: number) => void;
     /** Lower UTC bound (RFC3339, inclusive) restricting the window — e.g. a
      * chat burst's local day. Omit for the default unbounded window. */
@@ -84,6 +92,46 @@
       window.removeEventListener('focus', report);
     };
   });
+  // The tab follows the opened item. When that item is outside the loaded
+  // window, the message the thread opened at names it instead, and the title
+  // then stays put while other messages expand.
+  let titleKey = '';
+  let titleRequestKey = '';
+  const titleLoader = new ArchiveMessageLoader();
+  let windowAnchorId = $state(0);
+  let openedAnchorId = 0;
+  let openedTitle = '';
+  let openedTitleId = 0;
+  $effect(() => {
+    const key = `${conversationId}:${titleAnchorId}`;
+    if (key !== titleKey) {
+      titleLoader.cancel();
+      titleKey = key;
+      titleRequestKey = '';
+      openedAnchorId = untrack(() => anchorId);
+      openedTitle = '';
+      openedTitleId = 0;
+    }
+    const anchor = messages.find((message) => message.id === titleAnchorId) ??
+      messages.find((message) => message.id === openedAnchorId);
+    if (anchor?.id === titleAnchorId && anchor.id !== windowAnchorId) {
+      const requestKey = `${key}:${windowAnchorId}`;
+      if (requestKey !== titleRequestKey) {
+        titleRequestKey = requestKey;
+        untrack(() => { void titleLoader.load(apiClient, anchor.id); });
+      }
+      const detail = titleLoader.detail;
+      if (detail?.id === anchor.id) {
+        openedTitle = detail.tab_title || '(untitled)';
+        openedTitleId = detail.id;
+      } else if (openedTitleId !== anchor.id) openedTitle = '';
+    } else if (anchor?.id === windowAnchorId) {
+      openedTitle = anchor.tab_title || '(untitled)';
+      openedTitleId = anchor.id;
+    }
+    anchorTitle = openedTitle;
+  });
+  onDestroy(() => { titleLoader.cancel(); anchorTitle = ''; });
   let loading = $state(true);
   let error = $state('');
   let hasBefore = $state(false);
@@ -111,6 +159,7 @@
   let generation = 0;
   let loadedWindowKey = '';
   const anchorLoaded = $derived(messages.some((message) => message.id === activeAnchor));
+  const loadedIDs = $derived(messages.map((message) => message.id));
   $effect(() => { if (error) return reportError(() => apiClient, () => 'message'); });
 
   // Expansion is local: a new anchor that is already inside the loaded
@@ -188,6 +237,7 @@
         return;
       }
       messages = data.messages ?? [];
+      windowAnchorId = data.anchor_id;
       activeAnchor = data.anchor_id;
       hasBefore = data.has_before;
       hasAfter = data.has_after;
@@ -305,7 +355,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -- the thread scroller is
      a keyboard-scrollable reading surface and the focus target Escape
      returns to from inside an archived content frame. -->
-<section class="conversation-view" aria-label="Conversation thread" tabindex="0" bind:this={scroller}>
+<section class="conversation-view" aria-label="Conversation thread" tabindex="0" bind:this={scroller} {@attach overlayScrollbars()}>
   {#if loading && messages.length === 0}
     <p role="status">Loading conversation…</p>
   {:else if error}
@@ -333,6 +383,7 @@
           viewMode={viewModes[message.id] ?? 'html'}
           bodyPending={loadingBodies.has(message.id)}
           bodyError={bodyErrors[message.id] ?? ''}
+          loadedIDs={loadedIDs}
           onToggle={toggleMessage}
           onViewModeChange={changeViewMode}
         />

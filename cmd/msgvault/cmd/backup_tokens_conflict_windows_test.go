@@ -3,27 +3,24 @@
 package cmd
 
 import (
+	"encoding/json/v2"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/backup"
+	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"golang.org/x/sys/windows"
 )
 
-func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
-	backupRestoreOmittedOAuthLock(t, false)
-}
-
-func TestBackupRestoreKeepsCompliantDirectoryAndOmittedOAuthLock(t *testing.T) {
-	backupRestoreOmittedOAuthLock(t, true)
-}
-
-func backupRestoreOmittedOAuthLock(t *testing.T, compliant bool) {
-	t.Helper()
+func TestBackupRestoreConflictAndPermissionRetry(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg, dbPath, attachments := backupTokenFixture(t)
@@ -34,29 +31,14 @@ func backupRestoreOmittedOAuthLock(t *testing.T, compliant bool) {
 	require.NoError(err)
 	_, err = providercredentials.Put(cfg.TokensDir(), empty.ETag, providercredentials.VectorEmbeddingsID, endpoint, providerKey)
 	require.NoError(err)
-	serverKey, err := providercredentials.EnsureServerKey(cfg.TokensDir())
-	require.NoError(err)
-	require.NoError(os.Remove(filepath.Join(cfg.TokensDir(), ".provider-credentials.lock")))
-
-	nested := filepath.Join(cfg.TokensDir(), "carddav-connections", "example", "carddav.json")
-	require.NoError(os.MkdirAll(filepath.Dir(nested), 0o700))
-	require.NoError(os.WriteFile(nested, []byte("synthetic-carddav"), 0o600))
-
 	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
-
+	manifest, err := repo.LatestSnapshot()
+	require.NoError(err)
 	prepareBackupTokenRestore(t)
 
-	target := filepath.Join(t.TempDir(), "restored")
+	target := filepath.Join(t.TempDir(), "restored&archive") + string(os.PathSeparator)
 	tokens := filepath.Join(target, "tokens")
-	nestedTarget := filepath.Join(tokens, "carddav-connections", "example")
-	require.NoError(os.MkdirAll(nestedTarget, 0o700))
-	if compliant {
-		targetEmpty, readErr := providercredentials.Read(tokens)
-		require.NoError(readErr)
-		_, readErr = providercredentials.Put(tokens, targetEmpty.ETag, providercredentials.VectorEmbeddingsID, endpoint, providerKey)
-		require.NoError(readErr)
-		require.NoError(os.Remove(filepath.Join(tokens, ".provider-credentials.lock")))
-	}
+	require.NoError(os.MkdirAll(tokens, 0o700))
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	require.NoError(err)
 	entries := []windows.EXPLICIT_ACCESS{{
@@ -64,63 +46,76 @@ func backupRestoreOmittedOAuthLock(t *testing.T, compliant bool) {
 		Inheritance: windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE,
 		Trustee:     windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER, TrusteeValue: windows.TrusteeValueFromSID(user.User.Sid)},
 	}}
-	if !compliant {
-		everyone, err := windows.StringToSid("S-1-1-0")
-		require.NoError(err)
-		entries = append(entries, windows.EXPLICIT_ACCESS{AccessPermissions: windows.GENERIC_READ, AccessMode: windows.SET_ACCESS, Inheritance: windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE, Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_WELL_KNOWN_GROUP, TrusteeValue: windows.TrusteeValueFromSID(everyone)}})
-	}
+	everyone, err := windows.StringToSid("S-1-1-0")
+	require.NoError(err)
+	entries = append(entries, windows.EXPLICIT_ACCESS{
+		AccessPermissions: windows.GENERIC_READ, AccessMode: windows.SET_ACCESS,
+		Inheritance: windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE,
+		Trustee:     windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_WELL_KNOWN_GROUP, TrusteeValue: windows.TrusteeValueFromSID(everyone)},
+	})
 	acl, err := windows.ACLFromEntries(entries, nil)
 	require.NoError(err)
 	require.NoError(windows.SetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
-	if compliant {
-		_, err := providercredentials.Read(tokens)
-		require.NoError(err)
-	}
 	omitted := filepath.Join(tokens, "oauth-token.json.lock")
 	require.NoError(os.WriteFile(omitted, []byte("omitted"), 0o600))
-	var before, rootBefore *windows.SECURITY_DESCRIPTOR
-	if compliant {
-		before, err = windows.GetNamedSecurityInfo(omitted, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-		require.NoError(err)
-		dacl, _, err := before.DACL()
-		require.NoError(err)
-		require.NotNil(dacl)
-		inherited := false
-		for i := range uint32(dacl.AceCount) {
-			var ace *windows.ACCESS_ALLOWED_ACE
-			require.NoError(windows.GetAce(dacl, i, &ace))
-			inherited = inherited || ace.Header.AceFlags&windows.INHERITED_ACE != 0
-		}
-		require.True(inherited)
-		rootBefore, err = windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-		require.NoError(err)
+	output, err := runBackupTokenRestore(t, cfg, repo, manifest.SnapshotID, "--target", target, "--overwrite")
+	require.Error(err)
+	assert.NotContains(err.Error(), "was restored to")
+	require.ErrorContains(err, "permissions conflict")
+	assert.Contains(err.Error(), "selected token files were secured, but token directory permissions were not changed")
+	assert.Contains(output, fmt.Sprintf("Restored snapshot %s to %s", manifest.SnapshotID, target))
+	_, hint, ok := strings.Cut(err.Error(), "retry in PowerShell with: ")
+	require.True(ok)
+	syntheticTarget := `C:\a&b`
+	require.Contains(hint, escapeRestoreArg(target))
+	hint = strings.Replace(hint, escapeRestoreArg(target), escapeRestoreArg(syntheticTarget), 1)
+	powershell := exec.CommandContext(t.Context(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", `$tokens = $null; $errors = $null; $ast = [System.Management.Automation.Language.Parser]::ParseInput($env:MSGVAULT_RETRY_HINT, [ref]$tokens, [ref]$errors); $commands = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true)); if ($errors.Count -ne 0 -or $commands.Count -ne 1) { exit 1 }; $values = @($commands[0].CommandElements | ForEach-Object { if ($_ -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $_.Value } else { $_.Extent.Text } }); ConvertTo-Json -InputObject $values -Compress`)
+	powershell.Env = append(os.Environ(), "MSGVAULT_RETRY_HINT="+hint)
+	parsed, parseErr := powershell.CombinedOutput()
+	assert.NoError(parseErr, "%s", parsed)
+	var args []string
+	if assert.NoError(json.Unmarshal(parsed, &args), "%s", parsed) {
+		assert.Equal([]string{"msgvault", "backup", "restore", manifest.SnapshotID, "--repo", repo.Root(), "--target", syntheticTarget, "--permissions-only"}, args)
 	}
-	err = runBackupTokenRestore(t, cfg, repo, target, true)
-	if compliant {
-		require.NoError(err)
-		snapshot, readErr := providercredentials.Read(tokens)
-		require.NoError(readErr)
-		value, _, readErr := snapshot.Resolve(providercredentials.VectorEmbeddingsID, endpoint, "", nil)
-		require.NoError(readErr)
-		assert.Equal(providerKey, value)
-		key, readErr := providercredentials.ReadSecretFile(filepath.Join(tokens, providercredentials.ServerKeyFilename))
-		require.NoError(readErr)
-		assert.Equal(serverKey, key)
-		rootAfter, readErr := windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-		require.NoError(readErr)
-		assert.Equal(rootBefore.String(), rootAfter.String())
-		data, readErr := os.ReadFile(omitted)
-		require.NoError(readErr)
-		assert.Equal("omitted", string(data))
-		after, readErr := windows.GetNamedSecurityInfo(omitted, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-		require.NoError(readErr)
-		assert.Equal(before.String(), after.String())
-		data, readErr = os.ReadFile(filepath.Join(nestedTarget, "carddav.json"))
-		require.NoError(readErr)
-		assert.Equal("synthetic-carddav", string(data))
-	} else {
-		require.ErrorContains(err, "was restored to")
-		require.ErrorContains(err, "permissions conflict")
-	}
-	assert.FileExists(filepath.Join(target, "msgvault.db"))
+
+	require.NoError(os.Rename(omitted, filepath.Join(t.TempDir(), "omitted")))
+	output, err = runBackupTokenRestore(t, cfg, repo, manifest.SnapshotID, "--target", target, "--permissions-only")
+	require.NoError(err)
+	assert.Contains(output, "secured token files: 2")
+	_, err = providercredentials.Read(tokens)
+	require.NoError(err)
+}
+
+func TestPermissionRepairHonorsSnapshotAndLock(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg, dbPath, attachments := backupTokenFixture(t)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(err)
+	emptyManifest, err := backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
+		DBPath: dbPath, ContentDir: attachments, DataDir: cfg.Data.DataDir,
+	})
+	require.NoError(err)
+	manifest, err := backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
+		DBPath: dbPath, ContentDir: attachments, DataDir: cfg.Data.DataDir,
+		IncludeTokens: true, AllowPlaintextSecrets: true,
+	})
+	require.NoError(err)
+	target := t.TempDir()
+	prepareBackupTokenRestore(t)
+	lock, err := repo.AcquireExclusiveLock("create", false)
+	require.NoError(err)
+	count, err := secureRestoredTokens(t.Context(), repo, emptyManifest.SnapshotID, target, false)
+	require.NoError(err)
+	assert.Zero(count)
+	assert.FileExists(repo.Path("locks", "exclusive.json"))
+	_, err = secureRestoredTokens(t.Context(), repo, manifest.SnapshotID, target, false)
+	require.ErrorIs(err, backup.ErrRepoLocked)
+	assert.FileExists(repo.Path("locks", "exclusive.json"))
+	require.NoError(lock.Release())
+	lock, err = repo.AcquireExclusiveLock("create", false)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(lock.Release()) })
+	_, err = runBackupTokenRestore(t, cfg, repo, manifest.SnapshotID, "--target", target, "--permissions-only", "--force-unlock")
+	require.NoError(err)
 }

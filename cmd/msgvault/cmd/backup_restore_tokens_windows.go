@@ -4,76 +4,72 @@ package cmd
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"go.kenn.io/kit/backup"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
 
-func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string, extrasFiles int) error {
-	if extrasFiles == 0 {
-		return nil
+func escapeRestoreArg(arg string) string { return "'" + strings.ReplaceAll(arg, "'", "''") + "'" }
+
+func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string, forceUnlock bool) (count int, err error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
 	}
-	dir := filepath.Join(target, "tokens")
-	info, err := os.Lstat(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
+	manifest, err := repo.LoadManifest(snapshotID)
 	if err != nil {
-		return fmt.Errorf("inspect restored token directory: %w", err)
+		return 0, fmt.Errorf("load snapshot manifest: %w", err)
 	}
-	if !info.IsDir() {
-		return nil
+	if !manifest.Options.IncludeTokens {
+		return 0, nil
 	}
-	snapshot, err := repo.OpenSnapshot(ctx, snapshotID, backupapp.New(Version).PackFileExtension())
+	lease, err := repo.AcquireSharedLock("secure restored tokens", forceUnlock)
 	if err != nil {
-		return fmt.Errorf("open restored snapshot: %w", err)
+		return 0, fmt.Errorf("lock snapshot repository: %w", err)
 	}
-	defer snapshot.Close() //nolint:errcheck // membership lookup is authoritative
-	strict := false
+	defer func() { err = errors.Join(err, lease.Release()) }()
+	if manifest.Extras.Tree == "" {
+		return 0, nil
+	}
+	id, err := pack.ParseBlobID(manifest.Extras.Tree)
+	if err != nil {
+		return 0, fmt.Errorf("read saved credentials: %w", err)
+	}
+	index, err := repo.LoadBlobIndex()
+	if err != nil {
+		return 0, fmt.Errorf("read saved credentials: %w", err)
+	}
+	raw, err := repo.ReadBlob(index, id, nil, backupapp.New(Version).PackFileExtension())
+	if err != nil {
+		return 0, fmt.Errorf("read saved credentials: %w", err)
+	}
+	var tree backup.ExtrasTree
+	if err := json.Unmarshal(raw, &tree); err != nil {
+		return 0, fmt.Errorf("read saved credentials: %w", err)
+	}
 	var selected []string
-	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	for _, entry := range tree.Entries {
+		prefix, name, ok := strings.Cut(entry.Path, "/")
+		if !ok || prefix != "tokens" {
+			continue
 		}
-		if path == dir || entry.IsDir() {
-			return nil
+		if !filepath.IsLocal(filepath.FromSlash(name)) {
+			return 0, fmt.Errorf("invalid snapshot token path %q", entry.Path)
 		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-		_, err = snapshot.Extra("tokens/" + filepath.ToSlash(rel))
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("inspect restored token membership: %w", err)
-		}
-		if strings.EqualFold(rel, providercredentials.Filename) || strings.EqualFold(rel, providercredentials.ServerKeyFilename) || strings.EqualFold(rel, providercredentials.EventsFilename) {
-			strict = true
-		}
-		selected = append(selected, rel)
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("inspect restored tokens: %w", err)
+		selected = append(selected, filepath.FromSlash(name))
 	}
-	if !strict {
-		return nil
-	}
-	err = providercredentials.SecureRestored(dir, selected)
+	err = providercredentials.SecureRestored(filepath.Join(target, "tokens"), selected)
 	if errors.Is(err, providercredentials.ErrRestorePermissionsConflict) {
-		return fmt.Errorf("%w; credential permissions were not changed; resolve the conflict or move the omitted entry aside, then retry with --overwrite", err)
+		return 0, fmt.Errorf("%w; selected token files were secured, but token directory permissions were not changed; resolve the conflict or move the omitted entry aside", err)
 	}
 	if err != nil {
-		return fmt.Errorf("%w; credentials may be unreadable and permissions may have changed", err)
+		return 0, fmt.Errorf("%w; credentials may be unreadable and permissions may have changed", err)
 	}
-	return nil
+	return len(selected), nil
 }

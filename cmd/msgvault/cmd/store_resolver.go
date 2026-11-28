@@ -12,13 +12,14 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -131,7 +132,7 @@ func isAgentMode(state *invocation) bool {
 
 // openAgentDelegatedStore creates a daemonclient.Client authenticated with an
 // agent grant secret read from the file named by --agent-token-file.
-func openAgentDelegatedStore(ctx context.Context, state *invocation, minimumSchema ...string) (*daemonclient.Client, HTTPStoreInfo, error) {
+func openAgentDelegatedStore(ctx context.Context, state *invocation) (*daemonclient.Client, HTTPStoreInfo, error) {
 	state = invocationState(ctx, state)
 	if state == nil {
 		return nil, HTTPStoreInfo{}, errors.New("invocation state is required")
@@ -164,7 +165,7 @@ func openAgentDelegatedStore(ctx context.Context, state *invocation, minimumSche
 		return nil, HTTPStoreInfo{}, err
 	}
 	st.SetBusyNotifier(reportDaemonBusyWait)
-	if err := verifyRemoteAPISchemaVersion(ctx, st, minimumSchema...); err != nil {
+	if err := verifyRemoteAPISchemaVersion(ctx, st); err != nil {
 		_ = st.Close()
 		if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Status == http.StatusUnauthorized {
 			return nil, HTTPStoreInfo{}, fmt.Errorf("agent authentication failed: token is invalid, expired, revoked, or agent access is disabled: %w", apiErr)
@@ -227,8 +228,8 @@ func isRemoteModeFor(state *invocation) bool {
 // A configured [remote].url wins unless --local was passed. Otherwise the local
 // daemon is discovered or started so SQLite remains owned by one long-lived
 // process.
-func OpenHTTPStore(ctx context.Context, minimumSchema ...string) (*daemonclient.Client, HTTPStoreInfo, error) {
-	return openHTTPStoreWithStartupCacheIntent(ctx, startupCacheBuildIntentNone, minimumSchema...)
+func OpenHTTPStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo, error) {
+	return openHTTPStoreWithStartupCacheIntent(ctx, startupCacheBuildIntentNone)
 }
 
 // newLocalDaemonClient connects to the local daemon described by rt.
@@ -249,12 +250,11 @@ func newLocalDaemonClient(ctx context.Context, cfg *config.Config, rt *DaemonRun
 func openHTTPStoreWithStartupCacheIntent(
 	ctx context.Context,
 	intent startupCacheBuildIntent,
-	minimumSchema ...string,
 ) (*daemonclient.Client, HTTPStoreInfo, error) {
 	inv := invocationFromContext(ctx)
 	// Agent-delegated mode is checked first: it operates without a local config.
 	if isAgentMode(inv) {
-		return openAgentDelegatedStore(ctx, inv, minimumSchema...)
+		return openAgentDelegatedStore(ctx, inv)
 	}
 	if inv == nil {
 		return nil, HTTPStoreInfo{}, errors.New("invocation state is required")
@@ -314,14 +314,23 @@ func openRemoteStore(ctx context.Context, state *invocation) (*daemonclient.Clie
 		return nil, errors.New("invocation state is required")
 	}
 	currentCfg := state.cfg
-	if err := currentCfg.ResolveRemoteKey(); err != nil {
-		return nil, err
-	}
-	st, err := newDaemonCLIClient(ctx, daemonclient.Config{
+	clientConfig := daemonclient.Config{
 		URL:           currentCfg.Remote.URL,
-		APIKey:        currentCfg.Remote.AuthenticationKey(),
 		AllowInsecure: currentCfg.Remote.AllowInsecure,
-	})
+	}
+	if len(currentCfg.Remote.CredentialProvider) > 0 {
+		source, err := remoteCredentialSource(currentCfg)
+		if err != nil {
+			return nil, err
+		}
+		clientConfig.Credential = source.Token
+	} else {
+		if err := currentCfg.ResolveRemoteKey(); err != nil {
+			return nil, err
+		}
+		clientConfig.APIKey = currentCfg.Remote.AuthenticationKey()
+	}
+	st, err := newDaemonCLIClient(ctx, clientConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -346,15 +355,15 @@ func invocationState(ctx context.Context, state *invocation) *invocation {
 // probe's own tests re-enable it.
 var remoteAPISchemaCheckEnabled = true
 
-// verifyRemoteAPISchemaVersion refuses a configured remote daemon whose API
-// schema major version differs from this CLI's. Local daemons are checked
+// verifyRemoteAPISchemaVersion refuses a remote daemon whose API schema has a
+// different major version or is older than this CLI's. Local daemons are checked
 // against their on-disk runtime record instead (daemonRuntimeCompatibilityError);
 // a configured remote has no record, so the daemon reports its version on
 // authenticated /api/v1/health. Routes changed meaning at 2.0.0 (the old
 // analytical /people/{id} became the durable person detail), so decoding a
 // mismatched peer's response would silently produce wrong data rather than
 // an error.
-func verifyRemoteAPISchemaVersion(ctx context.Context, client *daemonclient.Client, minimumSchema ...string) error {
+func verifyRemoteAPISchemaVersion(ctx context.Context, client *daemonclient.Client) error {
 	if !remoteAPISchemaCheckEnabled {
 		return nil
 	}
@@ -372,13 +381,7 @@ func verifyRemoteAPISchemaVersion(ctx context.Context, client *daemonclient.Clie
 	if response.JSON200.APISchemaVersion != nil {
 		version = *response.JSON200.APISchemaVersion
 	}
-	if err := apiSchemaCompatibilityError(version); err != nil {
-		return err
-	}
-	if len(minimumSchema) > 0 && minimumSchema[0] != "" && !daemonclient.APISchemaVersionAtLeast(version, minimumSchema[0]) {
-		return fmt.Errorf("agent archive reads require daemon API schema %s or newer (daemon reports %q); upgrade the daemon and issue a read grant", minimumSchema[0], version)
-	}
-	return nil
+	return apiSchemaCompatibilityError(version)
 }
 
 type localDaemonStartupInfo struct {
@@ -926,11 +929,7 @@ func truncateDaemonLogLine(line string) string {
 	if len(line) <= maxDaemonLogLineLen {
 		return line
 	}
-	cut := maxDaemonLogLineLen
-	for cut > 0 && !utf8.RuneStart(line[cut]) {
-		cut--
-	}
-	return line[:cut] + "…"
+	return textutil.PrefixBytes(line, maxDaemonLogLineLen) + "…"
 }
 
 // parseLogfmt is a tolerant parser for slog's text output: space

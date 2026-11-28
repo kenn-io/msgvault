@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -211,15 +212,15 @@ func TestDocbankAttachmentDiscoveryEligibility(t *testing.T) {
 		{"unstored", `attachment_state='pending'`, false},
 		{"URL", `storage_path='https://example.com/file'`, false},
 		{"missing path", `storage_path=''`, false},
-		{"unsupported alias", `content_hash='',source_attachment_id='gmail:alias'`, false},
-		{"alias only", `content_hash='',source_attachment_id='slack:alias'`, true},
-		{"empty alias", `content_hash='',size=0,source_attachment_id='slack:alias'`, true},
-		{"invalid alias path", `content_hash='',storage_path='legacy/file',source_attachment_id='slack:alias'`, false},
-		{"Discord alias", `content_hash='',source_attachment_id='discord:alias'`, true},
-		{"uppercase Slack alias", `content_hash='',storage_path='AA/` + strings.Repeat("A", 64) + `',source_attachment_id='slack:alias'`, false},
-		{"uppercase Discord alias", `content_hash='',storage_path='AA/` + strings.Repeat("A", 64) + `',source_attachment_id='discord:alias'`, false},
-		{"non-hex Slack alias", `content_hash='',storage_path='aa/` + strings.Repeat("a", 63) + `g',source_attachment_id='slack:alias'`, false},
-		{"non-hex Discord alias", `content_hash='',storage_path='aa/` + strings.Repeat("a", 63) + `g',source_attachment_id='discord:alias'`, false},
+		{"unsupported alias", `content_hash='',attachment_state='',source_attachment_id='gmail:alias'`, false},
+		{"alias only", `content_hash='',attachment_state='',source_attachment_id='slack:alias'`, true},
+		{"empty alias", `content_hash='',attachment_state='',size=0,source_attachment_id='slack:alias'`, true},
+		{"invalid alias path", `content_hash='',attachment_state='',storage_path='legacy/file',source_attachment_id='slack:alias'`, false},
+		{"Discord alias", `content_hash='',attachment_state='',source_attachment_id='discord:alias'`, true},
+		{"uppercase Slack alias", `content_hash='',attachment_state='',storage_path='AA/` + strings.Repeat("A", 64) + `',source_attachment_id='slack:alias'`, false},
+		{"uppercase Discord alias", `content_hash='',attachment_state='',storage_path='AA/` + strings.Repeat("A", 64) + `',source_attachment_id='discord:alias'`, false},
+		{"non-hex Slack alias", `content_hash='',attachment_state='',storage_path='aa/` + strings.Repeat("a", 63) + `g',source_attachment_id='slack:alias'`, false},
+		{"non-hex Discord alias", `content_hash='',attachment_state='',storage_path='aa/` + strings.Repeat("a", 63) + `g',source_attachment_id='discord:alias'`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -275,7 +276,12 @@ func TestDocbankAttachmentReceiptAuthority(t *testing.T) {
 	} {
 		mid := f.CreateMessage(tc.name)
 		assert.Equal(map[int]string{1: hash}[tc.refs], store.AttachmentReceiptHash(tc.contentHash, tc.path, tc.provider), tc.name)
-		require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{ContentHash: tc.contentHash, StoragePath: tc.path, SourceAttachmentID: tc.provider, State: "stored"}))
+		// Hashless rows predate recorded outcomes; only hashed rows are stored.
+		state := attachmentpolicy.StateStored
+		if tc.contentHash == "" {
+			state = ""
+		}
+		require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{ContentHash: tc.contentHash, StoragePath: tc.path, SourceAttachmentID: tc.provider, State: state}))
 		msg, err := f.Store.GetMessageContext(t.Context(), mid)
 		require.NoError(err)
 		require.Len(msg.Attachments, 1)

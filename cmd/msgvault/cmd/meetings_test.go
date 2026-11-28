@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -171,45 +170,6 @@ func TestMeetingContextWritesExactContentAtomically(t *testing.T) {
 	assertions.Contains(string(content), "Planning review")
 }
 
-func TestMeetingsCommandsFailClosedForOlderDaemon(t *testing.T) {
-	tests := []struct {
-		name          string
-		schemaVersion string
-	}{
-		{name: "well before the meeting endpoints", schemaVersion: "2.23.0"},
-		{name: "meeting predecessor 2.25.x", schemaVersion: "2.25.0"},
-		{name: "meeting predecessor 2.26.x", schemaVersion: "2.26.0"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			routeCalls := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/health" {
-					w.Header().Set("Content-Type", "application/json")
-					_, err := fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, tt.schemaVersion)
-					assert.NoError(err)
-					return
-				}
-				routeCalls++
-				http.NotFound(w, r)
-			}))
-			t.Cleanup(server.Close)
-			client, err := daemonclient.New(daemonclient.Config{
-				URL: server.URL, AllowInsecure: true, HTTPClient: server.Client(),
-			})
-			require.NoError(err)
-
-			_, _, err = executeMeetingsCommand(t, client, "metrics", "--json")
-			require.Error(err, "daemon schema %s should fail closed", tt.schemaVersion)
-			require.ErrorContains(err, "API schema 2.27.0 or newer")
-			require.ErrorContains(err, "upgrade the daemon")
-			assert.Zero(routeCalls)
-		})
-	}
-}
-
 func TestMeetingsCommandsReportMissingDaemonRoute(t *testing.T) {
 	requirements := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -233,5 +193,4 @@ func TestMeetingsCommandsReportMissingDaemonRoute(t *testing.T) {
 	_, _, err = executeMeetingsCommand(t, client, "metrics", "--json")
 	requirements.Error(err)
 	requirements.ErrorContains(err, "meeting intelligence is unavailable")
-	requirements.ErrorContains(err, "upgrade it to API schema 2.27.0 or newer")
 }

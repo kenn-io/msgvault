@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, EmptyState, MEDIA, Tooltip, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, MEDIA, overlayScrollbars, Tooltip, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
 
@@ -77,6 +77,7 @@
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
 
+  let tableHost = $state<HTMLElement>();
   let gridElement = $state<HTMLDivElement>();
   let headerElement = $state<HTMLDivElement>();
   let scrollTop = $state(0);
@@ -407,7 +408,7 @@
   }
 </script>
 
-<section class="everything-table" aria-label="Messages table">
+<section class="everything-table" aria-label="Messages table" bind:this={tableHost}>
   <div
     class="table-grid"
     bind:this={gridElement}
@@ -421,6 +422,7 @@
     tabindex="0"
     onkeydown={handleKeydown}
     onscroll={handleScroll}
+    {@attach overlayScrollbars({ host: tableHost, insetTop: () => headerElement })}
   >
     <div class="table-header" bind:this={headerElement} role="row" style:--row-template={template}>
       {#if selection}<span role="columnheader" class="selection-header">
@@ -521,7 +523,9 @@
                 onpointerdown={() => {
                   activeKey = row.key;
                   onActiveKey?.(row.key);
-                  gridElement?.focus();
+                  // Scrolling the grid into view here would move the row out
+                  // from under the pointer before mouseup, and the click would be lost.
+                  gridElement?.focus({ preventScroll: true });
                 }}
                 onclick={() => onOpen?.(row)}
               >
@@ -743,7 +747,7 @@
     border-start-start-radius: 0;
     border-end-start-radius: 0;
     border-bottom-color: transparent;
-    background: linear-gradient(to right, var(--accent-blue) 3px, var(--selected-bg) 3px);
+    background: linear-gradient(to right, var(--accent-blue) 3px, var(--selected-list-bg) 3px);
     box-shadow: none;
   }
 
@@ -761,7 +765,7 @@
   .data-row--inspected {
     border-start-start-radius: 0;
     border-end-start-radius: 0;
-    background: var(--selected-bg);
+    background: var(--selected-list-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 

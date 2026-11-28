@@ -31,6 +31,7 @@ type PersonFactStore interface {
 	ListPersonFactDecisionsContext(
 		ctx context.Context, personID int64, filter personfacts.DecisionFilter,
 	) ([]personfacts.Decision, error)
+	PersonFactSummaryContext(ctx context.Context, personID int64) (personfacts.FactSummary, error)
 	ListPersonFactPinsContext(ctx context.Context, personID int64) ([]personfacts.PinState, error)
 	SetPersonFactPinContext(
 		ctx context.Context, personID int64, target personfacts.TargetRef, pinned bool, actor string,
@@ -95,16 +96,21 @@ type PersonFactClaim struct {
 }
 
 type PersonFactDecision struct {
-	ID                int64                      `json:"id"`
-	ResolutionID      int64                      `json:"resolution_id"`
-	DecisionKey       string                     `json:"decision_key"`
-	ClaimKey          string                     `json:"claim_key"`
-	Action            personfacts.DecisionAction `json:"action"`
-	Reason            personfacts.DecisionReason `json:"reason"`
-	Score             PersonFactScoreBreakdown   `json:"score"`
-	CompetingClaimKey string                     `json:"competing_claim_key,omitempty"`
-	Projection        *personfacts.ProjectionRef `json:"projection,omitzero" nullable:"false"`
-	CreatedAt         time.Time                  `json:"created_at"`
+	ID                int64                        `json:"id"`
+	ResolutionID      int64                        `json:"resolution_id"`
+	DecisionKey       string                       `json:"decision_key"`
+	ClaimKey          string                       `json:"claim_key"`
+	ClaimValue        string                       `json:"claim_value" doc:"Submitted JSON value of the claim this decision describes"`
+	Outcome           *personfacts.DecisionOutcome `json:"outcome" nullable:"true" enum:"saved,value-retired,current-value-kept,pinned-value-kept,too-close-to-choose,not-used"`
+	Target            personfacts.TargetRef        `json:"target"`
+	ResolverVersion   string                       `json:"resolver_version"`
+	ScoreMaxima       *PersonFactScoreBreakdown    `json:"score_maxima,omitzero" nullable:"false"`
+	Action            personfacts.DecisionAction   `json:"action"`
+	Reason            personfacts.DecisionReason   `json:"reason"`
+	Score             PersonFactScoreBreakdown     `json:"score"`
+	CompetingClaimKey string                       `json:"competing_claim_key,omitempty"`
+	Projection        *personfacts.ProjectionRef   `json:"projection,omitzero" nullable:"false"`
+	CreatedAt         time.Time                    `json:"created_at"`
 }
 
 type PersonFactScoreBreakdown struct {
@@ -168,6 +174,7 @@ func (s *Server) registerPersonFactRoutes(api huma.API) {
 
 	evidence := personFactHistoryOperation("listPersonFactEvidence", "/people/{id}/fact-evidence",
 		"List immutable person fact evidence")
+	evidence.Parameters = append(evidence.Parameters, queryIntegerParam("evidence_id", "Restrict to one evidence row"))
 	evidence.Responses = jsonResponsesFor[PersonFactEvidenceResponse](api)
 	addErrorResponses(api, evidence.Responses, http.StatusBadRequest, http.StatusNotFound,
 		http.StatusServiceUnavailable)
@@ -195,10 +202,18 @@ func (s *Server) registerPersonFactRoutes(api huma.API) {
 
 	decisions := personFactHistoryOperation("listPersonFactDecisions", "/people/{id}/fact-decisions",
 		"List immutable person fact decisions")
+	decisions.Parameters = append(decisions.Parameters, queryStringParam("claim_key", "Restrict to one claim key", false))
 	decisions.Responses = jsonResponsesFor[PersonFactDecisionsResponse](api)
 	addErrorResponses(api, decisions.Responses, http.StatusBadRequest, http.StatusNotFound,
 		http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, decisions, s.handleListPersonFactDecisions)
+
+	summary := rawAPIV1Operation("getPersonFactSummary", http.MethodGet,
+		"/people/{id}/fact-summary", "Get person fact summary")
+	addPersonIDParameter(&summary)
+	summary.Responses = jsonResponsesFor[personfacts.FactSummary](api)
+	addErrorResponses(api, summary.Responses, http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, summary, s.handlePersonFactSummary)
 
 	pins := rawAPIV1Operation("listPersonFactPins", http.MethodGet,
 		"/people/{id}/fact-pins", "List effective person fact pins")
@@ -270,8 +285,17 @@ func (s *Server) handleListPersonFactEvidence(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	evidenceID, present, err := queryInt64(r, "evidence_id")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	if present && evidenceID < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_evidence_id", "evidence_id must be a positive integer")
+		return
+	}
 	rows, err := facts.ListPersonFactEvidenceContext(r.Context(), personID,
-		personfacts.EvidenceFilter{Target: filter.target, Limit: filter.limit, Offset: filter.offset})
+		personfacts.EvidenceFilter{Target: filter.target, EvidenceID: evidenceID, Limit: filter.limit, Offset: filter.offset})
 	if err != nil {
 		s.writePersonFactError(w, err)
 		return
@@ -353,7 +377,7 @@ func (s *Server) handleListPersonFactDecisions(w http.ResponseWriter, r *http.Re
 		return
 	}
 	rows, err := facts.ListPersonFactDecisionsContext(r.Context(), personID,
-		personfacts.DecisionFilter{Target: filter.target, Limit: filter.limit, Offset: filter.offset})
+		personfacts.DecisionFilter{Target: filter.target, ClaimKey: filter.claimKey, Limit: filter.limit, Offset: filter.offset})
 	if err != nil {
 		s.writePersonFactError(w, err)
 		return
@@ -363,6 +387,20 @@ func (s *Server) handleListPersonFactDecisions(w http.ResponseWriter, r *http.Re
 		response.Decisions[index] = personFactDecisionDTO(rows[index])
 	}
 	writePersonFactDiagnostic(w, response)
+}
+
+func (s *Server) handlePersonFactSummary(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	facts, personID, ok := s.personFactRequestStore(w, r)
+	if !ok {
+		return
+	}
+	summary, err := facts.PersonFactSummaryContext(r.Context(), personID)
+	if err != nil {
+		s.writePersonFactError(w, err)
+		return
+	}
+	writePersonFactDiagnostic(w, summary)
 }
 
 func (s *Server) handleListPersonFactPins(w http.ResponseWriter, r *http.Request) {
@@ -435,9 +473,10 @@ func (s *Server) handleSetPersonFactPin(w http.ResponseWriter, r *http.Request) 
 }
 
 type personFactPageQuery struct {
-	target *personfacts.TargetRef
-	limit  int
-	offset int
+	claimKey string
+	target   *personfacts.TargetRef
+	limit    int
+	offset   int
 }
 
 func personFactTargetPageFilter(w http.ResponseWriter, r *http.Request) (personFactPageQuery, bool) {
@@ -445,6 +484,7 @@ func personFactTargetPageFilter(w http.ResponseWriter, r *http.Request) (personF
 	if !ok {
 		return filter, false
 	}
+	filter.claimKey = r.URL.Query().Get("claim_key")
 	rawTarget := r.URL.Query().Get("target")
 	if rawTarget == "" {
 		return filter, true
@@ -612,9 +652,14 @@ func personFactClaimDTO(claim personfacts.Claim) PersonFactClaim {
 }
 
 func personFactDecisionDTO(decision personfacts.Decision) PersonFactDecision {
+	var maxima *PersonFactScoreBreakdown
+	if decision.ScoreMaxima != nil {
+		maxima = new(PersonFactScoreBreakdown(*decision.ScoreMaxima))
+	}
 	return PersonFactDecision{
 		ID: decision.ID, ResolutionID: decision.ResolutionID,
-		DecisionKey: decision.DecisionKey, ClaimKey: decision.ClaimKey,
+		DecisionKey: decision.DecisionKey, ClaimKey: decision.ClaimKey, ClaimValue: decision.ClaimValue,
+		Outcome: decision.Outcome, Target: decision.Target, ResolverVersion: decision.ResolverVersion, ScoreMaxima: maxima,
 		Action: decision.Action, Reason: decision.Reason, Score: PersonFactScoreBreakdown{
 			SourceClass: decision.Score.SourceClass, Directness: decision.Score.Directness,
 			Authority: decision.Score.Authority, Confidence: decision.Score.Confidence,

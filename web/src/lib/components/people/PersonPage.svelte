@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, overlayScrollbars, SegmentedControl } from '@kenn-io/kit-ui';
   import EmptyLine from '../common/EmptyLine.svelte';
   import type { APIClient } from '../../api/client';
   import type { DirectoryController } from '../../directory/controller.svelte';
@@ -62,17 +62,7 @@
   const name = $derived(domain ?? savedProfile?.person?.display_name ?? person?.display_label ?? 'Person');
   let saving = $state(false);
   let mergeOpen = $state(false);
-  let staleLink = $state<{ a: number; b: number }>();
-  $effect(() => { void target; staleLink = undefined; mergeOpen = false; });
-  function linked(a: number, b: number, result: import('../../relationships/controller.svelte').LinkOutcome): void {
-    if (result.ok) staleLink = result.cacheState === 'stale' ? { a, b } : undefined;
-  }
-  async function retryLink(): Promise<void> {
-    if (!staleLink) return;
-    const receipt = staleLink, { a, b } = receipt;
-    const result = await controller.linkParticipants(a, b);
-    if (result.ok && staleLink === receipt) linked(a, b, result);
-  }
+  $effect(() => { void target; mergeOpen = false; });
   async function savePerson(): Promise<void> {
     if (!person || saving) return;
     saving = true;
@@ -106,15 +96,14 @@
 </script>
 
 {#snippet files()}
-  <div class="files"><FilesWorkspace {onConfigureVisualSearch} {client} embedded showHeader={false} predicate={context} identityScope={profileID === null ? scope : { kind: 'durable-person', id: profileID }} {sort} {filenameQuery} {mimeFamilies}
+  <div class="files"><FilesWorkspace {onConfigureVisualSearch} onOpenTaskSettings={() => onOpenSettings?.()} {client} embedded showHeader={false} predicate={context} identityScope={profileID === null ? scope : { kind: 'durable-person', id: profileID }} {sort} {filenameQuery} {mimeFamilies}
     personPresentation={personFilePresentation} personDirections={personFileDirections} onSortChange={(value) => sort = value}
     onFilenameQueryChange={(value) => filenameQuery = value} onMIMEFamiliesChange={(value) => mimeFamilies = value}
     onPersonPresentationChange={onPersonFilePresentationChange} onPersonDirectionsChange={onPersonFileDirectionsChange}
     onOpenItem={onOpenFileItem} onOpenConversation={onOpenFileConversation} /></div>
 {/snippet}
 
-<section class="person-page" class:details-open={details} role="group" aria-label="Person page">
-  {#if staleLink}<div class="summary-error" role="alert">Identity saved, but related views may be out of date.<Button label="Retry" onclick={() => void retryLink()} /></div>{/if}
+<section class="person-page" class:details-open={details} role="group" aria-label="Person page" {@attach overlayScrollbars()}>
   {#if durablePersonID !== null || (detail && !controller.detailMissing)}
     <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true}>
       {#snippet actions()}
@@ -168,7 +157,7 @@
       {/key}
     {/if}
   {/if}
-  <div class="details" hidden={!details} data-scroll-pane>
+  <div class="details" hidden={!details} data-scroll-pane {@attach overlayScrollbars({ axis: 'y' })}>
     {#if profileID !== null && details}
       {#key profileID}<PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
     {/if}
@@ -183,7 +172,7 @@
       {/if}
     {/if}
   </div>
-  {#if mergeOpen}<MergePeopleDialog {client} {controller} personID={profileID} participantID={person?.id ?? null} {name} onReconcile={onReconcilePersonMerge} onLinked={linked} onOpenPerson={onOpenDirectoryPerson} onClose={() => mergeOpen = false} />{/if}
+  {#if mergeOpen}<MergePeopleDialog {client} {controller} personID={profileID} participantID={person?.id ?? null} {name} onReconcile={onReconcilePersonMerge} onOpenPerson={onOpenDirectoryPerson} onClose={() => mergeOpen = false} />{/if}
 </section>
 
 <style>
@@ -195,16 +184,16 @@
   /* Messages | Files | Details: a 28 segmented control 8 below the header, at the pane's 16 inset. */
   .tabs { flex: none; padding: var(--space-group) var(--space-pane); border-bottom: 1px solid var(--border-muted); }
   .files { display: flex; min-height: 0; flex: 1; padding: var(--pane-pad-y) var(--page-gutter) var(--page-gutter); }
-  /* The Details pane reserves the 8px bar (data-scroll-pane pads its right side 8 less than its left), so rows
-   * keep a 16 inset on both sides and never shift when the bar appears. 16 above, 24 between sections, and
-   * 32 after the last one. It fills its column up to 880. */
+  /* The Details pane uses zero-gutter overlay scrollbars, so rows keep a 16 inset on both sides and never
+   * shift when the bar appears. 16 above, 24 between sections, and 32 after the last one. It fills its
+   * column up to 880. */
   .details:not([hidden]) { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: var(--space-section); padding-block: var(--space-pane) var(--space-end); }
-  .details > :global(*) { width: 100%; max-width: 880px; box-sizing: border-box; }
+  .details > :global(*:not(.kit-scrollbar)) { width: 100%; max-width: 880px; box-sizing: border-box; }
   .details > :global(p) { margin: 0; color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .summary-error { display: flex; align-items: center; gap: var(--space-group); padding: var(--space-group) var(--space-pane); }
   @media (max-width: 640px) {
     .person-page.details-open { overflow: auto; }
     .tabs { padding-inline: var(--page-gutter); }
-    .details:not([hidden]) { flex: none; overflow: visible; scrollbar-gutter: auto; will-change: auto; padding-inline: var(--page-gutter); }
+    .details:not([hidden]) { flex: none; overflow: visible; will-change: auto; padding-inline: var(--page-gutter); }
   }
 </style>

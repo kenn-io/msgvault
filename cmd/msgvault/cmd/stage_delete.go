@@ -16,10 +16,7 @@ import (
 
 var stageDeleteDryRun bool
 
-const (
-	stageDeleteMinAPISchemaVersion = "2.18.0"
-	analyticalCacheUnavailableCode = "analytical_cache_unavailable"
-)
+const analyticalCacheUnavailableCode = "analytical_cache_unavailable"
 
 func newStageDeleteCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -79,13 +76,6 @@ func runStageDeleteFromQuery(cmd *cobra.Command, queryText string) error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = store.Close() }()
-	supported, err := store.SupportsAPISchemaVersion(cmd.Context(), stageDeleteMinAPISchemaVersion)
-	if err != nil {
-		return fmt.Errorf("check daemon query staging capability: %w", err)
-	}
-	if !supported {
-		return fmt.Errorf("query staging requires daemon API schema %s or newer; upgrade the daemon", stageDeleteMinAPISchemaVersion)
-	}
 
 	// Staging trusts the full-text index as the complete match set, so an
 	// index still being verified or backfilled must block staging instead of

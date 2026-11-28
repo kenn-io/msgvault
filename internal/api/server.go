@@ -36,6 +36,7 @@ import (
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/tasklinks"
@@ -74,7 +75,7 @@ type TaskLinkOperations interface {
 	Link(ctx context.Context, taskID string, identity tasklinks.MessageIdentity, addedAt time.Time) (taskclient.Task, error)
 	Unlink(ctx context.Context, taskID string, identity tasklinks.MessageIdentity) (taskclient.Task, error)
 	Lookup(ctx context.Context, identity tasklinks.MessageIdentity) tasklinks.LookupResult
-	Search(ctx context.Context, query string) ([]tasklinks.TaskSummary, error)
+	Search(ctx context.Context, query string) ([]tasklinks.TaskSummary, bool, error)
 }
 
 type TaskIdentityResolver func(context.Context, *APIMessage) (tasklinks.MessageIdentity, error)
@@ -198,8 +199,8 @@ type SourceStatusStore interface {
 	ListSources(sourceType string) ([]*store.Source, error)
 	ListSourcesContext(ctx context.Context, sourceType string) ([]*store.Source, error)
 	GetActiveSyncReadOnly(ctx context.Context, sourceID int64) (*store.SyncRun, error)
-	GetLatestSyncContext(ctx context.Context, sourceID, excludeID int64) (*store.SyncRun, error)
-	GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error)
+	GetLatestSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*store.SyncRun, error)
+	GetLastSuccessfulSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*store.SyncRun, error)
 	CountSyncRunItemsContext(ctx context.Context, syncRunID int64, status string) (int64, error)
 	ListSyncRunItemsContext(ctx context.Context, syncRunID int64, status string, limit int) ([]store.SyncRunItem, error)
 }
@@ -257,12 +258,10 @@ type analyticsEngineContextKey struct{}
 type Server struct {
 	nativeMCP nativeMCPHandlers
 
-	// statsSnapshots and accountCountSnapshots bound /stats and
-	// /cli/accounts latency under load (see snapshotCache). Background
-	// computations run on importContext, the server-lifetime context that
-	// Shutdown cancels.
-	statsSnapshots        snapshotCache[*StoreStats]
-	accountCountSnapshots snapshotCache[map[int64]store.SourceMessageCounts]
+	// statsSnapshots bounds /stats latency under load (see snapshotCache).
+	// Background computations run on importContext, the server-lifetime
+	// context that Shutdown cancels.
+	statsSnapshots snapshotCache[*StoreStats]
 	// virtualAccountSnapshots bounds the account picker catalog the same way.
 	virtualAccountSnapshots snapshotCache[map[int64][]store.VirtualAccount]
 	statsSnapshotWait       time.Duration
@@ -278,6 +277,7 @@ type Server struct {
 	sqlQueryRunner         SQLQueryRunner
 	archiveSQLQueryRunner  SQLQueryRunner
 	cacheBuildStatusReader CacheBuildStatusReader
+	backupQuiesce          BackupQuiesceFunc
 	shutdownToken          string
 	shutdownFunc           func()
 	scheduler              SyncScheduler
@@ -318,10 +318,13 @@ type Server struct {
 	idleTracker               *IdleTracker
 	operationGate             OperationGate
 	operationHistoryReader    operations.HistoryReader
+	accountRepairs            map[int64]*accountAttributionRepairJob
 	importContext             context.Context
 	cancelImports             context.CancelFunc
 	importMu                  sync.Mutex
 	importsClosed             bool
+	loopEvidenceRunning       bool
+	loopEvidencePending       []int64
 	importWG                  sync.WaitGroup
 	localEmbeddings           LocalEmbeddingsController
 	localSetup                LocalEmbeddingsStatus
@@ -512,6 +515,13 @@ func (s *Server) clockNow() time.Time {
 type SQLQueryRunner func(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *CacheBuildAccepted, error)
 type CacheBuildStatusReader func(id string) (CacheBuildStatus, bool)
 
+// BackupQuiesceFunc stops daemon-owned archive readers that do not take the
+// operation gate, such as analytics cache builds, and holds them stopped until
+// the returned release runs. A backup freeze calls it after acquiring the gate
+// so no daemon reader blocks the backup's truncating WAL checkpoint. It must
+// return within ctx and must not leave readers held when it returns an error.
+type BackupQuiesceFunc func(ctx context.Context) (release func(), err error)
+
 const (
 	DaemonLongRequestTimeout = 30 * time.Minute
 	daemonReadTimeout        = 15 * time.Second
@@ -552,11 +562,13 @@ type ServerOptions struct {
 	SQLQueryRunner         SQLQueryRunner
 	ArchiveSQLQueryRunner  SQLQueryRunner
 	CacheBuildStatusReader CacheBuildStatusReader
-	ShutdownToken          string
-	ShutdownFunc           func()
-	HybridEngine           *hybrid.Engine
-	VectorCfg              vector.Config
-	Backend                vector.Backend
+	// BackupQuiesce, when set, runs inside each backup freeze window.
+	BackupQuiesce BackupQuiesceFunc
+	ShutdownToken string
+	ShutdownFunc  func()
+	HybridEngine  *hybrid.Engine
+	VectorCfg     vector.Config
+	Backend       vector.Backend
 	// PersonSearchEngine is the optional semantic people service.
 	PersonSearchEngine PersonSearchEngine
 	// VectorStatus is the initial vector subsystem status. Zero value
@@ -665,6 +677,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		sqlQueryRunner:         opts.SQLQueryRunner,
 		archiveSQLQueryRunner:  opts.ArchiveSQLQueryRunner,
 		cacheBuildStatusReader: opts.CacheBuildStatusReader,
+		backupQuiesce:          opts.BackupQuiesce,
 		shutdownToken:          opts.ShutdownToken,
 		shutdownFunc:           opts.ShutdownFunc,
 		hybridEngine:           opts.HybridEngine,
@@ -686,9 +699,6 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		importContext:          importContext,
 		cancelImports:          cancelImports,
 		statsSnapshots:         snapshotCache[*StoreStats]{logger: opts.Logger},
-		accountCountSnapshots: snapshotCache[map[int64]store.SourceMessageCounts]{
-			logger: opts.Logger, staleWait: 500 * time.Millisecond,
-		},
 		virtualAccountSnapshots: snapshotCache[map[int64][]store.VirtualAccount]{
 			logger: opts.Logger, freshFor: virtualAccountCatalogFreshFor,
 		},
@@ -1222,7 +1232,7 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if cardDAVRequestNeedsProtectiveCeiling(r) ||
-			(r.Method == http.MethodPost && r.URL.Path == "/api/v1/identity/scoring/run") {
+			(r.Method == http.MethodPost && (r.URL.Path == "/api/v1/identity/scoring/run" || r.URL.Path == "/api/v1/identity/cache-refresh")) {
 			serveWithProtectiveRequestDeadline(w, r, next)
 			return
 		}
@@ -1322,6 +1332,7 @@ func isLongDaemonRequest(path string) bool {
 		muesliImportEndpointPath,
 		muesliRecordingEndpointPath,
 		"/api/v1/cli/identities/discover",
+		"/api/v1/cli/messages/export",
 		"/api/v1/cli/rebuild-fts",
 		"/api/v1/cli/repair-encoding",
 		"/api/v1/cli/repair-message",
@@ -1617,13 +1628,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAuthenticatedHealth returns health details that are safe behind the
-// API-key boundary. Delegated callers and remote clients receive the public projection plus
-// APISchemaVersion only, so they can verify version compatibility without
-// seeing internal operation labels that name configured account identifiers.
+// API-key boundary. Delegated callers, remote clients, and callers under a
+// host's source scope receive the public projection plus APISchemaVersion
+// only, so they can verify version compatibility without seeing internal
+// operation labels that name configured account identifiers.
 func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatus(r.Context())
 	auth := s.requestAuthentication(r)
-	if auth.Mode == AuthModeDelegated || auth.Mode == AuthModeRemoteClient {
+	if auth.Mode == AuthModeDelegated || auth.Mode == AuthModeRemoteClient || sourcescope.Restricted(r.Context()) {
 		writeJSON(w, http.StatusOK, HealthResponse{
 			Status:           "ok",
 			Vector:           s.vectorHealthPublic(),

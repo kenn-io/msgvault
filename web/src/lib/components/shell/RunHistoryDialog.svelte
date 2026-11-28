@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, DateRangePicker, SelectDropdown, resolveRange, type RangeSelection } from '@kenn-io/kit-ui';
+  import { Button, DateRangePicker, overlayScrollbars, SelectDropdown, resolveRange, type RangeSelection } from '@kenn-io/kit-ui';
   import { tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { OperationsController } from '../../operations/controller.svelte';
@@ -130,7 +130,7 @@
       </div>
       {#if current.initialLoading || current.backgroundLoading}<p class="muted" role="status">Loading…</p>{/if}
       {#if current.historyReadable && current.rows.length === 0 && current.unavailableKinds.length === 0 && !current.runsError && !current.conflict}<p class="muted">No runs match.</p>{/if}
-      <div class="runs"><OperationRunTable rows={current.rows} onSelect={selectRun} /></div>
+      <div class="runs" {@attach overlayScrollbars()}><OperationRunTable rows={current.rows} onSelect={selectRun} /></div>
       {#if current.nextCursor}<Button size="sm" surface="soft" label={current.paging ? 'Loading…' : 'Show more'} disabled={current.paging} onclick={() => void controller.loadMore()} />{/if}
     {/if}
     {#if !local.operationStatus}<Button size="sm" surface="soft" label="Refresh" disabled={current.initialLoading || current.backgroundLoading || current.detailLoading} onclick={(event) => void refresh(event)} />{/if}

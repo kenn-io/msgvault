@@ -2,7 +2,7 @@
   import type { ReadingPaneSelection } from './ReadingPane.svelte';
   import { bucketSeries } from '../../explore/group-activity';
   import { groupRowName } from '../../explore/labels';
-  import { formatBytes, formatDate } from '../../util/format';
+  import { formatBytes, formatShortDate } from '../../util/format';
 
   let { selection }: {
     selection: Extract<ReadingPaneSelection, { kind: 'group' }>;
@@ -14,7 +14,7 @@
   const busiest = $derived(series.reduce((best, month) => month.count > best.count ? month : best, { bucket: '', count: 0 }));
   const daily = $derived(first?.bucket.length === 10);
   const monthName = (bucket: string) => bucket.length === 10
-    ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(bucket))
+    ? formatShortDate(`${bucket}T12:00:00`)
     : groupRowName('month', bucket, bucket).name;
   const stripLabel = $derived(first && last
     ? series.length === 1
@@ -28,9 +28,9 @@
     <strong>{selection.count?.toLocaleString() ?? '—'} {selection.count === 1 ? 'item' : 'items'}</strong>
     {#if selection.estimatedBytes !== undefined}<span>{formatBytes(selection.estimatedBytes)}</span>{/if}
   </div>
-  {#if selection.overview?.first_at && selection.latestAt && !(daily && formatDate(selection.overview.first_at) === monthName(first!.bucket) && formatDate(selection.latestAt) === monthName(last!.bucket))}
-    {@const firstDate = formatDate(selection.overview.first_at)}
-    {@const lastDate = formatDate(selection.latestAt)}
+  {#if selection.overview?.first_at && selection.latestAt && !(daily && formatShortDate(selection.overview.first_at) === monthName(first!.bucket) && formatShortDate(selection.latestAt) === monthName(last!.bucket))}
+    {@const firstDate = formatShortDate(selection.overview.first_at)}
+    {@const lastDate = formatShortDate(selection.latestAt)}
     <p>{firstDate}{firstDate === lastDate ? '' : ` – ${lastDate}`}</p>
   {/if}
   {#if series.length > 0 && first && last}

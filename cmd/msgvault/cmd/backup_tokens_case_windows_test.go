@@ -9,52 +9,36 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/providercredentials"
+	"go.kenn.io/msgvault/internal/carddav"
 )
 
-func TestBackupRestoreCaseVariantProviderCredential(t *testing.T) {
-	cfg, dbPath, attachments := backupTokenFixture(t)
-	const endpoint = "https://provider.example.test/v1"
-	const key = "synthetic-provider-key"
-	empty, err := providercredentials.Read(cfg.TokensDir())
-	require.NoError(t, err)
-	_, err = providercredentials.Put(cfg.TokensDir(), empty.ETag, providercredentials.VectorEmbeddingsID, endpoint, key)
-	require.NoError(t, err)
-	canonical := filepath.Join(cfg.TokensDir(), providercredentials.Filename)
-	temporary := filepath.Join(cfg.TokensDir(), "temporary-credentials")
-	require.NoError(t, os.Rename(canonical, temporary))
-	require.NoError(t, os.Rename(temporary, filepath.Join(cfg.TokensDir(), "Provider-Credentials.json")))
-	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
-	prepareBackupTokenRestore(t)
-	target := filepath.Join(t.TempDir(), "restored")
-	require.NoError(t, runBackupTokenRestore(t, cfg, repo, target, false))
-	restored, err := providercredentials.Read(filepath.Join(target, "tokens"))
-	require.NoError(t, err)
-	value, _, err := restored.Resolve(providercredentials.VectorEmbeddingsID, endpoint, "", nil)
-	require.NoError(t, err)
-	assert.Equal(t, key, value)
-}
+func TestBackupRestoreCardDAVCredentialRemainsUsable(t *testing.T) {
+	for _, overwrite := range []bool{false, true} {
+		name := "fresh restore"
+		if overwrite {
+			name = "overwrite existing credential"
+		}
+		t.Run(name, func(t *testing.T) {
+			cfg, dbPath, attachments := backupTokenFixture(t)
+			credential := carddav.Credential{Password: "synthetic-password", BaseURL: "https://carddav.example.test", Username: "person@example.test", ConnectionGeneration: 1}
+			dir := filepath.Join(cfg.TokensDir(), "carddav-connections", "work")
+			require.NoError(t, carddav.SaveCredential(dir, credential))
+			repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
+			prepareBackupTokenRestore(t)
 
-func TestBackupRestoreCaseVariantEventsCredential(t *testing.T) {
-	cfg, dbPath, attachments := backupTokenFixture(t)
-	id := providercredentials.EventsID("0123456789abcdef0123456789abcdef")
-	empty, err := providercredentials.ReadEvents(cfg.TokensDir())
-	require.NoError(t, err)
-	revision, err := empty.Revision(id)
-	require.NoError(t, err)
-	_, err = providercredentials.PutIfRevision(cfg.TokensDir(), revision, id, "https://example.test", "synthetic-secret")
-	require.NoError(t, err)
-	canonical := filepath.Join(cfg.TokensDir(), providercredentials.EventsFilename)
-	temporary := filepath.Join(cfg.TokensDir(), "temporary-events-credentials")
-	require.NoError(t, os.Rename(canonical, temporary))
-	require.NoError(t, os.Rename(temporary, filepath.Join(cfg.TokensDir(), "Mcp-Events-Credentials.json")))
-	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
-	prepareBackupTokenRestore(t)
-	target := filepath.Join(t.TempDir(), "restored")
-	require.NoError(t, runBackupTokenRestore(t, cfg, repo, target, false))
-	restored, err := providercredentials.ReadEvents(filepath.Join(target, "tokens"))
-	require.NoError(t, err)
-	value, _, err := restored.Resolve(id, "https://example.test", "", nil)
-	require.NoError(t, err)
-	assert.Equal(t, "synthetic-secret", value)
+			target := filepath.Join(t.TempDir(), "restored")
+			args := []string{"--target", target}
+			if overwrite {
+				upper := filepath.Join(target, "tokens", "CARDDAV-CONNECTIONS", "WORK")
+				require.NoError(t, os.MkdirAll(upper, 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(upper, "CARDDAV.JSON"), []byte("old"), 0o600))
+				args = append(args, "--overwrite")
+			}
+			_, err := runBackupTokenRestore(t, cfg, repo, args...)
+			require.NoError(t, err)
+			got, err := carddav.LoadCredential(filepath.Join(target, "tokens", "carddav-connections", "work"))
+			require.NoError(t, err)
+			assert.Equal(t, credential, got)
+		})
+	}
 }
