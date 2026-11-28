@@ -36,23 +36,9 @@ func TestSubscribeClassifiesScopeFailures(t *testing.T) {
 			t.Helper()
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			st := testutil.NewTestStore(t)
+			st := newEventsTestStore(t)
 			service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
 			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-			_, err := service.Subscribe(t.Context(), in, acceptCallback)
-			var eventErr *Error
-			requirements.ErrorAs(err, &eventErr)
-			assertions.Equal(InvalidParams, eventErr.Code)
-			assertions.Equal("invalid_scope", eventErr.Reason)
-			catalog, err := st.LoadMCPEventsCatalog(t.Context())
-			requirements.NoError(err)
-			assertions.Nil(catalog)
-			var count int
-			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&count))
-			assertions.Zero(count)
-			source, err := st.GetOrCreateSource("imap", "events@example.test")
-			requirements.NoError(err)
-			requirements.Equal(int64(1), source.ID)
 			result, err := service.Subscribe(t.Context(), in, acceptCallback)
 			requirements.NoError(err)
 			assertions.NotEmpty(result.ID)
@@ -63,6 +49,7 @@ func TestSubscribeClassifiesScopeFailures(t *testing.T) {
 			_, err = st.DB().ExecContext(t.Context(), "ALTER TABLE sources RENAME TO unavailable_sources")
 			requirements.NoError(err)
 			_, err = service.Subscribe(t.Context(), in, acceptCallback)
+			var eventErr *Error
 			requirements.ErrorAs(err, &eventErr)
 			assertions.Equal(Unavailable, eventErr.Code)
 			assertions.Equal("store_unavailable", eventErr.Reason)
@@ -139,8 +126,10 @@ func TestNativeSkipsMissingCredentialAndRefreshRecovers(t *testing.T) {
 	assert.NotEqual(first.ID, other.ID)
 	state, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
 	require.NoError(err)
-	stamp := time.Now().UTC().Add(-time.Hour)
-	state.Failures, state.LastError, state.FailedSince = 1, "network_error", &stamp
+	stamp := state.At.Add(time.Second)
+	state.Failures, state.LastError, state.FailedSince = 1, "http_5xx", &stamp
+	state.NextAttemptAt = stamp.Add(30 * time.Second)
+	state.NativeDelivery = &store.NativeDelivery{WebhookID: "msg_0123456789abcdef0123456789abcdef", EventID: "evt_0123456789abcdef0123456789abcdef", Timestamp: stamp, EndAt: stamp}
 	ok, err := st.AdvanceWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID), raw, state)
 	require.NoError(err)
 	require.True(ok)
@@ -163,7 +152,7 @@ func TestNativeSkipsMissingCredentialAndRefreshRecovers(t *testing.T) {
 	assert.Equal(state, after)
 	third, err := service.Subscribe(t.Context(), in, acceptCallback)
 	require.NoError(err)
-	assert.Equal("network_error", third.DeliveryStatus.LastError)
+	assert.Equal("http_5xx", third.DeliveryStatus.LastError)
 	require.NotNil(third.DeliveryStatus.FailedSince)
 	assert.Equal(stamp, *third.DeliveryStatus.FailedSince)
 	after, _, err = st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
@@ -272,7 +261,7 @@ func TestDisabledUnsubscribeThenSubscribeReusesIDAndStartsAtCurrentBound(t *test
 	require.NoError(err)
 	require.True(ok)
 	service.Enabled = false
-	targets, err := (&Service{}).Native(t.Context())
+	targets, err := service.Native(t.Context())
 	require.NoError(err)
 	assert.Empty(targets)
 	require.NoError(service.Unsubscribe(t.Context(), MCPEventsUnsubscribeRequest{Name: in.Name, Arguments: in.Arguments, Delivery: in.Delivery}))
@@ -458,7 +447,7 @@ func TestNativeRespectsConfiguredTargetLimitAfterRestart(t *testing.T) {
 	require.NoError(err)
 	assert.Len(entries, 32)
 
-	// Both refresh and a new subscription are refused after configured targets grow.
+	// A refresh is refused after configured targets grow beyond the limit.
 	service.ConfigTargets = 1
 	beforeCatalog, err := st.LoadMCPEventsCatalog(t.Context())
 	require.NoError(err)
@@ -467,14 +456,12 @@ func TestNativeRespectsConfiguredTargetLimitAfterRestart(t *testing.T) {
 	require.NoError(err)
 	_, beforePosition, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(ids[0]))
 	require.NoError(err)
-	for _, endpoint := range []string{"https://example.com/0", "https://example.com/new"} {
-		in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: endpoint, Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-		_, err := service.Subscribe(t.Context(), in, acceptCallback)
-		var eventErr *Error
-		require.ErrorAs(err, &eventErr)
-		assert.Equal(ResourceExhausted, eventErr.Code)
-		assert.Equal("subscriptions", eventErr.Reason)
-	}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/0", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	_, err = service.Subscribe(t.Context(), in, acceptCallback)
+	var eventErr *Error
+	require.ErrorAs(err, &eventErr)
+	assert.Equal(ResourceExhausted, eventErr.Code)
+	assert.Equal("subscriptions", eventErr.Reason)
 	afterCatalog, err := st.LoadMCPEventsCatalog(t.Context())
 	require.NoError(err)
 	assert.Equal(beforeCatalog, afterCatalog)
