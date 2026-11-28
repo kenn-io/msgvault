@@ -335,7 +335,11 @@ func TestSubscriptionChallengeKeepsOwnerHeadAndRefreshesGrantHead(t *testing.T) 
 				return nil
 			}, nil)
 			requirements.NoError(err)
-			state, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+			entries, _, err := service.catalog(t.Context())
+			requirements.NoError(err)
+			requirements.Len(entries, 1)
+			assertions.Equal(wireID(owner, entries[0].ID), result.ID)
+			state, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(entries[0].ID))
 			requirements.NoError(err)
 			requirements.NotNil(raw)
 			if delegated {
@@ -821,7 +825,7 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			var callbackErr *Error
 			requirements.ErrorAs(err, &callbackErr)
 			assertions.Equal(CallbackEndpoint, callbackErr.Code)
-			assertions.Equal("dns_error", callbackErr.Reason)
+			assertions.Equal("connection_refused", callbackErr.Reason)
 			_, err = service.Subscribe(t.Context(), in, "owner", func(context.Context, string, string, []byte) error { return errors.New("private transport detail") }, nil)
 			requirements.ErrorAs(err, &callbackErr)
 			assertions.Equal(CallbackEndpoint, callbackErr.Code)
@@ -1365,8 +1369,8 @@ func TestCreationAdmissionBeforeAndAfterVerification(t *testing.T) {
 	allowed, verified, steps = false, false, nil
 	second, err := service.Subscribe(t.Context(), in, agentgrant.Owner(id), verify, check)
 	require.NoError(err)
-	assert.True(verified)
-	assert.Equal([]string{"verify", "refresh"}, steps)
+	assert.False(verified)
+	assert.Equal([]string{"refresh"}, steps)
 	assert.Equal(first.ID, second.ID)
 }
 
