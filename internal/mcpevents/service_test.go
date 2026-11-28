@@ -677,6 +677,33 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Equal(credential, afterCredential)
 		}},
+		{"UnknownCatalogMembersRefusedWithoutRewriting", func(t *testing.T) {
+			for _, tc := range []struct{ name, old, replacement string }{
+				{"entry", `[{`, `[{"future":true,`},
+				{"arguments", `"arguments":{`, `"arguments":{"future":true,`},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					st := newEventsTestStore(t)
+					service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+					in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+					_, err := service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
+					require.NoError(t, err)
+					original, err := st.LoadMCPEventsCatalog(t.Context())
+					require.NoError(t, err)
+					changed := bytes.Replace(original, []byte(tc.old), []byte(tc.replacement), 1)
+					require.NotEqual(t, original, changed)
+					ok, err := st.SwapMCPEventsCatalog(t.Context(), original, changed, "", nil, "")
+					require.NoError(t, err)
+					require.True(t, ok)
+					before := snapshot(t, st, service.TokensDir)
+					_, err = service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
+					var eventErr *Error
+					require.ErrorAs(t, err, &eventErr)
+					assert.Equal(t, "store_unavailable", eventErr.Reason)
+					assert.Equal(t, before, snapshot(t, st, service.TokensDir))
+				})
+			}
+		}},
 		{"RefreshRejectsMissingOrCorruptPositionBeforePublication", func(t *testing.T) {
 			t.Helper()
 			for _, corrupted := range []bool{false, true} {

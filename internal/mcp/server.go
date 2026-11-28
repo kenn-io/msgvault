@@ -455,7 +455,7 @@ func newMCPServerWithPolicy(
 		confirmation = confirmationConfigs[0]
 	}
 	capabilities := &sdkmcp.ServerCapabilities{Tools: &sdkmcp.ToolCapabilities{}}
-	if opts.Events != nil && !opts.DelegatedOnly && !opts.legacyHTTP {
+	if opts.Events != nil && !opts.legacyHTTP {
 		capabilities.AddExtension("io.modelcontextprotocol/events", nil)
 	}
 	instructions := archiveSafetyInstructions + " " + decisionMemoryInstructions + " Use returned web_url values when linking to archived messages."
