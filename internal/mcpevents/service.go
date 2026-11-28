@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"sync"
 	"time"
 
 	"go.kenn.io/msgvault/internal/changefeed"
@@ -39,6 +40,8 @@ type Service struct {
 	ConfigTargets int
 	Now           func() time.Time
 	Logger        *slog.Logger
+	verifiedMu    sync.Mutex
+	verified      map[string]time.Time
 }
 
 func (s *Service) now() time.Time {
@@ -166,16 +169,19 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, v
 	if err != nil {
 		return out, failure(InvalidParams, "invalid_callback")
 	}
-	if err := verify(ctx, in.Delivery.URL, id, in.secret); err != nil {
-		var callbackErr *Error
-		if errors.As(err, &callbackErr) && callbackErr.Code == Unavailable {
-			return out, callbackErr
+	if !s.callbackVerified(in.Delivery.URL) {
+		if err := verify(ctx, in.Delivery.URL, id, in.secret); err != nil {
+			var callbackErr *Error
+			if errors.As(err, &callbackErr) && callbackErr.Code == Unavailable {
+				return out, callbackErr
+			}
+			reason := "challenge_failed"
+			if errors.As(err, &callbackErr) {
+				reason = CallbackReason(callbackErr.Reason)
+			}
+			return out, failure(CallbackEndpoint, reason)
 		}
-		reason := "challenge_failed"
-		if errors.As(err, &callbackErr) {
-			reason = CallbackReason(callbackErr.Reason)
-		}
-		return out, failure(CallbackEndpoint, reason)
+		s.rememberCallback(in.Delivery.URL, in.TTL.Duration())
 	}
 	previous, revision, credentialErr := s.credentialSnapshot(id)
 	if credentialErr != nil {
@@ -354,4 +360,29 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		out = append(out, sub)
 	}
 	return out, nil
+}
+
+// Verification is process-local soft state, scoped to the owner and exact URL.
+// No lock is held across the callback or the API's mutation gate transition.
+func (s *Service) callbackVerified(url string) bool {
+	s.verifiedMu.Lock()
+	defer s.verifiedMu.Unlock()
+	return s.now().Before(s.verified[url])
+}
+
+func (s *Service) rememberCallback(url string, ttl time.Duration) {
+	s.verifiedMu.Lock()
+	defer s.verifiedMu.Unlock()
+	now := s.now()
+	if s.verified == nil {
+		s.verified = make(map[string]time.Time)
+	}
+	for key, expires := range s.verified {
+		if !now.Before(expires) {
+			delete(s.verified, key)
+		}
+	}
+	if len(s.verified) < 32 {
+		s.verified[url] = now.Add(min(ttl, time.Hour))
+	}
 }

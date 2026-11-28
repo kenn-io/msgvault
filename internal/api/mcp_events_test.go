@@ -51,7 +51,7 @@ func TestEventsRouterRejectsUnverifiedCallback(t *testing.T) {
 	}
 	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 	assertions.Equal(-32027, response.Code)
-	assertions.Equal("dns_error", response.Reason)
+	assertions.Equal("connection_refused", response.Reason)
 	catalog, err := st.LoadMCPEventsCatalog(t.Context())
 	requirements.NoError(err)
 	assertions.Empty(catalog)

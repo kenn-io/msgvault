@@ -30,15 +30,26 @@ func casArchiveMetadata(q boundQuerier, key string, before, after []byte) (bool,
 	return n == 1, err
 }
 
+// NativeDelivery reserves one webhook message and its feed endpoint across retries.
+type NativeDelivery struct {
+	WebhookID   string    `json:"webhook_id"`
+	EventID     string    `json:"event_id"`
+	Timestamp   time.Time `json:"timestamp"`
+	EndAt       time.Time `json:"end_at"`
+	EndAfterID  int64     `json:"end_after_id"`
+	EndAfterRow bool      `json:"end_after_row"`
+}
+
 type WakeupState struct {
-	At             time.Time  `json:"at"`
-	AfterID        int64      `json:"after_id"`
-	AfterRow       bool       `json:"after_row"`
-	Failures       int        `json:"failures"`
-	NextAttemptAt  time.Time  `json:"next_attempt_at"`
-	LastError      string     `json:"last_error,omitempty"`
-	FailedSince    *time.Time `json:"failed_since,omitempty"`
-	LastDeliveryAt *time.Time `json:"last_delivery_at,omitempty"`
+	At             time.Time       `json:"at"`
+	AfterID        int64           `json:"after_id"`
+	AfterRow       bool            `json:"after_row"`
+	Failures       int             `json:"failures"`
+	NextAttemptAt  time.Time       `json:"next_attempt_at"`
+	LastError      string          `json:"last_error,omitempty"`
+	FailedSince    *time.Time      `json:"failed_since,omitempty"`
+	LastDeliveryAt *time.Time      `json:"last_delivery_at,omitempty"`
+	NativeDelivery *NativeDelivery `json:"native_delivery,omitempty"`
 }
 
 func (s *Store) LoadWakeupStateKey(ctx context.Context, key string) (WakeupState, []byte, error) {

@@ -213,7 +213,7 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 			cursor, present := bodies[0]["cursor"]
 			assert.True(present)
 			assert.Nil(cursor)
-			assert.Equal(ids[0], bodies[0]["eventId"])
+			assert.NotEqual(ids[0], bodies[0]["eventId"])
 			state, _, err := st.LoadWakeupStateKey(ctx, key)
 			require.NoError(err)
 			assert.True(state.At.After(start))
@@ -294,4 +294,54 @@ func TestNativeSuccessfulDeliveryClearsFailureStatus(t *testing.T) {
 	assert.NotNil(state.LastDeliveryAt)
 	assert.Empty(state.LastError)
 	assert.Nil(state.FailedSince)
+}
+
+func TestNativeRetryKeepsDeliveryIdentityWhenFeedAdvances(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	st := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	start := now.Add(-time.Hour)
+	seedWakeup(t, st, "native@example.test", 0, 1, now)
+	key := store.MCPEventsPositionKey("fixture")
+	ok, err := st.AdvanceWakeupStateKey(t.Context(), key, nil, store.WakeupState{At: start})
+	require.NoError(err)
+	require.True(ok)
+	var ids, bodies []string
+	status := http.StatusInternalServerError
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		err := json.NewDecoder(r.Body).Decode(&body)
+		if err == nil {
+			b, _ := json.Marshal(body)
+			bodies = append(bodies, string(b))
+		}
+		ids = append(ids, r.Header.Get("Webhook-Id"))
+		w.WriteHeader(status)
+	}))
+	defer server.Close()
+	observed := &observedStore{Store: st, fixedBound: now.Add(-30 * time.Second)}
+	sub := testSubscription(t, "fixture", server, changefeed.Filter{})
+	sub.Native, sub.StateKey = true, key
+	engine := Engine{Store: observed, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
+	require.NoError(engine.RunPass(t.Context()))
+	require.Len(ids, 1)
+	secondID := seedWakeup(t, st, "native@example.test", 0, 2, now)
+	stamp := now.Add(-10 * time.Second).Format(store.SQLiteTimestampLayout)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), stamp, secondID)
+	require.NoError(err)
+	observed.fixedBound = now.Add(-time.Second)
+	status = http.StatusNoContent
+	now = now.Add(time.Minute)
+	require.NoError(engine.RunPass(t.Context()))
+	require.Len(ids, 2)
+	require.Len(bodies, 2)
+	assert.Equal(ids[0], ids[1])
+	assert.Equal(bodies[0], bodies[1])
+	var body map[string]any
+	require.NoError(json.Unmarshal([]byte(bodies[0]), &body))
+	assert.NotEqual(body["eventId"], ids[0])
+	require.NoError(engine.RunPass(t.Context()))
+	require.Len(ids, 3)
+	assert.NotEqual(ids[0], ids[2])
 }

@@ -2,6 +2,7 @@ package wakeups
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -239,6 +240,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			state.AfterID, state.AfterRow = next.AfterID()
 			state.Failures = 0
 			state.NextAttemptAt = time.Time{}
+			state.NativeDelivery = nil
 		}
 		err := e.GatedSetup(ctx, func() error {
 			now := e.now()
@@ -312,6 +314,24 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				}
 				return nil
 			}
+			if sub.Native {
+				if state.NativeDelivery == nil {
+					var random [32]byte
+					if _, err := rand.Read(random[:]); err != nil {
+						return err
+					}
+					endID, endRow := next.AfterID()
+					state.NativeDelivery = &store.NativeDelivery{
+						WebhookID: "msg_" + hex.EncodeToString(random[:16]),
+						EventID:   "evt_" + hex.EncodeToString(random[16:]),
+						Timestamp: page.ServerTime, EndAt: next.At(), EndAfterID: endID, EndAfterRow: endRow,
+					}
+				} else if state.NativeDelivery.EndAfterRow {
+					next = store.ChangedMessagesAfter(state.NativeDelivery.EndAt, state.NativeDelivery.EndAfterID)
+				} else {
+					next = store.ChangedMessagesFrom(state.NativeDelivery.EndAt)
+				}
+			}
 			state.Failures++
 			state.NextAttemptAt = now.Add(retryDelay(state.Failures))
 			nextRaw, err := store.EncodeWakeupState(state)
@@ -342,7 +362,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		var body []byte
 		subscriptionID := ""
 		if sub.Native {
-			id = "evt_" + id[3:]
+			id = state.NativeDelivery.WebhookID
 			subscriptionID = sub.Name
 			body, err = json.Marshal(struct {
 				EventID   string            `json:"eventId"`
@@ -350,7 +370,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				Timestamp time.Time         `json:"timestamp"`
 				Data      map[string]string `json:"data"`
 				Cursor    *string           `json:"cursor"`
-			}{id, "msgvault.messages.changed", page.ServerTime, map[string]string{"subscription_id": sub.Name}, nil})
+			}{state.NativeDelivery.EventID, "msgvault.messages.changed", state.NativeDelivery.Timestamp, map[string]string{"subscription_id": sub.Name}, nil})
 		} else {
 			ids := make([]int64, 0, min(50, len(matches)))
 			start := max(0, len(matches)-50)

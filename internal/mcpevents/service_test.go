@@ -749,7 +749,7 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			var callbackErr *Error
 			requirements.ErrorAs(err, &callbackErr)
 			assertions.Equal(CallbackEndpoint, callbackErr.Code)
-			assertions.Equal("dns_error", callbackErr.Reason)
+			assertions.Equal("connection_refused", callbackErr.Reason)
 			catalog, err := st.LoadMCPEventsCatalog(t.Context())
 			requirements.NoError(err)
 			assertions.Empty(catalog)
@@ -762,7 +762,11 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			requirements.NoError(err)
 			_, err = service.Subscribe(t.Context(), in, verify)
 			requirements.NoError(err)
-			assertions.Equal(3, calls)
+			other := in
+			other.Arguments.IncomingOnly = new(false)
+			_, err = service.Subscribe(t.Context(), other, verify)
+			requirements.NoError(err)
+			assertions.Equal(2, calls)
 		}},
 		{"SubscribeRejectsLocalFailuresBeforeVerification", func(t *testing.T) {
 			t.Helper()
@@ -984,4 +988,18 @@ func TestRemovalKeepsCredentialsWhenCatalogCASFails(t *testing.T) {
 	credentials, err := providercredentials.ReadEvents(service.TokensDir)
 	requirements.NoError(err)
 	assertions.False(credentials.Stored(providercredentials.EventsID(result.ID)))
+}
+
+func TestCallbackReasonUsesSEPCategories(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"dns_error", "connection_refused"},
+		{"invalid_callback", "challenge_failed"},
+		{"http_3xx", "challenge_failed"},
+		{"http_4xx", "http_4xx"},
+		{"http_5xx", "http_5xx"},
+		{"timeout", "timeout"},
+		{"tls_error", "tls_error"},
+	} {
+		t.Run(tc.input, func(t *testing.T) { assert.Equal(t, tc.want, CallbackReason(tc.input)) })
+	}
 }

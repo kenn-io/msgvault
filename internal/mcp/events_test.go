@@ -52,6 +52,7 @@ func TestEventsListPropagatesBackendFailure(t *testing.T) {
 		{"disabled list", "events/list", &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "disabled"}, "disabled", mcpevents.Unavailable, http.StatusOK},
 		{"invalid", "events/subscribe", &mcpevents.Error{Code: mcpevents.InvalidParams, Reason: "invalid_scope"}, "invalid_scope", mcpevents.InvalidParams, http.StatusBadRequest},
 		{"not found", "events/subscribe", &mcpevents.Error{Code: mcpevents.NotFound, Reason: "event"}, "event", mcpevents.NotFound, http.StatusOK},
+		{"forbidden", "events/subscribe", &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "grant_denied"}, "grant_denied", mcpevents.Forbidden, http.StatusOK},
 		{"capacity", "events/subscribe", &mcpevents.Error{Code: mcpevents.ResourceExhausted, Reason: "subscriptions"}, "subscriptions", mcpevents.ResourceExhausted, http.StatusOK},
 		{"unsupported", "events/subscribe", &mcpevents.Error{Code: mcpevents.Unsupported, Reason: "delivery"}, "delivery", mcpevents.Unsupported, http.StatusOK},
 		{"callback", "events/subscribe", &mcpevents.Error{Code: mcpevents.CallbackEndpoint, Reason: "challenge_failed"}, "challenge_failed", mcpevents.CallbackEndpoint, http.StatusOK},
@@ -86,7 +87,16 @@ func TestEventsListPropagatesBackendFailure(t *testing.T) {
 			var response rawRPCResponse
 			require.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
 			assert.InDelta(float64(tc.code), response.Error["code"], 0)
-			assert.Equal(map[string]any{"reason": tc.reason}, response.Error["data"])
+			data := map[string]any{"reason": tc.reason}
+			switch tc.code {
+			case mcpevents.NotFound:
+				data = map[string]any{"kind": tc.reason}
+			case mcpevents.ResourceExhausted:
+				data = map[string]any{"limit": tc.reason}
+			case mcpevents.Unsupported:
+				data = map[string]any{"feature": "deliveryMode", "value": "webhook"}
+			}
+			assert.Equal(data, response.Error["data"])
 		})
 	}
 }
@@ -251,4 +261,25 @@ func TestEventsLegacyAndDelegatedDoNotReachBackend(t *testing.T) {
 			assert.Zero(t, backend.calls)
 		})
 	}
+}
+
+func TestEventsDiscoveryAndLegacyWire(t *testing.T) {
+	peer := newTask5RawStdioPeer(t, ServeOptions{Events: &eventTestBackend{}})
+	initialized := peer.call(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"fixture","version":"1"}}}`)
+	require.Nil(t, initialized.Error)
+	caps := initialized.Result["capabilities"].(map[string]any)
+	assert.NotContains(t, caps, "events")
+	assert.Contains(t, caps["extensions"], "io.modelcontextprotocol/events")
+	peer.writeLiteralLine(t, `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`)
+	list := peer.call(t, `{"jsonrpc":"2.0","id":2,"method":"events/list"}`)
+	require.Nil(t, list.Error)
+	assert.Len(t, list.Result["events"], 1)
+	assert.NotContains(t, list.Result, "resultType")
+
+	discover := rawModernCall(t, ServeOptions{Events: &eventTestBackend{}}, HTTPOptions{APIKey: "fixture-key"}, "server/discover", nil)
+	require.Nil(t, discover.Error)
+	modernCaps := discover.Result["capabilities"].(map[string]any)
+	assert.NotContains(t, modernCaps, "events")
+	assert.Contains(t, modernCaps["extensions"], "io.modelcontextprotocol/events")
+	assert.Equal(t, "complete", discover.Result["resultType"])
 }

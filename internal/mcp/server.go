@@ -455,6 +455,9 @@ func newMCPServerWithPolicy(
 		confirmation = confirmationConfigs[0]
 	}
 	capabilities := &sdkmcp.ServerCapabilities{Tools: &sdkmcp.ToolCapabilities{}}
+	if opts.Events != nil && !opts.DelegatedOnly && !opts.legacyHTTP {
+		capabilities.AddExtension("io.modelcontextprotocol/events", nil)
+	}
 	instructions := archiveSafetyInstructions + " " + decisionMemoryInstructions + " Use returned web_url values when linking to archived messages."
 	instructions += " Agent guide: https://msgvault.io/docs/guides/agent-quickstart.md (msgvault quickstart --mcp). " + bundledSkills().Instructions()
 	if !opts.DelegatedOnly {
