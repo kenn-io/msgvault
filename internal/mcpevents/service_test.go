@@ -1339,14 +1339,14 @@ func TestCreationAdmissionBeforeAndAfterVerification(t *testing.T) {
 		}
 		steps = append(steps, "creation")
 		if !allowed {
-			return failure(Forbidden, "person_scope_exceeds_grant")
+			return failure(Forbidden, "permission_denied")
 		}
 		return nil
 	}
 	_, err = service.Subscribe(t.Context(), in, agentgrant.Owner(id), verify, check)
 	var eventErr *Error
 	require.ErrorAs(err, &eventErr)
-	assert.Equal("person_scope_exceeds_grant", eventErr.Reason)
+	assert.Equal("permission_denied", eventErr.Reason)
 	assert.False(verified)
 	assert.Equal([]string{"creation"}, steps)
 	allowed, verified, steps = true, false, nil

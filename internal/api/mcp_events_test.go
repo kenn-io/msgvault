@@ -250,6 +250,44 @@ func TestDelegatedSourceScopeAdmission(t *testing.T) {
 	assert.Empty(raw)
 }
 
+func TestDelegatedPersonScopeAdmission(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	allowed, allowedMessage, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "allowed@example.test", "allowed", "allowed", "")
+	require.NoError(t, err)
+	_, outsideMessage, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "outside@example.test", "outside", "outside", "")
+	require.NoError(t, err)
+	people := make([]int64, 3)
+	participants := make([]int64, 3)
+	for i, name := range []string{"inside", "both", "outside"} {
+		participants[i], err = st.EnsureParticipant(name+"@example.test", name, "example.test")
+		require.NoError(t, err)
+		person, _, err := st.CreatePersonFromParticipant(participants[i])
+		require.NoError(t, err)
+		people[i] = person.ID
+	}
+	require.NoError(t, st.ReplaceMessageRecipients(allowedMessage, "to", participants[:2], nil))
+	require.NoError(t, st.ReplaceMessageRecipients(outsideMessage, "to", participants[1:], nil))
+	registry := agentgrant.NewRegistry()
+	t.Cleanup(registry.Close)
+	_, _, grant, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: allowed.ID, Type: allowed.SourceType, Identifier: allowed.Identifier}}, time.Time{})
+	require.NoError(t, err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}}
+	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true, Grants: registry}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, AgentGrants: registry, Logger: testLogger()})
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", nil)
+	check := func(id int64) error {
+		return srv.authorizeMCPEventsGrant(t.Context(), r, &grant, mcpevents.MCPEventsSubscribeRequest{Arguments: mcpevents.MCPEventsArguments{PersonID: id}}, true)
+	}
+	assert.NoError(t, check(people[0]))
+	assert.NoError(t, check(people[1]))
+	var outsideErr, missingErr *mcpevents.Error
+	require.ErrorAs(t, check(people[2]), &outsideErr)
+	require.ErrorAs(t, check(999999999), &missingErr)
+	assert.Equal(t, mcpevents.Forbidden, outsideErr.Code)
+	assert.Equal(t, "permission_denied", outsideErr.Reason)
+	assert.Equal(t, outsideErr, missingErr)
+}
+
 func TestMCPEventsRequireSearchPermission(t *testing.T) {
 	srv, reg := newTestServerWithAgentGrants(t)
 	t.Cleanup(reg.Close)

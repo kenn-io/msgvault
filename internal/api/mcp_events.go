@@ -136,14 +136,12 @@ func (s *Server) authorizeMCPEventsGrant(ctx context.Context, r *http.Request, g
 	case resolveErr != nil || s.mcpEvents.Store == nil:
 		return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "source_scope_unavailable"}
 	}
-	inside, outside, err := s.mcpEvents.Store.PersonSourceEvidence(request.Context(), filter.Participants, ids)
+	inside, err := s.mcpEvents.Store.PersonInSources(request.Context(), filter.Participants, ids)
 	switch {
 	case err != nil:
 		return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "source_scope_unavailable"}
 	case !inside:
 		return &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "permission_denied"}
-	case outside:
-		return &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "person_scope_exceeds_grant"}
 	}
 	return nil
 }
