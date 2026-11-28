@@ -17,7 +17,6 @@ const Name = "msgvault.messages.changed"
 const (
 	InvalidParams     = -32602
 	NotFound          = -32023
-	Forbidden         = -32024
 	ResourceExhausted = -32025
 	Unsupported       = -32026
 	CallbackEndpoint  = -32027
@@ -36,8 +35,6 @@ func (e *Error) Status() int {
 		return http.StatusBadRequest
 	case CallbackEndpoint:
 		return http.StatusBadGateway
-	case Forbidden:
-		return http.StatusForbidden
 	case NotFound:
 		return http.StatusNotFound
 	case ResourceExhausted:
@@ -49,13 +46,21 @@ func (e *Error) Status() int {
 
 // CallbackReason limits diagnostics to transport-owned categories.
 func CallbackReason(reason string) string {
+	if category := DeliveryCategory(reason); category != "" {
+		return category
+	}
+	return "challenge_failed"
+}
+
+// DeliveryCategory returns SEP delivery categories and omits local statuses.
+func DeliveryCategory(reason string) string {
 	switch reason {
 	case "challenge_failed", "timeout", "connection_refused", "tls_error", "http_4xx", "http_5xx":
 		return reason
 	case "dns_error":
 		return "connection_refused"
 	default:
-		return "challenge_failed"
+		return ""
 	}
 }
 func failure(code int, reason string) error { return &Error{code, reason} }
@@ -67,7 +72,8 @@ type MCPEventsArguments struct {
 }
 
 func (a MCPEventsArguments) filter() changefeed.Filter {
-	f := changefeed.Filter{PersonID: a.PersonID, IncomingOnly: *a.IncomingOnly}
+	incoming := a.IncomingOnly == nil || *a.IncomingOnly
+	f := changefeed.Filter{PersonID: a.PersonID, IncomingOnly: incoming}
 	if a.SourceID != 0 {
 		f.SourceIDs = []int64{a.SourceID}
 	}
@@ -201,10 +207,6 @@ func validate(name string, args *MCPEventsArguments, delivery MCPEventsDelivery,
 	}
 	if (args.PersonID > 0) == (args.SourceID > 0) {
 		return failure(InvalidParams, "invalid_arguments")
-	}
-	if args.IncomingOnly == nil {
-		v := true
-		args.IncomingOnly = &v
 	}
 	if (secret && delivery.Mode != "webhook") || (!secret && delivery.Mode != "" && delivery.Mode != "webhook") {
 		return failure(Unsupported, "delivery")

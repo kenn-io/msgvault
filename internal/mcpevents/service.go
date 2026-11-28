@@ -61,6 +61,11 @@ func (s *Service) catalog(ctx context.Context) ([]entry, []byte, error) {
 			return nil, nil, err
 		}
 	}
+	for _, e := range entries {
+		if e.Arguments.PersonID < 0 || e.Arguments.SourceID < 0 || (e.Arguments.PersonID > 0) == (e.Arguments.SourceID > 0) {
+			return nil, nil, errors.New("invalid events catalog")
+		}
+	}
 	return entries, raw, nil
 }
 func (s *Service) Available(_ context.Context) bool {
@@ -98,7 +103,11 @@ func (s *Service) deleteCredential(id string) error {
 	return err
 }
 func subscriptionID(owner string, args MCPEventsArguments, url string) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%t\x00%s", owner, Name, args.PersonID, args.SourceID, *args.IncomingOnly, url)))
+	incoming := "missing"
+	if args.IncomingOnly != nil {
+		incoming = fmt.Sprintf("%t", *args.IncomingOnly)
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%s\x00%s", owner, Name, args.PersonID, args.SourceID, incoming, url)))
 	return hex.EncodeToString(sum[:16])
 }
 
@@ -233,6 +242,8 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, v
 // are one compare-and-swap on the bytes this call published, so a catalog changed
 // meanwhile is left alone. It reports whether the swap took effect.
 func (s *Service) rollbackSubscribe(ctx context.Context, entries []entry, raw, next []byte, created bool) bool {
+	// Finish undoing the published catalog even if the request was canceled.
+	ctx = context.WithoutCancel(ctx)
 	var ok bool
 	var err error
 	if created {
@@ -340,9 +351,6 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		if len(out) >= max(0, 32-s.ConfigTargets) {
 			logger.Warn("native wakeup unavailable", "id", e.ID, "category", "over_limit")
 			continue
-		}
-		if e.Arguments.IncomingOnly == nil {
-			return nil, errors.New("invalid events catalog")
 		}
 		encoded, _, err := credentials.Resolve(providercredentials.EventsID(e.ID), e.Origin, "", nil)
 		var private privateCallback

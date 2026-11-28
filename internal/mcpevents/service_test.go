@@ -608,7 +608,7 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			original, err := st.LoadMCPEventsCatalog(t.Context())
 			requirements.NoError(err)
 			expires := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
-			draft := fmt.Sprintf(`[{"id":%q,"owner":"owner","arguments":{"source_id":1,"incoming_only":%t},"url":%q,"expires_at":%q}]`, first.ID, *in.Arguments.IncomingOnly, in.Delivery.URL, expires)
+			draft := fmt.Sprintf(`[{"id":%q,"owner":"owner","arguments":{"source_id":1,"incoming_only":%t},"url":%q,"expires_at":%q}]`, first.ID, true, in.Delivery.URL, expires)
 			ok, err := st.SwapMCPEventsCatalog(t.Context(), original, []byte(draft), "", nil, "")
 			requirements.NoError(err)
 			requirements.True(ok)
@@ -1002,4 +1002,51 @@ func TestCallbackReasonUsesSEPCategories(t *testing.T) {
 	} {
 		t.Run(tc.input, func(t *testing.T) { assert.Equal(t, tc.want, CallbackReason(tc.input)) })
 	}
+}
+
+func TestSubscriptionKeyPreservesArgumentPresence(t *testing.T) {
+	st := newEventsTestStore(t)
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	missing, err := service.Subscribe(t.Context(), in, acceptCallback)
+	require.NoError(t, err)
+	in.Arguments.IncomingOnly = new(true)
+	explicit, err := service.Subscribe(t.Context(), in, acceptCallback)
+	require.NoError(t, err)
+	assert.NotEqual(t, missing.ID, explicit.ID)
+	targets, err := service.Native(t.Context())
+	require.NoError(t, err)
+	require.Len(t, targets, 2)
+	assert.True(t, in.Arguments.filter().IncomingOnly)
+	assert.True(t, (MCPEventsArguments{SourceID: 1}).filter().IncomingOnly)
+	unsub := MCPEventsUnsubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{URL: in.Delivery.URL}}
+	require.NoError(t, service.Unsubscribe(t.Context(), unsub))
+	targets, err = service.Native(t.Context())
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	assert.Equal(t, explicit.ID, targets[0].Name)
+	unsub.Arguments.IncomingOnly = new(true)
+	require.NoError(t, service.Unsubscribe(t.Context(), unsub))
+	targets, err = service.Native(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, targets)
+}
+
+func TestRollbackSubscribeAfterCancellation(t *testing.T) {
+	st := newEventsTestStore(t)
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	result, err := service.Subscribe(t.Context(), in, acceptCallback)
+	require.NoError(t, err)
+	entries, raw, err := service.catalog(t.Context())
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.True(t, service.rollbackSubscribe(ctx, entries, nil, raw, true))
+	entries, _, err = service.catalog(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+	require.NoError(t, err)
+	assert.Nil(t, position)
 }
