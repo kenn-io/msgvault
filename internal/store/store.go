@@ -1007,6 +1007,20 @@ func (s *Store) withTxLockedContext(
 	ctx context.Context, opts *sql.TxOptions,
 	preFence func(*loggedTx) error, fn func(tx *loggedTx) error,
 ) error {
+	// A call joining a batch transaction keeps its own atomicity: its writes
+	// roll back alone when it fails, as when it had its own transaction.
+	if tx := writableSnapshot(ctx, s.db.DB); tx != nil {
+		return tx.inSavepoint(ctx, func() error {
+			return s.runTxLockedContext(ctx, opts, preFence, fn)
+		})
+	}
+	return s.runTxLockedContext(ctx, opts, preFence, fn)
+}
+
+func (s *Store) runTxLockedContext(
+	ctx context.Context, opts *sql.TxOptions,
+	preFence func(*loggedTx) error, fn func(tx *loggedTx) error,
+) error {
 	start := time.Now()
 	slog.Debug("sql tx begin")
 	tx := writableSnapshot(ctx, s.db.DB)

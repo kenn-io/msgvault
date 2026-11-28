@@ -191,15 +191,7 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 	if len(m.Files) == 0 && len(existing) == 0 {
 		return nil
 	}
-	maxBytes := opts.MaxMediaBytes
-	if opts.MediaPolicy.MaxBytes > 0 {
-		maxBytes = opts.MediaPolicy.MaxBytes
-	}
-	if maxBytes <= 0 {
-		maxBytes = defaultMaxMediaBytes
-	}
-	policy := opts.MediaPolicy
-	policy.MaxBytes = maxBytes
+	policy, maxBytes := mediaLimits(opts)
 	refs := make([]store.AttachmentRef, 0, len(m.Files))
 	seen := map[string]bool{}
 	for i := range m.Files {
@@ -313,7 +305,8 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 				fmt.Errorf("file %s is %d bytes (cap %d)", f.ID, f.Size, maxBytes))
 			continue
 		}
-		data, derr := imp.client.DownloadFile(ctx, fetchRef, maxBytes)
+		got := imp.fetchFile(ctx, f, sourceAttID, fetchRef, maxBytes, opts.AttachmentsDir)
+		derr := got.err
 		if errors.Is(derr, ErrAssetTooLarge) {
 			pendingRow.Size = attachmentpolicy.OversizeMarkerSize(maxBytes, int64(pendingRow.Size))
 			pend(store.SyncRunItemStatusSkipped, "slack_media_too_large", derr)
@@ -340,18 +333,16 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			pend(store.SyncRunItemStatusError, "slack_media_error", derr)
 			continue
 		}
-		ma := &mime.Attachment{Filename: f.Name, ContentType: f.Mimetype, Content: data}
-		storagePath, serr := export.StoreAttachmentFile(opts.AttachmentsDir, ma)
-		if serr != nil || storagePath == "" {
-			pend(store.SyncRunItemStatusError, "slack_media_error", serr)
+		if got.storeErr != nil || got.storagePath == "" {
+			pend(store.SyncRunItemStatusError, "slack_media_error", got.storeErr)
 			continue
 		}
 		stored := store.AttachmentRef{
 			Filename:           f.Name,
 			MimeType:           f.Mimetype,
-			StoragePath:        storagePath,
-			ContentHash:        ma.ContentHash,
-			Size:               len(data),
+			StoragePath:        got.storagePath,
+			ContentHash:        got.contentHash,
+			Size:               got.size,
 			SourceAttachmentID: sourceAttID,
 			MediaType:          mediaTypeOf(f),
 			Role:               store.AttachmentRoleStandalone,
@@ -385,6 +376,122 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 	}
 	if err := imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
 		return fmt.Errorf("recompute attachment stats: %w", err)
+	}
+	return nil
+}
+
+// mediaLimits returns the run's media policy and per-file byte cap.
+func mediaLimits(opts ImportOptions) (attachmentpolicy.Policy, int64) {
+	maxBytes := opts.MaxMediaBytes
+	if opts.MediaPolicy.MaxBytes > 0 {
+		maxBytes = opts.MediaPolicy.MaxBytes
+	}
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxMediaBytes
+	}
+	policy := opts.MediaPolicy
+	policy.MaxBytes = maxBytes
+	return policy, maxBytes
+}
+
+// fetchedFile is one file download and its content-addressed store result.
+type fetchedFile struct {
+	storagePath string
+	contentHash string
+	size        int
+	err         error // download failure
+	storeErr    error // local store failure
+}
+
+// fetchFile downloads f and stores it in content-addressed storage, or
+// returns the result preparePage already produced for it. The result stays
+// for the rest of the page, since several messages can share one file.
+func (imp *Importer) fetchFile(ctx context.Context, f *File, sourceAttID, fetchRef string, maxBytes int64, dir string) fetchedFile {
+	if got, ok := imp.fetched[sourceAttID]; ok {
+		return got
+	}
+	data, err := imp.client.DownloadFile(ctx, fetchRef, maxBytes)
+	if err != nil {
+		return fetchedFile{err: err}
+	}
+	ma := &mime.Attachment{Filename: f.Name, ContentType: f.Mimetype, Content: data}
+	storagePath, err := export.StoreAttachmentFile(dir, ma)
+	return fetchedFile{storagePath: storagePath, contentHash: ma.ContentHash, size: len(data), storeErr: err}
+}
+
+// fetchPageFiles downloads, before the page's write transaction, every file
+// persistFiles would download for the page's messages. It applies the same
+// checks persistFiles makes before its download, in the same order, so it
+// fetches no file that persistFiles would not; a file it misses is fetched
+// by persistFiles as before.
+func (imp *Importer) fetchPageFiles(ctx context.Context, cc *convScope, msgs []Message) error {
+	opts := cc.opts
+	if opts.NoMedia || opts.AttachmentsDir == "" {
+		return nil
+	}
+	var ids []string
+	for i := range msgs {
+		if len(msgs[i].Files) > 0 && msgs[i].Type == "message" && msgs[i].TS != "" {
+			ids = append(ids, sourceMessageID(cc.channelID, msgs[i].TS))
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	messageIDs, err := imp.store.MessageExistsBatchContext(ctx, cc.sourceID, ids)
+	if err != nil {
+		return fmt.Errorf("check existing Slack messages: %w", err)
+	}
+	policy, maxBytes := mediaLimits(opts)
+	if imp.fetched == nil {
+		imp.fetched = make(map[string]fetchedFile)
+	}
+	for i := range msgs {
+		m := &msgs[i]
+		if len(m.Files) == 0 || m.Type != "message" || m.TS == "" {
+			continue
+		}
+		var existing map[string]store.AttachmentRef
+		if id, ok := messageIDs[sourceMessageID(cc.channelID, m.TS)]; ok {
+			if existing, err = imp.store.MessageSlackAttachmentsContext(ctx, id); err != nil {
+				return fmt.Errorf("read attachment rows: %w", err)
+			}
+		}
+		for j := range m.Files {
+			f := &m.Files[j]
+			if f.ID == "" || f.Mode == "tombstone" {
+				continue
+			}
+			sourceAttID := slackAttachmentID(f.ID)
+			prev, ok := existing[sourceAttID]
+			if ok && prev.ContentHash != "" {
+				continue
+			}
+			fetchRef := f.URLPrivate
+			if fetchRef == "" {
+				fetchRef = f.URLPrivateDownload
+			}
+			if _, herr := fetchableURL(fetchRef); herr != nil || f.IsExternal {
+				continue
+			}
+			size := int(f.Size)
+			if ok && prev.Size > size {
+				size = prev.Size
+			}
+			if policy.Evaluate(opts.MediaConversation, int64(size)) != "" {
+				continue
+			}
+			if f.Size > 0 && f.Size > maxBytes {
+				continue
+			}
+			if _, done := imp.fetched[sourceAttID]; done {
+				continue
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			imp.fetched[sourceAttID] = imp.fetchFile(ctx, f, sourceAttID, fetchRef, maxBytes, opts.AttachmentsDir)
+		}
 	}
 	return nil
 }

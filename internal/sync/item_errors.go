@@ -209,7 +209,7 @@ func (s *Syncer) resolveAcquisition(messageID string) error {
 // a materialization obligation. A failed ledger write leaves both maps intact.
 func (s *Syncer) settleAcquisition(messageID string) error {
 	if item := s.acquisitionResolution(messageID); item != nil {
-		if err := s.store.RecordSyncRunItem(*item); err != nil {
+		if err := s.store.RecordSyncRunItemContext(s.writeContext(), *item); err != nil {
 			return fmt.Errorf("resolve acquisition %q: %w", messageID, err)
 		}
 		delete(s.pendingAcquisitions, messageID)
@@ -290,7 +290,7 @@ func (s *Syncer) writeSyncItem(syncID int64, sourceMessageID, phase, status, kin
 		sourceMessageID = "(unknown)"
 	}
 	errMsg := syncItemErrorMessage(err, kind)
-	return s.store.RecordSyncRunItem(store.SyncRunItem{
+	return s.store.RecordSyncRunItemContext(s.writeContext(), store.SyncRunItem{
 		SyncRunID:       syncID,
 		SourceMessageID: sourceMessageID,
 		Phase:           phase,

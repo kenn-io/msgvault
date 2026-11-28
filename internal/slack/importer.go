@@ -125,6 +125,9 @@ type Importer struct {
 	// ownerID is the source owner's Slack user ID, which may differ from
 	// opts.UserID after a credential replacement.
 	ownerID string
+	// fetched holds files preparePage downloaded and stored before the page's
+	// write transaction, keyed by source attachment ID; persistFiles takes them.
+	fetched map[string]fetchedFile
 }
 
 // NewImporter creates an Importer backed by the given store and Slack client.
@@ -725,10 +728,8 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 			sum.Errors++
 			return nil
 		}
-		for i := range page.Messages {
-			if err := imp.processMessage(ctx, cc, &page.Messages[i], sum); err != nil {
-				return err
-			}
+		if err := imp.processPage(ctx, cc, page.Messages, sum); err != nil {
+			return err
 		}
 		cc.budgetUsed += len(page.Messages)
 		// Record each discovered root as durable thread-drain debt BEFORE the
@@ -869,25 +870,12 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 		progressed := false
 		reanchored := false
 		preDrained := pt.DrainedTo
+		saved := *pt
+		budgetUsed, repliesFetched := cc.budgetUsed, sum.RepliesFetched
+		// Archived parents are skipped below, so their files are not fetched.
+		prepare := make([]Message, 0, len(page.Messages))
 		for i := range page.Messages {
-			m := &page.Messages[i]
-			if m.IsThreadReply() && m.ThreadTS != pt.RootTS {
-				// The entry was anchored at a REPLY (an unparseable-permalink
-				// sweep hit): replies(ts=<reply>) serves ONLY that reply
-				// (probed live — no bound or limit changes it). The reply's
-				// own thread_ts names the true root; adopt it and keep
-				// draining so the FULL thread is fetched, the parent guard
-				// can fire, and sibling replies are covered.
-				pt.RootTS = m.ThreadTS
-				reanchored = true
-			}
-			if !m.IsThreadReply() {
-				// The response leads with the parent regardless of bounds.
-				// Skip it when already archived — no write, no charge:
-				// re-persisting would refresh its content and reactions,
-				// which is --maintenance work, not the drain's. It is only
-				// processed when missing (this fetch is then the first to
-				// see the root, and SetReplyTo needs it in place).
+			if m := &page.Messages[i]; !m.IsThreadReply() {
 				archived, err := imp.parentArchived(ctx, cc.sourceID, cc.channelID, m.TS)
 				if err != nil {
 					return fmt.Errorf("check archived thread parent: %w", err)
@@ -895,24 +883,63 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 				if archived {
 					continue
 				}
+			}
+			prepare = append(prepare, page.Messages[i])
+		}
+		err = imp.writePage(ctx, cc, prepare, func(ctx context.Context) error {
+			for i := range page.Messages {
+				m := &page.Messages[i]
+				if m.IsThreadReply() && m.ThreadTS != pt.RootTS {
+					// The entry was anchored at a REPLY (an unparseable-permalink
+					// sweep hit): replies(ts=<reply>) serves ONLY that reply
+					// (probed live — no bound or limit changes it). The reply's
+					// own thread_ts names the true root; adopt it and keep
+					// draining so the FULL thread is fetched, the parent guard
+					// can fire, and sibling replies are covered.
+					pt.RootTS = m.ThreadTS
+					reanchored = true
+				}
+				if !m.IsThreadReply() {
+					// The response leads with the parent regardless of bounds.
+					// Skip it when already archived — no write, no charge:
+					// re-persisting would refresh its content and reactions,
+					// which is --maintenance work, not the drain's. It is only
+					// processed when missing (this fetch is then the first to
+					// see the root, and SetReplyTo needs it in place).
+					archived, err := imp.parentArchived(ctx, cc.sourceID, cc.channelID, m.TS)
+					if err != nil {
+						return fmt.Errorf("check archived thread parent: %w", err)
+					}
+					if archived {
+						continue
+					}
+					if err := imp.processMessage(ctx, cc, m, sum); err != nil {
+						return err
+					}
+					cc.budgetUsed++
+					continue
+				}
 				if err := imp.processMessage(ctx, cc, m, sum); err != nil {
 					return err
 				}
 				cc.budgetUsed++
-				continue
+				sum.RepliesFetched++
+				if pt.DrainedTo == "" || tsLess(pt.DrainedTo, m.TS) {
+					pt.DrainedTo = m.TS
+					progressed = true
+				}
+				if pt.Forecast > 0 {
+					pt.Forecast--
+				}
 			}
-			if err := imp.processMessage(ctx, cc, m, sum); err != nil {
-				return err
-			}
-			cc.budgetUsed++
-			sum.RepliesFetched++
-			if pt.DrainedTo == "" || tsLess(pt.DrainedTo, m.TS) {
-				pt.DrainedTo = m.TS
-				progressed = true
-			}
-			if pt.Forecast > 0 {
-				pt.Forecast--
-			}
+			return nil
+		})
+		if err != nil {
+			// The page rolled back. An interrupted run saves this resume
+			// point, so keep it where the committed replies left it.
+			*pt = saved
+			cc.budgetUsed, sum.RepliesFetched = budgetUsed, repliesFetched
+			return err
 		}
 		if page.NextCursor == "" {
 			if reanchored {
@@ -1156,10 +1183,8 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 			sum.Errors++
 			return nil
 		}
-		for i := range page.Messages {
-			if err := imp.processMessage(ctx, cc, &page.Messages[i], sum); err != nil {
-				return err
-			}
+		if err := imp.processPage(ctx, cc, page.Messages, sum); err != nil {
+			return err
 		}
 		// Repair thread REPLIES too: history structurally excludes them,
 		// and the rescan's contract is edits/reactions on recent messages
@@ -1210,10 +1235,8 @@ func (imp *Importer) rescanThread(ctx context.Context, cc *convScope, rootTS str
 			sum.Errors++
 			return nil
 		}
-		for i := range page.Messages {
-			if err := imp.processMessage(ctx, cc, &page.Messages[i], sum); err != nil {
-				return err
-			}
+		if err := imp.processPage(ctx, cc, page.Messages, sum); err != nil {
+			return err
 		}
 		if page.NextCursor == "" {
 			return nil

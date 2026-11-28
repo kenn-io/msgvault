@@ -142,6 +142,10 @@ func (r *participantResolver) recordRich(ctx context.Context, userID string, pid
 				return 0, err
 			}
 			pid = prev
+		} else {
+			// The merge deleted prev; other Slack IDs cached on it now
+			// belong to pid.
+			r.repoint(prev, pid)
 		}
 	}
 	if err := r.store.SetParticipantIdentifierContext(ctx, pid, participantIdentifierType, value); err != nil {
@@ -150,6 +154,17 @@ func (r *participantResolver) recordRich(ctx context.Context, userID string, pid
 	r.rich[userID] = pid
 	delete(r.fallback, userID)
 	return pid, nil
+}
+
+// repoint moves every cached Slack ID resolved to from onto to.
+func (r *participantResolver) repoint(from, to int64) {
+	for _, cache := range []map[string]int64{r.rich, r.fallback} {
+		for id, pid := range cache {
+			if pid == from {
+				cache[id] = to
+			}
+		}
+	}
 }
 
 // resolveBot resolves a bot sender (bot_id + optional username). Bots never

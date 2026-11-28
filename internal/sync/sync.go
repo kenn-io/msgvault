@@ -92,6 +92,13 @@ func DefaultOptions() *Options {
 
 // Syncer performs Gmail synchronization.
 type Syncer struct {
+	// batchCtx is the open batch write transaction's context (ingestFetchedBatch).
+	batchCtx context.Context
+	// prepared holds messages prepareBatch parsed for ingestMessage.
+	prepared map[*gmail.RawMessage]*messageData
+	// relayAuthors caches relay author participants by identifier for the sync.
+	relayAuthors map[string]int64
+
 	client             gmail.API
 	store              *store.Store
 	logger             *slog.Logger
@@ -1001,77 +1008,44 @@ func (s *Syncer) processBatchWithArchivedRows(
 			return nil, fmt.Errorf("fetch messages: %w", err)
 		}
 
-		for i, fetch := range rawMessages {
-			sourceMessageID := fetchIDs[i]
-			existing, alreadyExists := existingMap[sourceMessageID]
-			pendingRefresh, needsRawComparison :=
-				inconclusiveRefreshes[sourceMessageID]
-			raw := fetch.Message
+		err = s.ingestFetchedBatch(ctx, sourceID, fetchIDs, rawMessages, threadIDs, func(ctx context.Context) error {
+			for i, fetch := range rawMessages {
+				sourceMessageID := fetchIDs[i]
+				existing, alreadyExists := existingMap[sourceMessageID]
+				pendingRefresh, needsRawComparison :=
+					inconclusiveRefreshes[sourceMessageID]
+				raw := fetch.Message
 
-			if raw == nil {
-				if kind, gone := messageGoneKind(fetch.Err); gone {
-					s.logger.Debug("skipping message deleted before fetch", "id", sourceMessageID)
-					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, kind, fetch.Err)
+				if raw == nil {
+					if kind, gone := messageGoneKind(fetch.Err); gone {
+						s.logger.Debug("skipping message deleted before fetch", "id", sourceMessageID)
+						s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, kind, fetch.Err)
+						if !alreadyExists {
+							result.skipped++
+						}
+						result.acknowledged = append(result.acknowledged, sourceMessageID)
+						continue
+					}
+					errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
+					s.logger.Warn("failed to fetch message", "id", sourceMessageID, "error", errMsg)
 					if !alreadyExists {
-						result.skipped++
+						if err := s.recordAcquisitionFailure(syncID, sourceMessageID, syncItemPhaseFetch, syncItemKindFetchError, fetch.Err); err != nil {
+							return err
+						}
+					} else {
+						s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
 					}
-					result.acknowledged = append(result.acknowledged, sourceMessageID)
+					checkpoint.ErrorsCount++
 					continue
 				}
-				errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
-				s.logger.Warn("failed to fetch message", "id", sourceMessageID, "error", errMsg)
-				if !alreadyExists {
-					if err := s.recordAcquisitionFailure(syncID, sourceMessageID, syncItemPhaseFetch, syncItemKindFetchError, fetch.Err); err != nil {
-						return nil, err
-					}
-				} else {
-					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
-				}
-				checkpoint.ErrorsCount++
-				continue
-			}
-			if !alreadyExists && s.skipGmailAcquisition(syncID, sourceMessageID, raw.LabelIDs) {
-				result.skipped++
-				continue
-			}
-			if needsRawComparison && raw.Raw == nil {
-				err := errors.New(
-					"inconclusive IMAP identity returned a dedup stub")
-				s.logger.Warn("failed to compare existing message identity",
-					"id", sourceMessageID, "error", err)
-				s.recordSyncItem(
-					syncID,
-					sourceMessageID,
-					syncItemPhaseIngest,
-					store.SyncRunItemStatusError,
-					syncItemKindIngestError,
-					err,
-				)
-				checkpoint.ErrorsCount++
-				continue
-			}
-			// Non-nil stub with nil Raw signals a cross-mailbox
-			// dedup skip (e.g. same message in All Mail and Trash).
-			// Distinct from []byte{} which is a genuine empty body.
-			if raw.Raw == nil {
-				if s.relocationCompositeProtected(sourceMessageID) {
-					// Never acknowledge a failed relocation target's key
-					// through a dedup stub.
-					s.logger.Warn("deferring IMAP composite key of a failed relocation target",
-						"id", sourceMessageID)
-					continue
-				}
-				if !alreadyExists {
+				if !alreadyExists && s.skipGmailAcquisition(syncID, sourceMessageID, raw.LabelIDs) {
 					result.skipped++
+					continue
 				}
-				result.acknowledged = append(result.acknowledged, sourceMessageID)
-				continue
-			}
-
-			if needsRawComparison {
-				archivedRaw, err := s.store.GetMessageRawContext(ctx, existing.ID)
-				if err != nil {
-					s.logger.Warn("failed to load archived message for identity comparison",
+				if needsRawComparison && raw.Raw == nil {
+					err := errors.New(
+						"inconclusive IMAP identity returned a dedup stub")
+					s.logger.Warn("failed to compare existing message identity",
 						"id", sourceMessageID, "error", err)
 					s.recordSyncItem(
 						syncID,
@@ -1084,17 +1058,28 @@ func (s *Syncer) processBatchWithArchivedRows(
 					checkpoint.ErrorsCount++
 					continue
 				}
-				if bytes.Equal(archivedRaw, raw.Raw) {
-					changed, err := s.reconcileValidatedMessageLabels(
-						ctx,
-						existing.ID,
-						sourceMessageID,
-						pendingRefresh.rfc822MessageID,
-						pendingRefresh.labelIDs,
-						pendingRefresh.snapshotComplete,
-					)
+				// Non-nil stub with nil Raw signals a cross-mailbox
+				// dedup skip (e.g. same message in All Mail and Trash).
+				// Distinct from []byte{} which is a genuine empty body.
+				if raw.Raw == nil {
+					if s.relocationCompositeProtected(sourceMessageID) {
+						// Never acknowledge a failed relocation target's key
+						// through a dedup stub.
+						s.logger.Warn("deferring IMAP composite key of a failed relocation target",
+							"id", sourceMessageID)
+						continue
+					}
+					if !alreadyExists {
+						result.skipped++
+					}
+					result.acknowledged = append(result.acknowledged, sourceMessageID)
+					continue
+				}
+
+				if needsRawComparison {
+					archivedRaw, err := s.store.GetMessageRawContext(ctx, existing.ID)
 					if err != nil {
-						s.logger.Warn("failed to refresh raw-validated message labels",
+						s.logger.Warn("failed to load archived message for identity comparison",
 							"id", sourceMessageID, "error", err)
 						s.recordSyncItem(
 							syncID,
@@ -1107,125 +1092,163 @@ func (s *Syncer) processBatchWithArchivedRows(
 						checkpoint.ErrorsCount++
 						continue
 					}
+					if bytes.Equal(archivedRaw, raw.Raw) {
+						changed, err := s.reconcileValidatedMessageLabels(
+							ctx,
+							existing.ID,
+							sourceMessageID,
+							pendingRefresh.rfc822MessageID,
+							pendingRefresh.labelIDs,
+							pendingRefresh.snapshotComplete,
+						)
+						if err != nil {
+							s.logger.Warn("failed to refresh raw-validated message labels",
+								"id", sourceMessageID, "error", err)
+							s.recordSyncItem(
+								syncID,
+								sourceMessageID,
+								syncItemPhaseIngest,
+								store.SyncRunItemStatusError,
+								syncItemKindIngestError,
+								err,
+							)
+							checkpoint.ErrorsCount++
+							continue
+						}
+						if changed {
+							result.updated++
+							result.skipped--
+						}
+						result.acknowledged = append(
+							result.acknowledged, sourceMessageID)
+						summary.BytesDownloaded += int64(len(raw.Raw))
+						continue
+					}
+
+					if s.relocationRowProtected(existing.ID, sourceMessageID) {
+						// Same protection as the label path: never consume the
+						// old composite key of a failed relocation target.
+						s.logger.Warn("deferring reused IMAP composite key of a failed relocation target",
+							"id", sourceMessageID)
+						continue
+					}
+					if err := s.preserveReusedIMAPSource(
+						ctx,
+						existing.ID, sourceMessageID); err != nil {
+						s.logger.Warn("failed to preserve reused IMAP source ID",
+							"id", sourceMessageID, "error", err)
+						s.recordSyncItem(
+							syncID,
+							sourceMessageID,
+							syncItemPhaseIngest,
+							store.SyncRunItemStatusError,
+							syncItemKindIngestError,
+							err,
+						)
+						checkpoint.ErrorsCount++
+						continue
+					}
+					delete(existingMap, sourceMessageID)
+					alreadyExists = false
+					result.skipped--
+				}
+
+				if alreadyExists {
+					changed := false
+					if !s.defersAuthoritativeLabelReconciliation() {
+						changed, err = s.store.ReconcileMessageLabels(
+							ctx,
+							existing.ID,
+							labelIDsFor(raw.LabelIDs, labelMap),
+							false,
+						)
+						if err != nil {
+							s.logger.Warn("failed to merge existing message labels",
+								"id", sourceMessageID, "error", err)
+							s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+							checkpoint.ErrorsCount++
+							continue
+						}
+					}
 					if changed {
 						result.updated++
 						result.skipped--
 					}
-					result.acknowledged = append(
-						result.acknowledged, sourceMessageID)
+					result.acknowledged = append(result.acknowledged, sourceMessageID)
 					summary.BytesDownloaded += int64(len(raw.Raw))
 					continue
 				}
 
-				if s.relocationRowProtected(existing.ID, sourceMessageID) {
-					// Same protection as the label path: never consume the
-					// old composite key of a failed relocation target.
-					s.logger.Warn("deferring reused IMAP composite key of a failed relocation target",
-						"id", sourceMessageID)
-					continue
+				// Track oldest message date for progress display
+				// Gmail returns messages newest-to-oldest, so oldest shows where we've reached
+				if raw.InternalDate > 0 {
+					// .UTC() to match how InternalDate is normalized everywhere
+					// else (the stored message date and parsed.Date both use
+					// .UTC()); without it oldestDate carries the local zone and
+					// callers reading its calendar day are off by one east of UTC.
+					msgDate := time.UnixMilli(raw.InternalDate).UTC()
+					if result.oldestDate.IsZero() || msgDate.Before(result.oldestDate) {
+						result.oldestDate = msgDate
+					}
 				}
-				if err := s.preserveReusedIMAPSource(
-					ctx,
-					existing.ID, sourceMessageID); err != nil {
-					s.logger.Warn("failed to preserve reused IMAP source ID",
-						"id", sourceMessageID, "error", err)
-					s.recordSyncItem(
-						syncID,
-						sourceMessageID,
-						syncItemPhaseIngest,
-						store.SyncRunItemStatusError,
-						syncItemKindIngestError,
-						err,
-					)
-					checkpoint.ErrorsCount++
-					continue
-				}
-				delete(existingMap, sourceMessageID)
-				alreadyExists = false
-				result.skipped--
-			}
 
-			if alreadyExists {
-				changed := false
-				if !s.defersAuthoritativeLabelReconciliation() {
-					changed, err = s.store.ReconcileMessageLabels(
-						ctx,
-						existing.ID,
-						labelIDsFor(raw.LabelIDs, labelMap),
-						false,
-					)
-					if err != nil {
-						s.logger.Warn("failed to merge existing message labels",
-							"id", sourceMessageID, "error", err)
-						s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
-						checkpoint.ErrorsCount++
+				threadID := threadIDs[sourceMessageID]
+				done, err := s.store.SavepointContext(ctx)
+				if err != nil {
+					return err
+				}
+				updated, err := s.ingestMessage(
+					ctx, sourceID, raw, threadID, labelMap)
+				_, committed := errors.AsType[*committedMessageError](err)
+				// A message that failed before its commit point leaves none of
+				// its writes behind, as when each message had its own transaction.
+				keep := err == nil || committed || errors.Is(err, errDeferredIMAPIdentity) || errors.Is(err, errDuplicateRFC822)
+				if doneErr := done(keep); doneErr != nil {
+					return doneErr
+				}
+				if err == nil || committed {
+					if _, marked := markedGmailMessageIDs[sourceMessageID]; marked {
+						if _, clearErr := s.clearRestoredGmailMessage(ctx, sourceID, sourceMessageID, raw.LabelIDs); clearErr != nil {
+							return fmt.Errorf("clear Gmail deletion mark for restored message %s: %w", sourceMessageID, clearErr)
+						}
+					}
+				}
+				if err != nil {
+					if errors.Is(err, errDeferredIMAPIdentity) {
+						if updated {
+							result.updated++
+						} else {
+							result.skipped++
+						}
 						continue
 					}
+					if errors.Is(err, errDuplicateRFC822) {
+						if updated {
+							result.updated++
+						} else {
+							result.skipped++
+						}
+						result.acknowledged = append(result.acknowledged, sourceMessageID)
+						continue
+					}
+					s.logger.Warn("failed to ingest message", "id", raw.ID, "error", err)
 				}
-				if changed {
-					result.updated++
-					result.skipped--
+				_, acquired, recErr := s.recordIngestOutcome(syncID, sourceMessageID, err, checkpoint)
+				if recErr != nil {
+					return recErr
 				}
+				if !acquired || (err != nil && s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail) {
+					continue
+				}
+
+				result.added++
 				result.acknowledged = append(result.acknowledged, sourceMessageID)
 				summary.BytesDownloaded += int64(len(raw.Raw))
-				continue
 			}
-
-			// Track oldest message date for progress display
-			// Gmail returns messages newest-to-oldest, so oldest shows where we've reached
-			if raw.InternalDate > 0 {
-				// .UTC() to match how InternalDate is normalized everywhere
-				// else (the stored message date and parsed.Date both use
-				// .UTC()); without it oldestDate carries the local zone and
-				// callers reading its calendar day are off by one east of UTC.
-				msgDate := time.UnixMilli(raw.InternalDate).UTC()
-				if result.oldestDate.IsZero() || msgDate.Before(result.oldestDate) {
-					result.oldestDate = msgDate
-				}
-			}
-
-			threadID := threadIDs[sourceMessageID]
-			updated, err := s.ingestMessage(
-				ctx, sourceID, raw, threadID, labelMap)
-			_, committed := errors.AsType[*committedMessageError](err)
-			if err == nil || committed {
-				if _, marked := markedGmailMessageIDs[sourceMessageID]; marked {
-					if _, clearErr := s.clearRestoredGmailMessage(ctx, sourceID, sourceMessageID, raw.LabelIDs); clearErr != nil {
-						return nil, fmt.Errorf("clear Gmail deletion mark for restored message %s: %w", sourceMessageID, clearErr)
-					}
-				}
-			}
-			if err != nil {
-				if errors.Is(err, errDeferredIMAPIdentity) {
-					if updated {
-						result.updated++
-					} else {
-						result.skipped++
-					}
-					continue
-				}
-				if errors.Is(err, errDuplicateRFC822) {
-					if updated {
-						result.updated++
-					} else {
-						result.skipped++
-					}
-					result.acknowledged = append(result.acknowledged, sourceMessageID)
-					continue
-				}
-				s.logger.Warn("failed to ingest message", "id", raw.ID, "error", err)
-			}
-			_, acquired, recErr := s.recordIngestOutcome(syncID, sourceMessageID, err, checkpoint)
-			if recErr != nil {
-				return nil, recErr
-			}
-			if !acquired || (err != nil && s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail) {
-				continue
-			}
-
-			result.added++
-			result.acknowledged = append(result.acknowledged, sourceMessageID)
-			summary.BytesDownloaded += int64(len(raw.Raw))
+			return nil
+		})
+		if err != nil {
+			return nil, err
 		}
 
 		// Newly-persisted messages get embed_gen = NULL by column default,
@@ -1855,7 +1878,7 @@ func (s *Syncer) resolvePreparedMessage(ctx context.Context, data *messageData) 
 		return nil, fmt.Errorf("ensure participants: %w", err)
 	}
 	if data.relayType != "" {
-		id, err := s.store.EnsureParticipantByIdentifierContext(ctx, data.relayType, data.relayValue, strings.TrimSpace(data.from[0].Name))
+		id, err := s.ensureRelayAuthor(ctx, data)
 		if err != nil {
 			return nil, fmt.Errorf("ensure relay author: %w", err)
 		}
@@ -2227,9 +2250,14 @@ func (s *Syncer) ingestMessage(
 	threadID string,
 	labelMap map[string]int64,
 ) (bool, error) {
-	data, err := s.prepareMessage(sourceID, raw, threadID, false)
-	if err != nil {
-		return false, err
+	data, ok := s.prepared[raw]
+	if ok {
+		delete(s.prepared, raw)
+	} else {
+		var err error
+		if data, err = s.prepareMessage(sourceID, raw, threadID, false); err != nil {
+			return false, err
+		}
 	}
 
 	// For IMAP sources, check if a message with the same RFC822
@@ -2416,7 +2444,7 @@ func (s *Syncer) ingestMessage(
 		}
 	}
 
-	data, err = s.resolvePreparedMessage(ctx, data)
+	data, err := s.resolvePreparedMessage(ctx, data)
 	if err != nil {
 		return false, err
 	}

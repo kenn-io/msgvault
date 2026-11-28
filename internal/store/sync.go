@@ -269,6 +269,7 @@ func (s *Store) WithSourceWriteTxContext(ctx context.Context, sourceID int64, fn
 			tx.attribution = &attributionLockState{sources: make(map[int64]struct{}, 1)}
 		}
 		tx.attribution.sources[sourceID] = struct{}{}
+		tx.isolateJoinedCalls = s.IsPostgreSQL()
 		return nil
 	}, func(tx *loggedTx) error {
 		if err := fn(withWritableSnapshot(ctx, s.db.DB, tx)); err != nil {
@@ -2265,4 +2266,30 @@ func (s *Store) GetSourceByIdentifier(ctx context.Context, identifier string) (*
 	}
 
 	return source, nil
+}
+
+// SavepointContext opens a savepoint in the write transaction bound to ctx by
+// WithSourceWriteTxContext, so one item of a batch can be undone without the
+// rest. The returned done releases the savepoint when keep is true and rolls
+// the item's writes back otherwise. Outside such a transaction every store
+// write commits on its own, and done does nothing.
+func (s *Store) SavepointContext(ctx context.Context) (done func(keep bool) error, err error) {
+	tx := writableSnapshot(ctx, s.db.DB)
+	if tx == nil {
+		return func(bool) error { return nil }, nil
+	}
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT batch_item`); err != nil {
+		return nil, fmt.Errorf("open batch item savepoint: %w", err)
+	}
+	return func(keep bool) error {
+		if !keep {
+			if _, err := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT batch_item`); err != nil {
+				return fmt.Errorf("roll back batch item: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT batch_item`); err != nil {
+			return fmt.Errorf("release batch item savepoint: %w", err)
+		}
+		return nil
+	}, nil
 }
