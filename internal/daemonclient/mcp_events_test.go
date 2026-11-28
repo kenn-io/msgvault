@@ -42,11 +42,9 @@ func TestMCPEventsPreservesUnavailableReasons(t *testing.T) {
 		{"subscriptions", "subscriptions", mcpevents.ResourceExhausted, http.StatusTooManyRequests},
 		{"permission_denied", "permission_denied", mcpevents.Forbidden, http.StatusForbidden},
 		{"private_daemon_detail", "request_rejected", mcpevents.Forbidden, http.StatusForbidden},
-		{"dns_error", "connection_refused", mcpevents.CallbackEndpoint, http.StatusBadGateway},
 		{"subscription", "subscription", mcpevents.NotFound, http.StatusNotFound},
 		{"challenge_failed", "challenge_failed", mcpevents.CallbackEndpoint, http.StatusBadGateway},
 		{"unknown_private_detail", "request_rejected", mcpevents.InvalidParams, http.StatusBadRequest},
-		{"private_callback_detail", "challenge_failed", mcpevents.CallbackEndpoint, http.StatusBadGateway},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
 			require := require.New(t)

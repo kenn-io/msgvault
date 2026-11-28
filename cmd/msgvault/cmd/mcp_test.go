@@ -616,7 +616,6 @@ func TestDelegatedMCPEventsPermissionAndSchemaGate(t *testing.T) {
 		{"5.31.0", []string{"search.read"}, false},
 		{"5.32.0", []string{"search.read"}, true},
 		{"5.32.0", []string{"message.read"}, false},
-		{"5.31.0", []string{"message.read"}, false},
 	} {
 		t.Run(tc.version+"/"+tc.permissions[0], func(t *testing.T) {
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {

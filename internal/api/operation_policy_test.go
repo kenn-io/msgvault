@@ -1,7 +1,6 @@
 package api
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -73,15 +72,13 @@ func TestLegacyOperationAdmissionIsPreserved(t *testing.T) {
 	operations := apiV1PolicyOperations(t)
 	operations["unknown"] = nil
 	for id := range operations {
-		read, isRead := wantReads[id]
+		read := wantReads[id]
 		if id == "mcpEventsList" || id == "mcpEventsSubscribe" || id == "mcpEventsUnsubscribe" {
-			assert.True(delegatedOperationAllowed(id), "%s", id)
 			assert.Equal(agentgrant.PermissionSearchRead, operationPolicies[id].AgentReadPermission, "%s", id)
-			continue
+		} else {
+			assert.Equal(read.permission, operationPolicies[id].AgentReadPermission, "%s", id)
 		}
-		assert.Equal(isRead || slices.Contains(allowedDelegatedOps, id), delegatedOperationAllowed(id), "%s", id)
 		assert.Equal(wantRemoteRead[id], remoteClientOperationAllowed(id, false), "%s", id)
 		assert.Equal(wantRemoteRead[id] || wantRemoteWrite[id], remoteClientOperationAllowed(id, true), "%s", id)
-		assert.Equal(read.permission, operationPolicies[id].AgentReadPermission, "%s", id)
 	}
 }

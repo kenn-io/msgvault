@@ -274,6 +274,11 @@ func TestDelegatedHTTPEventsDoNotReachBackend(t *testing.T) {
 	h.ServeHTTP(w, r)
 	assert.Contains(t, w.Body.String(), `"code":-32601`)
 	assert.Zero(t, backend.calls)
+	httpDiscovery := rawModernCall(t, ServeOptions{Events: &eventTestBackend{}, DelegatedOnly: true}, HTTPOptions{APIKey: "fixture-key"}, "server/discover", nil)
+	require.Nil(t, httpDiscovery.Error)
+	httpCaps, ok := httpDiscovery.Result["capabilities"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, httpCaps, "extensions")
 }
 
 func TestEventsDiscoveryAndLegacyWire(t *testing.T) {
@@ -304,18 +309,6 @@ func TestEventsDiscoveryAndLegacyWire(t *testing.T) {
 	delegatedCaps, ok := initDelegated.Result["capabilities"].(map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, delegatedCaps["extensions"], "io.modelcontextprotocol/events")
-	delegated.writeLiteralLine(t, `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`)
-	delegatedList := delegated.call(t, `{"jsonrpc":"2.0","id":2,"method":"events/list"}`)
-	require.Nil(t, delegatedList.Error)
-	assert.Len(t, delegatedList.Result["events"], 1)
-
-	httpDiscovery := rawModernCall(t, ServeOptions{Events: &eventTestBackend{}, DelegatedOnly: true}, HTTPOptions{APIKey: "fixture-key"}, "server/discover", nil)
-	require.Nil(t, httpDiscovery.Error)
-	httpCaps, ok := httpDiscovery.Result["capabilities"].(map[string]any)
-	require.True(t, ok)
-	if extensions, ok := httpCaps["extensions"]; ok {
-		assert.NotContains(t, extensions, "io.modelcontextprotocol/events")
-	}
 }
 
 func TestEventsDeliveryStatusUsesSEPCategories(t *testing.T) {

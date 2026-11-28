@@ -409,8 +409,19 @@ func TestGrantRevokedAfterScanDoesNotSend(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { sends++; w.WriteHeader(http.StatusNoContent) }))
 	defer server.Close()
 	sub := Subscription{Name: "grant", StateKey: key, Native: true, GrantID: grantID, Grants: registry, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{SourceIDs: []int64{src.ID}}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}
-	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }, Gate: func(context.Context) (func(), bool) { return func() { registry.Revoke(grantID) }, true }}
+	var scanState store.WakeupState
+	var scanErr error
+	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }, Gate: func(context.Context) (func(), bool) {
+		return func() {
+			scanState, _, scanErr = st.LoadWakeupStateKey(ctx, key)
+			if scanState.NativeDelivery != nil {
+				registry.Revoke(grantID)
+			}
+		}, true
+	}}
 	require.NoError(engine.RunPass(ctx))
+	require.NoError(scanErr)
+	require.NotNil(scanState.NativeDelivery)
 	assert.Zero(sends)
 }
 

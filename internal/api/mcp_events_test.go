@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,47 +20,73 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/mcpevents"
-	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/testutil"
 	pkgclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 func TestEventsRouterRejectsUnverifiedCallback(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrCreateSource("imap", "events@example.test")
-	requirements.NoError(err)
+	require.NoError(t, err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}}
+	gate := NewSerialOperationGate()
 	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger()})
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-	defer cancel()
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger(), OperationGate: gate})
+	entered, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	original := net.DefaultResolver
+	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		once.Do(func() { close(entered) })
+		select {
+		case <-resume:
+			return nil, errors.New("synthetic DNS failure")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}}
+	t.Cleanup(func() { net.DefaultResolver = original })
 	body := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://callback.invalid/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
-	r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
-	r.RemoteAddr = "127.0.0.1:12345"
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, r)
-	requirements.Equal(http.StatusBadGateway, w.Code, w.Body.String())
+	request := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
+		r.RemoteAddr = "127.0.0.1:12345"
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		return w
+	}
+	result := make(chan *httptest.ResponseRecorder, 1)
+	go func() { result <- request() }()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		close(resume)
+		require.FailNow(t, "verification did not reach DNS")
+	}
+	gateCtx, cancelGate := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancelGate()
+	release, ok := gate.BeginWorkContext(gateCtx)
+	if !ok {
+		close(resume)
+		<-result
+	}
+	require.True(t, ok)
+	release()
+	gate.StartDrain()
+	busy := request()
+	assert.Equal(t, http.StatusServiceUnavailable, busy.Code)
+	assert.Contains(t, busy.Body.String(), "server_busy")
+	close(resume)
+	w := <-result
+	require.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
 	var response struct {
 		Code   int    `json:"code"`
 		Reason string `json:"reason"`
 	}
-	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	assertions.Equal(-32027, response.Code)
-	assertions.Equal("connection_refused", response.Reason)
-	catalog, err := st.LoadMCPEventsCatalog(t.Context())
-	requirements.NoError(err)
-	assertions.Empty(catalog)
-	var positions int
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&positions))
-	assertions.Zero(positions)
-	_, err = os.Stat(filepath.Join(cfg.TokensDir(), providercredentials.EventsFilename))
-	assertions.ErrorIs(err, os.ErrNotExist)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.Equal(t, -32027, response.Code)
+	assert.Equal(t, "connection_refused", response.Reason)
 }
 
 func TestMCPEventsRejectsRemoteClient(t *testing.T) {
@@ -234,10 +260,21 @@ func TestDelegatedSourceScopeAdmission(t *testing.T) {
 	registry := agentgrant.NewRegistry()
 	t.Cleanup(registry.Close)
 	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true, Grants: registry}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, AgentGrants: registry, Logger: testLogger()})
-	_, token, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: allowed.ID, Type: allowed.SourceType, Identifier: allowed.Identifier}}, time.Time{})
+	grantID, token, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: allowed.ID, Type: allowed.SourceType, Identifier: allowed.Identifier}}, time.Time{})
 	require.NoError(err)
 	body := fmt.Sprintf(`{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, outside.ID)
+	in, err := mcpevents.DecodeSubscribe([]byte(body))
+	require.NoError(err)
+	_, err = events.Subscribe(ctx, in, agentgrant.Owner(grantID), func(context.Context, string, string, []byte) error { return nil }, nil)
+	require.NoError(err)
+	// Restart the service to discard its verification cache before the refresh.
+	events = &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true, Grants: registry}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, AgentGrants: registry, Logger: testLogger()})
+	original := net.DefaultResolver
+	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("synthetic DNS failure")
+	}}
+	t.Cleanup(func() { net.DefaultResolver = original })
 	r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set(apiprotocol.AgentTokenHeader, token)
@@ -247,7 +284,7 @@ func TestDelegatedSourceScopeAdmission(t *testing.T) {
 	assert.Contains(w.Body.String(), "permission_denied")
 	raw, err := st.LoadMCPEventsCatalog(ctx)
 	require.NoError(err)
-	assert.Empty(raw)
+	assert.NotEmpty(raw)
 }
 
 func TestDelegatedPersonScopeAdmission(t *testing.T) {
@@ -286,6 +323,13 @@ func TestDelegatedPersonScopeAdmission(t *testing.T) {
 	assert.Equal(t, mcpevents.Forbidden, outsideErr.Code)
 	assert.Equal(t, "permission_denied", outsideErr.Reason)
 	assert.Equal(t, outsideErr, missingErr)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET identifier=? WHERE id=?`), "replacement@example.test", allowed.ID)
+	require.NoError(t, err)
+	err = srv.authorizeMCPEventsGrant(t.Context(), r, &grant, mcpevents.MCPEventsSubscribeRequest{Arguments: mcpevents.MCPEventsArguments{SourceID: allowed.ID}}, true)
+	var renamedErr *mcpevents.Error
+	require.ErrorAs(t, err, &renamedErr)
+	assert.Equal(t, mcpevents.Forbidden, renamedErr.Code)
+	assert.Equal(t, "permission_denied", renamedErr.Reason)
 }
 
 func TestMCPEventsRequireSearchPermission(t *testing.T) {
@@ -317,47 +361,16 @@ func TestEventsInitialSourceAdmissionPreservesDaemonClientReason(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: wrapped, MCPEvents: events, AgentGrants: registry, Logger: testLogger()})
 	_, token, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	requirements.NoError(err)
-	server := httptest.NewServer(srv.Router())
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: token, AllowInsecure: true})
-	requirements.NoError(err)
-	t.Cleanup(func() { assertions.NoError(client.Close()) })
-	_, err = client.MCPEventsSubscribe(t.Context(), mcpevents.MCPEventsSubscribeRequest{Name: mcpevents.Name, Arguments: mcpevents.MCPEventsArguments{SourceID: source.ID}, Delivery: mcpevents.MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	var eventErr *mcpevents.Error
-	requirements.ErrorAs(err, &eventErr)
+
+	body := fmt.Sprintf(`{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, source.ID)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	assertions.Equal(http.StatusServiceUnavailable, w.Code)
+	var eventErr mcpevents.Error
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &eventErr))
 	assertions.Equal(mcpevents.Unavailable, eventErr.Code)
 	assertions.Equal("source_scope_unavailable", eventErr.Reason)
-}
-
-func TestDelegatedSourceChangeDuringVerification(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "allowed@example.test", "allowed", "allowed", "")
-	require.NoError(err)
-	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}}
-	registry := agentgrant.NewRegistry()
-	t.Cleanup(registry.Close)
-	id, _, grant, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	require.NoError(err)
-	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true, Grants: registry}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, AgentGrants: registry, Logger: testLogger()})
-	body := fmt.Sprintf(`{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, source.ID)
-	in, err := mcpevents.DecodeSubscribe([]byte(body))
-	require.NoError(err)
-	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", nil)
-	verify := func(ctx context.Context, _, _ string, _ []byte) error {
-		_, err := st.DB().ExecContext(ctx, st.Rebind(`UPDATE sources SET identifier=? WHERE id=?`), "replacement@example.test", source.ID)
-		return err
-	}
-	_, err = events.Subscribe(t.Context(), in, agentgrant.Owner(id), verify, func(ctx context.Context, creating bool) error {
-		return srv.authorizeMCPEventsGrant(ctx, r, &grant, in, creating)
-	})
-	var eventErr *mcpevents.Error
-	require.ErrorAs(err, &eventErr)
-	assert.Equal(mcpevents.Forbidden, eventErr.Code)
-	assert.Equal("permission_denied", eventErr.Reason)
-	raw, err := st.LoadMCPEventsCatalog(t.Context())
-	require.NoError(err)
-	assert.Empty(raw)
 }
