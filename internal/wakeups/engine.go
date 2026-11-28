@@ -29,6 +29,7 @@ type Subscription struct {
 	Filter        changefeed.Filter
 	MaxMessageAge time.Duration
 	Client        webhookClient
+	CurrentExpiry func(context.Context) (time.Time, bool, error)
 }
 
 // Store supplies the bounded feed and durable positions for a pass.
@@ -244,6 +245,16 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		}
 		err := e.GatedSetup(ctx, func() error {
 			now := e.now()
+			if sub.Native && sub.CurrentExpiry != nil {
+				expires, exists, err := sub.CurrentExpiry(ctx)
+				if err != nil {
+					return err
+				}
+				if !exists {
+					return nil
+				}
+				sub.Expires = expires
+			}
 			if !sub.Expires.IsZero() && !now.Before(sub.Expires) {
 				return nil
 			}

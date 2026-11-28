@@ -356,6 +356,19 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		f := e.Arguments.filter()
 		sub := wakeups.NewSubscription(e.ID, private.URL, secret, f, 72*time.Hour, 10*time.Second, nil, nil)
 		sub.Native, sub.Expires = true, e.Expires
+		id := e.ID
+		sub.CurrentExpiry = func(ctx context.Context) (time.Time, bool, error) {
+			entries, _, err := s.catalog(ctx)
+			if err != nil {
+				return time.Time{}, false, err
+			}
+			for _, current := range entries {
+				if current.Owner == "owner" && current.ID == id {
+					return current.Expires, true, nil
+				}
+			}
+			return time.Time{}, false, nil
+		}
 		sub.StateKey = store.MCPEventsPositionKey(e.ID)
 		out = append(out, sub)
 	}
