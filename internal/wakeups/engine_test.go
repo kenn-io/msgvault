@@ -478,7 +478,12 @@ func TestNativeRetryKeepsDeliveryIdentityWhenFeedAdvances(t *testing.T) {
 func TestRevokedSubscriptionSendsSignedTermination(t *testing.T) {
 	require := Require.New(t)
 	assert := Assert.New(t)
-	var body map[string]any
+	var body struct {
+		Type  string `json:"type"`
+		Error *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
 	var subscription, signature, webhookID string
 	var decodeErr error
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -501,8 +506,7 @@ func TestRevokedSubscriptionSendsSignedTermination(t *testing.T) {
 	assert.Equal("stable-id", subscription)
 	assert.NotEmpty(signature)
 	assert.True(strings.HasPrefix(webhookID, "msg_terminated_"))
-	assert.Equal("terminated", body["type"])
-	errorBody, ok := body["error"].(map[string]any)
-	require.True(ok)
-	assert.Equal(float64(-32024), errorBody["code"])
+	assert.Equal("terminated", body.Type)
+	require.NotNil(body.Error)
+	assert.Equal(-32024, body.Error.Code)
 }
