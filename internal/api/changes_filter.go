@@ -1,24 +1,16 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json/v2"
 	"net/http"
 	"slices"
+	"strings"
 
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/changefeed"
 )
 
-type changesFilter struct {
-	PersonID                   int64
-	SourceIDs, ConversationIDs []int64
-	IncomingOnly               bool
-	participants               []int64
-}
-
-func parseChangesFilter(r *http.Request) (changesFilter, error) {
-	var f changesFilter
+func parseChangesFilter(r *http.Request) (changefeed.Filter, error) {
+	var f changefeed.Filter
 	var err error
 	f.PersonID, _, err = queryInt64(r, "person_id")
 	if err != nil {
@@ -56,25 +48,16 @@ func parseChangesFilter(r *http.Request) (changesFilter, error) {
 	return f, nil
 }
 
-func (f changesFilter) digest() string {
-	if f.PersonID == 0 && len(f.SourceIDs) == 0 && len(f.ConversationIDs) == 0 && !f.IncomingOnly {
-		return ""
+func bindChangesGrant(f changefeed.Filter, grant *agentgrant.Grant) changefeed.Filter {
+	f.GrantRefs = make([]changefeed.GrantRef, 0, len(grant.Sources))
+	for _, ref := range grant.Sources {
+		f.GrantRefs = append(f.GrantRefs, changefeed.GrantRef{Type: ref.Type, Identifier: ref.Identifier})
 	}
-	data, err := json.Marshal(struct {
-		PersonID                   int64
-		SourceIDs, ConversationIDs []int64
-		IncomingOnly               bool
-	}{f.PersonID, f.SourceIDs, f.ConversationIDs, f.IncomingOnly}, json.Deterministic(true))
-	if err != nil {
-		panic(err)
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:8])
-}
-
-func (f changesFilter) matches(m store.ChangedMessage) bool {
-	return (f.PersonID == 0 || slices.Contains(f.participants, m.SenderID)) &&
-		(len(f.SourceIDs) == 0 || slices.Contains(f.SourceIDs, m.SourceID)) &&
-		(len(f.ConversationIDs) == 0 || slices.Contains(f.ConversationIDs, m.ConversationID)) &&
-		(!f.IncomingOnly || !m.IsFromMe)
+	slices.SortFunc(f.GrantRefs, func(a, b changefeed.GrantRef) int {
+		if n := strings.Compare(a.Type, b.Type); n != 0 {
+			return n
+		}
+		return strings.Compare(a.Identifier, b.Identifier)
+	})
+	return f
 }

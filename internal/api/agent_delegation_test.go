@@ -44,6 +44,7 @@ func delegatedReads(identifier string, id, note, attachmentID int64, hash string
 		"getSubAggregates":        {"/api/v1/aggregates/sub?view_type=senders", identifier, agentgrant.PermissionSearchRead},
 		"filterMessages":          {"/api/v1/messages/filter", identifier, agentgrant.PermissionSearchRead},
 		"listMessages":            {"/api/v1/messages", identifier, agentgrant.PermissionSearchRead},
+		"listChangedMessages":     {"/api/v1/messages/changes", "glacier", agentgrant.PermissionSearchRead},
 		"searchMessagesByDomains": {"/api/v1/search/domains?domains=example.test", identifier, agentgrant.PermissionSearchRead},
 		"getStats":                {"/api/v1/stats", `"total_messages":2`, agentgrant.PermissionStatsRead},
 		"getCLIStats":             {"/api/v1/cli/stats", `"total_messages":2`, agentgrant.PermissionStatsRead},
@@ -372,7 +373,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	for op := range allowed {
 		assertions.True(seen[op], "missing preexisting delegated operation: "+op)
 	}
-	assertions.Len(reads, 22)
+	assertions.Len(reads, 23)
 	assertions.Equal(len(reads), testedReads)
 	assertions.Greater(denied, 10)
 }

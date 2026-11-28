@@ -612,6 +612,8 @@ func (c SenderAuthConfig) Pins() map[int64][]string {
 }
 
 type Config struct {
+	Wakeups            []WakeupConfig            `toml:"wakeups"`
+	MCPEvents          MCPEventsConfig           `toml:"mcp_events"`
 	RelayedSenders     []mime.RelayedSenderRule  `toml:"relayed_senders"`
 	SenderAuth         SenderAuthConfig          `toml:"sender_auth"`
 	ConversationPolicy ConversationPolicyConfig  `toml:"conversation_policy"`
@@ -1213,6 +1215,12 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		slog.Warn("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md; for Mistral run docbank processing probe --profile <name> --seeds <dir> (Docbank v0.17.0 or later)")
 	}
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "wakeups" {
+			cfg.deferDaemonError(fmt.Errorf("unknown wakeups config key %q", key.String()))
+		}
+		if len(key) > 0 && key[0] == "mcp_events" {
+			cfg.deferDaemonError(fmt.Errorf("unknown mcp_events config key %q", key.String()))
+		}
 		if len(key) > 0 && (key[0] == "facebook_messages" || key[0] == "instagram_messages") {
 			return nil, fmt.Errorf("unknown Meta inbox config key %q", key.String())
 		}
@@ -1349,6 +1357,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.deferDaemonError(cfg.Server.validateDaemonSettings())
 	cfg.deferDaemonError(cfg.Sync.Validate())
+	cfg.deferDaemonError(prepareWakeups(cfg.Wakeups))
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
 		return nil, err

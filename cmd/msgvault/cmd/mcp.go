@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
@@ -172,6 +173,11 @@ func prepareMCPHTTP(cmd *cobra.Command, cfg *config.Config) (string, string, err
 // delegatedMCPServeOptions offers only the tools an agent grant can use.
 // Source inventory is required to select tools within the grant.
 func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpserver.ServeOptions, error) {
+	health, healthErr := st.Health(ctx)
+	var schemaVersion string
+	if healthErr == nil && health != nil && health.APISchemaVersion != nil {
+		schemaVersion = *health.APISchemaVersion
+	}
 	grant, err := st.AgentTokenSelf(ctx)
 	if err != nil {
 		return mcpserver.ServeOptions{}, fmt.Errorf("read agent grant: %w", err)
@@ -186,8 +192,15 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		Calendar: st, GrantPermissions: grant.Permissions, Families: families,
 		Meetings: st, MeetingRecords: true, MeetingSuggestions: true,
 	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentChangeFeedMinAPISchemaVersion) {
+		opts.OperationCapabilities = []string{mcpserver.ToolListChanges}
+		opts.Operations = &daemonMCPOperations{client: st, now: time.Now, supported: opts.OperationCapabilities, delegated: true}
+	}
 	return opts, nil
 }
+
+// ownerEventsMinAPISchemaVersion adds owner MCP Events subscriptions.
+const ownerEventsMinAPISchemaVersion = "5.31.0"
 
 func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *invocation) mcpserver.ServeOptions {
 	if state == nil {
@@ -226,6 +239,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	health, healthErr := st.Health(ctx)
 	// Turn on can enable text search after this server starts.
 	activatable := mcpRequestPropertiesPresent(capabilities, "enableLocalEmbeddings")
+	if healthErr == nil && health != nil && health.APISchemaVersion != nil && daemonclient.APISchemaVersionAtLeast(*health.APISchemaVersion, ownerEventsMinAPISchemaVersion) {
+		opts.Events = st
+	}
 	lanes := healthErr == nil && health != nil && health.Vector != nil
 	if activatable || lanes && health.Vector.TextEnabled != nil && *health.Vector.TextEnabled {
 		opts.HybridSearcher = daemonMCPHybridSearcher{client: st}

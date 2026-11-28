@@ -445,7 +445,8 @@ import (
 // listings no longer return stale, as_of, or counts_pending.
 // 5.29.0 fails backup freeze begin with backup_readers_busy when daemon archive readers do not stop.
 // 5.30.0 allows Kit and Vertex visual embedding settings.
-const APISchemaVersion = "5.30.0"
+// 5.31.0 adds delegated change feed reads and owner MCP Events subscriptions.
+const APISchemaVersion = "5.31.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -509,6 +510,7 @@ func baseOpenAPIDocument(includeHidden bool) *huma.OpenAPI {
 	hardenSearchCoverageSchemas(doc)
 	hardenTaskLinkSchemas(doc)
 	hardenPersonRelationshipSchemas(doc)
+	hardenMCPEventsSchemas(doc)
 	hardenPersonSearchSchemas(doc)
 	hardenActivitySchemas(doc)
 	hardenMeetingSchemas(doc)
@@ -668,6 +670,40 @@ func hardenPersonSearchSchemas(doc *huma.OpenAPI) {
 	response := doc.Components.Schemas.Map()["PersonSearchResponse"]
 	if response != nil && response.Properties["results"] != nil {
 		response.Properties["results"].Nullable = false
+	}
+}
+
+func hardenMCPEventsSchemas(doc *huma.OpenAPI) {
+	const sourceIDProperty = "source_id"
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	schemas := doc.Components.Schemas.Map()
+	if arguments := schemas["MCPEventsArguments"]; arguments != nil {
+		minimum := float64(1)
+		for _, field := range []string{"person_id", sourceIDProperty} {
+			if property := arguments.Properties[field]; property != nil {
+				property.Minimum = &minimum
+			}
+		}
+		// Keep the exclusive choice under not: a top-level oneOf makes the
+		// Go generator add a union that changes request marshaling.
+		selector := func(fields ...string) *huma.Schema {
+			properties := make(map[string]*huma.Schema, len(fields))
+			for _, field := range fields {
+				properties[field] = &huma.Schema{Type: huma.TypeInteger}
+			}
+			return &huma.Schema{Type: huma.TypeObject, Properties: properties, Required: fields}
+		}
+		arguments.Not = &huma.Schema{AnyOf: []*huma.Schema{
+			selector("person_id", "source_id"),
+			{Not: &huma.Schema{AnyOf: []*huma.Schema{selector("person_id"), selector("source_id")}}},
+		}}
+		arguments.PrecomputeMessages()
+	}
+	if delivery := schemas["MCPEventsDelivery"]; delivery != nil {
+		delivery.Required = append(delivery.Required, "secret")
+		delivery.PrecomputeMessages()
 	}
 }
 
@@ -1608,6 +1644,16 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schemaName + "AllowedResolutionsKeepLocal",
 			schemaName + "AllowedResolutionsKeepRemote",
 		})
+	}
+	// Event schemas contain arbitrary JSON schema values, not empty objects.
+	if definition := schemas["MCPEventsDefinition"]; definition != nil {
+		for _, name := range []string{"inputSchema", "payloadSchema"} {
+			if property := definition.Properties[name]; property != nil {
+				if values, ok := property.AdditionalProperties.(*huma.Schema); ok {
+					setCodegenGoType(values, "any")
+				}
+			}
+		}
 	}
 	// Without the override, empty-schema map values generate struct{}, which cannot carry surface="web".
 	if telemetry := schemas["TelemetryEventRequest"]; telemetry != nil && telemetry.Properties["properties"] != nil {

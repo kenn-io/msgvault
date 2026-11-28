@@ -71,6 +71,8 @@ data.
 In owner sessions, use `list_changes` with a cursor to follow filtered message
 changes.
 
+Use `list_changes` to follow filtered message changes with a cursor. Delegated use requires `search.read` and daemon API schema 5.2.0 or newer.
+
 ## Find people and read conversations
 
 Call `search_people` with a `query` to find observed contacts and saved
@@ -317,7 +319,7 @@ backend checks for action permissions, source scope, and sender identity, and
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
 | `list_attribute_definitions` | read | — | owner-only |
-| `list_changes` | read | — | owner-only |
+| `list_changes` | read | — | search.read |
 | `list_deletions` | read | — | owner-only |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |

@@ -506,6 +506,42 @@ func (r *ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf) Validate() 
 	return nil
 }
 
+type McpEventsSubscribe_ErrorResponse_AnyOf struct {
+	runtime.Either[Error, ErrorResponse]
+}
+
+func (m *McpEventsSubscribe_ErrorResponse_AnyOf) Validate() error {
+	if m.IsA() {
+		if v, ok := any(m.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if m.IsB() {
+		if v, ok := any(m.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type McpEventsUnsubscribe_ErrorResponse_AnyOf struct {
+	runtime.Either[Error, ErrorResponse]
+}
+
+func (m *McpEventsUnsubscribe_ErrorResponse_AnyOf) Validate() error {
+	if m.IsA() {
+		if v, ok := any(m.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if m.IsB() {
+		if v, ok := any(m.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
 type SearchParticipants_ErrorResponse_503_AnyOf struct {
 	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
 }

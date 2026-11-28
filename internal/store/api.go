@@ -17,6 +17,9 @@ import (
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
+// ErrNullChangeWatermark signals that a change feed cannot safely advance.
+var ErrNullChangeWatermark = errors.New("NULL content_changed_at")
+
 // participantDisplaySQL formats a participant joined as `p` (with the
 // optional per-recipient `mr.display_name` row) into one display string
 // the way the query-backed engines do: "Name <addr>" when both name
@@ -1598,11 +1601,8 @@ func (c ChangedMessagesCursor) At() time.Time { return c.at }
 // between including the rows stamped there and excluding some of them.
 func (c ChangedMessagesCursor) AfterID() (int64, bool) { return c.afterID, c.afterRow }
 
-// changedMessagesQuery is the content-change feed's page query, for a cursor
-// that resumes after a particular row. changedMessagesFromInstantQuery is the
-// same query for a cursor at the start of an instant: identical but for the id
-// tiebreak, which it drops rather than binding, because there is no value that
-// would let every id at that instant through (see ChangedMessagesCursor).
+// The feed page query omits the id tiebreak for a cursor at the start of an
+// instant, so every id at that instant remains reachable.
 //
 // The lower bound is spelled `>= ? AND (> ? OR id > ?)` rather than the more
 // obvious `> ? OR (= ? AND id > ?)`. The two select identical rows. Measured on
@@ -1646,11 +1646,6 @@ const changedMessagesBounds = `
 	  AND content_changed_at < ?
 	ORDER BY content_changed_at, id
 	LIMIT ?`
-
-const changedMessagesQuery = changedMessagesSelect +
-	` AND (content_changed_at > ? OR id > ?)` + changedMessagesBounds
-
-const changedMessagesFromInstantQuery = changedMessagesSelect + changedMessagesBounds
 
 // ListChangedMessages returns messages whose content changed at or after the
 // given cursor, in (content_changed_at, id) order, along with the database's
@@ -1714,7 +1709,7 @@ func (s *Store) ListChangedMessages(
 		return ChangedMessagePage{}, nil
 	}
 
-	// Read the bounds BEFORE the page query, in their own statement (constant
+	// Read the bounds BEFORE the snapshot or page query, in their own statement (constant
 	// columns on the page query itself would vanish along with the rows on an
 	// empty page). Before, not after: a change committed while the page query
 	// runs may be invisible to that query's snapshot yet carry an earlier
@@ -1724,21 +1719,31 @@ func (s *Store) ListChangedMessages(
 	// PostgreSQL's bound read also verifies that `messages` resolves through the
 	// connection's search_path. Keep it ahead of the NULL preflight so a missing
 	// table produces that actionable diagnostic instead of a bare query error.
-	bounds, err := s.dialect.ReadWatermarkBounds(ctx, s.db.DB)
-	if err != nil {
-		return ChangedMessagePage{}, err
+	var bounds WatermarkBounds
+	var err error
+	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); ok && snapshot.db == s.db.DB {
+		if snapshot.bounds == nil {
+			return ChangedMessagePage{}, errors.New("change feed snapshot has no captured bounds")
+		}
+		bounds = *snapshot.bounds
+	} else {
+		bounds, err = s.dialect.ReadWatermarkBounds(ctx, s.db.DB)
+		if err != nil {
+			return ChangedMessagePage{}, err
+		}
 	}
 
 	// NULL watermarks are excluded by the range predicate and would otherwise
 	// remain invisible forever. Detect legacy or manually-corrupted rows before
 	// returning any page so consumers stop at a visible, repairable error.
 	var nullWatermarkID int64
+	scope, scopeArgs := sourceScopeClause(ctx, "source_id")
 	err = s.db.QueryRowContext(ctx,
-		`SELECT id FROM messages WHERE content_changed_at IS NULL LIMIT 1`,
+		`SELECT id FROM messages WHERE content_changed_at IS NULL`+scope+` LIMIT 1`, scopeArgs...,
 	).Scan(&nullWatermarkID)
 	if err == nil {
 		return ChangedMessagePage{}, fmt.Errorf(
-			"message %d has NULL content_changed_at", nullWatermarkID)
+			"message %d has %w", nullWatermarkID, ErrNullChangeWatermark)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return ChangedMessagePage{}, fmt.Errorf("check message watermarks: %w", err)
@@ -1746,11 +1751,14 @@ func (s *Store) ListChangedMessages(
 
 	cursor := s.dialect.TimestampParam(since.At())
 	openInstant := s.dialect.TimestampParam(bounds.CommitBound)
-	query, args := changedMessagesFromInstantQuery, []any{cursor, openInstant, limit}
+	query, args := changedMessagesSelect, []any{cursor}
 	if sinceID, ok := since.AfterID(); ok {
-		query = changedMessagesQuery
-		args = []any{cursor, cursor, sinceID, openInstant, limit}
+		query += ` AND (content_changed_at > ? OR id > ?)`
+		args = append(args, cursor, sinceID)
 	}
+	query += scope + changedMessagesBounds
+	args = append(args, scopeArgs...)
+	args = append(args, openInstant, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return ChangedMessagePage{}, fmt.Errorf("list changed messages: %w", err)

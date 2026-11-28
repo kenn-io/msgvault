@@ -363,6 +363,7 @@ func TestDaemonMCPServeOptionsOffersDaemonTools(t *testing.T) {
 			assert.NotNil(opts.PersonCardDAV)
 			assert.NotNil(opts.IdentityScoring)
 			assert.NotNil(opts.MessageTags)
+			assert.NotNil(opts.Events)
 		})
 	}
 }
