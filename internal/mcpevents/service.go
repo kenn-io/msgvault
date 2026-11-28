@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
@@ -105,7 +106,7 @@ func (s *Service) deleteCredential(id string) error {
 func subscriptionID(owner string, args MCPEventsArguments, url string) string {
 	incoming := "missing"
 	if args.IncomingOnly != nil {
-		incoming = fmt.Sprintf("%t", *args.IncomingOnly)
+		incoming = strconv.FormatBool(*args.IncomingOnly)
 	}
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%s\x00%s", owner, Name, args.PersonID, args.SourceID, incoming, url)))
 	return hex.EncodeToString(sum[:16])
