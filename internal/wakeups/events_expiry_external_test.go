@@ -33,7 +33,7 @@ func TestOwnerEventExpiresBehindConfiguredCallback(t *testing.T) {
 	service := mcpevents.Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: clock}
 	in, err := mcpevents.DecodeSubscribe(fmt.Appendf(nil, `{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/native","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"},"ttlMs":60000}`, source.ID))
 	require.NoError(err)
-	created, err := service.Subscribe(ctx, in, func(context.Context, string, string, []byte) error { return nil })
+	created, err := service.Subscribe(ctx, in, "owner", func(context.Context, string, string, []byte) error { return nil }, nil)
 	require.NoError(err)
 	start := clock().Add(-time.Hour)
 	key := store.MCPEventsPositionKey(created.ID)
@@ -103,7 +103,7 @@ func TestOwnerEventRefreshShortensLeaseBehindConfiguredCallback(t *testing.T) {
 	service := mcpevents.Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: clock}
 	in, err := mcpevents.DecodeSubscribe(fmt.Appendf(nil, `{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/native","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"},"ttlMs":3600000}`, source.ID))
 	require.NoError(err)
-	created, err := service.Subscribe(ctx, in, func(context.Context, string, string, []byte) error { return nil })
+	created, err := service.Subscribe(ctx, in, "owner", func(context.Context, string, string, []byte) error { return nil }, nil)
 	require.NoError(err)
 	start := clock().Add(-time.Hour)
 	key := store.MCPEventsPositionKey(created.ID)
@@ -137,7 +137,7 @@ func TestOwnerEventRefreshShortensLeaseBehindConfiguredCallback(t *testing.T) {
 		if r.URL.Path == "/configured" {
 			short, err := mcpevents.DecodeSubscribe(fmt.Appendf(nil, `{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/native","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"},"ttlMs":60000}`, source.ID))
 			if err == nil {
-				_, err = service.Subscribe(r.Context(), short, func(context.Context, string, string, []byte) error { return nil })
+				_, err = service.Subscribe(r.Context(), short, "owner", func(context.Context, string, string, []byte) error { return nil }, nil)
 			}
 			refreshErr = err
 			mu.Lock()

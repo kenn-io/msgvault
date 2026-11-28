@@ -653,7 +653,7 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			original, err := st.LoadMCPEventsCatalog(t.Context())
 			requirements.NoError(err)
 			expires := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
-			draft := fmt.Sprintf(`[{"id":%q,"owner":"owner","arguments":{"source_id":1,"incoming_only":%t},"url":%q,"expires_at":%q}]`, first.ID, *in.Arguments.IncomingOnly, in.Delivery.URL, expires)
+			draft := fmt.Sprintf(`[{"id":%q,"owner":"owner","arguments":{"source_id":1,"incoming_only":%t},"url":%q,"expires_at":%q}]`, first.ID, true, in.Delivery.URL, expires)
 			ok, err := st.SwapMCPEventsCatalog(t.Context(), original, []byte(draft), "", nil, "")
 			requirements.NoError(err)
 			requirements.True(ok)
@@ -814,7 +814,7 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			requirements.NoError(err)
 			other := in
 			other.Arguments.IncomingOnly = new(false)
-			_, err = service.Subscribe(t.Context(), other, verify)
+			_, err = service.Subscribe(t.Context(), other, "owner", verify, nil)
 			requirements.NoError(err)
 			assertions.Equal(2, calls)
 		}},
@@ -1158,6 +1158,7 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			secret, err := base64.StdEncoding.DecodeString(private.Secret)
 			require.NoError(err)
 			assert.Equal(second.secret, secret)
+			service.verified = nil // Exercise a fresh verification after the competing create.
 			var retryID string
 			retry, err := service.Subscribe(t.Context(), first, owner, func(_ context.Context, _ string, id string, secret []byte) error {
 				retryID = id
@@ -1190,6 +1191,7 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			require.NoError(err)
 			require.Len(entries, 1)
 			oldKey := store.MCPEventsPositionKey(entries[0].ID)
+			service.verified = nil // Exercise expiry during a fresh verification.
 			_, err = service.Subscribe(t.Context(), in, owner, func(_ context.Context, _ string, challenged string, _ []byte) error {
 				assert.Equal(first.ID, challenged)
 				*now = first.RefreshBefore
@@ -1205,6 +1207,7 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			_, gapID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "gap@example.test", "gap", "gap", "")
 			require.NoError(err)
 			checks := 0
+			service.verified = nil
 			var retryID string
 			retry, err := service.Subscribe(t.Context(), in, owner, func(_ context.Context, _ string, challenged string, _ []byte) error {
 				retryID = challenged
@@ -1476,4 +1479,110 @@ func TestCallbackReasonUsesSEPCategories(t *testing.T) {
 	} {
 		t.Run(tc.input, func(t *testing.T) { assert.Equal(t, tc.want, CallbackReason(tc.input)) })
 	}
+}
+
+func TestSubscriptionKeyPreservesArgumentPresence(t *testing.T) {
+	st := newEventsTestStore(t)
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	missing, err := service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
+	require.NoError(t, err)
+	in.Arguments.IncomingOnly = new(true)
+	explicit, err := service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, missing.ID, explicit.ID)
+	targets, err := service.Native(t.Context())
+	require.NoError(t, err)
+	require.Len(t, targets, 2)
+	assert.True(t, in.Arguments.filter().IncomingOnly)
+	assert.True(t, (MCPEventsArguments{SourceID: 1}).filter().IncomingOnly)
+	unsub := MCPEventsUnsubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{URL: in.Delivery.URL}}
+	require.NoError(t, service.Unsubscribe(t.Context(), unsub, "owner"))
+	targets, err = service.Native(t.Context())
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	assert.Equal(t, explicit.ID, targets[0].Name)
+	unsub.Arguments.IncomingOnly = new(true)
+	require.NoError(t, service.Unsubscribe(t.Context(), unsub, "owner"))
+	targets, err = service.Native(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, targets)
+}
+
+func TestRollbackSubscribeAfterCancellation(t *testing.T) {
+	st := newEventsTestStore(t)
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	result, err := service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
+	require.NoError(t, err)
+	entries, raw, err := service.catalog(t.Context())
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.True(t, service.rollbackSubscribe(ctx, entries, nil, raw, true))
+	entries, _, err = service.catalog(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+	require.NoError(t, err)
+	assert.Nil(t, position)
+}
+
+func TestDelegatedCallbackConsentIsScopedToPrincipalAndURL(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := newEventsTestStore(t)
+	registry := agentgrant.NewRegistry()
+	t.Cleanup(registry.Close)
+	issue := func() string {
+		id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "fixture@example.test"}}, time.Time{})
+		require.NoError(err)
+		return agentgrant.Owner(id)
+	}
+	first, second := issue(), issue()
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry}
+	request := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	calls := 0
+	verify := func(context.Context, string, string, []byte) error { calls++; return nil }
+	_, err := service.Subscribe(t.Context(), request, first, verify, nil)
+	require.NoError(err)
+	request.Arguments.IncomingOnly = new(false)
+	_, err = service.Subscribe(t.Context(), request, first, verify, nil)
+	require.NoError(err)
+	assert.Equal(1, calls)
+	request.Delivery.URL = "https://EXAMPLE.com:443/hook"
+	_, err = service.Subscribe(t.Context(), request, first, verify, nil)
+	require.NoError(err)
+	assert.Equal(1, calls)
+	_, err = service.Subscribe(t.Context(), request, second, verify, nil)
+	require.NoError(err)
+	assert.Equal(2, calls)
+	request.Delivery.URL = "https://example.com/other"
+	_, err = service.Subscribe(t.Context(), request, first, verify, nil)
+	require.NoError(err)
+	assert.Equal(3, calls)
+}
+
+func TestNativeTerminatesWhenSelectedSourceIdentityChanges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := newEventsTestStore(t)
+	registry := agentgrant.NewRegistry()
+	t.Cleanup(registry.Close)
+	id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "events@example.test"}}, time.Time{})
+	require.NoError(err)
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	created, err := service.Subscribe(t.Context(), in, agentgrant.Owner(id), acceptCallback, nil)
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET identifier=? WHERE id=?`), "replacement@example.test", 1)
+	require.NoError(err)
+	subs, err := service.Native(t.Context())
+	require.NoError(err)
+	require.Len(subs, 1)
+	assert.True(subs[0].Terminated)
+	assert.Equal(created.ID, subs[0].Name)
+	subs, err = service.Native(t.Context())
+	require.NoError(err)
+	assert.Empty(subs)
 }

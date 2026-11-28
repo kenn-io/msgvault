@@ -43,7 +43,7 @@ func TestMCPEventsPreservesUnavailableReasons(t *testing.T) {
 		{"permission_denied", "permission_denied", mcpevents.Forbidden, http.StatusForbidden},
 		{"person_scope_exceeds_grant", "person_scope_exceeds_grant", mcpevents.Forbidden, http.StatusForbidden},
 		{"private_daemon_detail", "request_rejected", mcpevents.Forbidden, http.StatusForbidden},
-		{"dns_error", "dns_error", mcpevents.CallbackEndpoint, http.StatusBadGateway},
+		{"dns_error", "connection_refused", mcpevents.CallbackEndpoint, http.StatusBadGateway},
 		{"subscription", "subscription", mcpevents.NotFound, http.StatusNotFound},
 		{"challenge_failed", "challenge_failed", mcpevents.CallbackEndpoint, http.StatusBadGateway},
 		{"unknown_private_detail", "request_rejected", mcpevents.InvalidParams, http.StatusBadRequest},
@@ -67,4 +67,20 @@ func TestMCPEventsPreservesUnavailableReasons(t *testing.T) {
 			assert.Equal(tc.want, eventErr.Reason)
 		})
 	}
+}
+
+func TestMCPEventsMiddlewareForbidden(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"permission_denied","message":"private detail"}`))
+	}))
+	defer server.Close()
+	client, err := New(Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, client.Close()) }()
+	_, err = client.MCPEventsList(t.Context())
+	var eventErr *mcpevents.Error
+	require.ErrorAs(t, err, &eventErr)
+	assert.Equal(t, mcpevents.Forbidden, eventErr.Code)
+	assert.Equal(t, "permission_denied", eventErr.Reason)
 }

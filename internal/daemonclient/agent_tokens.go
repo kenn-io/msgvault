@@ -15,7 +15,7 @@ import (
 const AgentChangeFeedMinAPISchemaVersion = "5.31.0"
 
 // AgentEventsMinAPISchemaVersion admits delegated Events.
-const AgentEventsMinAPISchemaVersion = "5.5.0"
+const AgentEventsMinAPISchemaVersion = "5.32.0"
 
 // IssueAgentToken creates a restricted agent grant and returns its one-time secret.
 func (c *Client) IssueAgentToken(

@@ -67,7 +67,7 @@ is clamped to one minute through 30 days, and null selects 30 days. Refreshing
 with the same event, arguments and URL replaces the secret and lease while
 keeping the saved position. After a default restore, refresh the secret to resume; a backup with `--include-tokens` restores it. After any refresh, read `list_changes` from your own cursor to catch up. `events/unsubscribe` uses the same identity.
 
-An unverified callback receives a signed HTTP POST with JSON body `{"type":"verification","challenge":"..."}`. The receiver must verify its Standard Webhooks signature using the subscription secret and return a successful 2xx JSON response containing the same `challenge` value, for example `{"challenge":"..."}`. The response body must be at most 4096 bytes. A callback that cannot confirm the challenge returns `-32027`. Verification is reused for the same owner and URL for up to one hour; after a restart, the next subscribe verifies again.
+An unverified callback receives a signed HTTP POST with JSON body `{"type":"verification","challenge":"..."}`. The receiver must verify its Standard Webhooks signature using the subscription secret and return a successful 2xx JSON response containing the same `challenge` value, for example `{"challenge":"..."}`. The response body must be at most 4096 bytes. A callback that cannot confirm the challenge returns `-32027`. Verification is reused for the same owner or grant and URL for up to one hour; after a restart, the next subscribe verifies again.
 
 Subscribe accepts but ignores `cursor` and `maxAgeMs`; then read `list_changes` once from your own cursor to catch up.
 Each signed ping names the subscription in its data and has a null cursor. Verify

@@ -49,6 +49,9 @@ func (c *Client) mcpEventsRequest(ctx context.Context, method, path string, body
 				}
 			}
 		}
+		if resp.StatusCode == http.StatusForbidden {
+			return &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "permission_denied"}
+		}
 		return errors.New("events daemon unavailable")
 	}
 	if err = json.Unmarshal(raw, out); err != nil {

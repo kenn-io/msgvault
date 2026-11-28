@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,6 +65,11 @@ func (s *Service) catalog(ctx context.Context) ([]entry, []byte, error) {
 			return nil, nil, err
 		}
 	}
+	for _, e := range entries {
+		if e.Arguments.PersonID < 0 || e.Arguments.SourceID < 0 || (e.Arguments.PersonID > 0) == (e.Arguments.SourceID > 0) {
+			return nil, nil, errors.New("invalid events catalog")
+		}
+	}
 	return entries, raw, nil
 }
 func (s *Service) Available(_ context.Context) bool {
@@ -101,7 +107,11 @@ func (s *Service) deleteCredential(id string) error {
 	return err
 }
 func subscriptionID(owner string, args MCPEventsArguments, url string) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%t\x00%s", owner, Name, args.PersonID, args.SourceID, *args.IncomingOnly, url)))
+	incoming := "missing"
+	if args.IncomingOnly != nil {
+		incoming = fmt.Sprintf("%t", *args.IncomingOnly)
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%s\x00%s", owner, Name, args.PersonID, args.SourceID, incoming, url)))
 	return hex.EncodeToString(sum[:16])
 }
 
@@ -233,7 +243,7 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 			}
 		}
 		if challengedID == "" {
-			if owner == "owner" && s.callbackVerified(in.Delivery.URL) {
+			if s.callbackVerified(owner, in.Delivery.URL) {
 				challengedID, challengedRefresh, ownerHead = id, refresh, initial
 				continue
 			}
@@ -248,9 +258,7 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 				}
 				return out, failure(CallbackEndpoint, reason)
 			}
-			if owner == "owner" {
-				s.rememberCallback(in.Delivery.URL, in.TTL.Duration())
-			}
+			s.rememberCallback(owner, in.Delivery.URL, in.TTL.Duration())
 			challengedID, challengedRefresh, ownerHead = id, refresh, initial
 			continue
 		}
@@ -323,6 +331,8 @@ func (s *Service) feedHead(ctx context.Context) (*store.WakeupState, error) {
 // are one compare-and-swap on the bytes this call published, so a catalog changed
 // meanwhile is left alone. It reports whether the swap took effect.
 func (s *Service) rollbackSubscribe(ctx context.Context, entries []entry, raw, next []byte, created bool) bool {
+	// Finish undoing the published catalog even if the request was canceled.
+	ctx = context.WithoutCancel(ctx)
 	var ok bool
 	var err error
 	if created {
@@ -382,7 +392,7 @@ func (s *Service) logger() *slog.Logger {
 	return slog.Default()
 }
 
-// purgeExpired removes expired or revoked entries, credentials and positions.
+// purgeExpired removes expired entries, credentials and positions.
 func (s *Service) purgeExpired(ctx context.Context) error {
 	for {
 		entries, raw, err := s.catalog(ctx)
@@ -427,12 +437,27 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		if e.Owner != "owner" && !isGrantOwner(e.Owner) {
 			continue
 		}
-		if len(out) >= max(0, 32-s.ConfigTargets) {
+		revoked := false
+		if grantID, ok := agentgrant.OwnerID(e.Owner); ok {
+			grant, live := s.Grants.LookupID(grantID, agentgrant.PermissionSearchRead)
+			revoked = !live
+			if live && e.Arguments.SourceID != 0 {
+				sources, err := s.Store.ListSourcesContext(ctx, "")
+				if err != nil {
+					return nil, err
+				}
+				revoked = true
+				for _, source := range sources {
+					if source.ID == e.Arguments.SourceID && grant.MatchesSource(agentgrant.SourceRef{Type: source.SourceType, Identifier: source.Identifier}) {
+						revoked = false
+						break
+					}
+				}
+			}
+		}
+		if len(out) >= max(0, 32-s.ConfigTargets) && !revoked {
 			logger.Warn("native wakeup unavailable", "id", e.ID, "category", "over_limit")
 			continue
-		}
-		if e.Arguments.IncomingOnly == nil {
-			return nil, errors.New("invalid events catalog")
 		}
 		encoded, _, err := credentials.Resolve(providercredentials.EventsID(e.ID), e.Origin, "", nil)
 		var private privateCallback
@@ -440,7 +465,7 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		secret, secretErr := base64.StdEncoding.DecodeString(private.Secret)
 		origin, originErr := callbackOrigin(private.URL)
 		if err != nil || decodeErr != nil || secretErr != nil || len(secret) == 0 || originErr != nil || origin != e.Origin || config.ValidateWakeupDestination(private.URL) != nil || find([]entry{e}, e.Owner, e.Arguments, private.URL) < 0 {
-			if isGrantOwner(e.Owner) && !s.liveGrant(e.Owner) {
+			if revoked {
 				_, err := s.removeEntryAndCredential(ctx, entries, raw, index)
 				return out, err
 			}
@@ -451,7 +476,7 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		sub := wakeups.NewSubscription(wireID(e.Owner, e.ID), private.URL, secret, f, 72*time.Hour, 10*time.Second, nil, nil)
 		sub.Native, sub.Expires = true, e.Expires
 		sub.StateKey = store.MCPEventsPositionKey(e.ID)
-		if isGrantOwner(e.Owner) && !s.liveGrant(e.Owner) {
+		if revoked {
 			// Tear down under the setup gate; the engine sends after releasing it.
 			removed, err := s.removeEntryAndCredential(ctx, entries, raw, index)
 			if err != nil {
@@ -480,30 +505,35 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 			}
 			return time.Time{}, false, nil
 		}
-		sub.StateKey = store.MCPEventsPositionKey(e.ID)
 		out = append(out, sub)
 	}
 	return out, nil
 }
 
-func (s *Service) liveGrant(owner string) bool {
-	id, ok := agentgrant.OwnerID(owner)
-	if !ok {
-		return true
-	}
-	_, live := s.Grants.LookupID(id, agentgrant.PermissionSearchRead)
-	return live
-}
-
 func isGrantOwner(owner string) bool { _, ok := agentgrant.OwnerID(owner); return ok }
 
-// Verification is process-local soft state for owner callback URLs.
-func (s *Service) callbackVerified(url string) bool {
+// verificationKey folds equivalent HTTPS origin spellings while retaining the path and query.
+func verificationKey(owner, raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return owner + "\x00" + raw
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	u.Host = strings.TrimSuffix(u.Host, ":443")
+	if u.Path == "" {
+		u.Path = "/"
+	}
+	return owner + "\x00" + u.String()
+}
+
+// Verification is process-local soft state scoped to a principal and URL.
+func (s *Service) callbackVerified(owner, url string) bool {
 	s.verifiedMu.Lock()
 	defer s.verifiedMu.Unlock()
-	return s.now().Before(s.verified[url])
+	return s.now().Before(s.verified[verificationKey(owner, url)])
 }
-func (s *Service) rememberCallback(url string, ttl time.Duration) {
+func (s *Service) rememberCallback(owner, url string, ttl time.Duration) {
 	s.verifiedMu.Lock()
 	defer s.verifiedMu.Unlock()
 	now := s.now()
@@ -516,6 +546,6 @@ func (s *Service) rememberCallback(url string, ttl time.Duration) {
 		}
 	}
 	if len(s.verified) < 32 {
-		s.verified[url] = now.Add(min(ttl, time.Hour))
+		s.verified[verificationKey(owner, url)] = now.Add(min(ttl, time.Hour))
 	}
 }

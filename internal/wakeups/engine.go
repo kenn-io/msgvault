@@ -235,6 +235,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		var matches []store.ChangedMessage
 		var uid string
 		var ready bool
+		var scannedSources []int64
 		recordFailure := func(category string) {
 			if sub.Native && category != "" {
 				state.LastError = category
@@ -313,6 +314,8 @@ func (e *Engine) RunPass(ctx context.Context) error {
 						ids = append(ids, source.ID)
 					}
 				}
+				slices.Sort(ids)
+				scannedSources = ids
 				readCtx = sourcescope.WithSourceIDs(readCtx, ids)
 			}
 			uid, err = e.Store.ArchiveUIDContext(ctx)
@@ -439,7 +442,32 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			logger.Warn("wakeup failed", "name", sub.Name, "category", "invalid_callback")
 			continue
 		}
-		if _, live := sub.Grants.LookupID(sub.GrantID, agentgrant.PermissionSearchRead); (sub.GrantID != "" && !live) || (!sub.Expires.IsZero() && !e.now().Before(sub.Expires)) {
+		if sub.GrantID != "" {
+			live := false
+			err = e.GatedSetup(ctx, func() error {
+				grant, ok := sub.Grants.LookupID(sub.GrantID, agentgrant.PermissionSearchRead)
+				if !ok {
+					return nil
+				}
+				sources, err := e.Store.ListSourcesContext(ctx, "")
+				if err != nil {
+					return err
+				}
+				ids := make([]int64, 0, len(sources))
+				for _, source := range sources {
+					if grant.MatchesSource(agentgrant.SourceRef{Type: source.SourceType, Identifier: source.Identifier}) {
+						ids = append(ids, source.ID)
+					}
+				}
+				slices.Sort(ids)
+				live = slices.Equal(scannedSources, ids)
+				return nil
+			})
+			if err != nil || !live {
+				continue
+			}
+		}
+		if !sub.Expires.IsZero() && !e.now().Before(sub.Expires) {
 			continue
 		}
 		category, status, _ := sub.Client.request(ctx, sub.URL, id, subscriptionID, sub.Secret, body, false)
