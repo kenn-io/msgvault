@@ -480,8 +480,13 @@ func TestRevokedSubscriptionSendsSignedTermination(t *testing.T) {
 	assert := Assert.New(t)
 	var body map[string]any
 	var subscription, signature, webhookID string
+	var decodeErr error
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(json.NewDecoder(r.Body).Decode(&body))
+		decodeErr = json.NewDecoder(r.Body).Decode(&body)
+		if decodeErr != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		subscription = r.Header.Get("X-Mcp-Subscription-Id")
 		signature = r.Header.Get("Webhook-Signature")
 		webhookID = r.Header.Get("Webhook-Id")
@@ -492,9 +497,12 @@ func TestRevokedSubscriptionSendsSignedTermination(t *testing.T) {
 	sub.Native, sub.Terminated = true, true
 	engine := Engine{Subscriptions: []Subscription{sub}}
 	require.NoError(engine.RunPass(t.Context()))
+	require.NoError(decodeErr)
 	assert.Equal("stable-id", subscription)
 	assert.NotEmpty(signature)
 	assert.True(strings.HasPrefix(webhookID, "msg_terminated_"))
 	assert.Equal("terminated", body["type"])
-	assert.Equal(float64(-32024), body["error"].(map[string]any)["code"])
+	errorBody, ok := body["error"].(map[string]any)
+	require.True(ok)
+	assert.Equal(float64(-32024), errorBody["code"])
 }

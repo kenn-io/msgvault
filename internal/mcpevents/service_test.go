@@ -720,6 +720,7 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			assertions.Equal(credential, afterCredential)
 		}},
 		{"UnknownCatalogMembersRefusedWithoutRewriting", func(t *testing.T) {
+			t.Helper()
 			for _, tc := range []struct{ name, old, replacement string }{
 				{"entry", `[{`, `[{"future":true,`},
 				{"arguments", `"arguments":{`, `"arguments":{"future":true,`},
