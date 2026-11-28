@@ -1020,3 +1020,40 @@ func TestMediaPolicyFailsClosedOnUnreadableMembership(t *testing.T) {
 	assert.NotEmpty(contentHash, "a readable roster releases the deferred download")
 	assert.Len(transport.requests, 1)
 }
+
+// A file shared by several messages of one page is downloaded once, before
+// the page's write transaction, and every message records it as downloaded.
+func TestPageDownloadsSharedFileOnce(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	f := testWorkspace(t)
+	shared := map[string]any{"id": "F_SHARED", "name": "plan.pdf", "mimetype": "application/pdf", "size": 5,
+		"url_private": "https://files.slack.com/files-pri/T01-F_SHARED/plan.pdf",
+		"permalink":   "https://testers.slack.com/files/F_SHARED"}
+	f.conv("C01").Msgs[6].Files = []map[string]any{shared}
+	f.conv("C01").Msgs[7].Files = []map[string]any{shared}
+
+	srv := f.serve()
+	client := NewClient(srv.URL, "xoxp-test")
+	client.disableRateLimits()
+	rt := &recordingTransport{body: "pdf05"}
+	client.mediaTransport = rt
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, client, "T01")
+	imp.checkpointMinInterval = 0
+
+	_, err := imp.Import(t.Context(), ImportOptions{
+		TeamID: "T01", UserID: "UME", AttachmentsDir: t.TempDir(), MaxMediaBytes: 1 << 20,
+	})
+	require.NoError(err)
+	assert.Len(rt.requests, 1, "one page shares one download of the file")
+	for _, i := range []int{6, 7} {
+		var messageID int64
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+			`SELECT id FROM messages WHERE source_message_id = ?`), "C01:"+ts(i)).Scan(&messageID))
+		refs, err := st.MessageSlackAttachments(messageID)
+		require.NoError(err)
+		assert.NotEmpty(refs["slack:F_SHARED"].ContentHash, "message %d records the shared file as downloaded", i)
+	}
+}

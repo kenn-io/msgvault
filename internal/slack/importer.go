@@ -872,7 +872,21 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 		preDrained := pt.DrainedTo
 		saved := *pt
 		budgetUsed, repliesFetched := cc.budgetUsed, sum.RepliesFetched
-		err = imp.writePage(ctx, cc, page.Messages, func(ctx context.Context) error {
+		// Archived parents are skipped below, so their files are not fetched.
+		prepare := make([]Message, 0, len(page.Messages))
+		for i := range page.Messages {
+			if m := &page.Messages[i]; !m.IsThreadReply() {
+				archived, err := imp.parentArchived(ctx, cc.sourceID, cc.channelID, m.TS)
+				if err != nil {
+					return fmt.Errorf("check archived thread parent: %w", err)
+				}
+				if archived {
+					continue
+				}
+			}
+			prepare = append(prepare, page.Messages[i])
+		}
+		err = imp.writePage(ctx, cc, prepare, func(ctx context.Context) error {
 			for i := range page.Messages {
 				m := &page.Messages[i]
 				if m.IsThreadReply() && m.ThreadTS != pt.RootTS {

@@ -269,6 +269,7 @@ func (s *Store) WithSourceWriteTxContext(ctx context.Context, sourceID int64, fn
 			tx.attribution = &attributionLockState{sources: make(map[int64]struct{}, 1)}
 		}
 		tx.attribution.sources[sourceID] = struct{}{}
+		tx.isolateJoinedCalls = s.IsPostgreSQL()
 		return nil
 	}, func(tx *loggedTx) error {
 		if err := fn(withWritableSnapshot(ctx, s.db.DB, tx)); err != nil {

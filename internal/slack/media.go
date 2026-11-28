@@ -404,10 +404,10 @@ type fetchedFile struct {
 }
 
 // fetchFile downloads f and stores it in content-addressed storage, or
-// returns the result preparePage already produced for it.
+// returns the result preparePage already produced for it. The result stays
+// for the rest of the page, since several messages can share one file.
 func (imp *Importer) fetchFile(ctx context.Context, f *File, sourceAttID, fetchRef string, maxBytes int64, dir string) fetchedFile {
 	if got, ok := imp.fetched[sourceAttID]; ok {
-		delete(imp.fetched, sourceAttID)
 		return got
 	}
 	data, err := imp.client.DownloadFile(ctx, fetchRef, maxBytes)
@@ -482,6 +482,9 @@ func (imp *Importer) fetchPageFiles(ctx context.Context, cc *convScope, msgs []M
 				continue
 			}
 			if f.Size > 0 && f.Size > maxBytes {
+				continue
+			}
+			if _, done := imp.fetched[sourceAttID]; done {
 				continue
 			}
 			if ctx.Err() != nil {

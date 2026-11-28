@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -187,10 +188,20 @@ func (d *loggedDB) ExecContext(
 	query = d.rebind(query)
 	start := time.Now()
 	var executor contextQuerier = d.DB
-	if tx := writableSnapshot(ctx, d.DB); tx != nil {
+	tx := writableSnapshot(ctx, d.DB)
+	if tx != nil {
 		executor = tx.Tx
 	}
-	res, err := executor.ExecContext(ctx, query, args...)
+	var res sql.Result
+	var err error
+	if tx != nil {
+		err = tx.inSavepoint(ctx, func() error {
+			res, err = executor.ExecContext(ctx, query, args...)
+			return err
+		})
+	} else {
+		res, err = executor.ExecContext(ctx, query, args...)
+	}
 	elapsed := time.Since(start)
 	rowsAffected := int64(-1)
 	if err == nil && res != nil {
@@ -236,6 +247,11 @@ type loggedTx struct {
 	// attribution records the locks withAttributionTxContext took before the
 	// sync fence; nil for every other transaction.
 	attribution *attributionLockState
+	// isolateJoinedCalls runs each store call that joins this transaction in
+	// its own savepoint. PostgreSQL aborts the whole transaction on any failed
+	// statement, so without it one failed call would fail every later write of
+	// a WithSourceWriteTxContext batch; SQLite fails only the statement.
+	isolateJoinedCalls bool
 	// accountCatalogChanged is set when this transaction wrote account
 	// attribution; Commit then bumps the catalog revision once.
 	accountCatalogChanged bool
@@ -254,6 +270,28 @@ func (t *loggedTx) Exec(
 }
 
 // ExecContext rebinds before delegating.
+// inSavepoint runs fn in a savepoint when the transaction isolates joined
+// calls, rolling fn's writes back if it fails, and runs fn directly otherwise.
+func (t *loggedTx) inSavepoint(ctx context.Context, fn func() error) error {
+	if !t.isolateJoinedCalls {
+		return fn()
+	}
+	if _, err := t.Tx.ExecContext(ctx, `SAVEPOINT msgvault_call`); err != nil {
+		return fmt.Errorf("open call savepoint: %w", err)
+	}
+	if err := fn(); err != nil {
+		if _, rbErr := t.Tx.ExecContext(context.WithoutCancel(ctx), `ROLLBACK TO SAVEPOINT msgvault_call`); rbErr != nil {
+			return errors.Join(err, fmt.Errorf("roll back call savepoint: %w", rbErr))
+		}
+		_, _ = t.Tx.ExecContext(context.WithoutCancel(ctx), `RELEASE SAVEPOINT msgvault_call`)
+		return err
+	}
+	if _, err := t.Tx.ExecContext(ctx, `RELEASE SAVEPOINT msgvault_call`); err != nil {
+		return fmt.Errorf("release call savepoint: %w", err)
+	}
+	return nil
+}
+
 func (t *loggedTx) ExecContext(
 	ctx context.Context, query string, args ...any,
 ) (sql.Result, error) {

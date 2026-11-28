@@ -17,10 +17,12 @@ import (
 // preparePage first resolves every participant the page names and downloads
 // its files. write receives the transaction's context; store calls made with
 // it join the transaction.
+//
+// msgs are the messages write may persist; a caller that skips some of the
+// page, such as archived thread parents, leaves them out so their files are
+// not fetched.
 func (imp *Importer) writePage(ctx context.Context, cc *convScope, msgs []Message, write func(context.Context) error) error {
-	// A file preparePage stored for a message the page then skipped stays
-	// pending in its row; it is fetched again when that message is processed.
-	defer clear(imp.fetched)
+	defer func() { clear(imp.fetched) }()
 	if err := imp.preparePage(ctx, cc, msgs); err != nil {
 		return err
 	}
