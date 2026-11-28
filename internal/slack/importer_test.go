@@ -3669,12 +3669,13 @@ func TestTombstonePlaceholderRetriesIncompletePersistence(t *testing.T) {
 	_, err = imp.Import(t.Context(), opts)
 	require.Error(err, "the auxiliary store failure must abort the run")
 
+	// The page's writes share one transaction, so the failed snapshot leaves
+	// no row behind, and in particular no raw JSON completion marker.
 	rootID := "C80:" + rootTS
-	var messageID int64
+	var rows int
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
-		`SELECT id FROM messages WHERE source_message_id = ?`), rootID).Scan(&messageID))
-	_, err = st.GetMessageRaw(messageID)
-	require.Error(err, "raw JSON is the completion marker and must be written only after fatal auxiliary snapshots")
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), rootID).Scan(&rows))
+	require.Zero(rows, "a failed page must roll back every write of the page")
 
 	// Once the store heals, the held cursor re-serves the tombstone. A row
 	// without the completion marker must be processed rather than mistaken
@@ -3684,6 +3685,9 @@ func TestTombstonePlaceholderRetriesIncompletePersistence(t *testing.T) {
 	require.NoError(err)
 	assert.Positive(sum.MessagesProcessed)
 
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), rootID).Scan(&messageID))
 	raw, err := st.GetMessageRaw(messageID)
 	require.NoError(err)
 	assert.Contains(string(raw), `"subtype":"tombstone"`)

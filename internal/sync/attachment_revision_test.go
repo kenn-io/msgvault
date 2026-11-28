@@ -97,7 +97,9 @@ func TestAttachmentRevisionCrashWorker(t *testing.T) {
 	}
 	mock.AddMessage("interrupted", raw, []string{"INBOX"})
 	logger := newSyncLogCapture(func(record slog.Record) {
-		if mode == "mime-error" && record.Message == "failed to ingest message" {
+		// Gmail batches commit after their last message, so terminate once the
+		// failed message's batch is durable rather than at the failure itself.
+		if mode == "mime-error" && record.Message == "full sync completed with errors" {
 			os.Exit(74)
 		}
 	})
