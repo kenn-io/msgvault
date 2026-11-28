@@ -1715,6 +1715,9 @@ func cliRunCommandAllowed(args []string) bool {
 	if args[0] == "backup" {
 		return len(args) >= 2 && args[1] == "create"
 	}
+	if args[0] == "doctor" {
+		return len(args) >= 2 && args[1] == "fts"
+	}
 	if args[0] == cliRunPersonCommand {
 		if len(args) < 3 {
 			return false

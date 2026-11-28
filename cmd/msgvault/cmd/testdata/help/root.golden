@@ -173,6 +173,7 @@ Indexes, embeddings, and analytics cache:
 
 Maintenance and repair:
   backup                  Back up the archive to a snapshot repository
+  doctor                  Run read-only health checks on the archive
   init-db                 Initialize the database schema
   migrate                 Apply this binary's archive schema migrations offline
   pack-attachments        Pack loose attachment files into sealed pack files
